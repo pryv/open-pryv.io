@@ -4,7 +4,7 @@
 
 **Personal Data & Privacy Management Software**
 
-A ready-to-use service for personal data and consent management.
+A ready-to-use solution for personal data and consent management.
 
 Pryv.io is a solid foundation on which you build your own digital health solution, so you can collect, store, share and rightfully use personal data.
 
@@ -146,7 +146,7 @@ Your platforms visuals can be customized in `public_html/assets/`, please refer 
 
 Pryv.io can send e-mails at registration and password reset request.
 
-The emails can be send either by local sendmail (default) or SMTP. 
+The emails can be sent either by local sendmail (default) or SMTP. 
 
 This service, its documentation and mail templates can be found in `service-mail/`.
 
