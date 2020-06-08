@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.5.9-open",
+  "version": "1.5.10-open",
   "private": false,
   "description": "Pryv core server app components",
   "homepage": "http://pryv.com",
@@ -46,7 +46,6 @@
     "heap": "^0.2.6",
     "hjson": "^3.1.1",
     "js-yaml": "^3.11.0",
-    "lib-reporting": "git+ssh://git@github.com/pryv/lib-reporting.git",
     "lodash": "^4.17.4",
     "lru-cache": "^4.1.1",
     "middleware": "file:components/middleware",

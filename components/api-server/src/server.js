@@ -34,8 +34,6 @@
  */
 // @flow
 
-const Reporting = require('lib-reporting');
-
 const express = require('express');
 
 const http = require('http');
@@ -343,6 +341,7 @@ class Server {
 
 
   async setupReporting() {
+    const Reporting = require('lib-reporting');
     async function collectClientData() {
       return {
         userCount: await this.getUserCount()
