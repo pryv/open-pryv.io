@@ -359,7 +359,7 @@ config.load = function (configDefault) {
   
   var settings = instance.get();
 
-  if (settings.printConfig) {
+  if (settings.printConfig || true) {
     print('Configuration settings loaded', settings);
   }
 
