@@ -14,6 +14,9 @@
     "adminAccessKey": "{ADMIN_ACCESS_KEY}",
     "trustedApps": "*@https://pryv.github.io, *@https://*.rec.la*"
   },
+  "eventFiles": {
+    "attachmentsDirPath": "var-pryv/attachment-files"
+  },
   "service": {
     "name": "Open-Pryv.io",
     "support": "https://pryv.com/open-pryv-non-configured-page/",

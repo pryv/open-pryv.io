@@ -1,4 +1,6 @@
-#
+var-pryv/
+public_html/
+app-web-auth3/
 dist/
 node_modules/
 

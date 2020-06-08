@@ -69,6 +69,9 @@ Edit the `config.json` file:
     "adminAccessKey": "randomstring",
     "trustedApps": "*@http://pryv.github.io, *@https://*.rec.la*"
   },
+  "eventFiles": {
+    "attachmentsDirPath": "var-pryv/attachment-files"
+  },
   "service": {
     "name": "Test",
     "support": "https://pryv.com/openpryv/unconfigured.html",
@@ -97,8 +100,10 @@ Edit the `config.json` file:
 - **auth**
   - **adminAccesskey** key to use for system calls such as `/reg/admin/users`. A random key should be generated on setup.
   - **trustedApps** list of web apps that can be trusted-app functionalities
-     API for trusted apps: [API reference-full](https://api.pryv.com/reference-full/)
+     API for trusted apps: [API reference](https://api.pryv.com/reference/)
     see: [SETUP Guide - customize authorization](https://api.pryv.com/customer-resources/pryv.io-setup/#customize-authorization-registration-and-reset-password-apps)
+- **eventFiles**
+  - **attachmentsDirPath** Directory where event attachment files will be stored on the file system.
 - **service** [API documention on Service Information](https://api.pryv.com/reference/#service-info)
 - **services:email** see [Options & Customization](#custom-email) bellow
 
