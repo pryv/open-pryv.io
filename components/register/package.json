@@ -1,0 +1,16 @@
+{
+  "name": "register",
+  "version": "0.1.9",
+  "private": false,
+  "description": "Pryv Register component",
+  "homepage": "http://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv S.A. <support@pryv.com> (http://pryv.com)",
+  "main": "source/index.js",
+  "scripts": {
+    "_test": "NODE_ENV=test PRYV_CONFIG=../api-server/config/test.json  ../../node_modules/.bin/mocha --reporter=dot 'test/**/*.test.js' --exit",
+    "test": "yarn run _test --logs:console:active=false"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

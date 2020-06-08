@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+
+set -e
+
+echo "Preparing 'dist' directory for release / running a server..."
+
+# Prepare dist and copy package installation into it. 
+mkdir -p dist
+rsync -a --delete node_modules/ dist/node_modules/
+
+# Point the components to the compiled source code within dist, not to the 
+# source code that is flow annotated. 
+ln -sf ../components dist/node_modules/components 
+
+echo "done."

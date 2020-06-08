@@ -1,0 +1,54 @@
+{
+  // Logging settings
+  logs: {
+    prefix: '',
+    console: { active: true, level: 'info', colorize: true }, 
+    file: { active: false },
+  },
+  email: {
+    message: {
+      // Sender name and email address
+      from: {
+        name: "Your Email address",
+        address: "change@my.email"
+      }
+    },
+    preview: false, // If true, it will open a webpage with a preview
+    send: true // Activate/deactivate the actual sending (prod/test env)
+  },
+  // Alternative transport, using the sendmail command of the machine
+  sendmail: {
+    // Set to false to use SMTP transport
+    active: true,
+    // Path of the sendmail command on the machine
+    path: '/usr/sbin/sendmail'
+  },
+  // SMTP will be used if sendmail:active is false,
+  smtp: {
+    // SMTP host of the external email delivery service
+    host: "smtp.email.service",
+    // SMTP port
+    port: 587,
+    // Credentials to authenticate against SMTP server
+    auth: {
+      user: "change@my.email",
+      pass: "YourPassword"
+    }
+  },
+  http: {
+    // IP address on which the mailing server is listening
+    ip: "127.0.0.1",
+    // Port on which the mailing server is listening
+    port: 9000,
+    // Each sendmail request should contain authorization header that
+    // matches this key, used to prevent abuse.
+    // No need to change if ip adress is not facing the internet.
+    auth: "SHOULD_MATCH_SERVICE_MAIL",
+  },
+  templates: {
+    // Root folder where the templates are stored
+    root: './templates/',
+    // Default language for templates
+    defaultLang: 'en'
+  }
+}

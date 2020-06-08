@@ -1,0 +1,41 @@
+{
+  "openSource": {
+    "isActive": true
+  },
+  "dnsLess": {
+    "isActive": true,
+    "publicUrl": "http://localhost:3000"
+  },
+  "auth": {
+    "adminAccessKey": "OVERRIDE ME",
+    "trustedApps": "pryv-test@http://test.pryv.local, pryv-test-no-cors@*, *@https://*.rec.la*"
+  },
+  "logs": {
+    "console": {
+      "active": false,
+      "level": "info",
+      "timestamp": false
+    }
+  },
+  "services": {
+    "email": {
+      "enabled": false
+    },
+    "register": {
+      "url": "http://localhost:5123"
+    }
+  },
+  "tcpMessaging": {
+    "enabled": true
+  },
+  "service": {
+    "name": "Test",
+    "support": "https://pryv.com/openpryv/unconfigured.html",
+    "terms": "https://pryv.com/openpryv/unconfigured.html",
+    "home": "https://pryv.com/openpryv/unconfigured.html",
+    "eventTypes": "https://api.pryv.com/event-types/flat.json",
+    "assets": {
+      "definitions": "https://http://localhost:3000/wwww/assets/index.json"
+    }
+  }
+}

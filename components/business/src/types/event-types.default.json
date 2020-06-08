@@ -1,0 +1,1497 @@
+{
+  "version": "0.2.9",
+  "types": {
+    "activity/plain": {
+      "description": "Plain activity event with no specific content; the activity is defined by the event's stream, time and duration, and possibly description and tags.",
+      "type": "null"
+    },
+    "audio/attached": {
+      "description": "The audio source is the file attached to the event (no explicit content defined).\nYou can use the event's duration to mirror the recording's duration.",
+      "type": "null",
+      "attachmentRequired": true
+    },
+    "audio/url": {
+      "description": "A reference to an audio file online.",
+      "type": "string",
+      "pattern": "^(https?)://.+$"
+    },
+    "call/name": {
+      "description": "The contact's name (or a free-form identifier)",
+      "type": "string"
+    },
+    "call/skype": {
+      "description": "The Skype id",
+      "type": "string"
+    },
+    "call/telephone": {
+      "description": "The phone number",
+      "type": "string"
+    },
+    "contact/facebook": {
+      "type": "object",
+      "description": "A Facebook user as specified in the Graph API: https://developers.facebook.com/docs/reference/api/user/",
+      "additionalProperties": "true",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "contact/vcard": {
+      "description": "A business card in vCard 2.0-3.x format. See: rfc2425, rfc2426.",
+      "type": "string"
+    },
+    "encrypted/aes-text-base64": {
+      "description": "AES encrypted payload, with a <em>text</em> key and a <em>Base64</em> payload.",
+      "type": "object",
+      "properties": {
+        "payload": {
+          "description": "The encrypted data.",
+          "type": "string"
+        },
+        "keyRef": {
+          "description": "A reference (e.g. id, name in keychain) to the key to use for decryption.",
+          "type": "string"
+        },
+        "hint": {
+          "description": "Alternative to <code>keyRef</code>. A textual hint about which key to use for decryption.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "payload"
+      ]
+    },
+    "file/attached": {
+      "description": "The file is attached to the event",
+      "type": "null",
+      "attachmentRequired": true
+    },
+    "file/attached-multiple": {
+      "description": "A set of file attached. Structure can be declared in the filenames.",
+      "attachmentRequired": true,
+      "type": "null"
+    },
+    "file/url": {
+      "description": "A reference to a file hosted elsewhere",
+      "type": "string",
+      "pattern": "^(https?)://.+$"
+    },
+    "message/email": {
+      "description": "An e-mail message.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "cc": {
+          "type": "string"
+        },
+        "bcc": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "message-id": {
+          "type": "string"
+        },
+        "reply-to": {
+          "type": "string"
+        },
+        "x-headers": {
+          "description": "Key/value map of `X-*` headers",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "body": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "body"
+      ]
+    },
+    "message/facebook": {
+      "description": "A Facebook post. See [Facebook's API docs](https://developers.facebook.com/docs/reference/api/post/) for reference. Facebook properties `message` and `created_time` map to event `description` and `time` respectively. Facebook attached pictures can be directly mapped to attachments. Other Facebook properties such as `link`, `source`, `privacy` are allowed.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "from": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name",
+            "id"
+          ]
+        },
+        "to": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "id"
+                ]
+              }
+            }
+          }
+        },
+        "message": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "description": "Either a fully qualified \"URL\" for an external source or a \"filename\" for a Flash Movie or Video attached to this event."
+        },
+        "properties": {
+          "type": "string",
+          "description": "Relative to `source`: a list of properties for an uploaded video, for example, the length of the video.",
+          "additionalProperties": true
+        },
+        "picture": {
+          "description": "Either a fully qualified \"URL\" for an external picture or a \"filename\" for a picture attached to this event.",
+          "type": "string"
+        },
+        "status-type": {
+          "description": "One of mobile_status_update, created_note, added_photos, added_video, shared_story, created_group, created_event, wall_post, app_created_story, published_story, tagged_in_photo, approved_friend",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "message"
+      ]
+    },
+    "message/twitter": {
+      "description": "A Twitter post. Twitter property `created_at` maps to event `time`. Other Twitter properties (see [Twitter's API docs](https://dev.twitter.com/docs/api/1.1/get/statuses/show/%3Aid)) are allowed.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "screen-name": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "screen-name",
+        "text"
+      ]
+    },
+    "money/aed": {
+      "type": "number"
+    },
+    "money/ang": {
+      "type": "number",
+      "description": "Netherlands Antilles Guilder"
+    },
+    "money/ars": {
+      "type": "number",
+      "description": "Argentina Peso"
+    },
+    "money/aud": {
+      "type": "number",
+      "description": "Australia Dollar"
+    },
+    "money/bgn": {
+      "type": "number",
+      "description": "Bulgaria Lev"
+    },
+    "money/bhd": {
+      "type": "number"
+    },
+    "money/bnd": {
+      "type": "number",
+      "description": "Brunei Darussalam Dollar"
+    },
+    "money/bob": {
+      "type": "number",
+      "description": "Bolivia Boliviano"
+    },
+    "money/brl": {
+      "type": "number",
+      "description": "Brazil Real"
+    },
+    "money/bwp": {
+      "type": "number",
+      "description": "Botswana Pula"
+    },
+    "money/cad": {
+      "type": "number",
+      "description": "Canada Dollar"
+    },
+    "money/chf": {
+      "type": "number",
+      "description": "Switzerland Franc"
+    },
+    "money/clp": {
+      "type": "number",
+      "description": "Chile Peso"
+    },
+    "money/cny": {
+      "type": "number",
+      "description": "China Yuan Renminbi"
+    },
+    "money/cop": {
+      "type": "number",
+      "description": "Colombia Peso"
+    },
+    "money/crc": {
+      "type": "number",
+      "description": "Costa Rica Colon"
+    },
+    "money/czk": {
+      "type": "number",
+      "description": "Czech Republic Koruna"
+    },
+    "money/dkk": {
+      "type": "number",
+      "description": "Denmark Krone"
+    },
+    "money/dop": {
+      "type": "number",
+      "description": "Dominican Republic Peso"
+    },
+    "money/dzd": {
+      "type": "number"
+    },
+    "money/eek": {
+      "type": "number",
+      "description": "Estonia Kroon"
+    },
+    "money/egp": {
+      "type": "number",
+      "description": "Egypt Pound"
+    },
+    "money/eur": {
+      "type": "number",
+      "description": "Euro"
+    },
+    "money/fjd": {
+      "type": "number",
+      "description": "Fiji Dollar"
+    },
+    "money/gbp": {
+      "type": "number",
+      "description": "United Kingdom Pound"
+    },
+    "money/hkd": {
+      "type": "number",
+      "description": "Hong Kong Dollar"
+    },
+    "money/hnl": {
+      "type": "number",
+      "description": "Honduras Lempira"
+    },
+    "money/hrk": {
+      "type": "number",
+      "description": "Croatia Kuna"
+    },
+    "money/huf": {
+      "type": "number",
+      "description": "Hungary Forint"
+    },
+    "money/idr": {
+      "type": "number",
+      "description": "Indonesia Rupiah"
+    },
+    "money/ils": {
+      "type": "number",
+      "description": "Israel Shekel"
+    },
+    "money/inr": {
+      "type": "number",
+      "description": "India Rupee"
+    },
+    "money/jmd": {
+      "type": "number",
+      "description": "Jamaica Dollar"
+    },
+    "money/jod": {
+      "type": "number"
+    },
+    "money/jpy": {
+      "type": "number",
+      "description": "Japan Yen"
+    },
+    "money/kes": {
+      "type": "number"
+    },
+    "money/krw": {
+      "type": "number",
+      "description": "Korea (South) Won"
+    },
+    "money/kwd": {
+      "type": "number"
+    },
+    "money/kyd": {
+      "type": "number",
+      "description": "Cayman Islands Dollar"
+    },
+    "money/kzt": {
+      "type": "number",
+      "description": "Kazakhstan Tenge"
+    },
+    "money/lbp": {
+      "type": "number",
+      "description": "Lebanon Pound"
+    },
+    "money/lkr": {
+      "type": "number",
+      "description": "Sri Lanka Rupee"
+    },
+    "money/ltl": {
+      "type": "number",
+      "description": "Lithuania Litas"
+    },
+    "money/lvl": {
+      "type": "number",
+      "description": "Latvia Lat"
+    },
+    "money/mad": {
+      "type": "number"
+    },
+    "money/mdl": {
+      "type": "number"
+    },
+    "money/mkd": {
+      "type": "number",
+      "description": "Macedonia Denar"
+    },
+    "money/mur": {
+      "type": "number",
+      "description": "Mauritius Rupee"
+    },
+    "money/mxn": {
+      "type": "number",
+      "description": "Mexico Peso"
+    },
+    "money/myr": {
+      "type": "number",
+      "description": "Malaysia Ringgit"
+    },
+    "money/nad": {
+      "type": "number",
+      "description": "Namibia Dollar"
+    },
+    "money/ngn": {
+      "type": "number",
+      "description": "Nigeria Naira"
+    },
+    "money/nio": {
+      "type": "number",
+      "description": "Nicaragua Cordoba"
+    },
+    "money/nok": {
+      "type": "number",
+      "description": "Norway Krone"
+    },
+    "money/npr": {
+      "type": "number",
+      "description": "Nepal Rupee"
+    },
+    "money/nzd": {
+      "type": "number",
+      "description": "New Zealand Dollar"
+    },
+    "money/omr": {
+      "type": "number",
+      "description": "Oman Rial"
+    },
+    "money/pen": {
+      "type": "number",
+      "description": "Peru Nuevo Sol"
+    },
+    "money/pgk": {
+      "type": "number"
+    },
+    "money/php": {
+      "type": "number",
+      "description": "Philippines Peso"
+    },
+    "money/pkr": {
+      "type": "number",
+      "description": "Pakistan Rupee"
+    },
+    "money/pln": {
+      "type": "number",
+      "description": "Poland Zloty"
+    },
+    "money/pyg": {
+      "type": "number",
+      "description": "Paraguay Guarani"
+    },
+    "money/qar": {
+      "type": "number",
+      "description": "Qatar Riyal"
+    },
+    "money/ron": {
+      "type": "number",
+      "description": "Romania New Leu"
+    },
+    "money/rsd": {
+      "type": "number",
+      "description": "Serbia Dinar"
+    },
+    "money/rub": {
+      "type": "number",
+      "description": "Russia Ruble"
+    },
+    "money/sar": {
+      "type": "number",
+      "description": "Saudi Arabia Riyal"
+    },
+    "money/scr": {
+      "type": "number",
+      "description": "Seychelles Rupee"
+    },
+    "money/sek": {
+      "type": "number",
+      "description": "Sweden Krona"
+    },
+    "money/sgd": {
+      "type": "number",
+      "description": "Singapore Dollar"
+    },
+    "money/skk": {
+      "type": "number"
+    },
+    "money/sll": {
+      "type": "number"
+    },
+    "money/svc": {
+      "type": "number",
+      "description": "El Salvador Colon"
+    },
+    "money/thb": {
+      "type": "number",
+      "description": "Thailand Baht"
+    },
+    "money/tnd": {
+      "type": "number"
+    },
+    "money/try": {
+      "type": "number",
+      "description": "Turkey Lira"
+    },
+    "money/ttd": {
+      "type": "number",
+      "description": "Trinidad and Tobago Dollar"
+    },
+    "money/twd": {
+      "type": "number",
+      "description": "Taiwan New Dollar"
+    },
+    "money/tzs": {
+      "type": "number"
+    },
+    "money/uah": {
+      "type": "number",
+      "description": "Ukraine Hryvna"
+    },
+    "money/ugx": {
+      "type": "number"
+    },
+    "money/usd": {
+      "type": "number",
+      "description": "United States Dollar"
+    },
+    "money/uyu": {
+      "type": "number",
+      "description": "Uruguay Peso"
+    },
+    "money/uzs": {
+      "type": "number",
+      "description": "Uzbekistan Som"
+    },
+    "money/vnd": {
+      "type": "number",
+      "description": "Viet Nam Dong"
+    },
+    "money/yer": {
+      "type": "number",
+      "description": "Yemen Rial"
+    },
+    "money/zar": {
+      "type": "number",
+      "description": "South Africa Rand"
+    },
+    "money/zmk": {
+      "type": "number"
+    },
+    "money/btc": {
+      "description": "Bitcoin",
+      "type": "number"
+    },
+    "money/all": {
+      "description": "Albania Lek",
+      "type": "number"
+    },
+    "money/afn": {
+      "description": "Afghanistan Afghani",
+      "type": "number"
+    },
+    "money/awg": {
+      "description": "Aruba Guilder",
+      "type": "number"
+    },
+    "money/azn": {
+      "description": "Azerbaijan New Manat",
+      "type": "number"
+    },
+    "money/bsd": {
+      "description": "Bahamas Dollar",
+      "type": "number"
+    },
+    "money/bbd": {
+      "description": "Barbados Dollar",
+      "type": "number"
+    },
+    "money/byr": {
+      "description": "Belarus Ruble",
+      "type": "number"
+    },
+    "money/bzd": {
+      "description": "Belize Dollar",
+      "type": "number"
+    },
+    "money/bmd": {
+      "description": "Bermuda Dollar",
+      "type": "number"
+    },
+    "money/bam": {
+      "description": "Bosnia and Herzegovina Convertible Marka",
+      "type": "number"
+    },
+    "money/khr": {
+      "description": "Cambodia Riel",
+      "type": "number"
+    },
+    "money/cup": {
+      "description": "Cuba Peso",
+      "type": "number"
+    },
+    "money/xcd": {
+      "description": "East Caribbean Dollar",
+      "type": "number"
+    },
+    "money/fkp": {
+      "description": "Falkland Islands (Malvinas) Pound",
+      "type": "number"
+    },
+    "money/ghc": {
+      "description": "Ghana Cedis",
+      "type": "number"
+    },
+    "money/gip": {
+      "description": "Gibraltar Pound",
+      "type": "number"
+    },
+    "money/gtq": {
+      "description": "Guatemala Quetzal",
+      "type": "number"
+    },
+    "money/ggp": {
+      "description": "Guernsey Pound",
+      "type": "number"
+    },
+    "money/gyd": {
+      "description": "Guyana Dollar",
+      "type": "number"
+    },
+    "money/isk": {
+      "description": "Iceland Krona",
+      "type": "number"
+    },
+    "money/irr": {
+      "description": "Iran Rial",
+      "type": "number"
+    },
+    "money/imp": {
+      "description": "Isle of Man Pound",
+      "type": "number"
+    },
+    "money/jep": {
+      "description": "Jersey Pound",
+      "type": "number"
+    },
+    "money/kpw": {
+      "description": "Korea (North) Won",
+      "type": "number"
+    },
+    "money/kgs": {
+      "description": "Kyrgyzstan Som",
+      "type": "number"
+    },
+    "money/lak": {
+      "description": "Laos Kip",
+      "type": "number"
+    },
+    "money/lrd": {
+      "description": "Liberia Dollar",
+      "type": "number"
+    },
+    "money/mnt": {
+      "description": "Mongolia Tughrik",
+      "type": "number"
+    },
+    "money/mzn": {
+      "description": "Mozambique Metical",
+      "type": "number"
+    },
+    "money/pab": {
+      "description": "Panama Balboa",
+      "type": "number"
+    },
+    "money/shp": {
+      "description": "Saint Helena Pound",
+      "type": "number"
+    },
+    "money/sbd": {
+      "description": "Solomon Islands Dollar",
+      "type": "number"
+    },
+    "money/sos": {
+      "description": "Somalia Shilling",
+      "type": "number"
+    },
+    "money/srd": {
+      "description": "Suriname Dollar",
+      "type": "number"
+    },
+    "money/syp": {
+      "description": "Syria Pound",
+      "type": "number"
+    },
+    "money/trl": {
+      "description": "Turkey Lira",
+      "type": "number"
+    },
+    "money/tvd": {
+      "description": "Tuvalu Dollar",
+      "type": "number"
+    },
+    "money/vef": {
+      "description": "Venezuela Bolivar",
+      "type": "number"
+    },
+    "money/zwd": {
+      "description": "Zimbabwe Dollar",
+      "type": "number"
+    },
+    "mood/rating": {
+      "description": "Rating of mood (float value) 0:worst -> 1:best",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "mood/emoticon": {
+      "description": "ASCII Art emoticon",
+      "type": "string"
+    },
+    "music/basic": {
+      "description": "Inspired from id3 key/pair",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "artist": {
+          "type": "string"
+        },
+        "album": {
+          "type": "string"
+        },
+        "track": {
+          "type": "integer"
+        },
+        "year": {
+          "type": "integer"
+        },
+        "genre": {
+          "type": "string"
+        }
+      }
+    },
+    "music/soundcloud": {
+      "description": "See [Soundcloud track properties](http://developers.soundcloud.com/docs/api/reference#tracks).",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "note/html": {
+      "description": "An HTML-formatted note.",
+      "type": "string",
+      "maxLength": 4194304
+    },
+    "note/txt": {
+      "description": "A plain-text note.",
+      "type": "string",
+      "maxLength": 4194304
+    },
+    "note/webclip": {
+      "description": "An HTML-formatted note associated to its source URL.",
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^(https?)://.+$"
+        },
+        "content": {
+          "description": "An HTML-formatted string.",
+          "type": "string",
+          "maxLength": 4194304
+        }
+      },
+      "required": [
+        "url"
+      ]
+    },
+    "numset/*": {
+      "description": "The format key is freely defined.\n\nFor example, a heart measurement with type `numset/heart` and content:\n```\n{ \n  \"systolic\": { \"pressure/mmhg\": 105 },\n  \"diastolic\": { \"pressure/mmhg\": 64 },\n  \"rate\": { \"frequency/bpm\": 88 }\n}\n```\n\n ",
+      "type": "object",
+      "patternProperties": {
+        "^(/[^/]+)+$": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": "false",
+      "required": []
+    },
+    "picture/base64": {
+      "description": "The picture is caried in base64 (utf-8) encoded in string",
+      "type": "string",
+      "properties": {
+        "payload": {
+          "type": "string",
+          "description": "base64 encoded content"
+        },
+        "format": {
+          "type": "string",
+          "description": "The data format \"gif\", \"jpeg\", \"png\", \"tiff\", \"vnd.microsoft.com\", \"svg+xml\""
+        },
+        "filename": {
+          "description": "A filename",
+          "type": "string"
+        }
+      },
+      "required": [
+        "payload",
+        "format"
+      ]
+    },
+    "picture/attached": {
+      "description": "The picture is the image file attached to the event (no explicit content defined). TODO: list accepted formats.",
+      "type": "null",
+      "attachmentRequired": true
+    },
+    "picture/url": {
+      "description": "A reference to a picture file online.",
+      "type": "string",
+      "pattern": "^(https?)://.+$"
+    },
+    "position/wgs84": {
+      "description": "The latest revision of the World Geodetic System (used by GPS).",
+      "type": "object",
+      "properties": {
+        "latitude": {
+          "type": "number",
+          "description": "Unit: degrees north from the equator."
+        },
+        "longitude": {
+          "type": "number",
+          "description": "Unit: degrees east from the zero meridian."
+        },
+        "altitude": {
+          "type": "number",
+          "description": "Unit: meters above sea level."
+        },
+        "horizontalAccuracy": {
+          "type": "number",
+          "description": "The radius of uncertainty for latitude and longitude. Unit: meters. Negative if latitude and longitude are invalid."
+        },
+        "verticalAccuracy": {
+          "type": "number",
+          "description": "The radius of uncertainty for altitude. Unit: meters. Negative if altitude is invalid."
+        },
+        "speed": {
+          "type": "number",
+          "description": "For informational purposes only. Unit: meters / second. Negative if invalid."
+        },
+        "bearing": {
+          "type": "number",
+          "description": "Unit: degrees clockwise from north. Negative if invalid."
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude"
+      ]
+    },
+    "ratio/generic": {
+      "description": "Generic ratio.",
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number"
+        },
+        "relativeTo": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "relativeTo"
+      ]
+    },
+    "ratio/percent": {
+      "description": "A percentage value.",
+      "type": "number"
+    },
+    "url/http": {
+      "description": "An HTTP or HTTPS resource.",
+      "type": "string",
+      "pattern": "^(https?)://.+$"
+    },
+    "video/attached": {
+      "description": "The video is the file attached to the event (no explicit content defined). TODO: list accepted formats.",
+      "type": "null",
+      "attachmentRequired": true
+    },
+    "video/url": {
+      "description": "A reference to an video file online.",
+      "type": "string",
+      "pattern": "^(https?)://.+$"
+    },
+    "video/vimeo": {
+      "description": "A Vimeo video ID.",
+      "type": "string"
+    },
+    "video/youtube": {
+      "description": "A YouTube video ID.",
+      "type": "string"
+    },
+    "absorbed-dose/gy": {
+      "description": "Gray",
+      "type": "number"
+    },
+    "absorbed-dose-equivalent/sv": {
+      "description": "Sievert",
+      "type": "number"
+    },
+    "absorbed-dose-rate/gy-s": {
+      "description": "Gray per second",
+      "type": "number"
+    },
+    "angle/deg": {
+      "description": "Degrees",
+      "type": "number"
+    },
+    "angle/grad": {
+      "description": "Grade",
+      "type": "number"
+    },
+    "angle/rad": {
+      "description": "Radians",
+      "type": "number"
+    },
+    "angular-acceleration/rad-s2": {
+      "description": "Radians per second squared",
+      "type": "number"
+    },
+    "angular-speed/rad-s": {
+      "description": "Radians per second",
+      "type": "number"
+    },
+    "area/ac": {
+      "description": "Acres (imperial)",
+      "type": "number"
+    },
+    "area/ft2": {
+      "description": "Square feet",
+      "type": "number"
+    },
+    "area/ha": {
+      "description": "Hectares",
+      "type": "number"
+    },
+    "area/in2": {
+      "description": "Square inches",
+      "type": "number"
+    },
+    "area/km2": {
+      "description": "Square kilometers",
+      "type": "number"
+    },
+    "area/m2": {
+      "description": "Square meter",
+      "type": "number"
+    },
+    "area/mm2": {
+      "description": "Square millimeters",
+      "type": "number"
+    },
+    "area/yd2": {
+      "description": "Square yards",
+      "type": "number"
+    },
+    "area/mi2": {
+      "description": "Square miles",
+      "type": "number"
+    },
+    "capacitance/f": {
+      "description": "Farad",
+      "type": "number"
+    },
+    "catalytic-activity/kat": {
+      "description": "Katal",
+      "type": "number"
+    },
+    "count/steps": {
+      "description": "Number of steps",
+      "type": "number"
+    },
+    "count/generic": {
+      "description": "For general items that demand no particular handling.",
+      "type": "number"
+    },
+    "data-quantity/b": {
+      "description": "Bytes",
+      "type": "number"
+    },
+    "data-quantity/bits": {
+      "description": "Bits",
+      "type": "number"
+    },
+    "data-quantity/gb": {
+      "description": "Gigabytes",
+      "type": "number"
+    },
+    "data-quantity/gbits": {
+      "description": "Gigabits",
+      "type": "number"
+    },
+    "data-quantity/kb": {
+      "description": "Kilobytes",
+      "type": "number"
+    },
+    "data-quantity/kbits": {
+      "description": "Kilobits",
+      "type": "number"
+    },
+    "data-quantity/mb": {
+      "description": "Megabytes",
+      "type": "number"
+    },
+    "data-quantity/mbits": {
+      "description": "Megabits",
+      "type": "number"
+    },
+    "data-quantity/tb": {
+      "description": "Terabytes",
+      "type": "number"
+    },
+    "density/g-dl": {
+      "description": "Grams per deciliter",
+      "type": "number"
+    },
+    "density/kg-m3": {
+      "description": "Kilograms per cubic meter",
+      "type": "number"
+    },
+    "density/mmol-l": {
+      "description": "Millimoles per liter",
+      "type": "number"
+    },
+    "density/mg-dl": {
+      "description": "Milligrams per deciliter",
+      "type": "number"
+    },
+    "dynamic-viscosity/pa-s": {
+      "description": "Pascal second",
+      "type": "number"
+    },
+    "electric-charge/c": {
+      "description": "Coulomb ",
+      "type": "number"
+    },
+    "electric-charge-line-density/c-m": {
+      "description": "Coulomb per meter",
+      "type": "number"
+    },
+    "electric-current/a": {
+      "description": "Ampere",
+      "type": "number"
+    },
+    "electrical-conductivity/s": {
+      "description": "Siemens",
+      "type": "number"
+    },
+    "electromotive-force/v": {
+      "description": "Volt",
+      "type": "number"
+    },
+    "energy/btu": {
+      "description": "British Thermal Units",
+      "type": "number"
+    },
+    "energy/cal": {
+      "description": "Calories",
+      "type": "number"
+    },
+    "energy/ev": {
+      "description": "Electron-Volts",
+      "type": "number"
+    },
+    "energy/erg": {
+      "description": "Ergs",
+      "type": "number"
+    },
+    "energy/ftlb": {
+      "description": "Foot-Pounds",
+      "type": "number"
+    },
+    "energy/j": {
+      "description": "Joules",
+      "type": "number"
+    },
+    "energy/kcal": {
+      "description": "Kilo-calories",
+      "type": "number"
+    },
+    "energy/ws": {
+      "description": "Watt-seconds",
+      "type": "number"
+    },
+    "energy/kwh": {
+      "description": "Kilowatt-hours",
+      "type": "number"
+    },
+    "energy/nm": {
+      "description": "Newton-meters",
+      "type": "number"
+    },
+    "energy/wh": {
+      "description": "Watt-hours",
+      "type": "number"
+    },
+    "force/dyn": {
+      "description": "Dynes",
+      "type": "number"
+    },
+    "force/n": {
+      "description": "Newtons",
+      "type": "number"
+    },
+    "force/pdl": {
+      "description": "Poundals",
+      "type": "number"
+    },
+    "frequency/bpm": {
+      "description": "Beats per minute",
+      "type": "number"
+    },
+    "frequency/ghz": {
+      "description": "Gigahertz",
+      "type": "number"
+    },
+    "frequency/hz": {
+      "description": "Hertz (also known as cycles per second) ",
+      "type": "number"
+    },
+    "frequency/khz": {
+      "description": "Kilohertz",
+      "type": "number"
+    },
+    "frequency/megahz": {
+      "description": "Megahertz",
+      "type": "number"
+    },
+    "frequency/millihz": {
+      "description": "Millihertz",
+      "type": "number"
+    },
+    "frequency/nhz": {
+      "description": "Nanohertz",
+      "type": "number"
+    },
+    "frequency/rpm": {
+      "description": "Revolutions per minute",
+      "type": "number"
+    },
+    "frequency/thz": {
+      "description": "Terahertz",
+      "type": "number"
+    },
+    "frequency/uhz": {
+      "description": "Microhertz",
+      "type": "number"
+    },
+    "length/cm": {
+      "description": "Centimeters",
+      "type": "number"
+    },
+    "length/m": {
+      "description": "Meters",
+      "type": "number"
+    },
+    "length/mm": {
+      "description": "Millimeters",
+      "type": "number"
+    },
+    "length/km": {
+      "description": "Kilometers",
+      "type": "number"
+    },
+    "length/a": {
+      "description": "Ångströms",
+      "type": "number"
+    },
+    "length/au": {
+      "description": "Astronomical units",
+      "type": "number"
+    },
+    "length/ch": {
+      "description": "Chains",
+      "type": "number"
+    },
+    "length/lea": {
+      "description": "Leagues",
+      "type": "number"
+    },
+    "length/ft": {
+      "description": "Feet",
+      "type": "number"
+    },
+    "length/in": {
+      "description": "Inches",
+      "type": "number"
+    },
+    "length/ly": {
+      "description": "Light-years",
+      "type": "number"
+    },
+    "length/mil": {
+      "description": "Mil",
+      "type": "number"
+    },
+    "length/mi": {
+      "description": "Miles",
+      "type": "number"
+    },
+    "length/fur": {
+      "description": "Furlongs",
+      "type": "number"
+    },
+    "length/nmi": {
+      "description": "Miles (nautical)",
+      "type": "number"
+    },
+    "length/p": {
+      "description": "Points",
+      "type": "number"
+    },
+    "length/pica": {
+      "description": "Picas",
+      "type": "number"
+    },
+    "length/ftm": {
+      "description": "Fathoms",
+      "type": "number"
+    },
+    "length/cb": {
+      "description": "Cables",
+      "type": "number"
+    },
+    "length/um": {
+      "description": "Microns",
+      "type": "number"
+    },
+    "length/yd": {
+      "description": "Yards",
+      "type": "number"
+    },
+    "luminous-intensity/cd": {
+      "description": "Candela",
+      "type": "number"
+    },
+    "mass/kg": {
+      "description": "Kilograms",
+      "type": "number"
+    },
+    "mass/gr": {
+      "description": "Grains",
+      "type": "number"
+    },
+    "mass/dr": {
+      "description": "Drams",
+      "type": "number"
+    },
+    "mass/g": {
+      "description": "Grams",
+      "type": "number"
+    },
+    "mass/l-t": {
+      "description": "Long tons",
+      "type": "number"
+    },
+    "mass/lb": {
+      "description": "Pounds",
+      "type": "number"
+    },
+    "mass/t": {
+      "description": "Metric tons",
+      "type": "number"
+    },
+    "mass/oz": {
+      "description": "Ounces",
+      "type": "number"
+    },
+    "mass/s-t": {
+      "description": "Short tons",
+      "type": "number"
+    },
+    "mass/st": {
+      "description": "Stone",
+      "type": "number"
+    },
+    "mol/mol": {
+      "description": "Mole ",
+      "type": "number"
+    },
+    "mol/lb-mol": {
+      "description": "Pound-mole.",
+      "type": "number"
+    },
+    "power/btu-min": {
+      "description": "BTUs/minute",
+      "type": "number"
+    },
+    "power/ftlb-s": {
+      "description": "Foot-pounds/second",
+      "type": "number"
+    },
+    "power/hp": {
+      "description": "Horsepower",
+      "type": "number"
+    },
+    "power/kw": {
+      "description": "Kilowatts",
+      "type": "number"
+    },
+    "power/w": {
+      "description": "Watts",
+      "type": "number"
+    },
+    "pressure/at": {
+      "description": "Atmospheres",
+      "type": "number"
+    },
+    "pressure/bar": {
+      "description": "Bars",
+      "type": "number"
+    },
+    "pressure/mmhg": {
+      "description": "Millimeters of mercury",
+      "type": "number"
+    },
+    "pressure/cmhg": {
+      "description": "Centimeters of mercury",
+      "type": "number"
+    },
+    "pressure/inhg": {
+      "description": "Inches of mercury",
+      "type": "number"
+    },
+    "pressure/kg-m2": {
+      "description": "Kilograms/square meter",
+      "type": "number"
+    },
+    "pressure/pa": {
+      "description": "Pascals",
+      "type": "number"
+    },
+    "pressure/kpa": {
+      "description": "Kilo pascals",
+      "type": "number"
+    },
+    "pressure/psf": {
+      "description": "Pounds/square foot",
+      "type": "number"
+    },
+    "pressure/psi": {
+      "description": "Pounds/square inch",
+      "type": "number"
+    },
+    "speed/ft-m": {
+      "description": "Feet/minute",
+      "type": "number"
+    },
+    "speed/ft-s": {
+      "description": "Feet/second",
+      "type": "number"
+    },
+    "speed/km-h": {
+      "description": "Kilometers/hour",
+      "type": "number"
+    },
+    "speed/kt": {
+      "description": "Knots",
+      "type": "number"
+    },
+    "speed/m-min": {
+      "description": "Miles/minute",
+      "type": "number"
+    },
+    "speed/m-s": {
+      "description": "Meters/second",
+      "type": "number"
+    },
+    "speed/mph": {
+      "description": "Miles/hour",
+      "type": "number"
+    },
+    "temperature/c": {
+      "description": "Celsius",
+      "type": "number"
+    },
+    "temperature/k": {
+      "description": "Kelvin",
+      "type": "number"
+    },
+    "temperature/f": {
+      "description": "Fahrenheit",
+      "type": "number"
+    },
+    "time/d": {
+      "description": "Days",
+      "type": "number"
+    },
+    "time/h": {
+      "description": "Hours",
+      "type": "number"
+    },
+    "time/min": {
+      "description": "Minutes",
+      "type": "number"
+    },
+    "time/ms": {
+      "description": "Milliseconds",
+      "type": "number"
+    },
+    "time/s": {
+      "description": "Seconds",
+      "type": "number"
+    },
+    "time/y": {
+      "description": "Years",
+      "type": "number"
+    },
+    "volume/l": {
+      "description": "Liters",
+      "type": "number"
+    },
+    "volume/m3": {
+      "description": "Cubic meters",
+      "type": "number"
+    },
+    "volume/c": {
+      "description": "Cups",
+      "type": "number"
+    },
+    "volume/cm3": {
+      "description": "Cubic centimeters",
+      "type": "number"
+    },
+    "volume/floz": {
+      "description": "Fluid ounces",
+      "type": "number"
+    },
+    "volume/ft3": {
+      "description": "Cubic feet",
+      "type": "number"
+    },
+    "volume/galgb": {
+      "description": "Gallons imperial",
+      "type": "number"
+    },
+    "volume/galus": {
+      "description": "Gallons US",
+      "type": "number"
+    },
+    "volume/in3": {
+      "description": "Cubic inches",
+      "type": "number"
+    },
+    "volume/yd3": {
+      "description": "Cubic yard",
+      "type": "number"
+    },
+    "volume/ml": {
+      "description": "Milliliters",
+      "type": "number"
+    },
+    "volume/pt": {
+      "description": "Pints",
+      "type": "number"
+    },
+    "volume/qt": {
+      "description": "Quarts",
+      "type": "number"
+    },
+    "volume/bbloil": {
+      "description": "Barrels (oil)",
+      "type": "number"
+    },
+    "volume/tbs": {
+      "description": "Tablespoons",
+      "type": "number"
+    },
+    "volume/tsp": {
+      "description": "Teaspoons",
+      "type": "number"
+    }
+  }
+}

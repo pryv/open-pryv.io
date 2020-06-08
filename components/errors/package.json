@@ -1,0 +1,10 @@
+{
+  "name": "errors",
+  "version": "1.2.18",
+  "private": false,
+  "description": "This package is part of Open Pryv.io",
+  "homepage": "http://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv S.A. <support@pryv.com> (http://pryv.com)",
+  "main": "./src/index.js"
+}

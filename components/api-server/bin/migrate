@@ -1,0 +1,52 @@
+#!/usr/bin/env node
+
+// Binary for launching the db migration process. 
+
+const Application = require('../src/application');
+const Settings = require('../src/settings');
+const bluebird = require('bluebird');
+let logger;
+
+(async () => {
+  // Load settings asynchronously because we have to fetch
+  // some values from register via an http-get request.
+  const settings = await Settings.load(); 
+
+  // Construct application
+  const app = new Application(settings);
+  logger = app.logFactory('migration-process');
+
+  // This bit is useful to trace down promise rejections that aren't caught. 
+  process.on('unhandledRejection', (reason, promise) => {
+    logger.warn('Unhandled promise rejection:', promise, 'reason:', reason.stack || reason); 
+  });
+  process.on('exit', function () {
+    logger.info('Process exiting.');
+  });
+  process.on('SIGINT', () => {
+    logger.warn('Received SIGINT. Exiting...');
+    process.exit(2);
+  });
+
+  connectAndMigrate(app)
+    .then(() => {
+      logger.info('Storage migration complete.');
+      process.exit(0);
+    })
+    .catch(e => {
+      logger.error(e);
+      process.exit(1);
+    });
+})()
+
+async function connectAndMigrate(app) {
+
+  logger.info('Connecting to storage...');
+  await app.storageLayer.waitForConnection();
+  
+  logger.info('Storage connected.');
+  
+  logger.info('Starting migration...');
+  return await bluebird.fromCallback(
+    (cb) => app.storageLayer.versions.migrateIfNeeded(cb));
+}

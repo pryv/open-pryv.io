@@ -1,0 +1,126 @@
+/**
+ * @license
+ * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * 
+ * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
+ * 
+ * Redistribution and use in source and binary forms, with or without 
+ * modification, are permitted provided that the following conditions are met:
+ * 
+ * 1. Redistributions of source code must retain the above copyright notice, 
+ *    this list of conditions and the following disclaimer.
+ * 
+ * 2. Redistributions in binary form must reproduce the above copyright notice, 
+ *    this list of conditions and the following disclaimer in the documentation 
+ *    and/or other materials provided with the distribution.
+ * 
+ * 3. Neither the name of the copyright holder nor the names of its contributors 
+ *    may be used to endorse or promote products derived from this software 
+ *    without specific prior written permission.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE 
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL 
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR 
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER 
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, 
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 
+ * SPDX-License-Identifier: BSD-3-Clause
+ * 
+ */
+// @flow
+
+/**
+ * Note: Debug tests with: DEBUG=engine,socket.io* yarn test --grep="Socket"
+ */
+
+const socketIO = require('socket.io');
+
+const MethodContext = require('components/model').MethodContext;
+const NATS_CONNECTION_URI = require('components/utils').messaging.NATS_CONNECTION_URI;
+
+const Manager = require('./Manager');
+const Paths = require('../routes/Paths');
+
+const ChangeNotifier = require('./change_notifier');
+
+import type { Logger } from 'components/utils';
+import type { StorageLayer } from 'components/storage';
+import type { CustomAuthFunction } from 'components/model';
+
+import type API from '../API';
+import type { SocketIO$Handshake } from './Manager';
+
+// Initializes the SocketIO subsystem. 
+//
+function setupSocketIO(
+  server: net$Server, logger: Logger, 
+  notifications: EventEmitter, api: API, 
+  storageLayer: StorageLayer, 
+  customAuthStepFn: ?CustomAuthFunction,
+  isOpenSource: boolean,
+) {
+  const io = socketIO.listen(server, {
+    path: Paths.SocketIO
+  });
+  io.use(initUsersNameSpaces);
+
+  // Manages socket.io connections and delivers method calls to the api. 
+  const manager: Manager = new Manager(logger, io, api, storageLayer, customAuthStepFn, isOpenSource);
+  
+  // Setup the chain from notifications -> NATS
+  if (! isOpenSource) {
+    const NatsPublisher = require('./nats_publisher');
+    const natsPublisher = new NatsPublisher(NATS_CONNECTION_URI, 
+      (userName: string): string => { return `${userName}.sok1`; }
+    );
+    const changeNotifier = new ChangeNotifier(natsPublisher);
+    changeNotifier.listenTo(notifications);
+
+    // Webhooks nats publisher - could be moved if there is a more convenient place.
+    const whNatsPublisher = new NatsPublisher(NATS_CONNECTION_URI,
+      (userName: string): string => { return `${userName}.wh1`; }
+    );
+    const webhooksChangeNotifier = new ChangeNotifier(whNatsPublisher);
+    webhooksChangeNotifier.listenTo(notifications);
+  } else {
+    const changeNotifier = new ChangeNotifier(manager);
+    changeNotifier.listenTo(notifications);
+  }
+  
+  async function initUsersNameSpaces(
+    socket, callback: (err: any, res: any) => mixed
+  ) {
+    try {
+      const handshake = socket.handshake;
+      const nsName = handshake.query.resource;
+      if (nsName == null) throw new Error("Missing 'resource' parameter.");
+      
+      const userName = manager.extractUsername(nsName); 
+        if (userName == null) throw new Error(`Invalid resource "${nsName}".`);
+
+      const accessToken = handshake.query.auth;
+      if (accessToken == null) 
+        throw new Error("Missing 'auth' parameter with a valid access token.");
+
+      const context = new MethodContext(
+        userName, accessToken, 
+        customAuthStepFn);
+        
+  
+      // Load user, init the namespace
+      await context.retrieveUser(storageLayer);
+      if (context.user == null) throw new Error('AF: context.user != null');
+      manager.ensureInitNamespace(nsName); 
+    
+      callback(null, true);
+    } catch (err) {
+      callback(err);
+    }
+  }
+}
+module.exports = setupSocketIO; 

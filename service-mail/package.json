@@ -1,0 +1,31 @@
+{
+  "name": "pryv-service-mail",
+  "version": "1.2.1",
+  "private": false,
+  "description": "Customizable SMTP solution in Pryv.io that mocks Mandrill's API",
+  "homepage": "http://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv S.A. <support@pryv.com> (http://pryv.com)",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "./bin/server --config ./config.hjson"
+  },
+  "dependencies": {
+    "bluebird": "^3.5.1",
+    "body-parser": "^1.18.2",
+    "convict": "^4.2.0",
+    "email-templates": "^3.5.2",
+    "express": "^4.16.3",
+    "hjson": "^3.1.1",
+    "http": "^0.0.0",
+    "js-yaml": "^3.11.0",
+    "nodemailer": "^4.6.4",
+    "path": "^0.12.7",
+    "pug": "^2.0.3",
+    "superagent": "^3.8.2",
+    "url": "^0.11.0",
+    "winston": "^2.4.1",
+    "yargs": "^11.0.0"
+  },
+  "devDependencies": {}
+}

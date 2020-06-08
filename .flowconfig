@@ -1,0 +1,18 @@
+[libs]
+decls/
+
+[include]
+
+[ignore]
+<PROJECT_ROOT>/scripts/.*
+<PROJECT_ROOT>/dist/.*
+<PROJECT_ROOT>/node_modules/nock/node_modules/changelog/examples/node.json
+<PROJECT_ROOT>/node_modules/api-server/.*
+<PROJECT_ROOT>/node_modules/storage/.*
+<PROJECT_ROOT>/node_modules/business/.*
+<PROJECT_ROOT>/node_modules/middleware/.*
+<PROJECT_ROOT>/node_modules/utils/.*
+
+[options]
+module.use_strict=true
+suppress_comment= \\(.\\|\n\\)*FLOW

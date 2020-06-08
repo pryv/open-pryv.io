@@ -1,0 +1,15 @@
+#!/usr/bin/env node
+
+// Starts a server for mailing service.
+
+const Application = require('../src/application');
+
+startup()
+  .catch(err => console.error(err)); // eslint-disable-line no-console
+
+async function startup() {
+  const app = new Application(); 
+
+  await app.setup();
+  await app.run();
+}
