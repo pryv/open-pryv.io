@@ -70,7 +70,6 @@
     "storage": "file:components/storage",
     "superagent": "^3.8",
     "tchannel": "^3.9.12",
-    "test-helpers": "file:components/test-helpers",
     "unicode": "^12.1.0",
     "unix-timestamp": "^0.2.0",
     "utils": "file:components/utils",
