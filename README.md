@@ -96,7 +96,7 @@ Edit the `config.json` file:
 - **publicUrl** Is the "Public" URL to reach the service, usually exposed in **https** by a third party SSL service such as NGNIX.
 - **http**
   - **port** The local port to listen
-  - **ip** The IP adress to use. Keep it 0.0.0.0 unless you explicitely want to expose the service in `http` to another network.
+  - **ip** The IP adress to use. Keep it 127.0.0.1 unless you explicitely want to expose the service in `http` to another network.
 - **auth**
   - **adminAccesskey** key to use for system calls such as `/reg/admin/users`. A random key should be generated on setup.
   - **trustedApps** list of web apps that can be trusted-app functionalities
