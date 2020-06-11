@@ -48,9 +48,9 @@ Install script as been tested on Linux Ubuntu 18.04 LTS and MacOSX.
   - Generate random alpha-numeric adminKey
 - `yarn release` create distribution for release
 
-### Configure your installatiom
+### Configure your installation
 
-Pryv.io is designed to be exposed by a third party SSL temination such as NGINX.
+Pryv.io is designed to be exposed by a third party SSL termination such as NGINX.
 
 #### Open Pryv.io configuration
 
@@ -104,8 +104,8 @@ Edit the `config.json` file:
     see: [SETUP Guide - customize authentication](https://api.pryv.com/customer-resources/pryv.io-setup/#customize-authentication-registration-and-reset-password-apps)
 - **eventFiles**
   - **attachmentsDirPath** Directory where event attachment files will be stored on the file system.
-- **service** [API documention on Service Information](https://api.pryv.com/reference/#service-info)
-- **services:email** see [Options & Customization](#custom-email) bellow
+- **service** [API documentation on Service Information](https://api.pryv.com/reference/#service-info)
+- **services:email** see [Options & Customization](#custom-email) below
 
 #### NGINX configuration
 
@@ -165,7 +165,7 @@ This service, its documentation and mail templates can be found in [`service-mai
 
 ## Contributing
 
-Open Pryv.io is developped and maintained by Pryv's team. You may contact us to submit a change or adaptation but do not be offended if we decline it or decide to re-write it.
+Open Pryv.io is developed and maintained by Pryv's team. You may contact us to submit a change or adaptation but do not be offended if we decline it or decide to re-write it.
 
 #
 # License
