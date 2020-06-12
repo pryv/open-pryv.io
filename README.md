@@ -79,7 +79,7 @@ Edit the `config.json` file:
     "home": "https://pryv.com/openpryv/unconfigured.html",
     "eventTypes": "https://api.pryv.com/event-types/flat.json",
     "assets": {
-      "definitions": "https://http://localhost:3000/wwww/assets/index.json"
+      "definitions": "http://localhost:3000/wwww/assets/index.json"
     }
   },
   "services": {

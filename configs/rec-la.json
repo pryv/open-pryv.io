@@ -22,7 +22,10 @@
     "support": "https://pryv.com/open-pryv-non-configured-page/",
     "terms": "https://pryv.com/open-pryv-non-configured-page/",
     "home": "https://pryv.com/open-pryv-non-configured-page/",
-    "eventTypes": "https://api.pryv.com/event-types/flat.json"
+    "eventTypes": "https://api.pryv.com/event-types/flat.json",
+    "assets": {
+      "definitions": "https://my-computer.rec.la:4443/wwww/assets/index.json"
+    }
   },
   "services": {
     "email": {
