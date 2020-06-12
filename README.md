@@ -38,7 +38,7 @@ Maintained and developed by Pryv.
 
 ### Install
 
-Install script as been tested on Linux Ubuntu 18.04 LTS and MacOSX.
+Install script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
 
 - `yarn setup`: (see `scripts/` for details)
   - Fetch dependencies
