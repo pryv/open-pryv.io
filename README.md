@@ -139,7 +139,11 @@ Each service independently - logs will be displayed on the console
 
 - `yarn proxy` based on [rec-la](https://github.com/pryv/rec-la) will expose the server running on http://localhost:3000 with an SSL certificate on https://my-computer.rec.la:4443 in this case you might want to use `configs/rec-la.json` 
 - `yarn local` is the equivalent of running `yarn pryv` + `yarn proxy` using `configs/rec-la.json`
-  This setup is useful to test Open Pryv.io locally. Once started you can test the authentication process on [App-Web-Access](http://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la:4443/reg/service/info) the `pryvServiceInfoUrl` being: [https://my-computer.rec.la:4443/reg/service/info](https://my-computer.rec.la:4443/reg/service/info)
+  This setup is useful to test Open Pryv.io locally.
+
+#### Start
+
+Create an account and launch the [authentication process](https://api.pryv.com/reference/#authenticate-your-app) on [App-Web-Access](http://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la:4443/reg/service/info) the `pryvServiceInfoUrl` being: [https://my-computer.rec.la:4443/reg/service/info](https://my-computer.rec.la:4443/reg/service/info).
 
 ### Options & Customization
 
