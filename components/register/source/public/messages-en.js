@@ -97,7 +97,13 @@ var messages = {
   'INVALID_AUTH_URL' : { 'message' : 'Authentication URL is invalid',
       'detail' : ''},
   'INVALID_SERVICE_INFO_URL' : { 'message' : 'Service information URL is invalid',
-      'detail' : ''}
+      'detail' : ''},
+  'INVALID_DEVICE_NAME' : { 'message' : 'Device name is invalid',
+    'detail' : ''},
+  'INVALID_EXPIRE_AFTER' : { 'message' : 'ExpireAfter is invalid',
+    'detail' : ''},
+  'INVALID_REFERER' : { 'message' : 'referer is invalid',
+    'detail' : ''},
 };
 
 if (module && module.exports) {

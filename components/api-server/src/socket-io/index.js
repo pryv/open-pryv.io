@@ -64,14 +64,52 @@ function setupSocketIO(
   customAuthStepFn: ?CustomAuthFunction,
   isOpenSource: boolean,
 ) {
+ 
   const io = socketIO.listen(server, {
     path: Paths.SocketIO
   });
-  io.use(initUsersNameSpaces);
 
   // Manages socket.io connections and delivers method calls to the api. 
   const manager: Manager = new Manager(logger, io, api, storageLayer, customAuthStepFn, isOpenSource);
   
+  // dynamicNamspaces allow to "auto" create namespaces
+  // when connected pass the socket to Manager
+  const dynamicNamespace = io.of(/^\/.+$/).on('connect', async (socket) => {
+    const nameSpaceContext = await manager.ensureInitNamespace(socket.nsp.name);
+    nameSpaceContext.onConnect(socket);
+  });
+  
+  // add a middelware for authentication 
+  // add middelware for authentication 
+  dynamicNamespace.use(async (socket, next) => {
+    try {
+      const nsName = socket.nsp.name;
+      const query = socket.handshake.query;
+      const userName = manager.extractUsername(nsName);
+      if (userName == null) throw new Error(`Invalid resource "${nsName}".`);
+      if (query.auth == null) throw new Error("Missing 'auth' parameter with a valid access token.");
+      const context = new MethodContext(userName, query.auth, customAuthStepFn);
+      // Load user, init the namespace
+      await context.retrieveUser(storageLayer);
+      if (context.user == null) throw new Error('AF: context.user != null');
+    
+      // Load user, init the namespace
+      await context.retrieveUser(storageLayer);
+      if (context.username == null) throw new Error('AF: context.username != null');
+      // Load access
+      await context.retrieveExpandedAccess(storageLayer);
+
+      // attach context to socket for further usage.
+      socket.methodContext = context;
+      next(null, true);
+    } catch (err) {
+      next(err, false);
+    }
+  });
+
+  // register wildcard to all namespaces
+  dynamicNamespace.use(require('socketio-wildcard')());
+
   // Setup the chain from notifications -> NATS
   if (! isOpenSource) {
     const NatsPublisher = require('./nats_publisher');
@@ -91,36 +129,10 @@ function setupSocketIO(
     const changeNotifier = new ChangeNotifier(manager);
     changeNotifier.listenTo(notifications);
   }
-  
-  async function initUsersNameSpaces(
-    socket, callback: (err: any, res: any) => mixed
-  ) {
-    try {
-      const handshake = socket.handshake;
-      const nsName = handshake.query.resource;
-      if (nsName == null) throw new Error("Missing 'resource' parameter.");
-      
-      const userName = manager.extractUsername(nsName); 
-        if (userName == null) throw new Error(`Invalid resource "${nsName}".`);
 
-      const accessToken = handshake.query.auth;
-      if (accessToken == null) 
-        throw new Error("Missing 'auth' parameter with a valid access token.");
-
-      const context = new MethodContext(
-        userName, accessToken, 
-        customAuthStepFn);
-        
-  
-      // Load user, init the namespace
-      await context.retrieveUser(storageLayer);
-      if (context.user == null) throw new Error('AF: context.user != null');
-      manager.ensureInitNamespace(nsName); 
-    
-      callback(null, true);
-    } catch (err) {
-      callback(err);
-    }
-  }
 }
 module.exports = setupSocketIO; 
+
+
+
+

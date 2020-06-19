@@ -1,6 +1,10 @@
 {
   "logs": {
-    "prefix": "api::"
+    "prefix": "api::",
+    "console": {
+      "active": true,
+      "level": "debug"
+    }
   }, 
   "serviceInfoUrl": "file://test/service-info.json",
   "services": {

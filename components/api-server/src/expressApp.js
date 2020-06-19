@@ -113,63 +113,6 @@ class ExpressAppLifecycle {
     this.phase = phase; 
   }
 
-  // Inserts airbrake related middleware into the stack. 
-  // 
-  activateAirbrake() {
-    const app = this.app; 
-    
-    /*
-      Quick guide on how to test Airbrake notifications (under logs entry):
-      1. Update configuration file with Airbrake information:
-          "airbrake": {
-           "active": true,
-           "key": "get it from pryv.airbrake.io settings",
-           "projectId": "get it from pryv.airbrake.io settings"
-         }
-      2. Throw a fake error in the code (/routes/root.js is easy to trigger):
-          throw new Error('This is a test of Airbrake notifications');
-      3. Trigger the error by running the faulty code (run a local core)
-     */
-    const settings = this.getAirbrakeSettings(); 
-    if (settings == null) return; 
-
-    const { Notifier } = require('@airbrake/node');
-
-    const airbrake = new Notifier({
-      projectId: settings.projectId,
-      projectKey: settings.key,
-      environment: 'production',
-    });
-
-    airbrake.addFilter(function (notice) {
-      if (notice.environment['err.dontNotifyAirbrake']) {
-        // Ignore errors with this messsage
-        return null;
-      }
-      return notice;
-    });
-
-    app.use(airbrake.expressHandler());
-  }
-
-  getAirbrakeSettings(): ?AirbrakeSettings {
-    // TODO Directly hand log settings to this class. 
-    const logSettings = config.load().logs;
-    if (logSettings == null) return null; 
-    
-    const airbrakeSettings = logSettings.airbrake;
-    if (airbrakeSettings == null || !airbrakeSettings.active) return null; 
-    
-    const projectId = airbrakeSettings.projectId;
-    const key = airbrakeSettings.key;
-    if (projectId == null || key == null) return null; 
-    
-    return {
-      projectId: projectId, 
-      key: key,
-    };
-  }
-
   // ------------------------------------------------------ state machine events
   
   /** Called before we have a database connection. This prevents errors while
@@ -201,7 +144,6 @@ class ExpressAppLifecycle {
     const app = this.app; 
 
     app.use(middleware.notFound);
-    this.activateAirbrake();
     app.use(this.errorHandlingMiddleware);
   }
 }
@@ -214,11 +156,13 @@ class ExpressAppLifecycle {
 async function expressAppInit(dependencies: any, isDNSLess: boolean) {
   const pv = new ProjectVersion(); 
   const version = await pv.version(); 
+
+  dependencies.register('airbrakeNotifier', {airbrakeNotifier: createAirbrakeNotifierIfNeeded()});
   
   const commonHeadersMiddleware = middleware.commonHeaders(version);
   const requestTraceMiddleware = dependencies.resolve(middleware.requestTrace); 
   const errorsMiddleware = dependencies.resolve(errorsMiddlewareMod);
-    
+  
   var app = express();
 
   // register common middleware
@@ -256,6 +200,51 @@ async function expressAppInit(dependencies: any, isDNSLess: boolean) {
   return {
     expressApp: app, 
     lifecycle: lifecycle,
+  };
+}
+
+function createAirbrakeNotifierIfNeeded() {
+  
+  /*
+    Quick guide on how to test Airbrake notifications (under logs entry):
+    1. Update configuration file with Airbrake information:
+        "airbrake": {
+         "active": true,
+         "key": "get it from pryv.airbrake.io settings",
+         "projectId": "get it from pryv.airbrake.io settings"
+       }
+    2. Throw a fake error in the code (/routes/root.js is easy to trigger):
+        throw new Error('This is a test of Airbrake notifications');
+    3. Trigger the error by running the faulty code (run a local core)
+   */
+  const settings = getAirbrakeSettings(); 
+  if (settings == null) return; 
+
+  const { Notifier } = require('@airbrake/node');
+
+  const airbrakeNotifier = new Notifier({
+    projectId: settings.projectId,
+    projectKey: settings.key,
+    environment: 'production',
+  });
+  return airbrakeNotifier
+}
+
+function getAirbrakeSettings(): ?AirbrakeSettings {
+  // TODO Directly hand log settings to this class. 
+  const logSettings = config.load().logs;
+  if (logSettings == null) return null; 
+  
+  const airbrakeSettings = logSettings.airbrake;
+  if (airbrakeSettings == null || !airbrakeSettings.active) return null; 
+  
+  const projectId = airbrakeSettings.projectId;
+  const key = airbrakeSettings.key;
+  if (projectId == null || key == null) return null; 
+  
+  return {
+    projectId: projectId, 
+    key: key,
   };
 }
 

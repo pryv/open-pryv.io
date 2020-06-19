@@ -46,8 +46,9 @@ const commonMeta = require('../methods/helpers/setCommonMeta');
 
 /** Error route handling.
  */
-function produceHandleErrorMiddleware(logging: any) {
+function produceHandleErrorMiddleware(logging: any, airbrakeNotifier: any) {
   const logger = logging.getLogger('routes');
+  const notifier = airbrakeNotifier.airbrakeNotifier;
 
   // NOTE next is not used, since the request is terminated on all errors. 
   /*eslint-disable no-unused-vars*/
@@ -58,6 +59,10 @@ function produceHandleErrorMiddleware(logging: any) {
     }
 
     errorHandling.logError(error, req, logger);
+
+    if (notifier != null & ! error.dontNotifyAirbrake) {
+      notifier.notify(error);
+    }
     
     res
       .status(error.httpStatus || 500)

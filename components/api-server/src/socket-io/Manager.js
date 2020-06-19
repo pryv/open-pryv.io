@@ -119,78 +119,53 @@ class Manager implements MessageSink {
   //    manager.getUsername('/foobar') // => 'foobar'
   //
   extractUsername(namespaceName: string): ?string {
-    if (! namespaceName.startsWith('/')) return null; 
-
+    const ns: string = cleanNS(namespaceName);
+    if (!ns.startsWith('/')) return null; 
+  
     // assert: namespaceName[0] === '/'
-    const candidate = namespaceName.slice(1);
+    const candidate = ns.slice(1);
       
     if (! this.looksLikeUsername(candidate)) return null; 
     
     return candidate;
+
+      /**
+     * Takes the last field of the NS path
+     * 
+     * @param {*} namespace 
+     */
+    function cleanNS(namespace: string): string {
+      let cleaned = '' + namespace;
+      // remove eventual trailing "/"
+      if (cleaned.slice(-1) === '/') cleaned = cleaned.slice(0, -1);
+      // get last element of path
+      const s = cleaned.lastIndexOf('/');
+      if (s > 0) {
+        cleaned = cleaned.slice(s);
+      }
+      return cleaned;
+    }
   }
   
   async ensureInitNamespace(namespaceName: string): NamespaceContext {  
-    let context = this.contexts.get(namespaceName);
+    
     let username = this.extractUsername(namespaceName);
-
+    let context = this.contexts.get(username);
     // Value is not missing, return it. 
     if (typeof context === 'undefined') {
-      const socketNs = this.io.of(namespaceName);
-      socketNs.use(this.authorizeUserMiddleware.bind(this));
 
       const sink: MessageSink = this;
 
       context = new NamespaceContext(
         username,
-        this.io, socketNs,
+        this.io.of(namespaceName), 
         this.api,
         sink, this.logger, this.isOpenSource);
-        
-      context.init();
 
-      this.contexts.set(namespaceName, context);
+      this.contexts.set(username, context);
     }  
     await context.open();
     return context;
-  }
-
-
-  // authorize middleware for NS
-  async authorizeUserMiddleware(
-    socket, callback: (err: any, res: any) => mixed
-  ) {
-    const handshake = socket.handshake;
-    const nsName = handshake.query.resource;
-    if (nsName == null) return callback("Missing 'resource' parameter.", false);
-
-
-    const userName = this.extractUsername(nsName);
-    if (userName == null) return callback(`Invalid resource "${nsName}".`, false);
-
-    const accessToken = handshake.query.auth;
-    if (accessToken == null)
-      return callback("Missing 'auth' parameter with a valid access token.", false);
-
-    const context = new MethodContext(
-      userName, accessToken,
-      this.customAuthStepFn);
-
-    // HACK Attach our method context to the socket as a means of talking to
-    // the code in Manager. 
-    socket.methodContext = context;
-    try {
-      // Load user, init the namespace
-      await context.retrieveUser(this.storageLayer);
-      if (context.username == null) throw new Error('AF: context.username != null');
-    
-      // Load access
-      await context.retrieveExpandedAccess(this.storageLayer);
-
-
-      callback(null, true);
-    } catch (err) {
-      callback(err, false);
-    }
   }
     
   // Given a `userName` and a `message`, delivers the `message` as a socket.io
@@ -199,7 +174,7 @@ class Manager implements MessageSink {
   // Part of the MessageSink implementation.
   //
   deliver(userName: string, message: string | {}): void {
-    const context = this.contexts.get(`/${userName}`);
+    const context = this.contexts.get(userName);
     if (context == null) return; 
     
     const namespace = context.socketNs;
@@ -215,8 +190,8 @@ class Manager implements MessageSink {
 }
 
 class NamespaceContext {
+  namespaceName: string;
   username: string; 
-  socketServer: SocketIO$Server;
   socketNs: SocketIO$Namespace;
   api: API; 
   sink: MessageSink;
@@ -227,14 +202,13 @@ class NamespaceContext {
   
   constructor(
     username: string, 
-    socketServer: SocketIO$Server, socketNs: SocketIO$Namespace, 
+    socketNs: SocketIO$Namespace, 
     api: API, 
     sink: MessageSink, 
     logger: Logger,
     isOpenSource: Boolean
   ) {
     this.username = username; 
-    this.socketServer = socketServer;
     this.socketNs = socketNs; 
     this.api = api; 
     this.sink = sink; 
@@ -244,23 +218,11 @@ class NamespaceContext {
     this.natsSubscriber = null;
   }
     
-  // Registers callbacks that we need for the context to operate. This happens
-  // only once, when the namespace gets its first connection - after that, 
-  // namespaces are cached. 
-  // 
-  init() {
-    const logger = this.logger; 
-    const socketNs = this.socketNs;
-    const namespaceName = this.socketNs.name;
-    socketNs.use(require('socketio-wildcard')());
-    socketNs.on('connection', 
-      (socket: SocketIO$Socket) => this.onConnect(socket));
-  }
 
   // Adds a connection to the namespace. This produces a `Connection` instance 
   // and stores it in (our) namespace. 
   // 
-  addConnection(socket: SocketIO$Socket, methodContext: MethodContext) {  
+  addConnection(socket: SocketIO$Socket) {  
     // This will represent state that we keep for every connection. 
     const connection = new Connection(
       this.logger, socket, this, socket.methodContext, this.api);

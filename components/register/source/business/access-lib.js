@@ -79,6 +79,9 @@ type RequestAccessParameters = {
   clientData?: mixed, 
   authUrl?: string,
   serviceInfo?: mixed,
+  deviceName?: string,
+  expireAfter?: number,
+  referer?: string,
 }
 
 
@@ -104,7 +107,7 @@ accessLib.requestAccess = function (
 
   // FLOW We don't currently verify the contents of the requested permissions. 
   const requestedPermissions = checkAndConstraints.access(parameters.requestedPermissions);
-  if (requestedPermissions == null || !Array.isArray(requestedPermissions)) {
+  if (requestedPermissions == null) {
     return errorHandler(messages.e(400, 'INVALID_DATA',
       {detail: 'Missing or invalid requestedPermissions field'}));
   }
@@ -138,7 +141,6 @@ accessLib.requestAccess = function (
       return errorHandler(messages.e(400, 'INVALID_SERVICE_INFO_URL', { detail: serviceInfo }));
     }
   }
-  
 
   let url: string;
   if(parameters.authUrl != null) {
@@ -153,13 +155,26 @@ accessLib.requestAccess = function (
     url = config.get('access:defaultAuthUrl');
   }
 
+  const deviceName = parameters.deviceName;
+  if (deviceName != null && typeof deviceName !== 'string') {
+    return errorHandler(messages.e(400, 'INVALID_DEVICE_NAME', { detail: 'deviceName : ' + deviceName }));
+  }
+
+  const expireAfter = parameters.expireAfter;
+  if (expireAfter != null && typeof expireAfter !== 'number') {
+    return errorHandler(messages.e(400, 'INVALID_EXPIRE_AFTER', { detail: 'expireAfter : ' + expireAfter }));
+  }
+
+  const referer = parameters.referer;
+  if (referer != null && typeof referer !== 'string') {
+    return errorHandler(messages.e(400, 'INVALID_REFERER', { detail: 'referer : ' + referer }));
+  }
+
   const reclaDevel = parameters.reclaDevel; 
   if (typeof reclaDevel === 'string') {
     url = 'https://sw.rec.la' + reclaDevel;
   }
 
-  
-  
   let firstParamAppender = (url.indexOf('?') >= 0) ? '&' : '?';
   
   let authUrl: string;
@@ -207,6 +222,9 @@ accessLib.requestAccess = function (
     clientData: clientData,
     lang: lang,
     serviceInfo: serviceInfo,
+    deviceName: deviceName,
+    expireAfter: expireAfter,
+    referer: referer,
   };
 
   accessLib.setAccessState(key, accessState, successHandler, errorHandler);

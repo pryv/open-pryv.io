@@ -46,7 +46,20 @@ function app_errors(app: express$Application) {
       //logger.debug('app_errors : '+ JSON.stringify(error.data));
       return res.status(error.httpCode).json(error.data);
     }
-
+    
+    // do not log and handle malformed input JSON errors
+    if (error instanceof SyntaxError) {
+        // custom error format that matches the one used in the core but not in
+        // the service-registry
+        return res.status(error.status, messages.say('INVALID_JSON_REQUEST')).json(
+                {
+                    "error": {
+                        "id": 'invalid-parameters-format',
+                        "message": error.toString()
+                    }
+                });
+    }
+    
     if (! (error instanceof Error)) {
       logger.error('app_errors unknown object : ' + error);
       logger.error((new Error()).stack);
