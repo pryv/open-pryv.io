@@ -4,14 +4,14 @@
   },
   "dnsLess": {
     "isActive": true,
-    "publicUrl": "http://localhost:3000"
+    "publicUrl": "https://my-computer.rec.la"
   },
   "http": {
     "port": 3000,
-    "ip": "127.0.0.1"
+    "ip": "0.0.0.0"
   },
   "auth": {
-    "adminAccessKey": "{ADMIN_ACCESS_KEY}",
+    "adminAccessKey": "REC_LA_ADMIN",
     "trustedApps": "*@https://pryv.github.io, *@https://*.rec.la*"
   },
   "eventFiles": {
@@ -22,14 +22,23 @@
     "support": "https://pryv.com/open-pryv-non-configured-page/",
     "terms": "https://pryv.com/open-pryv-non-configured-page/",
     "home": "https://pryv.com/open-pryv-non-configured-page/",
-    "eventTypes": "https://api.pryv.com/event-types/flat.json"
+    "eventTypes": "https://api.pryv.com/event-types/flat.json",
+    "assets": {
+      "definitions": "https://my-computer.rec.la/www/assets/index.json"
+    }
   },
   "services": {
     "email": {
       "enabled": {
         "welcome": true,
         "resetPassword": true
-      }
+      },
+      "url": "http://pryv_mail:9000/sendmail/"
     }
+  },
+  "database": {
+    "authUser": "api-server" ,
+    "authPassword": "OVERRIDEME",
+    "host": "pryv_mongo"
   }
 }

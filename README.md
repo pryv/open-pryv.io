@@ -38,6 +38,33 @@ Maintained and developed by Pryv.
 
 ### Install
 
+#### Install using docker compose (tested with docker version 19.03.11 and docker-compose version 1.26.0)
+1. `sh build-local.sh` - using docker-compose it will create database, api, mail, interface and nginx proxy services
+2. By default https://my-computer.rec.la domain is set, so you have to link ip 0.0.0.0 to this
+ domain (or change it in the config and nginx Docker files).
+In linux domain-ip mapping is done by `sudo nano /etc/hosts` and adding the line `0.0.0.0 my
+-computer.rec.la`
+
+At this moment you should have your application running on https://my-computer.rec.la . p.s. browsers do not trust self-signed certificates so you will have to add security exception to reach the page.
+
+3. To visualize login/registration/access giving process 
+
+a) launch the [authentication process](http://api.pryv.com/app-web
+-access/?pryvServiceInfoUrl=https://my-computer.rec.la/reg/service/info) on App-Web-Access the `pryvServiceInfoUrl` being: [https://my-computer.rec.la/reg/service/info](https://my-computer.rec.la/reg/service/info). Press "Request Access"
+![Request Access](readme/initialize-auth.png)
+
+b) Notice that [http://api.pryv.com/](http://api.pryv.com/) will open your local interface from
+ app-web-auth3 for the authentication. Press "Login: Open-Pryv.io"
+![Request Access](readme/get-auth-popup.png )
+
+c) Register/Login to your local setup
+![Request Access](readme/signup.png )
+
+You can try various **api requests** (including the same registration/login) using **postman** - find
+ documentation that could be imported into the Postman (to make Rest requests) - [https://api
+ .pryv.com/open-api/](https://api.pryv.com/open-api/).
+
+#### Install locally without docker
 Install script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
 
 - `yarn setup`: (see `scripts/` for details)

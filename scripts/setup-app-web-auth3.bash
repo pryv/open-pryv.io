@@ -8,7 +8,6 @@ cd $SCRIPT_FOLDER/.. # root
 APP_WEB_AUTH_FOLDER="app-web-auth3"
 if [[ ! -d $APP_WEB_AUTH_FOLDER ]]; then
   git clone --depth=1 --branch=master https://github.com/pryv/app-web-auth3.git $APP_WEB_AUTH_FOLDER
-
   cd $APP_WEB_AUTH_FOLDER
   rm -rf .git
   echo "module.exports = {DNSLess: true};" > "./src/defaults.js"
@@ -19,3 +18,4 @@ if [[ ! -d $APP_WEB_AUTH_FOLDER ]]; then
 else
   echo "App-web-auth3 already fetched skipping"
 fi
+
