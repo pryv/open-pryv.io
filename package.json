@@ -19,7 +19,7 @@
     "previews": "cd dist/components/previews-server && npm start",
     "proxy": "./node_modules/rec-la/bin/proxy.js localhost:3000",
     "pryv": "yarn database >> ./var-pryv/logs/mongodb.log & yarn mail >> ./var-pryv/logs/mail.log & yarn api",
-    "release": "scripts/prepare_dist && ./node_modules/.bin/babel ./components --verbose --out-dir=dist/components --copy-files",
+    "release": "scripts/prepare_dist && node_modules/.bin/babel ./components --verbose --out-dir=dist/components --copy-files",
     "setup": "yarn install --ignore-optionals ; bash ./scripts/setup-dev-env.bash",
     "test": "node scripts/components-command yarn test",
     "watch": "node_modules/.bin/babel --verbose --watch=./components --out-dir=dist/components --copy-files --source-maps both"

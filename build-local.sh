@@ -16,6 +16,5 @@ fi
 
 # setup assets
 bash ./scripts/setup-assets.bash
-yarn install --ignore-optionals
 
 docker-compose up --build

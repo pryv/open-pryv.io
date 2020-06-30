@@ -11,7 +11,7 @@
     "ip": "0.0.0.0"
   },
   "auth": {
-    "adminAccessKey": "REC_LA_ADMIN",
+    "adminAccessKey": "{ADMIN_ACCESS_KEY}",
     "trustedApps": "*@https://pryv.github.io, *@https://*.rec.la*"
   },
   "eventFiles": {
