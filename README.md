@@ -49,8 +49,8 @@ At this moment you should have your application running on https://my-computer.r
 
 3. To visualize login/registration/access giving process 
 
-a) launch the [authentication process](http://api.pryv.com/app-web
--access/?pryvServiceInfoUrl=https://my-computer.rec.la/reg/service/info) on App-Web-Access the `pryvServiceInfoUrl` being: [https://my-computer.rec.la/reg/service/info](https://my-computer.rec.la/reg/service/info). Press "Request Access"
+a) launch the [authentication process](http://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la/reg/service/info) on App-Web-Access the `pryvServiceInfoUrl` being: 
+[https://my-computer.rec.la/reg/service/info](https://my-computer.rec.la/reg/service/info). Press "Request Access"
 ![Request Access](readme/initialize-auth.png)
 
 b) Notice that [http://api.pryv.com/](http://api.pryv.com/) will open your local interface from
