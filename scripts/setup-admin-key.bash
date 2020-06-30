@@ -7,7 +7,7 @@ cd $SCRIPT_FOLDER/.. # root
 CONFIG_FILE="./config.json"
 set="abcdefghijklmonpqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 n=20
-rand=""
+rand="REPLACE_ME_"
 for i in `seq 1 $n`; do
     char=${set:$RANDOM % ${#set}:1}
     rand+=$char
