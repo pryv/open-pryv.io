@@ -15,4 +15,24 @@ fi
 # setup assets
 bash ./scripts/setup-assets.bash
 
-docker-compose up --build
+# download rec.la certificates
+CERTIFICATED_FOLDER="configs/rec.la-certificates"
+if [[ ! -d $CERTIFICATED_FOLDER ]]; then
+    git clone --branch=master https://github.com/pryv/rec-la.git $CERTIFICATED_FOLDER
+else
+    CURRENT_DIR=$(pwd)
+    cd $CERTIFICATED_FOLDER # go to the certificates folder
+    echo $(pwd)
+    # download the newest version
+    git pull
+    # come back to the main dir
+    cd $CURRENT_DIR
+fi
+
+DOCKER_COMPOSE_FILE=$1
+if [ -z "$DOCKER_COMPOSE_FILE" ]
+then
+    docker-compose up --build
+else
+    docker-compose -f $DOCKER_COMPOSE_FILE up --build
+fi

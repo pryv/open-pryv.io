@@ -1,10 +1,7 @@
 version: "3"
 services:
     pryv_api:
-        build: 
-          context: .
-          dockerfile: Dockerfile
-        image: pryv_api:1.0.0
+        image:  pryvio/open-pryv.io:1.5.18
         command: "yarn api"
         container_name: "pryv_api"
         restart: "always"
@@ -16,7 +13,7 @@ services:
           - app-network
           
     pryv_mail:
-        image: pryv_api:1.0.0
+        image:  pryvio/open-pryv.io:1.5.18
         command: "yarn mail"
         container_name: "pryv_mail"
         restart: "always"

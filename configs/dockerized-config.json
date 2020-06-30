@@ -37,8 +37,6 @@
     }
   },
   "database": {
-    "authUser": "api-server" ,
-    "authPassword": "OVERRIDEME",
     "host": "pryv_mongo"
   }
 }

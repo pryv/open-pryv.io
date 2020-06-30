@@ -1,1 +1,7 @@
 node_modules
+nbproject
+app-web-auth3/node_modules
+.git
+dump.rdb
+dist
+var-pryv/

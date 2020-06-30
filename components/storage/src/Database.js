@@ -81,7 +81,7 @@ class Database {
   constructor(settings: Object, logger: Logger) {
     const authPart = getAuthPart(settings);
      
-    this.connectionString = `mongodb://${authPart}${settings.host}:${settings.port}/${settings.name}?authSource=admin`;
+    this.connectionString = `mongodb://${authPart}${settings.host}:${settings.port}/${settings.name}`;
     this.databaseName = settings.name; 
         
     const m30 = 1800; // seconds in 30min
