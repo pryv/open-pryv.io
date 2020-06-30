@@ -37,7 +37,7 @@
   },
   http: {
     // IP address on which the mailing server is listening
-    ip: "127.0.0.1",
+    ip: "0.0.0.0",
     // Port on which the mailing server is listening
     port: 9000,
     // Each sendmail request should contain authorization header that

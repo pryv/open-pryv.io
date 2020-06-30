@@ -4,7 +4,7 @@
   },
   "dnsLess": {
     "isActive": true,
-    "publicUrl": "http://localhost:3000"
+    "publicUrl": "https://my-computer.rec.la"
   },
   "http": {
     "port": 3000,

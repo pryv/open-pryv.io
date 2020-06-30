@@ -38,7 +38,9 @@ Maintained and developed by Pryv.
 
 ### Install
 
-#### Install using docker compose (tested with docker version 19.03.11 and docker-compose version 1.26.0)
+#### Install using docker compose 
+
+*Prerequisites*: Docker v19.03, Docker-compose v1.26+
 1. `sh build-local.sh` - using docker-compose it will create database, api, mail, interface and nginx proxy services
 2. By default https://my-computer.rec.la domain is set, so you have to link ip 0.0.0.0 to this
  domain (or change it in the config and nginx Docker files).
