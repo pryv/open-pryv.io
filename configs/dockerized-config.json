@@ -33,7 +33,7 @@
         "welcome": true,
         "resetPassword": true
       },
-      "url": "http://pryv_mail:9000/sendmail/"
+      "url": "http://open_pryv_mail:9000/sendmail/"
     }
   },
   "database": {

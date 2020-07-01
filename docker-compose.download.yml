@@ -1,10 +1,12 @@
 version: "3"
 services:
-    pryv_api:
+    open_pryv_core:
         image:  pryvio/open-pryv.io:1.5.18
         command: "yarn api"
-        container_name: "pryv_api"
+        container_name: "open_pryv_core"
         restart: "always"
+        volumes:
+            - ./configs/dockerized-config.json:/app/config.json
         links:
             - pryv_mongo
         depends_on:
@@ -12,13 +14,13 @@ services:
         networks:
           - app-network
           
-    pryv_mail:
+    open_pryv_mail:
         image:  pryvio/open-pryv.io:1.5.18
         command: "yarn mail"
-        container_name: "pryv_mail"
+        container_name: "open_pryv_mail"
         restart: "always"
         depends_on:
-            - pryv_api
+            - open_pryv_core
         volumes:
           - ./var-pryv/logs/:/app/var-pryv/logs/
           - ./configs/dockerized-service-mail-config.hjson:/app/service-mail/config.hjson
@@ -60,15 +62,15 @@ services:
           - 80:80
           - 443:443
         links:
-          - pryv_api
-          - pryv_mail
+          - open_pryv_core
+          - open_pryv_mail
         depends_on:
-          - pryv_api
-          - pryv_mail
+          - open_pryv_core
+          - open_pryv_mail
         networks:
           - app-network
         environment:
-          - PUBLIC_URL=my-computer.rec.la
+          - HOSTNAME=my-computer.rec.la
 
 networks:
   app-network:

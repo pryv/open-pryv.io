@@ -64,7 +64,7 @@ Now you can try the api by launching the interface or trying api requests:
 
 1. To visualize login/registration/access giving process 
 
-a) launch the [authentication process](http://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la/reg/service/info) on App-Web-Access (notice that the
+a) launch the [authentication process](http://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la/reg/service/info ) on App-Web-Access (notice that the
  `pryvServiceInfoUrl` parameter is set to your `https://yourdomain//reg/service/info`. Press "Request Access"
 ![Request Access](readme/initialize-auth.png)
 
@@ -73,12 +73,15 @@ b) Press "Login: Open-Pryv.io". Notice that it will
  app-web-auth3 for the authentication. 
 ![Request Access](readme/get-auth-popup.png )
 
-c) Register/Login to your local setup
+c) Register/Login to your local setup. You will get endpoint like https://{token}@my-computer.rec.la/youruser/
 ![Request Access](readme/signup.png )
 
 2.You can try various **api requests** (including the same registration/login) using **postman** - find
  documentation that could be imported into the Postman (to make Rest requests) - [https://api
  .pryv.com/open-api/](https://api.pryv.com/open-api/).
+
+* You also can check the database by using [mongo-express](http://0.0.0.0:8081/) that was
+ launched together with docker-compose
 
 #### Install locally without docker
 Install script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
@@ -154,11 +157,11 @@ Edit the `config.json` file:
 
 You can find a NGINX configuration that you can include in your `sites-enabled/` in [configs/site.conf](configs/site.conf).
 
-You must change `${PUBLIC_URL}` to match the `dnsLess:publicUrl` setting in the Pryv.io configuration.
+You must change `${HOSTNAME}` to match the `dnsLess:publicUrl` setting in the Pryv.io configuration.
 
 ##### SSL certificate
 
-Using [certbot](https://certbot.eff.org/), you can generate a SSL certificate for your platform using `sudo certbot --nginx -d ${PUBLIC_URL}`.
+Using [certbot](https://certbot.eff.org/), you can generate a SSL certificate for your platform using `sudo certbot --nginx -d ${HOSTNAME}`.
 
 To set an automatic renewal, run `crontab -e` and append the following line:
 
