@@ -38,6 +38,59 @@ Maintained and developed by Pryv.
 
 ### Install
 
+#### Install using docker compose 
+
+*Prerequisites*: Docker v19.03, Docker-compose v1.26+
+1. `sh build-local.sh docker-compose.yml` (slower - builds docker images locally) 
+
+OR  
+
+`sh build-local.sh docker-compose.download.yml` (faster - downloads docker images from Docker Hub)  -
+  
+Using docker-compose it will create database, api, mail, interface and nginx proxy services.
+
+2.By default https://my-computer.rec.la domain is set for your application, so you have to link
+ ip 0.0.0.0 to this domain (or change it in the config and nginx Docker files).
+In linux domain-ip mapping is done by `sudo nano /etc/hosts` and adding the line 
+
+`0.0.0.0 my-computer.rec.la`
+
+At this moment you should have your application running on https://my-computer.rec.la. For the
+ **production environment**, please refer 
+ [documentation below](https://github.com/pryv/open-pryv.io#nginx-configuration) how to setup
+  certificate for your domain.
+  
+Now you can try the api by launching the interface or trying api requests:
+
+1. To visualize login/registration/access giving process 
+
+a) launch the [authentication process](http://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la/reg/service/info ) on App-Web-Access (notice that the
+ `pryvServiceInfoUrl` parameter is set to your `https://yourdomain//reg/service/info`. Press "Request Access" (you may need to allow popups in the browser)
+ 
+![Request Access](readme/initialize-auth.png)
+
+b) Press "Login: Open-Pryv.io". Notice that it will
+ open your local interface from
+ app-web-auth3 for the authentication. 
+ 
+![Request Access](readme/get-auth-popup.png )
+
+c) Register/Login to your local setup (locally email sending is slow, so wait until you will get green success message). You will get endpoint like https://{token}@my-computer
+.rec.la/youruser/
+
+![Request Access](readme/signup.png )
+
+2.You can try various **api requests** (including the same registration/login) using **postman** - find
+ documentation that could be imported into the Postman (to make Rest requests) - [https://api
+ .pryv.com/open-api/](https://api.pryv.com/open-api/).
+
+* You also can check the database by using [mongo-express](http://0.0.0.0:8081/) that was
+ launched together with docker-compose
+
+* After images are built, you can simply run `docker-compose up -f  docker-compose.yml` or `docker-compose up -f  docker-compose.download.yml` instead of `sh build-local.sh` to start the containers.
+
+
+#### Install locally without docker
 Install script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
 
 - `yarn setup`: (see `scripts/` for details)
@@ -111,11 +164,11 @@ Edit the `config.json` file:
 
 You can find a NGINX configuration that you can include in your `sites-enabled/` in [configs/site.conf](configs/site.conf).
 
-You must change `${PUBLIC_URL}` to match the `dnsLess:publicUrl` setting in the Pryv.io configuration.
+You must change `${HOSTNAME}` to match the `dnsLess:publicUrl` setting in the Pryv.io configuration.
 
 ##### SSL certificate
 
-Using [certbot](https://certbot.eff.org/), you can generate a SSL certificate for your platform using `sudo certbot --nginx -d ${PUBLIC_URL}`.
+Using [certbot](https://certbot.eff.org/), you can generate a SSL certificate for your platform using `sudo certbot --nginx -d ${HOSTNAME}`.
 
 To set an automatic renewal, run `crontab -e` and append the following line:
 
