@@ -112,6 +112,7 @@ Here is a sample configuration that shows all available settings alongside with 
 | Run the server                    | `yarn start`                    |
 | Run the server with custom config | `yarn start --config conf.json` |
 
+
 # License
 Copyright (c) 2020 Pryv S.A. https://pryv.com
 

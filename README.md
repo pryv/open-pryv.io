@@ -29,85 +29,13 @@ Maintained and developed by Pryv.
 - Support: [support.pryv.com](https://support.pryv.com)
 - More information about Pryv : [Pryv Home](https://pryv.com)
 
-## Usage
-
-### Prerequisites
-
-- Node v12.13.1 [Node.js home page](https://nodejs.org/)
-- Yarn v1 `npm install -g yarn`
-
-### Install
-
-#### Install using docker compose 
-
-*Prerequisites*: Docker v19.03, Docker-compose v1.26+
-1. `sh build-local.sh docker-compose.yml` (slower - builds docker images locally) 
-
-OR  
-
-`sh build-local.sh docker-compose.download.yml` (faster - downloads docker images from Docker Hub)  -
-  
-Using docker-compose it will create database, api, mail, interface and nginx proxy services.
-
-2.By default https://my-computer.rec.la domain is set for your application, so you have to link
- ip 0.0.0.0 to this domain (or change it in the config and nginx Docker files).
-In linux domain-ip mapping is done by `sudo nano /etc/hosts` and adding the line 
-
-`0.0.0.0 my-computer.rec.la`
-
-At this moment you should have your application running on https://my-computer.rec.la. For the
- **production environment**, please refer 
- [documentation below](https://github.com/pryv/open-pryv.io#nginx-configuration) how to setup
-  certificate for your domain.
-  
-Now you can try the api by launching the interface or trying api requests:
-
-1. To visualize login/registration/access giving process 
-
-a) launch the [authentication process](http://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la/reg/service/info ) on App-Web-Access (notice that the
- `pryvServiceInfoUrl` parameter is set to your `https://yourdomain//reg/service/info`. Press "Request Access" (you may need to allow popups in the browser)
- 
-![Request Access](readme/initialize-auth.png)
-
-b) Press "Login: Open-Pryv.io". Notice that it will
- open your local interface from
- app-web-auth3 for the authentication. 
- 
-![Request Access](readme/get-auth-popup.png )
-
-c) Register/Login to your local setup (locally email sending is slow, so wait until you will get green success message). You will get endpoint like https://{token}@my-computer
-.rec.la/youruser/
-
-![Request Access](readme/signup.png )
-
-2.You can try various **api requests** (including the same registration/login) using **postman** - find
- documentation that could be imported into the Postman (to make Rest requests) - [https://api
- .pryv.com/open-api/](https://api.pryv.com/open-api/).
-
-* You also can check the database by using [mongo-express](http://0.0.0.0:8081/) that was
- launched together with docker-compose
-
-* After images are built, you can simply run `docker-compose up -f  docker-compose.yml` or `docker-compose up -f  docker-compose.download.yml` instead of `sh build-local.sh` to start the containers.
-
-
-#### Install locally without docker
-Install script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
-
-- `yarn setup`: (see `scripts/` for details)
-  - Fetch dependencies
-  - Install mongodb
-  - Install service mail
-  - Install assets & app-web-auth3
-  - Generate random alpha-numeric adminKey
-- `yarn release` create distribution for release
-
-### Configure your installation
+## Setup
 
 Pryv.io is designed to be exposed by a third party SSL termination such as NGINX.
 
-#### Open Pryv.io configuration
+### Open Pryv.io configuration
 
-Edit the `config.json` file:
+For the native installation, edit `config.json`, otherwise `configs/dockerized-config.json`:
 
 ```json
 {
@@ -119,7 +47,7 @@ Edit the `config.json` file:
     "ip": "127.0.0.1"
   },
   "auth": {
-    "adminAccessKey": "randomstring",
+    "adminAccessKey": "replace_me_randomstring",
     "trustedApps": "*@http://pryv.github.io, *@https://*.rec.la*"
   },
   "eventFiles": {
@@ -160,13 +88,13 @@ Edit the `config.json` file:
 - **service** [API documentation on Service Information](https://api.pryv.com/reference/#service-info)
 - **services:email** see [Options & Customization](#custom-email) below
 
-#### NGINX configuration
+### NGINX configuration
 
 You can find a NGINX configuration that you can include in your `sites-enabled/` in [configs/site.conf](configs/site.conf).
 
-You must change `${HOSTNAME}` to match the `dnsLess:publicUrl` setting in the Pryv.io configuration.
+You must change `${HOSTNAME}` to match the hostname of the public URL.
 
-##### SSL certificate
+#### SSL certificate
 
 Using [certbot](https://certbot.eff.org/), you can generate a SSL certificate for your platform using `sudo certbot --nginx -d ${HOSTNAME}`.
 
@@ -176,11 +104,28 @@ To set an automatic renewal, run `crontab -e` and append the following line:
 0 12 * * * /usr/bin/certbot renew --quiet
 ```
 
-### Run
+## Run
+
+### Native
+
+*Prerequisites*:
+
+- Node v12.13.1 [Node.js home page](https://nodejs.org/)
+- Yarn v1 `npm install -g yarn`
+
+The installation script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
+
+- `yarn setup`: (see `scripts/` for details)
+  - Fetch dependencies
+  - Install mongodb
+  - Install service mail
+  - Install assets & app-web-auth3
+  - Generate random alpha-numeric adminKey
+- `yarn release` create distribution for release
 
 All services in a single command line
 
-- `yarn pryv`  - mail and database logs will be kept in `var-pryv/logs/local-*.log`
+- `yarn pryv` - mail and database logs will be kept in `var-pryv/logs/local-*.log`
 
 Each service independently - logs will be displayed on the console
 
@@ -190,17 +135,51 @@ Each service independently - logs will be displayed on the console
 
 #### Development
 
-- `yarn proxy` based on [rec-la](https://github.com/pryv/rec-la) will expose the server running on http://localhost:3000 with an SSL certificate on https://my-computer.rec.la:4443 in this case you might want to use `configs/rec-la.json` 
-- `yarn local` is the equivalent of running `yarn pryv` + `yarn proxy` using `configs/rec-la.json`
-  This setup is useful to test Open Pryv.io locally.
+- `yarn proxy` based on [rec-la](https://github.com/pryv/rec-la), it will expose the server running on http://localhost:3000 with an SSL certificate on https://my-computer.rec.la:4443 in this case you need to edit `configs/rec-la.json`.
+- `yarn local` is the equivalent of running `yarn pryv` + `yarn proxy` using `configs/rec-la.json`. This setup is useful to test Open Pryv.io locally.
 
-#### Start
+### Dockerized
 
-Create an account and launch the [authentication process](https://api.pryv.com/reference/#authenticate-your-app) on [App-Web-Access](http://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la:4443/reg/service/info) the `pryvServiceInfoUrl` being: [https://my-computer.rec.la:4443/reg/service/info](https://my-computer.rec.la:4443/reg/service/info).
+*Prerequisites*:
 
-### Options & Customization
+- Docker v19.03
+- Docker-compose v1.26
 
-#### Authentication & Registration web app.
+You can either build the images locally or download them from DockerHub before running them.
+
+- **Local build + run**: `sh build-local.sh docker-compose.yml`
+
+- **Download + run**: `sh build-local.sh docker-compose.download.yml`
+
+This will create all the components required to run Pryv.io with a NGINX proxy for SSL termination.
+
+After images are built, you can simply run `docker-compose up -f docker-compose.yml` or `docker-compose up -f docker-compose.download.yml` instead of `sh build-local.sh` to start the containers.
+
+## Start
+
+At this moment you should have your application running on the public URL you defined. For a **production environment**, please refer to [this part](#nginx-configuration) on how to setup a SSL certificate for your domain.
+
+### Native
+
+- Create an account and launch the [authentication process](https://api.pryv.com/reference/#authenticate-your-app) on **App-Web-Access**: [https://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la:4443/reg/service/info](https://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la:4443/reg/service/info).
+- The service info URL to your platform is: [https://my-computer.rec.la:4443/reg/service/info](https://my-computer.rec.la:4443/reg/service/info)
+
+If you are using another public URL, replace `https://my-computer.rec.la:4443` by it in the link above.
+
+### Dockerized
+
+- Create an account and launch the [authentication process](https://api.pryv.com/reference/#authenticate-your-app) on **App-Web-Access**: [https://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la/reg/service/info](https://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la/reg/service/info).
+- The service info URL to your platform is: [https://my-computer.rec.la/reg/service/info](https://my-computer.rec.la/reg/service/info)
+
+If you are using another public URL, replace `https://my-computer.rec.la` by it in the link above.
+
+### Try the API
+
+After this process, you should have an account on your Open Pryv.io platform with a valid authorization token, you can try various **API requests** using **Postman** following this guide [https://api.pryv.com/open-api/](https://api.pryv.com/open-api/).
+
+## Options & Customization
+
+### Authentication & Registration web app.
 
 Open Pryv.io comes packaged with [app-web-auth3](https://github.com/pryv/app-web-auth3), the default web pages for app authentication, user registration and password reset.
 
@@ -208,11 +187,11 @@ During the set-up process it has been built and published in `public_html/access
 
 To use a new build, simply copy the contents of the generated files from `app-web-auth3/dist/` to `public_html/access/`
 
-#### Visual assets and icons
+### Visual assets and icons
 
 Your platforms visuals can be customized in `public_html/assets/`, please refer to the README inside. These assets are a clone of the [assets-open-pryv.io](https://github.com/pryv/assets-open-pryv.io).
 
-#### E-Mails<a name="custom-email"></a>
+### E-Mails<a name="custom-email"></a>
 
 Pryv.io can send e-mails at registration and password reset request.
 
@@ -225,6 +204,7 @@ This service, its documentation and mail templates can be found in [`service-mai
 Open Pryv.io is developed and maintained by Pryv's team. You may contact us to submit a change or adaptation but do not be offended if we decline it or decide to re-write it.
 
 #
+
 # License
 Copyright (c) 2020 Pryv S.A. https://pryv.com
 
