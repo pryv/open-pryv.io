@@ -70,10 +70,19 @@ module.exports = function (api: API, logging: Logger, storageLayer: StorageLayer
       'lastUsed', 'expires', 'deleted', 'clientData',
       'created', 'createdBy', 'modified', 'modifiedBy', 'calls'
     ];
+    const userProps = ['username'];
+    
     for (const prop of accessInfoProps) {
       const accessProp = context.access[prop];
       if (accessProp != null) result[prop] = accessProp;
     }
+
+    result.user = {};
+    for (const prop of userProps) {
+      const userProp = context.user[prop];
+      if (userProp != null) result.user[prop] = userProp;
+    }
+  
     next();
   }
 

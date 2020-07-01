@@ -96,7 +96,10 @@ module.exports = {
     result: object({
       'type': string({enum: ['personal', 'app', 'shared']}),
       'name': string(),
-      'permissions': access.permissions(Action.READ)
+      'permissions': access.permissions(Action.READ),
+      'user': object({
+        'username': string(),
+      }),
     }, {
       required: [ 'type', 'name', 'permissions' ],
       additionalProperties: false
