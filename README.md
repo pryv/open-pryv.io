@@ -65,15 +65,19 @@ Now you can try the api by launching the interface or trying api requests:
 1. To visualize login/registration/access giving process 
 
 a) launch the [authentication process](http://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la/reg/service/info ) on App-Web-Access (notice that the
- `pryvServiceInfoUrl` parameter is set to your `https://yourdomain//reg/service/info`. Press "Request Access"
+ `pryvServiceInfoUrl` parameter is set to your `https://yourdomain//reg/service/info`. Press "Request Access" (you may need to allow popups in the browser)
+ 
 ![Request Access](readme/initialize-auth.png)
 
 b) Press "Login: Open-Pryv.io". Notice that it will
  open your local interface from
  app-web-auth3 for the authentication. 
+ 
 ![Request Access](readme/get-auth-popup.png )
 
-c) Register/Login to your local setup. You will get endpoint like https://{token}@my-computer.rec.la/youruser/
+c) Register/Login to your local setup (locally email sending is slow, so wait until you will get green success message). You will get endpoint like https://{token}@my-computer
+.rec.la/youruser/
+
 ![Request Access](readme/signup.png )
 
 2.You can try various **api requests** (including the same registration/login) using **postman** - find
@@ -82,6 +86,9 @@ c) Register/Login to your local setup. You will get endpoint like https://{token
 
 * You also can check the database by using [mongo-express](http://0.0.0.0:8081/) that was
  launched together with docker-compose
+
+* After images are built, you can simply run `docker-compose up -f  docker-compose.yml` or `docker-compose up -f  docker-compose.download.yml` instead of `sh build-local.sh` to start the containers.
+
 
 #### Install locally without docker
 Install script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
