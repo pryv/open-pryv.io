@@ -48,7 +48,7 @@ For the native installation, edit `config.json`, otherwise `configs/dockerized-c
   },
   "auth": {
     "adminAccessKey": "replace_me_randomstring",
-    "trustedApps": "*@http://pryv.github.io, *@https://*.rec.la*"
+    "trustedApps": "*@https://pryv.github.io, *@https://*.rec.la*"
   },
   "eventFiles": {
     "attachmentsDirPath": "var-pryv/attachment-files"
