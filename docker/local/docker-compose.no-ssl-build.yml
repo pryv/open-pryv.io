@@ -1,0 +1,46 @@
+version: "3.8"
+services:
+  open-pryv.io:
+    build: 
+      context: ../..
+      dockerfile: ./docker/local/Dockerfile
+    image: pryvio/open-pryv.io:${TAG}
+    command: "yarn api"
+    container_name: "open-pryv.io"
+    restart: "always"
+    ports:
+      - 3000:3000
+    volumes:
+      - ./dockerized-config-no-ssl.json:/app/config.json
+      - ../../public_html/:/app/public_html/
+      - ../../var-pryv/core/data/:/app/data/
+    depends_on:
+      - open-pryv-mongo
+    networks:
+      - app-network
+
+  open-pryv-mail:
+    image: pryvio/open-pryv.io:${TAG}
+    command: "/bin/sh /app/mail.sh"
+    container_name: "open-pryv-mail"
+    restart: "always"
+    depends_on:
+      - open-pryv.io
+    volumes:
+      - ../../var-pryv/logs/:/app/var-pryv/logs/
+      - ./dockerized-service-mail-config.hjson:/app/service-mail/config.hjson
+    networks:
+      - app-network
+
+  open-pryv-mongo:
+    image: mongo:3.6.18
+    container_name: "open-pryv-mongo"
+    restart: "always"
+    volumes:
+      - ../../var-pryv/mongodb/data/:/data/db/
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

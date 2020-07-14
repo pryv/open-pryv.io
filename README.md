@@ -29,13 +29,101 @@ Maintained and developed by Pryv.
 - Support: [support.pryv.com](https://support.pryv.com)
 - More information about Pryv : [Pryv Home](https://pryv.com)
 
+## Summary
+
+1. Choose your setup
+2. Download the required files / Run the installation scripts
+3. Edit the configuration files
+4. Start the services
+5. Try the API
+6. Customize your platform
+
 ## Setup
 
 Pryv.io is designed to be exposed by a third party SSL termination such as NGINX.
 
-### Open Pryv.io configuration
+Choose your Set-up
 
-For the native installation, edit `config.json`, otherwise `configs/dockerized-config.json`:
+- Discover Open Pryv.io on your local environment, this will only allow localhost apps to connect to your platform.
+  - Download docker images without SSL (quick start)
+  - Download docker images with SSL
+  - Native installation
+- Launch Pryv.io on a server exposed to the Internet with built-in SSL, this requires to have a hostname pointing to the public IP of your server.
+  - Download docker images (quick start)
+  - Native installation
+- Launch Pryv.io on a server with an external SSL termination. You know what you are doing.
+  - Download docker images
+  - Native installation
+
+### Docker
+
+The dockerized versions are available at this link: [Download link](docker/dockerized-open-pryv.io.tgz?raw=true).
+
+If you wish to build the images yourself, refer to the following README: [docker/README-build.md](docker/README-build.md).
+
+Once it is running, you can continue with the [tutorials](#dockerized).
+
+### Native
+
+*Prerequisites*:
+
+- Node v12.13.1 [Node.js home page](https://nodejs.org/)
+- Yarn v1 `npm install -g yarn`
+
+The installation script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
+
+- `yarn setup`: (see `scripts/` for details)
+  - Fetch dependencies
+  - Install mongodb
+  - Install service mail
+  - Install assets & app-web-auth3
+  - Generate random alpha-numeric adminKey
+- `yarn release` create distribution for release
+
+#### Native setup with external SSL
+
+[setup the environment](#native)
+
+- `yarn pryv` - mail and database logs will be kept in `var-pryv/logs/local-*.log`
+
+Each service independently - logs will be displayed on the console
+
+- `yarn database` start mongodb
+- `yarn api` start the API server on port 3000 (default)
+- `yarn mail` start the mail service
+
+#### Local native setup
+
+[setup the environment](#native)
+
+- `yarn local` is the equivalent of running `yarn pryv` + `yarn proxy` using `configs/rec-la.json`. This setup is useful to test Open Pryv.io locally.
+
+- `yarn proxy` based on [rec-la](https://github.com/pryv/rec-la), it will expose the server running on http://localhost:3000 with an SSL certificate on https://my-computer.rec.la:4443 in this case you need to edit `configs/rec-la.json`.
+
+#### Native Server setup with built-in SSL
+
+[setup the environment](#native)
+
+1. Run `yarn pryv` to start the API
+2. Configure NGINX and certificate
+
+You can find a NGINX configuration that you can include in your `sites-enabled/` in [configs/site.conf](configs/site.conf).
+
+You must change `${HOSTNAME}` to match the hostname of the public URL.
+
+##### SSL certificate
+
+Using [certbot](https://certbot.eff.org/), you can generate a SSL certificate for your platform using `sudo certbot --nginx -d ${HOSTNAME}`.
+
+To set an automatic renewal, run `crontab -e` and append the following line:
+
+```cron
+0 12 * * * /usr/bin/certbot renew --quiet
+```
+
+### Config
+
+For the native installation, edit `config.json`, otherwise `local/dockerized-config.json`:
 
 ```json
 {
@@ -88,76 +176,9 @@ For the native installation, edit `config.json`, otherwise `configs/dockerized-c
 - **service** [API documentation on Service Information](https://api.pryv.com/reference/#service-info)
 - **services:email** see [Options & Customization](#custom-email) below
 
-### NGINX configuration
-
-You can find a NGINX configuration that you can include in your `sites-enabled/` in [configs/site.conf](configs/site.conf).
-
-You must change `${HOSTNAME}` to match the hostname of the public URL.
-
-#### SSL certificate
-
-Using [certbot](https://certbot.eff.org/), you can generate a SSL certificate for your platform using `sudo certbot --nginx -d ${HOSTNAME}`.
-
-To set an automatic renewal, run `crontab -e` and append the following line:
-
-```cron
-0 12 * * * /usr/bin/certbot renew --quiet
-```
-
-## Run
-
-### Native
-
-*Prerequisites*:
-
-- Node v12.13.1 [Node.js home page](https://nodejs.org/)
-- Yarn v1 `npm install -g yarn`
-
-The installation script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
-
-- `yarn setup`: (see `scripts/` for details)
-  - Fetch dependencies
-  - Install mongodb
-  - Install service mail
-  - Install assets & app-web-auth3
-  - Generate random alpha-numeric adminKey
-- `yarn release` create distribution for release
-
-All services in a single command line
-
-- `yarn pryv` - mail and database logs will be kept in `var-pryv/logs/local-*.log`
-
-Each service independently - logs will be displayed on the console
-
-- `yarn database` start mongodb
-- `yarn api` start the API server on port 3000 (default)
-- `yarn mail` start the mail service
-
-#### Development
-
-- `yarn proxy` based on [rec-la](https://github.com/pryv/rec-la), it will expose the server running on http://localhost:3000 with an SSL certificate on https://my-computer.rec.la:4443 in this case you need to edit `configs/rec-la.json`.
-- `yarn local` is the equivalent of running `yarn pryv` + `yarn proxy` using `configs/rec-la.json`. This setup is useful to test Open Pryv.io locally.
-
-### Dockerized
-
-*Prerequisites*:
-
-- Docker v19.03
-- Docker-compose v1.26
-
-You can either build the images locally or download them from DockerHub before running them.
-
-- **Local build + run**: `sh build-local.sh docker-compose.yml`
-
-- **Download + run**: `sh build-local.sh docker-compose.download.yml`
-
-This will create all the components required to run Pryv.io with a NGINX proxy for SSL termination.
-
-After images are built, you can simply run `docker-compose up -f docker-compose.yml` or `docker-compose up -f docker-compose.download.yml` instead of `sh build-local.sh` to start the containers.
-
 ## Start
 
-At this moment you should have your application running on the public URL you defined. For a **production environment**, please refer to [this part](#nginx-configuration) on how to setup a SSL certificate for your domain.
+At this moment you should have your application running on the public URL you defined.
 
 ### Native
 
@@ -168,14 +189,16 @@ If you are using another public URL, replace `https://my-computer.rec.la:4443` b
 
 ### Dockerized
 
-- Create an account and launch the [authentication process](https://api.pryv.com/reference/#authenticate-your-app) on **App-Web-Access**: [https://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la/reg/service/info](https://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la/reg/service/info).
-- The service info URL to your platform is: [https://my-computer.rec.la/reg/service/info](https://my-computer.rec.la/reg/service/info)
+- Create an account and launch the [authentication process](https://api.pryv.com/reference/#authenticate-your-app) on **App-Web-Access**: [https://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la:4443/reg/service/info](https://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la:4443/reg/service/info).
+- The service info URL to your platform is: [https://my-computer.rec.la:4443/reg/service/info](https://my-computer.rec.la:4443/reg/service/info)
 
-If you are using another public URL, replace `https://my-computer.rec.la` by it in the link above.
+If you are using another public URL, replace `https://my-computer.rec.la:4443` by it in the link above.
 
 ### Try the API
 
-After this process, you should have an account on your Open Pryv.io platform with a valid authorization token, you can try various **API requests** using **Postman** following this guide [https://api.pryv.com/open-api/](https://api.pryv.com/open-api/).
+After this process, you should have an account on your Open Pryv.io platform with a valid authorization token in the form of an API endpoint, you can try various **API requests** using **Postman** following this guide [https://api.pryv.com/open-api/](https://api.pryv.com/open-api/).
+
+You can also try our [example apps with guides and tutorials](https://github.com/pryv/app-web-examples/).
 
 ## Options & Customization
 
@@ -204,7 +227,6 @@ This service, its documentation and mail templates can be found in [`service-mai
 Open Pryv.io is developed and maintained by Pryv's team. You may contact us to submit a change or adaptation but do not be offended if we decline it or decide to re-write it.
 
 #
-
 # License
 Copyright (c) 2020 Pryv S.A. https://pryv.com
 

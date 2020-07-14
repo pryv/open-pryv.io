@@ -4,18 +4,18 @@
   },
   "dnsLess": {
     "isActive": true,
-    "publicUrl": "http://localhost:3000"
+    "publicUrl": "https://${HOSTNAME}"
   },
   "http": {
     "port": 3000,
-    "ip": "127.0.0.1"
+    "ip": "0.0.0.0"
   },
   "auth": {
     "adminAccessKey": "REPLACE_ME",
-    "trustedApps": "*@https://pryv.github.io*, *@https://*.rec.la*"
+    "trustedApps": "*@https://pryv.github.io, *@https://${HOSTNAME}*"
   },
   "eventFiles": {
-    "attachmentsDirPath": "var-pryv/attachment-files"
+    "attachmentsDirPath": "/app/data/attachments"
   },
   "service": {
     "name": "Open-Pryv.io",
@@ -29,7 +29,11 @@
       "enabled": {
         "welcome": true,
         "resetPassword": true
-      }
+      },
+      "url": "http://open-pryv-mail:9000/sendmail/"
     }
+  },
+  "database": {
+    "host": "open-pryv-mongo"
   }
 }

@@ -12,7 +12,7 @@ upstream websocket_server {
 # API (Core)
 server {
   # redirect from http to https
-  listen 80 default_server;
+  listen ${PORT} default_server;
   server_name ${HOSTNAME};
 
   location /.well-known/acme-challenge/ {
@@ -30,7 +30,7 @@ server {
 }
 
 server {
-  listen               443 ssl;
+  listen               ${PORT_SSL} ssl;
 
   # set server name from env variables (set in docker compose)
   server_name          ${HOSTNAME};

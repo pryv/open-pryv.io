@@ -26,7 +26,6 @@ Make sure to check the root README first.
 - `yarn run test-detailed` for detailed test specs and debug log output
 - `yarn run test-profile` for profiling the tested server instance and opening the processed output with `tick-processor`
 - `yarn run test-debug` is similar as `yarn run test-detailed` but in debug mode; it will wait for a debugger to be attached on port 5858
-
 # License
 Copyright (c) 2020 Pryv S.A. https://pryv.com
 
