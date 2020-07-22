@@ -1,12 +1,10 @@
 {
   "name": "pryv-service-mail",
   "version": "1.2.1",
-  "private": false,
   "description": "Customizable SMTP solution in Pryv.io that mocks Mandrill's API",
-  "homepage": "http://pryv.com",
-  "license": "BSD-3-Clause",
-  "author": "Pryv S.A. <support@pryv.com> (http://pryv.com)",
   "main": "src/server.js",
+  "author": "Pryv S.A.",
+  "license": "MIT",
   "scripts": {
     "start": "./bin/server --config ./config.hjson"
   },
@@ -24,5 +22,6 @@
     "winston": "^2.4.1",
     "yargs": "^11.0.0"
   },
-  "devDependencies": {}
+  "devDependencies": {
+  }
 }

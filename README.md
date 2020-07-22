@@ -226,8 +226,8 @@ This service, its documentation and mail templates can be found in [`service-mai
 
 Open Pryv.io is developed and maintained by Pryv's team. You may contact us to submit a change or adaptation but do not be offended if we decline it or decide to re-write it.
 
-#
-# License
+## License
+
 Copyright (c) 2020 Pryv S.A. https://pryv.com
 
 This file is part of Open-Pryv.io and released under BSD-Clause-3 License
