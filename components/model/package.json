@@ -1,10 +1,14 @@
 {
   "name": "model",
   "version": "1.2.18",
-  "private": true,
+  "private": false,
+  "description": "This package is part of Open Pryv.io",
+  "homepage": "http://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv S.A. <support@pryv.com> (http://pryv.com)",
   "main": "./src/index.js",
   "scripts": {
-    "test": "yarn run _test --logs:console:active=false",
-    "_test": "NODE_ENV=test ../../node_modules/.bin/mocha --timeout 10000 --reporter=dot 'test/**/*.js'"
+    "_test": "NODE_ENV=test ../../node_modules/.bin/mocha --timeout 10000 --reporter=dot 'test/**/*.js'",
+    "test": "yarn run _test --logs:console:active=false"
   }
 }

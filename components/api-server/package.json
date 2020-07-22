@@ -1,16 +1,20 @@
 {
   "name": "api-server",
   "version": "1.3.0",
-  "private": true,
+  "private": false,
+  "description": "This package is part of Open Pryv.io",
+  "homepage": "http://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv S.A. <support@pryv.com> (http://pryv.com)",
   "main": "src/index.js",
   "scripts": {
+    "_test": "NODE_ENV=test ../../node_modules/.bin/mocha --timeout 10000 --reporter=dot 'test/**/*.test.js'",
+    "cover": "../../node_modules/.bin/nyc --reporter=html --report-dir=./coverage yarn run test",
     "start": "NODE_ENV=development node bin/server",
     "test": "yarn run _test --logs:console:active=false",
-    "cover": "../../node_modules/.bin/nyc --reporter=html --report-dir=./coverage yarn run test",
-    "test-detailed": "yarn run _test --reporter=spec",
     "test-debug": "yarn run _test --timeout 3600000 --reporter=spec --inspect-brk=40000",
+    "test-detailed": "yarn run _test --reporter=spec",
     "test-profile": "yarn run _test --profile=true --logs:console:active=false && tick-processor > profiling-output.txt && open profiling-output.txt",
-    "_test": "NODE_ENV=test ../../node_modules/.bin/mocha --timeout 10000 --reporter=dot 'test/**/*.test.js'",
     "update-event-types": "scripts/update-event-types.bash"
   },
   "dependencies": {

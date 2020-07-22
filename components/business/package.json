@@ -1,10 +1,12 @@
 {
   "name": "business",
   "version": "1.0.0",
+  "private": false,
   "description": "Business method layer",
+  "homepage": "http://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv S.A. <support@pryv.com> (http://pryv.com)",
   "main": "src/index.js",
-  "author": "Pryv",
-  "license": "All rights reserved / Proprietary",
   "scripts": {
     "test": "../../node_modules/.bin/mocha -R dot --exit 'test/**/*.test.js'"
   },

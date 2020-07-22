@@ -1,25 +1,28 @@
 {
   "name": "open-pryv.io",
-  "description": "Pryv core server app components",
   "version": "1.5.18-open",
-  "private": true,
+  "private": false,
+  "description": "Pryv core server app components",
+  "homepage": "http://pryv.com",
   "repository": {
     "type": "git",
     "url": "git://github.com/pryv/service-open-pryv.git"
   },
+  "license": "BSD-3-Clause",
+  "author": "Pryv S.A. <support@pryv.com> (http://pryv.com)",
   "scripts": {
-    "test": "node scripts/components-command yarn test",
-    "database": "scripts/start-database.sh",
     "api": "NODE_ENV=production ./dist/components/api-server/bin/server --config ./config.json",
-    "previews": "cd dist/components/previews-server && npm start",
-    "setup": "yarn install --ignore-optionals ; bash ./scripts/setup-dev-env.bash",
-    "watch": "node_modules/.bin/babel --verbose --watch=./components --out-dir=dist/components --copy-files --source-maps both",
     "build-dev": "scripts/prepare_dist && node_modules/.bin/babel ./components --out-dir=dist/components --copy-files --source-maps both",
-    "release": "scripts/prepare_dist && node_modules/.bin/babel ./components --verbose --out-dir=dist/components --copy-files",
+    "database": "scripts/start-database.sh",
+    "local": "yarn database >> ./var-pryv/logs/mongodb.log & yarn mail >> ./var-pryv/logs/mail.log & yarn proxy & NODE_ENV=production ./dist/components/api-server/bin/server --config ./configs/rec-la.json",
     "mail": "yarn --cwd ./service-mail start",
+    "previews": "cd dist/components/previews-server && npm start",
     "proxy": "./node_modules/rec-la/bin/proxy.js localhost:3000",
     "pryv": "yarn database >> ./var-pryv/logs/mongodb.log & yarn mail >> ./var-pryv/logs/mail.log & yarn api",
-    "local": "yarn database >> ./var-pryv/logs/mongodb.log & yarn mail >> ./var-pryv/logs/mail.log & yarn proxy & NODE_ENV=production ./dist/components/api-server/bin/server --config ./configs/rec-la.json"
+    "release": "scripts/prepare_dist && node_modules/.bin/babel ./components --verbose --out-dir=dist/components --copy-files",
+    "setup": "yarn install --ignore-optionals ; bash ./scripts/setup-dev-env.bash",
+    "test": "node scripts/components-command yarn test",
+    "watch": "node_modules/.bin/babel --verbose --watch=./components --out-dir=dist/components --copy-files --source-maps both"
   },
   "dependencies": {
     "@airbrake/node": "^1.1.2",
@@ -108,6 +111,5 @@
   "engines": {
     "node": "12.x",
     "yarn": "1.x"
-  },
-  "license": "BSD-3-clause"
+  }
 }
