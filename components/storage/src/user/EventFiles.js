@@ -68,38 +68,40 @@ EventFiles.prototype.getTotalSize = function (user, callback) {
 };
 
 /**
+ * Gets all files sizes assyncronously using generators
+ */
+async function* recursiveReadDirAsync(dir) {
+  const dirents = await fs.promises.readdir(dir, {withFileTypes: true});
+  for (const dirent of dirents) {
+    const res = path.resolve(dir, dirent.name);
+    if (dirent.isDirectory()) {
+      yield * recursiveReadDirAsync(res);
+    } else {
+      try{
+        const fileStats = await fs.promises.stat(res);
+        yield fileStats.size;
+      } catch(err){
+        this.logger.error('Data corrupted; expected ' + toString.path(filePath) + ' to exist');
+        yield 0;
+      }      
+    }
+  }
+}
+
+/**
  * @param filePath
  * @param callback
  * @this {EventFiles}
  */
 function getSizeRecursive(filePath, callback) {
-  fs.lstat(filePath, function (err, stats) {
-    if (err) {
-      this.logger.error('Data corrupted; expected ' + toString.path(filePath) + ' to exist');
-      return callback(null, 0);
+
+  (async () => {
+    let total = 0;
+    for await (const f of recursiveReadDirAsync(filePath)) {
+      total += f;
     }
-
-    var total = stats.size;
-
-    if (stats.isDirectory()) {
-      fs.readdir(filePath, function (err, fileNames) {
-        if (err) { return callback(err); }
-
-        async.forEach(fileNames, function (fileName, fileDone) {
-          getSizeRecursive.call(this, path.join(filePath, fileName), function (err, fileSize) {
-            if (! err) {
-              total += fileSize;
-            }
-            fileDone(err);
-          });
-        }, function (err) {
-          callback(err, total);
-        });
-      }.bind(this));
-    } else {
-      callback(null, total);
-    }
-  }.bind(this));
+    callback(null, total);
+  })()
 }
 
 /**

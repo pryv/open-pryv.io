@@ -87,6 +87,13 @@ class Server {
   //
   async start() {
     const logger = this.logger;
+
+
+    const defaultParam: ?string = this.findDefaultParam();
+    if (defaultParam != null) {
+      this.logger.error(`Config parameter "${defaultParam}" has a default value, please change it`);
+      process.exit(1);
+    }
     
     this.publishExpressMiddleware();
     
@@ -115,6 +122,12 @@ class Server {
 
     logger.info('Server ready.');
     this.notificationBus.serverReady();
+  }
+
+  findDefaultParam(): ?string {
+    const DEFAULT_VALUES: Array<string> = ['REPLACE_ME'];
+    if (DEFAULT_VALUES.includes(this.settings.get('auth.adminAccessKey').str())) return 'auth.adminAccessKey';
+    return null;
   }
   
   async createExpressApp(isDNSLess: boolean): Promise<[express$Application, ExpressAppLifecycle]> {
@@ -160,12 +173,13 @@ class Server {
       application.api, l('methods/service'), 
       application.getServiceInfoSettings());
 
-    if (! this.isOpenSource)
-    require('./methods/webhooks')(
-      application.api, l('methods/webhooks'),
-      application.getWebhooksSettings(),
-      application.storageLayer,
-    );
+    if (! this.isOpenSource) {
+      require('./methods/webhooks')(
+        application.api, l('methods/webhooks'),
+        application.getWebhooksSettings(),
+        application.storageLayer,
+      );
+    }
 
     require('./methods/trackingFunctions')(
       application.api,
@@ -345,17 +359,19 @@ class Server {
     async function collectClientData() {
       return {
         userCount: await this.getUserCount()
-      }
-    };
+      };
+    }
 
     const reportingSettings = this.settings.get('reporting').value;
     const templateVersion = reportingSettings.templateVersion;
+    const reportingUrl = reportingSettings?.url;
+    const optOut = reportingSettings?.optOut;
     const licenseName = reportingSettings.licenseName;
     const role = 'api-server';
     const mylog = function (str) {
       this.logger.info(str);
     }.bind(this);
-    new Reporting(licenseName, role, templateVersion, collectClientData.bind(this), mylog);
+    new Reporting(licenseName, role, templateVersion, collectClientData.bind(this), mylog, reportingUrl, optOut);
   }
 
   async getUserCount(): Promise<Number> {

@@ -15,6 +15,7 @@ else
 fi
 
 export MONGO_DATA_FOLDER=$DATA_FOLDER/mongodb-data
+export MONGO_LOGS_FOLDER=$DATA_FOLDER/mongodb-logs
 
 if [[ -z "$MONGO_BASE_FOLDER" ]]; then
   echo ""
@@ -32,6 +33,7 @@ cd $SCRIPT_FOLDER/
 
 mkdir -p $MONGO_BASE_FOLDER
 mkdir -p $MONGO_DATA_FOLDER
+mkdir -p $MONGO_LOGS_FOLDER
 
 if [[ ! -d $MONGO_BASE_FOLDER ]]; then
   echo ""

@@ -25,7 +25,6 @@ export ATTACHMENTS_FOLDER=${DATA_FOLDER}/attachment-files
 
 export MONGO_BASE_FOLDER=$DATA_FOLDER
 
-
 # file structure
 
 mkdir -p $DATA_FOLDER

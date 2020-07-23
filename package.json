@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.5.18-open",
+  "version": "1.5.19-3-open",
   "private": false,
   "description": "Pryv core server app components",
   "homepage": "http://pryv.com",
@@ -14,6 +14,7 @@
     "api": "NODE_ENV=production ./dist/components/api-server/bin/server --config ./config.json",
     "build-dev": "scripts/prepare_dist && node_modules/.bin/babel ./components --out-dir=dist/components --copy-files --source-maps both",
     "database": "scripts/start-database.sh",
+    "license": "cd licenser ; yarn install; yarn apply",
     "local": "yarn database >> ./var-pryv/logs/mongodb.log & yarn mail >> ./var-pryv/logs/mail.log & yarn proxy & NODE_ENV=production ./dist/components/api-server/bin/server --config ./configs/rec-la.json",
     "mail": "yarn --cwd ./service-mail start",
     "previews": "cd dist/components/previews-server && npm start",
@@ -24,6 +25,7 @@
     "test": "node scripts/components-command yarn test",
     "watch": "node_modules/.bin/babel --verbose --watch=./components --out-dir=dist/components --copy-files --source-maps both"
   },
+  "pre-commit": "",
   "dependencies": {
     "@airbrake/node": "^1.1.2",
     "api-server": "file:components/api-server",
