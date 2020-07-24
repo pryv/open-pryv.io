@@ -63,10 +63,7 @@ let config: ConfigAccess = null;
 
 // Initialise the project version as soon as we can. 
 const pv = new ProjectVersion(); 
-(async () => {
-  version = await pv.version();
-})();
-
+version = pv.version();
 
 /**
  * 

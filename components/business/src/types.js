@@ -37,7 +37,7 @@
 // TypeRepository is the repository for all Pryv event types. It allows access
 // to coercion and validation. 
 
-import type {EventType, Content} from './types/interfaces';
+import type { EventType, Content } from './types/interfaces';
 
 const lodash = require('lodash');
 const superagent = require('superagent');
@@ -63,26 +63,25 @@ function isSeriesType(name: string): boolean {
 // A validator that can check values against a types JSON Schema. 
 // 
 class TypeValidator {
-  
+
   // Validates the given event type against its schema. 
   // 
   validate(type: EventType, content: Content): Promise<Content> {
     return type.callValidator(this, content);
   }
-  
+
   validateWithSchema(
-    content: Content, 
+    content: Content,
     schema: any
-  ): Promise<Content> 
-  {
+  ): Promise<Content> {
     return bluebird.try(() => {
-      const validator = new ZSchemaValidator(); 
-      
+      const validator = new ZSchemaValidator();
+
       return bluebird
         .fromCallback(
           (cb) => validator.validate(content, schema, cb))
         .then(() => content);
-    }); 
+    });
   }
 }
 
@@ -120,10 +119,10 @@ class TypeRepository {
   // 
   isKnown(name: string): boolean {
     if (isSeriesType(name)) {
-      const leafTypeName = name.slice(SERIES_PREFIX.length); 
+      const leafTypeName = name.slice(SERIES_PREFIX.length);
       return this.isKnown(leafTypeName);
     }
-    
+
     return defaultTypes.types.hasOwnProperty(name);
   }
 
@@ -132,7 +131,7 @@ class TypeRepository {
   // `event-types.default.json`. 
   // 
   lookupLeafType(name: string): EventType {
-    if (! this.isKnown(name)) throw new errors.TypeDoesNotExistError(
+    if (!this.isKnown(name)) throw new errors.TypeDoesNotExistError(
       `Type '${name}' does not exist in this Pryv instance.`);
 
     const typeSchema = defaultTypes.types[name];
@@ -140,10 +139,10 @@ class TypeRepository {
     if (typeSchema.type === 'object') {
       return new ComplexType(name, typeSchema);
     }
-    
+
     return new BasicType(name, typeSchema);
   }
-  
+
   // Lookup a Pryv Event Type by name. To check if a type exists, use
   // `#isKnown`. Pryv types are either leaf types ('mass/kg', 'position/wgs84')
   // or series types ('series:LEAFTYPE'). 
@@ -152,12 +151,12 @@ class TypeRepository {
   // 
   lookup(name: string) {
     if (isSeriesType(name)) {
-      const leafTypeName = name.slice(SERIES_PREFIX.length); 
+      const leafTypeName = name.slice(SERIES_PREFIX.length);
       const leafType = this.lookupLeafType(leafTypeName);
-      
+
       return new InfluxRowType(leafType);
     }
-    
+
     // assert: Not a series type, must be a leaf type. 
     return this.lookupLeafType(name);
   }
@@ -165,13 +164,13 @@ class TypeRepository {
   // Produces a validator instance. 
   //
   validator(): TypeValidator {
-    return new TypeValidator(); 
+    return new TypeValidator();
   }
 
   // Tries to update the stored type definitions with a file found on the 
   // internet. 
   // 
-  tryUpdate(sourceURL: string): Promise<void> {
+  tryUpdate(sourceURL: string, apiVersion: string): Promise<void> {
     function unavailableError(err) {
       throw new Error(
         'Could not update event types from ' + sourceURL +
@@ -179,21 +178,24 @@ class TypeRepository {
     }
     function invalidError(err) {
       throw new Error(
-        'Invalid event types schema returned from ' + sourceURL + 
+        'Invalid event types schema returned from ' + sourceURL +
         '\nErrors: ' + err.errors);
     }
-    
+
+    const USER_AGENT_PREFIX: string = 'Pryv.io/';
+
     return superagent
       .get(sourceURL)
+      .set('User-Agent', USER_AGENT_PREFIX + apiVersion)
       .catch(unavailableError)
       .then((res) => {
-        const validator = new ZSchemaValidator(); 
-        const schema = res.body; 
-        
+        const validator = new ZSchemaValidator();
+        const schema = res.body;
+
         return bluebird.try(() => {
-          if (!validator.validateSchema(schema)) 
+          if (!validator.validateSchema(schema))
             return invalidError(validator.lastReport);
-            
+
           // Overwrite defaultTypes with the merged list of type schemata. 
           defaultTypes = lodash.merge(defaultTypes, schema);
         });
@@ -202,10 +204,10 @@ class TypeRepository {
 }
 
 module.exports = {
-  TypeRepository: TypeRepository, 
+  TypeRepository: TypeRepository,
   InfluxRowType: InfluxRowType,
   isSeriesType: isSeriesType,
-  errors: errors, 
+  errors: errors,
 };
 
 export type { InfluxRowType };

@@ -155,7 +155,7 @@ class ExpressAppLifecycle {
 // 
 async function expressAppInit(dependencies: any, isDNSLess: boolean) {
   const pv = new ProjectVersion(); 
-  const version = await pv.version(); 
+  const version = pv.version(); 
 
   dependencies.register('airbrakeNotifier', {airbrakeNotifier: createAirbrakeNotifierIfNeeded()});
   
