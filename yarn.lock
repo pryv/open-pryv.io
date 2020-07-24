@@ -5498,9 +5498,9 @@ ready-signal@^1.1.1:
   integrity sha1-VUA/kg4eHyqLBloii5pj77Cjwts=
 
 rec-la@^0.1.13:
-  version "0.1.13"
-  resolved "https://registry.yarnpkg.com/rec-la/-/rec-la-0.1.13.tgz#2e83afb2914009321e294e801c2977c353c60bd0"
-  integrity sha512-ZGosPORWEqQxtXqp/ArxQIMntza1orQbkSt8yP5XYTc13yT6rCzgX16D2BFIA5lxHU6QNrWIjiry72dSgYLWxw==
+  version "0.1.14"
+  resolved "https://registry.yarnpkg.com/rec-la/-/rec-la-0.1.14.tgz#b40f1c372a0b36701305a7403c7c6641a177f8e2"
+  integrity sha512-FBYRZqWUjOLOet0F9lLURIKATWX/sX/+YP9QKw1WurCodl7f9K8gXDDV/q6AbuvbNeepYk6GYPNrzsvtl0wRNw==
   dependencies:
     express "^4.14.0"
 
