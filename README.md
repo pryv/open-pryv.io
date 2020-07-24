@@ -123,7 +123,7 @@ To set an automatic renewal, run `crontab -e` and append the following line:
 
 ### Config
 
-For the native installation, edit `config.json`, otherwise `local/dockerized-config.json`:
+For the native installation, edit `config.json`, otherwise `docker/local/dockerized-config.json`:
 
 ```json
 {
@@ -210,6 +210,16 @@ During the set-up process it has been built and published in `public_html/access
 
 To use a new build, simply copy the contents of the generated files from `app-web-auth3/dist/` to `public_html/access/`
 
+### Event types
+
+Open Pryv.io comes with default [Event types](https://github.com/pryv/open-pryv.io/blob/master/components/business/src/types/event-types.default.json).
+
+To add new types for your events, you can modify the file `components/business/src/types/event-types.default.json`.
+
+### MongoDB data folder
+
+By default the MongoDB data are stored in `var-pryv/mongodb-data`. If you want to modify the folder where the MongoDB data files are stored, you can modify in `scripts/setup-mongodb.bash` the variable `MONGO_DATA_FOLDER`.
+
 ### Visual assets and icons
 
 Your platforms visuals can be customized in `public_html/assets/`, please refer to the README inside. These assets are a clone of the [assets-open-pryv.io](https://github.com/pryv/assets-open-pryv.io).
@@ -226,8 +236,7 @@ This service, its documentation and mail templates can be found in [`service-mai
 
 Open Pryv.io is developed and maintained by Pryv's team. You may contact us to submit a change or adaptation but do not be offended if we decline it or decide to re-write it.
 
-#
-# License
+## License
 Copyright (c) 2020 Pryv S.A. https://pryv.com
 
 This file is part of Open-Pryv.io and released under BSD-Clause-3 License

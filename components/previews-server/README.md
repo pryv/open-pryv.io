@@ -11,9 +11,6 @@ Node.js / Express server supporting client apps with event previews (which are o
 node src/server [options]
 ```
 
-See [the root README](https://github.com/pryv/service-core/blob/master/README.md#about-configuration) to learn about configuration options.
-
-
 ### API
 
 #### Event previews: `GET /events/{event-id}`

@@ -11,8 +11,6 @@ Node.js / Express server to manage user activity and user administration request
 node src/server [options]
 ```
 
-See [the root README](https://github.com/pryv/service-core/blob/master/README.md#about-configuration) to learn about configuration options.
-
 
 ### API
 
@@ -20,7 +18,7 @@ See the [Pryv API reference documentation](https://pryv.github.io/reference/).
 
 ### Nightly
 
-The _[bin](https://github.com/pryv/service-core/tree/release-1.3/components/api-server/bin)_ folder contains a binary called _[nightly](https://github.com/pryv/service-core/blob/release-1.3/components/api-server/bin/nightly)_, which performs maintenance tasks such as computing and updating the storage usage for each existing users.
+The _[bin](https://github.com/pryv/open-pryv.io/blob/master/components/api-server/bin)_ folder contains a binary called _[nightly](https://github.com/pryv/open-pryv.io/blob/master/components/api-server/bin/nightly)_, which performs maintenance tasks such as computing and updating the storage usage for each existing users.
 
 This binary can be manually executed with the following command (or be setup as cronjob):
 > node dist/components/api-server/bin/nightly --config config.json
