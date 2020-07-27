@@ -58,7 +58,14 @@ function attachmentsAccessMiddleware(userEventsStorage, req, res, next) {
     if (! event) {
       return next(errors.unknownResource('event', req.params.id));
     }
-    if (! req.context.canReadStream(event.streamId)) {
+    let canReadEvent = false;
+    for (let i = 0; i < event.streamIds.length ; i++) {
+      if (req.context.canReadStream(event.streamIds[i])) {
+        canReadEvent = true;
+        break;
+      }
+    }
+    if (! canReadEvent) {
       return next(errors.forbidden());
     }
 

@@ -48,6 +48,7 @@ GraphicsMagick (Linux: `apt-get install graphicsmagick`, OSX (Homebrew): `brew i
 - `yarn run test-profile` for profiling the tested server instance and opening the processed output with `tick-processor`
 - `yarn run test-debug` is similar as `yarn run test-detailed` but in debug mode; it will wait for debuggers to be attached on both ports 5858 (the test process) and 5959 (the tested server process)
 
+
 # License
 Copyright (c) 2020 Pryv S.A. https://pryv.com
 

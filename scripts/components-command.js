@@ -63,6 +63,10 @@ fs.readdirSync(componentsPath).forEach(function (name) {
     return;
   }
   
+  if(['test-helpers', 'errors'].includes(name) && args.slice(1)[0] == 'test'){
+    return;
+  }
+  
   name = pad(name);
   console.log(colors ? name.green : name); // eslint-disable-line 
   var res = childProcess.spawnSync(args[0], args.slice(1), {

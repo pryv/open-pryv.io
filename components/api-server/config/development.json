@@ -6,6 +6,9 @@
       "level": "debug"
     }
   }, 
+  "auth": {
+    "adminAccessKey": "REPLACE_ME_WITH_SOMETHING"
+  },
   "serviceInfoUrl": "file://test/service-info.json",
   "services": {
     "email": {

@@ -2,6 +2,9 @@
 
 Handles storage of user data on MongoDB.
 
+## Contribute
+
+Make sure to check the root README first.
 
 # License
 Copyright (c) 2020 Pryv S.A. https://pryv.com
