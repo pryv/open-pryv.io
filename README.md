@@ -123,7 +123,7 @@ To set an automatic renewal, run `crontab -e` and append the following line:
 
 ### Config
 
-For the native installation, edit `config.json`, otherwise `local/dockerized-config.json`:
+For the native installation, edit `config.json`, otherwise `docker/local/dockerized-config.json`:
 
 ```json
 {
@@ -209,6 +209,18 @@ Open Pryv.io comes packaged with [app-web-auth3](https://github.com/pryv/app-web
 During the set-up process it has been built and published in `public_html/access/`. To customize it, refer to its `README` in `app-web-auth3/`.
 
 To use a new build, simply copy the contents of the generated files from `app-web-auth3/dist/` to `public_html/access/`
+
+### Event types
+
+Open Pryv.io comes with default **event types**.
+The default ones are fetched at boot from the URL defined in service:eventTypes in the .json config file, set to https://api.pryv.com/event-types/flat.json.
+
+To customize your own, clone the [Data Types repository](https://github.com/pryv/data-types) and follow the guide there.
+
+### MongoDB data folder
+
+By default the MongoDB data are stored in `var-pryv/mongodb-data`. If you want to modify the folder where the MongoDB data files are stored, you can modify in `scripts/setup-mongodb.bash` the variable `MONGO_DATA_FOLDER`.
+
 
 ### Visual assets and icons
 

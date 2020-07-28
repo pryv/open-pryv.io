@@ -21,7 +21,7 @@ Service-mail can be configured by providing a configuration file (.json, .hjson 
 
 ### Templates
 
-Templates consist of [pug](https://pugjs.org/api/getting-started.html) files, arranged into folders according to email types and langage codes, see the [default templates](https://github.com/pryv/service-mail/tree/master/templates) for example.
+Templates consist of [pug](https://pugjs.org/api/getting-started.html) files, arranged into folders according to email types and langage codes, see the [default templates](templates) for example.
 
 The default root folder for templates is _/templates/_, it can be configured by providing **templates.root**.
 

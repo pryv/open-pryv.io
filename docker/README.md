@@ -6,6 +6,7 @@ This archive contains the necessary files to download and run Open Pryv.io.
 
 - [Docker v19.03](https://docs.docker.com/engine/install/)
 - [Docker-compose v1.26](https://docs.docker.com/compose/install/)
+- [Yarn v1.22.4](https://classic.yarnpkg.com/en/docs/install/)
 
 ## Local dev with SSL
 
