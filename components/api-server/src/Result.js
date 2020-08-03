@@ -101,6 +101,7 @@ class Result {
   access: mixed;
   accessDeletion: mixed;
   accessDeletions: mixed;
+  relatedDeletions: ?Array<any>;
   matchingAccess: mixed;
   mismatchingAccess: mixed;
   checkedPermissions: mixed;

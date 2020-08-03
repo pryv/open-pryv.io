@@ -36,8 +36,9 @@
  * Common converter helper functions for storage modules.
  */
 
-var generateId = require('cuid'),
-    timestamp = require('unix-timestamp');
+const generateId = require('cuid');
+const timestamp = require('unix-timestamp');
+const _ = require('lodash');
 
 exports.createIdIfMissing = function (item) {
   item.id = item.id || generateId();
@@ -119,4 +120,18 @@ exports.deletionFromDB = function (dbItem) {
   return dbItem;
 };
 
-
+/**
+ * Inside $or clauses, converts "id" to "_id"
+ * @param {*} query 
+ */
+exports.idInOrClause = function (query) {
+  if (query == null || query['$or'] == null) return query;
+  const convertedOrClause = query['$or'].map(field => {
+    if (field.id != null) {
+      return { _id: field.id };
+    }
+    return field;
+  });
+  query['$or'] = convertedOrClause;
+  return query;
+}

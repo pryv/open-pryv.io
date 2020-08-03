@@ -54,7 +54,8 @@ function Accesses(database) {
       createTokenIfMissing
     ],
     itemToDB: [converters.deletionToDB],
-    itemFromDB: [converters.deletionFromDB]
+    itemFromDB: [converters.deletionFromDB],
+    queryToDB: [converters.idInOrClause],
   });
 
   this.defaultOptions = {
