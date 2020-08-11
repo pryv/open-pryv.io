@@ -104,6 +104,9 @@ var messages = {
     'detail' : ''},
   'INVALID_REFERER' : { 'message' : 'referer is invalid',
     'detail' : ''},
+  'DISABLED_METHOD' : {'message' : 'The action you are trying to execute has been disabled. Please contact the platform admin to activate it.',
+    'detail' : ''
+  }
 };
 
 if (module && module.exports) {

@@ -38,6 +38,7 @@
 const checkAndConstraints = require('../utils/check-and-constraints');
 const db = require('../storage/database');
 const messages = require('../utils/messages');
+const config = require('../config');
 
 /**
  * Routes to handle emails
@@ -112,6 +113,9 @@ module.exports = function (app: any) {
  * @return {Promise<string>} resolves the corresponding username if the email is valid and in use.
  */
 function getUsernameFromEmail(email: string): Promise<string> {
+  if (config.get('routes:disableGetUsernameByEmail')) {
+    return Promise.reject(messages.e(405, 'DISABLED_METHOD'));
+  }
   if (checkAndConstraints.email(email) == null) {
     return Promise.reject(messages.e(400, 'INVALID_EMAIL'));
   }
