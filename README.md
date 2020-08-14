@@ -194,6 +194,10 @@ If you are using another public URL, replace `https://my-computer.rec.la:4443` b
 
 If you are using another public URL, replace `https://my-computer.rec.la:4443` by it in the link above.
 
+### Design your Data Model 
+
+Data in Pryv is stored in streams and events. We provide you with all necessary information to design your own data model in our [Data Modelling Guide](https://api.pryv.com/guides/data-modelling/) through a broad range of use cases and scenarios you might encounter.
+
 ### Try the API
 
 After this process, you should have an account on your Open Pryv.io platform with a valid authorization token in the form of an API endpoint, you can try various **API requests** using **Postman** following this guide [https://api.pryv.com/open-api/](https://api.pryv.com/open-api/).
