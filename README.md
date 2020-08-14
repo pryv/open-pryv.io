@@ -1,6 +1,6 @@
 # Open Pryv.io
 
-![Pryv-Logo](https://i0.wp.com/pryv.com/wp-content/uploads/2018/06/logo-data-privacy-management-pryv.png?fit=256%2C100&ssl=1)
+![Pryv-Logo](readme/logo-data-privacy-management-pryv.png)
 
 **Personal Data & Privacy Management Software**
 
@@ -193,6 +193,10 @@ If you are using another public URL, replace `https://my-computer.rec.la:4443` b
 - The service info URL to your platform is: [https://my-computer.rec.la:4443/reg/service/info](https://my-computer.rec.la:4443/reg/service/info)
 
 If you are using another public URL, replace `https://my-computer.rec.la:4443` by it in the link above.
+
+### Design your Data Model
+
+Data in Pryv is stored in streams and events. We provide you with all necessary information to design your own data model in our [Data Modelling Guide](https://api.pryv.com/guides/data-modelling/) through a broad range of use cases and scenarios you might encounter.
 
 ### Try the API
 
