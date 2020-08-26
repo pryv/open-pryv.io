@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.5.22-1-open",
+  "version": "1.5.22-4-open",
   "private": false,
   "description": "Pryv core server app components",
   "homepage": "http://pryv.com",
@@ -32,7 +32,7 @@
     "async": "^2.5.0",
     "awaiting": "^3.0.0",
     "axon": "2.0.x",
-    "bcrypt": "^3.0.7",
+    "bcrypt": "^5.0.0",
     "bluebird": "^3.5.0",
     "body-parser": "^1.17.1",
     "business": "file:components/business",
