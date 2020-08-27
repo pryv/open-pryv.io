@@ -15,7 +15,6 @@
     "test-profile": "yarn run _test --profile=true --logs:console:active=false && tick-processor > profiling-output.txt && open profiling-output.txt"
   },
   "dependencies": {
-    "bcrypt": "^3.0.7",
     "convict": "^2.0.0",
     "winston": "^2.3.0"
   }
