@@ -238,6 +238,60 @@ The emails can be sent either by local sendmail (default) or SMTP.
 
 This service, its documentation and mail templates can be found in [`service-mail/`](service-mail/).
 
+## Open Pryv.io Backup
+
+The backup and restore (in case of data loss) of your Open Pryv.io platform is described in the following procedures.
+
+[The root of your Open Pryv.io installation on each role (usually /var/pryv/${ROLE}/) will now be referred as
+${PRYV_CONF_ROOT}.] 
+
+### Backup
+
+You should first ensure that you backup core data starting with MongoDB. 
+
+1. **Core**
+  - Run the following command to export the MongoDB data: 
+` $ docker exec -t pryvio_mongodb /app/bin/mongodb/bin/mongodump -d pryv-node -o /app/backup/ `
+The backup folder will be located at: `${PRYV_CONF_ROOT}/pryv/mongodb/backup/`.
+
+  - Run the following command to export the InDuxDB data: 
+  `$ docker exec -t pryvio_influxdb /usr/bin/influxd backup -portable /var/backups/ `
+The backup folder will be located at: `${PRYV_CONF_ROOT}/pryv/influxdb/backup/`.
+
+  - Backup the ${PRYV_CONF_ROOT} folder except the following:
+    - `${PRYV_CONF_ROOT}/pryv/mongodb/data/`
+    - `${PRYV_CONF_ROOT}/pryv/influxdb/data`
+    - `${PRYV_CONF_ROOT}/pryv/core/data/previews/`
+
+2. **Register**
+- Backup the ${PRYV_CONF_ROOT} folder
+
+3. **Static-web**
+- Backup the ${PRYV_CONF_ROOT} folder
+
+*Important notice: During the time of the backup, if user accounts are created between the core and register backup times, they won't be usable after a backup restoration. Attachments created after the MongoDB backup won't be accessible as their corresponding Pryv.io events will not be available.*
+
+### Restore
+
+You can restore your Open Pryv.io platform as described in the following guidelines:
+
+1. **Core**
+ - Empty the contents of the ${PRYV_CONF_ROOT} folder 
+ - Copy the backed up files under the ${PRYV_CONF_ROOT} folder 
+ - Start the service 
+ - Restore the MongoDB files: `$ docker exec -t pryvio_mongodb /app/bin/mongodb/bin/mongorestore /app/backup/ `
+ - Restore the InDuxDB files: `$ docker exec -t pryvio_influxdb /usr/bin/influxd restore -portable /pryv/backup/`
+
+2. **Register**
+  - Empty the contents of the ${PRYV_CONF_ROOT} folder
+  - Copy the backed up files under the ${PRYV_CONF_ROOT} folder
+  - Start the service
+
+3. **Static-web**
+ - Empty the contents of the ${PRYV_CONF_ROOT} folder
+ - Copy the backed up files under the ${PRYV_CONF_ROOT} folder
+ - Start the service
+
 ## Contributing
 
 Open Pryv.io is developed and maintained by Pryv's team. You may contact us to submit a change or adaptation but do not be offended if we decline it or decide to re-write it.
