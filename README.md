@@ -240,7 +240,7 @@ This service, its documentation and mail templates can be found in [`service-mai
 
 ## Contributing
 
-Open Pryv.io is developed and maintained by Pryv's team. You may contact us to submit a change or adaptation but do not be offended if we decline it or decide to re-write it.
+Contributions are welcome. Get in touch with the Pryv team or submit a PR with your changes or adaptation.
 
 #
 # License
