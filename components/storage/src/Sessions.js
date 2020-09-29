@@ -120,7 +120,7 @@ Sessions.prototype.getMatching = function (data, callback) {
  * @param {Object} data
  * @param {Function} callback Args: err, id
  */
-Sessions.prototype.generate = function (data, callback) {
+Sessions.prototype.generate = function (data, options, callback) {
   var session = {
     _id: generateId(),
     data: typeof data === 'object' ? data : {},
@@ -129,7 +129,8 @@ Sessions.prototype.generate = function (data, callback) {
   this.database.insertOne(collectionInfo, session, function (err) {
     if (err) { return callback(err); }
     callback(null, session._id);
-  });
+  },
+    options);
 };
 
 /**

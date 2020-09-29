@@ -32,11 +32,19 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
-var async = require('async');
+const bluebird = require('bluebird');
 
-module.exports = Size;
+const UsersRepository = require('components/business/src/users/repository');
+const User = require('components/business/src/users/User');
 
-/**
+class Size {
+
+  userEventsStorage;
+  dbDocumentsItems;
+  attachedFilesItems;
+  usersRepository: UsersRepository;
+
+  /**
  * Computes storage size used by user accounts.
  * Will sum sizes returned by `getTotalSize(user, callback)` on the given storage objects,
  * if function is present.
@@ -45,42 +53,41 @@ module.exports = Size;
  * @param {Array} attachedFilesItems
  * @constructor
  */
-function Size(usersStorage, dbDocumentsItems, attachedFilesItems) {
-  this.usersStorage = usersStorage;
-  this.dbDocumentsItems = dbDocumentsItems;
-  this.attachedFilesItems = attachedFilesItems;
+  constructor(userEventsStorage, dbDocumentsItems, attachedFilesItems) {
+    this.userEventsStorage = userEventsStorage;
+    this.dbDocumentsItems = dbDocumentsItems;
+    this.attachedFilesItems = attachedFilesItems;
+    this.usersRepository = new UsersRepository(this.userEventsStorage);
 }
 
-/**
- * Computes and updates storage size for the given user.
- *
- * @param {Object} user
- * @param {Function} callback
- */
-Size.prototype.computeForUser = function (user, callback) {
-  async.series({
-    dbDocuments: computeCategory.bind(this, this.dbDocumentsItems),
-    attachedFiles: computeCategory.bind(this, this.attachedFilesItems)
-  }, function (err, storageUsed) {
-    if (err) { return callback(err); }
-    this.usersStorage.updateOne({id: user.id}, {storageUsed: storageUsed}, function (err) {
-      if (err) { return callback(err); }
-      callback(null, storageUsed);
-    });
-  }.bind(this));
+  /**
+   * Computes and updates storage size for the given user.
+   *
+   * @param {Object} user
+   */
+  async computeForUser(user) {
+    const storageUsed = {
+      dbDocuments: await computeCategory(this.dbDocumentsItems),
+      attachedFiles: await computeCategory(this.attachedFilesItems),
+    }
+    let userObject = new User(user);
+    await this.usersRepository.updateOne(
+      userObject,
+      storageUsed,
+      UsersRepository.options.SYSTEM_USER_ACCESS_ID
+    );
 
-  function computeCategory(storageItems, callback) {
-    var total = 0;
-    async.each(storageItems, function (storage, itemDone) {
-      if (typeof storage.getTotalSize !== 'function') { return; }
+    return storageUsed;
 
-      storage.getTotalSize(user, function (err, size) {
-        if (err) { return itemDone(err); }
+    async function computeCategory(storageItems) {
+      let total = 0;
+      for (let i=0; i<storageItems.length; i++) {
+        if (typeof storageItems[i].getTotalSize !== 'function') { return; }
+        const size = await bluebird.fromCallback(cb => storageItems[i].getTotalSize(user, cb));
         total += size;
-        itemDone();
-      });
-    }.bind(this), function (err) {
-      callback(err, total);
-    });
+      }
+      return total;
+    }
   }
-};
+}
+module.exports = Size;

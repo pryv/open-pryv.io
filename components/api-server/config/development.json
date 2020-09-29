@@ -15,7 +15,8 @@
       "enabled": false
     },
     "register": {
-      "url": "https://reg.pryv.io"
+      "url": "http://127.0.0.1:8080",
+      "key": "test-system-key"
     }
   }, 
   "reporting": {
@@ -24,5 +25,41 @@
   },
   "tcpMessaging": {
     "enabled": false
+  },
+  "openSource": {
+    "isActive": false
+  },
+  "singleNode": {
+    "isActive": true,
+    "publicUrl": "http://localhost:3000/"
+  },
+  "custom": {
+    "systemStreams": {
+      "account": [
+        {
+          "isIndexed": true,
+          "isUnique": true,
+          "isShown": true,
+          "isEditable": true,
+          "type": "email/string",
+          "name": "Email",
+          "id": "email",
+          "isRequiredInValidation": true
+        }
+      ],
+      "myCustomStream": [
+        {
+          "isShown": true,
+          "isEditable": true,
+          "type": "myCustomStream/string",
+          "name": "myCustomStream",
+          "id": "myCustomStream"
+        }
+      ]
+    }
+  },
+  "influxdb": {
+    "host": "127.0.0.1",
+    "port": 8086
   }
 }

@@ -104,6 +104,11 @@ exports.number = getBaseSchema.bind(null, 'number');
  */
 exports.boolean = getBaseSchema.bind(null, 'boolean');
 
+/**
+ * Global username rule
+ */
+exports.username = getBaseSchema('string', {pattern:  '^[a-z0-9][a-z0-9\\-]{3,21}[a-z0-9]$'});
+
 exports.getBaseSchema = getBaseSchema;
 
 function getBaseSchema(type, options) {

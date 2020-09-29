@@ -32,5 +32,6 @@
       "active": true,
       "key": "OVERRIDE ME"
     }
-  }
+  },
+  "serviceInfoUrl": "file://test/service-info.json"
 }

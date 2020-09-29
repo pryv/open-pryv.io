@@ -245,7 +245,7 @@ BaseStorage.prototype.aggregate = function(
   );
 };
 
-BaseStorage.prototype.insertOne = function(user, item, callback) {
+BaseStorage.prototype.insertOne = function (user, item, callback) {
   this.database.insertOne(
     this.getCollectionInfo(user),
     this.applyItemToDB(this.applyItemDefaults(item)),
@@ -253,8 +253,8 @@ BaseStorage.prototype.insertOne = function(user, item, callback) {
       if (err) {
         return callback(err);
       }
-      callback(null, item);
-    }
+      callback(null, this.applyItemFromDB(item));
+    }.bind(this)
   );
 };
 
@@ -301,7 +301,7 @@ BaseStorage.prototype.findOneAndUpdate = function(user, query, updatedData, call
  * @param updatedData
  * @param callback
  */
-BaseStorage.prototype.updateOne = function(user, query, updatedData, callback) {
+BaseStorage.prototype.updateOne = function (user, query, updatedData, callback) {
   this.database.findOneAndUpdate(
     this.getCollectionInfo(user),
     this.applyQueryToDB(query),
@@ -337,31 +337,6 @@ BaseStorage.prototype.updateMany = function(
   );
 };
 
-/**
- * Update.
- *
- * @param user
- * @param query
- * @param updatedData
- * @param options
- * @param callback
- */
-BaseStorage.prototype.updateWithOptions = function (
-  user,
-  query,
-  updatedData,
-  options,
-  callback
-) {
-  this.database.updateWithOptions(
-    this.getCollectionInfo(user),
-    this.applyQueryToDB(query),
-    this.applyUpdateToDB(updatedData),
-    options,
-    callback
-  );
-};
-
 /* jshint -W024, -W098 */
 /**
  * Deletes the document(s), replacing them with a deletion record (i.e. id and deletion date).
@@ -391,7 +366,7 @@ BaseStorage.prototype.removeOne = function(user, query, callback) {
   );
 };
 
-BaseStorage.prototype.removeMany = function(user, query, callback) {
+BaseStorage.prototype.removeMany = function (user, query, callback) {
   this.database.deleteMany(
     this.getCollectionInfo(user),
     this.applyQueryToDB(query),
@@ -399,7 +374,7 @@ BaseStorage.prototype.removeMany = function(user, query, callback) {
   );
 };
 
-BaseStorage.prototype.removeAll = function(user, callback) {
+BaseStorage.prototype.removeAll = function (user, callback) {
   this.database.deleteMany(
     this.getCollectionInfo(user),
     this.applyQueryToDB({}),
@@ -589,7 +564,6 @@ BaseStorage.prototype.applyItemFromDB = function(dbItem) {
  * @api private
  */
 BaseStorage.prototype.applyItemsFromDB = function(dbItems) {
-
   return applyConvertersFromDB(
     dbItems.map(this.applyItemFromDB.bind(this)),
     this.converters.itemsFromDB

@@ -54,6 +54,7 @@ ApplyEventsFromDbStream.prototype._transform = function (event, encoding, callba
 
     // SingleCollectionsMode - start
     delete event.userId;
+    
     if (event.deleted == null) {
       delete event.deleted;
     }
@@ -63,7 +64,9 @@ ApplyEventsFromDbStream.prototype._transform = function (event, encoding, callba
     if (event.deleted) {
       event.deleted = timestamp.fromDate(event.deleted);
     } 
-    
+
+    event = converters.removeFieldsEnforceUniqueness(event);
+
     this.push(event);
     callback();
   } catch(err) {

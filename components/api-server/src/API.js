@@ -193,7 +193,7 @@ class API {
   call(id: string, context: MethodContext, params: mixed, callback: ApiCallback) {
     const methodMap = this.map; 
     const methodList = methodMap.get(id);
-    
+
     if (methodList == null) 
       return callback(errors.invalidMethod(id), null);
     

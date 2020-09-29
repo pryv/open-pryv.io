@@ -77,7 +77,6 @@ module.exports = function (ignoredPaths: Array<string>) {
     });
   }
 };
-module.exports.injectDependencies = true; // make it DI-friendly
 
 function looksLikeUsername(candidate: string): boolean {
   const reUsername = /^([a-zA-Z0-9])(([a-zA-Z0-9-]){3,21})[a-zA-Z0-9]$/; 

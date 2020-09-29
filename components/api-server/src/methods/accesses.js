@@ -43,6 +43,7 @@ const bluebird = require('bluebird');
 const APIError = require('components/errors').APIError;
 const errors = require('components/errors').factory;
 const ErrorIds = require('components/errors').ErrorIds;
+const ErrorMessages = require('components/errors').ErrorMessages;
 
 const treeUtils = require('components/utils').treeUtils;
 
@@ -50,6 +51,7 @@ const commonFns = require('./helpers/commonFunctions');
 const methodsSchema = require('../schema/accessesMethods');
 const accessSchema = require('../schema/access');
 const string = require('./helpers/string');
+const SystemStreamsSerializer = require('components/business/src/system-streams/serializer');
 
 import type { StorageLayer } from 'components/storage';
 import type { Logger } from 'components/utils';
@@ -176,11 +178,15 @@ module.exports = function produceAccessesApiMethods(
 
   // CREATION
 
+  const notVisibleAccountStreamsIds = SystemStreamsSerializer.getAccountStreamsIdsForbiddenForReading();
+  const visibleAccountStreamsIds = Object.keys(SystemStreamsSerializer.getReadableAccountStreams());
+
   api.register('accesses.create',
     checkNoSharedAccess,
     applyDefaultsForCreation,
     commonFns.getParamsValidation(methodsSchema.create.params),
     applyPrerequisitesForCreation,
+    applyAccountStreamsValidation,
     createDataStructureFromPermissions,
     cleanupPermissions,
     createAccess);
@@ -233,6 +239,40 @@ module.exports = function produceAccessesApiMethods(
     return next();
   }
 
+  /**
+   * If user is creating an access for default streams, apply some validations
+   * @param {*} context 
+   * @param {*} params 
+   * @param {*} result 
+   * @param {*} next 
+   */
+  function applyAccountStreamsValidation (context, params, result, next) {
+    if (params.permissions == null) return next();
+
+    // don't allow user to give access to not visible stream
+    for (let i = 0; i < params.permissions.length; i++) {
+      if (notVisibleAccountStreamsIds.includes(params.permissions[i].streamId)) {
+        return next(errors.invalidOperation(
+          ErrorMessages[ErrorIds.DeniedStreamAccess],
+          { param: params.permissions[i].streamId }
+        ));
+      }
+    }
+
+    // don't allow user to give anything higher than contribute or read access
+    //to visible stream
+    for (let n = 0; n < params.permissions.length; n++) {
+      if (visibleAccountStreamsIds.includes(params.permissions[n].streamId) &&
+        params.permissions[n]?.level && !context.access.canCreateAccessForAccountStream(params.permissions[n].level)) {
+        return next(errors.invalidOperation(
+          ErrorMessages[ErrorIds.TooHighAccessForAccountStreams],
+          { param: params.permissions[n].streamId }));
+      }
+    }
+
+    return next();
+  }
+
   // Creates default data structure from permissions if needed, for app
   // authorization. 
   // 
@@ -245,13 +285,11 @@ module.exports = function produceAccessesApiMethods(
     if (params.permissions == null) return next(); 
 
     async.forEachSeries(params.permissions, ensureStream, next);
-
-    function ensureStream(permission, streamCallback) {
+    function ensureStream (permission, streamCallback) {
       if (! permission.defaultName) return streamCallback();
 
       const streamsRepository = storageLayer.streams;
       const existingStream = treeUtils.findById(context.streams, permission.streamId);
-
       if (existingStream) {
         if (! existingStream.trashed) { return streamCallback(); }
 

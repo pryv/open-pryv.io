@@ -147,7 +147,7 @@ Accesses.prototype.generateToken = function () {
  * @param {*} item 
  * @param {*} callback 
  */
-Accesses.prototype.insertOne = function (user, access, callback) {
+Accesses.prototype.insertOne = function (user, access, callback, options) {
   let accessToCreate = _.clone(access);
   if (accessToCreate.deleted === undefined) accessToCreate.deleted = null;
   this.database.insertOne(
@@ -158,7 +158,8 @@ Accesses.prototype.insertOne = function (user, access, callback) {
         return callback(err);
       }
       callback(null, _.omit(accessToCreate, 'deleted'));
-    }
+    },
+    options
   );
 };
 

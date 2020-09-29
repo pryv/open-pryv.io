@@ -32,6 +32,8 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
+const APIError = require('components/errors/src/APIError');
+
 var errors = require('components/errors').factory,
     validation = require('../../schema/validation');
 
@@ -53,7 +55,6 @@ exports.requirePersonalAccess = function requirePersonalAccess(context, params, 
  */
 exports.getTrustedAppCheck = function getTrustedAppCheck(authSettings) {
   var trustedApps;
-
   return function requireTrustedApp(context, params, result, next) {
     if (! isTrustedApp(params.appId, params.origin)) {
       return next(errors.invalidCredentials('The app id ("appId") is either missing or ' +
@@ -114,12 +115,13 @@ exports.getTrustedAppCheck = function getTrustedAppCheck(authSettings) {
  * @param  {Object} paramsSchema JSON Schema for the parameters
  * @return {void}
  */ 
-exports.getParamsValidation = function getParamsValidation(paramsSchema) {
-  return function validateParams(context, params, result, next) {
+exports.getParamsValidation = function getParamsValidation (paramsSchema) {
+  return function validateParams (context, params, result, next) {
     validation.validate(params, paramsSchema, function (err) {
       if (err) {
+        const errorsList = err.map(error => _addCustomMessage(error, paramsSchema));
         return next(errors.invalidParametersFormat(
-          "The parameters' format is invalid.", err
+          "The parameters' format is invalid.", errorsList
         ));
       }
       next();
@@ -127,9 +129,88 @@ exports.getParamsValidation = function getParamsValidation(paramsSchema) {
   };
 };
 
+/**
+ * Replaces z-schema message and code with a custom message given in the schema
+ * !!! Important - it also removes error params and schemaId and
+ * adds "param" that is equal to failing param id
+ * 
+ * Before this function validation errors could look like this:
+ * "error": {
+        "id": "invalid-parameters-format",
+        "message": "The parameters' format is invalid.",
+        "data": [
+            {
+                "code": "PATTERN",
+                "params": [
+                    "^[a-z0-9][a-z0-9\\-]{3,21}[a-z0-9]$",
+                    "ga"
+                ],
+                "message": "String does not match pattern ^[a-z0-9][a-z0-9\\-]{3,21}[a-z0-9]$: ga",
+                "path": "#/username"
+            }
+        ]
+    },
+    
+    And if custom error messages are provided, it could be changed to something like this:
+ * 
+ * "error": {
+        "id": "invalid-parameters-format",
+        "message": "The parameters' format is invalid.",
+        "data": [
+            {
+                "code": "username-invalid",
+                "message": "Username should have from 5 to 23 characters and contain letters or numbers or dashes",
+                "path": "#/username",
+                "param": "username"
+            }
+        ]
+    },
+ * 
+ * @param object error 
+ * @param object schema 
+ */
+function _addCustomMessage(error, schema){
+  const pathElements = error.path.split("/");
+  let paramId = pathElements[pathElements.length -1];
+
+  // when field is missing paramId will be empty
+  if(paramId === '' && error.params.length >= 1){
+    paramId = error.params[0]
+  }
+
+  // if there are custom messages set, replace default z-schema message
+  if (schema?.messages?.[paramId] != null) {
+    // if there is a message, set it
+    if(schema.messages[paramId][error.code]?.message){
+      error.message = schema.messages[paramId][error.code].message;
+    }
+    // if there is a custom error code, set it
+    if(schema.messages[paramId][error.code]?.code){
+      error.code = schema.messages[paramId][error.code].code;
+    }
+
+    // delete missleading error parameters
+    if ('params' in error){
+      delete error.params;
+    }
+
+    // delete schemaId
+    if ('schemaId' in error){
+      delete error.schemaId;
+    }
+
+    // make frontenders happier and instead of having 'path' with
+    // modified param name, pass not modified param too
+    error.param = paramId;
+  }
+  // if there are no custom messages, just return default z-schema message
+  return error;  
+}
+
 exports.catchForbiddenUpdate = function catchForbiddenUpdate(paramsSchema, ignoreProtectedFieldUpdates, logger) {
-  return function validateParams(context, params, result, next) {
+  return function validateParams (context, params, result, next) {
     const allowed = paramsSchema.alterableProperties;
+
     const forbidden = Object.keys(params.update)
       .filter(key => !allowed.includes(key));
     if(forbidden.length > 0) {

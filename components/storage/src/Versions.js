@@ -104,7 +104,9 @@ Versions.prototype.migrateIfNeeded = function (callback) {
         };
         this.database.upsertOne(collectionInfo, {_id: vNum}, update, stepDone);
       }.bind(this),
-      this.migrations[vNum].bind(null, context),
+      function (stepDone) {
+        this.migrations[vNum](context, stepDone);
+      }.bind(this),
       function (stepDone) {
         var update = {$set: {migrationCompleted: timestamp.now()}};
         this.database.updateOne(collectionInfo, {_id: vNum}, update, stepDone);

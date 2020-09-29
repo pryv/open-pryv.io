@@ -79,6 +79,7 @@ class Settings implements ConfigAccess {
     if (settingsSingleton) {
       return settingsSingleton;
     }
+
     config.printSchemaAndExitIfNeeded();
     const ourConfig = await config.setupWithServiceInfo(configLocation);
     settingsSingleton = new Settings(ourConfig);

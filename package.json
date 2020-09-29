@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.5.24-open",
+  "version": "1.6.0-21-open",
   "private": false,
   "description": "Pryv core server app components",
   "homepage": "http://pryv.com",
@@ -26,6 +26,10 @@
     "watch": "node_modules/.bin/babel --verbose --watch=./components --out-dir=dist/components --copy-files --source-maps both"
   },
   "pre-commit": "",
+  "resolutions": {
+    "**/bl": "^2.2.1",
+    "**/node-fetch": "^2.6.1"
+  },
   "dependencies": {
     "@airbrake/node": "^1.1.2",
     "api-server": "file:components/api-server",
@@ -40,8 +44,7 @@
     "convict": "^3.0.0",
     "cookie-parser": "^1.4.3",
     "cron": "^1.2.1",
-    "cross-fetch": "^3.0.4",
-    "dependable": "attentif/dependable#0bb5c4a9ef2b32dded1b24d5d3c0ecccfb0bf7fd",
+    "cross-fetch": "^3.0.6",
     "errors": "file:components/errors",
     "express": "^4",
     "flow-bin": "^0.113.0",
@@ -53,7 +56,7 @@
     "middleware": "file:components/middleware",
     "mkdirp": "1.0.4",
     "model": "file:components/model",
-    "mongodb": "3.x",
+    "mongodb": "^3.6.2",
     "morgan": "^1.8.1",
     "msgpack5": "^3.6.0",
     "multer": "^1.3.0",
@@ -75,7 +78,7 @@
     "unicode": "^12.1.0",
     "unix-timestamp": "^0.2.0",
     "utils": "file:components/utils",
-    "yargs": "^11.0.0"
+    "yargs": "^16.0.3"
   },
   "devDependencies": {
     "@babel/cli": "^7.8.4",
@@ -96,9 +99,9 @@
     "deep-equal": "latest",
     "eslint": "^7.0.0",
     "eslint-plugin-flowtype": "latest",
-    "flow-typed": "^2.0.0",
+    "flow-typed": "^3.2.1",
     "inspect": "^0.0.2",
-    "mocha": "7.1.2",
+    "mocha": "^8.1.2",
     "moment": "^2.24.0",
     "nock": "9.4.0",
     "nyc": "^15.0.1",

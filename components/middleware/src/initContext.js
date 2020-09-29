@@ -61,9 +61,11 @@ module.exports = function initContext(
     req.context = new MethodContext(
       req.params.username,
       authorizationHeader, 
-      customAuthStepFn);
+      customAuthStepFn,
+      storageLayer.events,
+    );
     
-    const userRetrieved = req.context.retrieveUser(storageLayer);
+    const userRetrieved = req.context.retrieveUser();
     
     // Convert the above promise into a callback. 
     return userRetrieved.then(() => next()).catch(next);

@@ -43,6 +43,9 @@ var errors = require('components/errors').factory,
   utils = require('components/utils'),
   treeUtils = utils.treeUtils,
   _ = require('lodash');
+const SystemStreamsSerializer = require('components/business/src/system-streams/serializer');
+const ErrorMessages = require('../../../errors/src/ErrorMessages');
+const ErrorIds = require('../../../errors/src/ErrorIds');
 
 /**
  * Event streams API methods implementation.
@@ -60,14 +63,15 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
   notifications, logging, auditSettings, updatesSettings) {
 
   const logger = logging.getLogger('methods/streams');
-
+  const systemStreamsSerializer = new SystemStreamsSerializer();
   // RETRIEVAL
 
   api.register('streams.get',
     commonFns.getParamsValidation(methodsSchema.get.params),
     applyDefaultsForRetrieval,
     findAccessibleStreams,
-    includeDeletionsIfRequested);
+    includeDeletionsIfRequested
+   );
 
   function applyDefaultsForRetrieval(context, params, result, next) {
     _.defaults(params, {
@@ -80,7 +84,11 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
   function findAccessibleStreams(context, params, result, next) {
     // can't reuse context streams (they carry extra internal properties)
     userStreamsStorage.find(context.user, {}, null, function (err, streams) {
+
       if (err) { return next(errors.unexpectedError(err)); }
+
+      const systemStreams = systemStreamsSerializer.getSystemStreamsList();
+      streams = streams.concat(systemStreams);
 
       if (params.parentId) {
         var parent = treeUtils.findById(streams, params.parentId);
@@ -134,6 +142,7 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
   // CREATION
 
   api.register('streams.create',
+    forbidSystemStreamsActions,
     commonFns.getParamsValidation(methodsSchema.create.params),
     applyDefaultsForCreation,
     applyPrerequisitesForCreation,
@@ -200,10 +209,39 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
   // UPDATE
 
   api.register('streams.update',
+    forbidSystemStreamsActions,
     commonFns.getParamsValidation(methodsSchema.update.params),
     commonFns.catchForbiddenUpdate(streamSchema('update'), updatesSettings.ignoreProtectedFields, logger),
     applyPrerequisitesForUpdate,
     updateStream);
+
+  /**
+   * Forbid to create or modify system streams, or add children to them
+   * 
+   * @param {*} context 
+   * @param {*} params 
+   * @param {*} result 
+   * @param {*} next 
+   */
+  function forbidSystemStreamsActions (context, params, result, next) {
+    let accountStreamIds = systemStreamsSerializer.getAllSystemStreamsIds();
+    if (params.id != null) {
+      if (accountStreamIds.includes(SystemStreamsSerializer.addDotToStreamId(params.id))) {
+        return next(errors.invalidOperation(
+          ErrorMessages[ErrorIds.ForbiddenAccountStreamsActions])
+        );
+      }
+    }
+    if (params.parentId != null) {
+      if (accountStreamIds.includes(SystemStreamsSerializer.addDotToStreamId(params.parentId))) {
+        return next(errors.invalidOperation(
+          ErrorMessages[ErrorIds.ForbiddenAccountStreamsActions])
+        );
+      }
+    }
+    
+    next();
+  }
 
   function applyPrerequisitesForUpdate(context, params, result, next) {
     // check stream
@@ -260,6 +298,7 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
   // DELETION
 
   api.register('streams.delete',
+    forbidSystemStreamsActions,
     commonFns.getParamsValidation(methodsSchema.del.params),
     verifyStreamExistenceAndPermissions,
     deleteStream);
@@ -588,7 +627,6 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
   }
 
 };
-module.exports.injectDependencies = true;
 
 /**
  * Returns if an array has all elements contained in another.

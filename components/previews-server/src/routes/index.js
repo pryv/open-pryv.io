@@ -40,4 +40,3 @@ module.exports = function index(expressApp) {
   });
 
 };
-module.exports.injectDependencies = true;

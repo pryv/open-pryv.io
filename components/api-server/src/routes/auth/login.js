@@ -41,16 +41,16 @@ const express = require('express');
 const errors = require('components/errors').factory;
 const middleware = require('components/middleware');
 
-const methodCallback = require('./methodCallback');
-const Paths = require('./Paths');
+const methodCallback = require('../methodCallback');
+const Paths = require('../Paths');
 
 declare class RequestWithContext extends express$Request {
   context: any; 
 }
 
 
-import type { ConfigAccess } from '../settings';
-import type Application from '../application';
+import type { ConfigAccess } from './../settings';
+import type Application from './../application';
 
 /**
  * Auth routes.

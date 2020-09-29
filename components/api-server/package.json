@@ -8,7 +8,7 @@
   "author": "Pryv S.A. <support@pryv.com> (http://pryv.com)",
   "main": "src/index.js",
   "scripts": {
-    "_test": "NODE_ENV=test ../../node_modules/.bin/mocha --timeout 10000 --reporter=dot 'test/**/*.test.js'",
+    "_test": "NODE_ENV=test ../../node_modules/.bin/mocha --timeout 10000 --reporter=dot 'test/**/*test.js' --slow 20 --exit --require test/hooks.js",
     "cover": "../../node_modules/.bin/nyc --reporter=html --report-dir=./coverage yarn run test",
     "start": "NODE_ENV=development node bin/server",
     "test": "yarn run _test --logs:console:active=false",

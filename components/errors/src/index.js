@@ -38,5 +38,6 @@ module.exports = {
   APIError: require('./APIError'),
   errorHandling: require('./errorHandling'),
   ErrorIds: require('./ErrorIds'),
+  ErrorMessages: require('./ErrorMessages'),
   factory: require('./factory')
 };

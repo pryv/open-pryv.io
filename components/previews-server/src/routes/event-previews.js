@@ -84,10 +84,15 @@ module.exports = function (
       if (event == null) { 
         return next(errors.unknownResource('event', id));
       }
-
-      if (! context.canReadContext(event.streamId, event.tags)) {
-        return next(errors.forbidden());
+      
+      let canReadEvent = false;
+      for (let i = 0; i < event.streamIds.length; i++) { // ok if at least one
+        if (context.canReadContext(event.streamIds[i], event.tags)) {
+          canReadEvent = true;
+          break;
+        }
       }
+      if (!canReadEvent) return next(errors.forbidden());
 
       if (! canHavePreview(event)) { 
         return res.sendStatus(204);
@@ -256,4 +261,3 @@ module.exports = function (
   }
 
 };
-module.exports.injectDependencies = true;

@@ -35,7 +35,6 @@
 // @flow
 
 const Access = require('./user/Accesses');
-const User = require('./Users');
 const Stream = require('./user/Streams');
 const StorageLayer = require('./storage_layer');
 
@@ -44,7 +43,6 @@ module.exports = {
   PasswordResetRequests: require('./PasswordResetRequests'),
   Sessions: require('./Sessions'),
   Size: require('./Size'),
-  Users: User,
   Versions: require('./Versions'),
   user: {
     Accesses: Access,
@@ -63,4 +61,4 @@ import type { IndexDefinition } from './Database';
 export type { IndexDefinition };
 
 export type {  
-  Access, User, Stream };
+  Access, Stream };

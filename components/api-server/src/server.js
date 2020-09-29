@@ -49,10 +49,10 @@ const expressAppInit = require('./expressApp');
 
 const child_process = require('child_process');
 const url = require('url');
+const UsersRepository = require('components/business/src/users/repository');
 
 import type { Logger } from 'components/utils';
 import type { ConfigAccess } from './settings';
-import type { ExpressAppLifecycle } from './expressApp';
 
 
 // Server class for api-server process. To use this, you 
@@ -80,14 +80,12 @@ class Server {
     this.settings = settings;
     this.isOpenSource = settings.get('openSource.isActive').bool();
     this.isDNSLess = settings.get('dnsLess.isActive').bool();
-    this.logger = application.logFactory('api-server');
   }
     
   // Start the server. 
   //
   async start() {
-    const logger = this.logger;
-
+    this.logger = this.application.logFactory('api-server');
 
     const defaultParam: ?string = this.findDefaultParam();
     if (defaultParam != null) {
@@ -95,9 +93,7 @@ class Server {
       process.exit(1);
     }
     
-    this.publishExpressMiddleware();
-    
-    const [expressApp, lifecycle] = await this.createExpressApp(this.isDNSLess); 
+    await this.application.initiate();
 
     // start TCP pub messaging
     await this.setupNotificationBus();
@@ -106,21 +102,15 @@ class Server {
     this.registerApiMethods();
 
     // Setup HTTP and register server; setup Socket.IO.
-    const server: net$Server = http.createServer(expressApp);
+    const server: net$Server = http.createServer(this.application.expressApp);
     this.setupSocketIO(server); 
     await this.startListen(server);
 
-    // Finish booting the server, start accepting connections.
-    this.addRoutes(expressApp);
-    
-    // Let actual requests pass.
-    lifecycle.appStartupComplete(); 
-    
     if (! this.isOpenSource) {
       await this.setupReporting();
     }
 
-    logger.info('Server ready.');
+    this.logger.info('Server ready.');
     this.notificationBus.serverReady();
   }
 
@@ -130,38 +120,48 @@ class Server {
     return null;
   }
   
-  async createExpressApp(isDNSLess: boolean): Promise<[express$Application, ExpressAppLifecycle]> {
-    const app = this.application;
-    const dependencies = app.dependencies;
-
-    const {expressApp, lifecycle} = await expressAppInit(dependencies, isDNSLess);
-    dependencies.register({expressApp: expressApp});
-    
-    // Make sure that when we receive requests at this point, they get notified 
-    // of startup API unavailability. 
-    lifecycle.appStartupBegin(); 
-    
-    return [expressApp, lifecycle];
-  }
-  
   // Requires and registers all API methods. 
   // 
   registerApiMethods() {
     const application = this.application;
-    const dependencies = this.application.dependencies;
     const l = (topic) => application.getLogger(topic);
     
-    // Open Heart Surgery ahead: Trying to get rid of DI here, file by file. 
-    // This means that what we want is in the middle there; all the 
-    // dependencies.resolves must go. 
+    require('./methods/system')(application.systemAPI,
+      application.storageLayer.accesses, 
+      application.settings.get('services').obj(), 
+      application.api, 
+      application.logging, 
+      application.storageLayer);
+    
+    require('./methods/utility')(application.api, application.logging, application.storageLayer);
 
-    [
-      require('./methods/system'),
-      require('./methods/utility'),
-      require('./methods/auth'),
-    ].forEach(function (moduleDef) {
-      dependencies.resolve(moduleDef);
-    });
+    require('./methods/auth/login')(application.api, 
+      application.storageLayer.accesses, 
+      application.storageLayer.sessions, 
+      application.storageLayer.events, 
+      application.settings.get('auth').obj());
+    
+    require('./methods/auth/register')(application.api, 
+      application.logging, 
+      application.storageLayer, 
+      application.settings.get('services').obj());
+
+    require('./methods/auth/register-singlenode')(application.api, 
+      application.logging, 
+      application.storageLayer, 
+      application.settings.get('services').obj());
+
+    if (this.isOpenSource) {
+      require('./methods/auth/delete-opensource')(application.api,
+        application.logging,
+        application.storageLayer,
+        application.settings);
+    } else {
+      require('./methods/auth/delete')(application.api,
+        application.logging,
+        application.storageLayer,
+        application.settings);
+    }
 
     require('./methods/accesses')(
       application.api, l('methods/accesses'), 
@@ -187,26 +187,39 @@ class Server {
       application.storageLayer,
     );
 
-    [
-      require('./methods/account'),
-      require('./methods/followedSlices'),
-      require('./methods/profile'),
-      require('./methods/streams'),
-      require('./methods/events'),
-    ].forEach(function (moduleDef) {
-      dependencies.resolve(moduleDef);
-    });
-  }
-  
-  // Publishes dependencies for express middleware setup. 
-  // 
-  publishExpressMiddleware() {
-    const dependencies = this.application.dependencies;
+    require('./methods/account')(application.api, 
+      application.storageLayer.events, 
+      application.storageLayer.passwordResetRequests, 
+      application.settings.get('auth').obj(), 
+      application.settings.get('services').obj(), 
+      this.notificationBus,
+      application.logging
+    );
 
-    dependencies.register({
-      // TODO Do we still need this? Where? Try to eliminate it. 
-      express: express, 
-    });
+    require('./methods/followedSlices')(application.api, application.storageLayer.followedSlices, this.notificationBus);
+
+    require('./methods/profile')(application.api, application.storageLayer.profile);
+
+    require('./methods/streams')(application.api, 
+      application.storageLayer.streams, 
+      application.storageLayer.events, 
+      application.storageLayer.eventFiles, 
+      this.notificationBus, 
+      application.logging, 
+      application.settings.get('audit').obj(), 
+      application.settings.get('updates').obj());
+
+    require('./methods/events')(application.api, 
+      application.storageLayer.events, 
+      application.storageLayer.eventFiles, 
+      application.settings.get('auth').obj(), 
+      application.settings.get('service.eventTypes').str(), 
+      this.notificationBus, 
+      application.logging,
+      application.settings.get('audit').obj(),
+      application.settings.get('updates').obj(), 
+      application.settings.get('openSource').obj(), 
+      application.settings.get('services').obj());
   }
   
   setupSocketIO(server: net$Server) {
@@ -271,6 +284,7 @@ class Server {
     if (process.env.NODE_ENV === 'test' && instanceTestSetup.exists()) {
       try {
         const axonSocket = this.notificationBus.axonSocket;
+        
         require('components/test-helpers')
           .instanceTestSetup.execute(instanceTestSetup.str(), axonSocket);
       } catch (err) {
@@ -318,39 +332,8 @@ class Server {
   // Sets up `Notifications` bus and registers it for everyone to consume. 
   // 
   async setupNotificationBus() {
-    const dependencies = this.application.dependencies;
     const notificationEvents = await this.openNotificationBus();
     const bus = this.notificationBus = new Notifications(notificationEvents);
-    
-    dependencies.register({
-      notifications: bus,
-    });
-  }
-  
-  // Installs actual routes in express and prints 'Server ready'.
-  //
-  addRoutes(expressApp: express$Application) {
-    const application = this.application;
-
-    // For DNS LESS load register
-    if (this.isOpenSource) {
-      require('../../register')(expressApp, this.application);
-      require('../../www')(expressApp, this.application);
-    }
-  
-    // system and root MUST come first
-    require('./routes/system')(expressApp, application);
-    require('./routes/root')(expressApp, application);
-
-    require('./routes/accesses')(expressApp, application);
-    require('./routes/account')(expressApp, application);
-    require('./routes/auth')(expressApp, application);
-    require('./routes/events')(expressApp, application);
-    require('./routes/followed-slices')(expressApp, application);
-    require('./routes/profile')(expressApp, application);
-    require('./routes/service')(expressApp, application);
-    require('./routes/streams')(expressApp, application);
-    if(! this.isOpenSource) require('./routes/webhooks')(expressApp, application);
   }
 
 
@@ -375,12 +358,15 @@ class Server {
   }
 
   async getUserCount(): Promise<Number> {
-    const usersStorage = this.application.storageLayer.users;
-    let numUsers = await bluebird.fromCallback(cb => {
-      usersStorage.count({}, cb);
-    });
+    let numUsers;
+    try{
+      let usersRepository = new UsersRepository(this.application.storageLayer.events);
+      numUsers = await usersRepository.count();
+    } catch (error) {
+      this.logger.error(error);
+      throw error;
+    }
     return numUsers;
   }
-
 }
 module.exports = Server;

@@ -16,3 +16,4 @@ decls/
 [options]
 module.use_strict=true
 suppress_comment= \\(.\\|\n\\)*FLOW
+esproposal.optional_chaining=enable

@@ -36,6 +36,7 @@
 
 const APIError = require('./APIError');
 const ErrorIds = require('./ErrorIds');
+const ErrorMessages = require('./ErrorMessages');
 const _ = require('lodash');
 
 import type { APIErrorOptions } from './APIError';
@@ -137,12 +138,12 @@ factory.itemAlreadyExists = function (
   resourceType: ?string, conflictingKeys: { [string]: string }, innerError: ?Error
 ) {
   resourceType = resourceType || 'resource';
-  var article = _.includes(['a', 'e', 'i', 'o', 'u'], resourceType[0]) ? 'An ' : 'A ';
   var keysDescription = Object.keys(conflictingKeys).map(function (k) {
     return k + ' "' + conflictingKeys[k] + '"';
   }).join(', ');
-  var message = article + resourceType + ' with ' + keysDescription +
-      ' already exists';
+  var message = functionGetRightArticle(resourceType) + resourceType + ' with ' + keysDescription +
+    ' already exists';
+
   return new APIError(ErrorIds.ItemAlreadyExists, message, {
     httpStatus: 400,
     innerError: innerError || null,
@@ -161,6 +162,12 @@ factory.missingHeader = function (headerName: string, status: ?number): APIError
   );
 };
 
+/**
+ * Strange, but seems to be used only in tests
+ * @param {*} message 
+ * @param {*} data 
+ * @param {*} innerError 
+ */
 factory.periodsOverlap = function (message: string, data: Object, innerError: Error) {
   return new APIError(ErrorIds.PeriodsOverlap, message, {
     httpStatus: 400,
@@ -203,7 +210,7 @@ factory.unexpectedError = function (sourceError: mixed, message?: string) {
       innerError: error,
     };
     
-    const text = `Unexpected error: ${msg}`;
+    const text = `${ErrorMessages[ErrorIds.UnexpectedError]}: ${msg}`;
 
     return new APIError(ErrorIds.UnexpectedError, text, opts);  
   }
@@ -266,3 +273,23 @@ factory.unavailableMethod = function (message: ?string): APIError {
     }
   );
 };
+
+/**
+ * Check in service-register if email is used
+ * The name is used in the service-core and service-register
+ **/
+factory.InvalidInvitationToken = (): APIError => {
+  const opts: APIErrorOptions = {
+    httpStatus: 400,
+    data: {param: 'invitationToken'},
+  };
+  return new APIError(ErrorIds.InvalidInvitationToken,  ErrorMessages[ErrorIds.InvalidInvitationToken], opts);
+};
+
+/**
+ * Get the right article for the noun
+ * @param {*} noun 
+ */
+function functionGetRightArticle(noun){
+  return _.includes(['a', 'e', 'i', 'o', 'u'], noun[0].toLowerCase()) ? 'An ' : 'A ';
+}

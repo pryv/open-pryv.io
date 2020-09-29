@@ -83,15 +83,11 @@ class Database {
      
     this.connectionString = `mongodb://${authPart}${settings.host}:${settings.port}/${settings.name}`;
     this.databaseName = settings.name; 
-        
-    const m30 = 1800; // seconds in 30min
-    const s60 = 60000; // 60 seconds
-    const s1 = 1000; // 1 second
     this.options = {
       j: true, // Requests acknowledgement that the write operation has been written to the journal.
       w: 1,   // Requests acknowledgement that the write operation has propagated.
-      connectTimeoutMS: s60, 
-      socketTimeoutMS: s60,
+      connectTimeoutMS: settings.connectTimeoutMS, 
+      socketTimeoutMS: settings.socketTimeoutMS, 
       useNewUrlParser: true,
       appname: 'pryv.io core',
       useUnifiedTopology: true,
@@ -148,7 +144,7 @@ class Database {
       this.client = client;
       this.db = client.db(this.databaseName);
 
-      client.db('admin').command({setFeatureCompatibilityVersion: "3.6" }, {}, callback);
+      client.db('admin').command({ setFeatureCompatibilityVersion: "4.0" }, {}, callback);
     });
   }
 
@@ -177,7 +173,6 @@ class Database {
       // Make sure we have a connect
       await bluebird.fromCallback( 
         cb => this.ensureConnect(cb) ); 
-
       if (this.collectionConnectionsCache[collectionInfo.name]) {
         return callback(null, this.collectionConnectionsCache[collectionInfo.name]);
       }
@@ -188,10 +183,9 @@ class Database {
 
       this.addUserIdToIndexIfNeeded(collectionInfo);
 
-
       // Ensure that proper indexing is initialized
       await ensureIndexes.call(this, collection, collectionInfo.indexes);
-
+      
       this.collectionConnectionsCache[collectionInfo.name] = collection;
       // returning the collection.
       return callback(null, collection);
@@ -205,7 +199,6 @@ class Database {
     async function ensureIndexes(collection: Collection, indexes) {
       const initializedCollections = this.initializedCollections; 
       const collectionName: string = collection.collectionName;
-      
       if (indexes == null) return; 
       if (initializedCollections[collectionName]) return; 
       
@@ -213,7 +206,6 @@ class Database {
         const options = lodash.merge({}, item.options, {
           background: true
         });
-        
         await collection.createIndex(item.index, options);
       }
 
@@ -318,7 +310,6 @@ class Database {
    */
   find(collectionInfo: CollectionInfo, query: {}, options: FindOptions, callback: DatabaseCallback) {
     this.addUserIdIfneed(collectionInfo, query);
-   
     this.getCollectionSafe(collectionInfo, callback, collection => {
       const queryOptions = {
         projection: options.projection,
@@ -442,14 +433,22 @@ class Database {
    * @param {Object} item
    * @param {Function} callback
    */
-  insertOne(collectionInfo: CollectionInfo, item: Object, callback: DatabaseCallback) {
+  insertOne (collectionInfo: CollectionInfo, item: Object, callback: DatabaseCallback, options: Object) {
+    // default value for options 
+    const defaultOptions = { w: 1, j: true };
+    if (typeof options == null) {
+      options = defaultOptions;
+    } else {
+      options = { ...defaultOptions, ...options };
+    }
+
     this.addUserIdIfneed(collectionInfo, item);
     this.getCollectionSafe(collectionInfo, callback, collection => {
-      collection.insertOne(item, {w: 1, j: true}, (err, res) => {
+      collection.insertOne(item, options, (err, res) => {
         if (err != null) {
           Database.handleDuplicateError(err);
         }
-        callback(err,res);
+        callback(err, res);
       });
     });
   }
@@ -457,10 +456,21 @@ class Database {
   /**
    * Inserts an array of items (each item must have a valid id already).
    */
-  insertMany(collectionInfo: CollectionInfo, items: Array<Object>, callback: DatabaseCallback) {
+  insertMany (collectionInfo: CollectionInfo, items: Array<Object>, callback: DatabaseCallback, options: Object) {
+    const defaultOptions = { w: 1, j: true };
+    if (typeof options == null) {
+      options = defaultOptions;
+    } else {
+      options = { ...defaultOptions, ...options };
+    }
     this.addUserIdIfneed(collectionInfo, items);
     this.getCollectionSafe(collectionInfo, callback, collection => {
-      collection.insertMany(items, {w: 1, j: true}, callback);
+      collection.insertMany(items, options, (err, res) => {
+        if (err != null) {
+          Database.handleDuplicateError(err);
+        }
+        callback(err, res);
+      });
     });
   }
 
@@ -473,10 +483,18 @@ class Database {
    * @param {Object} update
    * @param {Function} callback
    */
-  updateOne(collectionInfo: CollectionInfo, query: Object, update: Object, callback: DatabaseCallback) {
+  updateOne (collectionInfo: CollectionInfo, query: Object, update: Object, callback: DatabaseCallback, options: Object) {
+    // default value for options 
+    const defaultOptions = { w: 1, j: true };
+    if (typeof options == null) {
+      options = defaultOptions;
+    } else {
+      options = { ...defaultOptions, ...options };
+    }
+
     this.addUserIdIfneed(collectionInfo, query);
     this.getCollectionSafe(collectionInfo, callback, collection => {
-      collection.updateOne(query, update, {w: 1, j: true}, (err, res) => {
+      collection.updateOne(query, update, options, (err, res) => {
         if (err != null) {
           Database.handleDuplicateError(err);
         }
@@ -501,25 +519,6 @@ class Database {
     });
   }
 
-  /**
-   * Applies the given update to the document(s) matching the given query.
-   * Does *not* return the document(s).
-   *
-   * @param {Object} collectionInfo
-   * @param {Object} query
-   * @param {Object} update
-   * @param {Object} options
-   * @param {Function} callback
-   */
-  updateWithOptions(collectionInfo: CollectionInfo, query: Object, update: Object, options: Object, callback: DatabaseCallback) {
-    const opts = lodash.clone(options); // apply defaults
-    opts.w = 1;
-    opts.j = true;
-    this.addUserIdIfneed(collectionInfo, query);
-    this.getCollectionSafe(collectionInfo, callback, collection => {
-      collection.updateMany(query, update, opts, callback);
-    });
-  }
 
   /**
    * Applies the given update to the document matching the given query, returning the updated
@@ -668,6 +667,30 @@ class Database {
       }
       return false;
     };
+    /**
+     * Returns the unique system streamId for the event that triggered the error (dot-less)
+     * Works only for system streams uniqueness constraints
+     */
+    err.getDuplicateSystemStreamId = (): string => {
+      if (err != null && err.errmsg != null && err.isDuplicate) {
+        // This check depends on the MongoDB storage engine
+        // We assume WiredTiger here (and not MMapV1).
+        const matching = err.errmsg.match(/index:(.+) dup key:/);
+        if (Array.isArray(matching) && matching.length >= 2) {
+          const matchingKeys = matching[1].split('__unique');
+          const matchingKey = matchingKeys[0].trim();
+          const separatedKeys = matchingKey.split('_');
+
+          // there are some cases for other unique fields to fail
+          if (matchingKeys.length == 1 && separatedKeys.length > 1) {
+            return separatedKeys[separatedKeys.length - 2];
+          } else {
+            return separatedKeys[separatedKeys.length - 1];
+          }
+        }
+      }
+      return '';
+    }
   }
 
   /// Closes this database connection. After calling this, all other methods 
@@ -675,6 +698,11 @@ class Database {
   /// 
   async close() {
     return this.client.close();
+  }
+
+  async startSession () {
+    const session = this.client.startSession();
+    return session;
   }
 }
 
@@ -686,6 +714,7 @@ type MongoDBError = {
   lastErrorObject?: MongoDBError,
   isDuplicate?: boolean,
   isDuplicateIndex?: (key: string) => boolean,
+  getDuplicateSystemStreamId?: () => string,
 }
 
 type DatabaseCallback = (err?: Error | null, result?: mixed) => mixed;

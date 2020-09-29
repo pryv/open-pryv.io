@@ -35,7 +35,9 @@
 // @flow
 
 var Validator = require('z-schema'),
-    validator = new Validator();
+  validator = new Validator({
+    breakOnFirstError: false
+  });
 
 /**
  * Validates the object against the JSON-schema definition.

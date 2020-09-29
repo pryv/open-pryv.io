@@ -33,13 +33,20 @@
  * 
  */
 var errors = require('components/errors').factory,
-    commonFns = require('./helpers/commonFunctions'),
-    mailing = require('./helpers/mailing'),
-    encryption = require('components/utils').encryption,
-    methodsSchema = require('../schema/accountMethods'),
-    request = require('superagent');
+  commonFns = require('./helpers/commonFunctions'),
+  mailing = require('./helpers/mailing'),
+  methodsSchema = require('../schema/accountMethods');
 
-/**
+const { getConfig } = require('components/api-server/config/Config');
+
+const Registration = require('components/business/src/auth/registration'),
+  ErrorMessages = require('components/errors/src/ErrorMessages'),
+  ErrorIds = require('components/errors').ErrorIds,
+  ServiceRegister = require('components/business/src/auth/service_register'),
+  UsersRepository = require('components/business/src/users/repository');
+  User = require('components/business/src/users/User'),
+  SystemStreamsSerializer = require('components/business/src/system-streams/serializer');
+  /**
  * @param api
  * @param usersStorage
  * @param passwordResetRequestsStorage
@@ -47,26 +54,28 @@ var errors = require('components/errors').factory,
  * @param servicesSettings Must contain `email` and `register`
  * @param notifications
  */
-module.exports = function (api, usersStorage, passwordResetRequestsStorage,
-  authSettings, servicesSettings, notifications) {
+module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
+  authSettings, servicesSettings, notifications, logging) {
 
-  var registerSettings = servicesSettings.register,
-      emailSettings = servicesSettings.email,
-      requireTrustedAppFn =  commonFns.getTrustedAppCheck(authSettings);
+  var emailSettings = servicesSettings.email,
+    requireTrustedAppFn = commonFns.getTrustedAppCheck(authSettings);
+
+  // initialize service-register connection
+  const serviceRegisterConn = new ServiceRegister(servicesSettings.register, logging.getLogger('service-register'));
+  const usersRepository = new UsersRepository(userEventsStorage);
 
   // RETRIEVAL
 
   api.register('account.get',
     commonFns.requirePersonalAccess,
     commonFns.getParamsValidation(methodsSchema.get.params),
-    function (context, params, result, next) {
-      usersStorage.findOne({id: context.user.id}, null, function (err, user) {
-        if (err) { return next(errors.unexpectedError(err)); }
-
-        sanitizeAccountDetails(user);
-        result.account = user;
+    async function (context, params, result, next) {
+      try {
+        result.account = context.user.getLegacyAccount();
         next();
-      });
+      } catch (err) {
+        return next(errors.unexpectedError(err));
+      }
     });
 
   // UPDATE
@@ -74,29 +83,56 @@ module.exports = function (api, usersStorage, passwordResetRequestsStorage,
   api.register('account.update',
     commonFns.requirePersonalAccess,
     commonFns.getParamsValidation(methodsSchema.update.params),
-    notifyEmailChangeToRegister,
-    updateAccount);
+    validateThatAllFieldsAreEditable,
+    notifyServiceRegister,
+    updateAccount,
+    buildResultData,
+  );
 
+  /**
+   * Validate if given parameters are allowed for the edit
+   * 
+   * @param {*} context 
+   * @param {*} params 
+   * @param {*} result 
+   * @param {*} next 
+   */
+  function validateThatAllFieldsAreEditable (context, params, result, next) {
+    const nonEditableAccountStreamsIds = SystemStreamsSerializer.getAccountStreamsIdsForbiddenForEditing();
+    Object.keys(params.update).forEach(streamId => {
+      const streamIdWithDot = SystemStreamsSerializer.addDotToStreamId(streamId);
+      if (nonEditableAccountStreamsIds.includes(streamIdWithDot)) {
+        // if user tries to add new streamId from non editable streamsIds
+        return next(errors.invalidOperation(
+          ErrorMessages[ErrorIds.ForbiddenToEditNoneditableAccountFields],
+          { field: streamId }
+        ));
+      }
+    })
+    next();
+  }
   // CHANGE PASSWORD
 
   api.register('account.changePassword',
     commonFns.requirePersonalAccess,
     commonFns.getParamsValidation(methodsSchema.changePassword.params),
     verifyOldPassword,
-    encryptNewPassword,
-    updateAccount,
-    cleanupResult);
+    addNewPasswordParameter,
+    updateAccount
+  );
 
-  function verifyOldPassword(context, params, result, next) {
-    encryption.compare(params.oldPassword, context.user.passwordHash, function (err, isValid) {
-      if (err) { return next(errors.unexpectedError(err)); }
-
-      if (! isValid) {
+  async function verifyOldPassword (context, params, result, next) {
+    try{
+      const isValid = await usersRepository.checkUserPassword(context.user.id, params.oldPassword);
+      if (!isValid) {
         return next(errors.invalidOperation(
           'The given password does not match.'));
       }
       next();
-    });
+    } catch (err) {
+      // handles unexpected errors
+      return next(err);
+    }
   }
 
   // REQUEST PASSWORD RESET
@@ -127,13 +163,13 @@ module.exports = function (api, usersStorage, passwordResetRequestsStorage,
        (isMailActivated != null && isMailActivated.resetPassword === false)) {
       return next();
     }
-    
+
     const recipient = {
       email: context.user.email,
       name: context.user.username,
       type: 'to'
     };
-    
+
     const substitutions = {
       RESET_TOKEN: context.resetToken,
       RESET_URL: authSettings.passwordResetPageURL
@@ -149,9 +185,9 @@ module.exports = function (api, usersStorage, passwordResetRequestsStorage,
     commonFns.getParamsValidation(methodsSchema.resetPassword.params),
     requireTrustedAppFn,
     checkResetToken,
-    encryptNewPassword,
-    updateAccount,
-    cleanupResult);
+    addNewPasswordParameter,
+    updateAccount
+  );
 
   function checkResetToken(context, params, result, next) {
     const username = context.user.username;
@@ -172,73 +208,64 @@ module.exports = function (api, usersStorage, passwordResetRequestsStorage,
     );
   }
 
-  function encryptNewPassword(context, params, result, next) {
+  function addNewPasswordParameter (context, params, result, next) {
     if (! params.newPassword) { return next(); }
-
-    encryption.hash(params.newPassword, function (err, hash) {
-      if (err) { return next(errors.unexpectedError(err)); }
-
-      params.update = {passwordHash: hash};
-      next();
-    });
-  }
-
-  function notifyEmailChangeToRegister(context, params, result, next) {
-    const currentEmail = context.user.email;
-    const newEmail = params.update.email;
-
-    if (newEmail == null || newEmail === currentEmail) {
-      return next();
-    }
-    // email was changed, must notify registration server
-    const regChangeEmailURL = registerSettings.url + '/users/' + context.user.username +
-        '/change-email';
-    request.post(regChangeEmailURL)
-      .set('Authorization', registerSettings.key)
-      .send({email: newEmail})
-      .end(function (err, res) {
-
-        if (err != null || (res && ! res.ok)) {
-          let errMsg = 'Failed to update email on register. ';
-          // for some reason register returns error message within res.body
-          if (res != null && res.body != null && res.body.message != null) {
-            errMsg += res.body.message;
-          } else if (err != null && err.message != null) {
-            errMsg += err.message;
-          }
-          return next(errors.invalidOperation(errMsg, {email: newEmail}, err));
-        }
-
-        next();
-      });
-  }
-
-  function updateAccount(context, params, result, next) {
-    usersStorage.updateOne({id: context.user.id}, params.update, function (err, updatedUser) {
-      if (err) { return next(errors.unexpectedError(err)); }
-
-      sanitizeAccountDetails(updatedUser);
-      result.account = updatedUser;
-      notifications.accountChanged(context.user);
-      next();
-    });
-  }
-
-  function cleanupResult(context, params, result, next) {
-    delete result.account;
+    params.update = { password: params.newPassword };
     next();
   }
 
-  function sanitizeAccountDetails(data) {
-    delete data.id;
-    delete data.passwordHash;
-    if (! data.storageUsed) {
-      data.storageUsed = {
-        dbDocuments: -1,
-        attachedFiles: -1
-      };
+  async function notifyServiceRegister (context, params, result, next) {
+    // no need to update service register if it is single node setup
+    if (getConfig().get('singleNode:isActive') === true) {
+      return next();
     }
+    try {
+      const serviceRegisterRequest = await context.user.getUpdateRequestToServiceRegister(
+        params.update,
+        true
+      );
+      await serviceRegisterConn.updateUserInServiceRegister(
+        context.user.username,
+        serviceRegisterRequest,
+        {}
+      );
+    } catch (err) {
+      return next(err);
+    }
+    next();
   }
 
+  async function updateAccount(context, params, result, next) {
+    try {
+      const accessId = (context.access?.id) ? context.access.id : UsersRepository.options.SYSTEM_USER_ACCESS_ID
+      await usersRepository.updateOne(
+        context.user,
+        params.update,
+        accessId,
+      );
+      notifications.accountChanged(context.user);
+    } catch (err) {
+      return next(Registration.handleUniquenessErrors(
+        err,
+        ErrorMessages[ErrorIds.UnexpectedError],
+        params.update
+      ));
+    }
+    next();
+  }
+
+  /**
+   * Build response body for the account update
+   * @param {*} context 
+   * @param {*} params 
+   * @param {*} result 
+   * @param {*} next 
+   */
+  async function buildResultData (context, params, result, next) {
+    Object.keys(params.update).forEach(key => {
+      context.user[key] = params.update[key];
+    });
+    result.account = context.user.getLegacyAccount();
+    next();
+  }
 };
-module.exports.injectDependencies = true;

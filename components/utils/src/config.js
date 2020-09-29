@@ -207,6 +207,14 @@ config.schema = {
     name: {
       format: String,
       default: 'pryv-node'
+    },
+    connectTimeoutMS: {
+      default: 60000,
+      env: 'CONNECT_TIMOUT_MS'
+    },
+    socketTimeoutMS: {
+      default: 60000,
+      env: 'SOCKET_TIMOUT_MS'
     }
   },
   eventFiles: {
@@ -337,7 +345,7 @@ config.schema = {
           'by default because of a security vulnerability',
       }
     }
-  }
+  },
 };
 
 /**
@@ -380,11 +388,10 @@ function setup(configDefault) {
   autoSetEnvAndArg(config.schema);
 
   var instance = convict(config.schema);
-
   var filePath = instance.get('config') ||
                  configDefault ||
-                 'config/' + instance.get('env') + '.json';
-
+    '../api-server/config/' + instance.get('env') + '.json';
+  
   loadFile(filePath);
 
   var overridesFilePath = instance.get('configOverrides');
@@ -392,8 +399,9 @@ function setup(configDefault) {
     loadFile(overridesFilePath);
   }
 
-  instance.validate();
-  
+  if (!instance.get('env') === 'test') {
+    instance.validate();
+  }
   return instance; 
 
   function loadFile(fPath) {

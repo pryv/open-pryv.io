@@ -34,7 +34,7 @@
  */
 var Transform = require('stream').Transform,
     inherits = require('util').inherits,
-    utils = require('components/utils');
+  utils = require('components/utils');
 
 module.exports = SetFileReadTokenStream;
 
@@ -57,7 +57,7 @@ function SetFileReadTokenStream(params) {
 inherits(SetFileReadTokenStream, Transform);
 
 SetFileReadTokenStream.prototype._transform = function (event, encoding, callback) {
-
+  
   // To remove when streamId not necessary
   event.streamId = event.streamIds[0];
 

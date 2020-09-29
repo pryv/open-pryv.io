@@ -48,9 +48,12 @@ module.exports = function (action) {
     type: 'object',
     additionalProperties: false,
     properties: {
-      'username': helpers.string({pattern: '^[a-z0-9][a-z0-9\\-]{3,21}[a-z0-9]$'}),
-      'email': helpers.email,
-      'language': helpers.language,
+      username: helpers.username,
+      email: helpers.email,
+      language: helpers.language,
+      appId: helpers.string(),
+      referer: helpers.string({ nullable: true }), 
+      invitationToken: helpers.string({ nullable: true }), 
       storageUsed: helpers.object({
         dbDocuments: helpers.number(),
         attachedFiles: helpers.number()
@@ -72,8 +75,10 @@ module.exports = function (action) {
   case Action.READ:
     schema.required = [ 'id', 'username', 'email', 'language' ];
     break;
-  case Action.STORE:
-    schema.required = [ 'id', 'username', 'passwordHash', 'email', 'language', 'storageUsed' ];
+    case Action.STORE:
+    schema.required = ['id', 'username', 'email', 'language', 'storageUsed' ];
+    // TODO ILIA - load custom streams correctly here as is done in schema/authMethods
+    schema.additionalProperties = true;
     break;
   case Action.CREATE:
     schema.required = [ 'username', 'passwordHash', 'email', 'language' ];

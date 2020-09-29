@@ -56,7 +56,7 @@ module.exports = function expressApp(
   /** Called once routes are defined on app, allows finalizing middleware stack
    * with things like error handling.
    **/
-  function routesDefined() {
+  function routesDefined () {
     app.use(errorsMiddleware);
   }
 
@@ -73,4 +73,3 @@ module.exports = function expressApp(
     routesDefined: routesDefined,
   };
 };
-module.exports.injectDependencies = true;

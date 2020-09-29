@@ -32,13 +32,13 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
-var commonFns = require('./helpers/commonFunctions'),
-    utils = require('components/utils'),
-    encryption = utils.encryption,
-    errors = require('components/errors').factory,
-    methodsSchema = require('../schema/authMethods'),
-    _ = require('lodash');
-
+const commonFns = require('components/api-server/src/methods/helpers/commonFunctions');
+const utils = require('components/utils');
+const errors = require('components/errors').factory;
+const methodsSchema = require('components/api-server/src/schema/authMethods');
+const _ = require('lodash');
+const UsersRepository = require('components/business/src/users/repository');
+const ErrorIds = require('components/errors/src/ErrorIds');
 /**
  * Auth API methods implementations.
  *
@@ -47,9 +47,9 @@ var commonFns = require('./helpers/commonFunctions'),
  * @param sessionsStorage
  * @param authSettings
  */
-module.exports = function (api, userAccessesStorage, sessionsStorage, authSettings) {
-  // LOGIN
-
+module.exports = function (api, userAccessesStorage, sessionsStorage, userEventsStorage, authSettings) {
+  const usersRepository = new UsersRepository(userEventsStorage);
+  
   api.register('auth.login',
     commonFns.getParamsValidation(methodsSchema.login.params),
     commonFns.getTrustedAppCheck(authSettings),
@@ -68,15 +68,17 @@ module.exports = function (api, userAccessesStorage, sessionsStorage, authSettin
     next();
   }
 
-  function checkPassword(context, params, result, next) {
-    encryption.compare(params.password, context.user.passwordHash, function (err, isValid) {
-      if (err) { return next(errors.unexpectedError(err)); }
-
-      if (! isValid) {
+  async function checkPassword (context, params, result, next) {
+    try {
+      const isValid = await usersRepository.checkUserPassword(context.user.id, params.password);
+      if (!isValid) {
         return next(errors.invalidCredentials());
       }
       next();
-    });
+    } catch (err) {
+      // handles unexpected errors
+      return next(err);
+    }
   }
 
   function openSession(context, params, result, next) {
@@ -90,7 +92,7 @@ module.exports = function (api, userAccessesStorage, sessionsStorage, authSettin
         result.token = sessionId;
         next();
       } else {
-        sessionsStorage.generate(context.sessionData, function (err, sessionId) {
+        sessionsStorage.generate(context.sessionData, null, function (err, sessionId) {
           if (err) { return next(errors.unexpectedError(err)); }
           result.token = sessionId;
           next();
@@ -140,12 +142,12 @@ module.exports = function (api, userAccessesStorage, sessionsStorage, authSettin
     
     function createAccess(access, context, callback) {
       _.extend(access, context.accessQuery);
-      context.initTrackingProperties(access, 'system');
+      context.initTrackingProperties(access, UsersRepository.options.SYSTEM_USER_ACCESS_ID);
       userAccessesStorage.insertOne(context.user, access, callback);
     }
     
     function updatePersonalAccess(access, context, callback) {
-      context.updateTrackingProperties(access, 'system');
+      context.updateTrackingProperties(access, UsersRepository.options.SYSTEM_USER_ACCESS_ID);
       userAccessesStorage.updateOne(context.user, context.accessQuery, access, callback);
     }
   }
@@ -168,4 +170,3 @@ module.exports = function (api, userAccessesStorage, sessionsStorage, authSettin
   }
 
 };
-module.exports.injectDependencies = true;

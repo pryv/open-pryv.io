@@ -3,15 +3,18 @@
 // Binary for nightly tasks setup. 
 
 const Settings = require('../src/settings');
-const bluebird = require('bluebird');
+const { getConfig } = require('components/api-server/config/Config');
 const Application = require('../src/application');
 let logger;
+const Repository = require('components/business/src/users/repository');
 
 (async () => {
   // Load settings asynchronously because we have to fetch
   // some values from register via an http-get request.
   const settings = await Settings.load(); 
-
+  const config = getConfig();
+  await config.init();
+  
   // Construct application
   const app = new Application(settings);
   logger = app.logFactory('nightly-tasks');
@@ -20,7 +23,7 @@ let logger;
   const storage = require('../../storage');
   const storageLayer = app.storageLayer;
   const storageSize = new storage.Size(
-    storageLayer.users,
+    storageLayer.events,
     [ storageLayer.accesses,
       storageLayer.events,
       storageLayer.followedSlices,
@@ -57,22 +60,19 @@ let logger;
  */
 async function runNightlyTasks(storageLayer, storageSize) {
   logger.info('Starting update of storage size');
-  
+
   // Retrieve all existing users
-  const users = await bluebird.fromCallback(
-    (cb) => storageLayer.users.find(
-      {$nor: [{username: /^pool@.*/}, {username: /^temp@.*/}]}, null, cb));
+  const usersRepository = new Repository(storageLayer.events);
+  const users = await usersRepository.getAll();
 
   // Compute storage size used by each user
   for (const user of users) {
-    const computeForUser = bluebird.fromCallback(
-      (cb) => storageSize.computeForUser(user, cb));
-      
-    await computeForUser
-      .catch((err) => {
-        logger.error('Error computing storage size for user "' +
-          user.username + '" ' + '(' + user.id + '): ' + err);
-      });
+    try {
+      await storageSize.computeForUser(user);
+    } catch (err) {
+      logger.error('Error computing storage size for user "' +
+        user.username + '" ' + '(' + user.id + '): ' + err);
+    }
   }
   
   logger.info(users.length + ' users updated.');

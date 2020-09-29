@@ -88,13 +88,18 @@ function setupSocketIO(
       const userName = manager.extractUsername(nsName);
       if (userName == null) throw new Error(`Invalid resource "${nsName}".`);
       if (query.auth == null) throw new Error("Missing 'auth' parameter with a valid access token.");
-      const context = new MethodContext(userName, query.auth, customAuthStepFn);
+      const context = new MethodContext(
+        userName,
+        query.auth,
+        customAuthStepFn,
+        storageLayer.events
+      );
       // Load user, init the namespace
-      await context.retrieveUser(storageLayer);
+      await context.retrieveUser();
       if (context.user == null) throw new Error('AF: context.user != null');
     
       // Load user, init the namespace
-      await context.retrieveUser(storageLayer);
+      await context.retrieveUser();
       if (context.username == null) throw new Error('AF: context.username != null');
       // Load access
       await context.retrieveExpandedAccess(storageLayer);

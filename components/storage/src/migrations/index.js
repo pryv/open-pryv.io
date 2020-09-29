@@ -49,5 +49,6 @@ module.exports = {
   '1.2.5': require('./1.2.5.js'),
   '1.3.40': require('./1.3.40.js'),
   '1.4.0': require('./1.4.0.js'),
-  '1.5.0': require('./1.5.0.js')
+  '1.5.0': require('./1.5.0.js'),
+  '1.6.0': require('./1.6.0.js'),
 };

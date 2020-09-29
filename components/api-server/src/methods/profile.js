@@ -122,4 +122,3 @@ module.exports = function (api, userProfileStorage) {
   }
 
 };
-module.exports.injectDependencies = true;
