@@ -28,7 +28,7 @@ services:
       - app-network
 
   open-pryv-mongo:
-    image: mongo:3.6.18
+    image: mongo:4.2.9
     container_name: "open-pryv-mongo"
     restart: "always"
     volumes:
