@@ -36,11 +36,19 @@
 
 'use strict';
 const _ = require('lodash');
+const fs = require('fs');
+const path = require('path');
+const { Config } = require('components/api-server/config/Config');
 const treeUtils = require('components/utils/src/treeUtils');
 const validation = require('components/api-server/src/schema/validation');
 const string = require('components/api-server/src/methods/helpers/string');
 const slugify = require('slug');
 const systemStreamSchema = require('./systemStreamSchema');
+
+let additionalDefaultAccountStreams;
+if (fs.existsSync(path.join(path.dirname(__filename), 'additionalDefaultAccountStreams.json'))) {
+  additionalDefaultAccountStreams = require('./additionalDefaultAccountStreams.json');
+}
 
 const DEFAULT_VALUES_FOR_FIELDS = {
   isIndexed: false, // if true will be sent to service-register to be able to query across the platform
@@ -52,76 +60,82 @@ const DEFAULT_VALUES_FOR_FIELDS = {
 
 async function load(config: Config): Config {
   // default system streams that should be not changed
-  config.set('systemStreams:account', [
-    _.extend({}, DEFAULT_VALUES_FOR_FIELDS, {
-      isIndexed: true,
-      isUnique: true,
-      isShown: true,
-      type: 'identifier/string',
-      name: 'Username',
-      id: '.username',
-      isRequiredInValidation: true
-    }),
-    _.extend({}, DEFAULT_VALUES_FOR_FIELDS, {
-      isIndexed: true,
-      isShown: true,
-      isEditable: true,
-      default: 'en',
-      type: 'language/iso-639-1',
-      name: 'Language',
-      id: '.language'
-    }),
-    _.extend({}, DEFAULT_VALUES_FOR_FIELDS, {
-      isIndexed: true,
-      default: '',
-      isRequiredInValidation: true,
-      isIndexed: true,
-      type: 'identifier/string',
-      name: 'appId',
-      id: '.appId'
-    }),
-    _.extend({}, DEFAULT_VALUES_FOR_FIELDS, {
-      isIndexed: true,
-      default: 'no-token',
-      type: 'token/string',
-      name: 'Invitation Token',
-      id: '.invitationToken'
-    }),
-    _.extend({}, DEFAULT_VALUES_FOR_FIELDS, {
-      type: 'password-hash/string',
-      name: 'Password Hash',
-      id: '.passwordHash'
-    }),
-    _.extend({}, DEFAULT_VALUES_FOR_FIELDS, {
-      isIndexed: true,
-      default: null,
-      type: 'identifier/string',
-      name: 'Referer',
-      id: '.referer'
-    }),
+  let defaultAccountStreams = [
+    {
+      "isIndexed": true,
+      "isUnique": true,
+      "isShown": true,
+      "type": "identifier/string",
+      "name": "Username",
+      "id": ".username",
+      "isRequiredInValidation": true
+    },
+    {
+      "isIndexed": true,
+      "isShown": true,
+      "isEditable": true,
+      "default": "en",
+      "type": "language/iso-639-1",
+      "name": "Language",
+      "id": ".language"
+    },
+    {
+      "isIndexed": true,
+      "default": "",
+      "isRequiredInValidation": true,
+      "type": "identifier/string",
+      "name": "appId",
+      "id": ".appId"
+    },
+    {
+      "isIndexed": true,
+      "default": "no-token",
+      "type": "token/string",
+      "name": "Invitation Token",
+      "id": ".invitationToken"
+    },
+    {
+      "type": "password-hash/string",
+      "name": "Password Hash",
+      "id": ".passwordHash"
+    },
+    {
+      "isIndexed": true,
+      "default": null,
+      "type": "identifier/string",
+      "name": "Referer",
+      "id": ".referer"
+    },
     {
       id: '.storageUsed',
       isShown: true,
       name: 'Storage used',
-      type: 'data-quantity/b',
+      type: 'data-quantity/b',      
       children: [
-        _.extend({}, DEFAULT_VALUES_FOR_FIELDS, {
+        {
           isShown: true,
           default: 0,
           type: 'data-quantity/b',
           name: 'Db Documents',
           id: '.dbDocuments'
-        }),
-        _.extend({}, DEFAULT_VALUES_FOR_FIELDS, {
+        },
+        {
           isShown: true,
           default: 0,
           type: 'data-quantity/b',
           name: 'Attached files',
           id: '.attachedFiles'
-        })
+        }
       ]
     }
-  ]);
+  ];
+  
+  if (additionalDefaultAccountStreams) {
+    defaultAccountStreams = defaultAccountStreams.concat(additionalDefaultAccountStreams);
+  }
+
+  defaultAccountStreams = extendSystemStreamsWithDefaultValues(defaultAccountStreams);
+  config.set('systemStreams:account', defaultAccountStreams);
   config.set('systemStreams:helpers', [
     _.extend({}, DEFAULT_VALUES_FOR_FIELDS, {
       isIndexed: false,

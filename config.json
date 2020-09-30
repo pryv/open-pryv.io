@@ -31,5 +31,6 @@
         "resetPassword": true
       }
     }
-  }
+  },
+  "serviceInfoUrl": "file://configs/service-info.json"
 }
