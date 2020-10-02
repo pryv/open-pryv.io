@@ -2,7 +2,7 @@
   "openSource": {
     "isActive": true
   },
-  "dnsLess": {
+  "singleNode": {
     "isActive": true,
     "publicUrl": "http://localhost:3000"
   },
