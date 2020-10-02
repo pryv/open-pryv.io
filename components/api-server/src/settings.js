@@ -85,8 +85,8 @@ class Settings implements ConfigAccess {
     settingsSingleton = new Settings(ourConfig);
 
     // I was not able to find a better place  -- to be changed 
-    if (ourConfig.get('dnsLess.isActive')) {
-      let publicUrl = ourConfig.get('dnsLess.publicUrl');
+    if (ourConfig.get('singleNode.isActive')) {
+      let publicUrl = ourConfig.get('singleNode.publicUrl');
       if (publicUrl.slice(-1) === '/') publicUrl = publicUrl.slice(0, -1);
       ourConfig.set('auth.passwordResetPageURL', publicUrl + wwwPath + '/access/reset-password.html');
     }

@@ -60,10 +60,10 @@ config.schema = {
       doc: 'Used when webhooks and HFS are not available to cut off unavailble dependencies that would make the service crash.'
     }
   },  
-  dnsLess: {
+  singleNode: {
     isActive: {
       format: Boolean,
-      default: false,
+      default: true,
       doc: 'Activates routes /reg and /www. Builds service information on publicUrl.\n' + 
       'This requires to have built-in register and app-web-auth3.',
     },

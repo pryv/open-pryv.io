@@ -48,8 +48,8 @@ const FILE_PROTOCOL_LENGTH = FILE_PROTOCOL.length;
 const SERVICE_INFO_PATH = '/service/info';
 const REGISTER_URL_CONFIG = 'services.register.url';
 const SERVICE_INFO_URL_CONFIG = 'serviceInfoUrl';
-const DNS_LESS_VERSION_CONFIG = 'dnsLess.isActive'; 
-const DNS_LESS_PUBLIC_URL_CONFIG = 'dnsLess.publicUrl';
+const SINGLE_NODE_VERSION_CONFIG = 'singleNode.isActive'; 
+const SINGLE_NODE_PUBLIC_URL_CONFIG = 'singleNode.publicUrl';
 
 class ServiceInfo {
 
@@ -93,16 +93,17 @@ class ServiceInfo {
 
   static async addToConvict(convictInstance) {
 
-    let isDnsLess = convictInstance.get(DNS_LESS_VERSION_CONFIG);
-    if (isDnsLess) {
-      const dnsLessPublicUrl = convictInstance.get(DNS_LESS_PUBLIC_URL_CONFIG);
-      if (dnsLessPublicUrl.slice(-1) === '/') dnsLessPublicUrl = dnsLessPublicUrl.slice(0, -1);
+    let isSingleNode = convictInstance.get(SINGLE_NODE_VERSION_CONFIG);
+    if (isSingleNode) {
+      let singleNodePublicUrl = convictInstance.get(SINGLE_NODE_PUBLIC_URL_CONFIG);
+      if (singleNodePublicUrl.slice(-1) === '/') singleNodePublicUrl = singleNodePublicUrl.slice(0, -1);
       convictInstance.set('service.serial', 't' + Math.round(Date.now() / 1000));
-      convictInstance.set('service.api', dnsLessPublicUrl + '/{username}/');
-      convictInstance.set('service.register', dnsLessPublicUrl + regPath + '/');
-      convictInstance.set('service.access', dnsLessPublicUrl + regPath + '/access/');
+      convictInstance.set('service.api', singleNodePublicUrl + '/{username}/');
+      convictInstance.set('service.register', singleNodePublicUrl + regPath + '/');
+      convictInstance.set('service.access', singleNodePublicUrl + regPath + '/access/');
+      convictInstance.set('service.eventTypes', 'https://api.pryv.com/event-types/flat.json');
       convictInstance.set('service.assets', {
-        definitions: dnsLessPublicUrl + wwwPath + '/assets/index.json',
+        definitions: singleNodePublicUrl + wwwPath + '/assets/index.json',
       });
       return;
     }

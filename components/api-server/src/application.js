@@ -110,7 +110,7 @@ class Application {
 
   async createExpressApp(): Promise<express$Application> {
     this.expressApp = await expressAppInit( 
-      this.settings.get('dnsLess.isActive').bool(), 
+      this.settings.get('singleNode.isActive').bool(), 
       this.logging);
   }
 

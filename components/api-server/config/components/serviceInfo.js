@@ -48,21 +48,20 @@ const FILE_PROTOCOL: string = 'file://';
 const FILE_PROTOCOL_LENGTH: number = FILE_PROTOCOL.length;
 const SERVICE_INFO_PATH: string = '/service/info';
 
-async function load(config: Config): Config {
+async function load (config: Config): Config {
   const serviceInfoUrl: string = config.get('serviceInfoUrl');
+  let isSingleNode: boolean = config.get('singleNode:isActive');
 
   if (process.env.NODE_ENV !== 'test')
     console.info('Fetching serviceInfo from: ' + serviceInfoUrl);
 
-  if (serviceInfoUrl == null) {
+  if (serviceInfoUrl == null && !isSingleNode) {
     console.error(
       'Parameter "serviceInfoUrl" is undefined, set it in the configuration to allow core to provide service info'
     );
     process.exit(2);
     return null;
   }
-
-  let isSingleNode: boolean = config.get('singleNode:isActive');
 
   try {
     let serviceInfo: ?{};
@@ -87,21 +86,21 @@ module.exports.load = load;
 function buildServiceInfo(config: {}): {} {
   let serviceInfo: {} = {};
 
-  let dnsLessPublicUrl: string = config.get('singleNode:publicUrl');
+  let singleNodePublicUrl: string = config.get('singleNode:publicUrl');
 
-  if (dnsLessPublicUrl == null || (typeof dnsLessPublicUrl != 'string')) {
-    console.error('Core started in singleNode mode, but invalid publicUrl was set: "' + dnsLessPublicUrl + '". Exiting');
+  if (singleNodePublicUrl == null || (typeof singleNodePublicUrl != 'string')) {
+    console.error('Core started in singleNode mode, but invalid publicUrl was set: "' + singleNodePublicUrl + '". Exiting');
     process.exit(2);
   }
 
-  if (dnsLessPublicUrl.slice(-1) === '/') dnsLessPublicUrl = dnsLessPublicUrl.slice(0, -1);
+  if (singleNodePublicUrl.slice(-1) === '/') singleNodePublicUrl = singleNodePublicUrl.slice(0, -1);
 
   serviceInfo.serial = 't' + Math.round(Date.now() / 1000);
-  serviceInfo.api = dnsLessPublicUrl + '/{username}/';
-  serviceInfo.register = dnsLessPublicUrl + regPath + '/';
-  serviceInfo.access = dnsLessPublicUrl + regPath + '/access/';
+  serviceInfo.api = singleNodePublicUrl + '/{username}/';
+  serviceInfo.register = singleNodePublicUrl + regPath + '/';
+  serviceInfo.access = singleNodePublicUrl + regPath + '/access/';
   serviceInfo.assets = {
-    definitions: dnsLessPublicUrl + wwwPath + '/assets/index.json',
+    definitions: singleNodePublicUrl + wwwPath + '/assets/index.json',
     };
   return serviceInfo;
 }
