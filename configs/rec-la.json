@@ -1,9 +1,5 @@
 {
-  "openSource": {
-    "isActive": true
-  },
-  "dnsLess": {
-    "isActive": true,
+  "singleNode": {
     "publicUrl": "https://my-computer.rec.la:4443"
   },
   "http": {

@@ -10,6 +10,9 @@
   "scripts": {
     "start": "./bin/server --config ./config.hjson"
   },
+  "resolutions": {
+    "**/yargs-parser": "13.1.2"
+  },
   "dependencies": {
     "bluebird": "^3.7.2",
     "body-parser": "^1.19.0",

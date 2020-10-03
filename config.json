@@ -1,9 +1,5 @@
 {
-  "openSource": {
-    "isActive": true
-  },
   "singleNode": {
-    "isActive": true,
     "publicUrl": "http://localhost:3000"
   },
   "http": {
