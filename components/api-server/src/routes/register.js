@@ -32,31 +32,17 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
-// @flow
+const express = require('express');
+const Paths = require('./Paths');
+const methodCallback = require('./methodCallback');
 
-import type { MethodContext } from 'components/model';
-import type API from '../API';
-import type { ApiCallback } from '../API';
-import type Result from '../Result';
-import type { Logger } from 'components/utils';
-import type { ConfigAccess } from '../settings';
+import type Application from '../application';
 
-const _ = require('lodash');
-const { getConfig, Config } = require('components/api-server/config/Config');
+module.exports = function(expressApp: express$Application, app: Application) {  
+  const api = app.api;
 
-module.exports = function (api: API, logger: Logger, settings: ConfigAccess) {
-  this.serviceInfo = null;
-  const config: Config = getConfig();
-
-  api.register('service.info',
-    getServiceInfo
-  );
-
-  async function getServiceInfo(context: MethodContext, params: mixed, result: Result, next: ApiCallback) {  
-    if (! this.serviceInfo) {
-      this.serviceInfo = config.get('service');
-    }
-    result = _.merge(result, this.serviceInfo);
-    return next();
-  }
-};
+  // singleNode compatible route
+  expressApp.get('/reg/service/info', function (req: express$Request, res, next) {
+    api.call('service.info', req.context, req.query, methodCallback(res, next, 200));
+  });
+}

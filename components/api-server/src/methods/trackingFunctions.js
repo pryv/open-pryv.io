@@ -70,7 +70,7 @@ module.exports = function (
 
     // handle own errors not to mess with "concurrent" code (because of next() above)
     try {
-      const access = context.access;
+      const access = context?.access;
       if (access) {
         const calledMethodKey = string.toMongoKey(context.calledMethodId);
         const prevCallCount = (access.calls && access.calls[calledMethodKey]) ?
@@ -92,7 +92,7 @@ module.exports = function (
       }
     } catch (err) {
       errorHandling.logError(errors.unexpectedError(err), {
-        url: context.user.username,
+        url: context?.user?.username,
         method: 'updateAccessLastUsed',
         body: params
       }, logger);

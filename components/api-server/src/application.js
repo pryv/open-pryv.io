@@ -117,10 +117,11 @@ class Application {
   initiateRoutes() {
     const isOpenSource = this.settings.get('openSource.isActive').bool();
     if (isOpenSource) {
-      require('../../www')(this.expressApp, this);
+      require('components/www')(this.expressApp, this);
+      require('./routes/register')(this.expressApp, this);
     }
 
-    // system, root, register and delete MUST come first
+    // system, root, register and delete MUST come firs
     require('./routes/auth/delete')(this.expressApp, this);
     require('./routes/auth/register')(this.expressApp, this);
     require('./routes/system')(this.expressApp, this);

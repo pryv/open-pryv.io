@@ -61,7 +61,7 @@ The dockerized versions are available at this link: [Download link](https://api.
 
 If you wish to build the images yourself, refer to the following README: [docker/README-build.md](docker/README-build.md).
 
-Once it is running, you can continue with the [tutorials](#dockerized).
+Once it is running, you can continue with the [tutorials](#start).
 
 ### Native
 
