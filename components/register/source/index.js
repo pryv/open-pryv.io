@@ -73,7 +73,6 @@ module.exports = async (expressApp, application) => {
   // public API routes
   require('./routes/email')(app);
   require('./routes/service')(app);
-  require('./routes/users')(app);
   require('./routes/access')(app);
   require('./routes/admin')(app);
   require('./routes/server')(app); // only used for backwards compatiblity with DNS set-up

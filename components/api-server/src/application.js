@@ -118,6 +118,9 @@ class Application {
     const isOpenSource = this.settings.get('openSource.isActive').bool();
     if (isOpenSource) {
       require('components/www')(this.expressApp, this);
+      require('components/register')(this.expressApp, this);
+    }
+    if (this.settings.get('singleNode.isActive').bool()) {
       require('./routes/register')(this.expressApp, this);
     }
 

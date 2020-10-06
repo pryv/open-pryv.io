@@ -34,6 +34,7 @@
  */
 
 const home = require('../config').get('service').home;
+const publicUrl = require('../config').get('publicUrl');
 
 function getHostings() {
   return {
@@ -48,7 +49,8 @@ function getHostings() {
                 url: home, // here we set the sole dynamic var
                 name: 'Pryv.io',
                 description: 'Self hosted',
-                available: true
+                available: true,
+                availableCore: publicUrl
               }
             }
           }

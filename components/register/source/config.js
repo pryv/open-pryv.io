@@ -48,7 +48,7 @@ module.exports = {
   },
   loadSettings: function(settings) {
     config.service = settings.get('service').obj();
-    let publicUrl = settings.get('dnsLess.publicUrl').str();
+    let publicUrl = settings.get('singleNode.publicUrl').str();
     if (publicUrl.slice(-1) === '/') publicUrl = publicUrl.slice(0, -1);
     config.publicUrl = publicUrl;
     config['access:trustedAuthUrls'] = [publicUrl];
