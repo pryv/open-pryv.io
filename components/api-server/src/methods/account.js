@@ -209,7 +209,9 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
   }
 
   function addNewPasswordParameter (context, params, result, next) {
-    if (! params.newPassword) { return next(); }
+    if (!context.user.passwordHash) {
+      return next(errors.unexpectedError());
+    }
     params.update = { password: params.newPassword };
     next();
   }

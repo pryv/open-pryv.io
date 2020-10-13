@@ -102,10 +102,17 @@ class User {
   }
 
   /**
-   * 
+   * Get only readable account information
    */
   getAccount (): {} {
     return _.pick(this, this.readableAccountFields);
+  }
+
+  /**
+   * Get full account information
+   */
+  getFullAccount (): {} {
+    return _.pick(this, this.accountFields);
   }
 
   /**
@@ -247,7 +254,7 @@ async function buildEventsFromAccount (user: User): Array<{}> {
   const userAccountStreams = SystemStreamsSerializer.getAllAccountStreamsLeaves();
   
   // convert to events
-  let account = user.getAccount();
+  let account = user.getFullAccount();
 
   // change password into hash (also allow for tests to pass passwordHash directly)
   if (user.password && !user.passwordHash) {

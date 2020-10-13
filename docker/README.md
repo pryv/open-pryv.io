@@ -7,6 +7,7 @@ This archive contains the necessary files to download and run Open Pryv.io.
 - [Docker v19.03](https://docs.docker.com/engine/install/)
 - [Docker-compose v1.26](https://docs.docker.com/compose/install/)
 - [Yarn v1.22.4](https://classic.yarnpkg.com/en/docs/install/)
+- Rsync (for Backup and restore only)
 
 ## Local dev with SSL
 
@@ -49,6 +50,16 @@ docker-compose -f production-no-ssl/docker-compose.yml up
 ```
 
 It will run Open Pryv.io on http://0.0.0.0:3000. However, all [service information](https://api.pryv.com/reference/#service-info) resources will be advertised on https://${HOSTNAME}.
+
+## Backup
+
+Run `./scripts/backup-database-docker.sh` to generate a dump of the current database contents in `var-pryv/backup/`.  
+Run `./scripts/backup-attachments-docker.sh ${BACKUP_FOLDER}` to copy the current attachment files.
+
+## Restore
+
+Run `./scripts/restore-database-docker.sh` to restore data from `var-pryv/backup/`.  
+Run `./scripts/restore-attachments-docker.sh ${BACKUP_FOLDER}` to restore attachments data from the provided backup folder.
 
 # License
 Copyright (c) 2020 Pryv S.A. https://pryv.com

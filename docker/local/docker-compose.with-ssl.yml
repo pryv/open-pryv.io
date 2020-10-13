@@ -32,7 +32,8 @@ services:
     container_name: "open-pryv-mongo"
     restart: "always"
     volumes:
-        - ../var-pryv/mongodb/data/:/data/db/
+      - ../var-pryv/mongodb/data/:/data/db/
+      - ../var-pryv/mongodb/backup/:/data/backup/
     networks:
       - app-network
 
