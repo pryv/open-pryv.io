@@ -244,6 +244,7 @@ Run `./scripts/backup-attachments-native.sh ${BACKUP_FOLDER}` to copy the curren
 
 To restore the database, run `./scripts/restore-database-native.sh ${BACKUP_FOLDER}` to restore data from the provided backup folder.
 To restore attachments, run `./scripts/restore-attachments-native.sh ${BACKUP_FOLDER}` to restore data from the provided backup folder.
+Depending on your setup, you may need additional access rights.
 
 ### Backup: dockerized
 
