@@ -37,15 +37,14 @@
 const urllib = require('url');
 const superagent = require('superagent');
 import type { Logger } from 'components/utils/src/logging';
-import type { RegistrySettings } from 'components/pryvuser-cli/src/configuration';
 const ErrorIds = require('components/errors').ErrorIds,
   errors = require('components/errors').factory,
   ErrorMessages = require('components/errors/src/ErrorMessages');
 class ServiceRegister {
-  config: RegistrySettings; 
+  config: {}; 
   logger: Logger;
 
-  constructor(config: RegistrySettings, logger: Logger) {
+  constructor(config: {}, logger: Logger) {
     this.config = config; 
     this.logger = logger;
   }
@@ -70,7 +69,7 @@ class ServiceRegister {
           core: core
         });
     } catch (err) {
-      if(err.status == 400 && err?.response?.body?.error){
+      if(((err.status == 409) || (err.status == 400)) && err?.response?.body?.error){
         if (err.response.body.error != null) {
           if (err.response.body.error.id === ErrorIds.InvalidInvitationToken) {
             throw errors.invalidOperation(ErrorMessages.InvalidInvitationToken);
@@ -144,7 +143,7 @@ class ServiceRegister {
         .set('Authorization', this.config.key);
       return res.body;
     } catch (err) {
-      if (err.status == 400 && err.response.body.error != null) {
+      if (((err.status == 400) || (err.status == 409)) && err.response.body.error != null) {
         if (err.response.body.error.id === ErrorIds.ItemAlreadyExists) {
           throw errors.itemAlreadyExists('user', err.response.body.error.data);
         } else {

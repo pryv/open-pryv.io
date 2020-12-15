@@ -52,7 +52,7 @@ module.exports = function (api, logging, storageLayer, servicesSettings) {
   const registration = new Registration(logging, storageLayer, servicesSettings);
   const usersRepository = new UsersRepository(storageLayer.events);
 
-  api.register('auth.register.singlenode',
+  api.register('auth.register.dnsless',
     // data validation methods
     commonFns.getParamsValidation(methodsSchema.register.params),
     // user registration methods
@@ -63,7 +63,7 @@ module.exports = function (api, logging, storageLayer, servicesSettings) {
   );
 
   // Username check
-  api.register('auth.usernameCheck.singlenode',
+  api.register('auth.usernameCheck.dnsless',
     commonFns.getParamsValidation(methodsSchema.usernameCheck.params),
     checkUsername
   );

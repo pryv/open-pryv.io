@@ -134,6 +134,7 @@ class SystemStreamsSerializer {
 
   /**
    * Return not only account stream but also helper streams
+   * @returns {array} of StreamIds
    */
   static getAllAccountStreamsIdsForAccess () {
     if (!SystemStreamsSerializer.allAccountStreamsIdsForAccess) {
@@ -145,6 +146,15 @@ class SystemStreamsSerializer {
       SystemStreamsSerializer.allAccountStreamsIdsForAccess = allAccountStreamsIds;
     }
     return SystemStreamsSerializer.allAccountStreamsIdsForAccess;
+  }
+
+  /**
+   * Return true is this streamid is a system stream
+   * @param {string} streamId 
+   * @returns {boolean} 
+   */
+  static isAccountStreamId(streamId) {
+    return SystemStreamsSerializer.getAllAccountStreamsIdsForAccess().includes(streamId);
   }
 
   /**

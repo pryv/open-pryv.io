@@ -85,8 +85,18 @@ class Config {
     } else {
       this.configFile = 'config/development.json';
     }
+    store.file({ file: this.configFile});
 
-    store.file({ file: this.configFile });
+    /**
+     * This can be removed once "singleNode" has been removed of all configs
+     * This is a duplicate of /components/utils/src/config.js duplicate code 
+     * They should be updated simulatenously
+     */
+    if (store.get('singleNode')) {
+        console.log("Warning (Config) [singleNode] config parameter has been depracted and replaced by [dnsLess]");
+        store.set('dnsLess', store.get('singleNode'));
+        store.set('singleNode', null);
+    }
 
     // remove this when config is loaded in all tests before other components that use it. See commits:
     // - f7cc95f70aae87ebb0776f94256c14eeec54baa3

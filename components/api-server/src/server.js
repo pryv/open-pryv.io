@@ -65,7 +65,7 @@ class Server {
   application: Application;
   settings: ConfigAccess;
   isOpenSource: boolean;
-  isSingleNode: Boolean;
+  isDnsLess: Boolean;
   logger: Logger; 
   
   // Axon based internal notification and messaging bus. 
@@ -79,7 +79,7 @@ class Server {
     const settings = application.settings; 
     this.settings = settings;
     this.isOpenSource = settings.get('openSource.isActive').bool();
-    this.isSingleNode = settings.get('singleNode.isActive').bool();
+    this.isDnsLess = settings.get('dnsLess.isActive').bool();
   }
     
   // Start the server. 
@@ -146,7 +146,7 @@ class Server {
       application.storageLayer, 
       application.settings.get('services').obj());
 
-    require('./methods/auth/register-singlenode')(application.api, 
+    require('./methods/auth/register-dnsless')(application.api, 
       application.logging, 
       application.storageLayer, 
       application.settings.get('services').obj());
@@ -270,13 +270,6 @@ class Server {
       logger.warn('Server configuration has "ignoreProtectedFieldUpdates" set to true: ' +
         'This means updates to protected fields will be ignored and operations will succeed. ' +
         'We recommend turning this off, but please be aware of the implications for your code.');
-    }
-
-
-    if (settings.get('deprecated.auth.ssoIsWhoamiActivated').bool()) {
-      logger.warn('Server configuration has "ssoIsWhoamiActivated" set to true: ' + 
-        'This means that the API method "GET /auth/who-am-i" is activated. ' + 
-        'We recommend turning this off as this method might be removed in the next major release.');
     }
     
     // TEST: execute test setup instructions if any

@@ -68,6 +68,7 @@ class MethodContext {
 
   accessToken: ?string;
   callerId: ?string;
+  headers: ?object; // used in custom auth function
 
   // Custom auth function, if one was configured. 
   customAuthStepFn: ?CustomAuthFunction;
@@ -86,6 +87,7 @@ class MethodContext {
     auth: ?string,
     customAuthStepFn: ?CustomAuthFunction,
     eventsStorage: ?StorageLayer,
+    headers: ?{}
   ) {
     this.username = username;
 
@@ -99,6 +101,7 @@ class MethodContext {
 
     this.accessToken = null;
     this.callerId = null;
+    this.headers = headers;
 
     this.calledMethodId = null;
     this.systemStreamsSerializer = new SystemStreamsSerializer();

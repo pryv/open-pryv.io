@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.6.2-2-open",
+  "version": "1.6.7-open",
   "private": false,
   "description": "Pryv core server app components",
   "homepage": "http://pryv.com",
@@ -28,6 +28,7 @@
   "pre-commit": "",
   "resolutions": {
     "**/bl": "^2.2.1",
+    "**/ini": "^1.3.6",
     "**/node-fetch": "^2.6.1"
   },
   "dependencies": {
@@ -60,7 +61,7 @@
     "morgan": "^1.8.1",
     "msgpack5": "^3.6.0",
     "multer": "^1.3.0",
-    "nconf": "^0.10.0",
+    "nconf": "^0.11.0",
     "previews-server": "file:components/previews-server",
     "protobufjs": "^6.8.6",
     "pryv": "^2.0.2",

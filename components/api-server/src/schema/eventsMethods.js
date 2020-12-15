@@ -52,7 +52,7 @@ const boolean = helpers.boolean;
 module.exports = {
   get: {
     params: object({
-      'streams': array(string()),
+      'streams': {},
       'tags': array(string()),
       'types': array(string()),
       'fromTime': number(),

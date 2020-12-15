@@ -104,6 +104,8 @@ module.exports = function (api: API, logging: Logger, storageLayer: StorageLayer
     async function refreshContext() {
       // Clone context to avoid potential side effects
       freshContext = _.cloneDeep(context);
+      // Accept streamQueries in JSON format for batchCalls
+      freshContext.acceptStreamsQueryNonStringified = true;
       const access = freshContext.access;
       await freshContext.retrieveStreams(storageLayer);
       if (! access.isPersonal()) access.loadPermissions(freshContext.streams);

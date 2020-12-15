@@ -67,7 +67,6 @@ module.exports = function (expressApp: express$Application, app: Application) {
   const ssoCookieDomain: string = settings.get('auth.ssoCookieDomain').str() || settings.get('http.ip').str();
   const ssoCookieSignSecret: string = settings.get('auth.ssoCookieSignSecret').str() || 'Hallowed Be Thy Name, O Node';
   const ssoCookieSecure: boolean = process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test' ;
-  const ssoIsWhoamiActivated: boolean = settings.get('deprecated.auth.ssoIsWhoamiActivated').bool();
   const ssoHttpOnly: boolean = true ;
 
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);
@@ -105,21 +104,7 @@ module.exports = function (expressApp: express$Application, app: Application) {
     // Define local routes
     router.all('*', cookieParser(ssoCookieSignSecret));
     router.get('/who-am-i', function routeWhoAmI(req: express$Request, res, next) {
-      if (! ssoIsWhoamiActivated) {
-        return next(errors.unknownResource());
-      }
-
-      var ssoCookie = req.signedCookies.sso;
-
-
-      if (! ssoCookie || typeof ssoCookie !== 'object') {
-        return next(errors.invalidCredentials('Not signed-on'));
-      }
-
-      res.status(200).json({
-        username: ssoCookie.username,
-        token: ssoCookie.token
-      });
+      return next(errors.goneResource());
     });
     router.post('/login', function routeLogin(req: RequestWithContext, res, next) {
       if (typeof req.body !== 'object' || req.body == null ||

@@ -110,7 +110,7 @@ class Application {
 
   async createExpressApp(): Promise<express$Application> {
     this.expressApp = await expressAppInit( 
-      this.settings.get('singleNode.isActive').bool(), 
+      this.settings.get('dnsLess.isActive').bool(), 
       this.logging);
   }
 
@@ -120,7 +120,7 @@ class Application {
       require('components/www')(this.expressApp, this);
       require('components/register')(this.expressApp, this);
     }
-    if (this.settings.get('singleNode.isActive').bool()) {
+    if (this.settings.get('dnsLess.isActive').bool()) {
       require('./routes/register')(this.expressApp, this);
     }
 

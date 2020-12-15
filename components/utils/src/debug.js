@@ -32,9 +32,11 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
-exports.defaultConfig = {
-  dnsLess: {
-    isActive: true,
-    publicUrl: "http://localhost:3000/"
+
+
+const util = require("util");
+module.exports.log = function log() {
+  for(let i = 0; i < arguments.length; i++) {
+    console.log(util.inspect(arguments[i], {depth: 12, colors: true}));
   }
 }

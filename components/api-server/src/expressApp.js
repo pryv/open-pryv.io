@@ -49,7 +49,7 @@ const { ProjectVersion } = require('components/middleware/src/project_version');
 // Creates and returns an express application with a standard set of middleware. 
 // `version` should be the version string you want to show to API clients. 
 // 
-async function expressAppInit(isSingleNode: boolean, logging: Logger) {
+async function expressAppInit(isDnsLess: boolean, logging: Logger) {
   const pv = new ProjectVersion();
   const version = pv.version();
   var app = express(); // register common middleware
@@ -70,7 +70,7 @@ async function expressAppInit(isSingleNode: boolean, logging: Logger) {
     .filter(e => e.indexOf(Paths.Params.Username) < 0)
     .value(); 
 
-  if (!isSingleNode)
+  if (!isDnsLess)
     app.use(middleware.subdomainToPath(ignorePaths));
 
   // Parse JSON bodies: 

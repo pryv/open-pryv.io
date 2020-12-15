@@ -63,6 +63,7 @@ module.exports = function initContext(
       authorizationHeader, 
       customAuthStepFn,
       storageLayer.events,
+      req.headers
     );
     
     const userRetrieved = req.context.retrieveUser();

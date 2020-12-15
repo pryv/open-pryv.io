@@ -44,7 +44,7 @@ const ErrorMessages = {
    */
   // ErrorIds.
   [ErrorIds.InvalidInvitationToken]: 'Invalid invitation',
-  [ErrorIds.InvalidUsername]: 'Username should have from 5 to 23 characters and contain letters or numbers or dashes',
+  [ErrorIds.InvalidUsername]: 'Username should have from 5 to 23 characters and contain lowercase letters or numbers or dashes',
   [ErrorIds.UsernameRequired]: 'Username is required',
   [ErrorIds.InvalidEmail]: 'Invalid email',
   [ErrorIds.InvalidLanguage]: 'Invalid language',

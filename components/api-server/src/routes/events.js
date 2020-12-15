@@ -74,7 +74,7 @@ module.exports = function(expressApp: express$Application, app: Application) {
       tryCoerceStringValues(params, {
         fromTime: 'number',
         toTime: 'number',
-        streams: 'array',
+        streams: 'object',
         tags: 'array',
         types: 'array',
         sortAscending: 'boolean',

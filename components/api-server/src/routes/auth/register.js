@@ -48,13 +48,13 @@ module.exports = function (expressApp: express$Application, app: Application) {
 
   const api: API = app.api;
   const config: Config = getConfig();
-  const isSingleNode = config.get('singleNode:isActive');
+  const isDnsLess = config.get('dnsLess:isActive');
 
   // POST /users: create a new user
   expressApp.post('/users', function (req: express$Request, res: express$Response, next: express$NextFunction) {
     let context = { host: req.headers.host };
-    if (isSingleNode) {
-      api.call('auth.register.singlenode', context, req.body, methodCallback(res, next, 201));
+    if (isDnsLess) {
+      api.call('auth.register.dnsless', context, req.body, methodCallback(res, next, 201));
     } else {
       api.call('auth.register', context, req.body, methodCallback(res, next, 201));
     }
@@ -64,8 +64,8 @@ module.exports = function (expressApp: express$Application, app: Application) {
    * POST /username/check_username: check the existence/validity of a given username
    */
   expressApp.get('/:username/check_username', (req: express$Request, res, next) => {
-    if (isSingleNode) {
-      api.call('auth.usernameCheck.singlenode', {}, req.params, methodCallback(res, next, 200));
+    if (isDnsLess) {
+      api.call('auth.usernameCheck.dnsless', {}, req.params, methodCallback(res, next, 200));
     } else {
       api.call('auth.usernameCheck', {}, req.params, methodCallback(res, next, 200));
     }

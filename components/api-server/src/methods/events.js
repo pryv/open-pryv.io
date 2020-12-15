@@ -44,6 +44,7 @@ var cuid = require('cuid'),
   querying = require('./helpers/querying'),
   timestamp = require('unix-timestamp'),
   treeUtils = utils.treeUtils,
+  streamsQueryUtils = require('./helpers/streamsQueryUtils'),
   _ = require('lodash'),
   SetFileReadTokenStream = require('./streams/SetFileReadTokenStream');
 
@@ -89,7 +90,7 @@ module.exports = function (
 
   // initialize service-register connection
   let serviceRegisterConn = {};
-  if (!config.get('singleNode:isActive')) {
+  if (!config.get('dnsLess:isActive')) {
     serviceRegisterConn = new ServiceRegister(
       config.get('services:register'),
       logging.getLogger('service-register')
@@ -115,10 +116,72 @@ module.exports = function (
   // RETRIEVAL
 
   api.register('events.get',
+    coerceStreamsParam,
     commonFns.getParamsValidation(methodsSchema.get.params),
+    transformArrayOfStringsToStreamsQuery,
+    validateStreamsQuery,
     applyDefaultsForRetrieval,
+    checkStreamsPermissionsAndApplyToScope,
     findAccessibleEvents,
     includeDeletionsIfRequested);
+
+  function coerceStreamsParam (context, params, result, next) {
+    if (! params.streams)  {
+      params.streams = null;
+      return next();
+    }
+    // Streams query can also be sent as a JSON string or string of Array
+    if (! context.acceptStreamsQueryNonStringified ||
+       (context.acceptStreamsQueryNonStringified && typeof params.streams === 'string')) { // batchCall and socket.io can use plain JSON objects
+      try {
+        params.streams = parseStreamsQueryParam(params.streams);
+      } catch (e) {
+        return next(errors.invalidRequestStructure(
+          'Invalid "streams" parameter. It should be an array of streamIds or JSON logical query' + e, params.streams));
+      }
+    }
+
+     // Transform object or string to Array
+    if (! Array.isArray(params.streams)) {
+      params.streams = [params.streams];
+    }
+
+    next();
+
+    function parseStreamsQueryParam(streamsParam) {
+      if (typeof streamsParam === 'string') {
+        if (['[', '{'].includes(streamsParam.substr(0, 1))) { // we detect if it's JSON by looking at first char
+          // Note: since RFC 7159 JSON can also starts with ", true, false or number - this does not apply in this case.
+          try {
+            streamsParam = JSON.parse(streamsParam);
+          } catch (e) {
+            throw ('Error while parsing JSON ' + e);
+          }
+        }
+      }
+      return streamsParam
+    }
+  }
+
+  function transformArrayOfStringsToStreamsQuery (context, params, result, next) {
+    if (params.streams === null) return next();
+    try {
+      params.streams = streamsQueryUtils.transformArrayOfStringsToStreamsQuery(params.streams);
+    } catch (e) {
+      return next(errors.invalidRequestStructure(e, params.streams));
+    }
+    next();
+  }
+
+  function validateStreamsQuery (context, params, result, next) {
+    if (params.streams === null) return next();
+    try {
+      streamsQueryUtils.validateStreamsQuery(params.streams);
+    } catch (e) {
+      return next(errors.invalidRequestStructure('Initial filtering: ' + e, params.streams));
+    }
+    next();
+  }
 
   async function applyDefaultsForRetrieval (context, params, result, next) {
     _.defaults(params, {
@@ -144,60 +207,8 @@ module.exports = function (
       // limit to 20 items by default
       params.limit = 20;
     }
-
-    if (params.streams != null) {
-      var expandedStreamIds = treeUtils.expandIds(context.streams, params.streams);
-      var unknownIds = _.difference(params.streams, expandedStreamIds);
-
-      if (unknownIds.length > 0) {
-        return next(errors.unknownReferencedResource(
-          'stream' + (unknownIds.length > 1 ? 's' : ''),
-          'streams', 
-          unknownIds));
-      }
-
-      params.streams = expandedStreamIds;
-    }
-    if (params.state === 'default') {
-      // exclude events in trashed streams
-      var nonTrashedStreamIds = treeUtils.collectPluck(
-        treeUtils.filterTree(
-          context.streams, false, (s) => { return ! s.trashed; }), 
-        'id');
-      params.streams = params.streams 
-        ? _.intersection(params.streams, nonTrashedStreamIds) 
-        : nonTrashedStreamIds;
-    }
-
-    if (! context.access.canReadAllStreams()) {
-      var accessibleStreamIds = [];
-
-      Object.keys(context.access.streamPermissionsMap).map((streamId) => {
-        if (context.access.canReadStream(streamId)) {
-          accessibleStreamIds.push(streamId);
-        }
-      });
-      params.streams = params.streams 
-        ? _.intersection(params.streams, accessibleStreamIds) 
-        : accessibleStreamIds;
-    } else if (params.streams && !context.access.isPersonal()) { // case streamPermission has *
-      // allow account stream events access only with personal token or specific access
-      let allAccountStreamIds = SystemStreamsSerializer.getAllAccountStreamsIdsForAccess(); // using global object
-      const notAccessibleStreamIds = _.cloneDeep(allAccountStreamIds);
-
-      Object.keys(context.access.streamPermissionsMap).map((streamId) => {
-        if (hasPermissionForAccountStream(streamId) &&
-          context.access.canReadAccountStream(streamId)) {
-          notAccessibleStreamIds.splice(notAccessibleStreamIds.indexOf(streamId), 1);
-        }
-      });
-      params.streams = params.streams.filter(function (streamId) {
-        return ! notAccessibleStreamIds.includes(streamId);
-      });
-      function hasPermissionForAccountStream(streamId) {
-        return allAccountStreamIds.includes(streamId);
-      }
-    }
+    
+  
 
     if (! context.access.canReadAllTags()) {
       var accessibleTags = Object.keys(context.access.tagPermissionsMap);
@@ -208,40 +219,89 @@ module.exports = function (
     next();
   }
 
-  /**
-   * Remove events that belongs to the account streams and should not be displayed
-   * @param query -mongo query object  
-   */
-  function removeNotReadableAccountStreamsFromQuery (query) {
-    // get streams ids from the config that should be retrieved
-    const userAccountStreams = SystemStreamsSerializer.getAccountStreamsIdsForbiddenForReading();
-    query.streamIds = { ...query.streamIds, ...{ $nin: userAccountStreams } };
+  function checkStreamsPermissionsAndApplyToScope(context, params, result, next) {
+    // Get all authorized streams (the ones that could be acessed) - Pass by all the tree including childrens
+    const authorizedStreamsIds = treeUtils.collectPluck(treeUtils.filterTree(context.streams, true, isAuthorizedStream), 'id');
+    function isAuthorizedStream(stream) {
+      if (context.access.isPersonal()) return true;
+      return context.access.canReadStream(stream.id);
+    }
 
-    return query;
+    // Accessible streams are the on that authorized && correspond to the "state" param request - ie: if state=default, trashed streams are omitted
+    let accessibleStreamsIds = [];
+
+    if (params.state === 'all' || params.state === 'trashed') { // all streams
+      accessibleStreamsIds = authorizedStreamsIds;
+    } else { // Get all streams compatible with state request - Stops when a stream is not matching to exclude childrens
+      const notTrashedStreamIds = treeUtils.collectPluck(treeUtils.filterTree(context.streams, false, isRequestedStateStreams), 'id');
+      function isRequestedStateStreams(stream) {
+        return !stream.trashed;
+      }
+      accessibleStreamsIds = _.intersection(authorizedStreamsIds, notTrashedStreamIds);
+    }
+
+    if (params.streams === null) { // all streams
+      if (accessibleStreamsIds.length > 0) params.streams = [{ any: accessibleStreamsIds }];
+
+      return next();
+    }
+
+    /**
+     * Function to be passed to streamQueryFiltering.validateQuery
+     * Expand a streamId to [streamId, child1, ...]
+     * @param {Streamid} streamId 
+     */
+    function expand (streamId) {
+      return treeUtils.expandIds(context.streams, [streamId]);
+    }
+
+    const { streamQuery, nonAuthorizedStreams } =
+      streamsQueryUtils.checkPermissionsAndApplyToScope(params.streams, expand, authorizedStreamsIds, accessibleStreamsIds);
+
+    params.streams = streamQuery;
+
+    if (nonAuthorizedStreams.length > 0) {
+      // check if one is create-only and send forbidden
+      for (let i = 0; i < nonAuthorizedStreams.length; i++) {
+        if (context.access.isCreateOnlyStream(nonAuthorizedStreams[i])) {
+          return next(errors.forbidden('stream [' + nonAuthorizedStreams[i] + '] has create-only permission and cannot be read'));
+        }
+      }
+
+      return next(errors.unknownReferencedResource(
+        'stream' + (nonAuthorizedStreams.length > 1 ? 's' : ''),
+        'streams',
+        nonAuthorizedStreams));
+    }
+
+    next();
   }
 
   async function findAccessibleEvents(context, params, result, next) {
     // build query
-    var query = querying.noDeletions(querying.applyState({}, params.state));
-
-    if (params.streams) {
-      query.streamIds = {$in: params.streams};
-    }
-    query = removeNotReadableAccountStreamsFromQuery(query);
-
+    const query = querying.noDeletions(querying.applyState({}, params.state));
+  
+    const forbiddenStreamIds = SystemStreamsSerializer.getAccountStreamsIdsForbiddenForReading();
+    const streamsQuery = streamsQueryUtils.toMongoDBQuery(params.streams, forbiddenStreamIds);
+    
+    if (streamsQuery.$or) query.$or = streamsQuery.$or;
+    if (streamsQuery.streamIds) query.streamIds = streamsQuery.streamIds;
+    if (streamsQuery.$and) query.$and = streamsQuery.$and;
+  
+  
     if (params.tags && params.tags.length > 0) {
       query.tags = {$in: params.tags};
     }
     if (params.types && params.types.length > 0) {
       // unofficially accept wildcard for sub-type parts
-      var types = params.types.map(getTypeQueryValue);
+      const types = params.types.map(getTypeQueryValue);
       query.type = {$in: types};
     }
     if (params.running) {
       query.duration = {'$type' : 10}; // matches when duration exists and is null
     }
     if (params.fromTime != null) {
-      query.$or = [
+      const timeQuery = [
         { // Event started before fromTime, but finished inside from->to.
           time: {$lt: params.fromTime},
           endTime: {$gte: params.fromTime}
@@ -250,6 +310,16 @@ module.exports = function (
           time: { $gte: params.fromTime, $lte: params.toTime }
         },
       ];
+
+      if (query.$or) { // mongo support only one $or .. so we nest them into a $and
+        if (! query.$and) query.$and = [];
+        query.$and.push({$or: query.$or});
+        query.$and.push({$or: timeQuery});
+        delete query.$or; // clean; 
+      } else {
+        query.$or = timeQuery;
+      }
+
     }
     if (params.toTime != null) {
       _.defaults(query, {time: {}});
@@ -259,13 +329,12 @@ module.exports = function (
       query.modified = {$gt: params.modifiedSince};
     }
 
-    var options = {
+    const options = {
       projection: params.returnOnlyIds ? {id: 1} : {},
       sort: { time: params.sortAscending ? 1 : -1 },
       skip: params.skip,
       limit: params.limit
     };
-
     try {
       let eventsStream = await bluebird.fromCallback(cb =>
         userEventsStorage.findStreamed(context.user, query, options, cb));
@@ -290,7 +359,7 @@ module.exports = function (
       return next();
     }
 
-    var options = {
+    const options = {
       sort: {deleted: params.sortAscending ? 1 : -1},
       skip: params.skip,
       limit: params.limit
@@ -314,7 +383,13 @@ module.exports = function (
   );
 
   function findEvent (context, params, result, next) {
-    const query = removeNotReadableAccountStreamsFromQuery({ id: params.id });
+    const query = { 
+      streamIds: {
+        // forbid account stream ids
+        $nin: SystemStreamsSerializer.getAccountStreamsIdsForbiddenForReading()
+      },
+      id: params.id 
+    };
     userEventsStorage.findOne(context.user, query, null, function (err, event) {
       if (err) {
         return next(errors.unexpectedError(err));
@@ -1155,7 +1230,7 @@ module.exports = function (
    * @param string accountStreamId - accountStreamId
    */
   async function sendUpdateToServiceRegister (user, event, accountStreamId) {
-    if (config.get('singleNode:isActive')) {
+    if (config.get('dnsLess:isActive')) {
       return;
     }
     const editableAccountStreams = SystemStreamsSerializer.getEditableAccountStreams();
@@ -1412,7 +1487,7 @@ module.exports = function (
    */
   async function sendDataToServiceRegister (context, creation, editableAccountStreams) {
     // send update to service-register
-    if (config.get('singleNode:isActive')) {
+    if (config.get('dnsLess:isActive')) {
       return;
     }
     let fieldsForUpdate = {};
@@ -1437,3 +1512,5 @@ module.exports = function (
     );
   }
 };
+
+

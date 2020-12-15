@@ -55,7 +55,7 @@ module.exports = function system(expressApp: express$Application, app: Applicati
   /**
    * Handle common parameters.
    */
-  expressApp.all(Paths.System + '*', checkAuth);
+  expressApp.all(Paths.System + '/*', checkAuth);
 
 
   expressApp.post(Paths.System + '/create-user', contentType.json, createUser);

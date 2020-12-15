@@ -218,7 +218,7 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
 
   async function notifyServiceRegister (context, params, result, next) {
     // no need to update service register if it is single node setup
-    if (getConfig().get('singleNode:isActive') === true) {
+    if (getConfig().get('dnsLess:isActive') === true) {
       return next();
     }
     try {

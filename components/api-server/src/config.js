@@ -79,7 +79,7 @@ _.merge(config.schema, {
     sessionMaxAge: {
       format: 'duration',
       default: 1000 * 60 * 60 * 24 * 14, // 2 weeks
-      doc: 'The maximum age (in seconds) of a personal access token if unused.'
+      doc: 'The maximum age (in milliseconds) of a personal access token if unused.'
     },
     ssoCookieDomain: {
       format: String,
@@ -185,7 +185,7 @@ _.merge(config.schema, {
       default: true
     }
   },
-  singleNode: {
+  dnsLess: {
     isActive: {
       format: Boolean,
       default: true
