@@ -1,5 +1,5 @@
 {
-  "singleNode": {
+  "dnsLess": {
     "publicUrl": "https://my-computer.rec.la:4443"
   },
   "http": {

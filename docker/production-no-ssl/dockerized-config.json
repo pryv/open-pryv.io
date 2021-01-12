@@ -2,7 +2,7 @@
   "openSource": {
     "isActive": true
   },
-  "singleNode": {
+  "dnsLess": {
     "isActive": true,
     "publicUrl": "https://${HOSTNAME}"
   },

@@ -1,5 +1,5 @@
 {
-  "singleNode": {
+  "dnsLess": {
     "publicUrl": "http://localhost:3000"
   },
   "http": {

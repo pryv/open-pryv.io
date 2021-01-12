@@ -127,7 +127,7 @@ For the native installation, edit `config.json`, otherwise `docker/local/dockeri
 
 ```json
 {
-  "singleNode": {
+  "dnsLess": {
     "publicUrl":  "http://localhost:3000"
   },
   "http": {
