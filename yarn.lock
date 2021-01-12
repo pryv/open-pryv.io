@@ -5503,10 +5503,10 @@ ready-signal@^1.1.1:
   resolved "https://registry.yarnpkg.com/ready-signal/-/ready-signal-1.3.0.tgz#55403f920e1e1f2a8b065a228b9a63efb0a3c2db"
   integrity sha1-VUA/kg4eHyqLBloii5pj77Cjwts=
 
-rec-la@^0.1.16:
-  version "0.1.16"
-  resolved "https://registry.yarnpkg.com/rec-la/-/rec-la-0.1.16.tgz#d6674e89eda58017b01a1640edc70c90e27fdb25"
-  integrity sha512-8T8heOe4IXIPfu/BMYz2Px5iXsoAQAcV3iLNDtUEKEK24ToSEjzLF1R36imy5OR8sMKnATGhzxqlrnEb3FHZxg==
+rec-la@latest:
+  version "0.1.17"
+  resolved "https://registry.yarnpkg.com/rec-la/-/rec-la-0.1.17.tgz#b6813c81cdf58c208515e6cfd5006da11e45792c"
+  integrity sha512-kLcHAW2iODOEjGwnH9Z88PUSQMD2S1IcRpZ6BbQE7q4KCGsq0BaaO1K2orqkFeQMBLFPdhZqB+gLIfYgRKRzUw==
   dependencies:
     express "^4.14.0"
 

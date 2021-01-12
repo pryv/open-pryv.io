@@ -684,7 +684,7 @@ module.exports = function (
     validateEventContentAndCoerce,
     doesEventBelongToTheAccountStream,
     validateAccountStreamsEventEdition,
-    generateLogIfNeeded,
+    generateVersionIfNeeded,
     updateAttachments,
     appendAccountStreamsEventDataForUpdate,
     updateEvent,
@@ -765,19 +765,21 @@ module.exports = function (
 
   }
 
-  function generateLogIfNeeded(context, params, result, next) {
+  /**
+   * Depends on context.oldContent
+   */
+  function generateVersionIfNeeded(context, params, result, next) {
     if (!auditSettings.forceKeepHistory) {
       return next();
     }
 
-    context.oldContent = _.extend(context.oldContent, {headId: context.content.id});
+    context.oldContent = _.extend(context.oldContent, {headId: context.oldContent.id});
     delete context.oldContent.id;
 
     userEventsStorage.insertOne(context.user, context.oldContent, function (err) {
       if (err) {
         return next(errors.unexpectedError(err));
       }
-      delete context.oldContent;
       next();
     });
   }
@@ -1211,6 +1213,7 @@ module.exports = function (
     checkEventForDelete,
     doesEventBelongToTheAccountStream,
     validateAccountStreamsEventDeletion,
+    generateVersionIfNeeded,
     function (context, params, result, next) {
       if (!context.oldContent.trashed) {
         // move to trash
