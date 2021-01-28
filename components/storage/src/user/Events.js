@@ -38,7 +38,7 @@ var BaseStorage = require('./BaseStorage'),
   util = require('util'),
   _ = require('lodash'),
   ApplyEventsFromDbStream = require('./../ApplyEventsFromDbStream'),
-  SystemStreamsSerializer = require('components/business/src/system-streams/serializer');
+  SystemStreamsSerializer = require('business/src/system-streams/serializer');
 
 module.exports = Events;
 /**

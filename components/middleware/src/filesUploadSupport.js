@@ -34,7 +34,7 @@
  */
 // @flow
 
-var errors = require('components/errors').factory;
+var errors = require('errors').factory;
 
 /** Transparently handles multipart requests for uploading file attachments.
  *

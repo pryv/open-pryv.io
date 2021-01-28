@@ -35,7 +35,7 @@
 // @flow
 
 const express = require('express');
-const middleware = require('components/middleware');
+const middleware = require('middleware');
 const bodyParser = require('body-parser');
 
 type AppAndEndWare = {

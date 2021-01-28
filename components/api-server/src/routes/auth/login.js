@@ -38,8 +38,8 @@ const cookieParser = require('cookie-parser');
 const lodash = require('lodash');
 const express = require('express');
 
-const errors = require('components/errors').factory;
-const middleware = require('components/middleware');
+const errors = require('errors').factory;
+const middleware = require('middleware');
 
 const methodCallback = require('../methodCallback');
 const Paths = require('../Paths');
@@ -49,8 +49,9 @@ declare class RequestWithContext extends express$Request {
 }
 
 
-import type { ConfigAccess } from './../settings';
-import type Application from './../application';
+import type Application  from './../application';
+
+const { getConfigUnsafe } = require('boiler');
 
 /**
  * Auth routes.
@@ -58,14 +59,13 @@ import type Application from './../application';
  * @param {Object} api The API object for registering methods
  */
 module.exports = function (expressApp: express$Application, app: Application) {
-
-  const settings: ConfigAccess = app.settings;
+  const config = getConfigUnsafe();
   const api = app.api;
 
   const ms14days: number = 1000 * 60 * 60 * 24 * 14;
-  const sessionMaxAge: number = settings.get('auth.sessionMaxAge').num() || ms14days;
-  const ssoCookieDomain: string = settings.get('auth.ssoCookieDomain').str() || settings.get('http.ip').str();
-  const ssoCookieSignSecret: string = settings.get('auth.ssoCookieSignSecret').str() || 'Hallowed Be Thy Name, O Node';
+  const sessionMaxAge: number = config.get('auth:sessionMaxAge') || ms14days;
+  const ssoCookieDomain: string = config.get('auth:ssoCookieDomain') || config.get('http:ip');
+  const ssoCookieSignSecret: string = config.get('auth:ssoCookieSignSecret') || 'Hallowed Be Thy Name, O Node';
   const ssoCookieSecure: boolean = process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test' ;
   const ssoHttpOnly: boolean = true ;
 

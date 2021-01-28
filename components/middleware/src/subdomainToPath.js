@@ -34,7 +34,7 @@
  */
 // @flow
 
-const errors = require('components/errors').factory;
+const errors = require('errors').factory;
 
 /**
  * Middleware to translate the subdomain (i.e. username) in requests (if any) into the URL path,

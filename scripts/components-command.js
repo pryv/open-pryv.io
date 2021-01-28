@@ -63,7 +63,7 @@ fs.readdirSync(componentsPath).forEach(function (name) {
     return;
   }
   
-  if(['test-helpers', 'errors'].includes(name) && args.slice(1)[0] == 'test'){
+  if(['test-helpers', 'errors', 'boiler'].includes(name) && args.slice(1)[0] == 'test'){
     return;
   }
   

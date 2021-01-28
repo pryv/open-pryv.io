@@ -34,11 +34,11 @@
  */
 // @flow
 
-const model = require('components/model');
+const model = require('model');
 const MethodContext = model.MethodContext;
 
-import type { CustomAuthFunction } from 'components/model';
-import type { StorageLayer } from 'components/storage';
+import type { CustomAuthFunction } from 'model';
+import type { StorageLayer } from 'storage';
 
 
 // Returns a middleware function that initializes the method context into
@@ -55,7 +55,6 @@ module.exports = function initContext(
     req: express$Request, res: express$Response, next: express$NextFunction
   ) {
     const authorizationHeader = req.headers['authorization'];
-
 
     // FLOW We should not do this, but we're doing it.
     req.context = new MethodContext(

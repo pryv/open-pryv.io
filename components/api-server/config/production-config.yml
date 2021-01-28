@@ -1,0 +1,49 @@
+---
+env: production
+http:
+  ip: 127.0.0.1
+  port: 9000
+database:
+  authUser: api-server
+  authPassword: OVERRIDE ME
+  host: localhost
+  port: 27017
+  name: pryv-node
+eventFiles:
+  attachmentsDirPath: "${PRYV_DATADIR}/service-core-files/attachments"
+  previewsDirPath: "${PRYV_DATADIR}/service-core-files/previews"
+register:
+  secret: OVERRIDE ME
+auth:
+  adminAccessKey: OVERRIDE ME
+  trustedApps: "*@https://*.pryv.me*, *@http://pryv.github.io"
+  sessionMaxAge: 1209600000
+  ssoCookieDomain: ".pryv.io"
+  ssoCookieSignSecret: OVERRIDE ME
+  filesReadTokenSecret: OVERRIDE ME
+  passwordResetRequestMaxAge: 3600000
+  passwordResetPageURL: https://sw.pryv.me/access/reset-password.html
+services:
+  register:
+    url: https://reg.pryv.io
+  email:
+    welcomeTemplate: welcome-email
+    resetPasswordTemplate: reset-password
+    method: mandrill
+    url: https://mandrillapp.com/api/1.0/messages/send-template.json
+    key: OVERRIDE ME
+logs:
+  console:
+    active: true
+    level: info
+    colorize: false
+  file:
+    active: true
+    level: error
+    path: "${PRYV_LOGSDIR}/api-server.errors.log"
+    maxFileBytes: 4096
+    maxNbFiles: 20
+  airbrake:
+    active: true
+    key: OVERRIDE ME
+    projectId: OVERRIDE ME

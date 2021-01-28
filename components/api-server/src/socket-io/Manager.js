@@ -34,21 +34,20 @@
  */
 // @flow
 
-const errorHandling = require('components/errors').errorHandling;
+const errorHandling = require('errors').errorHandling;
 const commonMeta = require('../methods/helpers/setCommonMeta');
 const bluebird = require('bluebird');
-const NATS_CONNECTION_URI = require('components/utils').messaging.NATS_CONNECTION_URI;
+const NATS_CONNECTION_URI = require('utils').messaging.NATS_CONNECTION_URI;
 
 (async () => {
   await commonMeta.loadSettings();
 })();
 
-import type { Logger } from 'components/utils';
-const MethodContext = require('components/model').MethodContext;
-import type API from '../API';
+const MethodContext = require('model').MethodContext;
+import type API  from '../API';
 
-import type { MessageSink } from './message_sink';
-import type { StorageLayer } from 'components/storage';
+import type { MessageSink }  from './message_sink';
+import type { StorageLayer } from 'storage';
 
 type SocketIO$SocketId = string; 
 export type SocketIO$Handshake = {
@@ -86,7 +85,7 @@ type SocketIO$Server = {
 class Manager implements MessageSink {
   contexts: Map<string, NamespaceContext>; 
   
-  logger: Logger; 
+  logger; 
   io: SocketIO$Server; 
   api: API; 
   storageLayer: StorageLayer;
@@ -94,7 +93,7 @@ class Manager implements MessageSink {
   isOpenSource: boolean;
 
   constructor(
-    logger: Logger, io: SocketIO$Server, api: API, storageLayer: StorageLayer, customAuthStepFn: Object,
+    logger, io: SocketIO$Server, api: API, storageLayer: StorageLayer, customAuthStepFn: Object,
     isOpenSource: boolean,
   ) {
     this.logger = logger; 
@@ -195,7 +194,7 @@ class NamespaceContext {
   socketNs: SocketIO$Namespace;
   api: API; 
   sink: MessageSink;
-  logger: Logger; 
+  logger; 
   
   connections: Map<SocketIO$SocketId, Connection>; 
   natsSubscriber: ?NatsSubscriber; 
@@ -205,7 +204,7 @@ class NamespaceContext {
     socketNs: SocketIO$Namespace, 
     api: API, 
     sink: MessageSink, 
-    logger: Logger,
+    logger,
     isOpenSource: Boolean
   ) {
     this.username = username; 
@@ -329,10 +328,10 @@ class Connection {
   socket: SocketIO$Socket; 
   methodContext: MethodContext;
   api: API; 
-  logger: Logger; 
+  logger; 
   
   constructor(
-    logger: Logger, 
+    logger, 
     socket: SocketIO$Socket, 
     namespaceContext: NamespaceContext,
     methodContext: MethodContext, api: API

@@ -35,7 +35,7 @@
 const path = require('path');
 const express = require('express');
 
-const headPath = require('components/api-server/src/routes/Paths').WWW;
+const headPath = require('api-server/src/routes/Paths').WWW;
 const publicHtml = path.resolve(__dirname, '../../../../public_html');
 
 

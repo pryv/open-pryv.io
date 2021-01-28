@@ -36,16 +36,10 @@
 // @flow
 
 const morgan = require('morgan');
+const { getLogger } = require('boiler');
 
-interface LoggerFactory {
-  getLogger(name: string): Logger; 
-}
-interface Logger {
-  info(msg: string): void; 
-}
-
-module.exports = function (express: any, logging: LoggerFactory) {
-  const logger = logging.getLogger('routes');
+module.exports = function (express: any) {
+  const logger = getLogger('request-trace');
   const morganLoggerStreamWrite = (msg: string) => logger.info(msg);
   
   return morgan('combined', {stream: {

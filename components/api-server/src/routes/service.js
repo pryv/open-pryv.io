@@ -38,7 +38,7 @@ const express = require('express');
 const Paths = require('./Paths');
 const methodCallback = require('./methodCallback');
 
-import type Application from '../application';
+import type Application  from '../application';
 
 /**
  * Set up events route handling.

@@ -1,0 +1,13 @@
+---
+influxdb:
+  host: 127.0.0.1
+  port: 8086
+
+webhooks:
+  minIntervalMs: 5000
+  maxRetries: 5
+  runsSize: 20
+
+audit: 
+  forceKeepHistory: false
+  deletionMode: 'keep-nothing'

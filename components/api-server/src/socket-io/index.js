@@ -40,25 +40,24 @@
 
 const socketIO = require('socket.io');
 
-const MethodContext = require('components/model').MethodContext;
-const NATS_CONNECTION_URI = require('components/utils').messaging.NATS_CONNECTION_URI;
+const MethodContext = require('model').MethodContext;
+const NATS_CONNECTION_URI = require('utils').messaging.NATS_CONNECTION_URI;
 
 const Manager = require('./Manager');
 const Paths = require('../routes/Paths');
 
 const ChangeNotifier = require('./change_notifier');
 
-import type { Logger } from 'components/utils';
-import type { StorageLayer } from 'components/storage';
-import type { CustomAuthFunction } from 'components/model';
+import type { StorageLayer } from 'storage';
+import type { CustomAuthFunction } from 'model';
 
-import type API from '../API';
-import type { SocketIO$Handshake } from './Manager';
+import type API  from '../API';
+import type { SocketIO$Handshake }  from './Manager';
 
 // Initializes the SocketIO subsystem. 
 //
 function setupSocketIO(
-  server: net$Server, logger: Logger, 
+  server: net$Server, logger, 
   notifications: EventEmitter, api: API, 
   storageLayer: StorageLayer, 
   customAuthStepFn: ?CustomAuthFunction,

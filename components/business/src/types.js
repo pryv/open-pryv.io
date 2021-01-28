@@ -37,7 +37,7 @@
 // TypeRepository is the repository for all Pryv event types. It allows access
 // to coercion and validation. 
 
-import type { EventType, Content } from './types/interfaces';
+import type { EventType, Content }  from './types/interfaces';
 
 const lodash = require('lodash');
 const superagent = require('superagent');

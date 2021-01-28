@@ -32,7 +32,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
-const errors = require('components/errors').factory;
+const errors = require('errors').factory;
 
 /**
  * '404' handling to override Express' defaults. Must be set after the routes in the init sequence.

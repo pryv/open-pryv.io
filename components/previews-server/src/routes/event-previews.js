@@ -37,13 +37,15 @@
 const Cache = require('../cache.js');
 const childProcess = require('child_process');
 const CronJob = require('cron').CronJob;
-const errors = require('components/errors').factory;
+const errors = require('errors').factory;
 const gm = require('gm');
 const timestamp = require('unix-timestamp');
 const xattr = require('fs-xattr');
 const _ = require('lodash');
 const bluebird = require('bluebird');
 const getAuth = require('../../../middleware/src/getAuth');
+
+const {getLogger} = require('boiler');
 
 // constants
 const StandardDimensions = [ 256, 512, 768, 1024 ];
@@ -210,7 +212,7 @@ module.exports = function (
 
   // CACHE CLEAN-UP
 
-  var logger = logging.getLogger('previews-cache'),
+  var logger = getLogger('previews-cache'),
       workerRunning = false;
 
   expressApp.post('/clean-up-cache', cleanUpCache);

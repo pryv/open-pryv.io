@@ -33,7 +33,7 @@
  * 
  */
 var async = require('async'),
-  toString = require('components/utils').toString;
+  toString = require('utils').toString;
 
 /**
  * v1.2.0:

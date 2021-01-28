@@ -32,16 +32,16 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
-const errors = require('components/errors').factory;
+const errors = require('errors').factory;
 const commonFns = require('./helpers/commonFunctions');
-const Registration = require('components/business/src/auth/registration');
+const Registration = require('business/src/auth/registration');
 const methodsSchema = require('../schema/systemMethods');
 const string = require('./helpers/string');
 const _ = require('lodash');
 const bluebird = require('bluebird');
-const UsersRepository = require('components/business/src/users/repository');
-const User = require('components/business/src/users/User');
-const SystemStreamsSerializer = require('components/business/src/system-streams/serializer');
+const UsersRepository = require('business/src/users/repository');
+const User = require('business/src/users/User');
+const SystemStreamsSerializer = require('business/src/system-streams/serializer');
 
 /**
  * @param systemAPI

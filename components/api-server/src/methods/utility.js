@@ -35,17 +35,18 @@
 // @flow
 
 const commonFns = require('./helpers/commonFunctions');
-const errorHandling = require('components/errors').errorHandling;
+const errorHandling = require('errors').errorHandling;
 const methodsSchema = require('../schema/generalMethods');
 const _ = require('lodash');
 const bluebird = require('bluebird');
 
-import type API from '../API';
-import type { Logger } from 'components/utils';
-import type { StorageLayer } from 'components/storage';
-import type { MethodContext } from 'components/model';
-import type Result from '../Result';
-import type { ApiCallback } from '../API';
+const { getLogger } = require('boiler');
+
+import type API  from '../API';
+import type { StorageLayer } from 'storage';
+import type { MethodContext } from 'model';
+import type Result  from '../Result';
+import type { ApiCallback }  from '../API';
 
 type ApiCall = {
   method: string,
@@ -57,9 +58,9 @@ type ApiCall = {
  *
  * @param api
  */
-module.exports = function (api: API, logging: Logger, storageLayer: StorageLayer) {
+module.exports = function (api: API, logging, storageLayer: StorageLayer) {
 
-  const logger = logging.getLogger('methods/batch');
+  const logger = getLogger('methods:batch');
 
   api.register('getAccessInfo',
     commonFns.getParamsValidation(methodsSchema.getAccessInfo.params),

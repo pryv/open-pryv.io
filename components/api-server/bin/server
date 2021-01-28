@@ -4,51 +4,22 @@
 
 const Server = require('../src/server');
 const Application = require('../src/application');
-const Settings = require('../src/settings');
-const { getConfig } = require('components/api-server/config/Config');
+
 const loadCommonMeta = require('../src/methods/helpers/setCommonMeta').loadSettings;
-let logger, airbrake;
-const { Notifier } = require('@airbrake/node');
+
+const { getConfig, getLogger } = require('boiler');
+const logger = getLogger('serverRoot');
 
 (async () => {
-  // Load settings asynchronously because we have to fetch
-  // some values from register via an http-get request.
-  const settings = await Settings.load();
-  const config = getConfig();
-  await config.init();
+  const config = await getConfig();
   loadCommonMeta({}); // load settings to common meta
   
-
   // Construct application
-  const app = new Application(settings);
-
-  // Setup Airbrake if enabled
-  const airbrakeSettings = app.settings.get('logs.airbrake').obj();
-  if (airbrakeSettings.active) {
-   airbrake = new Notifier({
-     projectId: airbrakeSettings.projectId, 
-     projectKey: airbrakeSettings.key,
-    environment: 'production',
-    });
-  }
-
-  // Catch uncaught Promise rejections
-  process.on('unhandledRejection', (reason) => {
-    throw reason;
-  });
-
-  // Catch uncaught Exceptions
-  process.on('uncaughtException', async (error) => {
-    if (logger) logger.error(error);
-    console.dir(error);
-    if (airbrake != null && typeof airbrake.notify === 'function') {
-      await airbrake.notify(error);
-    }
-    process.exit(1);
-  });
+  const app = new Application();
+  await app.initiate();
 
   process.on('exit', () => {
-    console.log('Server stopped.');
+    logger.info('Server stopped.');
   });
   process.on('SIGINT', () => {
     logger.warn('Received SIGINT. Exiting...');
@@ -59,9 +30,12 @@ const { Notifier } = require('@airbrake/node');
   const server = new Server(app); 
   await server.start();
 })()
-  .then(() => console.log('Startup sequence complete, Server is running.'))
+  .then(() => logger.info('Startup sequence complete, Server is running. mode: [' + process.env.NODE_ENV + ']'))
   .catch(e => {
-    if (logger) logger.error(e);
-    console.dir(e);
+    if (logger) {
+      logger.error(e);
+    } else {
+      console.log(e);
+    }
     process.exit(1);
   });

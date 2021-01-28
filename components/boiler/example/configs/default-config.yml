@@ -1,0 +1,7 @@
+---
+foo:
+  bar: 'Hello Bar'
+  foo: 'Hello Foo'
+service:
+  name: 'To be overriden by Async Service load'
+default-yaml: 'default-yaml loaded'

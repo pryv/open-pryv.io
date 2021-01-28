@@ -36,17 +36,18 @@
 
 const urllib = require('url');
 const superagent = require('superagent');
-import type { Logger } from 'components/utils/src/logging';
-const ErrorIds = require('components/errors').ErrorIds,
-  errors = require('components/errors').factory,
-  ErrorMessages = require('components/errors/src/ErrorMessages');
+const ErrorIds = require('errors').ErrorIds,
+  errors = require('errors').factory,
+  ErrorMessages = require('errors/src/ErrorMessages');
+
+const { getLogger } = require('boiler');
 class ServiceRegister {
   config: {}; 
-  logger: Logger;
+  logger;
 
-  constructor(config: {}, logger: Logger) {
+  constructor(config: {}) {
     this.config = config; 
-    this.logger = logger;
+    this.logger = getLogger('service-register');
   }
 
   async validateUser (
@@ -147,7 +148,6 @@ class ServiceRegister {
         if (err.response.body.error.id === ErrorIds.ItemAlreadyExists) {
           throw errors.itemAlreadyExists('user', err.response.body.error.data);
         } else {
-          console.log(err.response.body);
           this.logger.error(err.response.body.error);
           throw errors.unexpectedError(err.response.body.error);
         }

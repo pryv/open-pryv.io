@@ -37,15 +37,15 @@
 const bluebird = require('bluebird');
 const timestamp = require('unix-timestamp');
 const _ = require('lodash');
-import type { Access, User, Stream } from 'components/storage';
+import type { Access, User, Stream } from 'storage';
 
 const accessLogic = require('./accessLogic');
-const APIError = require('components/errors').APIError;
-const errors = require('components/errors').factory;
-const treeUtils = require('components/utils').treeUtils;
-const SystemStreamsSerializer = require('components/business/src/system-streams/serializer');
-const UsersRepository = require('components/business/src/users/repository');
-import type { StorageLayer } from 'components/storage';
+const APIError = require('errors').APIError;
+const errors = require('errors').factory;
+const treeUtils = require('utils').treeUtils;
+const SystemStreamsSerializer = require('business/src/system-streams/serializer');
+const UsersRepository = require('business/src/users/repository');
+import type { StorageLayer } from 'storage';
 
 export type CustomAuthFunctionCallback = (err: any) => void;
 export type CustomAuthFunction = (MethodContext, CustomAuthFunctionCallback) => void;
@@ -104,7 +104,7 @@ class MethodContext {
     this.headers = headers;
 
     this.calledMethodId = null;
-    this.systemStreamsSerializer = new SystemStreamsSerializer();
+    this.systemStreamsSerializer = SystemStreamsSerializer.getSerializer();
     this.usersRepository = new UsersRepository(eventsStorage);
     if (auth != null) this.parseAuth(auth);
   }

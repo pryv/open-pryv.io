@@ -32,13 +32,13 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
-const commonFns = require('components/api-server/src/methods/helpers/commonFunctions');
-const utils = require('components/utils');
-const errors = require('components/errors').factory;
-const methodsSchema = require('components/api-server/src/schema/authMethods');
+const commonFns = require('api-server/src/methods/helpers/commonFunctions');
+const utils = require('utils');
+const errors = require('errors').factory;
+const methodsSchema = require('api-server/src/schema/authMethods');
 const _ = require('lodash');
-const UsersRepository = require('components/business/src/users/repository');
-const ErrorIds = require('components/errors/src/ErrorIds');
+const UsersRepository = require('business/src/users/repository');
+const ErrorIds = require('errors/src/ErrorIds');
 /**
  * Auth API methods implementations.
  *

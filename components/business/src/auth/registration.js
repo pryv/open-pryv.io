@@ -36,17 +36,19 @@
 
 const _ = require('lodash');
 const cuid = require('cuid');
-const errors = require('components/errors').factory;
-const { errorHandling } = require('components/errors');
-const mailing = require('components/api-server/src/methods/helpers/mailing');
+const errors = require('errors').factory;
+const { errorHandling } = require('errors');
+const mailing = require('api-server/src/methods/helpers/mailing');
 const ServiceRegister = require('./service_register');
-const SystemStreamsSerializer = require('components/business/src/system-streams/serializer');
-const UsersRepository = require('components/business/src/users/repository');
-const User = require('components/business/src/users/User');
-const ErrorIds = require('components/errors').ErrorIds;
+const SystemStreamsSerializer = require('business/src/system-streams/serializer');
+const UsersRepository = require('business/src/users/repository');
+const User = require('business/src/users/User');
+const ErrorIds = require('errors').ErrorIds;
 
-import type { MethodContext } from 'components/model';
-import type { ApiCallback } from 'components/api-server/src/API';
+const { getLogger } = require('boiler');
+
+import type { MethodContext } from 'model';
+import type { ApiCallback } from 'api-server/src/API';
 
 /**
  * Create (register) a new user
@@ -60,14 +62,12 @@ class Registration {
   servicesSettings: any; // settigns to get the email to send user welcome email
 
   constructor(logging, storageLayer, servicesSettings) {
-    this.logger = logging.getLogger('business/registration');
+    this.logger = getLogger('business:registration');
     this.storageLayer = storageLayer;
     this.servicesSettings = servicesSettings;
 
     this.serviceRegisterConn = new ServiceRegister(
-      servicesSettings.register,
-      logging.getLogger('service-register')
-    );
+      servicesSettings.register);
     this.usersRepository = new UsersRepository(
       this.storageLayer.events,
       this.storageLayer.sessions,
@@ -288,8 +288,9 @@ class Registration {
     result: Result,
     next: ApiCallback
   ) {
+    
     const emailSettings = this.servicesSettings.email;
-
+   
     // Skip this step if welcome mail is deactivated
     const emailActivation = emailSettings.enabled;
     if (emailActivation?.welcome === false) {

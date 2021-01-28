@@ -39,5 +39,5 @@ module.exports = {
   MethodContext: require('./MethodContext')
 };
 
-import type { CustomAuthFunction } from './MethodContext';
+import type { CustomAuthFunction }  from './MethodContext';
 export type { CustomAuthFunction };

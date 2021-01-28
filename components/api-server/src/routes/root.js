@@ -36,14 +36,14 @@
 
 const _ = require('lodash');
 
-const middleware = require('components/middleware');
+const middleware = require('middleware');
 
 const commonMeta = require('../methods/helpers/setCommonMeta');
 const methodCallback = require('./methodCallback');
 const Paths = require('./Paths');
 const getAuth = require('../../../middleware/src/getAuth');
     
-import type Application from '../application';
+import type Application  from '../application';
 
 (async () => {
   await commonMeta.loadSettings();
@@ -52,10 +52,9 @@ import type Application from '../application';
 // Handlers for path roots at various places; handler for batch calls and 
 // access-info. 
 function root(expressApp: express$Application, app: Application) {
-  const settings = app.settings;
   const api = app.api;
   
-  const customAuthStepFn = settings.getCustomAuthFunction();
+  const customAuthStepFn = app.getCustomAuthFunction('root.js');
   const initContextMiddleware = middleware.initContext(
     app.storageLayer, customAuthStepFn);
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);

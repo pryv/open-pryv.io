@@ -32,9 +32,9 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
-const APIError = require('components/errors/src/APIError');
+const APIError = require('errors/src/APIError');
 
-var errors = require('components/errors').factory,
+var errors = require('errors').factory,
     validation = require('../../schema/validation');
 
 exports.requirePersonalAccess = function requirePersonalAccess(context, params, result, next) {

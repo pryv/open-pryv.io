@@ -34,8 +34,8 @@
  */
 const bluebird = require('bluebird');
 
-const UsersRepository = require('components/business/src/users/repository');
-const User = require('components/business/src/users/User');
+const UsersRepository = require('business/src/users/repository');
+const User = require('business/src/users/User');
 
 class Size {
 

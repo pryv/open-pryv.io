@@ -32,15 +32,10 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
-/* jshint -W024 */
-var convict = require('convict'),
-    fs = require('fs'),
-    path = require('path'),
-    toString = require('./toString'),
-    _ = require('lodash'), 
-    ServiceInfo = require('./config/ServiceInfo');
+const path = require('path');
 
-var config = module.exports = {};
+
+module.exports = config = {};
 
 /**
  * Additional setting format definitions.
@@ -255,11 +250,6 @@ config.schema = {
     }
   },
   logs: {
-    prefix: {
-      format: String,
-      default: '',
-      doc: 'Will be prefixed to each logged message\'s context'
-    },
     console: {
       active: {
         format: Boolean,
@@ -336,127 +326,11 @@ config.schema = {
       doc: 'Used for tests to reverse the pub-sub init order'
     }
   },
-};
-
-/**
- * Loads configuration settings from (last takes precedence):
- *
- *   1. Defaults
- *   2. A file whose path is specified in the setting 'config', defaulting to 'config/{env}.json'
- *   3. An "overrides" file whose path is specified in the setting 'configOverrides'
- *   4. Environment variables
- *   5. Command-line arguments
- *
- * Note: possible output is printed to the console (logging is not yet setup at this point).
- *
- * @param configDefault An optional override default value for option `config`
- * @returns {Object} The loaded settings
- */
-config.load = function (configDefault) {
-  const instance = setup(configDefault);
-  
-  var settings = instance.get();
-
-  if (settings.printConfig) {
-    print('Configuration settings loaded', settings);
-  }
-
-  return settings;
-};
-
-
-async function setupWithServiceInfo(configDefault) {
-  const instance = this.setup(configDefault);
-  await ServiceInfo.addToConvict(instance);
-  return instance;
-}
-config.setupWithServiceInfo = setupWithServiceInfo;
-
-// For internal use only: loads convict instance, then validates and returns it. 
-//
-function setup(configDefault) {
-  autoSetEnvAndArg(config.schema);
-
-  var instance = convict(config.schema);
-  var filePath = instance.get('config') ||
-                 configDefault ||
-    '../api-server/config/' + instance.get('env') + '.json';
-  
-  loadFile(filePath);
-
-  var overridesFilePath = instance.get('configOverrides');
-  if (overridesFilePath) {
-    loadFile(overridesFilePath);
-  }
-
-  if (!instance.get('env') === 'test') {
-    instance.validate();
-  }
-  return instance; 
-
-  function loadFile(fPath) {
-    if (! fs.existsSync(fPath)) {
-      console.error('Could not load config file ' + toString.path(fPath) + ''); // eslint-disable-line no-console
-    } else {
-      const data = JSON.parse(fs.readFileSync(fPath, 'utf-8'));
-      /**
-       * This can be removed once "singleNode" has been removed of all configs
-       * This is a duplicate of /components/utils/src/config.js duplicate code 
-       * They should be updated simulatenously
-       * 
-       * replaceable by "instance.loadFile(fPath);"
-      */
-      if (data.singleNode) { 
-        data.dnsLess = data.singleNode;
-        console.log("Warning (config) [singleNode] config parameter has been depracted and replaced by [dnsLess]");
-        delete data.singleNode;
-      }
-      instance.load(data);
+  updates: {
+     ignoreProtectedFields: {
+      format: Boolean,
+      default: false,
+      doc: 'To be written'
     }
   }
-}
-config.setup = setup;
-
-config.printSchemaAndExitIfNeeded = function () {
-  process.argv.slice(2).forEach(function (arg) {
-    if (arg === '--help') {
-      autoSetEnvAndArg(this.schema);
-      print('Available configuration settings', this.schema);
-      process.exit(0);
-    }
-  }.bind(this));
 };
-
-function autoSetEnvAndArg(schema, context) {
-  context = context || [];
-  Object.keys(schema).forEach(function (key) {
-    var value = schema[key],
-        keyPath = context.concat(key);
-    if (isSettingDefinition(value)) {
-      value.env = value.env || getSettingEnvName(keyPath);
-      value.arg = value.arg || getSettingArgName(keyPath);
-    } else if (_.isObject(value)) {
-      autoSetEnvAndArg(value, keyPath);
-    }
-  });
-}
-
-function isSettingDefinition(obj) {
-  return obj.hasOwnProperty('default');
-}
-
-function getSettingEnvName(keyPath) {
-  var envKeyPath = ['Pryv'].concat(keyPath);
-  return envKeyPath.map(function (s) {
-    return s.toUpperCase();
-  }).join('_');
-}
-
-function getSettingArgName(keyPath) {
-  return keyPath.join(':');
-}
-
-function print(title, data) {
-  console.log(title + ':\n' + JSON.stringify(data, null, 2)); // eslint-disable-line no-console
-}
-

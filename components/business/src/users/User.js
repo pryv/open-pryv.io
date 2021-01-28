@@ -38,16 +38,13 @@ const _ = require('lodash');
 const cuid = require('cuid');
 const timestamp = require('unix-timestamp');
 const bluebird = require('bluebird');
-const encryption = require('components/utils').encryption;
+const encryption = require('utils').encryption;
 
-const treeUtils = require('components/utils/src/treeUtils');
-const SystemStreamsSerializer = require('components/business/src/system-streams/serializer');
-const UsersRepository = require('components/business/src/users/repository');
+const treeUtils = require('utils/src/treeUtils');
+const SystemStreamsSerializer = require('business/src/system-streams/serializer');
+const UsersRepository = require('business/src/users/repository');
 
-const getConfig: () => Config = require('components/api-server/config/Config')
-  .getConfig;
-import type { Config } from 'components/api-server/config/Config';
-const config: Config = getConfig();
+const { getConfigUnsafe } = require('boiler');
 
 class User {
   // User properties that exists by default (email could not exist with specific config)
@@ -60,7 +57,6 @@ class User {
 
   events: ?Array<{}>;
   apiEndpoint: ?string;
-  accountStreamsSettings: Array<{}>;
   accountFields: Array<string> = [];
   readableAccountFields: Array<string> = [];
   accountFieldsWithDot: Array<string> = [];
@@ -81,7 +77,6 @@ class User {
     attachedFiles: number,
   }) {
     this.events = params.events;
-    this.accountStreamsSettings = config.get('systemStreams:account');
     buildAccountFields(this);
     loadAccountData(this, params);
 
@@ -146,7 +141,7 @@ class User {
    */
   getApiEndpoint () {
     if (this.apiEndpoint != null) return this.apiEndpoint;
-    const apiFormat = config.get('service:api');
+    const apiFormat = getConfigUnsafe().get('service:api');
     this.apiEndpoint = apiFormat.replace('{username}', this.username);
     if (this.token) {
       let endpointElements = this.apiEndpoint.split('//');
@@ -335,7 +330,7 @@ function createEvent (
  * @param User user
  */
 function buildAccountDataFromListOfEvents (user: User) {
-  const account = buildEventsTree(user.accountStreamsSettings, user.events, {});
+  const account = buildEventsTree(SystemStreamsSerializer.getAccountStreamsConfig(), user.events, {});
   Object.keys(account).forEach(param => {
     user[param] = account[param];
   });

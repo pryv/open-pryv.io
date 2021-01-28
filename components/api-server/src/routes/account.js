@@ -36,9 +36,9 @@
 
 const methodCallback = require('./methodCallback');
 const Paths = require('./Paths');
-const middleware = require('components/middleware');
+const middleware = require('middleware');
 
-import type Application from '../application';
+import type Application  from '../application';
 
 // User account details route handling.
 module.exports = function (expressApp: express$Application, app: Application) {

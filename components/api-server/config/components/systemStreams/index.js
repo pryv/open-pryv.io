@@ -38,10 +38,9 @@
 const _ = require('lodash');
 const fs = require('fs');
 const path = require('path');
-const { Config } = require('components/api-server/config/Config');
-const treeUtils = require('components/utils/src/treeUtils');
-const validation = require('components/api-server/src/schema/validation');
-const string = require('components/api-server/src/methods/helpers/string');
+const treeUtils = require('utils/src/treeUtils');
+const validation = require('api-server/src/schema/validation');
+const string = require('api-server/src/methods/helpers/string');
 const slugify = require('slug');
 const systemStreamSchema = require('./systemStreamSchema');
 
@@ -58,7 +57,7 @@ const DEFAULT_VALUES_FOR_FIELDS = {
   isRequiredInValidation: false // if true, the field will be required in the validation
 };
 
-async function load(config: Config): Config {
+function load(config) {
   // default system streams that should be not changed
   let defaultAccountStreams = [
     {
@@ -149,22 +148,8 @@ async function load(config: Config): Config {
 
   const CUSTOM_SYSTEM_STREAMS_FIELDS: string = 'CUSTOM_SYSTEM_STREAMS_FIELDS';
 
-  /**
-   * Or if it is a simple config, just pass json by env variable
-   */
-  config.env({
-    [CUSTOM_SYSTEM_STREAMS_FIELDS]: {
-      alias: 'ADDITIONAL_SYSTEM_STREAMS_FIELDS',
-      describe:
-        'json that contains additional system streams fields information.',
-      demand: false,
-      parseValues: true,
-      lowerCase: true
-    }
-  });
-
   readAdditionalFieldsConfig(config); 
-  return config;
+  return 'System Streams';
 
   /**
    * If any, load custom system streams from:
@@ -239,9 +224,9 @@ async function load(config: Config): Config {
    * @param {*} additionalFields
    */
   function appendSystemStreamsConfigWithAdditionalFields(
-    config: Config,
+    config,
     additionalFields
-  ): Config {
+  ) {
     let defaultConfig = config.get('systemStreams');
 
     // extend systemStreams with default values

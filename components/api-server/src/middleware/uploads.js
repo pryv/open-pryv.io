@@ -38,7 +38,7 @@
 // A middleware that allows checking uploads and that will at the same time
 // allow uploads for the route. 
 
-const filesUploadSupport = require('components/middleware').filesUploadSupport;
+const filesUploadSupport = require('middleware').filesUploadSupport;
 const multer = require('multer');
 
 // ---------------------------------------------------------------- multer setup

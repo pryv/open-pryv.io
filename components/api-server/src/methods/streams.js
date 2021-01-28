@@ -32,20 +32,25 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
-var errors = require('components/errors').factory,
+var errors = require('errors').factory,
   async = require('async'),
   commonFns = require('./helpers/commonFunctions'),
-  errorHandling = require('components/errors').errorHandling,
+  errorHandling = require('errors').errorHandling,
   methodsSchema = require('../schema/streamsMethods'),
   streamSchema = require('../schema/stream'),
   slugify = require('slug'),
   string = require('./helpers/string'),
-  utils = require('components/utils'),
+  utils = require('utils'),
   treeUtils = utils.treeUtils,
   _ = require('lodash');
-const SystemStreamsSerializer = require('components/business/src/system-streams/serializer');
+const SystemStreamsSerializer = require('business/src/system-streams/serializer');
 const ErrorMessages = require('../../../errors/src/ErrorMessages');
 const ErrorIds = require('../../../errors/src/ErrorIds');
+
+const { getLogger } = require('boiler');
+const logger = getLogger('methods:streams');
+
+const systemStreamsSerializer = SystemStreamsSerializer.getSerializer();
 
 /**
  * Event streams API methods implementation.
@@ -62,8 +67,7 @@ const ErrorIds = require('../../../errors/src/ErrorIds');
 module.exports = function (api, userStreamsStorage, userEventsStorage, userEventFilesStorage,
   notifications, logging, auditSettings, updatesSettings) {
 
-  const logger = logging.getLogger('methods/streams');
-  const systemStreamsSerializer = new SystemStreamsSerializer();
+  
   // RETRIEVAL
 
   api.register('streams.get',

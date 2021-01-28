@@ -43,8 +43,6 @@ var APIError = require('./APIError'),
 
 var errorHandling = module.exports = {};
 
-import type { Logger } from 'components/utils';
-
 /**
  * Logs the given error.
  *
@@ -52,8 +50,8 @@ import type { Logger } from 'components/utils';
  * @param {Object} req The request context; expected properties: url, method, body
  * @param {Object} logger The logger object (expected methods: debug, info, warn, error)
  */
-errorHandling.logError = function (error: Error, req: express$Request | Object, logger: Logger) {
-  // console.log('XXXXXX', error); // uncomment to log 500 errors on test running using InstanceManager  
+errorHandling.logError = function (error: Error, req: express$Request | Object, logger) {
+  //console.log('XXXXXX', error); // uncomment to log 500 errors on test running using InstanceManager  
   var metadata = {};
   if (req) {
     metadata.context = {

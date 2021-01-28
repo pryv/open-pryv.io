@@ -36,8 +36,8 @@
 
 const methodCallback = require('../methodCallback');
 const API = require('../../API');
-import type Application from '../../application';
-const { Config, getConfig } = require('components/api-server/config/Config');
+import type Application  from '../../application';
+const { getConfigUnsafe } = require('boiler');
 
 /**
  * Routes for users
@@ -46,7 +46,6 @@ const { Config, getConfig } = require('components/api-server/config/Config');
 module.exports = function(expressApp: express$Application, app: Application) {
   const api: API = app.api;
   const context = {};
-  const config: Config = getConfig();
 
   expressApp.delete('/users/:username', function(
     req: express$Request,
@@ -55,7 +54,7 @@ module.exports = function(expressApp: express$Application, app: Application) {
   ) {
     context.username = req.params.username;
     context.authorizationHeader = req.headers.authorization;
-    const isOpensource = config.get('openSource:isActive');
+    const isOpensource = getConfigUnsafe().get('openSource:isActive');
 
     if (isOpensource) {
       api.call(

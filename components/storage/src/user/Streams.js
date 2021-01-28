@@ -36,8 +36,8 @@ var async = require('async'),
     BaseStorage = require('./BaseStorage'),
     converters = require('./../converters'),
     util = require('util'),
-    toString = require('components/utils').toString,
-    treeUtils = require('components/utils').treeUtils,
+    toString = require('utils').toString,
+    treeUtils = require('utils').treeUtils,
     _ = require('lodash');
 
 module.exports = Streams;

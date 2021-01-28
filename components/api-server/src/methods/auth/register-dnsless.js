@@ -33,11 +33,11 @@
  * 
  */
 const _ = require('lodash');
-const Registration = require('components/business/src/auth/registration');
+const Registration = require('business/src/auth/registration');
 const commonFns = require('./../helpers/commonFunctions');
-const methodsSchema = require('components/api-server/src/schema/authMethods');
-const UsersRepository = require('components/business/src/users/repository');
-const errors = require('components/errors').factory;
+const methodsSchema = require('api-server/src/schema/authMethods');
+const UsersRepository = require('business/src/users/repository');
+const errors = require('errors').factory;
 
 /**
  * Auth API methods implementations.
@@ -65,7 +65,12 @@ module.exports = function (api, logging, storageLayer, servicesSettings) {
   // Username check
   api.register('auth.usernameCheck.dnsless',
     commonFns.getParamsValidation(methodsSchema.usernameCheck.params),
-    checkUsername
+    checkUniqueField
+  );
+
+  api.register('auth.emailCheck.dnsless',
+    commonFns.getParamsValidation(methodsSchema.emailCheck.params),
+    checkUniqueField
   );
 
   /**
@@ -75,15 +80,15 @@ module.exports = function (api, logging, storageLayer, servicesSettings) {
    * @param {*} result 
    * @param {*} next 
    */
-  async function checkUsername(context: MethodContext, params: mixed, result: Result, next: ApiCallback) {
+  async function checkUniqueField(context: MethodContext, params: mixed, result: Result, next: ApiCallback) {
     result.reserved = false;
+    // the check for the required field is done by the schema
+    const field = Object.keys(params)[0];
     try {
-      const existingUsers = await usersRepository.findExistingUniqueFields({ username: params.username});
-
+      const existingUsers = await usersRepository.findExistingUniqueFields({ [field]: params[field]});
       if (existingUsers.length > 0) {
-        return next(errors.itemAlreadyExists('user', { username: params.username }));
+        return next(errors.itemAlreadyExists('user', { [field]: params[field] }));
       }
-      result.reserved = false;
     } catch (error) {
       return next(errors.unexpectedError(error));
     }

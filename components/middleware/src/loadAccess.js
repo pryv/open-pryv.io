@@ -34,7 +34,7 @@
  */
 // @flow
 
-import type { StorageLayer } from 'components/storage';
+import type { StorageLayer } from 'storage';
 
 // Returns a middleware function that loads the access into `req.context.access`.
 // The access is loaded from the token previously extracted by the `initContext` middleware.

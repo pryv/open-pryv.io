@@ -36,9 +36,11 @@ var logger = require('winston');
 var database = require('./storage/database');
 var config = require('./config');
 var messages = require('./utils/messages');
+
+
 logger['default'].transports.console.level = 'info';
 
-const headPath = require('components/api-server/src/routes/Paths').Register;
+const headPath = require('api-server/src/routes/Paths').Register;
 
 class mockExpress {
   constructor(expressApp) {
@@ -46,7 +48,7 @@ class mockExpress {
   }
 
   use(fn) {
-    this.app.use(fn);
+    this.app.use(headPath, fn);
   }
 
   get(path, cb1, cb2) {
@@ -65,7 +67,7 @@ class mockExpress {
 }
 
 module.exports = async (expressApp, application) => {
-  config.loadSettings(application.settings);
+  config.loadSettings(application.config);
   database.setReference('storage', application.storageLayer);
   database.setReference('systemAPI', application.systemAPI);
   
@@ -75,7 +77,6 @@ module.exports = async (expressApp, application) => {
   require('./routes/service')(app);
   require('./routes/access')(app);
   require('./routes/admin')(app);
-  require('./routes/server')(app); // only used for backwards compatiblity with DNS set-up
   require('./middleware/app-errors')(app);
 
   // register all reg routes

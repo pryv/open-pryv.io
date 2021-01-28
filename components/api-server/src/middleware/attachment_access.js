@@ -36,8 +36,8 @@
 
 const lodash = require('lodash');
 
-const storage = require('components/storage');
-const errors = require('components/errors').factory;
+const storage = require('storage');
+const errors = require('errors').factory;
 
 function middlewareFactory(userEventsStorage: storage.user.Events) {
   return lodash.partial(attachmentsAccessMiddleware, userEventsStorage);

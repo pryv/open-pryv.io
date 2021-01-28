@@ -34,7 +34,7 @@
  */
 var async = require('async'),
     commonFns = require('./helpers/commonFunctions'),
-    errors = require('components/errors').factory,
+    errors = require('errors').factory,
     methodsSchema = require('../schema/followedSlicesMethods');
 
 /**

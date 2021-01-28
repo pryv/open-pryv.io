@@ -34,7 +34,7 @@
  */
 // @flow
 
-import type Result from '../Result';
+import type Result  from '../Result';
 
 /**
  * Helper function for handling method responses.

@@ -32,19 +32,38 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
+
+const path = require('path');
+const {getConfig, getLogger } = require('boiler').init({
+  appName: 'previews-server',
+  baseConfigDir: path.resolve(__dirname, '../../api-server/config'), // api-server config
+  extraConfigs: [{
+    scope: 'defaults-previews',
+    file: path.resolve(__dirname, '../config/defaults-config.yml')
+  }, {
+    scope: 'serviceInfo',
+    key: 'service',
+    urlFromKey: 'serviceInfoUrl'
+  },{
+    scope: 'defaults-data',
+    file: path.resolve(__dirname, '../../api-server/config/defaults.js')
+  }, {
+    plugin: require('../../api-server/config/components/systemStreams')
+  }]
+});
+
 // @flow
 const http = require('http');
 
-const middleware = require('components/middleware');
-const storage = require('components/storage');
-const utils = require('components/utils');
+const middleware = require('middleware');
+const storage = require('storage');
+const utils = require('utils');
 
 const ExtensionLoader = utils.extension.ExtensionLoader;
 
-const { ProjectVersion } = require('components/middleware/src/project_version');
-const { getConfig } = require('components/api-server/config/Config');
+const { ProjectVersion } = require('middleware/src/project_version');
 
-import type { Extension } from 'components/utils';
+import type { Extension } from 'utils';
 
 function loadCustomAuthStepFn(customExtensions): ?Extension {
   const defaultFolder = customExtensions.defaultFolder;
@@ -63,28 +82,22 @@ async function start() {
    * Runs the server.
    * Launch with `node server [options]`.
    */
-  const newConfig = getConfig();
-  await newConfig.init();
 
   // load config settings
-  var config = require('./config');
-  config.printSchemaAndExitIfNeeded();
-  var settings = config.load();
+  var config = await getConfig();
 
-  const customAuthStepExt = loadCustomAuthStepFn(settings.customExtensions);
+  const customAuthStepExt = loadCustomAuthStepFn(config.get('customExtensions'));
 
-  const logging = utils.logging(settings.logs); 
-
-  const logger = logging.getLogger('server');
+  const logger = getLogger('server');
 
   const database = new storage.Database(
-    settings.database, logging.getLogger('database'));
+    config.get('database'), getLogger('database'));
 
   const storageLayer = new storage.StorageLayer(
     database, logger,
-    settings.eventFiles.attachmentsDirPath,
-    settings.eventFiles.previewsDirPath,
-    10, settings.auth.sessionMaxAge);
+    config.get('eventFiles:attachmentsDirPath'),
+    config.get('eventFiles:previewsDirPath'),
+    10, config.get('auth:sessionMaxAge'));
 
   const initContextMiddleware = middleware.initContext(
     storageLayer,
@@ -98,12 +111,12 @@ async function start() {
 
   const { expressApp, routesDefined } = require('./expressApp')(
     middleware.commonHeaders(version), 
-    require('./middleware/errors')(logging), 
-    middleware.requestTrace(null, logging));
+    require('./middleware/errors')(logger), 
+    middleware.requestTrace(null, logger));
 
   // setup routes
   require('./routes/index')(expressApp);
-  require('./routes/event-previews')(expressApp, initContextMiddleware, loadAccessMiddleware, storageLayer.events, storageLayer.eventFiles, logging);
+  require('./routes/event-previews')(expressApp, initContextMiddleware, loadAccessMiddleware, storageLayer.events, storageLayer.eventFiles, logger);
 
   // Finalize middleware stack: 
   routesDefined();
@@ -115,25 +128,26 @@ async function start() {
 
   // Go
 
-  utils.messaging.openPubSocket(settings.tcpMessaging, function (err, pubSocket) {
+  utils.messaging.openPubSocket(config.get('tcpMessaging'), function (err, pubSocket) {
     if (err) {
       logger.error('Error setting up TCP pub socket: ' + err);
       process.exit(1);
     }
-    logger.info('TCP pub socket ready on ' + settings.tcpMessaging.host + ':' +
-      settings.tcpMessaging.port);
+    logger.info('TCP pub socket ready on ' + config.get('tcpMessaging:host') + ':' +
+      config.get('tcpMessaging:port'));
 
     database.waitForConnection(function () {
       const backlog = 512;
-      server.listen(settings.http.port, settings.http.ip, backlog, function () {
+      server.listen(config.get('http:port'), config.get('http:ip'), backlog, function () {
         var address = server.address();
         var protocol = server.key ? 'https' : 'http';
         server.url = protocol + '://' + address.address + ':' + address.port;
-        logger.info('Browser server v' + require('../package.json').version +
-          ' [' + expressApp.settings.env + '] listening on ' + server.url);
+        const infostr =  'Preview server v' + require('../package.json').version +
+        ' [' + expressApp.settings.env + '] listening on ' + server.url;
+        logger.info(infostr);
 
         // all right
-
+        logger.debug(infostr)
         logger.info('Server ready');
         pubSocket.emit('server-ready');
       });
@@ -150,9 +164,11 @@ type ExtendedAttributesServer = net$Server & {
   url?: string,
 }
 
+const loggerLaunch = getLogger('launch');
+
 // And now:
 start()
   .catch(err => {
-    console.error(err); // eslint-disable-line no-console
+    loggerLaunch.error(err); // eslint-disable-line no-console
   });
 

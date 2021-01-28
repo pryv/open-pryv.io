@@ -32,9 +32,9 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
-exports.defaultConfig = {
-  dnsLess: {
-    isActive: true,
-    publicUrl: "http://localhost:3000/"
+module.exports = {
+  load: function(store) {
+    store.set('plugin-sync', 'plugin sync loaded');
+    return 'plugin-sync'; // my name
   }
 }

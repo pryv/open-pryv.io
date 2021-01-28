@@ -36,9 +36,9 @@
  * Business logic for access objects.
  */
 
-var treeUtils = require('components/utils').treeUtils,
+var treeUtils = require('utils').treeUtils,
     _ = require('lodash');
-const SystemStreamsSerializer = require('components/business/src/system-streams/serializer');
+const SystemStreamsSerializer = require('business/src/system-streams/serializer');
 
 /**
  * Lists permission levels ordered by ascending level to help with permission assessment.

@@ -3,9 +3,8 @@
 // Binary for launching the db migration process. 
 
 const Application = require('../src/application');
-const Settings = require('../src/settings');
-const { getConfig } = require('components/api-server/config/Config');
 const bluebird = require('bluebird');
+const { getLogger } = require('boiler');
 let logger;
 
 (async () => {
@@ -13,13 +12,11 @@ let logger;
   // some values from register via an http-get request.
   process.env.CONNECT_TIMOUT_MS = 1000000;
   process.env.SOCKET_TIMOUT_MS = 1000000;
-  const settings = await Settings.load(); 
-  const config = getConfig();
-  await config.init();
 
   // Construct application
-  const app = new Application(settings);
-  logger = app.logFactory('migration-process');
+  const app = new Application();
+  await app.initiate();
+  logger = getLogger('migration-process');
 
   // This bit is useful to trace down promise rejections that aren't caught. 
   process.on('unhandledRejection', (reason, promise) => {

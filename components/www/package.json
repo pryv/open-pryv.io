@@ -1,7 +1,7 @@
 {
   "name": "www",
   "version": "0.0.1",
-  "private": false,
+  "private": true,
   "description": "Pryv WWW component",
   "homepage": "http://pryv.com",
   "license": "BSD-3-Clause",

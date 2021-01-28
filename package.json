@@ -1,7 +1,7 @@
 {
   "name": "open-pryv.io",
-  "version": "1.6.12-open",
-  "private": false,
+  "version": "1.6.13-open",
+  "private": true,
   "description": "Pryv core server app components",
   "homepage": "http://pryv.com",
   "repository": {
@@ -10,6 +10,11 @@
   },
   "license": "BSD-3-Clause",
   "author": "Pryv S.A. <support@pryv.com> (http://pryv.com)",
+  "workspaces": {
+    "packages": [
+      "components/*"
+    ]
+  },
   "scripts": {
     "api": "NODE_ENV=production ./dist/components/api-server/bin/server --config ./config.json",
     "build-dev": "scripts/prepare_dist && node_modules/.bin/babel ./components --out-dir=dist/components --copy-files --source-maps both",
@@ -32,21 +37,16 @@
     "**/node-fetch": "^2.6.1"
   },
   "dependencies": {
-    "@airbrake/node": "^1.1.2",
-    "api-server": "file:components/api-server",
     "async": "^2.5.0",
     "awaiting": "^3.0.0",
     "axon": "2.0.x",
     "bcrypt": "^5.0.0",
     "bluebird": "^3.5.0",
     "body-parser": "^1.17.1",
-    "business": "file:components/business",
     "cls-hooked": "^4.2.2",
-    "convict": "^3.0.0",
     "cookie-parser": "^1.4.3",
     "cron": "^1.2.1",
     "cross-fetch": "^3.0.6",
-    "errors": "file:components/errors",
     "express": "^4",
     "flow-bin": "^0.113.0",
     "heap": "^0.2.6",
@@ -54,15 +54,11 @@
     "js-yaml": "^3.11.0",
     "lodash": "^4.17.4",
     "lru-cache": "^4.1.1",
-    "middleware": "file:components/middleware",
     "mkdirp": "1.0.4",
-    "model": "file:components/model",
     "mongodb": "^3.6.2",
     "morgan": "^1.8.1",
     "msgpack5": "^3.6.0",
     "multer": "^1.3.0",
-    "nconf": "^0.11.0",
-    "previews-server": "file:components/previews-server",
     "protobufjs": "^6.8.6",
     "pryv": "^2.0.2",
     "qs": "^6.3.0",
@@ -73,12 +69,10 @@
     "shimmer": "^1.2.0",
     "sinon": "^5",
     "slug": "^0.9.1",
-    "storage": "file:components/storage",
     "superagent": "^3.8",
     "tchannel": "^3.9.12",
     "unicode": "^12.1.0",
     "unix-timestamp": "^0.2.0",
-    "utils": "file:components/utils",
     "yargs": "^16.0.3"
   },
   "devDependencies": {

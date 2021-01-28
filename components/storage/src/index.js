@@ -57,7 +57,7 @@ module.exports = {
   StorageLayer: StorageLayer,
 };
 
-import type { IndexDefinition } from './Database';
+import type { IndexDefinition }  from './Database';
 export type { IndexDefinition };
 
 export type {  

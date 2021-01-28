@@ -53,7 +53,7 @@ const ErrorMessages = {
   [ErrorIds.InvalidInvitationToken]: 'Invalid invitation token',
   [ErrorIds.MissingRequiredField]: 'Missing required field',
   [ErrorIds.DeniedStreamAccess]: 'It is forbidden to access this stream.',
-  [ErrorIds.TooHighAccessForAccountStreams]: 'Only read and contribute acceesses are allowed for the account sterams',
+  [ErrorIds.TooHighAccessForAccountStreams]: 'Only read and contribute accesses are allowed for the account streams',
   [ErrorIds.EmailRequired]: 'Email is required',
   [ErrorIds.PasswordRequired]: 'Password is required',
   [ErrorIds.InvalidPassword]: 'Password should have from 5 to 23 characters',

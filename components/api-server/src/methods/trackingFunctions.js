@@ -34,17 +34,16 @@
  */
 // @flow
 
-const errorHandling = require('components/errors').errorHandling;
-const errors = require('components/errors').factory;
+const errorHandling = require('errors').errorHandling;
+const errors = require('errors').factory;
 const string = require('./helpers/string');
 const timestamp = require('unix-timestamp');
 
-import type API from '../API';
-import type { Logger } from 'components/utils';
-import type { StorageLayer } from 'components/storage';
-import type { MethodContext } from 'components/model';
-import type Result from '../Result';
-import type { ApiCallback } from '../API';
+import type API  from '../API';
+import type { StorageLayer } from 'storage';
+import type { MethodContext } from 'model';
+import type Result  from '../Result';
+import type { ApiCallback }  from '../API';
 
 /**
  * Call tracking functions, to be registered after all methods have been registered.
@@ -55,7 +54,7 @@ import type { ApiCallback } from '../API';
  */
 module.exports = function (
   api: API,
-  logger: Logger, 
+  logger, 
   storageLayer: StorageLayer
 ) {
 

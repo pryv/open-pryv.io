@@ -37,42 +37,56 @@
 // A central registry for singletons and configuration-type instances; pass this
 // to your code to give it access to app setup. 
 
-const utils = require('components/utils');
-const storage = require('components/storage');
+const path = require('path');
+const boiler = require('boiler').init({
+  appName: 'api-server',
+  baseConfigDir: path.resolve(__dirname, '../config/'),
+  extraConfigs: [{
+    scope: 'serviceInfo',
+    key: 'service',
+    urlFromKey: 'serviceInfoUrl'
+  }, {
+    scope: 'defaults-data',
+    file: path.resolve(__dirname, '../config/defaults.js')
+  },{
+    plugin: require('../config/components/systemStreams')
+  },{
+    plugin: require('../config/public-url')
+  }, {
+    plugin: require('../config/config-validation')
+  }]
+});
+
+const storage = require('storage');
 const API = require('./API');
 const expressAppInit = require('./expressApp');
-const middleware = require('components/middleware');
+const middleware = require('middleware');
 const errorsMiddlewareMod = require('./middleware/errors'); 
-const config = require('./config');
 
-const { getConfig, Config } = require('components/api-server/config/Config');
+const { getConfig, getLogger } = require('boiler');
+const logger = getLogger('application');
 
-import type { ConfigAccess } from './settings';
-import type { WebhooksSettingsHolder } from './methods/webhooks';
-import type { LogFactory } from 'components/utils';
-import type { Logger } from 'components/utils';
+const { Extension, ExtensionLoader } = require('utils').extension;
+
+logger.debug('Loading app');
+
+import type { CustomAuthFunction } from 'model';
+import type { WebhooksSettingsHolder }  from './methods/webhooks';
 
 type UpdatesSettingsHolder = {
   ignoreProtectedFields: boolean,
 }
 
-type AirbrakeSettings = {
-  projectId: string, key: string,
-};
-
 // Application is a grab bag of singletons / system services with not many 
 // methods of its own. It is the type-safe version of DI. 
 // 
 class Application {
-  // Application settings, see ./settings
-  settings: ConfigAccess; 
   // new config
-  config: Config;
-  
-  logging: Logger
+  config;
+  logging;
 
-  // Application log factory
-  logFactory: LogFactory; 
+  initalized;
+
   
   // Normal user API
   api: API; 
@@ -86,47 +100,58 @@ class Application {
   
   expressApp: express$Application;
 
-  constructor(settings: ConfigAccess) {
-    this.settings = settings;
-    
+  constructor() {
+    this.initalized = false;
+    logger.debug('creation');
+
     this.api = new API(); 
     this.systemAPI = new API(); 
-    
-    this.produceLogSubsystem(); 
-    this.produceStorageSubsystem();
-    this.config = getConfig();
+  
+    logger.debug('created');
   }
 
   async initiate() {
-    await this.config.init();
-    this.produceLogSubsystem(); 
+    if (this.initalized) {
+      logger.debug('App was already initialized, skipping');
+      return this;
+    }
+    this.produceLogSubsystem();
+    logger.debug('Init started');
+
+    this.config = await getConfig();
+   
     this.produceStorageSubsystem(); 
     await this.createExpressApp();
     this.initiateRoutes();
     this.expressApp.use(middleware.notFound);
-    const errorsMiddleware = errorsMiddlewareMod(this.logging, createAirbrakeNotifierIfNeeded());
+    const errorsMiddleware = errorsMiddlewareMod(this.logging);
     this.expressApp.use(errorsMiddleware);
+    logger.debug('Init done');
+    this.initalized = true;
   }
 
   async createExpressApp(): Promise<express$Application> {
+
     this.expressApp = await expressAppInit( 
-      this.settings.get('dnsLess.isActive').bool(), 
+      this.config.get('dnsLess:isActive'), 
       this.logging);
   }
 
   initiateRoutes() {
-    const isOpenSource = this.settings.get('openSource.isActive').bool();
-    if (isOpenSource) {
-      require('components/www')(this.expressApp, this);
-      require('components/register')(this.expressApp, this);
-    }
-    if (this.settings.get('dnsLess.isActive').bool()) {
+    const isOpenSource = this.config.get('openSource:isActive');
+    
+    if (this.config.get('dnsLess:isActive')) {
       require('./routes/register')(this.expressApp, this);
     }
 
-    // system, root, register and delete MUST come firs
+    // system, root, register and delete MUST come first
     require('./routes/auth/delete')(this.expressApp, this);
     require('./routes/auth/register')(this.expressApp, this);
+    if (isOpenSource) {
+      require('www')(this.expressApp, this);
+      require('register')(this.expressApp, this);
+    }
+    
     require('./routes/system')(this.expressApp, this);
     require('./routes/root')(this.expressApp, this);
     
@@ -139,102 +164,81 @@ class Application {
     require('./routes/service')(this.expressApp, this);
     require('./routes/streams')(this.expressApp, this);
 
+    
     if(!isOpenSource) require('./routes/webhooks')(this.expressApp, this);
   }
   
   produceLogSubsystem() {
-    const logSystemSettings = this.settings.get('logs').obj();
-    this.logging = utils.logging(logSystemSettings); 
-    
-    this.logFactory = this.logging.getLogger;
+    this.logging = getLogger('Application'); 
   }
 
   produceStorageSubsystem() {
-    const settings = this.settings;
-
-    this.database = new storage.Database(
-      settings.get('database').obj(), 
-      this.logFactory('database'));
+    const config = this.config;
+    this.database = new storage.Database(config.get('database'));
 
     // 'StorageLayer' is a component that contains all the vertical registries
     // for various database models. 
     this.storageLayer = new storage.StorageLayer(this.database, 
-      this.logFactory('model'),
-      settings.get('eventFiles.attachmentsDirPath').str(), 
-      settings.get('eventFiles.previewsDirPath').str(), 
-      settings.get('auth.passwordResetRequestMaxAge').num(), 
-      settings.get('auth.sessionMaxAge').num()
+      getLogger('model'),
+      config.get('eventFiles:attachmentsDirPath'), 
+      config.get('eventFiles:previewsDirPath'), 
+      config.get('auth:passwordResetRequestMaxAge'), 
+      config.get('auth:sessionMaxAge')
     );
   }
   
   // Returns the settings for updating entities
   // 
   getUpdatesSettings(): UpdatesSettingsHolder {
-    const settings = this.settings;
-    
     return {
-      ignoreProtectedFields: settings.get('updates.ignoreProtectedFields').bool(),
+      ignoreProtectedFields: this.config.get('updates:ignoreProtectedFields'),
     };
   }
 
   getWebhooksSettings(): WebhooksSettingsHolder {
-    const settings = this.settings;
-    return settings.get('webhooks').obj();
-  }
-  
-  getServiceInfoSettings(): ConfigAccess {
-    return this.settings;
+    return this.config.get('webhooks');
   }
 
-  // Produces and returns a new logger for a given `topic`.
+  
+   // Returns the custom auth function if one was configured. Otherwise returns
+  // null. 
   // 
-  getLogger(topic: string): Logger {
-    return this.logFactory(topic);
+  customAuthStepLoaded = false;
+  customAuthStepFn = null;
+  getCustomAuthFunction(from): ?CustomAuthFunction {
+    if (! this.customAuthStepLoaded) {
+      this.customAuthStepFn = this.loadCustomExtension();
+      this.customAuthStepLoaded = true;
+    }
+    logger.debug('getCustomAuth from: ' + from + ' => ' + (this.customAuthStepFn !== null), this.customAuthStep);
+    return this.customAuthStepFn;
   }
-}
 
-function createAirbrakeNotifierIfNeeded() {
-  /*
-    Quick guide on how to test Airbrake notifications (under logs entry):
-    1. Update configuration file with Airbrake information:
-        "airbrake": {
-         "active": true,
-         "key": "get it from pryv.airbrake.io settings",
-         "projectId": "get it from pryv.airbrake.io settings"
-       }
-    2. Throw a fake error in the code (/routes/root.js is easy to trigger):
-        throw new Error('This is a test of Airbrake notifications');
-    3. Trigger the error by running the faulty code (run a local core)
-   */
-  const settings = getAirbrakeSettings(); 
-  if (settings == null) return; 
+  loadCustomExtension(): ?Extension {
+    const defaultFolder = this.config.get('customExtensions:defaultFolder');
+    const name = 'customAuthStepFn';
+    const customAuthStepFnPath = this.config.get('customExtensions:customAuthStepFn');
 
-  const { Notifier } = require('@airbrake/node');
-
-  const airbrakeNotifier = new Notifier({
-    projectId: settings.projectId,
-    projectKey: settings.key,
-    environment: 'production',
-  });
-  return airbrakeNotifier;
-}
-
-function getAirbrakeSettings(): ?AirbrakeSettings {
-  // TODO Directly hand log settings to this class. 
-  const logSettings = config.load().logs;
-  if (logSettings == null) return null; 
+    const loader = new ExtensionLoader(defaultFolder);
   
-  const airbrakeSettings = logSettings.airbrake;
-  if (airbrakeSettings == null || !airbrakeSettings.active) return null; 
-  
-  const projectId = airbrakeSettings.projectId;
-  const key = airbrakeSettings.key;
-  if (projectId == null || key == null) return null; 
-  
-  return {
-    projectId: projectId, 
-    key: key,
-  };
+    let customAuthStep = null;
+    if ( customAuthStepFnPath) {
+       logger.debug('Loading CustomAuthStepFn from ' + customAuthStepFnPath);
+       customAuthStep = loader.loadFrom(customAuthStepFnPath);
+    } else {
+      // assert: no path was configured in configuration file, try loading from 
+      // default location:
+      logger.debug('Trying to load CustomAuthStepFn from ' + defaultFolder + '/'+ name + '.js');
+      customAuthStep = loader.load(name);
+    }
+    if (customAuthStep) {
+      logger.debug('Loaded CustomAuthStepFn');
+      return customAuthStep.fn;
+    } else {
+      logger.debug('No CustomAuthStepFn');
+    }
+  }
+
 }
 
 module.exports = Application;

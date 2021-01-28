@@ -2,22 +2,19 @@
 
 // Binary for nightly tasks setup. 
 
-const Settings = require('../src/settings');
-const { getConfig } = require('components/api-server/config/Config');
 const Application = require('../src/application');
+const { getLogger } = require('boiler');
 let logger;
-const Repository = require('components/business/src/users/repository');
+const Repository = require('business/src/users/repository');
 
 (async () => {
   // Load settings asynchronously because we have to fetch
   // some values from register via an http-get request.
-  const settings = await Settings.load(); 
-  const config = getConfig();
-  await config.init();
   
   // Construct application
-  const app = new Application(settings);
-  logger = app.logFactory('nightly-tasks');
+  const app = new Application();
+  await app.initiate();
+  logger = getLogger('nightly-tasks');
 
   // Construct storage size object
   const storage = require('../../storage');

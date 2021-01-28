@@ -1,7 +1,7 @@
 {
   "name": "utils",
   "version": "1.2.18",
-  "private": false,
+  "private": true,
   "description": "This package is part of Open Pryv.io",
   "homepage": "http://pryv.com",
   "license": "BSD-3-Clause",
@@ -14,8 +14,5 @@
     "test-detailed": "yarn run _test --reporter=spec",
     "test-profile": "yarn run _test --profile=true --logs:console:active=false && tick-processor > profiling-output.txt && open profiling-output.txt"
   },
-  "dependencies": {
-    "convict": "^2.0.0",
-    "winston": "^2.3.0"
-  }
+  "dependencies": {}
 }

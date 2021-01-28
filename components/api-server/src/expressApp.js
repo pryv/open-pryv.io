@@ -38,18 +38,18 @@ const express = require('express');
 const _ = require('lodash');
 const bodyParser = require('body-parser');
 
-const middleware = require('components/middleware');
+const middleware = require('middleware');
 
 const Paths = require('./routes/Paths');
 
-const { ProjectVersion } = require('components/middleware/src/project_version');
+const { ProjectVersion } = require('middleware/src/project_version');
 
 // ------------------------------------------------------------ express app init
 
 // Creates and returns an express application with a standard set of middleware. 
 // `version` should be the version string you want to show to API clients. 
 // 
-async function expressAppInit(isDnsLess: boolean, logging: Logger) {
+async function expressAppInit(isDnsLess: boolean, logging) {
   const pv = new ProjectVersion();
   const version = pv.version();
   var app = express(); // register common middleware

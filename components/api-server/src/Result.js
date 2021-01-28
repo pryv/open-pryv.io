@@ -42,7 +42,7 @@ const async = require('async');
 
 const Transform = require('stream').Transform;
 
-import type { Webhook } from 'components/business/webhooks';
+import type { Webhook } from 'business/webhooks';
 
 type ResultOptions = {
   arrayLimit?: number, 

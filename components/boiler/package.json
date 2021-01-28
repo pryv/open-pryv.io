@@ -1,0 +1,19 @@
+{
+  "name": "boiler",
+  "version": "1.0.0",
+  "private": true,
+  "description": "This package is part of Open Pryv.io",
+  "homepage": "http://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv S.A. <support@pryv.com> (http://pryv.com)",
+  "main": "./src/index.js",
+  "scripts": {},
+  "dependencies": {
+    "@airbrake/node": "^1.4.2",
+    "debug": "^4.3.1",
+    "js-yaml": "^4.0.0",
+    "nconf": "^0.10.0",
+    "superagent": "^6.1.0",
+    "winston": "^3.3.3"
+  }
+}

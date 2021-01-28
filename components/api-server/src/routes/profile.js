@@ -37,9 +37,9 @@
 const methodCallback = require('./methodCallback');
 const Paths = require('./Paths');
 const _ = require('lodash');
-const middleware = require('components/middleware');
+const middleware = require('middleware');
 
-import type Application from '../application';
+import type Application  from '../application';
 
 // Profile route handling.
 module.exports = function (expressApp: express$Application, app: Application) {

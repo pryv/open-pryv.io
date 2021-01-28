@@ -38,11 +38,13 @@ const bluebird = require('bluebird');
 const rimraf = require('rimraf');
 const fs = require('fs');
 const path = require('path');
-const UsersRepository = require('components/business/src/users/repository');
-const errors = require('components/errors').factory;
+const UsersRepository = require('business/src/users/repository');
+const errors = require('errors').factory;
 
-import type { MethodContext } from 'components/model';
-import type { ApiCallback } from 'components/api-server/src/API';
+import type { MethodContext } from 'model';
+import type { ApiCallback } from 'api-server/src/API';
+
+const { getLogger } = require('boiler');
 
 class Deletion {
   logger: any;
@@ -51,7 +53,7 @@ class Deletion {
   usersRepository: UsersRepository;
 
   constructor(logging: any, storageLayer: any, settings: any) {
-    this.logger = logging.getLogger('business/deletion');
+    this.logger = getLogger('business:deletion');
     this.storageLayer = storageLayer;
     this.settings = settings;
     this.usersRepository = new UsersRepository(this.storageLayer.events);
@@ -63,7 +65,7 @@ class Deletion {
     result: Result,
     next: ApiCallback
   ) {
-    if(this.settings.get('auth.adminAccessKey').str() !== context.authorizationHeader) {
+    if(this.settings.get('auth:adminAccessKey') !== context.authorizationHeader) {
       return next(errors.unknownResource());
     }
     next();
@@ -90,8 +92,8 @@ class Deletion {
     next: ApiCallback
   ) {
     const paths = [
-      this.settings.get('eventFiles.attachmentsDirPath').str(),
-      this.settings.get('eventFiles.previewsDirPath').str(),
+      this.settings.get('eventFiles:attachmentsDirPath'),
+      this.settings.get('eventFiles:previewsDirPath'),
     ];
 
     const notExistingDir = findNotExistingDir(paths);
@@ -131,8 +133,8 @@ class Deletion {
     next: ApiCallback
   ) {
     const paths = [
-      this.settings.get('eventFiles.attachmentsDirPath').str(),
-      this.settings.get('eventFiles.previewsDirPath').str(),
+      this.settings.get('eventFiles:attachmentsDirPath'),
+      this.settings.get('eventFiles:previewsDirPath'),
     ];
 
     const userPaths = paths.map((p) => path.join(p, context.user.id));
@@ -154,14 +156,11 @@ class Deletion {
     next: ApiCallback
   ) {
     // dynamic loading , because series functionality does not exist in opensource
-    const InfluxConnection = require('components/business/src/series/influx_connection');
-    const host = this.settings.get('influxdb.host').str();
-    const port = this.settings.get('influxdb.port').num();
+    const InfluxConnection = require('business/src/series/influx_connection');
+    const host = this.settings.get('influxdb:host');
+    const port = this.settings.get('influxdb:port');
 
-    const influx = new InfluxConnection(
-      { host: host, port: port },
-      this.logger
-    );
+    const influx = new InfluxConnection({ host: host, port: port });
     await influx.dropDatabase(`user.${params.username}`);
     next();
   }

@@ -1,0 +1,66 @@
+---
+auth:
+  adminAccessKey: some_key_yo
+  trustedApps: pryv-test@http://test.pryv.local, pryv-test-no-cors@*, *@https://*.rec.la*
+logs:
+  console:
+    active: false
+    level: info
+    timestamp: false
+serviceInfoUrl: file://test/service-info.json
+services:
+  email:
+    enabled:
+      welcome: false
+      resetPassword: false
+    method: mandrill
+    url: https://mandrillapp.local/api/1.0/messages/send-template.json
+    key: "doesnt-matter-in-test"
+    welcomeTemplate: welcome-email
+    resetPasswordTemplate: reset-password"
+  register:
+    url: http://localhost:5123
+    key: test-system-key
+tcpMessaging:
+  enabled: true
+reporting:
+  licenseName: pryv.io-test-license
+  templateVersion: 1.0.0
+database:
+  host: 127.0.0.1
+  port: 27017
+  name: pryv-node-test
+  authUser: ''
+  authPassword: ''
+openSource:
+  isActive: false
+dnsLess:
+  isActive: false
+  publicUrl: http://localhost:3000/
+influxdb:
+  host: 127.0.0.1
+  port: 8086
+custom:
+  systemStreams:
+    account:
+    - id: insurancenumber
+      isIndexed: true
+      isShown: true
+      type: string/pryv
+      isRequiredInValidation: true
+      regexValidation: "^[0-9]*$"
+      regexError:
+        message: Cool error
+        code: cool-error
+    - id: phoneNumber
+      isEditable: true
+      isShown: true
+      type: string/pryv
+    - isIndexed: true
+      isUnique: true
+      isShown: true
+      isEditable: true
+      type: email/string
+      name: Email
+      id: email
+      isRequiredInValidation: true

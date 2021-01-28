@@ -32,37 +32,24 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
-/* jshint -W024 */
-var config = require('components/utils').config,
-    _ = require('lodash');
+const schema = require('./config-schema').schema;
 
-/**
- * Extends base config.
- */
-module.exports = config;
+function schemaToConfig (o) {
+  if (typeof o !== 'object') return o;
+  if (Array.isArray(o)) return o;
+  if (typeof o.default !== 'undefined') return o.default;
+  if (typeof o.format !== 'undefined') return null;
 
-_.merge(config.schema, {
-  http: {
-    // override base default
-    port: {
-      default: 3001
-    }
-  },
-  eventFiles: {
-    previewsCacheMaxAge: {
-      format: 'duration',
-      default: 1000 * 60 * 60 * 24 * 7, // 1 week
-      doc: 'The maximum age (in seconds) of a cached preview file if unused.'
-    },
-    previewsCacheCleanUpCronTime: {
-      format: String,
-      default: '00 00 2 * * *' // every day at 2:00:00AM
-    }
-  },
-  tcpMessaging: {
-    // override base default
-    port: {
-      default: '4001'
+  const res = {};
+  let addedOne = false;
+  for (let key of Object.keys(o)) {
+    const v = schemaToConfig(o[key]);
+    if (typeof v !== 'undefined' && v !== null) {
+      addedOne = true;
+      res[key] = v;
     }
   }
-});
+  return addedOne ? res : null;
+}
+
+module.exports = schemaToConfig(schema);

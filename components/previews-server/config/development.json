@@ -1,6 +1,3 @@
 {
-  "logs": {
-    "prefix": "previews::"
-  },
   "serviceInfoUrl": "file://test/service-info.json"
 }

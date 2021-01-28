@@ -36,11 +36,9 @@
 
 const timestamp = require('unix-timestamp');
 const _ = require('lodash');
-const { ProjectVersion } = require('components/middleware/src/project_version');
+const { ProjectVersion } = require('middleware/src/project_version');
 // cnan be overriden;
-const apiServerSettings = require('../../settings');
-
-import type { ConfigAccess } from './settings';
+const { getConfig } = require('boiler');
 
 type MetaInfo = {
   meta: {
@@ -59,7 +57,7 @@ type MetaInfo = {
 // Memoised copy of the current project version. 
 let version: string = 'n/a';
 let serial: ?string = null;
-let config: ConfigAccess = null;
+let config = null;
 
 // Initialise the project version as soon as we can. 
 const pv = new ProjectVersion(); 
@@ -69,12 +67,8 @@ version = pv.version();
  * 
  * If no parameter is provided, loads the configuration. Otherwise takes the provided loaded settings.
  */
-module.exports.loadSettings = async function (overrideSettings: ConfigAccess): Promise<void> {
-  if (overrideSettings != null) {
-    config = overrideSettings;
-  } else {
-    config = await apiServerSettings.load();
-  }
+module.exports.loadSettings = async function (): Promise<void> {
+  config = await getConfig();
 };
 
 /**
@@ -93,7 +87,7 @@ module.exports.setCommonMeta = function <T: Object>(result: T): T & MetaInfo {
   }
 
   if (serial == null && config != null) {
-    serial = config.get('service.serial').str();
+    serial = config.get('service:serial');
   }
   
   _.extend(result.meta, {

@@ -33,7 +33,7 @@
  * 
  */
 const async = require('async');
-const toString = require('components/utils').toString;
+const toString = require('utils').toString;
 
 /**
  * v1.4.0: Merges user-related collections: events, streams, accesses, profiles, followedSlices

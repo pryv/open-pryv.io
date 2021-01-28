@@ -32,20 +32,20 @@
  * SPDX-License-Identifier: BSD-3-Clause
  * 
  */
-var errors = require('components/errors').factory,
+var errors = require('errors').factory,
   commonFns = require('./helpers/commonFunctions'),
   mailing = require('./helpers/mailing'),
   methodsSchema = require('../schema/accountMethods');
 
-const { getConfig } = require('components/api-server/config/Config');
+const { getConfig } = require('boiler');
 
-const Registration = require('components/business/src/auth/registration'),
-  ErrorMessages = require('components/errors/src/ErrorMessages'),
-  ErrorIds = require('components/errors').ErrorIds,
-  ServiceRegister = require('components/business/src/auth/service_register'),
-  UsersRepository = require('components/business/src/users/repository');
-  User = require('components/business/src/users/User'),
-  SystemStreamsSerializer = require('components/business/src/system-streams/serializer');
+const Registration = require('business/src/auth/registration'),
+  ErrorMessages = require('errors/src/ErrorMessages'),
+  ErrorIds = require('errors').ErrorIds,
+  ServiceRegister = require('business/src/auth/service_register'),
+  UsersRepository = require('business/src/users/repository');
+  User = require('business/src/users/User'),
+  SystemStreamsSerializer = require('business/src/system-streams/serializer');
   /**
  * @param api
  * @param usersStorage
@@ -61,7 +61,7 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
     requireTrustedAppFn = commonFns.getTrustedAppCheck(authSettings);
 
   // initialize service-register connection
-  const serviceRegisterConn = new ServiceRegister(servicesSettings.register, logging.getLogger('service-register'));
+  const serviceRegisterConn = new ServiceRegister(servicesSettings.register);
   const usersRepository = new UsersRepository(userEventsStorage);
 
   // RETRIEVAL
@@ -218,7 +218,7 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
 
   async function notifyServiceRegister (context, params, result, next) {
     // no need to update service register if it is single node setup
-    if (getConfig().get('dnsLess:isActive') === true) {
+    if ((await getConfig()).get('dnsLess:isActive') === true) {
       return next();
     }
     try {

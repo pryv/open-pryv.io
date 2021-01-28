@@ -39,7 +39,7 @@ const ErrorIds = require('./ErrorIds');
 const ErrorMessages = require('./ErrorMessages');
 const _ = require('lodash');
 
-import type { APIErrorOptions } from './APIError';
+import type { APIErrorOptions }  from './APIError';
 
 /**
  * Helper "factory" methods for API errors (see error ids).

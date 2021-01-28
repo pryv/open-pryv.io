@@ -35,8 +35,8 @@
 // @flow
 
 const async = require('async');
-const APIError = require('components/errors').APIError;
-const errors = require('components/errors').factory;
+const APIError = require('errors').APIError;
+const errors = require('errors').factory;
 const Result = require('./Result');
 const _ = require('lodash');
 
@@ -57,7 +57,7 @@ type ApiFunction = string |
 export type ApiCallback = 
   (err: ?Error, result: ?Result) => mixed;
 
-import type { MethodContext } from 'components/model';
+import type { MethodContext } from 'model';
 
 // Maps each API method's implementation as a chain of functions (akin to
 // middleware) to its id. Handles method calls coming from HTTP or web sockets.

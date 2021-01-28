@@ -36,7 +36,7 @@ const express = require('express');
 const Paths = require('./Paths');
 const methodCallback = require('./methodCallback');
 
-import type Application from '../application';
+import type Application  from '../application';
 
 module.exports = function(expressApp: express$Application, app: Application) {  
   const api = app.api;

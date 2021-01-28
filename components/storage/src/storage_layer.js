@@ -38,8 +38,7 @@
 
 const bluebird = require('bluebird');
 
-import type { Logger } from 'components/utils';
-import type Database from './Database';
+import type Database  from './Database';
 
 const Versions = require('./Versions');
 const PasswordResetRequests = require('./PasswordResetRequests');
@@ -51,9 +50,6 @@ const FollowedSlices = require('./user/FollowedSlices');
 const Profile = require('./user/Profile');
 const Streams = require('./user/Streams');
 const Webhooks = require('./user/Webhooks');
-
-const { getConfig, Config } = require('components/api-server/config/Config');
-const config: Config = getConfig();
 
 class StorageLayer {
   connection: Database; 
@@ -71,7 +67,7 @@ class StorageLayer {
   
   constructor(
     connection: Database, 
-    logger: Logger, 
+    logger, 
     attachmentsDirPath: string,
     previewsDirPath: string,
     passwordResetRequestMaxAge: number,

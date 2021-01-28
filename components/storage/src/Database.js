@@ -39,9 +39,10 @@ const MongoClient = require('mongodb').MongoClient;
 const lodash = require('lodash');
 const bluebird = require('bluebird');
 
-import type { Db as MongoDB, Collection } from 'mongodb';
+const { getLogger } = require('boiler');
 
-import type { Logger } from 'components/utils';
+import type { Db as MongoDB, Collection }  from 'mongodb';
+
 
 type DatabaseOptions = {
   j?: boolean,
@@ -76,11 +77,12 @@ class Database {
   
   initializedCollections: { [name: string]: boolean }; 
   
-  logger: Logger; 
+  logger; 
   
-  constructor(settings: Object, logger: Logger) {
+  constructor(settings: Object) {
     const authPart = getAuthPart(settings);
-     
+    this.logger = getLogger('database');
+
     this.connectionString = `mongodb://${authPart}${settings.host}:${settings.port}/${settings.name}`;
     this.databaseName = settings.name; 
     this.options = {
@@ -95,7 +97,7 @@ class Database {
 
     this.db = null;
     this.initializedCollections = {};
-    this.logger = logger;
+
 
     this.collectionConnectionsCache = {};
   }

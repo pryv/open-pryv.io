@@ -34,8 +34,8 @@
  */
 
 var cuid = require('cuid'),
-  utils = require('components/utils'),
-  errors = require('components/errors').factory,
+  utils = require('utils'),
+  errors = require('errors').factory,
   async = require('async'),
   bluebird = require('bluebird'),
   commonFns = require('./helpers/commonFunctions'),
@@ -48,25 +48,24 @@ var cuid = require('cuid'),
   _ = require('lodash'),
   SetFileReadTokenStream = require('./streams/SetFileReadTokenStream');
 
-const SystemStreamsSerializer = require('components/business/src/system-streams/serializer');
-const ServiceRegister = require('components/business/src/auth/service_register');
-const Registration = require('components/business/src/auth/registration');
-const UsersRepository = require('components/business/src/users/repository');
-const ErrorIds = require('components/errors/src/ErrorIds');
-const ErrorMessages = require('components/errors/src/ErrorMessages');
-const { getConfig } = require('components/api-server/config/Config');
-
+const SystemStreamsSerializer = require('business/src/system-streams/serializer');
+const ServiceRegister = require('business/src/auth/service_register');
+const Registration = require('business/src/auth/registration');
+const UsersRepository = require('business/src/users/repository');
+const ErrorIds = require('errors/src/ErrorIds');
+const ErrorMessages = require('errors/src/ErrorMessages');
 const assert = require('assert');
 
-const { ProjectVersion } = require('components/middleware/src/project_version');
+const { ProjectVersion } = require('middleware/src/project_version');
 
-const {TypeRepository, isSeriesType} = require('components/business').types;
+const {TypeRepository, isSeriesType} = require('business').types;
 
+const { getLogger, getConfigUnsafe } = require('boiler');
 
-const NATS_CONNECTION_URI = require('components/utils').messaging.NATS_CONNECTION_URI;
-const NATS_UPDATE_EVENT = require('components/utils').messaging
+const NATS_CONNECTION_URI = require('utils').messaging.NATS_CONNECTION_URI;
+const NATS_UPDATE_EVENT = require('utils').messaging
   .NATS_UPDATE_EVENT;
-const NATS_DELETE_EVENT = require('components/utils').messaging
+const NATS_DELETE_EVENT = require('utils').messaging
   .NATS_DELETE_EVENT;
 
 const BOTH_STREAMID_STREAMIDS_ERROR = 'It is forbidden to provide both "streamId" and "streamIds", please opt for "streamIds" only.';
@@ -86,15 +85,11 @@ module.exports = function (
 ) {
 
   const usersRepository = new UsersRepository(userEventsStorage);
-  const config = getConfig();
 
   // initialize service-register connection
   let serviceRegisterConn = {};
-  if (!config.get('dnsLess:isActive')) {
-    serviceRegisterConn = new ServiceRegister(
-      config.get('services:register'),
-      logging.getLogger('service-register')
-    );
+  if (!getConfigUnsafe().get('dnsLess:isActive')) {
+    serviceRegisterConn = new ServiceRegister(getConfigUnsafe().get('services:register'));
   }
   
   // Initialise the project version as soon as we can. 
@@ -103,9 +98,9 @@ module.exports = function (
   
   // Update types and log error
   typeRepo.tryUpdate(eventTypesUrl, version)
-    .catch((err) => logging.getLogger('typeRepo').warn(err));
+    .catch((err) => getLogger('typeRepo').warn(err));
     
-  const logger = logging.getLogger('methods/events');
+  const logger = getLogger('methods:events');
   
   let natsPublisher;
   if (!openSourceSettings.isActive) {
@@ -153,6 +148,7 @@ module.exports = function (
         if (['[', '{'].includes(streamsParam.substr(0, 1))) { // we detect if it's JSON by looking at first char
           // Note: since RFC 7159 JSON can also starts with ", true, false or number - this does not apply in this case.
           try {
+            logger.debug('Failed parsing', streamsParam);
             streamsParam = JSON.parse(streamsParam);
           } catch (e) {
             throw ('Error while parsing JSON ' + e);
@@ -1233,7 +1229,7 @@ module.exports = function (
    * @param string accountStreamId - accountStreamId
    */
   async function sendUpdateToServiceRegister (user, event, accountStreamId) {
-    if (config.get('dnsLess:isActive')) {
+    if (getConfigUnsafe().get('dnsLess:isActive')) {
       return;
     }
     const editableAccountStreams = SystemStreamsSerializer.getEditableAccountStreams();
@@ -1490,7 +1486,7 @@ module.exports = function (
    */
   async function sendDataToServiceRegister (context, creation, editableAccountStreams) {
     // send update to service-register
-    if (config.get('dnsLess:isActive')) {
+    if (getConfigUnsafe().get('dnsLess:isActive')) {
       return;
     }
     let fieldsForUpdate = {};

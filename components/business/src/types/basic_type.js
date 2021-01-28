@@ -34,8 +34,8 @@
  */
 // @flow
 
-import type {EventType, PropertyType, Validator, Content} from './interfaces';
-import type {ValueType} from './value_types';
+import type {EventType, PropertyType, Validator, Content}  from './interfaces';
+import type {ValueType}  from './value_types';
 
 type JSONSchema = {
   type: string, 
