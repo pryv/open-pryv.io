@@ -7,7 +7,7 @@ const Application = require('../src/application');
 
 const loadCommonMeta = require('../src/methods/helpers/setCommonMeta').loadSettings;
 
-const { getConfig, getLogger } = require('boiler');
+const { getConfig, getLogger } = require('@pryv/boiler');
 const logger = getLogger('serverRoot');
 
 (async () => {

@@ -1,15 +1,15 @@
 {
   "name": "open-pryv.io",
-  "version": "1.6.13-1-open",
+  "version": "1.6.16-5-open",
   "private": true,
   "description": "Pryv core server app components",
-  "homepage": "http://pryv.com",
+  "homepage": "https://pryv.com",
   "repository": {
     "type": "git",
     "url": "git://github.com/pryv/service-open-pryv.git"
   },
   "license": "BSD-3-Clause",
-  "author": "Pryv S.A. <support@pryv.com> (http://pryv.com)",
+  "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)",
   "workspaces": {
     "packages": [
       "components/*"
@@ -19,16 +19,16 @@
     "api": "NODE_ENV=production ./dist/components/api-server/bin/server --config ./config.json",
     "build-dev": "scripts/prepare_dist && node_modules/.bin/babel ./components --out-dir=dist/components --copy-files --source-maps both",
     "database": "scripts/start-database.sh",
-    "license": "cd licenser ; yarn install; yarn apply",
+    "license": "node_modules/.bin/source-licenser licensing/config.yml licensing/LICENSE.src ./",
     "local": "yarn database >> ./var-pryv/logs/mongodb.log & yarn mail >> ./var-pryv/logs/mail.log & yarn proxy & NODE_ENV=production ./dist/components/api-server/bin/server --config ./configs/rec-la.json",
-    "mail": "yarn --cwd ./service-mail start",
     "previews": "cd dist/components/previews-server && npm start",
-    "proxy": "./node_modules/rec-la/bin/proxy.js localhost:3000",
-    "pryv": "yarn database >> ./var-pryv/logs/mongodb.log & yarn mail >> ./var-pryv/logs/mail.log & yarn api",
     "release": "scripts/prepare_dist && node_modules/.bin/babel ./components --verbose --out-dir=dist/components --copy-files",
     "setup": "yarn install --ignore-optionals ; bash ./scripts/setup-dev-env.bash",
     "test": "node scripts/components-command yarn test",
-    "watch": "node_modules/.bin/babel --verbose --watch=./components --out-dir=dist/components --copy-files --source-maps both"
+    "watch": "node_modules/.bin/babel --verbose --watch=./components --out-dir=dist/components --copy-files --source-maps both",
+    "mail": "yarn --cwd ./service-mail start",
+    "proxy": "./node_modules/rec-la/bin/proxy.js localhost:3000",
+    "pryv": "yarn database >> ./var-pryv/logs/mongodb.log & yarn mail >> ./var-pryv/logs/mail.log & yarn api"
   },
   "pre-commit": "",
   "resolutions": {
@@ -38,6 +38,7 @@
     "**/socket.io": "^2.4.0"
   },
   "dependencies": {
+    "@pryv/boiler": "https://github.com/pryv/lib-node-boiler.git",
     "async": "^2.5.0",
     "awaiting": "^3.0.0",
     "axon": "2.0.x",
@@ -104,6 +105,7 @@
     "parallelshell": "^2.0.0",
     "should": "^11.2.0",
     "socket.io-client": "^2.3.0",
+    "source-licenser": "1.0.2",
     "supertest": "^3.0.0",
     "temp": "^0.8.3",
     "tmp": "^0.0.33",

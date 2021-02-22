@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,14 +30,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 // @flow
 
 const methodCallback = require('../methodCallback');
 const API = require('../../API');
 import type Application  from '../../application';
-const { getConfigUnsafe } = require('boiler');
+const { getConfigUnsafe } = require('@pryv/boiler');
+
+const middleware = require('middleware');
 
 /**
  * Routes for users
@@ -45,31 +46,35 @@ const { getConfigUnsafe } = require('boiler');
  */
 module.exports = function(expressApp: express$Application, app: Application) {
   const api: API = app.api;
-  const context = {};
+  
 
-  expressApp.delete('/users/:username', function(
+  const initContextMiddleware = middleware.initContext(app.storageLayer);
+  const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);
+  
+
+  expressApp.delete('/users/:username',
+  middleware.getAuth,
+  initContextMiddleware,
+  function (req, res, next) {
+    loadAccessMiddleware(req, res, function (err) { 
+      // ignore errors as a valid adminAuthentication token might be presented
+      next();
+    });
+  },
+  function callMethodAuthDelete(
     req: express$Request,
     res: express$Response,
     next: express$NextFunction
   ) {
-    context.username = req.params.username;
-    context.authorizationHeader = req.headers.authorization;
+    req.context.username = req.params.username;
+    req.context.authorizationHeader = req.headers.authorization;
     const isOpensource = getConfigUnsafe().get('openSource:isActive');
 
-    if (isOpensource) {
-      api.call(
-        'auth.delete.opensource',
-        context,
-        req.params,
-        methodCallback(res, next, 200)
-      );
-    }else{
-      api.call(
-        'auth.delete',
-        context,
-        req.params,
-        methodCallback(res, next, 200)
-      );
-    }
+    api.call(
+      'auth.delete',
+      req.context,
+      req.params,
+      methodCallback(res, next, 200)
+    );
   });
 };

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,7 +30,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 
 var cuid = require('cuid'),
@@ -49,7 +48,7 @@ var cuid = require('cuid'),
   SetFileReadTokenStream = require('./streams/SetFileReadTokenStream');
 
 const SystemStreamsSerializer = require('business/src/system-streams/serializer');
-const ServiceRegister = require('business/src/auth/service_register');
+const { getServiceRegisterConn } = require('business/src/auth/service_register');
 const Registration = require('business/src/auth/registration');
 const UsersRepository = require('business/src/users/repository');
 const ErrorIds = require('errors/src/ErrorIds');
@@ -60,7 +59,7 @@ const { ProjectVersion } = require('middleware/src/project_version');
 
 const {TypeRepository, isSeriesType} = require('business').types;
 
-const { getLogger, getConfigUnsafe } = require('boiler');
+const { getLogger, getConfigUnsafe } = require('@pryv/boiler');
 
 const NATS_CONNECTION_URI = require('utils').messaging.NATS_CONNECTION_URI;
 const NATS_UPDATE_EVENT = require('utils').messaging
@@ -89,7 +88,7 @@ module.exports = function (
   // initialize service-register connection
   let serviceRegisterConn = {};
   if (!getConfigUnsafe().get('dnsLess:isActive')) {
-    serviceRegisterConn = new ServiceRegister(getConfigUnsafe().get('services:register'));
+    serviceRegisterConn = getServiceRegisterConn();
   }
   
   // Initialise the project version as soon as we can. 
@@ -771,13 +770,22 @@ module.exports = function (
 
     context.oldContent = _.extend(context.oldContent, {headId: context.oldContent.id});
     delete context.oldContent.id;
-
+    // otherwise the history value will squat
+    context.oldContent = removeUniqueStreamId(context.oldContent);
     userEventsStorage.insertOne(context.user, context.oldContent, function (err) {
       if (err) {
         return next(errors.unexpectedError(err));
       }
       next();
     });
+
+    function removeUniqueStreamId(event) {
+      const index = event.streamIds.indexOf('.unique');
+      if (index > -1) {
+        event.streamIds.splice(index, 1);
+      }
+      return event;
+    }
   }
 
   async function updateAttachments(context, params, result, next) {
@@ -1237,7 +1245,7 @@ module.exports = function (
     if (editableAccountStreams[accountStreamId].isUnique) {
       // send information update to service regsiter
       await serviceRegisterConn.updateUserInServiceRegister(
-        user.username, {}, { [streamIdWithoutDot]: event.content});
+        user.username, {}, { [streamIdWithoutDot]: event.content}, { [streamIdWithoutDot]: event.content});
     }
   }
   
@@ -1507,7 +1515,8 @@ module.exports = function (
     await serviceRegisterConn.updateUserInServiceRegister(
       context.user.username,
       fieldsForUpdate,
-      {}
+      {},
+      {[streamIdWithoutDot] : context.content.content}
     );
   }
 };

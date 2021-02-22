@@ -4,7 +4,7 @@
 
 const Application = require('../src/application');
 const bluebird = require('bluebird');
-const { getLogger } = require('boiler');
+const { getLogger } = require('@pryv/boiler');
 let logger;
 
 (async () => {

@@ -3,7 +3,7 @@
 // Binary for nightly tasks setup. 
 
 const Application = require('../src/application');
-const { getLogger } = require('boiler');
+const { getLogger } = require('@pryv/boiler');
 let logger;
 const Repository = require('business/src/users/repository');
 

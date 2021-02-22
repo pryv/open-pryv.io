@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,7 +30,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 // @flow
 
@@ -54,9 +53,6 @@ module.exports = function (ignoredPaths: Array<string>) {
     if (! req.headers.host) { return next(errors.missingHeader('Host')); }
 
     const hostChunks = req.headers.host.split('.');
-    
-    // check for subdomain, assuming we have structure '<subdomain>.<2nd level domain>.<tld>
-    if (hostChunks.length < 3) return next();
     
     // For security reasons, don't allow inserting anything into path unless it
     // looks like a user name. 

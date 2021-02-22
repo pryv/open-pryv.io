@@ -2,10 +2,10 @@
   "name": "middleware",
   "version": "1.1.7",
   "private": true,
-  "description": "This package is part of Open Pryv.io",
+  "description": "This package is part of Pryv.io - a Pryv S.A. Software",
   "homepage": "http://pryv.com",
   "license": "BSD-3-Clause",
-  "author": "Pryv S.A. <support@pryv.com> (http://pryv.com)",
+  "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)",
   "main": "./src/index.js",
   "scripts": {
     "test": "../../node_modules/.bin/mocha -R dot 'test/**/*.test.js'"

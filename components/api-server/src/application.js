@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,7 +30,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 // @flow
 
@@ -38,7 +37,7 @@
 // to your code to give it access to app setup. 
 
 const path = require('path');
-const boiler = require('boiler').init({
+const boiler = require('@pryv/boiler').init({
   appName: 'api-server',
   baseConfigDir: path.resolve(__dirname, '../config/'),
   extraConfigs: [{
@@ -46,8 +45,8 @@ const boiler = require('boiler').init({
     key: 'service',
     urlFromKey: 'serviceInfoUrl'
   }, {
-    scope: 'defaults-data',
-    file: path.resolve(__dirname, '../config/defaults.js')
+    scope: 'defaults-paths',
+    file: path.resolve(__dirname, '../config/paths-config.js')
   },{
     plugin: require('../config/components/systemStreams')
   },{
@@ -63,7 +62,7 @@ const expressAppInit = require('./expressApp');
 const middleware = require('middleware');
 const errorsMiddlewareMod = require('./middleware/errors'); 
 
-const { getConfig, getLogger } = require('boiler');
+const { getConfig, getLogger } = require('@pryv/boiler');
 const logger = getLogger('application');
 
 const { Extension, ExtensionLoader } = require('utils').extension;

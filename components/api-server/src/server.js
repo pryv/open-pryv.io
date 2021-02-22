@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,7 +30,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 // @flow
 
@@ -45,7 +44,7 @@ const Application = require('./application');
 
 const UsersRepository = require('business/src/users/repository');
 
-const { getLogger, getConfig } = require('boiler');
+const { getLogger, getConfig } = require('@pryv/boiler');
 
 
 // Server class for api-server process. To use this, you 
@@ -147,17 +146,10 @@ class Server {
       application.storageLayer, 
       config.get('services'));
 
-    if (this.isOpenSource) {
-      require('./methods/auth/delete-opensource')(application.api,
-        application.logging,
-        application.storageLayer,
-        config);
-    } else {
       require('./methods/auth/delete')(application.api,
         application.logging,
         application.storageLayer,
         config);
-    }
 
     require('./methods/accesses')(
       application.api, 
@@ -201,7 +193,7 @@ class Server {
       application.storageLayer.eventFiles, 
       this.notificationBus, 
       application.logging, 
-      config.get('audit'), 
+      config.get('versioning'), 
       config.get('updates'));
 
     require('./methods/events')(application.api, 
@@ -211,7 +203,7 @@ class Server {
       config.get('service:eventTypes'), 
       this.notificationBus, 
       application.logging,
-      config.get('audit'),
+      config.get('versioning'),
       config.get('updates'), 
       config.get('openSource'), 
       config.get('services'));
@@ -337,22 +329,23 @@ class Server {
 
   async setupReporting() {
     const Reporting = require('lib-reporting');
+    const serviceInfoUrl = this.config.get('serviceInfoUrl');
     async function collectClientData() {
       return {
-        userCount: await this.getUserCount()
+        userCount: await this.getUserCount(),
+        serviceInfoUrl: serviceInfoUrl
       };
     }
 
     const reportingSettings = this.config.get('reporting');
     const templateVersion = reportingSettings.templateVersion;
-    const reportingUrl = reportingSettings?.url;
-    const optOut = reportingSettings?.optOut;
+    const reportingUrl = (process.env.NODE_ENV === 'test') ? 'http://localhost:4001' : null ;
     const licenseName = reportingSettings.licenseName;
     const role = 'api-server';
     const mylog = function (str) {
       this.logger.info(str);
     }.bind(this);
-    new Reporting(licenseName, role, templateVersion, collectClientData.bind(this), mylog, reportingUrl, optOut);
+    new Reporting(licenseName, role, templateVersion, collectClientData.bind(this), mylog, reportingUrl);
   }
 
   async getUserCount(): Promise<Number> {

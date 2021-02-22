@@ -63,7 +63,7 @@ Run `./scripts/restore-database-docker.sh` to restore data from `var-pryv/backup
 Run `./scripts/restore-attachments-docker.sh ${BACKUP_FOLDER}` to restore attachments data from the provided backup folder.
 Depending on your setup, you may need additional access rights.
 # License
-Copyright (c) 2020 Pryv S.A. https://pryv.com
+Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
 
 This file is part of Open-Pryv.io and released under BSD-Clause-3 License
 

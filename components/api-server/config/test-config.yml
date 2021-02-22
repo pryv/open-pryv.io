@@ -2,6 +2,7 @@
 auth:
   adminAccessKey: some_key_yo
   trustedApps: pryv-test@http://test.pryv.local, pryv-test-no-cors@*, *@https://*.rec.la*
+  filesReadTokenSecret: 'some_token'
 logs:
   console:
     active: false

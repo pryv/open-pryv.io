@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,11 +30,27 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
-module.exports = {
-  load: function(store) {
-    store.set('plugin-sync', 'plugin sync loaded');
-    return 'plugin-sync'; // my name
+const { getConfigUnsafe } = require('@pryv/boiler');
+
+let defaultApiFormat;
+/**
+ * @param {string} username 
+ * @param {string} token 
+ * @param {string} [apiFormat] - (default the one of config "service:api") https://{username}.domain/ or https://hostname/{username}/
+ */
+function build(username, token, apiFormat) {
+  if (! defaultApiFormat) { defaultApiFormat = getConfigUnsafe().get('service:api'); }
+  apiFormat = apiFormat || defaultApiFormat;
+  let apiEndpoint = apiFormat.replace('{username}', username);
+  if (token) {
+    let endpointElements = apiEndpoint.split('//');
+    endpointElements[1] = `${token}@${endpointElements[1]}`;
+    apiEndpoint = endpointElements.join('//');
   }
+  return apiEndpoint;
+} 
+
+module.exports = {
+  build: build
 }

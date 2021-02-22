@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,7 +30,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 // @flow
 
@@ -51,7 +50,7 @@ declare class RequestWithContext extends express$Request {
 
 import type Application  from './../application';
 
-const { getConfigUnsafe } = require('boiler');
+const { getConfigUnsafe } = require('@pryv/boiler');
 
 /**
  * Auth routes.
@@ -124,7 +123,7 @@ module.exports = function (expressApp: express$Application, app: Application) {
       api.call('auth.login', req.context, params, function (err, result) {
         if (err) return next(err);
         setSSOCookie({ username: req.context.username, token: result.token }, res);
-        result.writeToHttpResponse(res, 200);
+        methodCallback(res, next, 200)(err, result);
       });
 
     });

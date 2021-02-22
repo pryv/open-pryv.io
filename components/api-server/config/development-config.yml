@@ -9,7 +9,9 @@ auth:
 serviceInfoUrl: file://test/service-info.json
 services:
   email:
-    enabled: false
+    enabled: 
+      welcome: false
+      resetPassword: false
   register:
     url: http://127.0.0.1:8080
     key: test-system-key
@@ -40,4 +42,8 @@ custom:
       type: myCustomStream/string
       name: myCustomStream
       id: myCustomStream
+user-account:
+  delete: # array of entities that can delete a user account
+    - 'adminToken' # enable deletion from admin Panel
+    - 'personalToken' # enable self deletion request with a personal token
 

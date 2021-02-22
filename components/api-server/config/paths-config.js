@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,26 +30,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
-const schema = require('./config-schema').schema;
+const path = require('path');
 
-function schemaToConfig (o) {
-  if (typeof o !== 'object') return o;
-  if (Array.isArray(o)) return o;
-  if (typeof o.default !== 'undefined') return o.default;
-  if (typeof o.format !== 'undefined') return null;
-
-  const res = {};
-  let addedOne = false;
-  for (let key of Object.keys(o)) {
-    const v = schemaToConfig(o[key]);
-    if (typeof v !== 'undefined' && v !== null) {
-      addedOne = true;
-      res[key] = v;
-    }
+module.exports = {
+  eventFiles: {
+    attachmentsDirPath: path.join(__dirname, '../../../../../service-core-files/attachments'),
+    previewsDirPath: path.join(__dirname, '../../../../../service-core-files/previews')
+  },
+  customExtensions: {
+    defaultFolder: path.join(__dirname, '../../../../custom-extensions')
   }
-  return addedOne ? res : null;
 }
-
-module.exports = schemaToConfig(schema);

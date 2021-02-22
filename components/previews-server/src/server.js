@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,11 +30,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 
 const path = require('path');
-const {getConfig, getLogger } = require('boiler').init({
+const {getConfig, getLogger } = require('@pryv/boiler').init({
   appName: 'previews-server',
   baseConfigDir: path.resolve(__dirname, '../../api-server/config'), // api-server config
   extraConfigs: [{
@@ -45,8 +44,8 @@ const {getConfig, getLogger } = require('boiler').init({
     key: 'service',
     urlFromKey: 'serviceInfoUrl'
   },{
-    scope: 'defaults-data',
-    file: path.resolve(__dirname, '../../api-server/config/defaults.js')
+    scope: 'defaults-paths',
+    file: path.resolve(__dirname, '../../api-server/config/paths-config.js')
   }, {
     plugin: require('../../api-server/config/components/systemStreams')
   }]

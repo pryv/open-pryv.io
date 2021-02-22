@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,7 +30,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 /**
  * Standalone script to perform cache cleanup.
@@ -38,15 +37,15 @@
  */
 
 const path = require('path');
-const { getConfigUnsafe, getLogger }  = require('boiler').init({
+const { getConfigUnsafe, getLogger }  = require('@pryv/boiler').init({
   appName: 'previews-cache-clean',
   baseConfigDir: path.resolve(__dirname, '../../api-server/config'), // api-server config
   extraConfigs: [{
     scope: 'defaults-previews',
     file: path.resolve(__dirname, '../config/defaults-config.yml')
   },{
-    scope: 'defaults-data',
-    file: path.resolve(__dirname, '../../api-server/config/defaults.js')
+    scope: 'defaults-paths',
+    file: path.resolve(__dirname, '../../api-server/config/paths-config.js')
   }, {
     plugin: require('../../api-server/config/components/systemStreams')
   }]

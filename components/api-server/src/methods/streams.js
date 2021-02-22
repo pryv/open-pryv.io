@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,7 +30,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 var errors = require('errors').factory,
   async = require('async'),
@@ -47,7 +46,7 @@ const SystemStreamsSerializer = require('business/src/system-streams/serializer'
 const ErrorMessages = require('../../../errors/src/ErrorMessages');
 const ErrorIds = require('../../../errors/src/ErrorIds');
 
-const { getLogger } = require('boiler');
+const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('methods:streams');
 
 const systemStreamsSerializer = SystemStreamsSerializer.getSerializer();

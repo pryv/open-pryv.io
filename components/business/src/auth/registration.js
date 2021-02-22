@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,7 +30,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 // @flow
 
@@ -39,13 +38,13 @@ const cuid = require('cuid');
 const errors = require('errors').factory;
 const { errorHandling } = require('errors');
 const mailing = require('api-server/src/methods/helpers/mailing');
-const ServiceRegister = require('./service_register');
+const { getServiceRegisterConn, safetyCleanDuplicate } = require('./service_register');
 const SystemStreamsSerializer = require('business/src/system-streams/serializer');
 const UsersRepository = require('business/src/users/repository');
 const User = require('business/src/users/User');
 const ErrorIds = require('errors').ErrorIds;
 
-const { getLogger } = require('boiler');
+const { getLogger } = require('@pryv/boiler');
 
 import type { MethodContext } from 'model';
 import type { ApiCallback } from 'api-server/src/API';
@@ -66,8 +65,7 @@ class Registration {
     this.storageLayer = storageLayer;
     this.servicesSettings = servicesSettings;
 
-    this.serviceRegisterConn = new ServiceRegister(
-      servicesSettings.register);
+    this.serviceRegisterConn = getServiceRegisterConn();
     this.usersRepository = new UsersRepository(
       this.storageLayer.events,
       this.storageLayer.sessions,
@@ -338,7 +336,7 @@ class Registration {
     }
 
     if (Object.keys(uniquenessErrors).length > 0) {
-      return errors.itemAlreadyExists('user', uniquenessErrors);
+      return errors.itemAlreadyExists('user', safetyCleanDuplicate(uniquenessErrors, null, params));
     }
     // Any other error
     return errors.unexpectedError(err, message);

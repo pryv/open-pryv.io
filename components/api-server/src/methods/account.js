@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,19 +30,18 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 var errors = require('errors').factory,
   commonFns = require('./helpers/commonFunctions'),
   mailing = require('./helpers/mailing'),
   methodsSchema = require('../schema/accountMethods');
 
-const { getConfig } = require('boiler');
+const { getConfig } = require('@pryv/boiler');
 
 const Registration = require('business/src/auth/registration'),
   ErrorMessages = require('errors/src/ErrorMessages'),
   ErrorIds = require('errors').ErrorIds,
-  ServiceRegister = require('business/src/auth/service_register'),
+  { getServiceRegisterConn } = require('business/src/auth/service_register'),
   UsersRepository = require('business/src/users/repository');
   User = require('business/src/users/User'),
   SystemStreamsSerializer = require('business/src/system-streams/serializer');
@@ -61,7 +60,7 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
     requireTrustedAppFn = commonFns.getTrustedAppCheck(authSettings);
 
   // initialize service-register connection
-  const serviceRegisterConn = new ServiceRegister(servicesSettings.register);
+  const serviceRegisterConn = getServiceRegisterConn();
   const usersRepository = new UsersRepository(userEventsStorage);
 
   // RETRIEVAL
@@ -229,7 +228,8 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
       await serviceRegisterConn.updateUserInServiceRegister(
         context.user.username,
         serviceRegisterRequest,
-        {}
+        {},
+        params.update
       );
     } catch (err) {
       return next(err);

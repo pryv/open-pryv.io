@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,7 +30,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 // @flow
 
@@ -53,7 +52,7 @@ const accessSchema = require('../schema/access');
 const string = require('./helpers/string');
 const SystemStreamsSerializer = require('business/src/system-streams/serializer');
 
-const { getLogger } = require('boiler');
+const { getLogger } = require('@pryv/boiler');
 
 import type { StorageLayer } from 'storage';
 import type { MethodContext } from 'model';
@@ -137,7 +136,12 @@ module.exports = function produceAccessesApiMethods(
 
       // Return the chain result.
       result.accesses = chain.value();
-      
+
+      // Add apiEndpoind
+      for (let i = 0; i < result.accesses.length; i++) {
+        result.accesses[i].apiEndpoint = context.user.buildApiEndpoint(result.accesses[i].token);
+      }
+
       next();
     });
     
@@ -369,6 +373,7 @@ module.exports = function produceAccessesApiMethods(
       }
 
       result.access = newAccess;
+      result.access.apiEndpoint = context.user.buildApiEndpoint(result.access.token);
       notifications.accessesChanged(context.username);
       next();
     });

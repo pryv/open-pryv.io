@@ -1,4 +1,48 @@
 ---
+
+openSource:
+  isActive: false
+
+dnsLess:
+  isActive: true
+
+reporting:
+  licenseName: 'REPLACE ME'
+  templateVersion: '1.0.0'
+
+http: 
+  ip: '127.0.0.1'
+  port: 3000
+
+database:
+  authUser: ''
+  authPassword: ''
+  host: 'localhost'
+  port: 27017
+  name: 'pryv-node'
+  connectTimeoutMS: 60000
+  socketTimeoutMS: 60000
+
+eventFiles: 
+  attachmentsDirPath: 'REPLACE ME'
+  previewsDirPath: 'REPLACE ME'
+
+auth:
+  filesReadTokenSecret: 'REPLACE ME'
+
+customExtensions: 
+  defaultFolder: 'REPLACE ME'
+  customAuthStepFn: ''
+
+tcpMessaging:
+  enabled: false
+  host: 'localhost'
+  port: 4000
+  pubConnectInsteadOfBind: false
+
+updates: 
+  ignoreProtectedFields: false 
+
 influxdb:
   host: 127.0.0.1
   port: 8086
@@ -8,6 +52,11 @@ webhooks:
   maxRetries: 5
   runsSize: 20
 
-audit: 
+versioning: 
   forceKeepHistory: false
   deletionMode: 'keep-nothing'
+
+user-account:
+  delete: # array of entities that can delete a user account
+    - 'adminToken' # enable deletion from admin Panel
+    #- 'personalToken' # enable self deletion request with a personal token

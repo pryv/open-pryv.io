@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,7 +30,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 // @flow
 
@@ -45,7 +44,7 @@ const _ = require('lodash');
 const bluebird = require('bluebird');
 const getAuth = require('../../../middleware/src/getAuth');
 
-const {getLogger} = require('boiler');
+const {getLogger} = require('@pryv/boiler');
 
 // constants
 const StandardDimensions = [ 256, 512, 768, 1024 ];

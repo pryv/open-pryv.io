@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,7 +30,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 const commonFns = require('api-server/src/methods/helpers/commonFunctions');
 const utils = require('utils');
@@ -57,6 +56,7 @@ module.exports = function (api, userAccessesStorage, sessionsStorage, userEvents
     checkPassword,
     openSession,
     updateOrCreatePersonalAccess,
+    addApiEndpoint,
     setAdditionalInfo);
 
   function applyPrerequisitesForLogin(context, params, result, next) {
@@ -150,6 +150,13 @@ module.exports = function (api, userAccessesStorage, sessionsStorage, userEvents
       context.updateTrackingProperties(access, UsersRepository.options.SYSTEM_USER_ACCESS_ID);
       userAccessesStorage.updateOne(context.user, context.accessQuery, access, callback);
     }
+  }
+
+  function addApiEndpoint(context, params, result, next) {
+    if (result.token) {
+      result.apiEndpoint = context.user.buildApiEndpoint(result.token);
+    }
+    next();
   }
 
   function setAdditionalInfo(context, params, result, next) {

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,7 +30,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 // @flow
 
@@ -39,36 +38,56 @@ const rimraf = require('rimraf');
 const fs = require('fs');
 const path = require('path');
 const UsersRepository = require('business/src/users/repository');
+const { getServiceRegisterConn } = require('business/src/auth/service_register');
 const errors = require('errors').factory;
 
 import type { MethodContext } from 'model';
 import type { ApiCallback } from 'api-server/src/API';
 
-const { getLogger } = require('boiler');
+const { getLogger } = require('@pryv/boiler');
 
 class Deletion {
   logger: any;
   storageLayer: any;
-  settings: any;
+  config: any;
   usersRepository: UsersRepository;
+  serviceRegisterConn: ServiceRegister;
 
-  constructor(logging: any, storageLayer: any, settings: any) {
+  constructor(logging: any, storageLayer: any, config: any) {
     this.logger = getLogger('business:deletion');
     this.storageLayer = storageLayer;
-    this.settings = settings;
+    this.config = config;
     this.usersRepository = new UsersRepository(this.storageLayer.events);
+    this.serviceRegisterConn = getServiceRegisterConn();
   }
 
+
+  /**
+   * Authorization check order: 
+   * 1- is a valid admin token
+   * 2- is a valid personalToken
+   */
   checkIfAuthorized(
     context: MethodContext,
     params: mixed,
     result: Result,
     next: ApiCallback
   ) {
-    if(this.settings.get('auth:adminAccessKey') !== context.authorizationHeader) {
-      return next(errors.unknownResource());
+    const canDelete = this.config.get('user-account:delete');
+    if (canDelete.includes('adminToken')) {
+      if(this.config.get('auth:adminAccessKey') === context.authorizationHeader) {
+        return next();
+      }
     }
-    next();
+   
+    if (canDelete.includes('personalToken')) {
+      if(context.access && context.access.isPersonal && context.access.isPersonal()) {
+        return next();
+      } 
+      // If personal Token is available, then error code is different
+      return next(errors.invalidAccessToken('Cannot find access from token.', 403));
+    } 
+    return next(errors.unknownResource());
   }
 
   async validateUserExists(
@@ -92,18 +111,9 @@ class Deletion {
     next: ApiCallback
   ) {
     const paths = [
-      this.settings.get('eventFiles:attachmentsDirPath'),
-      this.settings.get('eventFiles:previewsDirPath'),
+      this.config.get('eventFiles:attachmentsDirPath'),
+      this.config.get('eventFiles:previewsDirPath'),
     ];
-
-    const notExistingDir = findNotExistingDir(paths);
-    if (notExistingDir) {
-      const error = new Error(`Base directory '${notExistingDir}' does not exist.`);
-      this.logger.error(error);
-      return next(
-        errors.unexpectedError(error)
-      );
-    }
 
     // NOTE User specific paths are constructed by appending the user _id_ to the
     // `paths` constant above. I know this because I read EventFiles#getXPath(...)
@@ -133,8 +143,8 @@ class Deletion {
     next: ApiCallback
   ) {
     const paths = [
-      this.settings.get('eventFiles:attachmentsDirPath'),
-      this.settings.get('eventFiles:previewsDirPath'),
+      this.config.get('eventFiles:attachmentsDirPath'),
+      this.config.get('eventFiles:previewsDirPath'),
     ];
 
     const userPaths = paths.map((p) => path.join(p, context.user.id));
@@ -155,10 +165,11 @@ class Deletion {
     result: Result,
     next: ApiCallback
   ) {
+    if (this.config.get('openSource:isActive')) return next();
     // dynamic loading , because series functionality does not exist in opensource
     const InfluxConnection = require('business/src/series/influx_connection');
-    const host = this.settings.get('influxdb:host');
-    const port = this.settings.get('influxdb:port');
+    const host = this.config.get('influxdb:host');
+    const port = this.config.get('influxdb:port');
 
     const influx = new InfluxConnection({ host: host, port: port });
     await influx.dropDatabase(`user.${params.username}`);
@@ -198,7 +209,7 @@ class Deletion {
 
       await bluebird.fromCallback((cb) =>
         this.storageLayer.sessions.remove(
-          { data: { username: context.user.username } },
+          { 'data.username': { $eq: context.user.username } },
           cb
         )
       );
@@ -206,8 +217,25 @@ class Deletion {
       this.logger.error(error);
       return next(errors.unexpectedError(error));
     }
+    result.userDeletion = { username: context.user.username };
     next();
   }
+
+  async deleteOnRegister(
+    context: MethodContext,
+    params: mixed,
+    result: Result,
+    next: ApiCallback
+  ) {
+    if (this.config.get('openSource:isActive') || this.config.get('dnsLess:isActive')) return next();
+    try {
+      const res = await this.serviceRegisterConn.deleteUser(params.username);
+      this.logger.debug('on register: ' + params.username, res);
+    } catch (e) { // user might have been deleted register we do not FW error just log it
+      this.logger.error(e);
+    }
+    next();
+  };
 }
 
 function findNotExistingDir(paths: Array<string>): string {
@@ -234,7 +262,7 @@ function findNotAccessibleDir(paths: Array<string>): string {
 
       fs.accessSync(path, fs.constants.W_OK + fs.constants.X_OK);
     } catch (err) {
-      if (err.code === 'ENOENT') {
+      if (err.code === 'ENOENT') { // ignore if file does not exist
         continue;
       } else {
         notAccessibleDir = path;

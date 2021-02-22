@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (c) 2020 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
  * 
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  * 
@@ -30,7 +30,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * SPDX-License-Identifier: BSD-3-Clause
- * 
  */
 // @flow
 
@@ -38,13 +37,13 @@ const _ = require('lodash');
 const cuid = require('cuid');
 const timestamp = require('unix-timestamp');
 const bluebird = require('bluebird');
-const encryption = require('utils').encryption;
 
 const treeUtils = require('utils/src/treeUtils');
 const SystemStreamsSerializer = require('business/src/system-streams/serializer');
 const UsersRepository = require('business/src/users/repository');
 
-const { getConfigUnsafe } = require('boiler');
+const { getConfigUnsafe } = require('@pryv/boiler');
+const { ApiEndpoint , encryption } = require('utils')
 
 class User {
   // User properties that exists by default (email could not exist with specific config)
@@ -140,15 +139,17 @@ class User {
    * Builds apiEndpoint with the token if it exists
    */
   getApiEndpoint () {
-    if (this.apiEndpoint != null) return this.apiEndpoint;
-    const apiFormat = getConfigUnsafe().get('service:api');
-    this.apiEndpoint = apiFormat.replace('{username}', this.username);
-    if (this.token) {
-      let endpointElements = this.apiEndpoint.split('//');
-      endpointElements[1] = `${this.token}@${endpointElements[1]}`;
-      this.apiEndpoint = endpointElements.join('//');
-    }
+    if (! this.apiEndpoint) this.apiEndpoint = this.buildApiEndpoint(this.token);
     return this.apiEndpoint;
+  }
+
+  /**
+   * Build apiEndPoint for this user and token
+   * @param {*} updateData 
+   * @param {*} isActive 
+   */
+  buildApiEndpoint(token) {
+    return ApiEndpoint.build(this.username, token);
   }
 
   /**
