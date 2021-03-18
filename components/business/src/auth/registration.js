@@ -317,9 +317,9 @@ class Registration {
         if (err) {
           errorHandling.logError(err, null, this.logger);
         }
-        next();
       }
     );
+    next();
   }
 
   /**

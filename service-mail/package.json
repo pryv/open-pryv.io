@@ -11,18 +11,16 @@
     "start": "./bin/server --config ./config.hjson"
   },
   "resolutions": {
+    "**/pug": "^3.0.1",
     "**/yargs-parser": "13.1.2"
   },
   "dependencies": {
     "bluebird": "^3.7.2",
     "body-parser": "^1.19.0",
-    "convict": "^6.0.0",
     "email-templates": "^7.0.5",
     "express": "^4.17.1",
     "hjson": "^3.2.1",
     "js-yaml": "^3.14.0",
-    "nodemailer": "^4.6.4",
-    "pug": "^2.0.3",
     "superagent": "^5.2.2",
     "winston": "^2.4.1",
     "yargs": "^11.0.0"

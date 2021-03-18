@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.6.16-5-open",
+  "version": "1.6.18-open",
   "private": true,
   "description": "Pryv core server app components",
   "homepage": "https://pryv.com",
@@ -59,7 +59,7 @@
     "mkdirp": "1.0.4",
     "mongodb": "^3.6.2",
     "morgan": "^1.8.1",
-    "msgpack5": "^3.6.0",
+    "msgpack5": "^3.6.1",
     "multer": "^1.3.0",
     "protobufjs": "^6.8.6",
     "pryv": "^2.0.2",
