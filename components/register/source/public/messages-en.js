@@ -36,6 +36,9 @@
 var messages = {
   'INTERNAL_ERROR' : {'message' : 'Internal Error',
     'detail' : 'Something went bad on our side, sorry for this inconvenience.'},
+  'INVALID_PARAMETERS': {
+    message: 'Invalid parameters',
+  },
   'INVALID_DATA' : {'message' : 'Invalid Data',
     'detail' : 'Some of the data transmited is invalid.'},
   'INVALID_JSON_REQUEST' : {'message' : 'Invalid Data',

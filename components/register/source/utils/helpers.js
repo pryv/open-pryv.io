@@ -33,6 +33,12 @@
  */
 exports.asyncForEach = async (array, callback) => {
   for (let index = 0; index < array.length; index++) {
-    await callback(array[index], index, array)
+    await callback(array[index], index, array);
   }
-}
+};
+
+exports.ensureTrailingSlash = (url) => {
+  if (url.charAt(url.length - 1) === '/') return url;
+  return url + '/';
+};
+
