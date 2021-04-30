@@ -142,7 +142,7 @@ class Application {
     if (this.config.get('dnsLess:isActive')) {
       require('./routes/register')(this.expressApp, this);
     }
-
+    
     // system, root, register and delete MUST come first
     require('./routes/auth/delete')(this.expressApp, this);
     require('./routes/auth/register')(this.expressApp, this);

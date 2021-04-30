@@ -73,5 +73,10 @@ module.exports = {
     }, {
       required: [ 'userInfo' ]
     })
-  }
+  },
+  deleteMfa: {
+    params: helpers.object({
+      username: helpers.username,
+    }, { required: [ 'username' ] }),
+  },
 };

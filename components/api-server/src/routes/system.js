@@ -56,7 +56,7 @@ module.exports = function system(expressApp: express$Application, app: Applicati
    * Handle common parameters.
    */
   expressApp.all(Paths.System + '/*', checkAuth);
-
+  
 
   expressApp.post(Paths.System + '/create-user', contentType.json, createUser);
 
@@ -85,6 +85,10 @@ module.exports = function system(expressApp: express$Application, app: Applicati
       username: req.params.username
     };
     systemAPI.call('system.getUserInfo', {}, params, methodCallback(res, next, 200));
+  });
+
+  expressApp.delete(Paths.System + '/users/:username/mfa', function (req: express$Request, res, next) {
+    systemAPI.call('system.deleteMfa', {}, { username: req.params.username }, methodCallback(res, next, 204));
   });
 
   // Checks if `req` contains valid authorization to access the system routes. 

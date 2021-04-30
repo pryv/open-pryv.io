@@ -59,6 +59,7 @@ module.exports = function (
   const POOL_REGEX = new RegExp('^' + 'pool@');
   const registration = new Registration(logging, storageLayer, servicesSettings);
   const usersRepository = new UsersRepository(storageLayer.events);
+  const userProfileStorage = storageLayer.profile;
 
   // ---------------------------------------------------------------- createUser
   systemAPI.register('system.createUser',
@@ -160,6 +161,26 @@ module.exports = function (
       next();
     });
   }
+
+  // --------------------------------------------------------------- deleteMfa
+  systemAPI.register('system.deleteMfa',
+    commonFns.getParamsValidation(methodsSchema.deleteMfa.params),
+    retrieveUser,
+    deleteMfa
+  );
+
+  async function deleteMfa(context, params, result, next) {
+    try {
+      await bluebird.fromCallback(cb => userProfileStorage.findOneAndUpdate(
+        context.user, 
+        {}, 
+        { $unset: { 'data.mfa': '' } },
+        cb));
+    } catch (err) {
+      return next(err);
+    }
+    next();
+  };
 
   function getAPIMethodKeys() {
     return api.getMethodKeys().map(string.toMongoKey); 

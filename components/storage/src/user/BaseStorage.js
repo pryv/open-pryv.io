@@ -532,11 +532,17 @@ BaseStorage.prototype.applyUpdateToDB = function(updatedData) {
     data.$pull = input.$pull;
     delete input.$pull;
   }
+
+  if (input.$unset != null) {
+    data.$unset = input.$unset;
+    delete input.$unset;
+  } else {
+    data.$unset = {}; // code in 'converters.js' depends on this.
+  }
   
   // Maybe add more of these?
   //    https://docs.mongodb.com/manual/reference/operator/update/
   data.$set = input;
-  data.$unset = {};       // code in 'converters.js' depends on this.
   
   var dbUpdate = applyConvertersToDB(
     data,

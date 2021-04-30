@@ -1101,7 +1101,6 @@
 
 "@pryv/boiler@git+https://github.com/pryv/lib-node-boiler.git":
   version "1.0.1"
-  uid eefd8f95e883b0d98a6624f209fdb8137325de6d
   resolved "git+https://github.com/pryv/lib-node-boiler.git#eefd8f95e883b0d98a6624f209fdb8137325de6d"
   dependencies:
     "@airbrake/node" "^1.4.2"
@@ -1111,9 +1110,9 @@
     superagent "^6.1.0"
     winston "^3.3.3"
 
-"@pryv/boiler@https://github.com/pryv/lib-node-boiler.git":
-  version "1.0.1"
-  resolved "https://github.com/pryv/lib-node-boiler.git#eefd8f95e883b0d98a6624f209fdb8137325de6d"
+"@pryv/boiler@https://github.com/pryv/lib-node-boiler.git#1.0.2":
+  version "1.0.2"
+  resolved "https://github.com/pryv/lib-node-boiler.git#431e6d30e4df2302d8c3ac71c425340b3f1bb047"
   dependencies:
     "@airbrake/node" "^1.4.2"
     debug "^4.3.1"

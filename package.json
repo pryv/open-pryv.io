@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.6.18-2-open",
+  "version": "1.6.20-1-open",
   "private": true,
   "description": "Pryv core server app components",
   "homepage": "https://pryv.com",
@@ -38,7 +38,7 @@
     "**/socket.io": "^2.4.0"
   },
   "dependencies": {
-    "@pryv/boiler": "https://github.com/pryv/lib-node-boiler.git",
+    "@pryv/boiler": "https://github.com/pryv/lib-node-boiler.git#1.0.2",
     "async": "^2.5.0",
     "awaiting": "^3.0.0",
     "axon": "2.0.x",
