@@ -37,6 +37,7 @@ const errorHandling = require('errors').errorHandling;
 const commonMeta = require('../methods/helpers/setCommonMeta');
 const bluebird = require('bluebird');
 const NATS_CONNECTION_URI = require('utils').messaging.NATS_CONNECTION_URI;
+const { USERNAME_REGEXP_STR } = require('../schema/helpers');
 
 (async () => {
   await commonMeta.loadSettings();
@@ -107,8 +108,9 @@ class Manager implements MessageSink {
   // Returns true if the `candidate` could be a username on a lexical level. 
   // 
   looksLikeUsername(candidate: string): boolean {
-    const reUsername = /^([a-zA-Z0-9])(([a-zA-Z0-9-]){3,21})[a-zA-Z0-9]$/; 
-    return reUsername.test(candidate);
+    const reUsername = new RegExp(USERNAME_REGEXP_STR); 
+    const lowercasedUsername = candidate.toLowerCase(); // for retro-compatibility
+    return reUsername.test(lowercasedUsername);
   }
 
   // Extracts the username from the given valid namespace name.

@@ -33,6 +33,7 @@
  */
 // @flow
 const ErrorIds = require('./ErrorIds');
+const { USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH } = require('api-server/src/schema/helpers');
 /**
  * Identifier constants for API errors' messages.
  */
@@ -43,7 +44,7 @@ const ErrorMessages = {
    */
   // ErrorIds.
   [ErrorIds.InvalidInvitationToken]: 'Invalid invitation',
-  [ErrorIds.InvalidUsername]: 'Username should have from 5 to 23 characters and contain lowercase letters or numbers or dashes',
+  [ErrorIds.InvalidUsername]: 'Username should have between ' + USERNAME_MIN_LENGTH + ' and ' + USERNAME_MAX_LENGTH + ' characters and contain lowercase letters or numbers or dashes',
   [ErrorIds.UsernameRequired]: 'Username is required',
   [ErrorIds.InvalidEmail]: 'Invalid email',
   [ErrorIds.InvalidLanguage]: 'Invalid language',
@@ -55,7 +56,7 @@ const ErrorMessages = {
   [ErrorIds.TooHighAccessForAccountStreams]: 'Only read and contribute accesses are allowed for the account streams',
   [ErrorIds.EmailRequired]: 'Email is required',
   [ErrorIds.PasswordRequired]: 'Password is required',
-  [ErrorIds.InvalidPassword]: 'Password should have from 5 to 23 characters',
+  [ErrorIds.InvalidPassword]: 'Password should have between 5 and 23 characters',
   [ErrorIds.ForbiddenMultipleAccountStreams]: 'Event cannot be part of multiple account streams.',
   [ErrorIds.ForbiddenNoneditableAccountStreamsEdit]: 'Forbidden event modification, you are trying to edit a system event or trying to delete active system event.',
   [ErrorIds.ForbiddenNoneditableAccountStreamsEventsDeletion]: 'It is forbidden to delete non-editable or active system events.',

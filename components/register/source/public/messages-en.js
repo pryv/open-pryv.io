@@ -33,6 +33,8 @@
  */
 /*global window*/
 
+const {USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH} = require('../utils/check-and-constraints');
+
 var messages = {
   'INTERNAL_ERROR' : {'message' : 'Internal Error',
     'detail' : 'Something went bad on our side, sorry for this inconvenience.'},
@@ -44,7 +46,7 @@ var messages = {
   'INVALID_JSON_REQUEST' : {'message' : 'Invalid Data',
     'detail' : 'The data transmited is not in a valid JSON format.'},
   'INVALID_USER_NAME' : { 'message' : 'Invalid user name',
-    'detail' : 'User name must be made of 5 to 23 alphanumeric characters (- authorized).'},
+    'detail' : 'User name must be made of ' + USERNAME_MIN_LENGTH + ' to ' + USERNAME_MAX_LENGTH + ' alphanumeric characters (- authorized).'},
   'INVALID_API_ENDPOINT': {
     'message': 'Invalid api endpoint',
     'detail': 'api endpoint should be a valid url'

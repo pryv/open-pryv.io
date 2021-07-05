@@ -50,6 +50,7 @@ Choose your Set-up
   - Native installation
 - Launch Pryv.io on a server exposed to the Internet with built-in SSL, this requires to have a hostname pointing to the public IP of your server.
   - Download docker images (quick start)
+  - Launch image with Open Pryv.io installed on Exoscale hosting provider: [link to guide](https://api.pryv.com/image-exoscale-open-pryv.io/) (quick start including hosting)
   - Native installation
 - Launch Pryv.io on a server with an external SSL termination. You know what you are doing.
   - Download docker images

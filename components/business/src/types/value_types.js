@@ -66,6 +66,16 @@ class NumberType implements ValueType {
   }
 }
 
+class BooleanType implements ValueType {
+  coerce(value: any): boolean {
+    if (value === true) return true;
+    if (value === false) return false;
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    throw new errors.InputTypeError(`Doesn't look like a valid boolean: '${value}'.`); 
+  }
+}
+
 class StringType implements ValueType {
   coerce(value: any): string {
     return '' + value; 
@@ -83,6 +93,7 @@ function produceInner(type: string): ValueType {
     case 'number': return new NumberType(); 
     case 'string': return new StringType(); 
     case 'null': return new NullType(); 
+    case 'boolean': return new BooleanType(); 
   }
   
   throw new Error(`Unknown inner type: '${type}'.`);

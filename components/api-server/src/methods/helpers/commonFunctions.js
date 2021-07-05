@@ -141,10 +141,10 @@ exports.getParamsValidation = function getParamsValidation (paramsSchema) {
             {
                 "code": "PATTERN",
                 "params": [
-                    "^[a-z0-9][a-z0-9\\-]{3,21}[a-z0-9]$",
+                    "^[a-z0-9][a-z0-9\\-]{3,58}[a-z0-9]$",
                     "ga"
                 ],
-                "message": "String does not match pattern ^[a-z0-9][a-z0-9\\-]{3,21}[a-z0-9]$: ga",
+                "message": "String does not match pattern ^[a-z0-9][a-z0-9\\-]{3,58}[a-z0-9]$: ga",
                 "path": "#/username"
             }
         ]
@@ -158,7 +158,7 @@ exports.getParamsValidation = function getParamsValidation (paramsSchema) {
         "data": [
             {
                 "code": "username-invalid",
-                "message": "Username should have from 5 to 23 characters and contain letters or numbers or dashes",
+                "message": "Username should have from 5 to 60 characters and contain letters or numbers or dashes",
                 "path": "#/username",
                 "param": "username"
             }

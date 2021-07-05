@@ -37,6 +37,16 @@
 
 var _ = require('lodash');
 
+const USERNAME_MIN_LENGTH = 5;
+const USERNAME_MAX_LENGTH = 60;
+const USERNAME_REGEXP_STR = '^[a-z0-9]' +
+                            '[a-z0-9-]{' + (USERNAME_MIN_LENGTH - 2) + ',' + (USERNAME_MAX_LENGTH - 2) + '}' + 
+                            '[a-z0-9]$';
+
+exports.USERNAME_MIN_LENGTH = USERNAME_MIN_LENGTH;
+exports.USERNAME_MAX_LENGTH = USERNAME_MAX_LENGTH;
+exports.USERNAME_REGEXP_STR = USERNAME_REGEXP_STR;
+
 /**
  * Gets the full core type URI for the given type name and action (read, create, etc.)
  *
@@ -106,7 +116,8 @@ exports.boolean = getBaseSchema.bind(null, 'boolean');
 /**
  * Global username rule
  */
-exports.username = getBaseSchema('string', {pattern:  '^[a-z0-9][a-z0-9\\-]{3,21}[a-z0-9]$'});
+
+exports.username = getBaseSchema('string', { pattern: USERNAME_REGEXP_STR });
 
 exports.getBaseSchema = getBaseSchema;
 

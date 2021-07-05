@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.6.20-1-open",
+  "version": "1.6.21-open",
   "private": true,
   "description": "Pryv core server app components",
   "homepage": "https://pryv.com",
@@ -65,7 +65,7 @@
     "pryv": "^2.0.2",
     "qs": "^6.3.0",
     "ramda": "^0.23.0",
-    "rec-la": "^0.1.19",
+    "rec-la": "^0.1.20",
     "rimraf": "^2.4.3",
     "rsvp": "^4.8.1",
     "shimmer": "^1.2.0",

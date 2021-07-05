@@ -36,14 +36,23 @@
 const _ = require('lodash');
 const { URL } = require('url');
 
+const USERNAME_MIN_LENGTH = 5;
+const USERNAME_MAX_LENGTH = 60;
+const USERNAME_REGEXP_STR = '^[a-z0-9]' +
+                            '[a-z0-9-]{' + (USERNAME_MIN_LENGTH - 2) + ',' + (USERNAME_MAX_LENGTH - 2) + '}' + 
+                            '[a-z0-9]$';
+
+module.exports.USERNAME_MIN_LENGTH = USERNAME_MIN_LENGTH;
+module.exports.USERNAME_MAX_LENGTH = USERNAME_MAX_LENGTH;
+
 // Username regular expression
-var checkUsername = new RegExp('^' + '([a-z0-9-]{1,100})' + '$');
+var checkUsername = new RegExp(USERNAME_REGEXP_STR);
 
 // Returns true if `candidate` could be a username, which means it fulfills the
 // character level constraints we impose. 
 // 
-module.exports.isLegalUsername = function(candidate: string): boolean {
-  return checkUsername.exec(candidate) != null;
+module.exports.isValidUsername = function(candidate: string): boolean {
+  return checkUsername.test(candidate);
 };
 
 /**
@@ -83,13 +92,12 @@ module.exports.extractResourceFromHostname = function (
  * and return the processed string if it passes the tests, 'null' otherwise
  */
 
-// Alphanumeric between 5 and 23 chars, case-insensitive  -  authorized
+// Alphanumeric between 5 and 60 chars, case-insensitive  -  authorized
 // Trim the uid
 exports.uid = function (str: string): ?string {
   if (! str) { return null; }
   str = _.trim(str).toLowerCase();
-  const filter = /^([a-zA-Z0-9])(([a-zA-Z0-9-]){3,21})([a-zA-Z0-9])$/;
-  return (filter.test(str)) ? str : null;
+  return (checkUsername.test(str)) ? str : null;
 };
 
 
