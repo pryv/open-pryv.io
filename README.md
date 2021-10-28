@@ -97,9 +97,9 @@ Each service independently - logs will be displayed on the console
 
 [setup the environment](#native)
 
-- `yarn local` is the equivalent of running `yarn pryv` + `yarn proxy` using `configs/rec-la.json`. This setup is useful to test Open Pryv.io locally.
+- `yarn local` is the equivalent of running `yarn pryv` + `yarn proxy` using `configs/rec-la.yml`. This setup is useful to test Open Pryv.io locally.
 
-- `yarn proxy` based on [rec-la](https://github.com/pryv/rec-la), it will expose the server running on http://localhost:3000 with an SSL certificate on https://my-computer.rec.la:4443 in this case you need to edit `configs/rec-la.json`.
+- `yarn proxy` based on [rec-la](https://github.com/pryv/rec-la), it will expose the server running on http://localhost:3000 with an SSL certificate on https://my-computer.rec.la:4443 in this case you need to edit `configs/rec-la.yml`.
 
 #### Native Server setup with built-in SSL
 
@@ -124,43 +124,31 @@ To set an automatic renewal, run `crontab -e` and append the following line:
 
 ### Config
 
-For the native installation, edit `config.json`, otherwise `docker/local/dockerized-config.json`:
+For the native installation, edit `config.yml`, otherwise `docker/local/dockerized-config.yml`:
 
-```json
-{
-  "dnsLess": {
-    "publicUrl":  "http://localhost:3000"
-  },
-  "http": {
-    "port": 3000,
-    "ip": "127.0.0.1"
-  },
-  "auth": {
-    "adminAccessKey": "replace_me_randomstring",
-    "trustedApps": "*@https://pryv.github.io, *@https://*.rec.la*"
-  },
-  "eventFiles": {
-    "attachmentsDirPath": "var-pryv/attachment-files"
-  },
-  "service": {
-    "name": "Test",
-    "support": "https://pryv.com/openpryv/unconfigured.html",
-    "terms": "https://pryv.com/openpryv/unconfigured.html",
-    "home": "https://pryv.com/openpryv/unconfigured.html",
-    "eventTypes": "https://api.pryv.com/event-types/flat.json",
-    "assets": {
-      "definitions": "http://localhost:3000/www/assets/index.json"
-    }
-  },
-  "services": {
-    "email": {
-      "enabled": {
-        "welcome": true,
-        "resetPassword": true
-      }
-    }
-  }
-}
+```yaml
+dnsLess:
+  publicUrl: http://localhost:3000
+http:
+  port: 3000
+  ip: 127.0.0.1
+auth:
+  adminAccessKey: iuahwd0ba87hw0bd7a8hwd
+  trustedApps: "*@https://pryv.github.io*, *@https://*.rec.la*"
+eventFiles:
+  attachmentsDirPath: var-pryv/attachment-files
+service:
+  name: Open-Pryv.io
+  support: https://pryv.com/open-pryv-non-configured-page/
+  terms: https://pryv.com/open-pryv-non-configured-page/
+  home: https://pryv.com/open-pryv-non-configured-page/
+  eventTypes: https://api.pryv.com/event-types/flat.json
+services:
+  email:
+    enabled:
+      welcome: true
+      resetPassword: true
+
 ```
 
 - **publicUrl** Is the "Public" URL to reach the service, usually exposed in **https** by a third party SSL service such as NGNIX.
@@ -209,7 +197,7 @@ To use a new build, simply copy the contents of the generated files from `app-we
 ### Event types
 
 Open Pryv.io comes with default **event types**.
-The default ones are fetched at boot from the URL defined in service:eventTypes in the .json config file, set to https://api.pryv.com/event-types/flat.json.
+The default ones are fetched at boot from the URL defined in service:eventTypes in the `.yml` config file, set to https://api.pryv.com/event-types/flat.json.
 
 To customize your own, clone the [Data Types repository](https://github.com/pryv/data-types) and follow the guide there.
 

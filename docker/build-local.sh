@@ -40,7 +40,7 @@ jsonval () {
 	temp=${temp##*|}
   echo "$temp"
 }
-CONFIGS_FILE="local/dockerized-config.json"
+CONFIGS_FILE="local/dockerized-config.yml"
 JSON_CONF=$(cat $CONFIGS_FILE)
 PUBLIC_URL_ROW=$(jsonval "$JSON_CONF" "publicUrl")
 HOSTNAME=$(echo $PUBLIC_URL_ROW | cut -d"/" -f3)

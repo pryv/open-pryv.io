@@ -6,7 +6,7 @@ services:
     container_name: "open-pryv.io"
     restart: "always"
     volumes:
-      - ./dockerized-config.json:/app/config.json
+      - ./dockerized-config.yml:/app/config.yml
       - ../public_html/:/app/public_html/
       - ../var-pryv/core/data/:/app/data/
     depends_on:

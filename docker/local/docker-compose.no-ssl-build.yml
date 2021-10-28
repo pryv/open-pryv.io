@@ -11,7 +11,7 @@ services:
     ports:
       - 3000:3000
     volumes:
-      - ./dockerized-config-no-ssl.json:/app/config.json
+      - ./dockerized-config-no-ssl.yml:/app/config.yml
       - ../../public_html/:/app/public_html/
       - ../../var-pryv/core/data/:/app/data/
     depends_on:

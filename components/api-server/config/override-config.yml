@@ -2,3 +2,25 @@ openSource:
   isActive: true
 dnsLess:
   isActive: true
+logs:
+  console:
+    active: true
+    level: info
+  file:
+    active: false
+    path: "var-pryv/logs/core.log"
+    level: info
+    rotation:
+      isActive: true
+      days: 14
+custom:
+  systemStreams:
+    account:
+    - id: email
+      isIndexed: true
+      isUnique: true
+      isShown: true
+      isEditable: true
+      type: email/string
+      name: Email
+      isRequiredInValidation: false

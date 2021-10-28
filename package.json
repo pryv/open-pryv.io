@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.7.1-5-open",
+  "version": "1.7.1-6-open",
   "private": true,
   "description": "Pryv core server app components",
   "homepage": "https://pryv.com",
@@ -16,11 +16,11 @@
     ]
   },
   "scripts": {
-    "api": "NODE_ENV=production ./dist/components/api-server/bin/server --config ./config.json",
+    "api": "NODE_ENV=production ./dist/components/api-server/bin/server --config ./config.yml",
     "build-dev": "scripts/prepare_dist && node_modules/.bin/babel ./components --out-dir=dist/components --copy-files --source-maps both",
     "database": "scripts/start-database.sh",
     "license": "node_modules/.bin/source-licenser licensing/config.yml licensing/LICENSE.src ./",
-    "local": "yarn database >> ./var-pryv/logs/mongodb.log & yarn mail >> ./var-pryv/logs/mail.log & yarn proxy & NODE_ENV=production ./dist/components/api-server/bin/server --config ./configs/rec-la.json",
+    "local": "yarn database >> ./var-pryv/logs/mongodb.log & yarn mail >> ./var-pryv/logs/mail.log & yarn proxy & NODE_ENV=production ./dist/components/api-server/bin/server --config ./configs/rec-la.yml",
     "previews": "cd dist/components/previews-server && npm start",
     "release": "scripts/prepare_dist && node_modules/.bin/babel ./components --verbose --out-dir=dist/components --copy-files",
     "setup": "yarn install --ignore-optionals ; bash ./scripts/setup-dev-env.bash",

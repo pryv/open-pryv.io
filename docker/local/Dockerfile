@@ -6,7 +6,7 @@ WORKDIR /app
 COPY . /app/
 
 # Choose dockerized config instead of default local env
-COPY ./docker/local/dockerized-config.json /app/config.json
+COPY ./docker/local/dockerized-config.yml /app/config.yml
 # the same for mail service
 COPY ./docker/local/dockerized-service-mail-config.hjson /app/service-mail/config.json
 

@@ -21,8 +21,8 @@ function jsonval {
   temp="${temp//\'}"
   echo "$temp"
 }
-#dockerized-config.json | getJsonVal "['text']"
-JSON_CONF=$(cat "dockerized-config.json")
+#dockerized-config.yml | getJsonVal "['text']"
+JSON_CONF=$(cat "dockerized-config.yml")
 PUBLIC_URL_ROW=$(jsonval "$JSON_CONF" "publicUrl")
 HOSTNAME=$(echo $PUBLIC_URL_ROW | cut -d"/" -f3)
 EMAIL=$(echo $(jsonval "$JSON_CONF" "ssl_email") | cut -d":" -f2)

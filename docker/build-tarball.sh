@@ -10,7 +10,7 @@ cp ../rec.la-certificates/src/rec.la-key.pem ./rec.la-certificates
 cp -af ../public_html/* ./public_html
 
 tar czfv dockerized-open-pryv.io.tgz \
-  ./local/dockerized-config.json \
+  ./local/dockerized-config.yml \
   ./local/dockerized-service-mail-config.hjson \
   ./local/nginx-templates/ \
   ./local/dhparam.pem \

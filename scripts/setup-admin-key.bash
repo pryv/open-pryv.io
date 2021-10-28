@@ -11,15 +11,15 @@ for i in `seq 1 $n`; do
     char=${set:$RANDOM % ${#set}:1}
     rand+=$char
 done
-sed -i ".bak" "s/${DEFAULT_VALUE}/${rand}/g" "./config.json"
-sed -i ".bak" "s/${DEFAULT_VALUE}/${rand}/g" "./configs/rec-la.json"
-sed -i ".bak" "s/${DEFAULT_VALUE}/${rand}/g" "./docker/local/dockerized-config.json"
-sed -i ".bak" "s/${DEFAULT_VALUE}/${rand}/g" "./docker/local/dockerized-config-no-ssl.json"
+sed -i ".bak" "s/${DEFAULT_VALUE}/${rand}/g" "./config.yml"
+sed -i ".bak" "s/${DEFAULT_VALUE}/${rand}/g" "./configs/rec-la.yml"
+sed -i ".bak" "s/${DEFAULT_VALUE}/${rand}/g" "./docker/local/dockerized-config.yml"
+sed -i ".bak" "s/${DEFAULT_VALUE}/${rand}/g" "./docker/local/dockerized-config-no-ssl.yml"
 
-rm "./config.json.bak"
-rm "./configs/rec-la.json.bak"
-rm "./docker/local/dockerized-config.json.bak"
-rm "./docker/local/dockerized-config-no-ssl.json.bak"
+rm "./config.yml.bak"
+rm "./configs/rec-la.yml.bak"
+rm "./docker/local/dockerized-config.yml.bak"
+rm "./docker/local/dockerized-config-no-ssl.yml.bak"
 
 echo "Set new random key for admin"
 
