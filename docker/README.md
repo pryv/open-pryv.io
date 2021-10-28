@@ -22,6 +22,8 @@ docker-compose -f local/docker-compose.with-ssl.yml up
 
 It will run Open Pryv.io on https://my-computer.rec.la:4443, using [rec-la](https://github.com/pryv/rec-la).
 
+If the rec-la certificates have expired, you can download valid ones at [www.rec.la](https://www.rec.la/) and place them in `rec.la-certificates/`
+
 ## Server with built-in SSL
 
 1. Edit the following values in the [Config](https://github.com/pryv/open-pryv.io#config) file `production-with-ssl/dockerized-config.yml` and docker-compose file: `production-with-ssl/docker-compose.yml`:
