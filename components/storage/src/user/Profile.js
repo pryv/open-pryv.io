@@ -57,13 +57,14 @@ function Profile(database) {
 }
 util.inherits(Profile, BaseStorage);
 
-Profile.prototype.getCollectionInfo = function (user) {
+Profile.prototype.getCollectionInfo = function (userOrUserId) {
+  const userId = this.getUserIdFromUserOrUserId(userOrUserId);
   return {
     name: 'profile',
     indexes: [ {
       index: {profileId: 1},
       options: {unique: true}
     } ],
-    useUserId: user.id,
+    useUserId: userId,
   };
 };

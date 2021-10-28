@@ -64,6 +64,7 @@ const Paths = module.exports = {
   Profile: makePath(username, 'profile'),
   Service: makePath(username, 'service'),
   Webhooks: makePath(username, 'webhooks'),
+  Audit: makePath(username, 'audit/logs'),
 
   SocketIO: makePath('socket.io'),
   SocketIO2: makePath('socket.io2'),

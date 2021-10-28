@@ -40,31 +40,24 @@ module.exports = ApplyEventsFromDbStream;
 
 inherits(ApplyEventsFromDbStream, Transform);
 
-function ApplyEventsFromDbStream() {
+/**
+ * @param {Array<Function>} convs 
+ */
+function ApplyEventsFromDbStream(itemFromDBConverters) {
   Transform.call(this, {objectMode: true});
   this.trans = converters.getRenamePropertyFn('_id', 'id');
+  this.converters = itemFromDBConverters;
 }
 
 ApplyEventsFromDbStream.prototype._transform = function (event, encoding, callback) {
   try {
     event = this.trans(event);
-    // from storage/src/user/Events.js
-    delete event.endTime;
-
     // SingleCollectionsMode - start
     delete event.userId;
-    
-    if (event.deleted == null) {
-      delete event.deleted;
+
+    for (converter of this.converters) {
+      event = converter(event);
     }
-    // SingleCollectionsModes - end
-
-    // from storage/src/converters
-    if (event.deleted) {
-      event.deleted = timestamp.fromDate(event.deleted);
-    } 
-
-    event = converters.removeFieldsEnforceUniqueness(event);
 
     this.push(event);
     callback();

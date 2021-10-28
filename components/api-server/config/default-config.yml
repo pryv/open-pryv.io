@@ -23,6 +23,9 @@ database:
   connectTimeoutMS: 60000
   socketTimeoutMS: 60000
 
+userFiles:
+  path: 'REPLACE ME'
+
 eventFiles: 
   attachmentsDirPath: 'REPLACE ME'
   previewsDirPath: 'REPLACE ME'
@@ -34,7 +37,7 @@ customExtensions:
   defaultFolder: 'REPLACE ME'
   customAuthStepFn: ''
 
-tcpMessaging:
+axonMessaging:
   enabled: false
   host: 'localhost'
   port: 4000
@@ -60,3 +63,58 @@ user-account:
   delete: # array of entities that can delete a user account
     - 'adminToken' # enable deletion from admin Panel
     #- 'personalToken' # enable self deletion request with a personal token
+
+backwardCompatibility:
+  systemStreams:
+    prefix:
+      isActive: false
+  tags:
+    isActive: true
+    rootStreamId: 'tags-migrated'
+    streamIdPrefix: 'tag-migrated-'
+
+custom:
+  systemStreams:
+    account:
+    - id: email
+      isIndexed: true
+      isUnique: true
+      isShown: true
+      isEditable: true
+      type: email/string
+      name: Email
+      isRequiredInValidation: true
+
+stores:
+  loadExternal: []
+
+caching:
+  isActive: true
+
+logs:
+  console:
+    active: false
+    level: info
+  file:
+    active: false
+    path: "var-pryv/logs/core.log"
+    level: info
+    rotation:
+      isActive: true
+      days: 14
+
+uploads:
+  maxSizeMb: 50
+
+trace:
+  enable: false
+
+integrity:
+  isActive:
+    attachments: true
+    events: true
+    accesses: true
+  algorithm: sha256
+
+accessTracking:
+  isActive: true

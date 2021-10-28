@@ -2,7 +2,14 @@
 logs:
   console:
     active: true
-    level: debug
+    level: info
+  file:
+    active: true
+    path: "var-pryv/logs/core.log"
+    level: info
+    rotation:
+      isActive: true
+      days: 14
 auth:
   adminAccessKey: CHANGE_ME_WITH_SOMETHING
   trustedApps: "*@https://pryv.github.io*, *@https://*.rec.la*"
@@ -18,7 +25,7 @@ services:
 reporting:
   licenseName: pryv.io-dev-license
   templateVersion: 1.0.0
-tcpMessaging:
+axonMessaging:
   enabled: false
 openSource:
   isActive: false
@@ -28,22 +35,29 @@ dnsLess:
 custom:
   systemStreams:
     account:
-    - isIndexed: true
-      isUnique: true
-      isShown: true
-      isEditable: true
-      type: email/string
-      name: Email
-      id: email
-      isRequiredInValidation: true
-    myCustomStream:
-    - isShown: true
-      isEditable: true
-      type: myCustomStream/string
-      name: myCustomStream
-      id: myCustomStream
+      - 
+        isIndexed: true
+        isUnique: true
+        isShown: true
+        isEditable: true
+        type: email/string
+        name: Email
+        id: email
+        isRequiredInValidation: true
+    other:
+      - 
+        isShown: true
+        isEditable: true
+        type: myCustomStream/string
+        name: myCustomStream
+        id: myCustomStream
 user-account:
   delete: # array of entities that can delete a user account
     - 'adminToken' # enable deletion from admin Panel
     - 'personalToken' # enable self deletion request with a personal token
-
+backwardCompatibility:
+  systemStreams:
+    prefix:
+      isActive: false
+trace:
+  enable: true

@@ -37,30 +37,35 @@ const bluebird = require('bluebird');
 const rimraf = require('rimraf');
 const fs = require('fs');
 const path = require('path');
-const UsersRepository = require('business/src/users/repository');
+const { getUsersRepository } = require('business/src/users');
 const { getServiceRegisterConn } = require('business/src/auth/service_register');
 const errors = require('errors').factory;
 
-import type { MethodContext } from 'model';
+import type { MethodContext } from 'business';
 import type { ApiCallback } from 'api-server/src/API';
+
+
+
 
 const { getLogger } = require('@pryv/boiler');
 
+const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils');
+
+const setAdminAuditAccessId = setAuditAccessId(AuditAccessIds.ADMIN_TOKEN);
 class Deletion {
   logger: any;
   storageLayer: any;
   config: any;
-  usersRepository: UsersRepository;
   serviceRegisterConn: ServiceRegister;
 
   constructor(logging: any, storageLayer: any, config: any) {
     this.logger = getLogger('business:deletion');
     this.storageLayer = storageLayer;
     this.config = config;
-    this.usersRepository = new UsersRepository(this.storageLayer.events);
     this.serviceRegisterConn = getServiceRegisterConn();
   }
 
+  
 
   /**
    * Authorization check order: 
@@ -76,7 +81,7 @@ class Deletion {
     const canDelete = this.config.get('user-account:delete');
     if (canDelete.includes('adminToken')) {
       if(this.config.get('auth:adminAccessKey') === context.authorizationHeader) {
-        return next();
+        return setAdminAuditAccessId(context, params, result, next);
       }
     }
    
@@ -96,11 +101,13 @@ class Deletion {
     result: Result,
     next: ApiCallback
   ) {
-    const user = await this.usersRepository.getAccountByUsername(params.username);
+    const usersRepository = await getUsersRepository(); 
+    const user = await usersRepository.getUserByUsername(params.username);
     if (!user || !user.id) {
       return next(errors.unknownResource('user', params.username));
     }
-    context.user = user;
+    context.user = { id: user.id };
+    context.user.username = user.username;
     next();
   }
 
@@ -130,7 +137,7 @@ class Deletion {
       const error = new Error(
         `Directory '${inaccessibleDirectory}' is inaccessible or missing.`
       );
-      this.logger.error(error);
+      this.logger.error(error, error);
       return next(errors.unexpectedError(error));
     }
     next();
@@ -176,6 +183,19 @@ class Deletion {
     next();
   }
 
+  async deleteAuditData (
+    context: MethodContext,
+    params: mixed,
+    result: Result,
+    next: ApiCallback
+  ) { 
+    if (this.config.get('openSource:isActive')) return next();
+    // dynamic loading , because series functionality does not exist in opensource
+    const deleteUserDirectory = require('business/src/users/UserLocalDirectory').deleteUserDirectory;
+    await deleteUserDirectory(context.user.id);
+    next();
+  }
+
   async deleteUser(
     context: MethodContext,
     params: mixed,
@@ -202,8 +222,9 @@ class Deletion {
             () => {}
           )
         );
-
-      await this.usersRepository.deleteOne(context.user.id);
+      
+      const usersRepository = await getUsersRepository();
+      await usersRepository.deleteOne(context.user.id);
 
       await Promise.all(drops);
 
@@ -214,7 +235,7 @@ class Deletion {
         )
       );
     } catch (error) {
-      this.logger.error(error);
+      this.logger.error(error, error);
       return next(errors.unexpectedError(error));
     }
     result.userDeletion = { username: context.user.username };
@@ -232,7 +253,7 @@ class Deletion {
       const res = await this.serviceRegisterConn.deleteUser(params.username);
       this.logger.debug('on register: ' + params.username, res);
     } catch (e) { // user might have been deleted register we do not FW error just log it
-      this.logger.error(e);
+      this.logger.error(e, e);
     }
     next();
   };

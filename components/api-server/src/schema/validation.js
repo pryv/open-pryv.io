@@ -55,6 +55,11 @@ exports.validate = validator.validate.bind(validator);
  */
 exports.validateSchema = validator.validateSchema.bind(validator);
 
+/**
+ * To use after using validate synchronuously
+ */
+exports.getLastError = validator.getLastError.bind(validator);
+
 // Tries to type-coerce properties of the given `object` according to the
 // settings. Iterates in shallow manner over the keys of `settings`, coercing 
 // the values of the same key in `object` to the type indicated by the value

@@ -6,5 +6,5 @@ previews:
     previewsCacheMaxAge: 604800000 # 1 week in ms - 'The maximum age (in seconds) of a cached preview file if unused.'
     previewsCacheCleanUpCronTime: 00 00 2 * * * # every day at 2:00:00AM
 
-tcpMessaging: 
+axonMessaging: 
   port: 4001

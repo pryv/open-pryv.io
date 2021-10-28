@@ -33,10 +33,8 @@
  */
 // @flow
 
-const model = require('model');
-const MethodContext = model.MethodContext;
-
-import type { CustomAuthFunction } from 'model';
+const { MethodContext } = require('business');
+import type { CustomAuthFunction,  ContextSource} from 'business';
 import type { StorageLayer } from 'storage';
 
 
@@ -55,18 +53,23 @@ module.exports = function initContext(
   ) {
     const authorizationHeader = req.headers['authorization'];
 
+    const contextSource: ContextSource = {
+      name: 'http',
+      ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress
+    };
     // FLOW We should not do this, but we're doing it.
     req.context = new MethodContext(
+      contextSource,
       req.params.username,
       authorizationHeader, 
       customAuthStepFn,
       storageLayer.events,
-      req.headers
+      req.headers,
+      req.query,
+      req.tracing,
     );
     
-    const userRetrieved = req.context.retrieveUser();
-    
     // Convert the above promise into a callback. 
-    return userRetrieved.then(() => next()).catch(next);
+    return req.context.init().then(() => next()).catch(next);
   };
 };

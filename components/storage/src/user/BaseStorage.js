@@ -34,6 +34,9 @@
 const _ = require('lodash');
 const converters = require('./../converters');
 const timestamp = require('unix-timestamp');
+const logger = require('@pryv/boiler').getLogger('storage:base-storage');
+
+const BULKWRITE_BATCH_SIZE = 1000;
 
 module.exports = BaseStorage;
 /**
@@ -78,34 +81,39 @@ function BaseStorage(database) {
   this.defaultOptions = { sort: {} };
 }
 
+BaseStorage.prototype.getUserIdFromUserOrUserId = function(userOrUserId) {
+  if (typeof userOrUserId === 'string') return userOrUserId;
+  return userOrUserId.id;
+}
+
 /**
  * Retrieves collection information (name and indexes).
  * Must be implemented by storage modules.
  *
- * @param {Object} user The user owning the collection
+ * @param {Object|String} userOrUserId The user owning the collection
  * @return {{name: string, indexes: Array}}
  */
-BaseStorage.prototype.getCollectionInfo = function(user) {
-  return new Error('Not implemented (user: ' + user + ')');
+BaseStorage.prototype.getCollectionInfo = function(userOrUserId) {
+  return new Error('Not implemented (user: ' + userOrUserId + ')');
 };
 
-BaseStorage.prototype.countAll = function(user, callback) {
-  this.database.countAll(this.getCollectionInfo(user), callback);
+BaseStorage.prototype.countAll = function(userOrUserId, callback) {
+  this.database.countAll(this.getCollectionInfo(userOrUserId), callback);
 };
 
-BaseStorage.prototype.initCollection = function (user, callback) {
-  this.database.getCollection(this.getCollectionInfo(user), callback);
+BaseStorage.prototype.initCollection = function (userOrUserId, callback) {
+  this.database.getCollection(this.getCollectionInfo(userOrUserId), callback);
 };
 
 /// Returns the number of documents in the collection, minus those that are 
 /// either `deleted` or have a `headId`, aka the number of live / trashed 
 /// documents. 
 /// 
-BaseStorage.prototype.count = function(user, query, callback) {
+BaseStorage.prototype.count = function(userOrUserId, query, callback) {
   query.deleted = null;
   query.headId = null;
   this.database.count(
-    this.getCollectionInfo(user),
+    this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB(query),
     callback
   );
@@ -116,11 +124,11 @@ BaseStorage.prototype.count = function(user, query, callback) {
  * history items (i.e. documents with `headId` field)
  * @see `findDeletions()`
  */
-BaseStorage.prototype.find = function(user, query, options, callback) {
+BaseStorage.prototype.find = function(userOrUserId, query, options, callback) {
   query.deleted = null;
   query.headId = null;
   this.database.find(
-    this.getCollectionInfo(user),
+    this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB(query),
     this.applyOptionsToDB(options),
     function(err, dbItems) {
@@ -132,6 +140,72 @@ BaseStorage.prototype.find = function(user, query, options, callback) {
   );
 };
 
+
+/**
+ * 1. Finds all documents matching the given query
+ * 2. Check them against some logic done by `updateIfNeedCallback` one by one
+ * 3. Eventually perform an update (in Bulk) if `updateIfNeedCallback` returns an operation
+ * 
+ * This is used by integrity processes to re-set integrity values on updateMany
+ *
+ * @param {Object} collectionInfo
+ * @param {Object} query Mongo-style query
+ * @param {UpdateIfNeededCallback} updateIfNeededCallback .. returns update to do on document or null if no update
+ * @param {Function} callback
+ */
+ BaseStorage.prototype.findAndUpdateIfNeeded = function(userOrUserId, query, options, updateIfNeededCallback, callback) {
+  const collectionInfo = this.getCollectionInfo(userOrUserId);
+  const database = this.database;
+  const finalQuery = this.applyQueryToDB(query);
+  const finalOptions = this.applyOptionsToDB(options);
+  database.findCursor(
+  collectionInfo,
+  finalQuery,
+  finalOptions,
+  async (err, cursor) => {
+
+    let updatesToDo = []; // keeps a list of updates to do
+    let updatesDone = 0;
+    async function executBulk() {
+      if (updatesToDo.length === 0) return;
+      
+      const bulkResult = await database.bulkWrite(collectionInfo, updatesToDo);
+      updatesDone += bulkResult?.result?.nModified || 0;
+      if (bulkResult?.result?.nModified != updatesToDo.length) {
+        // not throwing error as we are in the middle on an operation
+        logger.error('Issue when doing bulk update for ' + JSON.stringify({coll: collectionInfo.name,userOrUserId, query}) + ' counts does not match');
+      }
+      updatesToDo = [];
+    }
+
+    try {
+      while (await cursor.hasNext()) {
+        const document = await cursor.next();
+        const _id = document._id; // keep mongodb _id;
+        const updateQuery = updateIfNeededCallback(this.applyItemFromDB(document));
+        if (updateQuery == null) continue; // nothing to do .. 
+
+        updatesToDo.push(
+          {
+            'updateOne': {
+              'filter': { '_id': _id },
+              'update': updateQuery
+            }
+          });
+
+        if (updatesToDo.length === BULKWRITE_BATCH_SIZE) {
+          await executBulk();
+        }
+      }
+      // flush 
+      await executBulk();
+    
+      return callback(null, {count: updatesDone});
+    } catch (err) {
+      return callback(err);
+    }
+  });
+}
 
 /**
  * Same as find(), but returns a readable stream
@@ -157,15 +231,15 @@ BaseStorage.prototype.findHistory = function(user, headId, options, callback) {
 };
 
 BaseStorage.prototype.findDeletions = function(
-  user,
+  userOrUserId,
   deletedSince,
   options,
   callback
 ) {
-  const query = { deleted: { $gt: timestamp.toDate(deletedSince) } };
+  const query = { deleted: { $gt: deletedSince } };
   query.headId = null;
   this.database.find(
-    this.getCollectionInfo(user),
+    this.getCollectionInfo(userOrUserId),
     query,
     this.applyOptionsToDB(options),
     function(err, dbItems) {
@@ -190,11 +264,11 @@ BaseStorage.prototype.findDeletionsStreamed = function(
   // Implemented for Events only.
 };
 
-BaseStorage.prototype.findOne = function(user, query, options, callback) {
+BaseStorage.prototype.findOne = function(userOrUserId, query, options, callback) {
   query.deleted = null;
   
   this.database.findOne(
-    this.getCollectionInfo(user),
+    this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB(query),
     this.applyOptionsToDB(options),
     function(err, dbItem) {
@@ -206,10 +280,10 @@ BaseStorage.prototype.findOne = function(user, query, options, callback) {
   );
 };
 
-BaseStorage.prototype.findDeletion = function(user, query, options, callback) {
+BaseStorage.prototype.findDeletion = function(userOrUserId, query, options, callback) {
   query.deleted = { $ne: null };
   this.database.findOne(
-    this.getCollectionInfo(user),
+    this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB(query),
     this.applyOptionsToDB(options),
     function(err, dbItem) {
@@ -222,7 +296,7 @@ BaseStorage.prototype.findDeletion = function(user, query, options, callback) {
 };
 
 BaseStorage.prototype.aggregate = function(
-  user,
+  userOrUserId,
   query,
   projectExpression,
   groupExpression,
@@ -230,7 +304,7 @@ BaseStorage.prototype.aggregate = function(
   callback
 ) {
   this.database.aggregate(
-    this.getCollectionInfo(user),
+    this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB(query),
     this.applyQueryToDB(projectExpression),
     this.applyQueryToDB(groupExpression),
@@ -244,15 +318,16 @@ BaseStorage.prototype.aggregate = function(
   );
 };
 
-BaseStorage.prototype.insertOne = function (user, item, callback) {
+BaseStorage.prototype.insertOne = function (userOrUserId, item, callback) {
+  const itemToInsert = this.applyItemToDB(this.applyItemDefaults(item));
   this.database.insertOne(
-    this.getCollectionInfo(user),
-    this.applyItemToDB(this.applyItemDefaults(item)),
+    this.getCollectionInfo(userOrUserId),
+    itemToInsert,
     function(err) {
       if (err) {
         return callback(err);
       }
-      callback(null, this.applyItemFromDB(item));
+      callback(null, this.applyItemFromDB(itemToInsert));
     }.bind(this)
   );
 };
@@ -278,9 +353,9 @@ BaseStorage.prototype.minimizeEventsHistory = function(user, headId, callback) {
  * @param updatedData
  * @param callback
  */
-BaseStorage.prototype.findOneAndUpdate = function(user, query, updatedData, callback) {
+BaseStorage.prototype.findOneAndUpdate = function(userOrUserId, query, updatedData, callback) {
   this.database.findOneAndUpdate(
-    this.getCollectionInfo(user),
+    this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB(query),
     this.applyUpdateToDB(updatedData),
     function(err, dbItem) {
@@ -300,19 +375,7 @@ BaseStorage.prototype.findOneAndUpdate = function(user, query, updatedData, call
  * @param updatedData
  * @param callback
  */
-BaseStorage.prototype.updateOne = function (user, query, updatedData, callback) {
-  this.database.findOneAndUpdate(
-    this.getCollectionInfo(user),
-    this.applyQueryToDB(query),
-    this.applyUpdateToDB(updatedData),
-    function(err, dbItem) {
-      if (err) {
-        return callback(err);
-      }
-      callback(null, this.applyItemFromDB(dbItem));
-    }.bind(this)
-  );
-};
+BaseStorage.prototype.updateOne = BaseStorage.prototype.findOneAndUpdate;
 
 /**
  * Updates the one or multiple document(s) matching the given query.
@@ -323,13 +386,13 @@ BaseStorage.prototype.updateOne = function (user, query, updatedData, callback) 
  * @param callback
  */
 BaseStorage.prototype.updateMany = function(
-  user,
+  userOrUserId,
   query,
   updatedData,
   callback
 ) {
   this.database.updateMany(
-    this.getCollectionInfo(user),
+    this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB(query),
     this.applyUpdateToDB(updatedData),
     callback
@@ -350,39 +413,39 @@ BaseStorage.prototype.updateMany = function(
  * @param query
  * @param callback
  */
-BaseStorage.prototype.delete = function(user, query, callback) {
-  callback( new Error('Not implemented (user: ' + user + ')') );
+BaseStorage.prototype.delete = function(userOrUserId, query, callback) {
+  callback( new Error('Not implemented (user: ' + userOrUserId + ')') );
   // a line like this could work when/if Mongo ever supports "replacement" update on multiple docs:
   //this.database.update(this.getCollectionInfo(user), this.applyQueryToDB(query),
-  //    {deleted: new Date()}, callback);
+  //    {deleted: Date.now() / 1000}, callback);
 };
 
-BaseStorage.prototype.removeOne = function(user, query, callback) {
+BaseStorage.prototype.removeOne = function(userOrUserId, query, callback) {
   this.database.deleteOne(
-    this.getCollectionInfo(user),
+    this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB(query),
     callback
   );
 };
 
-BaseStorage.prototype.removeMany = function (user, query, callback) {
+BaseStorage.prototype.removeMany = function (userOrUserId, query, callback) {
   this.database.deleteMany(
-    this.getCollectionInfo(user),
+    this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB(query),
     callback
   );
 };
 
-BaseStorage.prototype.removeAll = function (user, callback) {
+BaseStorage.prototype.removeAll = function (userOrUserId, callback) {
   this.database.deleteMany(
-    this.getCollectionInfo(user),
+    this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB({}),
     callback
   );
 };
 
-BaseStorage.prototype.dropCollection = function(user, callback) {
-  this.database.dropCollection(this.getCollectionInfo(user), callback);
+BaseStorage.prototype.dropCollection = function(userOrUserId, callback) {
+  this.database.dropCollection(this.getCollectionInfo(userOrUserId), callback);
 };
 
 // for tests only (at the moment)
@@ -390,9 +453,9 @@ BaseStorage.prototype.dropCollection = function(user, callback) {
 /**
  * For tests only.
  */
-BaseStorage.prototype.findAll = function(user, options, callback) {
+BaseStorage.prototype.findAll = function(userOrUserId, options, callback) {
   this.database.find(
-    this.getCollectionInfo(user),
+    this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB({}),
     this.applyOptionsToDB(options),
     function(err, dbItems) {
@@ -407,10 +470,12 @@ BaseStorage.prototype.findAll = function(user, options, callback) {
 /**
  * Inserts an array of items; each item must have a valid id and data already. For tests only.
  */
-BaseStorage.prototype.insertMany = function(user, items, callback) {
+BaseStorage.prototype.insertMany = function(userOrUserId, items, callback) {
+  // Groumpf... Many tests are relying on this.. 
+  const nItems = _.cloneDeep(items);
   this.database.insertMany(
-    this.getCollectionInfo(user),
-    this.applyItemsToDB(items),
+    this.getCollectionInfo(userOrUserId),
+    this.applyItemsToDB(nItems),
     callback
   );
 };
@@ -418,11 +483,11 @@ BaseStorage.prototype.insertMany = function(user, items, callback) {
 /**
  * Gets the total size of the collection, in bytes.
  *
- * @param {Object} user
+ * @param {Object} userOrUserId
  * @param {Function} callback
  */
-BaseStorage.prototype.getTotalSize = function(user, callback) {
-  this.database.totalSize(this.getCollectionInfo(user), callback);
+BaseStorage.prototype.getTotalSize = function(userOrUserId, callback) {
+  this.database.totalSize(this.getCollectionInfo(userOrUserId), callback);
 };
 
 /**
@@ -432,8 +497,8 @@ BaseStorage.prototype.getTotalSize = function(user, callback) {
  * @param {Object} options
  * @param {Function} callback
  */
-BaseStorage.prototype.listIndexes = function(user, options, callback) {
-  this.database.listIndexes(this.getCollectionInfo(user), options, callback);
+BaseStorage.prototype.listIndexes = function(userOrUserId, options, callback) {
+  this.database.listIndexes(this.getCollectionInfo(userOrUserId), options, callback);
 };
 
 // converters application functions
@@ -531,6 +596,11 @@ BaseStorage.prototype.applyUpdateToDB = function(updatedData) {
   if (input.$pull != null) {
     data.$pull = input.$pull;
     delete input.$pull;
+  }
+
+  if (input.$inc != null) {
+    data.$inc = input.$inc;
+    delete input.$inc;
   }
 
   if (input.$unset != null) {

@@ -37,54 +37,61 @@ var errors = require('errors').factory,
   methodsSchema = require('../schema/accountMethods');
 
 const { getConfig } = require('@pryv/boiler');
+const { pubsub } = require('messages');
+const { getStorageLayer } = require('storage');
+
+const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils');
 
 const Registration = require('business/src/auth/registration'),
   ErrorMessages = require('errors/src/ErrorMessages'),
   ErrorIds = require('errors').ErrorIds,
   { getServiceRegisterConn } = require('business/src/auth/service_register'),
-  UsersRepository = require('business/src/users/repository');
-  User = require('business/src/users/User'),
-  SystemStreamsSerializer = require('business/src/system-streams/serializer');
+  { getUsersRepository, UserRepositoryOptions} = require('business/src/users');
+const SystemStreamsSerializer = require('business/src/system-streams/serializer');
   /**
  * @param api
- * @param usersStorage
- * @param passwordResetRequestsStorage
- * @param authSettings
- * @param servicesSettings Must contain `email` and `register`
- * @param notifications
  */
-module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
-  authSettings, servicesSettings, notifications, logging) {
+module.exports = async function (api) {
+  const config = await getConfig();
+  const authSettings = config.get('auth');
+  const servicesSettings = config.get('services');
+  const storageLayer = await getStorageLayer();
+  const passwordResetRequestsStorage = storageLayer.passwordResetRequests;
 
   var emailSettings = servicesSettings.email,
     requireTrustedAppFn = commonFns.getTrustedAppCheck(authSettings);
 
   // initialize service-register connection
   const serviceRegisterConn = getServiceRegisterConn();
-  const usersRepository = new UsersRepository(userEventsStorage);
+  const usersRepository = await getUsersRepository(); 
+
+  const isDnsLess = config.get('dnsLess:isActive');
 
   // RETRIEVAL
 
   api.register('account.get',
-    commonFns.requirePersonalAccess,
+    commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.get.params),
+    addUserBusinessToContext,
     async function (context, params, result, next) {
       try {
-        result.account = context.user.getLegacyAccount();
+        result.account = context.userBusiness.getLegacyAccount();
         next();
       } catch (err) {
         return next(errors.unexpectedError(err));
       }
     });
+  
 
   // UPDATE
 
   api.register('account.update',
-    commonFns.requirePersonalAccess,
+    commonFns.basicAccessAuthorizationCheck,  
     commonFns.getParamsValidation(methodsSchema.update.params),
     validateThatAllFieldsAreEditable,
     notifyServiceRegister,
     updateAccount,
+    addUserBusinessToContext,
     buildResultData,
   );
 
@@ -97,10 +104,10 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
    * @param {*} next 
    */
   function validateThatAllFieldsAreEditable (context, params, result, next) {
-    const nonEditableAccountStreamsIds = SystemStreamsSerializer.getAccountStreamsIdsForbiddenForEditing();
+    const editableAccountMap: Map<string, SystemStream> = SystemStreamsSerializer.getEditableAccountMap();
     Object.keys(params.update).forEach(streamId => {
-      const streamIdWithDot = SystemStreamsSerializer.addDotToStreamId(streamId);
-      if (nonEditableAccountStreamsIds.includes(streamIdWithDot)) {
+      const streamIdWithPrefix = SystemStreamsSerializer.addCorrectPrefixToAccountStreamId(streamId);
+      if (editableAccountMap[streamIdWithPrefix] == null) {
         // if user tries to add new streamId from non editable streamsIds
         return next(errors.invalidOperation(
           ErrorMessages[ErrorIds.ForbiddenToEditNoneditableAccountFields],
@@ -113,9 +120,10 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
   // CHANGE PASSWORD
 
   api.register('account.changePassword',
-    commonFns.requirePersonalAccess,
+    commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.changePassword.params),
     verifyOldPassword,
+    addUserBusinessToContext,
     addNewPasswordParameter,
     updateAccount
   );
@@ -140,7 +148,11 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
     commonFns.getParamsValidation(methodsSchema.requestPasswordReset.params),
     requireTrustedAppFn,
     generatePasswordResetRequest,
-    sendPasswordResetMail);
+    addUserBusinessToContext,
+    sendPasswordResetMail,
+    setAuditAccessId(AuditAccessIds.PASSWORD_RESET_REQUEST));
+
+  
 
   function generatePasswordResetRequest(context, params, result, next) {
     const username = context.user.username;
@@ -155,6 +167,18 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
     });
   }
 
+  async function addUserBusinessToContext(context, params, result, next) {
+    try {
+      // get user details
+      const usersRepository = await getUsersRepository();
+      context.userBusiness = await usersRepository.getUserByUsername(context.user.username);
+      if (! context.userBusiness) return next(errors.unknownResource('user', context.user.username));
+    } catch (err) {
+      return next(err);
+    }
+    next();
+  }
+
   function sendPasswordResetMail(context, params, result, next) {
     // Skip this step if reset mail is deactivated
     const isMailActivated = emailSettings.enabled;
@@ -164,8 +188,8 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
     }
 
     const recipient = {
-      email: context.user.email,
-      name: context.user.username,
+      email: context.userBusiness.email,
+      name: context.userBusiness.username,
       type: 'to'
     };
 
@@ -175,7 +199,7 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
     };
 
     mailing.sendmail(emailSettings, emailSettings.resetPasswordTemplate,
-      recipient, substitutions, context.user.language, next);
+      recipient, substitutions, context.userBusiness.language, next);
   }
 
   // RESET PASSWORD
@@ -184,8 +208,10 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
     commonFns.getParamsValidation(methodsSchema.resetPassword.params),
     requireTrustedAppFn,
     checkResetToken,
+    addUserBusinessToContext,
     addNewPasswordParameter,
-    updateAccount
+    updateAccount,
+    setAuditAccessId(AuditAccessIds.PASSWORD_RESET_TOKEN)
   );
 
   function checkResetToken(context, params, result, next) {
@@ -208,7 +234,7 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
   }
 
   function addNewPasswordParameter (context, params, result, next) {
-    if (!context.user.passwordHash) {
+    if (!context.userBusiness.passwordHash) {
       return next(errors.unexpectedError());
     }
     params.update = { password: params.newPassword };
@@ -217,19 +243,27 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
 
   async function notifyServiceRegister (context, params, result, next) {
     // no need to update service register if it is single node setup
-    if ((await getConfig()).get('dnsLess:isActive') === true) {
+    if (isDnsLess) {
       return next();
     }
     try {
-      const serviceRegisterRequest = await context.user.getUpdateRequestToServiceRegister(
-        params.update,
-        true
-      );
+      const editableAccountMap: Map<string, SystemStream> = SystemStreamsSerializer.getEditableAccountMap();
+
+      const operations: Array<{}> = [];
+      for (const [key, value] of Object.entries(params.update)) {
+        operations.push({
+          update: {
+            key,
+            value,
+            isUnique: editableAccountMap[SystemStreamsSerializer.addCorrectPrefixToAccountStreamId(key)].isUnique,
+          }
+        })
+      }
       await serviceRegisterConn.updateUserInServiceRegister(
         context.user.username,
-        serviceRegisterRequest,
-        {},
-        params.update
+        operations,
+        true,
+        false,
       );
     } catch (err) {
       return next(err);
@@ -239,19 +273,15 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
 
   async function updateAccount(context, params, result, next) {
     try {
-      const accessId = (context.access?.id) ? context.access.id : UsersRepository.options.SYSTEM_USER_ACCESS_ID
+      const accessId = (context.access?.id) ? context.access.id : UserRepositoryOptions.SYSTEM_USER_ACCESS_ID
       await usersRepository.updateOne(
         context.user,
         params.update,
         accessId,
       );
-      notifications.accountChanged(context.user);
+      pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCOUNT_CHANGED);
     } catch (err) {
-      return next(Registration.handleUniquenessErrors(
-        err,
-        ErrorMessages[ErrorIds.UnexpectedError],
-        params.update
-      ));
+      return next(err);
     }
     next();
   }
@@ -267,7 +297,7 @@ module.exports = function (api, userEventsStorage, passwordResetRequestsStorage,
     Object.keys(params.update).forEach(key => {
       context.user[key] = params.update[key];
     });
-    result.account = context.user.getLegacyAccount();
+    result.account = context.userBusiness.getLegacyAccount();
     next();
   }
 };

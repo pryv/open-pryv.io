@@ -22,8 +22,10 @@ services:
   register:
     url: http://localhost:5123
     key: test-system-key
-tcpMessaging:
+axonMessaging:
   enabled: true
+nats:
+ uri: 'nats://127.0.0.1:4222'
 reporting:
   licenseName: pryv.io-test-license
   templateVersion: 1.0.0
@@ -53,15 +55,33 @@ custom:
       regexError:
         message: Cool error
         code: cool-error
+      isEditable: true
     - id: phoneNumber
       isEditable: true
       isShown: true
       type: string/pryv
-    - isIndexed: true
+    - id: email
+      isIndexed: true
       isUnique: true
       isShown: true
       isEditable: true
       type: email/string
       name: Email
-      id: email
       isRequiredInValidation: true
+backwardCompatibility:
+  systemStreams:
+    prefix:
+      isActive: false
+stores:
+  loadExternal:
+    - id: dummy
+      name: Dummy Store
+      path: ../implementations/dummy # should be fully qualified path for external store
+      config: null
+    - id: faulty
+      name: Faulty Store
+      path: ../implementations/faulty # should be fully qualified path
+      config: null
+trace:
+  enable: true
+    

@@ -61,7 +61,7 @@ module.exports = function (context, callback) {
   const addUserIdToIndexIfNeeded = require('../Database').prototype.addUserIdToIndexIfNeeded;
   ['Profile', 'Accesses', 'FollowedSlices', 'Streams', 'Events'].forEach(function (storageName) {
     const storage = new (require('../user/' + storageName))(null);
-    const collectionInfo = addUserIdToIndexIfNeeded(storage.getCollectionInfo({id: 'bob'}));
+    const collectionInfo = addUserIdToIndexIfNeeded(storage.getCollectionInfo('bob'));
     collectionInfo.convertIdToItemId = storage.converters.convertIdToItemId;
     collectionsInfo.push(collectionInfo);
   });

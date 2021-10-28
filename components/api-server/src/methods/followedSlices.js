@@ -36,33 +36,24 @@ var async = require('async'),
     errors = require('errors').factory,
     methodsSchema = require('../schema/followedSlicesMethods');
 
+const { pubsub } = require('messages');
+const { getStorageLayer } = require('storage');
 /**
  * Followed slices methods implementations.
  * TODO: refactor methods as chains of functions
  *
  * @param api
- * @param userFollowedSlicesStorage
- * @param notifications
  */
-module.exports = function (api, userFollowedSlicesStorage, notifications){
-
-  // COMMON
-
-  api.register('followedSlices.*',
-    commonFns.requirePersonalAccess);
+module.exports = async function (api){
+  const storageLayer = await getStorageLayer();
+  userFollowedSlicesStorage = storageLayer.followedSlices;
 
   // RETRIEVAL
 
   api.register('followedSlices.get',
+    commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.get.params),
     function (context, params, result, next) {
-      if (! context.access.isPersonal()) {
-        return process.nextTick(next.bind(null,
-          errors.forbidden(
-            'You cannot access this resource using the given access token.'
-          )));
-      }
-
       userFollowedSlicesStorage.find(context.user, {}, null, function (err, slices) {
         if (err) { return next(errors.unexpectedError(err)); }
         result.followedSlices = slices;
@@ -73,25 +64,15 @@ module.exports = function (api, userFollowedSlicesStorage, notifications){
   // CREATION
 
   api.register('followedSlices.create',
+    commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.create.params),
     function (context, params, result, next) {
-
-
-      if (! context.access.isPersonal()) {
-        return process.nextTick(next.bind(null,
-          errors.forbidden(
-            'You cannot access this resource using the given access token.'
-          )
-        ));
-      }
       userFollowedSlicesStorage.insertOne(context.user, params, function (err, newSlice) {
         if (err) {
           return next(getCreationOrUpdateError(err, params));
         }
-
-
         result.followedSlice = newSlice;
-        notifications.followedSlicesChanged(context.user);
+        pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_FOLLOWEDSLICES_CHANGED);
         next();
       });
     });
@@ -99,16 +80,9 @@ module.exports = function (api, userFollowedSlicesStorage, notifications){
   // UPDATE
 
   api.register('followedSlices.update',
+    commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.update.params),
     function (context, params, result, next) {
-      if (! context.access.isPersonal()) {
-        return process.nextTick(next.bind(null,
-          errors.forbidden(
-            'You cannot access this resource using the given access token.'
-          )
-        ));
-      }
-
       async.series([
         function checkSlice(stepDone) {
           userFollowedSlicesStorage.findOne(context.user, {id: params.id}, null,
@@ -132,7 +106,7 @@ module.exports = function (api, userFollowedSlicesStorage, notifications){
               }
 
               result.followedSlice = updatedSlice;
-              notifications.followedSlicesChanged(context.user);
+              pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_FOLLOWEDSLICES_CHANGED);
               stepDone();
             });
         }
@@ -159,16 +133,9 @@ module.exports = function (api, userFollowedSlicesStorage, notifications){
   // DELETION
 
   api.register('followedSlices.delete',
+    commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.del.params),
     function (context, params, result, next) {
-      if (! context.access.isPersonal()) {
-        return process.nextTick(next.bind(null,
-          errors.forbidden(
-            'You cannot access this resource using the given access token.'
-          )
-        ));
-      }
-
       userFollowedSlicesStorage.findOne(context.user, {id: params.id}, null, function (err, slice) {
         if (err) { return next(errors.unexpectedError(err)); }
 
@@ -183,7 +150,7 @@ module.exports = function (api, userFollowedSlicesStorage, notifications){
           if (err) { return next(errors.unexpectedError(err)); }
 
           result.followedSliceDeletion = {id: params.id};
-          notifications.followedSlicesChanged(context.user);
+          pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_FOLLOWEDSLICES_CHANGED);
           next();
         });
       });

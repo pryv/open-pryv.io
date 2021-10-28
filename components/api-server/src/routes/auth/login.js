@@ -39,6 +39,7 @@ const express = require('express');
 
 const errors = require('errors').factory;
 const middleware = require('middleware');
+const { setMethodId } = require('middleware');
 
 const methodCallback = require('../methodCallback');
 const Paths = require('../Paths');
@@ -99,20 +100,22 @@ module.exports = function (expressApp: express$Application, app: Application) {
       httpOnly: ssoHttpOnly
     });
   }
-  function defineRoutes(router) {
-    // Define local routes
-    router.all('*', cookieParser(ssoCookieSignSecret));
-    router.get('/who-am-i', function routeWhoAmI(req: express$Request, res, next) {
-      return next(errors.goneResource());
-    });
-    router.post('/login', function routeLogin(req: RequestWithContext, res, next) {
+  
+  // Define local routes
+  expressApp.all(Paths.Auth + '*', cookieParser(ssoCookieSignSecret));
+  expressApp.get(Paths.Auth + '/who-am-i', function routeWhoAmI(req: express$Request, res, next) {
+    return next(errors.goneResource());
+  });
+  expressApp.post(Paths.Auth + '/login', 
+    setMethodId('auth.login'),
+    function routeLogin(req: RequestWithContext, res, next) {
       if (typeof req.body !== 'object' || req.body == null ||
         ! hasProperties(req.body, ['username', 'password', 'appId'])) {
         return next(errors.invalidOperation('Missing parameters: username, password and appId are required.'));
       }
       const body: Object = req.body; 
       
-      var params = {
+      const params = {
         username: body.username,
         password: body.password,
         appId: body.appId,
@@ -120,26 +123,21 @@ module.exports = function (expressApp: express$Application, app: Application) {
         origin: req.headers.origin || req.headers.referer || ''
       };
       
-      api.call('auth.login', req.context, params, function (err, result) {
+      api.call(req.context, params, function (err, result) {
         if (err) return next(err);
-        setSSOCookie({ username: req.context.username, token: result.token }, res);
+        setSSOCookie({ username: req.context.user.username, token: result.token }, res);
         methodCallback(res, next, 200)(err, result);
       });
 
+  });
+  expressApp.post(Paths.Auth + '/logout',
+    setMethodId('auth.logout'),
+    loadAccessMiddleware,
+    function routeLogout(req: RequestWithContext, res, next) {
+      clearSSOCookie(res);
+      api.call(req.context, {}, methodCallback(res, next, 200));
     });
-    router.post('/logout',
-      loadAccessMiddleware,
-      function routeLogout(req: RequestWithContext, res, next) {
-        clearSSOCookie(res);
-        api.call('auth.logout', req.context, {}, methodCallback(res, next, 200));
-      });
-  }
   
-  // Create a router that is relative to /:username/auth/
-  const router = express.Router(); 
-  expressApp.use(Paths.Auth, router);
-  
-  defineRoutes(router);
   
   return {
     hasProperties: hasProperties, 

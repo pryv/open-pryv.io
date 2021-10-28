@@ -36,6 +36,7 @@
 const methodCallback = require('./methodCallback');
 const Paths = require('./Paths');
 const middleware = require('middleware');
+const { setMethodId } = require('middleware');
 
 import type Application  from '../application';
 
@@ -46,33 +47,40 @@ module.exports = function (expressApp: express$Application, app: Application) {
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);
 
   expressApp.get(Paths.Account,
+    setMethodId('account.get'),
     loadAccessMiddleware,
     function (req: express$Request, res, next) {
-      api.call('account.get', req.context, req.query, methodCallback(res, next, 200));
+      api.call(req.context, req.query, methodCallback(res, next, 200));
     });
 
   expressApp.put(Paths.Account,
+    setMethodId('account.update'),
     loadAccessMiddleware,
     function (req: express$Request, res, next) {
-      api.call('account.update', req.context, {update: req.body}, methodCallback(res, next, 200));
+      api.call(req.context, {update: req.body}, methodCallback(res, next, 200));
     });
 
   expressApp.post(Paths.Account + '/change-password',
+    setMethodId('account.changePassword'),
     loadAccessMiddleware,
     function (req: express$Request, res, next) {
-      api.call('account.changePassword', req.context, req.body, methodCallback(res, next, 200));
+      api.call(req.context, req.body, methodCallback(res, next, 200));
     });
 
-  expressApp.post(Paths.Account + '/request-password-reset', function (req: express$Request, res, next) {
-    var params = req.body;
-    params.origin = req.headers.origin;
-    api.call('account.requestPasswordReset', req.context, params, methodCallback(res, next, 200));
+  expressApp.post(Paths.Account + '/request-password-reset',
+    setMethodId('account.requestPasswordReset'),
+    function (req: express$Request, res, next) {
+      const params = req.body;
+      params.origin = req.headers.origin;
+      api.call(req.context, params, methodCallback(res, next, 200));
   });
 
-  expressApp.post(Paths.Account + '/reset-password', function (req: express$Request, res, next) {
-    var params = req.body;
-    params.origin = req.headers.origin;
-    api.call('account.resetPassword', req.context, params, methodCallback(res, next, 200));
+  expressApp.post(Paths.Account + '/reset-password',
+    setMethodId('account.resetPassword'),
+    function (req: express$Request, res, next) {
+      const params = req.body;
+      params.origin = req.headers.origin;
+      api.call(req.context, params, methodCallback(res, next, 200));
   });
 
 };

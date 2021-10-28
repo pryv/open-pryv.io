@@ -35,7 +35,6 @@
 
 module.exports = {
   encryption: require('./encryption'),
-  messaging: require('./messaging'),
   toString: require('./toString'),
   treeUtils: require('./treeUtils'), 
   extension: require('./extension'),

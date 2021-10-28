@@ -42,14 +42,20 @@ var errors = require('errors').factory,
   utils = require('utils'),
   treeUtils = utils.treeUtils,
   _ = require('lodash');
+
+const bluebird = require('bluebird');
 const SystemStreamsSerializer = require('business/src/system-streams/serializer');
-const ErrorMessages = require('../../../errors/src/ErrorMessages');
-const ErrorIds = require('../../../errors/src/ErrorIds');
+const ErrorMessages = require('errors/src/ErrorMessages');
+const ErrorIds = require('errors/src/ErrorIds');
 
-const { getLogger } = require('@pryv/boiler');
+const { getLogger, getConfig } = require('@pryv/boiler');
 const logger = getLogger('methods:streams');
+const { getMall, StreamsUtils } = require('mall');
+const { changePrefixIdForStreams, replaceWithNewPrefix } = require('./helpers/backwardCompatibility');
+const { pubsub } = require('messages');
+const { getStorageLayer } = require('storage');
 
-const systemStreamsSerializer = SystemStreamsSerializer.getSerializer();
+SystemStreamsSerializer.getSerializer(); // ensure it's loaded
 
 /**
  * Event streams API methods implementation.
@@ -58,23 +64,31 @@ const systemStreamsSerializer = SystemStreamsSerializer.getSerializer();
  * @param userStreamsStorage
  * @param userEventsStorage
  * @param userEventFilesStorage
- * @param notifications
+ * @param notifyTests
  * @param logging
  * @param auditSettings
  * @param updatesSettings
  */
-module.exports = function (api, userStreamsStorage, userEventsStorage, userEventFilesStorage,
-  notifications, logging, auditSettings, updatesSettings) {
+module.exports = async function (api) {
+  const config = await getConfig();
+  const storageLayer = await getStorageLayer();
+  const userStreamsStorage = storageLayer.streams;
+  const userEventsStorage = storageLayer.events;
+  const userEventFilesStorage = storageLayer.eventFiles;
+  const auditSettings = config.get('versioning');
+  const updatesSettings = config.get('updates');
+  const mall = await getMall();
 
-  
+  const isStreamIdPrefixBackwardCompatibilityActive: boolean = config.get('backwardCompatibility:systemStreams:prefix:isActive');
+
   // RETRIEVAL
-
   api.register('streams.get',
     commonFns.getParamsValidation(methodsSchema.get.params),
+    checkAuthorization,
     applyDefaultsForRetrieval,
     findAccessibleStreams,
     includeDeletionsIfRequested
-   );
+  );
 
   function applyDefaultsForRetrieval(context, params, result, next) {
     _.defaults(params, {
@@ -84,46 +98,111 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
     next();
   }
 
-  function findAccessibleStreams(context, params, result, next) {
-    // can't reuse context streams (they carry extra internal properties)
-    userStreamsStorage.find(context.user, {}, null, function (err, streams) {
-
-      if (err) { return next(errors.unexpectedError(err)); }
-
-      const systemStreams = systemStreamsSerializer.getSystemStreamsList();
-      streams = streams.concat(systemStreams);
-
-      if (params.parentId) {
-        var parent = treeUtils.findById(streams, params.parentId);
-        if (!parent) {
-          return next(errors.unknownReferencedResource('parent stream',
-            'parentId', params.parentId, err));
-        }
-        streams = parent.children;
+  async function checkAuthorization(context, params, result, next) {
+    if (params.parentId && params.id) {
+      DataStore.throwInvalidRequestStructure('Do not mix "parentId" and "id" parameter in request');
+    }
+    
+    if (params.parentId) {
+      if (isStreamIdPrefixBackwardCompatibilityActive && ! context.disableBackwardCompatibility) {
+        params.parentId = replaceWithNewPrefix(params.parentId);
       }
+    }
 
-      if (params.state !== 'all') { // i.e. === 'default' (return non-trashed items)
-        streams = treeUtils.filterTree(streams, false /*no orphans*/, function (item) {
-          return !item.trashed;
-        });
+    let streamId = params.id || params.parentId || null;
+    if (! streamId ) return next(); // "*" is authorized for everyone
+
+    if (! await context.access.canListStream(streamId)) {
+      return next(errors.forbidden('Insufficient permissions or non-existant stream [' + streamId + ']'));
+    }
+    return next();
+  }
+
+  async function findAccessibleStreams(context, params, result, next) {
+    
+    if (params.parentId) {
+      if (isStreamIdPrefixBackwardCompatibilityActive && ! context.disableBackwardCompatibility) {
+        params.parentId = replaceWithNewPrefix(params.parentId);
       }
+    }
 
-      if (! context.access.isPersonal()) {
-        streams = treeUtils.filterTree(streams, true /*keep orphans*/, function (stream) {
-          return context.canListStream(stream.id);
-        });
-      }
+    let streamId = params.id || params.parentId || '*';
 
-      // hide inaccessible parent ids
-      streams.forEach(function (stream) {
-        if (! context.canListStream(stream.parentId)) {
-          delete stream.parentId;
-        }
+    let storeId = params.storeId; // might me null
+    if (storeId == null) {
+      [storeId, streamId] = StreamsUtils.storeIdAndStreamIdForStreamId(streamId);
+    }
+   
+    let streams = await mall.streams.get(context.user.id, 
+      {
+        id: streamId,
+        storeId: storeId,
+        expandChildren: true,
+        includeDeletionsSince: params.includeDeletionsSince,
+        includeTrashed: params.includeTrashed || params.state === 'all',
+        excludedIds: context.access.getCannotListStreamsStreamIds(storeId),
       });
+ 
+    if (streamId !== '*') {
+      const fullStreamId = StreamsUtils.streamIdForStoreId(streamId, storeId);
+      const inResult = treeUtils.findById(streams, fullStreamId);
+      if (!inResult) {
+        return next(errors.unknownReferencedResource('unkown Stream:', params.parentId ? 'parentId' : 'id', fullStreamId, null));
+      }
+    } else if (! await context.access.canListStream('*')) { // request is "*" and not personal access
+      // cherry pick accessible streams from result
+      /********************************
+       * This is not optimal (fetches all streams) and not accurate 
+       * This method can "duplicate" streams, if read rights have been given to a parent and one of it's children
+       * Either:
+       *  - detect parent / child relationships
+       *  - pass a list of streamIds to store.streams.get() to get a consolidated answer 
+       *********************************/
+      const listables = context.access.getListableStreamIds();
+      const filteredStreams = [];
+      for (const listable of listables) {
+        const listableFullStreamId = StreamsUtils.streamIdForStoreId(listable.streamId, listable.storeId);
+        const inResult = treeUtils.findById(streams, listableFullStreamId);
+        if (inResult) {
+          const copy = _.cloneDeep(inResult);
+          filteredStreams.push(copy);
+        } else {
+          if (storeId === 'local' && listable.storeId !== 'local') {
+            // fetch stream structures for listables not in local and add it to the result
+            const listableStreamAndChilds = await mall.streams.get(context.user.id, 
+              {
+                id: listable.streamId,
+                storeId: listable.storeId,
+                expandChildren: true,
+                includeDeletionsSince: params.includeDeletionsSince,
+                includeTrashed: params.includeTrashed || params.state === 'all',
+                excludedIds: context.access.getCannotListStreamsStreamIds(listable.storeId),
+              });
+            filteredStreams.push(...listableStreamAndChilds);
+          }
+        }
+      }
+      streams = filteredStreams;
+    } 
 
-      result.streams = streams;
-      next();
-    });
+    // remove non visible parentIds from 
+    for (const rootStream of streams) { 
+      if ((rootStream.parentId != null) && (! await context.access.canListStream(rootStream.parentId))) {
+        rootStream.parentId = null;
+      }
+    };
+
+    // if request was made on parentId .. return only the children
+    if (params.parentId && streams.length === 1) {
+      streams = streams[0].children;
+    } 
+
+    if (isStreamIdPrefixBackwardCompatibilityActive && ! context.disableBackwardCompatibility) {
+      streams = changePrefixIdForStreams(streams);
+    }
+
+    result.streams = streams;
+    next();
   }
 
   function includeDeletionsIfRequested(context, params, result, next) {
@@ -156,8 +235,8 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
     next();
   }
 
-  function applyPrerequisitesForCreation(context, params, result, next) {
-    if (!context.canManageStream(params.parentId)) {
+  async function applyPrerequisitesForCreation(context, params, result, next) {
+    if (! await context.access.canCreateChildOnStream(params.parentId)) {
       return process.nextTick(next.bind(null, errors.forbidden()));
     }
 
@@ -204,7 +283,7 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
       }
 
       result.stream = newStream;
-      notifications.streamsChanged(context.user);
+      pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_STREAMS_CHANGED);
       next();
     });
   }
@@ -227,18 +306,25 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
    * @param {*} next 
    */
   function forbidSystemStreamsActions (context, params, result, next) {
-    let accountStreamIds = systemStreamsSerializer.getAllSystemStreamsIds();
     if (params.id != null) {
-      if (accountStreamIds.includes(SystemStreamsSerializer.addDotToStreamId(params.id))) {
+      if (isStreamIdPrefixBackwardCompatibilityActive && ! context.disableBackwardCompatibility) {
+        params.id = replaceWithNewPrefix(params.id);
+      }
+
+      if (SystemStreamsSerializer.isSystemStreamId(params.id)) {
         return next(errors.invalidOperation(
-          ErrorMessages[ErrorIds.ForbiddenAccountStreamsActions])
+          ErrorMessages[ErrorIds.ForbiddenAccountStreamsModification])
         );
       }
     }
     if (params.parentId != null) {
-      if (accountStreamIds.includes(SystemStreamsSerializer.addDotToStreamId(params.parentId))) {
+      if (isStreamIdPrefixBackwardCompatibilityActive && ! context.disableBackwardCompatibility) {
+        params.parentId = replaceWithNewPrefix(params.parentId);
+      }
+      
+      if (SystemStreamsSerializer.isSystemStreamId(params.parentId)) {
         return next(errors.invalidOperation(
-          ErrorMessages[ErrorIds.ForbiddenAccountStreamsActions])
+          ErrorMessages[ErrorIds.ForbiddenAccountStreamsModification])
         );
       }
     }
@@ -246,9 +332,13 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
     next();
   }
 
-  function applyPrerequisitesForUpdate(context, params, result, next) {
+  async function applyPrerequisitesForUpdate(context, params, result, next) {
+    if (params?.update?.parentId === params.id) {
+      return next(errors.invalidOperation('The provided "parentId" is the same as the stream\'s "id".', params.update));
+    }
+
     // check stream
-    var stream = treeUtils.findById(context.streams, params.id);
+    var stream = await context.streamForStreamId(params.id);
     if (!stream) {
       return process.nextTick(next.bind(null,
         errors.unknownResource(
@@ -256,12 +346,13 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
         )
       ));
     }
-    if (!context.canManageStream(stream.id)) {
+
+    if (!await context.access.canUpdateStream(stream.id)) {
       return process.nextTick(next.bind(null, errors.forbidden()));
     }
 
     // check target parent if needed
-    if (params.update.parentId && !context.canManageStream(params.update.parentId)) {
+    if (params.update.parentId && ! await context.access.canCreateChildOnStream(params.update.parentId)) {
       return process.nextTick(next.bind(null, errors.forbidden()));
     }
 
@@ -293,7 +384,7 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
         }
 
         result.stream = updatedStream;
-        notifications.streamsChanged(context.user);
+        pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_STREAMS_CHANGED);
         next();
       });
   }
@@ -306,15 +397,15 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
     verifyStreamExistenceAndPermissions,
     deleteStream);
 
-  function verifyStreamExistenceAndPermissions(context, params, result, next) {
+  async function verifyStreamExistenceAndPermissions(context, params, result, next) {
     _.defaults(params, { mergeEventsWithParent: null });
 
-    context.stream = treeUtils.findById(context.streams, params.id);
+    context.stream = await context.streamForStreamId(params.id); 
     if (context.stream == null) {
       return process.nextTick(next.bind(null,
         errors.unknownResource('stream', params.id)));
       }
-    if (! context.canManageStream(context.stream.id)) {
+    if (! await context.access.canDeleteStream(context.stream.id)) {
       return process.nextTick(next.bind(null, errors.forbidden()));
     }
 
@@ -340,7 +431,7 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
         if (err) { return next(errors.unexpectedError(err)); }
 
         result.stream = updatedStream;
-        notifications.streamsChanged(context.user);
+        pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_STREAMS_CHANGED);
         next();
       });
   }
@@ -438,7 +529,7 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
                   if (err) {
                     return subStepDone(errors.unexpectedError(err));
                   }
-                  notifications.eventsChanged(context.user);
+                  pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
                   subStepDone();
                 });
             },
@@ -463,7 +554,7 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
               if (auditSettings.deletionMode === 'keep-everything') {
 
                 // history is untouched
-                subStepDone();
+                return subStepDone();
               } else if (auditSettings.deletionMode === 'keep-authors') {
 
                 userEventsStorage.findStreamed(context.user,
@@ -606,7 +697,7 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
                   if (err) {
                     return subStepDone(errors.unexpectedError(err));
                   }
-                  notifications.eventsChanged(context.user);
+                  pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
                   subStepDone();
                 });
             }
@@ -622,7 +713,7 @@ module.exports = function (api, userStreamsStorage, userEventsStorage, userEvent
               return stepDone(errors.unexpectedError(err));
             }
             result.streamDeletion = { id: params.id };
-            notifications.streamsChanged(context.user);
+            pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_STREAMS_CHANGED);
             stepDone();
           });
       }

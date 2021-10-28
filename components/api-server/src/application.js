@@ -44,13 +44,19 @@ const boiler = require('@pryv/boiler').init({
     scope: 'serviceInfo',
     key: 'service',
     urlFromKey: 'serviceInfoUrl'
-  }, {
-    scope: 'defaults-paths',
+  },{
+    scope: 'default-paths',
     file: path.resolve(__dirname, '../config/paths-config.js')
   },{
     plugin: require('../config/components/systemStreams')
   },{
     plugin: require('../config/public-url')
+  }, {
+    scope: 'default-audit',
+    file: path.resolve(__dirname, '../../audit/config/default-config.yml')
+  }, {
+    scope: 'default-audit-path',
+    file: path.resolve(__dirname, '../../audit/config/default-path.js')
   }, {
     plugin: require('../config/config-validation')
   }]
@@ -64,12 +70,16 @@ const errorsMiddlewareMod = require('./middleware/errors');
 
 const { getConfig, getLogger } = require('@pryv/boiler');
 const logger = getLogger('application');
+const UserLocalDirectory = require('business').users.UserLocalDirectory;
 
 const { Extension, ExtensionLoader } = require('utils').extension;
 
+const { getAPIVersion } = require('middleware/src/project_version');
+const { tracingMiddleware } = require('tracing');
+
 logger.debug('Loading app');
 
-import type { CustomAuthFunction } from 'model';
+import type { CustomAuthFunction } from 'business';
 import type { WebhooksSettingsHolder }  from './methods/webhooks';
 
 type UpdatesSettingsHolder = {
@@ -85,6 +95,7 @@ class Application {
   logging;
 
   initalized;
+  initializing; 
 
   
   // Normal user API
@@ -99,45 +110,98 @@ class Application {
   
   expressApp: express$Application;
 
+  isOpenSource: boolean;
+  isAuditActive: boolean;
+
   constructor() {
     this.initalized = false;
-    logger.debug('creation');
-
-    this.api = new API(); 
-    this.systemAPI = new API(); 
-  
-    logger.debug('created');
+    this.isOpenSource = false;
+    this.isAuditActive = false;
+    this.initializing = false;
   }
 
   async initiate() {
+    while (this.initializing) { await new Promise(r => setTimeout(r, 50)); }
     if (this.initalized) {
       logger.debug('App was already initialized, skipping');
       return this;
     }
+    this.initializing = true;
     this.produceLogSubsystem();
     logger.debug('Init started');
+    await UserLocalDirectory.init();
 
     this.config = await getConfig();
-   
+    this.isOpenSource = this.config.get('openSource:isActive');
+    this.isAuditActive = (! this.isOpenSource) && this.config.get('audit:active')
+    
+    if (this.isAuditActive) {
+      const audit = require('audit');
+      await audit.init();
+    }
+
+    this.api = new API(); 
+    this.systemAPI = new API(); 
+    
     this.produceStorageSubsystem(); 
     await this.createExpressApp();
+    const apiVersion: string = await getAPIVersion();
+    const hostname: string = require('os').hostname();
+    this.expressApp.use(tracingMiddleware(
+      'express1',
+      {
+        apiVersion,
+        hostname,
+      }
+    ))
     this.initiateRoutes();
     this.expressApp.use(middleware.notFound);
     const errorsMiddleware = errorsMiddlewareMod(this.logging);
     this.expressApp.use(errorsMiddleware);
     logger.debug('Init done');
     this.initalized = true;
+    if (this.config.get('showRoutes')) this.helperShowRoutes();
+    this.initializing = false;
+    return this;
+  }
+
+  /**
+   * Helps that display all routes and methodId registered
+   */
+  helperShowRoutes() {
+    let route;
+    const routes = [];
+    function addRoute(route) {
+      if (route) {
+        let methodId;
+        for (let layer of route.stack ) {
+          if (layer.handle.name === 'setMethodId') {
+            const fakeReq = {};
+            layer.handle(fakeReq, null, function() {});
+            methodId = fakeReq.context.methodId;
+          }
+        }
+        let keys = Object.keys(route.methods);
+        if (keys.length > 1) keys = ['all'];
+        routes.push({methodId: methodId, path: route.path, method: keys[0]})
+      }
+    }
+
+    this.expressApp._router.stack.forEach(function(middleware){
+      if(middleware.route){ // routes registered directly on the app
+          addRoute(middleware.route);
+      } else if(middleware.name === 'router'){ // router middleware 
+          middleware.handle.stack.forEach(h => addRoute(h.route));
+      }
+    });
+    console.log(routes);
   }
 
   async createExpressApp(): Promise<express$Application> {
-
-    this.expressApp = await expressAppInit( 
-      this.config.get('dnsLess:isActive'), 
-      this.logging);
+    this.expressApp = await expressAppInit(this.logging);
   }
 
   initiateRoutes() {
-    const isOpenSource = this.config.get('openSource:isActive');
     
     if (this.config.get('dnsLess:isActive')) {
       require('./routes/register')(this.expressApp, this);
@@ -146,7 +210,7 @@ class Application {
     // system, root, register and delete MUST come first
     require('./routes/auth/delete')(this.expressApp, this);
     require('./routes/auth/register')(this.expressApp, this);
-    if (isOpenSource) {
+    if (this.isOpenSource) {
       require('www')(this.expressApp, this);
       require('register')(this.expressApp, this);
     }
@@ -164,7 +228,12 @@ class Application {
     require('./routes/streams')(this.expressApp, this);
 
     
-    if(!isOpenSource) require('./routes/webhooks')(this.expressApp, this);
+    if(! this.isOpenSource) {
+      require('./routes/webhooks')(this.expressApp, this);
+    }
+    if(this.isAuditActive) {
+      require('audit/src/routes/audit.route')(this.expressApp, this);
+    }
   }
   
   produceLogSubsystem() {
@@ -172,33 +241,12 @@ class Application {
   }
 
   produceStorageSubsystem() {
-    const config = this.config;
-    this.database = new storage.Database(config.get('database'));
-
+    this.database = storage.getDatabaseSync();
     // 'StorageLayer' is a component that contains all the vertical registries
     // for various database models. 
-    this.storageLayer = new storage.StorageLayer(this.database, 
-      getLogger('model'),
-      config.get('eventFiles:attachmentsDirPath'), 
-      config.get('eventFiles:previewsDirPath'), 
-      config.get('auth:passwordResetRequestMaxAge'), 
-      config.get('auth:sessionMaxAge')
-    );
-  }
-  
-  // Returns the settings for updating entities
-  // 
-  getUpdatesSettings(): UpdatesSettingsHolder {
-    return {
-      ignoreProtectedFields: this.config.get('updates:ignoreProtectedFields'),
-    };
+    this.storageLayer = storage.getStorageLayerSync()
   }
 
-  getWebhooksSettings(): WebhooksSettingsHolder {
-    return this.config.get('webhooks');
-  }
-
-  
    // Returns the custom auth function if one was configured. Otherwise returns
   // null. 
   // 
@@ -222,8 +270,8 @@ class Application {
   
     let customAuthStep = null;
     if ( customAuthStepFnPath) {
-       logger.debug('Loading CustomAuthStepFn from ' + customAuthStepFnPath);
-       customAuthStep = loader.loadFrom(customAuthStepFnPath);
+      logger.debug('Loading CustomAuthStepFn from ' + customAuthStepFnPath);
+      customAuthStep = loader.loadFrom(customAuthStepFnPath);
     } else {
       // assert: no path was configured in configuration file, try loading from 
       // default location:
@@ -240,4 +288,19 @@ class Application {
 
 }
 
-module.exports = Application;
+let app;
+/**
+ * get Application Singleton
+ * @param {boolean} forceNewApp - In TEST mode only, return a new Application for fixtures and mocks
+ * @returns 
+ */
+function getApplication(forceNewApp) {
+  if (forceNewApp || ! app)  {
+    app = new Application();
+  }
+  return app;
+}
+
+module.exports = {
+  getApplication
+}

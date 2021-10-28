@@ -1,0 +1,16 @@
+{
+  "name": "cache",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cache Logic",
+  "homepage": "http://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)",
+  "main": "src/index.js",
+  "scripts": {
+    "cover": "nyc --reporter=lcov --reporter=text-summary npm run test",
+    "test": "NODE_ENV=test ../../node_modules/.bin/mocha --reporter=dot test/**/*.test.js --exit"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

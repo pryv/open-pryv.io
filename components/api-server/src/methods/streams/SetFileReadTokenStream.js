@@ -31,9 +31,9 @@
  * 
  * SPDX-License-Identifier: BSD-3-Clause
  */
-var Transform = require('stream').Transform,
-    inherits = require('util').inherits,
-  utils = require('utils');
+const Transform = require('stream').Transform;
+const inherits = require('util').inherits;
+const utils = require('utils');
 
 module.exports = SetFileReadTokenStream;
 

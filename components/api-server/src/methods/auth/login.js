@@ -32,23 +32,29 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 const commonFns = require('api-server/src/methods/helpers/commonFunctions');
-const utils = require('utils');
+const { ApiEndpoint } = require('utils');
 const errors = require('errors').factory;
 const methodsSchema = require('api-server/src/schema/authMethods');
 const _ = require('lodash');
-const UsersRepository = require('business/src/users/repository');
+const { getUsersRepository, UserRepositoryOptions } = require('business/src/users');
 const ErrorIds = require('errors/src/ErrorIds');
+const { getStorageLayer } = require('storage');
+const { getLogger, getConfig } = require('@pryv/boiler');
+const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils');
+
 /**
  * Auth API methods implementations.
  *
  * @param api
- * @param userAccessesStorage
- * @param sessionsStorage
- * @param authSettings
  */
-module.exports = function (api, userAccessesStorage, sessionsStorage, userEventsStorage, authSettings) {
-  const usersRepository = new UsersRepository(userEventsStorage);
-  
+module.exports = async function (api) {
+  const usersRepository = await getUsersRepository(); 
+  const storageLayer = await getStorageLayer();
+  const userAccessesStorage = storageLayer.accesses;
+  const sessionsStorage = storageLayer.sessions;
+  const config = await getConfig();
+  const authSettings =  config.get('auth');
+
   api.register('auth.login',
     commonFns.getParamsValidation(methodsSchema.login.params),
     commonFns.getTrustedAppCheck(authSettings),
@@ -57,6 +63,7 @@ module.exports = function (api, userAccessesStorage, sessionsStorage, userEvents
     openSession,
     updateOrCreatePersonalAccess,
     addApiEndpoint,
+    setAuditAccessId(AuditAccessIds.VALID_PASSWORD),
     setAdditionalInfo);
 
   function applyPrerequisitesForLogin(context, params, result, next) {
@@ -142,25 +149,29 @@ module.exports = function (api, userAccessesStorage, sessionsStorage, userEvents
     
     function createAccess(access, context, callback) {
       _.extend(access, context.accessQuery);
-      context.initTrackingProperties(access, UsersRepository.options.SYSTEM_USER_ACCESS_ID);
+      context.initTrackingProperties(access, UserRepositoryOptions.SYSTEM_USER_ACCESS_ID);
       userAccessesStorage.insertOne(context.user, access, callback);
     }
     
     function updatePersonalAccess(access, context, callback) {
-      context.updateTrackingProperties(access, UsersRepository.options.SYSTEM_USER_ACCESS_ID);
+      context.updateTrackingProperties(access, UserRepositoryOptions.SYSTEM_USER_ACCESS_ID);
       userAccessesStorage.updateOne(context.user, context.accessQuery, access, callback);
     }
   }
 
   function addApiEndpoint(context, params, result, next) {
     if (result.token) {
-      result.apiEndpoint = context.user.buildApiEndpoint(result.token);
+      result.apiEndpoint = ApiEndpoint.build(context.user.username, result.token);
     }
     next();
   }
 
-  function setAdditionalInfo(context, params, result, next) {
-    result.preferredLanguage = context.user.language;
+  async function setAdditionalInfo(context, params, result, next) {
+    // get user details
+    const usersRepository = await getUsersRepository();
+    const userBusiness = await usersRepository.getUserByUsername(context.user.username);
+    if (! userBusiness) return next(errors.unknownResource('user', context.user.username));
+    result.preferredLanguage = userBusiness.language;
     next();
   }
 

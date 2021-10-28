@@ -2,17 +2,17 @@
 
 // Binary for nightly tasks setup. 
 
-const Application = require('../src/application');
+const { getApplication } = require('api-server/src/application');
 const { getLogger } = require('@pryv/boiler');
 let logger;
-const Repository = require('business/src/users/repository');
+const { getUsersRepository } = require('business/src/users/repository');
 
 (async () => {
   // Load settings asynchronously because we have to fetch
   // some values from register via an http-get request.
   
   // Construct application
-  const app = new Application();
+  const app = getApplication();
   await app.initiate();
   logger = getLogger('nightly-tasks');
 
@@ -47,7 +47,7 @@ const Repository = require('business/src/users/repository');
       process.exit(0);
     })
     .catch(e => {
-      logger.error(e);
+      logger.error(e, e);
       process.exit(1);
     });
 })();
@@ -59,7 +59,7 @@ async function runNightlyTasks(storageLayer, storageSize) {
   logger.info('Starting update of storage size');
 
   // Retrieve all existing users
-  const usersRepository = new Repository(storageLayer.events);
+  const usersRepository = await getUsersRepository(); 
   const users = await usersRepository.getAll();
 
   // Compute storage size used by each user

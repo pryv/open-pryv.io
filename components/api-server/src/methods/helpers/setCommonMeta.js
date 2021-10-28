@@ -35,7 +35,7 @@
 
 const timestamp = require('unix-timestamp');
 const _ = require('lodash');
-const { ProjectVersion } = require('middleware/src/project_version');
+const { getAPIVersion } = require('middleware/src/project_version');
 // cnan be overriden;
 const { getConfig } = require('@pryv/boiler');
 
@@ -58,16 +58,13 @@ let version: string = 'n/a';
 let serial: ?string = null;
 let config = null;
 
-// Initialise the project version as soon as we can. 
-const pv = new ProjectVersion(); 
-version = pv.version();
-
 /**
  * 
  * If no parameter is provided, loads the configuration. Otherwise takes the provided loaded settings.
  */
 module.exports.loadSettings = async function (): Promise<void> {
   config = await getConfig();
+  version = await getAPIVersion();
 };
 
 /**

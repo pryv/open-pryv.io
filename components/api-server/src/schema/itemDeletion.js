@@ -38,7 +38,8 @@ var helpers = require('./helpers');
  */
 module.exports = helpers.object({
   id: helpers.string(),
-  deleted: helpers.number()
+  deleted: helpers.number(),
+  integrity: helpers.string(),
 }, {
   id: 'itemDeletion',
   required: ['id'],

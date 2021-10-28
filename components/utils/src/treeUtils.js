@@ -31,6 +31,7 @@
  * 
  * SPDX-License-Identifier: BSD-3-Clause
  */
+
 /**
  * Helper methods for handling tree object structures.
  * Here 'tree' means a recursive array of objects with a 'children' property.
@@ -94,19 +95,20 @@ exports.flattenTreeWithoutParents = function (array) {
     throw new Error('Invalid argument: expected an array');
   }
 
-  var result = [];
+  const result = [];
   flattenRecursiveWithoutParents(array, null, result);
   return result;
 };
 
 function flattenRecursiveWithoutParents (originalArray, parentId, resultArray) {
   originalArray.forEach(function (item) {
-    var clone = _.clone(item);
+    const clone = _.clone(item);
 
-    clone.parentId = parentId;
-    if (clone.hasOwnProperty('children')) {
+    clone.parentId = parentId; // WTF
+    const children = clone.children;
+    if (Array.isArray(children) && children.length > 0) {
       flattenRecursive(clone.children, clone.id, resultArray);
-      delete clone.children;
+      delete clone.children; // WTF #2
     } else {
       resultArray.push(clone);
     }
@@ -203,6 +205,44 @@ var findInTree = exports.findInTree = function (array, iterator) {
 };
 
 /**
+ * Iterate on Tree, if iterator returns false, do not inspect children
+ * @param {Function} iterator Arguments: ({Object}), return value: {Boolean}
+ */
+const iterateOnPromise = exports.iterateOnPromise = async function(array, iterator) {
+  if (! array) return;
+  for (let stream of array) {
+    if ((await iterator(stream)) && stream.children) 
+      await iterateOnPromise(stream.children, iterator);
+  }
+}
+
+/**
+ * @async 
+ * @param {Boolean} keepOrphans Whether to take into account the children of filtered-out items
+ *                              (if yes, the tree structure may be modified)
+ * @callback {Promise<boolean>} iterator Arguments: ({Object}), return value: {Boolean}
+ */
+ var filterTreeOnPromise = exports.filterTreeOnPromise = async function (array, keepOrphans, iterator) {
+  var filteredArray = [];
+
+  for (var i = 0, n = array.length; i < n; i++) {
+    var item = array[i];
+    if (await iterator(item)) {
+      var clone = _.clone(item);
+      filteredArray.push(clone);
+      if (clone.hasOwnProperty('children')) {
+        clone.children = await filterTreeOnPromise(clone.children, keepOrphans, iterator);
+      }
+    } else if (item.hasOwnProperty('children') && keepOrphans) {
+      const res = await filterTreeOnPromise(item.children, keepOrphans, iterator);
+      filteredArray.push(...res);
+    }
+  }
+
+  return filteredArray;
+};
+
+/**
  * @param {Boolean} keepOrphans Whether to take into account the children of filtered-out items
  *                              (if yes, the tree structure may be modified)
  * @param {Function} iterator Arguments: ({Object}), return value: {Boolean}
@@ -291,3 +331,48 @@ exports.expandIds = function (array, ids) {
   });
   return expandedIds;
 };
+
+/**
+ * Applies "iterator" function to all elements of the array and its children
+ */
+exports.cloneAndApply = function (array, iterator) {
+  const result = [];
+  array.forEach(item => {
+    const clone = _.clone(item);
+    result.push(applyRecursive(iterator(clone), iterator));
+  });
+  return result;
+
+  function applyRecursive(item, iterator) {
+    if (! Array.isArray(item.children) || item.children.length === 0) return item;
+    const result = [];
+    item.children.forEach(child => {
+      const clone = _.clone(child);
+      result.push(applyRecursive(iterator(clone), iterator));
+    });
+    item.children = result;
+    return item;
+  }
+};
+
+/**
+ * Display in the console
+ * @param {<Streams>} array 
+ * @param {Array} properties to display ['id', ..]
+ * @param {*} depth  - private
+ */
+exports.debug = function debug(streams, properties, depth) {
+  const myddepth = depth ? (depth + 1) : 1;
+  if (! properties) properties = [];
+  const base = '-'.padStart(myddepth * 2, ' ');
+  for (let stream of streams) { 
+    let line = base + stream.id;
+    for (let p of properties) {
+      line += ' | ' + p + ': ' + stream[p];
+    }
+    console.log(line);
+    if (stream.children) {
+      debug(stream.children, properties, myddepth);
+    }
+  }
+}

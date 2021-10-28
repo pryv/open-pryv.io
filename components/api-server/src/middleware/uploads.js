@@ -39,11 +39,15 @@
 
 const filesUploadSupport = require('middleware').filesUploadSupport;
 const multer = require('multer');
+const integrity = require('business').integrity;
+
+// load the correct disk storage depending on settings
+const MulterDiskStorage = integrity.attachments.isActive ? integrity.attachments.MulterIntegrityDiskStorage : multer.diskStorage;
 
 // ---------------------------------------------------------------- multer setup
 
 // Parse multipart file data into request.files: 
-const storage = multer.diskStorage({
+const storage = MulterDiskStorage({
   filename: null, // default filename, random
   destination: null, // operating system's default directory for temporary files is used.
 }); 

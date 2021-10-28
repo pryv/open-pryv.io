@@ -33,7 +33,7 @@
  */
 // @flow
 
-import type { MethodContext } from 'model';
+import type { MethodContext } from 'business';
 import type API  from '../API';
 import type { ApiCallback }  from '../API';
 import type Result  from '../Result';

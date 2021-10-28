@@ -3,7 +3,7 @@
 // Binary for launching the api-server process. 
 
 const Server = require('../src/server');
-const Application = require('../src/application');
+const { getApplication } = require('api-server/src/application');
 
 const loadCommonMeta = require('../src/methods/helpers/setCommonMeta').loadSettings;
 
@@ -15,7 +15,7 @@ const logger = getLogger('serverRoot');
   loadCommonMeta({}); // load settings to common meta
   
   // Construct application
-  const app = new Application();
+  const app = getApplication();
   await app.initiate();
 
   process.on('exit', () => {
@@ -27,13 +27,13 @@ const logger = getLogger('serverRoot');
   });
 
   // Start the server
-  const server = new Server(app); 
+  const server = new Server(); 
   await server.start();
 })()
   .then(() => logger.info('Startup sequence complete, Server is running. mode: [' + process.env.NODE_ENV + ']'))
   .catch(e => {
     if (logger) {
-      logger.error(e);
+      logger.error(e, e);
     } else {
       console.log(e);
     }

@@ -41,6 +41,8 @@ const fs = require('fs');
 const API_VERSION_FILENAME = '.api-version';
 const DEFAULT_VERSION = 'unset';
 
+const { execSync } = require('child_process');
+
 // The method '#version' returns a version string for this project; it
 // determines it using the following:
 // 
@@ -63,9 +65,18 @@ class ProjectVersion {
   // 
   version(): string {
     const version = this.readStaticVersion(); 
-    if (version != null) return version; 
-    
-    return DEFAULT_VERSION;
+    if (version != null && version != '1.2.3') return version; 
+
+    let versionFromGitTag = null;
+    try {
+      const options = { stdio: 'pipe' }; // in order to mute stderr from console stdout. https://stackoverflow.com/a/45578119/3967660
+      versionFromGitTag = execSync('git describe --tags', options).toString(); 
+      if (versionFromGitTag) versionFromGitTag = versionFromGitTag.trim();
+    } catch (e) {
+      // remove log because we don't want it to appear in CI logs
+    }
+
+    return versionFromGitTag || version || DEFAULT_VERSION;
   }
   
   readStaticVersion(): ?string {
@@ -86,6 +97,16 @@ class ProjectVersion {
   }
 }
 
+let version = null;
+async function getAPIVersion(forceRefresh: ?boolean): Promise<string> {
+  if (! version || forceRefresh) {
+    const pv = new ProjectVersion();
+    version = pv.version();
+  }
+  return version;
+}
+
 module.exports = {
-  ProjectVersion
+  ProjectVersion,
+  getAPIVersion
 };

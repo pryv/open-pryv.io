@@ -1,0 +1,17 @@
+{
+  "name": "messages",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Messages",
+  "homepage": "https://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "NODE_ENV=test ../../node_modules/.bin/mocha --reporter=dot test/**/*.test.js --exit"
+  },
+  "dependencies": {
+    "msgpack5": "^3.6.1",
+    "nats": "^2.1.0"
+  }
+}

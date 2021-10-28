@@ -43,6 +43,8 @@ const messages = require('../utils/messages');
 type GenericCallback<T> = (err?: ?Error, res: ?T) => mixed;
 type Callback = GenericCallback<mixed>;
 
+const SystemStreamsSerializer = require('business/src/system-streams/serializer');
+
 import type { UserInformation } from './users';
 
 export type AccessState = {
@@ -120,7 +122,7 @@ exports.uidExists = function (uid: string, callback: Callback) {
     },
     function (done) { 
       if (! context.userId) return done();
-      context.eventCollection.findOne({content: uid, streamIds: {$in : ['.username']}, type: 'identifier/string'}, function(err, res) {
+      context.eventCollection.findOne({content: uid, streamIds: {$in : [SystemStreamsSerializer.addCorrectPrefixToAccountStreamId('username')]}, type: 'identifier/string'}, function(err, res) {
         context.username = res?.content;
         done(err);
       }); 
@@ -156,14 +158,14 @@ function getUIDFromMail(mail: string, callback: GenericCallback<string>) {
       });
     },
     function (done) { 
-      context.eventCollection.findOne({content: mail, streamIds: {$in : ['.email']}, type: 'email/string'}, function(err, res) {
+      context.eventCollection.findOne({content: mail, streamIds: {$in : [SystemStreamsSerializer.addCorrectPrefixToAccountStreamId('email')]}, type: 'email/string'}, function(err, res) {
         context.userId = res?.userId;
         done(err);
       }); 
     },
     function (done) { 
       if (! context.userId) return done();
-      context.eventCollection.findOne({userId: context.userId, streamIds: {$in : ['.username']}, type: 'identifier/string'}, function(err, res) {
+      context.eventCollection.findOne({userId: context.userId, streamIds: {$in : [SystemStreamsSerializer.addCorrectPrefixToAccountStreamId('username')]}, type: 'identifier/string'}, function(err, res) {
         context.username = res?.content;
         done(err);
       }); 
@@ -200,13 +202,13 @@ function getAllUsers(callback: GenericCallback<string>) {
         }
         if (item.events) {
           for (let event of item.events) {
-            if (event.type === 'email/string' && event.streamIds.includes('.email')) {
+            if (event.type === 'email/string' && event.streamIds.includes(SystemStreamsSerializer.addCorrectPrefixToAccountStreamId('email'))) {
               user.email = event.content;
-            } else if (event.type === 'language/iso-639-1' && event.streamIds.includes('.language')) {
+            } else if (event.type === 'language/iso-639-1' && event.streamIds.includes(SystemStreamsSerializer.addCorrectPrefixToAccountStreamId('language'))) {
               user.language = event.content;
-            } else if (event.type === 'identifier/string' && event.streamIds.includes('.username')) {
+            } else if (event.type === 'identifier/string' && event.streamIds.includes(SystemStreamsSerializer.addCorrectPrefixToAccountStreamId('username'))) {
               user.username = event.content;
-            } else if (event.type === 'identifier/string' && event.streamIds.includes('.referer')) {
+            } else if (event.type === 'identifier/string' && event.streamIds.includes(SystemStreamsSerializer.addCorrectPrefixToAccountStreamId('referer'))) {
               user.referer = event.content;
             } else {
               console.log('Unkown field... ', event);
@@ -270,7 +272,7 @@ cleanAccessState(); // launch cleaner
 const QUERY_GET_ALL = [
   {
     '$match': {
-      streamIds: { '$in': [ '.email', '.username', '.language', '.referer' ] }
+      streamIds: { '$in': [ 'email', 'username', 'language', 'referer' ].map(SystemStreamsSerializer.addCorrectPrefixToAccountStreamId) }
     }
   },
   {

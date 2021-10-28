@@ -31,10 +31,14 @@
  * 
  * SPDX-License-Identifier: BSD-3-Clause
  */
+// @flow
+
 const APIError = require('errors/src/APIError');
 
-var errors = require('errors').factory,
-    validation = require('../../schema/validation');
+const errors = require('errors').factory;
+const validation = require('../../schema/validation');
+
+const { findForbiddenChar, isStreamIdValidForCreation } = require('../../schema/streamId');
 
 exports.requirePersonalAccess = function requirePersonalAccess(context, params, result, next) {
   if (! context.access.isPersonal()) {
@@ -42,6 +46,20 @@ exports.requirePersonalAccess = function requirePersonalAccess(context, params, 
         'token.'));
   }
   next();
+};
+
+
+/**
+ * Basic check for authorized access based on context.methodId
+ */
+exports.basicAccessAuthorizationCheck = function (context, params, result, next) {
+  const res = context.access.can(context.methodId);
+  if (res === true) return next();
+
+  const message = (typeof res === "boolean") ? 
+    'You cannot access ' + context.methodId + ' resource using the given access' :
+    '' + res;
+  return next(errors.forbidden(message));
 };
 
 /**
@@ -127,6 +145,15 @@ exports.getParamsValidation = function getParamsValidation (paramsSchema) {
     });
   };
 };
+
+exports.isValidStreamIdForQuery = function isValidStreamIdForQuery(streamId: string, parameter: {}, parameterName: string): void {
+  const forbiddenChar: ?string = findForbiddenChar(streamId);
+  if (forbiddenChar != null) throw (new Error(`Error in '${parameterName}' parameter: ${JSON.stringify(parameter)}, forbidden chartacter(s) in streamId '${streamId}'.`));
+}
+
+exports.isValidStreamIdForCreation = function isValidStreamIdForCreation(streamId: string): boolean {
+  return isStreamIdValidForCreation(streamId);
+}
 
 /**
  * Replaces z-schema message and code with a custom message given in the schema

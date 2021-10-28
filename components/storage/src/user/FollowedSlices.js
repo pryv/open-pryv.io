@@ -70,10 +70,11 @@ var indexes = [
 /**
  * Implementation.
  */
-FollowedSlices.prototype.getCollectionInfo = function (user) {
+FollowedSlices.prototype.getCollectionInfo = function (userOrUserId) {
+  const userId = this.getUserIdFromUserOrUserId(userOrUserId);
   return {
     name: 'followedSlices',
     indexes: indexes,
-    useUserId: user.id
+    useUserId: userId
   };
 };

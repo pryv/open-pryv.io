@@ -39,7 +39,7 @@ const DrainStream = require('./methods/streams/DrainStream');
 const ArrayStream = require('./methods/streams/ArrayStream');
 const async = require('async');
 
-const Transform = require('stream').Transform;
+const { Transform, Readable} = require('stream');
 
 import type { Webhook } from 'business/webhooks';
 
@@ -56,19 +56,22 @@ type APIResult =
   
 type ToObjectCallback = (err: ?Error, res: ?APIResult) => mixed;
 
+type doneCallBack = () => mixed;
+
 type itemDeletion = {
   id: string,
   deleted: number,
 };
 
 type PermissionLevel = 'read' | 'contribute' | 'manage';
+type Setting = 'forbidden';
 
 type Permission = {
   streamId: string,
   level: PermissionLevel,
 } | {
-  tag: string,
-  level: PermissionLevel,
+  feature: string,
+  setting: Setting,
 };
 
 (async () => {
@@ -89,7 +92,10 @@ class Result {
   _private: {
     init: boolean, first: boolean, 
     arrayLimit: number, 
-    isStreamResult: boolean, streamsArray: Array<StreamDescriptor>, 
+    isStreamResult: boolean, 
+    streamsArray: Array<StreamDescriptor>, 
+    onEndCallback: ?doneCallBack,
+    streamsConcatArrays: Object
   }
   meta: ?Object;
   
@@ -106,6 +112,9 @@ class Result {
   checkedPermissions: mixed;
   error: mixed;
 
+  event: ?Event;
+  events: ?Array<Event>;
+
   type: string;
   name: string;
   permissions: Array<Permission>
@@ -116,17 +125,40 @@ class Result {
   webhooks: Array<Webhook>;
   
   webhookDeletion: itemDeletion;
+
+  auditLogs: ?Array<{}>;
+  
+
   constructor(params?: ResultOptions) {
     this._private = { 
       init: false, first: true, 
       arrayLimit: 10000, 
       isStreamResult: false, 
       streamsArray: [],  
+      onEndCallback: null,
+      streamsConcatArrays: {}
     };
     
     if (params && params.arrayLimit != null && params.arrayLimit > 0) {
       this._private.arrayLimit = params.arrayLimit;
     }
+  }
+
+  // Array concat stream
+  addToConcatArrayStream(arrayName: string, stream: stream$Readable) {
+    if (! this._private.streamsConcatArrays[arrayName]) {
+      this._private.streamsConcatArrays[arrayName] = new StreamConcatArray();
+    }
+    this._private.streamsConcatArrays[arrayName].add(stream);    
+  }
+
+  // Close
+  closeConcatArrayStream(arrayName: string) {
+    if (! this._private.streamsConcatArrays[arrayName]) {
+      return;
+    }
+    this.addStream(arrayName, this._private.streamsConcatArrays[arrayName].getStream());
+    this._private.streamsConcatArrays[arrayName].close();
   }
   
   // Pushes stream on the streamsArray stack, FIFO.
@@ -142,17 +174,28 @@ class Result {
     return this._private.isStreamResult;
   }
   
+  // Execute the following when result has been fully sent
+  // If already sent callback is called right away
+  onEnd(callback: doneCallBack) {
+    this._private.onEndCallback = callback;
+  }
+
   // Sends the content of Result to the HttpResponse stream passed in parameters.
   // 
   writeToHttpResponse(res: express$Response, successCode: number) {
+    const onEndCallBack = this._private.onEndCallback;
     if (this.isStreamResult()) {
-      this.writeStreams(res, successCode);
+      const stream: Readable = this.writeStreams(res, successCode);
+      stream.on('close', function() { 
+        if (onEndCallBack) onEndCallBack();
+      }.bind(this));
     } else {
       this.writeSingle(res, successCode);
+      if (onEndCallBack) onEndCallBack()
     }
   }
   
-  writeStreams(res: express$Response, successCode: number) {
+  writeStreams(res: express$Response, successCode: number): Readable {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Transfer-Encoding', 'chunked');
     res.statusCode = successCode;
@@ -180,7 +223,7 @@ class Result {
       streams.push(s.stream.pipe(new ArrayStream(s.name, i === 0)));
     }
 
-    new MultiStream(streams).pipe(new ResultStream()).pipe(res);
+    return new MultiStream(streams).pipe(new ResultStream()).pipe(res);
   }
   
   writeSingle(res: express$Response, successCode: number) {
@@ -258,3 +301,55 @@ class ResultStream extends Transform {
 }
 
 module.exports = Result;
+
+
+class StreamConcatArray {
+  streamsToAdd: Array<stream$Readable>;
+  nextFactoryCallBack: Function;
+  multistream: MultiStream;
+  isClosed: boolean;
+  
+  constructor() {
+    // holds pending stream not yet taken by
+    this.streamsToAdd = [];
+    this.nextFactoryCallBack = null;
+    this.isClosed = false;
+    const streamConcact = this;
+
+    function factory(callback) {
+      streamConcact.nextFactoryCallBack = callback;
+      streamConcact._next();
+    }
+    this.multistream = new MultiStream(factory, {objectMode: true});
+  }
+
+  /**
+   * @private
+   */
+  _next() {
+    if (! this.nextFactoryCallBack) return;
+    if (this.streamsToAdd.length > 0) {
+      const nextStream = this.streamsToAdd.shift();
+      this.nextFactoryCallBack(null, nextStream);
+      this.nextFactoryCallBack = null;
+      return;
+    }
+    if (this.isClosed) {
+      this.nextFactoryCallBack(null, null);
+      this.nextFactoryCallBack = null;
+    }
+  }
+
+  getStream() {  
+    return this.multistream;
+  }
+
+  add(readableStream: Readable) {
+    this.streamsToAdd.push(readableStream);
+  }
+
+  close() {
+    this.isClosed = true;
+    this._next();
+  }
+}

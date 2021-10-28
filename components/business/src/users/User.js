@@ -40,10 +40,13 @@ const bluebird = require('bluebird');
 
 const treeUtils = require('utils/src/treeUtils');
 const SystemStreamsSerializer = require('business/src/system-streams/serializer');
-const UsersRepository = require('business/src/users/repository');
+const UserRepositoryOptions = require('./UserRepositoryOptions');
 
 const { getConfigUnsafe } = require('@pryv/boiler');
-const { ApiEndpoint , encryption } = require('utils')
+const { encryption } = require('utils')
+
+import type { SystemStream } from 'business/src/system-streams';
+import type { Event } from 'business/src/events';
 
 class User {
   // User properties that exists by default (email could not exist with specific config)
@@ -54,15 +57,14 @@ class User {
   password: ?string;
   accessId: ?string;
 
-  events: ?Array<{}>;
-  apiEndpoint: ?string;
+  events: ?Array<Event>;
   accountFields: Array<string> = [];
   readableAccountFields: Array<string> = [];
-  accountFieldsWithDot: Array<string> = [];
+  accountFieldsWithPrefix: Array<string> = [];
   uniqueAccountFields: Array<string> = [];
 
   constructor (params: {
-    events?: Array<{}>,
+    events?: Array<Event>,
     id?: string,
     username?: string,
     email?: string,
@@ -72,14 +74,11 @@ class User {
     password?: string,
     passwordHash?: string,
     referer?: string,
-    dbDocuments?: number,
-    attachedFiles: number,
   }) {
-    this.events = params.events;
     buildAccountFields(this);
     loadAccountData(this, params);
 
-    if (this.events != null) buildAccountDataFromListOfEvents(this);
+    if (params.events != null) this.events = buildAccountDataFromListOfEvents(this, params.events);
     this.createIdIfMissing();
   }
 
@@ -90,23 +89,23 @@ class User {
   /**
    * Get list of events from account data
    */
-  async getEvents (): Array<{}> {
-    if (this.events == null) await buildEventsFromAccount(this);
+  async getEvents (): Array<Event> {
+    if (this.events == null) this.events = await buildEventsFromAccount(this);
     return this.events;
   }
 
   /**
    * Get only readable account information
    */
-  getAccount (): {} {
-    return _.pick(this, this.readableAccountFields);
+  getReadableAccount (): {} {
+    return _.pick(this, this.readableAccountFields.filter(x => x !== 'dbDocuments' && x != 'attachedFiles'));
   }
 
   /**
    * Get full account information
    */
   getFullAccount (): {} {
-    return _.pick(this, this.accountFields);
+    return _.pick(this, this.accountFields.filter(x => x !== 'dbDocuments' && x != 'attachedFiles'));
   }
 
   /**
@@ -125,7 +124,7 @@ class User {
    * Get account with id property added to it
    */
   getAccountWithId () {
-    return _.pick(this, this.accountFields.concat('id'));
+    return _.pick(this, this.accountFields.concat('id').filter(x => x !== 'dbDocuments' && x != 'attachedFiles'));
   }
 
   /**
@@ -135,106 +134,35 @@ class User {
     return _.pick(this, this.uniqueAccountFields);
   }
 
-  /**
-   * Builds apiEndpoint with the token if it exists
-   */
-  getApiEndpoint () {
-    if (! this.apiEndpoint) this.apiEndpoint = this.buildApiEndpoint(this.token);
-    return this.apiEndpoint;
+  get dbDocuments() {
+    console.log('XXXXX > dbDocuments', new Error());
   }
-
-  /**
-   * Build apiEndPoint for this user and token
-   * @param {*} updateData 
-   * @param {*} isActive 
-   */
-  buildApiEndpoint(token) {
-    return ApiEndpoint.build(this.username, token);
+  set dbDocuments(x) {
+    console.log('XXXXX set dbDocuments', new Error());
   }
-
-  /**
-   * Build request to service register for data update
-   * @param {*} updateData 
-   */
-  getUpdateRequestToServiceRegister (updateData: {}, isActive: boolean) {
-    const updateRequest = {};
-    const updateKeys = Object.keys(updateData);
-    const editableAccountStreams = SystemStreamsSerializer.getEditableAccountStreams();
-    
-    // iterate over updateData and check which fields should be updated
-    updateKeys.forEach(streamIdWithoutDot => {
-      // check if field value was changed
-      if (updateData[streamIdWithoutDot] !== this[streamIdWithoutDot]){
-        let streamIdWithDot = SystemStreamsSerializer.addDotToStreamId(streamIdWithoutDot);
-        updateRequest[streamIdWithoutDot] = [{
-          value: updateData[streamIdWithoutDot],
-          isUnique: editableAccountStreams[streamIdWithDot].isUnique,
-          isActive: isActive,
-          creation: false
-        }];
-      }
-    });
-    return updateRequest;
+  get attachedFiles() {
+    console.log('XXXXX get attachedFiles', new Error());
   }
-  /**
-   * 1) Build events for the given updateData
-   * @param {*} update
-   */
-  async getEventsDataForUpdate (update: {}, accessId: string) {
-    const uniqueAccountStreamIds = SystemStreamsSerializer.getUniqueAccountStreamsIdsWithoutDot();
-
-    // change password into hash if it exists
-    if (update.password) {
-      update.passwordHash = await bluebird.fromCallback((cb) => encryption.hash(update.password, cb));
-    }
-    delete update.password;
-
-    // Start a transaction session
-    const streamIdsForUpdate = Object.keys(update);
-    let events = [];
-
-    // update all account streams and don't allow additional properties
-    for (let i = 0; i < streamIdsForUpdate.length; i++) {
-      let streamIdWithoutDot = streamIdsForUpdate[i];
-      // if needed append field that enforces uniqueness
-      let updateData = {
-        content: update[streamIdWithoutDot],
-        modified: timestamp.now(),
-        modifiedBy: accessId
-      };
-      // __unique property is assigned here because update object that is passwed to convertors
-      // does not have streamIds info that is needed
-      if (uniqueAccountStreamIds.includes(streamIdWithoutDot)) {
-        updateData[`${streamIdWithoutDot}__unique`] = update[streamIdWithoutDot];
-      }
-      events.push({
-        updateData: updateData,
-        streamId: SystemStreamsSerializer.addDotToStreamId(streamIdWithoutDot)
-      });
-    }
-    return events;
+  set attachedFiles(x) {
+    console.log('XXXXX set attachedFiles', new Error());
   }
 }
 
 function buildAccountFields (user: User): void {
-  const userAccountStreams = SystemStreamsSerializer.getAllAccountStreams();
-  
-  Object.keys(userAccountStreams).forEach(streamId => {
-    user.accountFieldsWithDot.push(streamId);
-    let streamIdWithoutDot = SystemStreamsSerializer.removeDotFromStreamId(streamId);
-    if (userAccountStreams[streamId].isUnique == true) {
-      user.uniqueAccountFields.push(streamIdWithoutDot);
-    }
-    if (userAccountStreams[streamId].isShown == true) {
-      user.readableAccountFields.push(streamIdWithoutDot);
-    }    
-    user.accountFields.push(streamIdWithoutDot);
-  });
+  const userAccountStreamIds = SystemStreamsSerializer.getAccountStreamIdsForUser();
+  user.accountFieldsWithPrefix = userAccountStreamIds.accountFieldsWithPrefix;
+  user.uniqueAccountFields = userAccountStreamIds.uniqueAccountFields;
+  user.readableAccountFields = userAccountStreamIds.readableAccountFields;
+  user.accountFields = userAccountStreamIds.accountFields;
 }
 
 function loadAccountData (user: User, params): void {
   user.accountFields.forEach(field => {
-    if (params[field] != null) user[field] = params[field];
+    if (field === 'dbDocuments' || field === 'attachedFiles') {
+      //console.log('XXXXXX loadAccountData > Ignoring', field);
+    } else {
+      if (params[field] != null) user[field] = params[field];
+    }
   });
   // temporarily add password because the encryption need to be loded asyncronously
   // and it could not be done in the contructor
@@ -246,79 +174,62 @@ function loadAccountData (user: User, params): void {
   }
 }
 
-async function buildEventsFromAccount (user: User): Array<{}> {
-  const userAccountStreams = SystemStreamsSerializer.getAllAccountStreamsLeaves();
+async function buildEventsFromAccount (user: User): Promise<Array<Event>> {
+  const accountLeavesMap: Map<string, SystemStream> = SystemStreamsSerializer.getAccountLeavesMap();
   
   // convert to events
-  let account = user.getFullAccount();
+  const account: {} = user.getFullAccount();
 
   // change password into hash (also allow for tests to pass passwordHash directly)
-  if (user.password && !user.passwordHash) {
+  if (user.password != null && user.passwordHash == null) {
     account.passwordHash = await bluebird.fromCallback((cb) => encryption.hash(user.password, cb));
   }
   delete user.password;
 
-  // flatten account information
-  account = treeUtils.flattenSimpleObject(account);
-  const events = [];
-  Object.keys(userAccountStreams).forEach(streamId => {
-    let streamIdWithoutDot = SystemStreamsSerializer.removeDotFromStreamId(streamId);
-    if (
-      account[streamIdWithoutDot] ||
-      typeof userAccountStreams[streamId].default != 'undefined'
-    ) {
-      let parameter = userAccountStreams[streamId].default;
+  const events: Array<Event> = [];
+  for (const [streamId, stream] of Object.entries(accountLeavesMap)) {
 
-      // set default value if undefined
-      if (typeof account[streamIdWithoutDot] !== 'undefined') {
-        parameter = account[streamIdWithoutDot];
-      }
+    const streamIdWithoutPrefix: string = SystemStreamsSerializer.removePrefixFromStreamId(streamId);
+    const content: string = account[streamIdWithoutPrefix] ? account[streamIdWithoutPrefix] : stream.default;
 
-      let accessId = (user.accessId) ? user.accessId : UsersRepository.options.SYSTEM_USER_ACCESS_ID;
+    if (content != null) {
       const event = createEvent(
         streamId,
-        parameter,
-        userAccountStreams,
-        accessId
+        stream.type,
+        stream.isUnique,
+        content,
+        user.accessId ? user.accessId : UserRepositoryOptions.SYSTEM_USER_ACCESS_ID,
       );
 
       events.push(event);
     }
-  });
-  // flatten them
-  user.events = events;
+  }
+
+  return events;
 }
 
 function createEvent (
   streamId: string,
-  accountParameter: string,
-  userAccountStreams: array,
+  type: string,
+  isUnique: boolean,
+  content: string,
   accessId: string
-) {
-  // get type for the event from the config
-  let eventType = 'string';
-  if (userAccountStreams[streamId].type) {
-    eventType = userAccountStreams[streamId].type;
-  }
-
-  // create the event
-  const event = {
-    // add active stream id by default
+): Event {
+  const event: Event = {
     id: cuid(),
-    streamIds: [streamId, SystemStreamsSerializer.options.STREAM_ID_ACTIVE],
-    type: eventType,
-    content: accountParameter,
+    streamIds: [streamId, SystemStreamsSerializer.options.STREAM_ID_ACTIVE], // add active stream id by default
+    type,
+    content,
     created: timestamp.now(),
     modified: timestamp.now(),
     time: timestamp.now(),
     createdBy: accessId,
     modifiedBy: accessId,
-    attachements: [],
+    attachments: [],
     tags: []
   };
 
-  // if fields has to be unique , add stream id and the field that enforces uniqueness
-  if (userAccountStreams[streamId].isUnique === true) {
+  if (isUnique) {
     event.streamIds.push(
       SystemStreamsSerializer.options.STREAM_ID_UNIQUE
     );
@@ -327,14 +238,14 @@ function createEvent (
 }
 
 /**
- * Convert system->account events to the account object
- * @param User user
+ * Assign events data to user account fields
  */
-function buildAccountDataFromListOfEvents (user: User) {
-  const account = buildEventsTree(SystemStreamsSerializer.getAccountStreamsConfig(), user.events, {});
+function buildAccountDataFromListOfEvents(user: User, events: Array<Event>): Array<Event> {
+  const account = buildAccountRecursive(SystemStreamsSerializer.getAccountChildren(), events, {});
   Object.keys(account).forEach(param => {
     user[param] = account[param];
   });
+  return events;
 }
 
 /**
@@ -344,27 +255,28 @@ function buildAccountDataFromListOfEvents (user: User) {
  * @param array events
  * @param object user
  */
-function buildEventsTree (streams: Array<{}>, events: Array<{}>, user: {}): {} {
+function buildAccountRecursive(streams: Array<SystemStream>, events: Array<Event>, user: {}): User {
   let streamIndex;
 
   for (streamIndex = 0; streamIndex < streams.length; streamIndex++) {
-    const streamIdWithDot = streams[streamIndex].id;
-    const streamIdWithoutDot = SystemStreamsSerializer.removeDotFromStreamId(streamIdWithDot);
+    const currentStream: SystemStream = streams[streamIndex];
+    const streamIdWithPrefix = currentStream.id;
+    const streamIdWithoutPrefix = SystemStreamsSerializer.removePrefixFromStreamId(streamIdWithPrefix);
 
     // if stream has children recursivelly call the same function
-    if (typeof streams[streamIndex].children !== 'undefined') {
-      user[streamIdWithoutDot] = {};
-      user[streamIdWithoutDot] = buildEventsTree(
-        streams[streamIndex].children,
+    if (Array.isArray(currentStream.children) && currentStream.children.length > 0) {
+      user[streamIdWithoutPrefix] = {};
+      user[streamIdWithoutPrefix] = buildAccountRecursive(
+        currentStream.children,
         events,
-        user[streamIdWithoutDot]
+        user[streamIdWithoutPrefix]
       );
     }
 
     // get value for the stream element
     for (let i = 0; i < events.length; i++) {
-      if (events[i].streamIds.includes(streamIdWithDot)) {
-        user[streamIdWithoutDot] = events[i].content;
+      if (events[i].streamIds.includes(streamIdWithPrefix)) {
+        user[streamIdWithoutPrefix] = events[i].content;
         break;
       }
     }

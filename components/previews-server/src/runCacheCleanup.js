@@ -47,7 +47,7 @@ const { getConfigUnsafe, getLogger }  = require('@pryv/boiler').init({
     scope: 'defaults-paths',
     file: path.resolve(__dirname, '../../api-server/config/paths-config.js')
   }, {
-    plugin: require('../../api-server/config/components/systemStreams')
+    plugin: require('api-server/config/components/systemStreams')
   }]
 });
 

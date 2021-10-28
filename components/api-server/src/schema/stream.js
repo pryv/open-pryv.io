@@ -59,7 +59,8 @@ module.exports = function (action, ignoreChildren, refToStreamSchema) {
       'clientData': object({}, {nullable: true}),
       'trashed': boolean({nullable: true}),
       // ignored except on READ, accepted to simplify interaction with client frameworks
-      'children': array({'$ref': refToStreamSchema || '#'}, {nullable: true})
+      'children': array({'$ref': refToStreamSchema || '#'}, {nullable: true}),
+      'childrenHidden': boolean({nullable: true}),
     }
   };
 

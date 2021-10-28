@@ -42,6 +42,7 @@ const tryCoerceStringValues = require('../schema/validation').tryCoerceStringVal
 const _ = require('lodash');
 
 const middleware = require('middleware');
+const { setMethodId } = require('middleware');
 const hasFileUpload = require('../middleware/uploads').hasFileUpload;
 const attachmentsAccessMiddleware = require('../middleware/attachment_access');
 
@@ -53,23 +54,14 @@ module.exports = function(expressApp: express$Application, app: Application) {
   const config = app.config;
   const storage = app.storageLayer;
 
-  const attachmentsDirPath = config.get('eventFiles:attachmentsDirPath');
   const filesReadTokenSecret = config.get('auth:filesReadTokenSecret');
 
   const loadAccessMiddleware = middleware.loadAccess(storage);
-
-  const attachmentsStatic = express.static(attachmentsDirPath);
-  const events = new express.Router({
-    mergeParams: true
-  });
-  
-  // This is the path prefix for the routes in this file. 
-  expressApp.use(Paths.Events, events);
-
-  events.get('/', 
+  expressApp.get(Paths.Events + '/',
+    setMethodId('events.get'),
     loadAccessMiddleware,
     function (req: express$Request, res, next) {
-      var params = _.extend({}, req.query);
+      const params = _.extend({}, req.query);
       tryCoerceStringValues(params, {
         fromTime: 'number',
         toTime: 'number',
@@ -82,32 +74,33 @@ module.exports = function(expressApp: express$Application, app: Application) {
         modifiedSince: 'number',
         includeDeletions: 'boolean'
       });
-      api.call('events.get', req.context, params, methodCallback(res, next, 200));
+      api.call(req.context, params, methodCallback(res, next, 200));
     });
 
-  events.get('/:id',
+  expressApp.get(Paths.Events + '/:id',
+    setMethodId('events.getOne'),
     loadAccessMiddleware,
     function (req: express$Request, res, next) {
-      var params = _.extend({id: req.params.id}, req.query);
+      const params = _.extend({id: req.params.id}, req.query);
       tryCoerceStringValues(params, {
         includeHistory: 'boolean'
       });
-      api.call('events.getOne', req.context, params, methodCallback(res, next, 200));
+      api.call(req.context, params, methodCallback(res, next, 200));
     });
 
   // Access an events files
   // 
-  // NOTE This `events.get('/:id/:fileId/:fileName?',`  doesn't work because 
+  // NOTE This `expressApp.get(Paths.Events + '/:id/:fileId/:fileName?',`  doesn't work because 
   //  using a Router will hide the username from the code here. It appears that 
   //  the url is directly transformed into a file path in attachmentsAccessMiddleware
   //  and thus if something is missing from the (router-)visible url, something 
   //  will be missing upon file access. 
   // 
   expressApp.get(Paths.Events + '/:id/:fileId/:fileName?', 
+    setMethodId('events.getAttachment'),
     retrieveAccessFromReadToken, 
     loadAccessMiddleware,
-    attachmentsAccessMiddleware(storage.events), 
-    attachmentsStatic
+    attachmentsAccessMiddleware(storage.events)
   );
 
   // Parses the 'readToken' and verifies that the access referred to by id in 
@@ -152,7 +145,8 @@ module.exports = function(expressApp: express$Application, app: Application) {
   }
 
   // Create an event.
-  events.post('/', 
+  expressApp.post(Paths.Events + '/', 
+    setMethodId('events.create'),
     loadAccessMiddleware,
     hasFileUpload,
     function (req: express$Request, res, next) {
@@ -160,27 +154,29 @@ module.exports = function(expressApp: express$Application, app: Application) {
       if (req.files) {
         params.files = req.files;
       }
-      api.call('events.create', req.context, params, methodCallback(res, next, 201));
+      api.call(req.context, params, methodCallback(res, next, 201));
     });
 
-  events.post('/start',
+  expressApp.post(Paths.Events + '/start',
     function (req: express$Request, res, next) {
       return next(errors.goneResource());
     });
 
   expressApp.put(Paths.Events + '/:id',
+    setMethodId('events.update'),
     loadAccessMiddleware,
     function (req: express$Request, res, next) {
-      api.call('events.update', req.context, { id: req.params.id, update: req.body }, methodCallback(res, next, 200));
+      api.call(req.context, { id: req.params.id, update: req.body }, methodCallback(res, next, 200));
     });
 
-  events.post('/stop',
+  expressApp.post(Paths.Events + '/stop',
     function (req: express$Request, res, next) {
       return next(errors.goneResource());
     });
   
   // Update an event
-  events.post('/:id',
+  expressApp.post(Paths.Events + '/:id',
+    setMethodId('events.update'),
     loadAccessMiddleware,
     hasFileUpload,
     function (req: express$Request, res, next) {
@@ -193,19 +189,21 @@ module.exports = function(expressApp: express$Application, app: Application) {
       } else {
         delete params.files; // close possible hole
       }
-      api.call('events.update', req.context, params, methodCallback(res, next, 200));
+      api.call(req.context, params, methodCallback(res, next, 200));
     });
 
-  events.delete('/:id',
+  expressApp.delete(Paths.Events + '/:id',
+    setMethodId('events.delete'),
     loadAccessMiddleware,
     function (req: express$Request, res, next) {
-      api.call('events.delete', req.context, {id: req.params.id}, methodCallback(res, next, 200));
+      api.call(req.context, {id: req.params.id}, methodCallback(res, next, 200));
     });
 
-  events.delete('/:id/:fileId',
+  expressApp.delete(Paths.Events + '/:id/:fileId',
+    setMethodId('events.deleteAttachment'),
     loadAccessMiddleware,
     function (req: express$Request, res, next) {
-      api.call('events.deleteAttachment', req.context, {id: req.params.id, fileId: req.params.fileId}, methodCallback(res, next, 200));
+      api.call(req.context, {id: req.params.id, fileId: req.params.fileId}, methodCallback(res, next, 200));
     });
 
 };

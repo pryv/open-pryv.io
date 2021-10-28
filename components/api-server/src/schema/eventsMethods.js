@@ -53,7 +53,7 @@ module.exports = {
     params: object({
       'streams': {},
       'tags': array(string()),
-      'types': array(string()),
+      'types': array(string({ pattern: '^(series:)?[a-z0-9-]+/(\\*|[a-z0-9-]+)$'}), {nullable: true}),
       'fromTime': number(),
       'toTime': number(),
       'sortAscending': boolean(),

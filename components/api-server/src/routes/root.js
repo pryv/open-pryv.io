@@ -40,7 +40,8 @@ const middleware = require('middleware');
 const commonMeta = require('../methods/helpers/setCommonMeta');
 const methodCallback = require('./methodCallback');
 const Paths = require('./Paths');
-const getAuth = require('../../../middleware/src/getAuth');
+const getAuth = require('middleware/src/getAuth');
+const { setMethodId } = require('middleware');
     
 import type Application  from '../application';
 
@@ -68,20 +69,22 @@ function root(expressApp: express$Application, app: Application) {
 
   // Current access information.
   expressApp.get(Paths.UserRoot + '/access-info',
+    setMethodId('getAccessInfo'),
     loadAccessMiddleware,
     function (req: express$Request, res, next) {
       // FLOW More request.context...
-      api.call('getAccessInfo', req.context, req.query, 
+      api.call(req.context, req.query, 
         methodCallback(res, next, 200));
     });
 
   // Batch request of multiple API method calls.
   expressApp.post(Paths.UserRoot,
     initContextMiddleware,
+    setMethodId('callBatch'),
     loadAccessMiddleware,
     function (req: express$Request, res, next) {
       // FLOW More request.context...
-      api.call('callBatch', req.context, req.body, 
+      api.call(req.context, req.body, 
         methodCallback(res, next, 200));
     }
   );

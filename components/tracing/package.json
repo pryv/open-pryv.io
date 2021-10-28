@@ -1,0 +1,10 @@
+{
+  "name": "tracing",
+  "version": "1.0.0",
+  "private": true,
+  "description": "tracing utilitaries for service-core",
+  "homepage": "https://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)",
+  "main": "src/index.js"
+}

@@ -19,10 +19,10 @@
   },
   "dependencies": {
     "awaiting": "^3.0",
-    "msgpack5": "^3.6",
+    "lib-reporting": "git+ssh://git@github.com/pryv/lib-reporting",
     "multistream": "^2.1.0",
     "slug": "^0.9.1",
-    "socket.io": "^2.3.0",
+    "socket.io": "^3.1.2",
     "socketio-wildcard": "^2.0.0",
     "url": "^0.11.0",
     "z-schema": "^4.2.3"

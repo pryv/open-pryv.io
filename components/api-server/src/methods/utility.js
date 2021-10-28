@@ -38,14 +38,18 @@ const errorHandling = require('errors').errorHandling;
 const methodsSchema = require('../schema/generalMethods');
 const _ = require('lodash');
 const bluebird = require('bluebird');
+const SystemStreamsSerializer = require('business/src/system-streams/serializer');
 
-const { getLogger } = require('@pryv/boiler');
+const { getLogger, getConfig } = require('@pryv/boiler');
 
 import type API  from '../API';
-import type { StorageLayer } from 'storage';
-import type { MethodContext } from 'model';
+import type { MethodContext } from 'business';
 import type Result  from '../Result';
 import type { ApiCallback }  from '../API';
+
+const { Permission } = require('business/src/accesses');
+
+const updateAccessUsageStats = require('./helpers/updateAccessUsageStats');
 
 type ApiCall = {
   method: string,
@@ -57,25 +61,38 @@ type ApiCall = {
  *
  * @param api
  */
-module.exports = function (api: API, logging, storageLayer: StorageLayer) {
+module.exports = async function (api: API) {
 
   const logger = getLogger('methods:batch');
+  const config = await getConfig();
+
+  const isOpenSource = config.get('openSource:isActive');
+  const isAuditActive = (! isOpenSource) && config.get('audit:active');
+
+  const updateAccessUsage = await updateAccessUsageStats();
+
+  let audit;
+  if (isAuditActive) {
+    audit = require('audit');
+  }
 
   api.register('getAccessInfo',
     commonFns.getParamsValidation(methodsSchema.getAccessInfo.params),
-    getAccessInfo);
+    getAccessInfoApiFn);
 
-  function getAccessInfo(context: MethodContext, params: mixed, result: Result, next: ApiCallback) {
-    const accessInfoProps = ['id', 'token', 'type', 'name', 'deviceName', 'permissions',
+  function getAccessInfoApiFn(context: MethodContext, params: mixed, result: Result, next: ApiCallback) {
+    const accessInfoProps: Array<string> = ['id', 'token', 'type', 'name', 'deviceName', 'permissions',
       'lastUsed', 'expires', 'deleted', 'clientData',
       'created', 'createdBy', 'modified', 'modifiedBy', 'calls'
     ];
-    const userProps = ['username'];
+    const userProps: Array<string> = ['username'];
     
     for (const prop of accessInfoProps) {
       const accessProp = context.access[prop];
       if (accessProp != null) result[prop] = accessProp;
     }
+
+    if (result.permissions != null) result.permissions = filterNonePermissionsOnSystemStreams(result.permissions);
 
     result.user = {};
     for (const prop of userProps) {
@@ -84,54 +101,62 @@ module.exports = function (api: API, logging, storageLayer: StorageLayer) {
     }
   
     next();
+
+    /**
+     * Remove permissions with level="none" from given array
+     */
+    function filterNonePermissionsOnSystemStreams(permissions: Array<Permission>): Array<Permission> {
+      const filteredPermissions: Array<Permission> = [];
+      for (const perm of permissions) {
+        if (perm.level !== 'none' && (! SystemStreamsSerializer.isSystemStreamId(perm.streamId))) filteredPermissions.push(perm);
+      }
+      return filteredPermissions;
+    }
   }
 
   api.register('callBatch',
     commonFns.getParamsValidation(methodsSchema.callBatch.params),
-    callBatch);
+    callBatchApiFn,
+    updateAccessUsage);
 
-  async function callBatch(context: MethodContext, calls: Array<ApiCall>, result: Result, next: ApiCallback) {
+  async function callBatchApiFn(context: MethodContext, calls: Array<ApiCall>, result: Result, next: ApiCallback) {
+    // allow non stringified stream queries in batch calls 
+    context.acceptStreamsQueryNonStringified = true;
+    context.disableAccessUsageStats = true;
 
-    let needRefeshForNextcall = true;
-    let freshContext: MethodContext = null;
-    
-    result.results = await bluebird.mapSeries(calls, executeCall);
-    next();
-
-
-    // Reload streams tree since a previous call in this batch
-    // may have modified stream structure.
-    async function refreshContext() {
-      // Clone context to avoid potential side effects
-      freshContext = _.cloneDeep(context);
-      // Accept streamQueries in JSON format for batchCalls
-      freshContext.acceptStreamsQueryNonStringified = true;
-      const access = freshContext.access;
-      await freshContext.retrieveStreams(storageLayer);
-      if (! access.isPersonal()) access.loadPermissions(freshContext.streams);
+    // to avoid updatingAccess for each api call we are collecting all counter here
+    context.accessUsageStats = {};
+    function countCall(methodId) {
+      if (context.accessUsageStats[methodId] == null) context.accessUsageStats[methodId] = 0;
+      context.accessUsageStats[methodId]++;
     }
+
+    result.results = await bluebird.mapSeries(calls, executeCall);
+    context.disableAccessUsageStats = false; // to allow tracking functions
+    next();
 
     async function executeCall(call: ApiCall) {
       try {
-        if (needRefeshForNextcall) {
-          await refreshContext();
-        }
-
-        needRefeshForNextcall = ['streams.create', 'streams.update', 'streams.delete'].includes(call.method);
-
+        countCall(call.method);
+        // update methodId to match the call todo
+        context.methodId = call.method;
         // Perform API call
         const result: Result = await bluebird.fromCallback(
-          (cb) => api.call(call.method, freshContext, call.params, cb));
+          (cb) => api.call(context, call.params, cb));
         
+        if (isAuditActive) await audit.validApiCall(context, result);
+
         return await bluebird.fromCallback(
           (cb) => result.toObject(cb));
       } catch(err) {
         // Batchcalls have specific error handling hence the custom request context
         const reqContext = {
           method: call.method + ' (within batch)',
-          url: 'pryv://' + context.username
+          url: 'pryv://' + context.user.username
         };
         errorHandling.logError(err, reqContext, logger);
+
+        if (isAuditActive) await audit.errorApiCall(context, err);
         
         return {error: errorHandling.getPublicErrorData(err)};
       }

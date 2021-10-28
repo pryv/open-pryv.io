@@ -91,15 +91,13 @@ const ErrorIds = {
    * Throw this error for methods that are valid only for pryv.io
    */
   DeniedStreamAccess: 'denied-stream-access',
-  TooHighAccessForAccountStreams: 'too-high-access-for-account-stream',
+  TooHighAccessForSystemStreams: 'too-high-access-for-account-stream',
   ForbiddenMultipleAccountStreams: 'forbidden-multiple-account-streams-events',
   EmailRequired: 'email-required',
   PasswordRequired: 'password-required',
-  ForbiddenNoneditableAccountStreamsEdit: 'forbidden-noneditable-account-streams-edit',
-  ForbiddenNoneditableAccountStreamsEventsDeletion: 'forbidden-noneditable-account-streams-events-deletion',
+  ForbiddenAccountEventModification: 'forbidden-none-editable-account-streams',
   ForbiddenToChangeAccountStreamId: 'forbidden-change-account-streams-id',
-  ForbiddenAccountStreamsActions: 'forbidden-account-streams-actions',
-  ForbiddenAccountStreamsEventDeletion: 'forbidden-account-streams-deletion',
+  ForbiddenAccountStreamsModification: 'forbidden-account-streams-actions',
   ForbiddenToEditNoneditableAccountFields: 'forbidden-to-edit-noneditable-account-fields',
   MissingRequiredField: 'missing-required-field',
   NewPasswordFieldIsRequired: 'newPassword-required',

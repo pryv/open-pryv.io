@@ -38,6 +38,23 @@ const lodash = require('lodash');
 const storage = require('storage');
 const errors = require('errors').factory;
 
+const config = require('@pryv/boiler').getConfigUnsafe(true);
+const pathForAttachment = require('business').users.UserLocalDirectory.pathForAttachment;
+const getHTTPDigestHeaderForAttachment = require('business').integrity.attachments.getHTTPDigestHeaderForAttachment;
+
+// -- Audit 
+const isAuditActive = (!  config.get('openSource:isActive')) && config.get('audit:active');
+let audit;
+if (isAuditActive) {
+  const throwIfMethodIsNotDeclared = require('audit/src/ApiMethods').throwIfMethodIsNotDeclared;
+  throwIfMethodIsNotDeclared('events.getAttachment');
+  audit = require('audit');
+}
+// -- end Audit
+
+const fs = require('fs');
+const path = require('path');
+
 function middlewareFactory(userEventsStorage: storage.user.Events) {
   return lodash.partial(attachmentsAccessMiddleware, userEventsStorage);
 }
@@ -47,8 +64,8 @@ module.exports = middlewareFactory;
 // translates the request's resource path to match the actual physical path for
 // static-serving the file.
 // 
-function attachmentsAccessMiddleware(userEventsStorage, req, res, next) {
-  userEventsStorage.findOne(req.context.user, {id: req.params.id}, null, function (err, event) {
+async function attachmentsAccessMiddleware(userEventsStorage, req, res, next) {
+  userEventsStorage.findOne(req.context.user, {id: req.params.id}, null, async function (err, event) {
     const _ = lodash; 
     
     if (err) {
@@ -59,23 +76,13 @@ function attachmentsAccessMiddleware(userEventsStorage, req, res, next) {
     }
     let canReadEvent = false;
     for (let i = 0; i < event.streamIds.length ; i++) {
-      if (req.context.canReadStream(event.streamIds[i])) {
+      if (await req.context.access.canGetEventsOnStream(event.streamIds[i], 'local')) {
         canReadEvent = true;
         break;
       }
     }
     if (! canReadEvent) {
       return next(errors.forbidden());
-    }
-
-    req.url = req.url
-      .replace(req.params.username, req.context.user.id)
-      .replace('/events/', '/');
-      
-    if (req.params.fileName) {
-      // ignore filename (it's just there to help clients build nice URLs)
-      var encodedFileId = encodeURIComponent(req.params.fileId);
-      req.url = req.url.substr(0, req.url.indexOf(encodedFileId) + encodedFileId.length);
     }
 
     // set response content type (we can't rely on the filename)
@@ -87,7 +94,34 @@ function attachmentsAccessMiddleware(userEventsStorage, req, res, next) {
       ));
     }
     res.header('Content-Type', attachment.type);
+    res.header('Content-Length', attachment.size);
+    res.header('Content-Disposition', 'attachment; filename="' + attachment.fileName + '"');
+    if (attachment.integrity != null) {
+      const digest = getHTTPDigestHeaderForAttachment(attachment.integrity)
+      if (digest != null) {
+        res.header('Digest', digest);
+      }
+    }
+    const fullPath = pathForAttachment(req.context.user.id, req.params.id, req.params.fileId);
+    const fsReadStream = fs.createReadStream(fullPath);
 
-    next();
+    // for Audit
+    req.context.originalQuery = req.params;
+
+    const pipedStream = fsReadStream.pipe(res);
+    let streamHasErrors = false;
+    fsReadStream.on('error', async (err) => {
+      streamHasErrors = true;
+      try { 
+        fsReadStream.unpipe(res);
+      } catch(e) {}
+      // error audit is taken in charge by express error management
+      next(err);
+    });
+    pipedStream.on('finish', async (a) => {
+      if (streamHasErrors) return;
+      if (isAuditActive) await audit.validApiCall(req.context, null);
+      // do not call "next()" 
+    });
   });
 }

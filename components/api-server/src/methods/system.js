@@ -38,88 +38,66 @@ const methodsSchema = require('../schema/systemMethods');
 const string = require('./helpers/string');
 const _ = require('lodash');
 const bluebird = require('bluebird');
-const UsersRepository = require('business/src/users/repository');
-const User = require('business/src/users/User');
+const { getStorageLayer } = require('storage');
+const { getConfig, getLogger } = require('@pryv/boiler');
+const { getUsersRepository } = require('business/src/users');
 const SystemStreamsSerializer = require('business/src/system-streams/serializer');
+
+const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils');
 
 /**
  * @param systemAPI
- * @param usersStorage
- * @param userAccessesStorage
- * @param servicesSettings Must contain `email`
  * @param api The user-facing API, used to compute usage stats per method
- * @param logging
- * @param storageLayer
  */
-module.exports = function (
-  systemAPI, userAccessesStorage, servicesSettings, api,
-  logging, storageLayer
+module.exports = async function (
+  systemAPI, api
 ) {
-
-  const POOL_REGEX = new RegExp('^' + 'pool@');
-  const registration = new Registration(logging, storageLayer, servicesSettings);
-  const usersRepository = new UsersRepository(storageLayer.events);
+  const config = await getConfig();
+  const logger = getLogger('system');
+  const storageLayer = await getStorageLayer();
+  const registration = new Registration(logger, storageLayer, config.get('services'));
+  const usersRepository = await getUsersRepository(); 
   const userProfileStorage = storageLayer.profile;
+  const userAccessesStorage = storageLayer.accesses;
 
   // ---------------------------------------------------------------- createUser
   systemAPI.register('system.createUser',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
     commonFns.getParamsValidation(methodsSchema.createUser.params),
     registration.prepareUserData,
     registration.createUser.bind(registration),
     registration.sendWelcomeMail.bind(registration),
     );
 
-  // ------------------------------------------------------------ createPoolUser
-  systemAPI.register('system.createPoolUser',
-    registration.prepareUserData,
-    registration.createPoolUser.bind(registration),
-    registration.createUser.bind(registration),
-  );
-
-  // ---------------------------------------------------------- getUsersPoolSize
-  systemAPI.register('system.getUsersPoolSize',
-    countPoolUsers);
-
-  async function countPoolUsers(context, params, result, next) {
-    try {
-      const numUsers = await bluebird.fromCallback(cb => 
-        storageLayer.events.count({}, {
-          $and: [
-            { streamIds: SystemStreamsSerializer.options.STREAM_ID_USERNAME },
-            { content: { $regex: POOL_REGEX } }
-          ]
-        }, cb));
-      result.size = numUsers ? numUsers : 0;
-      return next();
-    } catch (err) {
-      return next(errors.unexpectedError(err))
-    }
-  }
-
   // --------------------------------------------------------------- getUserInfo
   systemAPI.register('system.getUserInfo',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
     commonFns.getParamsValidation(methodsSchema.getUserInfo.params),
-    retrieveUser,
+    loadUserToMinimalMethodContext,
     getUserInfoInit,
     getUserInfoSetAccessStats);
 
-  async function retrieveUser(context, params, result, next) {
+  async function loadUserToMinimalMethodContext(minimalMethodContext, params, result, next) {
     try {
-      context.user = await usersRepository.getAccountByUsername(params.username, true);
-
-      if (context.user == null) {
+      const userId = await usersRepository.getUserIdForUsername(params.username);
+      if (userId == null) {
         return next(errors.unknownResource('user', params.username));
       }
+      minimalMethodContext.user = {
+        id: userId,
+        username: params.username
+      };
       next();
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
   }
 
-  function getUserInfoInit(context, params, result, next) {
+  async function getUserInfoInit(context, params, result, next) {
+    const newStorageUsed = await usersRepository.getStorageUsedByUserId(context.user.id);
     result.userInfo = {
       username: context.user.username,
-      storageUsed: context.user.storageUsed
+      storageUsed: newStorageUsed
     };
     next();
   }
@@ -162,14 +140,15 @@ module.exports = function (
     });
   }
 
-  // --------------------------------------------------------------- deleteMfa
-  systemAPI.register('system.deleteMfa',
-    commonFns.getParamsValidation(methodsSchema.deleteMfa.params),
-    retrieveUser,
-    deleteMfa
+  // --------------------------------------------------------------- deactivateMfa
+  systemAPI.register('system.deactivateMfa',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    commonFns.getParamsValidation(methodsSchema.deactivateMfa.params),
+    loadUserToMinimalMethodContext,
+    deactivateMfa
   );
 
-  async function deleteMfa(context, params, result, next) {
+  async function deactivateMfa(context, params, result, next) {
     try {
       await bluebird.fromCallback(cb => userProfileStorage.findOneAndUpdate(
         context.user, 

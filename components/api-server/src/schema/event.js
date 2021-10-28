@@ -63,7 +63,8 @@ exports = module.exports = function (action) {
     'content': {},
     'description': string({nullable: true}),
     'clientData': object({}, {nullable: true}),
-    'trashed': boolean({nullable: true})
+    'trashed': boolean({nullable: true}),
+    'integrity': string({nullable: true}),
   }, {
     id: helpers.getTypeURI('event', action),
     additionalProperties: false
@@ -113,7 +114,8 @@ exports.attachments = array(object({
   fileName: string(),
   type: string(),
   size: number(),
-  readToken: string()
+  readToken: string(),
+  integrity: string()
 }, {
   required: [ 'id', 'fileName', 'type', 'size', 'readToken' ],
   additionalProperties: false
