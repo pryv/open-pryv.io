@@ -19,7 +19,6 @@
   },
   "dependencies": {
     "awaiting": "^3.0",
-    "lib-reporting": "git+ssh://git@github.com/pryv/lib-reporting",
     "multistream": "^2.1.0",
     "slug": "^0.9.1",
     "socket.io": "^3.1.2",

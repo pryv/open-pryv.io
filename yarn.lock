@@ -1784,7 +1784,7 @@ blanket@^1.2.3:
     object-keys "^1.0.6"
     xtend "~4.0.0"
 
-bluebird@^3.5.0, bluebird@^3.7.2:
+bluebird@^3.5.0:
   version "3.7.2"
   resolved "https://registry.yarnpkg.com/bluebird/-/bluebird-3.7.2.tgz#9f229c15be272454ffa973ace0dbee79a1b0c36f"
   integrity sha512-XpNj6GDQzdfW+r2Wnn7xiSAd7TM3jzkxGXBGTtWKuSXv1xUV+azxAm8jdWZN06QTQk+2N2XB9jRDkvbmQmcRtg==
@@ -2570,9 +2570,9 @@ ee-first@1.1.1:
   integrity sha1-WQxhFWsK4vTwJVcyoViyZrxWsh0=
 
 electron-to-chromium@^1.3.878:
-  version "1.3.882"
-  resolved "https://registry.yarnpkg.com/electron-to-chromium/-/electron-to-chromium-1.3.882.tgz#ec57bb0c3a97f0ddfe6e39c5a9655ea9566b2db6"
-  integrity sha512-Kllt2R9+7yEIBbASR0MReJSK9TjPmHoomLbCLRP7r4SVtSy+Y0hYIhQ7LGjnMhlAyWUtGXTiznoGsaKxEH0ttw==
+  version "1.3.883"
+  resolved "https://registry.yarnpkg.com/electron-to-chromium/-/electron-to-chromium-1.3.883.tgz#cc409921469b3aa6ab6efd65cc2a4375128bb703"
+  integrity sha512-goyjNx4wB9j911PBteb+AXNbErug7rJVkmDXWdw5SCVn2JlARBwsqucPkvp1h5mXWxHUbBRK3bwXTrqSxSiAIQ==
 
 emitter-listener@^1.0.1:
   version "1.1.2"
@@ -4045,13 +4045,6 @@ levn@^0.4.1:
   dependencies:
     prelude-ls "^1.2.1"
     type-check "~0.4.0"
-
-"lib-reporting@git+ssh://git@github.com/pryv/lib-reporting":
-  version "1.0.1"
-  resolved "git+ssh://git@github.com/pryv/lib-reporting#1fafe89f5a624a22ccd9cb8fd79a28f9211d5a4e"
-  dependencies:
-    bluebird "^3.7.2"
-    superagent "^5.2.2"
 
 listenercount@~1.0.1:
   version "1.0.1"
