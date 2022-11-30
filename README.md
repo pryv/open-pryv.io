@@ -182,7 +182,7 @@ Data in Pryv is stored in streams and events. We provide you with all necessary 
 
 After this process, you should have an account on your Open Pryv.io platform with a valid authorization token in the form of an API endpoint, you can try various **API requests** using **Postman** following this guide [https://api.pryv.com/open-api/](https://api.pryv.com/open-api/).
 
-You can also try our [example apps with guides and tutorials](https://github.com/pryv/app-web-examples/).
+You can also try our [example apps with guides and tutorials](https://github.com/pryv/example-apps-web/).
 
 ## Options & Customization
 
