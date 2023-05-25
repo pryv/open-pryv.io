@@ -1,19 +1,18 @@
 #!/usr/bin/env node
 
-// Binary for launching the api-server process. 
+// Binary for launching the api-server process.
 
 const Server = require('../src/server');
 const { getApplication } = require('api-server/src/application');
 
 const loadCommonMeta = require('../src/methods/helpers/setCommonMeta').loadSettings;
 
-const { getConfig, getLogger } = require('@pryv/boiler');
+const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('serverRoot');
 
 (async () => {
-  const config = await getConfig();
   loadCommonMeta({}); // load settings to common meta
-  
+
   // Construct application
   const app = getApplication();
   await app.initiate();
@@ -27,7 +26,7 @@ const logger = getLogger('serverRoot');
   });
 
   // Start the server
-  const server = new Server(); 
+  const server = new Server();
   await server.start();
 })()
   .then(() => logger.info('Startup sequence complete, Server is running. mode: [' + process.env.NODE_ENV + ']'))

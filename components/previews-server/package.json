@@ -1,21 +1,9 @@
 {
   "name": "previews-server",
-  "version": "1.2.18",
+  "version": "1.8.1",
   "private": true,
-  "description": "This package is part of Pryv.io - a Pryv S.A. Software",
-  "homepage": "http://pryv.com",
+  "description": "Express server supporting client apps with event previews",
+  "homepage": "https://pryv.com",
   "license": "BSD-3-Clause",
-  "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)",
-  "scripts": {
-    "_test": "NODE_ENV=test ../../node_modules/.bin/mocha --timeout 10000 --reporter=dot 'test/**/*.js' --slow 20 --exit",
-    "start": "NODE_ENV=development node src/server",
-    "test": "yarn run _test --logs:console:active=false",
-    "test-debug": "yarn run _test --timeout 3600000 --reporter=spec --debug-brk",
-    "test-detailed": "yarn run _test --reporter=spec",
-    "test-profile": "yarn run _test --profile=true --logs:console:active=false && tick-processor > profiling-output.txt && open profiling-output.txt"
-  },
-  "dependencies": {
-    "fs-xattr": "^0.3.0",
-    "gm": "^1.20.0"
-  }
+  "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)"
 }

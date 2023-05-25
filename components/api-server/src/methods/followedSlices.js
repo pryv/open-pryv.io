@@ -1,40 +1,40 @@
 /**
  * @license
- * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
- * 
+ * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- * 
- * Redistribution and use in source and binary forms, with or without 
+ *
+ * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
- * 
- * 1. Redistributions of source code must retain the above copyright notice, 
- *    this list of conditions and the following disclaimer.
- * 
- * 2. Redistributions in binary form must reproduce the above copyright notice, 
- *    this list of conditions and the following disclaimer in the documentation 
- *    and/or other materials provided with the distribution.
- * 
- * 3. Neither the name of the copyright holder nor the names of its contributors 
- *    may be used to endorse or promote products derived from this software 
- *    without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE 
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL 
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR 
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER 
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, 
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *   this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors
+ *   may be used to endorse or promote products derived from this software
+ *   without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * 
+ *
  * SPDX-License-Identifier: BSD-3-Clause
  */
-var async = require('async'),
-    commonFns = require('./helpers/commonFunctions'),
-    errors = require('errors').factory,
-    methodsSchema = require('../schema/followedSlicesMethods');
+const async = require('async');
+const commonFns = require('./helpers/commonFunctions');
+const errors = require('errors').factory;
+const methodsSchema = require('../schema/followedSlicesMethods');
 
 const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
@@ -44,9 +44,9 @@ const { getStorageLayer } = require('storage');
  *
  * @param api
  */
-module.exports = async function (api){
+module.exports = async function (api) {
   const storageLayer = await getStorageLayer();
-  userFollowedSlicesStorage = storageLayer.followedSlices;
+  const userFollowedSlicesStorage = storageLayer.followedSlices;
 
   // RETRIEVAL
 
@@ -84,12 +84,12 @@ module.exports = async function (api){
     commonFns.getParamsValidation(methodsSchema.update.params),
     function (context, params, result, next) {
       async.series([
-        function checkSlice(stepDone) {
-          userFollowedSlicesStorage.findOne(context.user, {id: params.id}, null,
+        function checkSlice (stepDone) {
+          userFollowedSlicesStorage.findOne(context.user, { id: params.id }, null,
             function (err, slice) {
               if (err) { return stepDone(errors.unexpectedError(err)); }
 
-              if (! slice) {
+              if (!slice) {
                 return stepDone(errors.unknownResource(
                   'followed slice', params.id
                 ));
@@ -98,8 +98,8 @@ module.exports = async function (api){
               stepDone();
             });
         },
-        function update(stepDone) {
-          userFollowedSlicesStorage.updateOne(context.user, {id: params.id}, params.update,
+        function update (stepDone) {
+          userFollowedSlicesStorage.updateOne(context.user, { id: params.id }, params.update,
             function (err, updatedSlice) {
               if (err) {
                 return stepDone(getCreationOrUpdateError(err, params.update));
@@ -114,14 +114,14 @@ module.exports = async function (api){
     });
 
   /**
-   * Returns the error to propagate given `dbError` and `params` as input. 
+   * Returns the error to propagate given `dbError` and `params` as input.
    */
-  function getCreationOrUpdateError(dbError, params) {
+  function getCreationOrUpdateError (dbError, params) {
     // Duplicate errors
     if (dbError.isDuplicateIndex('name')) {
       return errors.itemAlreadyExists('followed slice',
-        {name: params.name}, dbError);
-    } 
+        { name: params.name }, dbError);
+    }
     if (dbError.isDuplicateIndex('username') && dbError.isDuplicateIndex('accessToken')) {
       return errors.itemAlreadyExists('followed slice',
         { url: params.url, accessToken: params.accessToken }, dbError);
@@ -136,24 +136,23 @@ module.exports = async function (api){
     commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.del.params),
     function (context, params, result, next) {
-      userFollowedSlicesStorage.findOne(context.user, {id: params.id}, null, function (err, slice) {
+      userFollowedSlicesStorage.findOne(context.user, { id: params.id }, null, function (err, slice) {
         if (err) { return next(errors.unexpectedError(err)); }
 
-        if (! slice) {
+        if (!slice) {
           return next(errors.unknownResource(
             'followed slice',
             params.id
           ));
         }
 
-        userFollowedSlicesStorage.removeOne(context.user, {id: params.id}, function (err) {
+        userFollowedSlicesStorage.removeOne(context.user, { id: params.id }, function (err) {
           if (err) { return next(errors.unexpectedError(err)); }
 
-          result.followedSliceDeletion = {id: params.id};
+          result.followedSliceDeletion = { id: params.id };
           pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_FOLLOWEDSLICES_CHANGED);
           next();
         });
       });
     });
-
 };

@@ -1,13 +1,11 @@
 var-pryv/
 public_html/
 app-web-auth3/
-dist/
 node_modules/
 rec.la-certificates/
 
 # not commiting this into OS version
-test/
-test-helpers/
+
 
 service-mail/.github
 

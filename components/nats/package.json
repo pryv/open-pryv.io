@@ -1,0 +1,13 @@
+{
+  "name": "nats",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fake Nats",
+  "homepage": "https://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}

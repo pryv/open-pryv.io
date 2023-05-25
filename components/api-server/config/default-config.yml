@@ -10,14 +10,16 @@ reporting:
   licenseName: 'REPLACE ME'
   templateVersion: '1.0.0'
 
-http: 
+http:
   ip: '127.0.0.1'
   port: 3000
 
+
 database:
+  engine: 'mongodb' # set to sqlite for poc sqlite storage for events
   authUser: ''
   authPassword: ''
-  host: 'localhost'
+  host: '127.0.0.1'
   port: 27017
   name: 'pryv-node'
   connectTimeoutMS: 60000
@@ -26,25 +28,30 @@ database:
 userFiles:
   path: 'REPLACE ME'
 
-eventFiles: 
+eventFiles:
   attachmentsDirPath: 'REPLACE ME'
   previewsDirPath: 'REPLACE ME'
 
 auth:
   filesReadTokenSecret: 'REPLACE ME'
+  passwordComplexityMinCharCategories: 0
+  passwordComplexityMinLength: 0
+  passwordAgeMaxDays: 0
+  passwordAgeMinDays: 0
+  passwordPreventReuseHistoryLength: 0
 
-customExtensions: 
+customExtensions:
   defaultFolder: 'REPLACE ME'
   customAuthStepFn: ''
 
 axonMessaging:
   enabled: false
-  host: 'localhost'
+  host: '127.0.0.1'
   port: 4000
   pubConnectInsteadOfBind: false
 
-updates: 
-  ignoreProtectedFields: false 
+updates:
+  ignoreProtectedFields: false
 
 influxdb:
   host: 127.0.0.1
@@ -55,7 +62,7 @@ webhooks:
   maxRetries: 5
   runsSize: 20
 
-versioning: 
+versioning:
   forceKeepHistory: false
   deletionMode: 'keep-nothing'
 
@@ -84,9 +91,7 @@ custom:
       type: email/string
       name: Email
       isRequiredInValidation: true
-
-stores:
-  loadExternal: []
+  dataStores: []
 
 caching:
   isActive: true

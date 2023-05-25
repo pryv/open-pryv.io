@@ -1,6 +1,6 @@
 {
   "name": "pryv-service-mail",
-  "version": "1.2.1",
+  "version": "1.8.1",
   "private": true,
   "description": "Customizable SMTP solution in Pryv.io that mocks Mandrill's API",
   "homepage": "https://pryv.com",
@@ -8,22 +8,23 @@
   "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)",
   "main": "src/server.js",
   "scripts": {
-    "start": "./bin/server --config ./config.hjson"
+    "test": "echo 'This project doesn't use npm scripts - enter `just` for the available development commands\n' && exit 1"
   },
   "resolutions": {
     "**/pug": "^3.0.1",
     "**/yargs-parser": "13.1.2"
   },
   "dependencies": {
-    "bluebird": "^3.7.2",
-    "body-parser": "^1.19.0",
-    "email-templates": "^7.0.5",
-    "express": "^4.17.1",
-    "hjson": "^3.2.1",
-    "js-yaml": "^3.14.0",
-    "superagent": "^5.2.2",
-    "winston": "^2.4.1",
-    "yargs": "^11.0.0"
+    "@pryv/boiler": "https://github.com/pryv/pryv-boiler.git#semver:^1.1.1",
+    "body-parser": "^1.20.1",
+    "email-templates": "^10.0.1",
+    "express": "^4.18.2",
+    "superagent": "^8.0.9"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "nyc": "^15.1.0",
+    "semistandard": "^16.0.1",
+    "source-licenser": "^2.0.5",
+    "supertest": "^6.3.3"
+  }
 }

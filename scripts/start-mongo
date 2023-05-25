@@ -1,0 +1,16 @@
+#!/bin/sh
+
+SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
+VAR_PRYV_FOLDER=$SCRIPT_FOLDER/../var-pryv
+MONGO_BIN_FOLDER=$VAR_PRYV_FOLDER/mongodb-bin/bin
+
+BASE_OPTS="--logpath $VAR_PRYV_FOLDER/mongodb-logs/mongod.log --dbpath $VAR_PRYV_FOLDER/mongodb-data"
+if [[ "$DEVELOPMENT" == "true" ]]; then
+  # attach process, no sharding
+  $MONGO_BIN_FOLDER/mongod $BASE_OPTS
+else
+  # detach process, convert standalone to replicaSet
+  # https://docs.mongodb.com/manual/tutorial/convert-shard-standalone-to-shard-replica-set/
+  $MONGO_BIN_FOLDER/mongod $BASE_OPTS --fork --replSet shardA
+  $MONGO_BIN_FOLDER/mongosh --eval "rs.initiate()"
+fi

@@ -1,41 +1,38 @@
 /**
  * @license
- * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
- * 
+ * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- * 
- * Redistribution and use in source and binary forms, with or without 
+ *
+ * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
- * 
- * 1. Redistributions of source code must retain the above copyright notice, 
- *    this list of conditions and the following disclaimer.
- * 
- * 2. Redistributions in binary form must reproduce the above copyright notice, 
- *    this list of conditions and the following disclaimer in the documentation 
- *    and/or other materials provided with the distribution.
- * 
- * 3. Neither the name of the copyright holder nor the names of its contributors 
- *    may be used to endorse or promote products derived from this software 
- *    without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE 
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL 
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR 
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER 
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, 
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *   this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors
+ *   may be used to endorse or promote products derived from this software
+ *   without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * 
+ *
  * SPDX-License-Identifier: BSD-3-Clause
  */
-// @flow
-
 const errors = require('errors').factory;
-const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers'); 
-
+const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers');
 /**
  * Middleware to translate the subdomain (i.e. username) in requests (if any) into the URL path,
  * e.g. path "/streams" on host ignace.pryv.io becomes "/ignace/streams".
@@ -47,36 +44,37 @@ const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers');
  * @param {Array} ignoredPaths Paths for which no translation is needed
  * @return {Function}
  */
-module.exports = function (ignoredPaths: Array<string>) {
-  return function (req: express$Request, res: express$Response, next: express$NextFunction) {
-    if (isIgnoredPath(req.url)) { return next(); }
-
-    if (! req.headers.host) { return next(errors.missingHeader('Host')); }
-
+module.exports = function (ignoredPaths) {
+  return function (req, res, next) {
+    if (isIgnoredPath(req.url)) {
+      return next();
+    }
+    if (!req.headers.host) {
+      return next(errors.missingHeader('Host'));
+    }
     const hostChunks = req.headers.host.split('.');
-    
     // For security reasons, don't allow inserting anything into path unless it
-    // looks like a user name. 
+    // looks like a user name.
     const firstChunk = hostChunks[0];
-    if (! looksLikeUsername(firstChunk)) return next(); 
-    
+    if (!looksLikeUsername(firstChunk)) { return next(); }
     // Skip if it is already in the path.
     const pathPrefix = `/${firstChunk}`;
-    if (req.url.startsWith(pathPrefix)) return next(); 
-
+    if (req.url.startsWith(pathPrefix)) { return next(); }
     req.url = pathPrefix + req.url;
     next();
   };
-
-  function isIgnoredPath(url) {
+  function isIgnoredPath (url) {
     return ignoredPaths.some(function (ignoredPath) {
       return url.startsWith(ignoredPath);
     });
   }
 };
-
-function looksLikeUsername(candidate: string): boolean {
-  const reUsername = new RegExp(USERNAME_REGEXP_STR); 
+/**
+ * @param {string} candidate
+ * @returns {boolean}
+ */
+function looksLikeUsername (candidate) {
+  const reUsername = new RegExp(USERNAME_REGEXP_STR);
   const lowercasedUsername = candidate.toLowerCase(); // for retro-compatibility
   return reUsername.test(lowercasedUsername);
 }

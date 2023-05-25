@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+
+// wrapper for consistency with the other server components, which all have `bin/server`
+require('../src/server');

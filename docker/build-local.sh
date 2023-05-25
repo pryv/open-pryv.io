@@ -29,7 +29,7 @@ fi
 # ================= like registration button style and etc=============
 # =====================================================================
 
-bash ../scripts/setup-assets.bash
+bash ../scripts/setup-assets
 
 # =====================================================================
 # ================= Config parsing starts         =====================
@@ -52,7 +52,7 @@ echo "Hostname is $HOSTNAME"
 # =====================================================================
 
 # download or update rec.la domain certificates
-bash ../scripts/download-recla-certificates.sh
+bash ../scripts/download-recla-certificates
 
 # =====================================================================
 # ================= Start docker compose          =====================

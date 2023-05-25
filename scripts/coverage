@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# Run every possible test, with both Mongo and SQLite storage;
+# meant to be called from `just test-cover-all`
+
+just clean-data &
+just test all
+just clean-data &
+just test-sqlite api-server
+just test-sqlite storage
+just test-sqlite mall

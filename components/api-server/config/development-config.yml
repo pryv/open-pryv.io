@@ -12,11 +12,11 @@ logs:
       days: 14
 auth:
   adminAccessKey: CHANGE_ME_WITH_SOMETHING
-  trustedApps: "*@https://pryv.github.io*, *@https://*.rec.la*"
+  trustedApps: "*@https://pryv.github.io*, *@https://*.rec.la*, *@http://127.0.0.1*"
 serviceInfoUrl: file://test/service-info.json
 services:
   email:
-    enabled: 
+    enabled:
       welcome: false
       resetPassword: false
   register:
@@ -31,11 +31,11 @@ openSource:
   isActive: false
 dnsLess:
   isActive: true
-  publicUrl: http://localhost:3000/
+  publicUrl: http://127.0.0.1:3000/
 custom:
   systemStreams:
     account:
-      - 
+      -
         isIndexed: true
         isUnique: true
         isShown: true
@@ -45,10 +45,10 @@ custom:
         id: email
         isRequiredInValidation: true
     other:
-      - 
+      -
         isShown: true
         isEditable: true
-        type: myCustomStream/string
+        type: my-custom-stream/string
         name: myCustomStream
         id: myCustomStream
 user-account:

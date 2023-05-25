@@ -1,4 +1,5 @@
 ---
+testsSkipForwardToRegister: true
 auth:
   adminAccessKey: some_key_yo
   trustedApps: pryv-test@http://test.pryv.local, pryv-test-no-cors@*, *@https://*.rec.la*
@@ -20,7 +21,7 @@ services:
     welcomeTemplate: welcome-email
     resetPasswordTemplate: reset-password"
   register:
-    url: http://localhost:5123
+    url: http://127.0.0.1:5123
     key: test-system-key
 axonMessaging:
   enabled: true
@@ -39,7 +40,7 @@ openSource:
   isActive: false
 dnsLess:
   isActive: false
-  publicUrl: http://localhost:3000/
+  publicUrl: http://127.0.0.1:3000/
 influxdb:
   host: 127.0.0.1
   port: 8086
@@ -68,20 +69,18 @@ custom:
       type: email/string
       name: Email
       isRequiredInValidation: true
+  dataStores:
+    - id: dummy
+      name: Dummy Store
+      path: ../../mall/test-helpers/dummyDataStore # should be fully qualified path
+      settings: null
+    - id: faulty
+      name: Faulty Store
+      path: ../../mall/test-helpers/faultyDataStore # should be fully qualified path
+      settings: null
 backwardCompatibility:
   systemStreams:
     prefix:
       isActive: false
-stores:
-  loadExternal:
-    - id: dummy
-      name: Dummy Store
-      path: ../implementations/dummy # should be fully qualified path for external store
-      config: null
-    - id: faulty
-      name: Faulty Store
-      path: ../implementations/faulty # should be fully qualified path
-      config: null
 trace:
   enable: true
-    

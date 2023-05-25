@@ -1,0 +1,20 @@
+{
+  "version": "0.3.0",
+  "types": {
+    "pryv-test/array-num": {
+      "description": "array of numbers for test VK9J",
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    }
+  },
+  "extras": {
+  },
+  "classes": {
+    "pryv-test": {
+      "description": "types for Pryv tests"
+    }
+  },
+  "sets": {}
+}

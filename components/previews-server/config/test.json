@@ -1,8 +1,0 @@
-{
-  "logs": {
-    "console": {
-      "timestamp": false
-    }
-  },
-  "serviceInfoUrl": "file://test/service-info.json"
-}
