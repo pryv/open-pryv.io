@@ -32,51 +32,53 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-const { ALL_EVENTS_TAG } = require('./schemas/events');
+// Migration of v0 to 1 is done in the following steps:
+// 1. Open v0
+// 2. Copy events to v1
+// 3. Delete v0 file
 
-/**
- * Transform queries for SQLite - to be run on
- * @param {} streamQuery
- */
-exports.toSQLiteQuery = function toSQLiteQuery (streamQuery) {
-  if (streamQuery == null) return null;
+// We cannot simply update the schema as we cannot alter NULLABLE state of columns
 
-  if (streamQuery.length === 1) {
-    return processAndBlock(streamQuery[0]);
-  } else { // pack in $or
-    return '(' + streamQuery.map(processAndBlock).join(') OR (') + ')';
-  }
+// changes:
+// - renamed duration to endTime
+// - added deleted
+// - added attachments
+// changed most of the fields to be nullable
+// - added headId
 
-  function processAndBlock (andBlock) {
-    if (typeof andBlock === 'string') return '"' + andBlock + '"';
+const SQLite3 = require('better-sqlite3');
+const fs = require('fs/promises');
 
-    const anys = [];
-    const nots = [];
-    for (const andItem of andBlock) {
-      if (andItem.any != null && andItem.any.length > 0) {
-        if (andItem.any.indexOf('*') > -1) continue; // skip and with '*';
-        if (andItem.any.length === 1) {
-          anys.push(addQuotes(andItem.any)[0]);
-        } else {
-          anys.push('(' + addQuotes(andItem.any).join(' OR ') + ')');
-        }
-      } else if (andItem.not != null && andItem.not.length > 0) {
-        nots.push(' NOT ' + addQuotes(andItem.not).join(' NOT '));
-      } else {
-        throw new Error('Go a query block with no any or not item ' + andBlock);
-      }
+module.exports = async function migrateUserDB (v0dbPath, v1userDB, logger) {
+  const v0db = new SQLite3(v0dbPath);
+  const v0EventsIterator = v0db.prepare('SELECT * FROM events').iterate();
+  const res = { count: 0 };
+
+  v1userDB.db.exec('BEGIN');
+  for (const eventData of v0EventsIterator) {
+    eventData.eventid = eventData.id;
+    delete eventData.id;
+
+    if (eventData.duration) { // NOT null, 0, undefined
+      eventData.endTime = eventData.time + eventData.duration;
+    } else {
+      eventData.endTime = eventData.time;
     }
 
-    if (anys.length === 0) {
-      anys.push('"' + ALL_EVENTS_TAG + '"');
+    if (eventData.streamIds != null) {
+      eventData.streamIds = eventData.streamIds.split(' ');
     }
 
-    const res = anys.join(' AND ') + nots.join('');
-    if (res === ALL_EVENTS_TAG) return null;
-    return res;
+    if (eventData.content != null) {
+      eventData.content = JSON.parse(eventData.content);
+    }
+    delete eventData.duration;
+    res.count++;
+    v1userDB.createEventSync(eventData);
   }
+  v1userDB.db.exec('COMMIT');
+
+  v0db.close();
+  await fs.unlink(v0dbPath);
+  return res;
 };
-
-function addQuotes (array) {
-  return array.map((x) => '"' + x + '"');
-}

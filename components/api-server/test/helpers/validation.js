@@ -77,7 +77,7 @@ const schemas = exports.schemas = {
  *    - {Function} sanitizeFn A data cleanup function to apply before checking response body
  *    - {String} sanitizeTarget The key of the response body property to apply the sanitize fn to
  *    - {Object} body Optional
- * @param {Function} done Optional
+ * @param {Function} [done] Optional
  */
 exports.check = function (response, expected, done) {
   assert.exists(response, '"response" must be a valid HTTP response object');
@@ -150,7 +150,7 @@ function checkAccessIntegrity (access) {
  *    - {Number} status
  *    - {String} id
  *    - {Object} data Optional
- * @param {Function} done Optional
+ * @param {Function} [done] Optional
  */
 exports.checkError = function (response, expected, done) {
   response.statusCode.should.eql(expected.status);

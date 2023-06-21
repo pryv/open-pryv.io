@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "@pryv/boiler": "https://github.com/pryv/pryv-boiler.git#semver:^1.2.1",
-    "@pryv/datastore": "git+ssh://git@github.com/pryv/pryv-datastore.git",
+    "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
     "@pryv/stable-object-representation": "^1.1.4",
     "async": "^2.6.4",
     "awaiting": "^3.0.0",
@@ -73,7 +73,7 @@
     "socketio-wildcard": "^2.0.0",
     "superagent": "^8.0.3",
     "tchannel": "https://github.com/pryv/tchannel-node#v4.0.2",
-    "unix-timestamp": "^1.0.2",
+    "unix-timestamp": "^1.0.3",
     "url": "^0.11.0",
     "winston": "^3.8.2",
     "winston-syslog": "^2.7.0",

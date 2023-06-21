@@ -149,7 +149,7 @@ describe('[ACCP] accesses (app)', function () {
         modifiedBy: 'test'
       }
     ];
-    user = Object.assign({}, testData.users[0]);
+    user = structuredClone(testData.users[0]);
     additionalTestAccesses.forEach((a) => {
       a.apiEndpoint = buildApiEndpoint(user.username, a.token);
       integrity.accesses.set(a);
@@ -231,7 +231,7 @@ describe('[ACCP] accesses (app)', function () {
             status: 201,
             schema: methodsSchema.create.result
           });
-          const expected = _.cloneDeep(data);
+          const expected = structuredClone(data);
           expected.id = res.body.access.id;
           expected.token = res.body.access.token;
           expected.apiEndpoint = buildApiEndpoint('userzero', expected.token);

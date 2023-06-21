@@ -252,7 +252,7 @@ async function getServiceRegisterConn () {
 function safetyCleanDuplicate (foundDuplicates, username, params) {
   if (foundDuplicates == null) { return foundDuplicates; }
   const res = {};
-  const newParams = Object.assign({}, params);
+  const newParams = structuredClone(params);
   if (username != null) { newParams.username = username; }
   for (const key of Object.keys(foundDuplicates)) {
     if (foundDuplicates[key] === newParams[key]) {

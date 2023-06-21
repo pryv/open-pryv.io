@@ -81,7 +81,7 @@ exports.resetAccesses = function (done, user, personalAccessToken, addToId) {
     accesses[0].token = personalAccessToken;
   }
   if (addToId) {
-    const data = _.cloneDeep(accesses);
+    const data = structuredClone(accesses);
     for (let i = 0; i < data.length; i++) {
       data[i].id += u.id;
     }
@@ -123,7 +123,7 @@ exports.resetEvents = function (done, user) {
   // deleteData(storage.user.events, user || defaultUser, events, done);
   user = user || defaultUser;
   const eventsToWrite = events.map((e) => {
-    const eventToWrite = _.cloneDeep(e);
+    const eventToWrite = structuredClone(e);
     delete eventToWrite.tags;
     return eventToWrite;
   });
@@ -155,7 +155,7 @@ exports.resetStreams = function (done, user) {
   async function addStreams (arrayOfStreams) {
     for (const stream of arrayOfStreams) {
       const children = stream?.children || [];
-      const streamData = _.clone(stream);
+      const streamData = structuredClone(stream);
       delete streamData.children;
       await mall.streams.create(myUser.id, streamData);
       await addStreams(children);

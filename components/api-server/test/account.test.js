@@ -57,7 +57,7 @@ const encryption = require('utils').encryption;
 let isOpenSource = false;
 
 describe('[ACCO] account', function () {
-  const user = Object.assign({}, testData.users[0]);
+  const user = structuredClone(testData.users[0]);
   let usersRepository = null;
   let userAccountStorage = null;
 
@@ -98,7 +98,7 @@ describe('[ACCO] account', function () {
 
     it('[PHSB] must return the user\'s account details', function (done) {
       request.get(basePath).end(function (res) {
-        const expected = _.clone(user);
+        const expected = structuredClone(user);
         delete expected.id;
         delete expected.password;
         delete expected.storageUsed;
@@ -124,7 +124,7 @@ describe('[ACCO] account', function () {
 
     it('[0PPV] must modify account details with the sent data, notifying register if e-mail changed',
       function (done) {
-        const settings = _.cloneDeep(helpers.dependencies.settings);
+        const settings = structuredClone(helpers.dependencies.settings);
         settings.testsSkipForwardToRegister = false;
         const updatedData = {
           email: 'userzero.new@test.com',
@@ -134,7 +134,7 @@ describe('[ACCO] account', function () {
         // setup registration server mock
         let regServerCalled = false;
         helpers.instanceTestSetup.set(settings, {
-          context: _.defaults({ username: user.username }, settings.services.register),
+          context: Object.assign({}, settings.services.register, { username: user.username }),
           execute: function () {
             const scope = require('nock')(this.context.url);
             scope.put('/users')
@@ -178,7 +178,7 @@ describe('[ACCO] account', function () {
               if (!isOpenSource) { // no notification in openSource
                 assert.isOk(regServerCalled);
               }
-              const expected = _.defaults(updatedData, user);
+              const expected = Object.assign({}, user, updatedData);
               delete expected.id;
               delete expected.password;
               delete expected.storageUsed;
@@ -420,7 +420,7 @@ describe('[ACCO] account', function () {
           });
         },
         function verifyNewPassword (stepDone) {
-          request.login(_.defaults({ password: data.newPassword }, user), stepDone);
+          request.login(Object.assign({}, user, { password: data.newPassword }), stepDone);
         },
         async function checkPasswordInHistory () {
           assert.isTrue(await userAccountStorage.passwordExistsInHistory(user.id, data.oldPassword, 2), 'missing previous password in history');
@@ -455,7 +455,7 @@ describe('[ACCO] account', function () {
     });
 
     describe('[APWD] When password rules are enabled', function () {
-      const settings = _.merge(_.cloneDeep(helpers.dependencies.settings), helpers.passwordRules.settingsOverride);
+      const settings = _.merge(structuredClone(helpers.dependencies.settings), helpers.passwordRules.settingsOverride);
       const baseData = { oldPassword: user.password };
 
       before(async () => {
@@ -465,7 +465,7 @@ describe('[ACCO] account', function () {
 
       describe('Complexity rules:', function () {
         it('[1YPT] must return an error if the new password is too short', async () => {
-          const data = _.defaults({ newPassword: helpers.passwordRules.passwords.badTooShort }, baseData);
+          const data = Object.assign({}, baseData, { newPassword: helpers.passwordRules.passwords.badTooShort });
           const res = await request.post(path).send(data);
           validation.checkError(res, {
             status: 400,
@@ -475,7 +475,7 @@ describe('[ACCO] account', function () {
         });
 
         it('[352R] must accept the new password if it is long enough', async () => {
-          const data = _.defaults({ newPassword: helpers.passwordRules.passwords.good3CharCats }, baseData);
+          const data = Object.assign({}, baseData, { newPassword: helpers.passwordRules.passwords.good3CharCats });
           const res = await request.post(path).send(data);
           validation.check(res, {
             status: 200
@@ -484,7 +484,7 @@ describe('[ACCO] account', function () {
         });
 
         it('[663A] must return an error if the new password does not contains characters from enough categories', async () => {
-          const data = _.defaults({ newPassword: helpers.passwordRules.passwords.bad2CharCats }, baseData);
+          const data = Object.assign({}, baseData, { newPassword: helpers.passwordRules.passwords.bad2CharCats });
           const res = await request.post(path).send(data);
           validation.checkError(res, {
             status: 400,
@@ -495,8 +495,8 @@ describe('[ACCO] account', function () {
 
         it('[OY2G] must accept the new password if it contains characters from enough categories', async () => {
           // also tests checking for all 4 categories
-          await server.ensureStartedAsync(_.merge(_.cloneDeep(settings), { auth: { passwordComplexityMinCharCategories: 4 } }));
-          const data = _.defaults({ newPassword: helpers.passwordRules.passwords.good4CharCats }, baseData);
+          await server.ensureStartedAsync(_.merge(structuredClone(settings), { auth: { passwordComplexityMinCharCategories: 4 } }));
+          const data = Object.assign({}, baseData, { newPassword: helpers.passwordRules.passwords.good4CharCats });
           const res = await request.post(path).send(data);
           validation.check(res, {
             status: 200
@@ -508,7 +508,7 @@ describe('[ACCO] account', function () {
       describe('Reuse rules:', function () {
         it('[AFX4] must return an error if the new password is found in the N last passwords used', async () => {
           const passwordsHistory = await setupPasswordHistory(settings.auth.passwordPreventReuseHistoryLength);
-          const data = _.defaults({ newPassword: passwordsHistory[0] }, baseData);
+          const data = Object.assign({}, baseData, { newPassword: passwordsHistory[0] });
           const res = await request.post(path).send(data);
           validation.checkError(res, {
             status: 400,
@@ -519,7 +519,7 @@ describe('[ACCO] account', function () {
 
         it('[6XXP] must accept the new password if different from the N last passwords used', async () => {
           const passwordsHistory = await setupPasswordHistory(settings.auth.passwordPreventReuseHistoryLength + 1);
-          const data = _.defaults({ newPassword: passwordsHistory[0] }, baseData);
+          const data = Object.assign({}, baseData, { newPassword: passwordsHistory[0] });
           const res = await request.post(path).send(data);
           validation.check(res, {
             status: 200
@@ -531,7 +531,7 @@ describe('[ACCO] account', function () {
           const passwordsHistory = [];
           for (let n = historyLength; n >= 1; n--) {
             const pwd = `${helpers.passwordRules.passwords.good4CharCats}-${n}`;
-            const res = await request.post(path).send(_.defaults({ newPassword: pwd }, baseData));
+            const res = await request.post(path).send(Object.assign({}, baseData, { newPassword: pwd }));
             validation.check(res, { status: 200 });
             passwordsHistory.push(pwd);
             baseData.oldPassword = pwd;
@@ -541,7 +541,7 @@ describe('[ACCO] account', function () {
       });
 
       describe('Age rules:', function () {
-        const passwordAgeSettings = _.merge(_.cloneDeep(settings), { auth: { passwordAgeMinDays: 1 } });
+        const passwordAgeSettings = _.merge(structuredClone(settings), { auth: { passwordAgeMinDays: 1 } });
 
         it('[J4O6] must return an error if the current password’s age is below the set minimum', async () => {
           await server.ensureStartedAsync(passwordAgeSettings);
@@ -552,7 +552,7 @@ describe('[ACCO] account', function () {
           await userAccountStorage.addPasswordHash(user.id, passwordHash, 'test', timestamp.now('-23h'));
 
           // try and change
-          const data = _.defaults({ newPassword: helpers.passwordRules.passwords.good4CharCats }, baseData);
+          const data = Object.assign({}, baseData, { newPassword: helpers.passwordRules.passwords.good4CharCats });
           const res = await request.post(path).send(data);
           validation.checkError(res, {
             status: 400,
@@ -570,7 +570,7 @@ describe('[ACCO] account', function () {
           await userAccountStorage.addPasswordHash(user.id, passwordHash, 'test', timestamp.now('-25h'));
 
           // try and change
-          const data = _.defaults({ newPassword: helpers.passwordRules.passwords.good4CharCats }, baseData);
+          const data = Object.assign({}, baseData, { newPassword: helpers.passwordRules.passwords.good4CharCats });
           const res = await request.post(path).send(data);
           validation.check(res, {
             status: 200
@@ -593,7 +593,7 @@ describe('[ACCO] account', function () {
 
     it('[G1VN] "request" must trigger an email with a reset token, store that token, ' +
        'then "reset" must reset the password to the given value', function (done) {
-      const settings = _.cloneDeep(helpers.dependencies.settings);
+      const settings = structuredClone(helpers.dependencies.settings);
       let resetToken;
       const newPassword = 'Dr0ws$4p';
 
@@ -645,10 +645,10 @@ describe('[ACCO] account', function () {
           );
         },
         function doReset (stepDone) {
-          const data = _.defaults({
+          const data = Object.assign({}, authData, {
             resetToken,
             newPassword
-          }, authData);
+          });
           request.post(resetPath).send(data)
             .unset('authorization')
             .set('Origin', 'http://test.pryv.local')
@@ -660,19 +660,19 @@ describe('[ACCO] account', function () {
             });
         },
         function verifyNewPassword (stepDone) {
-          request.login(_.defaults({ password: newPassword }, user), stepDone);
+          request.login(Object.assign({}, user, { password: newPassword }), stepDone);
         }
       ], done);
     });
 
     it('[HV0V] must not trigger a reset email if mailing is deactivated', function (done) {
-      const settings = _.cloneDeep(helpers.dependencies.settings);
+      const settings = structuredClone(helpers.dependencies.settings);
       settings.services.email.enabled = false;
       testResetMailNotSent(settings, done);
     });
 
     it('[VZ1W] must not trigger a reset email if reset mail is deactivated', function (done) {
-      const settings = _.cloneDeep(helpers.dependencies.settings);
+      const settings = structuredClone(helpers.dependencies.settings);
       settings.services.email.enabled = {
         resetPassword: false
       };
@@ -736,10 +736,10 @@ describe('[ACCO] account', function () {
           );
         },
         function doReset (stepDone) {
-          const data = _.defaults({
+          const data = Object.assign({}, authData, {
             resetToken,
             newPassword
-          }, authData);
+          });
           // use user1's resetToken to reset user0's password
           request.post(resetPath).send(data)
             .unset('authorization')
@@ -775,10 +775,10 @@ describe('[ACCO] account', function () {
     });
 
     it('[PKBP] "reset" must return an error if the reset token is invalid/expired', function (done) {
-      const data = _.defaults({
+      const data = Object.assign({}, authData, {
         resetToken: 'bad-token',
         newPassword: '>-=(♥️)=-<'
-      }, authData);
+      });
       request.post(resetPath).send(data)
         .unset('authorization')
         .set('Origin', 'http://test.pryv.local')
@@ -829,7 +829,7 @@ describe('[ACCO] account', function () {
           );
         },
         function doResetFirst (stepDone) {
-          const data = _.defaults({ resetToken, newPassword }, authData);
+          const data = Object.assign({}, authData, { resetToken, newPassword });
           // use user1's resetToken to reset user0's password
           request.post(resetPath).send(data)
             .unset('authorization')
@@ -843,7 +843,7 @@ describe('[ACCO] account', function () {
             });
         },
         function doResetSecond (stepDone) {
-          const data = _.defaults({ resetToken, newPassword }, authData);
+          const data = Object.assign({}, authData, { resetToken, newPassword });
           // use user1's resetToken to reset user0's password
           request.post(resetPath).send(data)
             .unset('authorization')
@@ -860,7 +860,7 @@ describe('[ACCO] account', function () {
 
     describe('[RPWD] When password rules are enabled', function () {
       it('[HZCU] must fail if the new password does not comply (smoke test; see "/change-password" tests)', function (done) {
-        const settings = _.merge(_.cloneDeep(helpers.dependencies.settings), helpers.passwordRules.settingsOverride);
+        const settings = _.merge(structuredClone(helpers.dependencies.settings), helpers.passwordRules.settingsOverride);
         settings.services.email.enabled = true;
 
         let resetToken;
@@ -912,10 +912,10 @@ describe('[ACCO] account', function () {
             );
           },
           function doReset (stepDone) {
-            const data = _.defaults({
+            const data = Object.assign({}, authData, {
               resetToken,
               newPassword: badPassword
-            }, authData);
+            });
             request.post(resetPath).send(data)
               .unset('authorization')
               .set('Origin', 'http://test.pryv.local')

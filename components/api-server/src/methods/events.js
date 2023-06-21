@@ -272,7 +272,7 @@ module.exports = async function (api) {
   function applyPrerequisitesForCreation (context, params, result, next) {
     const event = context.newEvent;
     // default time is now
-    _.defaults(event, { time: timestamp.now() });
+    event.time ??= timestamp.now();
     if (event.tags == null) {
       event.tags = [];
     }
@@ -584,11 +584,11 @@ module.exports = async function (api) {
         return next(errors.invalidOperation('Normal events cannot be updated to HF-events and vice versa.'));
       }
     }
-    context.oldEvent = _.cloneDeep(event);
+    context.oldEvent = structuredClone(event);
     context.newEvent = _.extend(event, eventUpdate);
     // clientData key-map handling
     if (eventUpdate.clientData != null) {
-      context.newEvent.clientData = _.cloneDeep(context.oldEvent.clientData || {});
+      context.newEvent.clientData = structuredClone(context.oldEvent.clientData || {});
       for (const [key, value] of Object.entries(eventUpdate.clientData)) {
         if (value == null) {
           // delete keys with null value
@@ -623,43 +623,31 @@ module.exports = async function (api) {
     next();
   }
   async function updateEvent (context, params, result, next) {
+    // deals with attachments if any
     const files = sanitizeRequestFiles(params.files);
     delete params.files;
     if (files != null && files.length > 0) {
-      const attachmentItems = [];
+      let eventWithUpdatedAttachments = null;
       for (const file of files) {
-        attachmentItems.push({
+        const attachmentItem = {
           fileName: file.originalname,
           type: file.mimetype,
           size: file.size,
           integrity: file.integrity,
           attachmentData: fs.createReadStream(file.path) // simulate full pass-thru of attachement until implemented
-        });
+        };
+        eventWithUpdatedAttachments = await mall.events.addAttachment(context.user.id, context.newEvent.id, attachmentItem);
+        // update attachments property of newEvent
+        context.newEvent.attachments = eventWithUpdatedAttachments.attachments;
       }
-      try {
-        const updatedEvent = await mall.events.updateWithAttachments(context.user.id, context.newEvent, attachmentItems);
-        updatedEvent.attachments = setFileReadToken(context.access, updatedEvent.attachments);
-        updatedEvent.streamId = updatedEvent.streamIds[0];
-        result.event = updatedEvent;
-      } catch (err) {
-        if (err instanceof APIError) { return next(err); }
-        return next(errors.unexpectedError(err));
-      }
-      return next(); // --- update has been done
     }
-    try {
-      const updatedEvent = await mall.events.update(context.user.id, context.newEvent);
-      // if update was not done and no errors were catched
-      //, perhaps user is trying to edit account streams
-      if (!updatedEvent) {
-        return next(errors.invalidOperation(ErrorMessages[ErrorIds.ForbiddenAccountEventModification])); // WTF this was checked earlier
-      }
-      updatedEvent.streamId = updatedEvent.streamIds[0];
-      result.event = updatedEvent;
-      result.event.attachments = setFileReadToken(context.access, result.event.attachments);
-    } catch (err) {
-      return next(err);
-    }
+
+    // -- update the event (to save tacking properties and recalculate integrity)
+    const updatedEvent = await mall.events.update(context.user.id, context.newEvent);
+
+    updatedEvent.attachments = setFileReadToken(context.access, updatedEvent.attachments);
+    updatedEvent.streamId = updatedEvent.streamIds[0];
+    result.event = updatedEvent;
     next();
   }
   /**
@@ -968,26 +956,18 @@ module.exports = async function (api) {
     }
   }
   async function flagAsTrashed (context, params, result, next) {
-    const newEvent = _.cloneDeep(context.oldEvent);
+    const newEvent = structuredClone(context.oldEvent);
     newEvent.trashed = true;
     context.updateTrackingProperties(newEvent);
-    try {
-      if (context.doesEventBelongToAccountStream) {
-        await updateDeletionOnPlatform(context.user.username, context.oldEvent.content, context.accountStreamId);
-      }
-      const updatedEvent = await mall.events.update(context.user.id, newEvent);
-      // if update was not done and no errors were catched
-      //, perhaps user is trying to edit account streams ---- WTF
-      if (updatedEvent == null) {
-        return next(errors.invalidOperation(ErrorMessages[ErrorIds.ForbiddenAccountEventModification]));
-      }
-      _applyBackwardCompatibilityOnEvent(updatedEvent, context);
-      result.event = updatedEvent;
-      result.event.attachments = setFileReadToken(context.access, result.event.attachments);
-      next();
-    } catch (err) {
-      return next(errors.unexpectedError(err));
+    if (context.doesEventBelongToAccountStream) {
+      await updateDeletionOnPlatform(context.user.username, context.oldEvent.content, context.accountStreamId);
     }
+    const updatedEvent = await mall.events.update(context.user.id, newEvent);
+
+    _applyBackwardCompatibilityOnEvent(updatedEvent, context);
+    result.event = updatedEvent;
+    result.event.attachments = setFileReadToken(context.access, result.event.attachments);
+    next();
   }
   function deleteWithData (context, params, result, next) {
     async.series([
@@ -1024,33 +1004,27 @@ module.exports = async function (api) {
   );
 
   async function deleteAttachment (context, params, result, next) {
-    try {
-      const attIndex = getAttachmentIndex(context.event.attachments, params.fileId);
-      if (attIndex === -1) {
-        return next(errors.unknownResource('attachment', params.fileId));
-      }
-      const deletedAtt = context.event.attachments[attIndex];
-      const newEvent = _.cloneDeep(context.oldEvent);
-      context.updateTrackingProperties(newEvent);
-      const newEventData = await mall.events.updateDeleteAttachment(context.user.id, newEvent, params.fileId);
-      // if update was not done and no errors were catched
-      //, perhaps user is trying to edit account streams
-      if (!newEventData) {
-        return next(errors.invalidOperation(ErrorMessages[ErrorIds.ForbiddenAccountEventModification]));
-      }
-      // To remove when streamId not necessary
-      newEventData.streamId = newEventData.streamIds[0];
-      result.event = newEventData;
-      result.event.attachments = setFileReadToken(context.access, result.event.attachments);
-      const storagedUsed = await usersRepository.getStorageUsedByUserId(context.user.id);
-      // approximately update account storage size
-      storagedUsed.attachedFiles -= deletedAtt.size;
-      await usersRepository.updateOne(context.user, storagedUsed, 'system');
-      pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
-      next();
-    } catch (err) {
-      next(err);
+    const attIndex = getAttachmentIndex(context.event.attachments, params.fileId);
+    if (attIndex === -1) {
+      return next(errors.unknownResource('attachment', params.fileId));
     }
+    const deletedAtt = context.event.attachments[attIndex];
+    const eventDataWithDeletedAttach = await mall.events.deleteAttachment(context.user.id, context.event.id, params.fileId);
+
+    // update tracking properties on event
+    context.updateTrackingProperties(eventDataWithDeletedAttach);
+    const newEvent = await mall.events.update(context.user.id, eventDataWithDeletedAttach);
+
+    // To remove when streamId not necessary
+    newEvent.streamId = newEvent.streamIds[0];
+    result.event = newEvent;
+    result.event.attachments = setFileReadToken(context.access, result.event.attachments);
+    const storagedUsed = await usersRepository.getStorageUsedByUserId(context.user.id);
+    // approximately update account storage size
+    storagedUsed.attachedFiles -= deletedAtt.size;
+    await usersRepository.updateOne(context.user, storagedUsed, 'system');
+    pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
+    next();
   }
   async function checkEventForDelete (context, params, result, next) {
     const eventId = params.id;
@@ -1074,7 +1048,7 @@ module.exports = async function (api) {
     // save event from the database as an oldEvent
     context.oldEvent = event;
     // create an event object that could be modified
-    context.event = Object.assign({}, event);
+    context.event = structuredClone(event);
     next();
   }
   /**

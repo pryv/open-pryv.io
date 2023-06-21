@@ -33,6 +33,7 @@
  */
 
 const _ = require('lodash');
+const assert = require('assert');
 const storeDataUtils = require('./helpers/storeDataUtils');
 const eventsUtils = require('./helpers/eventsUtils');
 const eventsQueryUtils = require('./helpers/eventsQueryUtils');
@@ -224,6 +225,8 @@ class MallUserEvents {
    * @returns {Promise<any>}
    */
   async create (userId, eventData, mallTransaction) {
+    assert.ok(eventData.attachments == null || eventData.attachments.length === 0,
+      'Attachments must be added after event creation');
     const { storeId, eventsStore, storeEvent, storeTransaction } = await this.prepareForStore(eventData, mallTransaction);
     try {
       const res = await eventsStore.create(userId, storeEvent, storeTransaction);
@@ -258,15 +261,17 @@ class MallUserEvents {
 
   /**
    * @param {string} userId
-   * @param {any} eventDataWithoutAttachments
-   * @param {boolean} isExistingEvent
-   * @param {Array<AttachmentItem>} attachmentsItems
+   * @param {string} eventId
+   * @param {AttachmentItem} attachmentItem
    * @param {MallTransaction} mallTransaction
-   * @returns {Promise<any>}
+   * @returns {Promise<Event>}
    */
-  async saveAttachedFiles (userId, eventDataWithoutAttachments, isExistingEvent, attachmentsItems, mallTransaction) {
-    const { eventsStore, storeEvent, storeTransaction } = await this.prepareForStore(eventDataWithoutAttachments, mallTransaction);
-    return await eventsStore.saveAttachedFiles(userId, storeEvent.id, attachmentsItems, storeTransaction);
+  async addAttachment (userId, eventId, attachmentItem, mallTransaction) {
+    const [storeId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(eventId);
+    const eventsStore = this.eventsStores.get(storeId);
+    const storeEvent = await eventsStore.addAttachment(userId, storeEventId, attachmentItem);
+    const event = eventsUtils.convertEventFromStore(storeId, storeEvent);
+    return event;
   }
 
   /**
@@ -285,14 +290,21 @@ class MallUserEvents {
 
   /**
    * @param {string} userId
-   * @param {any} eventData
+   * @param {string} eventId
    * @param {string} fileId
    * @param {MallTransaction} mallTransaction
    * @returns {Promise<any>}
    */
-  async deleteAttachedFile (userId, eventData, fileId, mallTransaction) {
-    const { eventsStore, storeEvent, storeTransaction } = await this.prepareForStore(eventData, mallTransaction);
-    return await eventsStore.deleteAttachedFile(userId, storeEvent.id, fileId, storeTransaction);
+  async deleteAttachment (userId, eventId, fileId, mallTransaction) {
+    const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(eventId);
+    const eventsStore = this.eventsStores.get(storeId);
+    const storeTransaction = mallTransaction ? await mallTransaction.getStoreTransaction(storeId) : null;
+    if (!eventsStore) {
+      throw errorFactory.unknownResource(`Unknown store "${storeId}"`, storeId);
+    }
+    const eventFromStore = await eventsStore.deleteAttachment(userId, eventId, fileId, storeTransaction);
+    const event = eventsUtils.convertEventFromStore(storeId, eventFromStore);
+    return event;
   }
 
   /**
@@ -303,38 +315,11 @@ class MallUserEvents {
    * @returns {Promise<void>}
    */
   async createWithAttachments (userId, eventDataWithoutAttachments, attachmentsItems, mallTransaction) {
-    const attachmentsResponse = await this.saveAttachedFiles(userId, eventDataWithoutAttachments, false, attachmentsItems, mallTransaction);
-    const eventDataWithNewAttachments = _attachmentsResponseToEvent(eventDataWithoutAttachments, attachmentsResponse, attachmentsItems);
-    return await this.create(userId, eventDataWithNewAttachments, mallTransaction);
-  }
-
-  /**
-   * @param {string} userId
-   * @param {any} eventDataWithoutNewAttachments
-   * @param {Array<AttachmentItem>} newAttachmentsItems
-   * @param {MallTransaction} mallTransaction
-   * @returns {Promise<void>}
-   */
-  async updateWithAttachments (userId, eventDataWithoutNewAttachments, newAttachmentsItems, mallTransaction) {
-    const attachmentsResponse = await this.saveAttachedFiles(userId, eventDataWithoutNewAttachments, true, newAttachmentsItems, mallTransaction);
-    const eventDataWithNewAttachments = _attachmentsResponseToEvent(eventDataWithoutNewAttachments, attachmentsResponse, newAttachmentsItems);
-    return await this.update(userId, eventDataWithNewAttachments, mallTransaction);
-  }
-
-  /**
-   * @param {string} userId
-   * @param {any} eventData
-   * @param {string} attachmentId
-   * @param {MallTransaction} mallTransaction
-   * @returns {Promise<void>}
-   */
-  async updateDeleteAttachment (userId, eventData, attachmentId, mallTransaction) {
-    await this.deleteAttachedFile(userId, eventData, attachmentId, mallTransaction);
-    const newEventData = _.cloneDeep(eventData);
-    newEventData.attachments = newEventData.attachments.filter((attachment) => {
-      return attachment.id !== attachmentId;
-    });
-    return await this.update(userId, newEventData, mallTransaction);
+    let event = await this.create(userId, eventDataWithoutAttachments);
+    for (const attachmentItem of attachmentsItems) {
+      event = await this.addAttachment(userId, event.id, attachmentItem);
+    }
+    return event;
   }
 
   // ----------------- UPDATE ----------------- //
@@ -442,7 +427,7 @@ class MallUserEvents {
           if (update.fieldsToDelete.includes('attachments') &&
                         eventData.attachments != null) {
             for (const attachment of eventData.attachments) {
-              await mallEvents.deleteAttachedFile(userId, eventData, attachment.id, mallTransaction);
+              await mallEvents.deleteAttachment(userId, eventData, attachment.id, mallTransaction);
             }
           }
           for (const field of update.fieldsToDelete) {
@@ -511,23 +496,3 @@ class MallUserEvents {
   }
 }
 module.exports = MallUserEvents;
-
-/**
- * Add attachment response to eventData
- * @returns {any}
- */
-function _attachmentsResponseToEvent (eventDataWithoutNewAttachments, attachmentsResponse, attachmentsItems) {
-  const eventDataWithNewAttachments = _.cloneDeep(eventDataWithoutNewAttachments);
-  eventDataWithNewAttachments.attachments =
-        eventDataWithNewAttachments.attachments || [];
-  for (let i = 0; i < attachmentsResponse.length; i++) {
-    eventDataWithNewAttachments.attachments.push({
-      id: attachmentsResponse[i].id,
-      fileName: attachmentsItems[i].fileName,
-      type: attachmentsItems[i].type,
-      size: attachmentsItems[i].size,
-      integrity: attachmentsItems[i].integrity
-    });
-  }
-  return eventDataWithNewAttachments;
-}

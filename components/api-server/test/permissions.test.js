@@ -36,7 +36,6 @@ const async = require('async');
 const fs = require('fs');
 const path = require('path');
 const timestamp = require('unix-timestamp');
-const _ = require('lodash');
 const { assert } = require('chai');
 
 require('./test-helpers');
@@ -56,7 +55,7 @@ describe('[ACCP] Access permissions', function () {
     isAuditActive = (!config.get('openSource:isActive')) && config.get('audit:active');
   });
 
-  const user = Object.assign({}, testData.users[0]);
+  const user = structuredClone(testData.users[0]);
   let request = null; // must be set after server instance started
   const filesReadTokenSecret = helpers.dependencies.settings.auth.filesReadTokenSecret;
 
@@ -147,7 +146,7 @@ describe('[ACCP] Access permissions', function () {
           state: 'all'
         };
         request.get(basePath, token(1)).unset('Authorization').query(query).end(function (res) {
-          const expectedEvent = _.cloneDeep(testData.events[8]);
+          const expectedEvent = structuredClone(testData.events[8]);
           expectedEvent.streamId = expectedEvent.streamIds[0];
           res.body.events.should.eql([expectedEvent]);
           done();
@@ -317,7 +316,7 @@ describe('[ACCP] Access permissions', function () {
 
     it('[NJ1A] must allow access to all streams when no specific stream permissions are defined',
       function (done) {
-        const expected = validation.removeDeletions(_.cloneDeep(testData.streams));
+        const expected = validation.removeDeletions(structuredClone(testData.streams));
         validation.addStoreStreams(expected);
         request.get(basePath, token(2)).query({ state: 'all' }).end(function (res) {
           res.body.streams = validation.removeAccountStreams(res.body.streams);

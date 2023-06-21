@@ -51,7 +51,7 @@ const { getMall } = require('mall');
 const SystemStreamsSerializer = require('business/src/system-streams/serializer');
 
 describe('event previews', function () {
-  const user = Object.assign({}, testData.users[0]);
+  const user = structuredClone(testData.users[0]);
   const token = testData.accesses[2].token;
   const basePath = '/' + user.username + '/events';
   let request = null;

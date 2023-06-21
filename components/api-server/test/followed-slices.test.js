@@ -47,7 +47,7 @@ const storage = helpers.dependencies.storage.user.followedSlices;
 const testData = helpers.data;
 
 describe('followed slices', function () {
-  const user = Object.assign({}, testData.users[0]);
+  const user = structuredClone(testData.users[0]);
   const basePath = '/' + user.username + '/followed-slices';
   let request = null; // must be set after server instance started
 
@@ -133,7 +133,7 @@ describe('followed slices', function () {
 
             followedSlices.length.should.eql(originalCount + 1, 'followed slices');
 
-            const expected = _.clone(data);
+            const expected = structuredClone(data);
             expected.id = createdSlice.id;
             const actual = _.find(followedSlices, function (slice) {
               return slice.id === createdSlice.id;
@@ -203,8 +203,7 @@ describe('followed slices', function () {
           schema: methodsSchema.update.result
         });
 
-        const expected = _.clone(newSliceData);
-        _.defaults(expected, original);
+        const expected = Object.assign({}, original, newSliceData);
         res.body.followedSlice.should.eql(expected);
 
         followedSlicesNotifCount.should.eql(1, 'followed slices notifications');
@@ -288,7 +287,7 @@ describe('followed slices', function () {
 
   function resetFollowedSlices (done) {
     followedSlicesNotifCount = 0;
-    const user = Object.assign({}, testData.users[0]);
+    const user = structuredClone(testData.users[0]);
     testData.resetFollowedSlices(done, user);
   }
 });

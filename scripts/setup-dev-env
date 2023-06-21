@@ -21,6 +21,8 @@ SCRIPT_EXTRAS="./scripts/setup-open"
 if [[ -f $SCRIPT_EXTRAS ]]; then
   echo "Running Open-Pryv.io extra setup steps..."
   bash $SCRIPT_EXTRAS
+else # setup private (non open-sourced) libs
+  bash ./scripts/setup-private-libs
 fi
 
 # create base file structure

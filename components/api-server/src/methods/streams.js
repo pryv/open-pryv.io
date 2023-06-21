@@ -67,10 +67,8 @@ module.exports = async function (api) {
   // RETRIEVAL
   api.register('streams.get', commonFns.getParamsValidation(methodsSchema.get.params), checkAuthorization, applyDefaultsForRetrieval, findAccessibleStreams, includeDeletionsIfRequested);
   function applyDefaultsForRetrieval (context, params, result, next) {
-    _.defaults(params, {
-      parentId: null,
-      includeDeletionsSince: null
-    });
+    params.parentId ??= null;
+    params.includeDeletionsSince ??= null;
     next();
   }
   async function checkAuthorization (context, params, result, next) {
@@ -132,7 +130,7 @@ module.exports = async function (api) {
         const listableFullStreamId = storeDataUtils.getFullItemId(listable.storeId, listable.streamId);
         const inResult = treeUtils.findById(streams, listableFullStreamId);
         if (inResult) {
-          const copy = _.cloneDeep(inResult);
+          const copy = structuredClone(inResult);
           filteredStreams.push(copy);
         } else {
           if (storeId === 'local' && listable.storeId !== 'local') {
@@ -189,7 +187,7 @@ module.exports = async function (api) {
   // CREATION
   api.register('streams.create', forbidSystemStreamsActions, commonFns.getParamsValidation(methodsSchema.create.params), applyDefaultsForCreation, applyPrerequisitesForCreation, createStream);
   function applyDefaultsForCreation (context, params, result, next) {
-    _.defaults(params, { parentId: null });
+    params.parentId ??= null;
     next();
   }
   async function applyPrerequisitesForCreation (context, params, result, next) {
@@ -316,7 +314,7 @@ module.exports = async function (api) {
   }
   async function updateStream (context, params, result, next) {
     try {
-      const updateData = _.cloneDeep(params.update);
+      const updateData = structuredClone(params.update);
       updateData.id = params.id;
       const updatedStream = await mall.streams.update(context.user.id, updateData);
       result.stream = updatedStream;
@@ -332,7 +330,7 @@ module.exports = async function (api) {
   // DELETION
   api.register('streams.delete', forbidSystemStreamsActions, commonFns.getParamsValidation(methodsSchema.del.params), verifyStreamExistenceAndPermissions, deleteStream);
   async function verifyStreamExistenceAndPermissions (context, params, result, next) {
-    _.defaults(params, { mergeEventsWithParent: null });
+    params.mergeEventsWithParent ??= null;
     context.stream = await context.streamForStreamId(params.id);
     if (context.stream == null) {
       return process.nextTick(next.bind(null, errors.unknownResource('stream', params.id)));

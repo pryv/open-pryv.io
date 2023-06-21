@@ -422,7 +422,7 @@ BaseStorage.prototype.findAll = function (userOrUserId, options, callback) {
  */
 BaseStorage.prototype.insertMany = function (userOrUserId, items, callback, options) {
   // Groumpf... Many tests are relying on this..
-  const nItems = _.cloneDeep(items);
+  const nItems = structuredClone(items);
   this.database.insertMany(
     this.getCollectionInfo(userOrUserId),
     this.applyItemsToDB(nItems),
@@ -466,17 +466,14 @@ BaseStorage.prototype.applyItemDefaults = function (item) {
  */
 BaseStorage.prototype.applyQueryToDB = function (query) {
   this.addIdConvertion();
-  return applyConvertersToDB(_.clone(query), this.converters.queryToDB);
+  return applyConvertersToDB(structuredClone(query), this.converters.queryToDB);
 };
 
 /**
  * @api private
  */
 BaseStorage.prototype.applyOptionsToDB = function (options) {
-  const dbOptions = _.defaults(
-    options ? _.clone(options) : {},
-    this.defaultOptions
-  );
+  const dbOptions = Object.assign({}, this.defaultOptions, options || {});
 
   if (dbOptions.fields != null) { throw new Error("AF: fields key is deprecated; we're not using it anymore."); }
 
@@ -515,7 +512,7 @@ BaseStorage.prototype.addIdConvertion = function () {
  */
 BaseStorage.prototype.applyItemToDB = function (item) {
   this.addIdConvertion();
-  return applyConvertersToDB(_.clone(item), this.converters.itemToDB);
+  return applyConvertersToDB(structuredClone(item), this.converters.itemToDB);
 };
 
 /**
@@ -531,7 +528,7 @@ BaseStorage.prototype.applyItemsToDB = function (items) {
  * @api private
  */
 BaseStorage.prototype.applyUpdateToDB = function (updatedData) {
-  const input = _.cloneDeep(updatedData);
+  const input = structuredClone(updatedData);
   const data = {};
 
   if (input.$min != null) {

@@ -33,7 +33,6 @@
  */
 const bluebird = require('bluebird');
 const timestamp = require('unix-timestamp');
-const _ = require('lodash');
 const AccessLogic = require('./accesses/AccessLogic');
 const APIError = require('errors').APIError;
 const errors = require('errors').factory;
@@ -86,7 +85,7 @@ class MethodContext {
     this.headers = headers;
     this.methodId = null;
     if (auth != null) { this.parseAuth(auth); }
-    this.originalQuery = _.cloneDeep(query);
+    this.originalQuery = structuredClone(query);
     if (this.originalQuery?.auth) { delete this.originalQuery.auth; }
     if (headers != null) {
       this.disableBackwardCompatibility =

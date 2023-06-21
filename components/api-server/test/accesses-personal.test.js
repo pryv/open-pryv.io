@@ -53,7 +53,7 @@ const { integrity } = require('business');
 const { getMall } = require('mall');
 
 describe('accesses (personal)', function () {
-  const user = Object.assign({}, testData.users[0]);
+  const user = structuredClone(testData.users[0]);
   const basePath = '/' + user.username + '/accesses';
   let sessionAccessId = null;
   let request = null;
@@ -115,7 +115,7 @@ describe('accesses (personal)', function () {
         .get(basePath)
         .end(function (res) {
           const expected = validation
-            .removeDeletions(_.cloneDeep(testData.accesses))
+            .removeDeletions(structuredClone(testData.accesses))
             .map((a) => _.omit(a, 'calls'));
           validation.addStoreStreams(expected);
           for (const e of expected) {
@@ -254,7 +254,7 @@ describe('accesses (personal)', function () {
                 status: 201,
                 schema: methodsSchema.create.result
               });
-              const expected = _.cloneDeep(data);
+              const expected = structuredClone(data);
               expected.id = res.body.access.id;
               expected.token = res.body.access.token;
               expected.apiEndpoint = buildApiEndpoint('userzero', expected.token);
@@ -341,7 +341,7 @@ describe('accesses (personal)', function () {
             status: 201,
             schema: methodsSchema.create.result
           });
-          const expected = _.cloneDeep(data);
+          const expected = structuredClone(data);
           expected.id = res.body.access.id;
           expected.token = res.body.access.token;
           expected.apiEndpoint = buildApiEndpoint('userzero', expected.token);
@@ -698,7 +698,7 @@ describe('accesses (personal)', function () {
         .end(function (res) {
           validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
           should.exist(res.body.checkedPermissions);
-          const expected = _.cloneDeep(data.requestedPermissions);
+          const expected = structuredClone(data.requestedPermissions);
           expected[0].name = testData.streams[0].name;
           delete expected[0].defaultName;
           res.body.checkedPermissions.should.eql(expected);
@@ -733,7 +733,7 @@ describe('accesses (personal)', function () {
             schema: methodsSchema.checkApp.result
           });
           should.exist(res.body.checkedPermissions);
-          const expected = _.cloneDeep(data.requestedPermissions);
+          const expected = structuredClone(data.requestedPermissions);
           expected[0].name = testData.streams[0].name;
           delete expected[0].defaultName;
           delete expected[1].defaultName;
@@ -792,7 +792,7 @@ describe('accesses (personal)', function () {
             schema: methodsSchema.checkApp.result
           });
           should.exist(res.body.checkedPermissions);
-          const expected = _.cloneDeep(data.requestedPermissions);
+          const expected = structuredClone(data.requestedPermissions);
           expected[0].name = testData.streams[0].name;
           delete expected[0].defaultName;
           res.body.checkedPermissions.should.eql(expected);
@@ -825,7 +825,7 @@ describe('accesses (personal)', function () {
           should.exist(res.body.checkedPermissions);
           should.exist(res.body.error);
           res.body.error.id.should.eql(ErrorIds.ItemAlreadyExists);
-          const expected = _.cloneDeep(data.requestedPermissions);
+          const expected = structuredClone(data.requestedPermissions);
           expected[0].defaultName = testData.streams[3].name + ' (1)';
           res.body.checkedPermissions.should.eql(expected);
           done();

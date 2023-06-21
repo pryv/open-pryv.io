@@ -32,7 +32,6 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-const _ = require('lodash');
 const cuid = require('cuid');
 const { assert } = require('chai');
 
@@ -171,7 +170,7 @@ describe('permissions selfRevoke', function () {
     });
   });
 
-  describe('DELETE /accesses', function () {
+  describe('[DACC] DELETE /accesses', function () {
     let username,
       accesses,
       basePathAccess;
@@ -187,7 +186,7 @@ describe('permissions selfRevoke', function () {
     beforeEach(async function () {
       username = cuid();
       basePathAccess = `/${username}/accesses/`;
-      accesses = _.clone(accessDefs);
+      accesses = structuredClone(accessDefs);
       const user = await mongoFixtures.user(username, {});
 
       for (let i = 0; i < accessKeys.length; i++) {
@@ -215,8 +214,10 @@ describe('permissions selfRevoke', function () {
     });
 
     for (let i = 0; i < accessKeys.length; i++) {
-      const access = accessDefs[accessKeys[i]];
-      it(`[${access.testCode}] ` + accessKeys[i], async function () {
+      const testKey = accessKeys[i];
+      const accessDef = accessDefs[testKey];
+      it(`[${accessDef.testCode}] ` + testKey, async function () {
+        const access = accesses[testKey];
         const res = await server.request().delete(basePathAccess + access.id).set('Authorization', access.token);
 
         if (access.selfRevoke) {

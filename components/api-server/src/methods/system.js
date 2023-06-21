@@ -107,15 +107,16 @@ module.exports = async function (systemAPI, api) {
   }
 
   function getUserInfoSetAccessStats (context, params, result, next) {
-    const info = _.defaults(result.userInfo, {
-      lastAccess: 0,
-      callsTotal: 0,
-      callsDetail: {},
-      callsPerAccess: {}
-    });
+    const info = result.userInfo ??= {};
+    info.lastAccess ??= 0;
+    info.callsTotal ??= 0;
+    info.callsDetail ??= {};
+    info.callsPerAccess ??= {};
+
     getAPIMethodKeys().forEach(function (methodKey) {
       info.callsDetail[methodKey] = 0;
     });
+
     userAccessesStorage.find(context.user, {}, null, function (err, accesses) {
       if (err) { return next(errors.unexpectedError(err)); }
 
@@ -136,9 +137,6 @@ module.exports = async function (systemAPI, api) {
           });
         }
       });
-      // Since we've merged new keys into _the old userInfo_ on result, we don't
-      // need to return our result here, since we've modified the result in
-      // place.
 
       next();
     });

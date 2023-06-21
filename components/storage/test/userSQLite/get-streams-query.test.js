@@ -34,7 +34,7 @@
 
 const { assert } = require('chai');
 
-const { toSQLiteQuery } = require('../../src/userSQLite/sqLiteStreamQueryUtils');
+const { toSQLiteQuery } = require('../../src/userSQLite/streamQueryUtils');
 
 describe('[USQL] userSQLite toSqliteQuery()', function () {
   it('[YS6Y] must convert to SQLite including expansion', async function () {

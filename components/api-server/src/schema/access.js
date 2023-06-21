@@ -70,18 +70,18 @@ exports = module.exports = function (action) {
     base.properties.calls = object({});
   }
 
-  const personal = _.cloneDeep(base);
+  const personal = structuredClone(base);
   _.extend(personal.properties, {
     type: string({ enum: ['personal'] })
   });
 
-  const app = _.cloneDeep(base);
+  const app = structuredClone(base);
   _.extend(app.properties, {
     type: string({ enum: ['app'] }),
     deviceName: string()
   });
 
-  const shared = _.cloneDeep(base);
+  const shared = structuredClone(base);
   _.extend(shared.properties, {
     type: string({ enum: ['shared'] })
   });

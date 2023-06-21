@@ -873,7 +873,7 @@ describe('accesses', () => {
       assert.equal(body.user.username, userId);
     });
     describe('[APRA] When password rules are enabled', async () => {
-      const settingsOverride = _.cloneDeep(helpers.passwordRules.settingsOverride);
+      const settingsOverride = structuredClone(helpers.passwordRules.settingsOverride);
       settingsOverride.auth.passwordAgeMinDays = 1;
       const passwordTime = timestamp.now(`-${settingsOverride.auth.passwordAgeMaxDays - 1}d`);
       before(async () => {

@@ -60,7 +60,7 @@ const { integrity } = require('business');
 const { ConditionVariable } = require('test-helpers').syncPrimitives;
 
 describe('Socket.IO', function () {
-  const user = Object.assign({}, testData.users[0]);
+  const user = structuredClone(testData.users[0]);
   const namespace = '/' + user.username;
   const otherUser = testData.users[1];
   let token = null;
@@ -70,7 +70,7 @@ describe('Socket.IO', function () {
   // Connects to `namespace` given `queryParams`. Connections are disconnected
   // after each test automatically.
   function connect (namespace, queryParams) {
-    const paramsWithNS = _.defaults(queryParams || {});
+    const paramsWithNS = queryParams || {};
     const url = server.url + namespace + '?' + queryString.stringify(paramsWithNS);
     const conn = io.connect(url, { forceNew: true });
     cleanupConnections.push(conn);
@@ -230,7 +230,7 @@ describe('Socket.IO', function () {
         result.events = separatedEvents.events;
         validation.checkSchema(result, eventsMethodsSchema.get.result);
         validation.sanitizeEvents(result.events);
-        const testEvents = _.clone(testData.events);
+        const testEvents = structuredClone(testData.events);
         const chronologicalEvents = _.sortBy(testEvents, 'time');
         const expectedEvents = validation.removeDeletionsAndHistory(chronologicalEvents);
         // lets separate core events from all other events and validate them separatelly
@@ -261,7 +261,7 @@ describe('Socket.IO', function () {
 
     it('[O3SW] must properly route method call messages for streams and return the results', function (done) {
       ioCons.con = connect(namespace, { auth: token });
-      const expected = _.cloneDeep(testData.streams);
+      const expected = structuredClone(testData.streams);
       validation.addStoreStreams(expected);
       ioCons.con.emit('streams.get', { state: 'all' }, function (err, result) {
         assert.notExists(err);

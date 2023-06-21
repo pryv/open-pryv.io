@@ -57,7 +57,7 @@ const { getMall } = require('mall');
 const cache = require('cache');
 
 describe('[STRE] streams', function () {
-  const user = Object.assign({}, testData.users[0]);
+  const user = structuredClone(testData.users[0]);
   const initialRootStreamId = testData.streams[0].id;
   const basePath = '/' + user.username + '/streams';
   // these must be set after server instance started
@@ -104,7 +104,7 @@ describe('[STRE] streams', function () {
       request.get(basePath).end(async function (res) {
         // manually filter out trashed items
 
-        const expected = treeUtils.filterTree(validation.removeDeletionsAndHistory(_.cloneDeep(testData.streams)),
+        const expected = treeUtils.filterTree(validation.removeDeletionsAndHistory(structuredClone(testData.streams)),
           false, function (s) { return !s.trashed; });
         await validation.addStoreStreams(expected);
         res.body.streams = validation.removeAccountStreams(res.body.streams);
@@ -119,7 +119,7 @@ describe('[STRE] streams', function () {
 
     it('[DPWG] must return all streams (trashed or not) when requested', function (done) {
       request.get(basePath).query({ state: 'all' }).end(async function (res) {
-        const expected = _.sortBy(validation.removeDeletions(_.cloneDeep(testData.streams)), 'name');
+        const expected = _.sortBy(validation.removeDeletions(structuredClone(testData.streams)), 'name');
         await validation.addStoreStreams(expected);
         res.body.streams = validation.removeAccountStreams(res.body.streams);
         validation.check(res, {
@@ -233,7 +233,7 @@ describe('[STRE] streams', function () {
           const streams = await mall.streams.get(user.id, { storeId: 'local', hideRootStreams: true });
           streams.length.should.eql(originalCount + 1, 'should count one more root stream');
 
-          const expected = _.clone(data);
+          const expected = structuredClone(data);
           expected.id = createdStream.id;
           expected.parentId = null;
           expected.created = expected.modified = time;
@@ -468,7 +468,7 @@ describe('[STRE] streams', function () {
           schema: methodsSchema.update.result
         });
 
-        const expected = _.clone(data);
+        const expected = structuredClone(data);
         expected.id = original.id;
         expected.parentId = original.parentId;
         expected.modified = time;
@@ -512,7 +512,7 @@ describe('[STRE] streams', function () {
             schema: methodsSchema.update.result
           });
 
-          const expected = _.clone(original);
+          const expected = structuredClone(original);
           _.extend(expected.clientData, data.clientData);
           delete expected.clientData.numberProp;
           delete expected.modified;
@@ -571,12 +571,12 @@ describe('[STRE] streams', function () {
         async function verifyStreamsData () {
           const streams = await mall.streams.get(user.id, { storeId: 'local', hideRootStreams: true });
 
-          const updated = _.clone(original);
+          const updated = structuredClone(original);
           updated.parentId = newParent.id;
           delete updated.modified;
           delete updated.modifiedBy;
-          const expected = _.clone(newParent);
-          expected.children = _.clone(newParent.children);
+          const expected = structuredClone(newParent);
+          expected.children = structuredClone(newParent.children);
           expected.children.unshift(updated);
           const actual = _.find(streams, function (stream) {
             return stream.id === newParent.id;
@@ -684,7 +684,7 @@ describe('[STRE] streams', function () {
       });
 
       function setIgnoreProtectedFieldUpdates (activated, stepDone) {
-        const settings = _.cloneDeep(helpers.dependencies.settings);
+        const settings = structuredClone(helpers.dependencies.settings);
         settings.updates.ignoreProtectedFields = activated;
         server.ensureStarted(settings, stepDone);
       }

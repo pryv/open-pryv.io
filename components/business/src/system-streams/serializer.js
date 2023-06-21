@@ -318,7 +318,7 @@ class SystemStreamsSerializer {
    */
   static getAccountMapWithOptions () {
     if (SystemStreamsSerializer.accountMapWithOptions != null) { return SystemStreamsSerializer.accountMapWithOptions; }
-    const accountMapWithOptions = _.cloneDeep(SystemStreamsSerializer.getAccountMap());
+    const accountMapWithOptions = structuredClone(SystemStreamsSerializer.getAccountMap());
     accountMapWithOptions[SystemStreamsSerializer.options.STREAM_ID_ACCOUNT] = true;
     accountMapWithOptions[SystemStreamsSerializer.options.STREAM_ID_ACTIVE] = true;
     accountMapWithOptions[SystemStreamsSerializer.options.STREAM_ID_UNIQUE] = true;

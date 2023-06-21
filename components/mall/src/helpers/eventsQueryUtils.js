@@ -33,7 +33,6 @@
  */
 
 const storeDataUtils = require('./storeDataUtils');
-const _ = require('lodash');
 
 module.exports = {
   getParamsByStore,
@@ -90,17 +89,17 @@ function getParamsByStore (params) {
 
   const paramsByStore = {};
   for (const storeId of Object.keys(streamQueriesByStore)) {
-    paramsByStore[storeId] = _.cloneDeep(params);
+    paramsByStore[storeId] = structuredClone(params);
     paramsByStore[storeId].streams = streamQueriesByStore[storeId];
   }
 
   if (singleStoreId) {
-    paramsByStore[singleStoreId] ??= _.cloneDeep(params);
+    paramsByStore[singleStoreId] ??= structuredClone(params);
     paramsByStore[singleStoreId].id = singleStoreEventId;
   }
 
   if (Object.keys(paramsByStore).length === 0) { // default is local
-    paramsByStore.local = _.cloneDeep(params);
+    paramsByStore.local = structuredClone(params);
     delete paramsByStore.local.streams;
   }
 

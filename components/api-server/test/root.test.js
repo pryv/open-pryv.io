@@ -513,30 +513,24 @@ describe('[ROOT] root', function () {
       assert.exists(results[0].event);
       validation.checkObjectEquality(
         results[0].event,
-        _.defaults(
-          {
-            id: results[0].event.id,
-            tags: [],
-            integrity: results[0].event.integrity
-          },
-          _.extend(calls[0].params, { streamId: calls[0].params.streamIds[0] })
-        ),
+        Object.assign({}, calls[0].params, {
+          streamId: calls[0].params.streamIds[0],
+          id: results[0].event.id,
+          tags: [],
+          integrity: results[0].event.integrity
+        }),
         integrity.events.isActive ? [] : ['integrity']
       );
 
       assert.exists(results[1].event);
       validation.checkObjectEquality(
         results[1].event,
-        _.defaults(
-          {
-            id: results[1].event.id,
-            integrity: results[1].event.integrity
-          },
-          _.extend(calls[1].params, {
-            streamId: calls[1].params.streamIds[0],
-            streamIds: calls[1].params.streamIds.concat(calls[1].params.tags.map(t => TAG_PREFIX + t))
-          })
-        ),
+        Object.assign({}, calls[1].params, {
+          streamId: calls[1].params.streamIds[0],
+          streamIds: calls[1].params.streamIds.concat(calls[1].params.tags.map(t => TAG_PREFIX + t)),
+          id: results[1].event.id,
+          integrity: results[1].event.integrity
+        }),
         integrity.events.isActive ? [] : ['integrity']
       );
       assert.exists(results[2].error);
@@ -585,24 +579,19 @@ describe('[ROOT] root', function () {
       assert.exists(results[0].stream);
       validation.checkObjectEquality(
         results[0].stream,
-        _.defaults(
-          {
-            parentId: null
-          },
-          calls[0].params
-        )
+        Object.assign({}, calls[0].params, {
+          parentId: null
+        })
       );
       assert.exists(results[1].event);
       validation.checkObjectEquality(
         results[1].event,
-        _.defaults(
-          {
-            tags: [],
-            id: results[1].event.id,
-            integrity: results[1].event.integrity
-          },
-          _.extend(calls[1].params, { streamId: calls[1].params.streamIds[0] })
-        ),
+        Object.assign({}, calls[1].params, {
+          streamId: calls[1].params.streamIds[0],
+          tags: [],
+          id: results[1].event.id,
+          integrity: results[1].event.integrity
+        }),
         integrity.events.isActive ? [] : ['integrity']
       );
 

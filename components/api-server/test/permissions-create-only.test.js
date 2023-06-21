@@ -36,11 +36,10 @@ const cuid = require('cuid');
 const chai = require('chai');
 const assert = chai.assert;
 const charlatan = require('charlatan');
-const _ = require('lodash');
 
 const helpers = require('./helpers');
 const testData = helpers.data;
-const settings = _.cloneDeep(helpers.dependencies.settings);
+const settings = structuredClone(helpers.dependencies.settings);
 
 const { databaseFixture } = require('test-helpers');
 const { produceMongoConnection, context } = require('./test-helpers');

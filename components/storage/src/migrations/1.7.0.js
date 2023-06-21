@@ -52,9 +52,11 @@ module.exports = async function (context, callback) {
 
   const newSystemStreamIds = SystemStreamsSerializer.getAllSystemStreamsIds();
   const oldToNewStreamIdsMap = buildOldToNewStreamIdsMap(newSystemStreamIds);
-  // add username to system streams definition (removed in 1.8.0) release, but required for migration
+  // add username and passwordHash to system streams definition (removed in 1.8.0) release, but required for migration
   newSystemStreamIds.push(':_system:username');
   oldToNewStreamIdsMap['.username'] = ':_system:username';
+  newSystemStreamIds.push(':_system:passwordHash');
+  oldToNewStreamIdsMap['.passwordHash'] = ':_system:passwordHash';
 
   const eventsCollection = await context.database.getCollection({
     name: 'events'

@@ -39,13 +39,13 @@ const setUserBasePathTestOnly = require('storage').userLocalDirectory.setBasePat
 const path = require('path');
 const { copy, pathExists } = require('fs-extra');
 const cuid = require('cuid');
-const versioning = require('../../src/userSQLite/versioning');
+const migrate0to1 = require('../../src/userSQLite/migrations/1');
 const UserDatabase = require('../../src/userSQLite/UserDatabase');
 const os = require('os');
 const { getLogger } = require('@pryv/boiler');
 const Storage = require('../../src/userSQLite/Storage');
 
-describe('UserCentric Storage Migration', () => {
+describe('SQLite user-centric storage migration', () => {
   let logger;
   before(async () => {
     logger = getLogger('sqlite-storage-migration-test');
@@ -66,7 +66,7 @@ describe('UserCentric Storage Migration', () => {
     const v1user = new UserDatabase(logger, { dbPath: v1dbPath });
     await v1user.init();
 
-    const resMigrate = await versioning.migrate0to1(v0dbPath, v1user, logger);
+    const resMigrate = await migrate0to1(v0dbPath, v1user, logger);
     assert.equal(resMigrate.count, 298);
   });
 

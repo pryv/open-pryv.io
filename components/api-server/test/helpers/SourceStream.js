@@ -33,7 +33,6 @@
  */
 const Readable = require('stream').Readable;
 const inherits = require('util').inherits;
-const _ = require('lodash');
 
 module.exports = Source;
 
@@ -45,7 +44,7 @@ module.exports = Source;
  */
 function Source (array) {
   Readable.call(this, { objectMode: true });
-  this.array = _.cloneDeep(array); // shift changes in place
+  this.array = structuredClone(array); // shift changes in place
 }
 
 inherits(Source, Readable);

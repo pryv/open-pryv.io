@@ -36,34 +36,31 @@ const path = require('path');
 const fs = require('fs');
 
 const userLocalDirectory = require('storage').userLocalDirectory;
-
 const UserDatabase = require('../UserDatabase');
-const { migrate0to1 } = require('./migrate0to1');
-
-module.exports = {
-  migrate0to1,
-  checkAllUsers
-};
-
+const migrate0to1 = require('./1');
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('sqlite-storage-migration');
 
-async function checkAllUsers (storage) {
+module.exports = {
+  migrateUserDBsIfNeeded
+};
+
+async function migrateUserDBsIfNeeded (storage) {
   const usersBaseDirectory = userLocalDirectory.getBasePath();
 
-  const auditDBVersionFile = path.join(usersBaseDirectory, 'audit-db-version-' + storage.getVersion() + '.txt');
+  const auditDBVersionFile = path.join(usersBaseDirectory, `audit-db-version-${storage.getVersion()}.txt`);
   if (fs.existsSync(auditDBVersionFile)) {
     logger.debug('Audit db version file found, skipping migration for ' + storage.getVersion());
     return;
   }
-  const counts = { done: 0, skip: 0 };
+
+  const result = { migrated: 0, skipped: 0 };
 
   await foreachUserDirectory(checkUserDir, usersBaseDirectory, logger);
-  logger.info('Done with migration for ' + storage.getVersion() + ': ' + counts.done + ' done, ' + counts.skip + ' skipped');
+  logger.info(`Migration done for ${storage.getVersion()}: ${result.migrated} migrated, ${result.skipped} skipped`);
+  fs.writeFileSync(auditDBVersionFile, 'DO NOT DELETE THIS FILE - IT IS USED TO DETECT MIGRATION SUCCESS');
 
-  await fs.writeFileSync(auditDBVersionFile, 'DO NOT DELETE THIS FILE - IT IS USED TO DETECT MIGRATION SUCESS');
-
-  return counts;
+  return result;
 
   async function checkUserDir (userId, userDir) {
     // check if a migration from a non upgradeable schema (copy file to file) is needed
@@ -71,7 +68,7 @@ async function checkAllUsers (storage) {
 
     if (!fs.existsSync(v0dbPath)) {
       logger.info('OK for ' + userId);
-      counts.skip++;
+      result.skipped++;
       return; // skip as file exists
     }
 
@@ -87,8 +84,8 @@ async function checkAllUsers (storage) {
       await v1user.init();
       const resMigrate = await migrate0to1(v0dbPath, v1user, logger);
       logger.info('Migrated ' + resMigrate.count + ' records for ' + userId);
-      await v1user.close();
-      counts.done++;
+      v1user.close();
+      result.migrated++;
     } catch (err) {
       logger.error('ERROR during Migration V0 to V1: ' + err.message + ' >> For User: ' + userId + '>>> Check Dbs in: ' + userDir);
       logger.error(err);
@@ -101,7 +98,7 @@ async function checkAllUsers (storage) {
 /**
  * @param {Function} asyncCallBack(uid, path)
  * @param {string} [userDataPath] -- Optional, user data path
- * @param {string} [logger] -- Optional, logger
+ * @param {any} [logger] -- Optional, logger
  */
 async function foreachUserDirectory (asyncCallBack, userDataPath, logger) {
   await loop(userDataPath, '');

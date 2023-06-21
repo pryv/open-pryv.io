@@ -117,7 +117,7 @@ Webhooks.prototype.delete = function (userOrUserId, query, callback) {
  * @param {*} callback
  */
 Webhooks.prototype.insertOne = function (userOrUserId, webhook, callback) {
-  const webhookToCreate = _.clone(webhook);
+  const webhookToCreate = structuredClone(webhook);
   if (webhookToCreate.deleted === undefined) webhookToCreate.deleted = null;
   this.database.insertOne(
     this.getCollectionInfo(userOrUserId),

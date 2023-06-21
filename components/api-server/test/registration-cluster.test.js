@@ -360,7 +360,7 @@ describe('[REGC] registration: cluster', function () {
         // should be validation and they shuold be equal
         // (remove core because validation and registration was done
         // by different processes - port is different)
-        const validationSent2 = Object.assign({}, serviceRegisterRequests[0]);
+        const validationSent2 = structuredClone(serviceRegisterRequests[0]);
         delete validationSent2.core;
         delete serviceRegisterRequests[2].core;
         assert.deepEqual(validationSent2, serviceRegisterRequests[2]);

@@ -58,7 +58,7 @@ module.exports = ds.createDataStore({
     }
     // forward settings to userEvents
     userEvents.settings = this.settings;
-    userEvents.init(eventsCollection, eventFilesStorage);
+    userEvents.init(eventsCollection, eventFilesStorage, params.integrity.setOnEvent);
 
     // init streams
     const streamsCollection = await database.getCollection({ name: 'streams' });

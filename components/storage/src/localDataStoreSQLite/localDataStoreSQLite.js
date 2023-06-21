@@ -53,7 +53,7 @@ module.exports = ds.createDataStore({
     // init events
     const eventFilesStorage = (await storage.getStorageLayer()).eventFiles;
     const userStorage = await getStorage('local');
-    userEvents.init(userStorage, eventFilesStorage, this.settings);
+    userEvents.init(userStorage, eventFilesStorage, this.settings, params.integrity.setOnEvent);
 
     // init streams
     const streamsCollection = await database.getCollection({ name: 'streams' });
