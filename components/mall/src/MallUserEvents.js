@@ -279,13 +279,13 @@ class MallUserEvents {
    * @param {string} fileId
    * @returns {Promise<any>}
    */
-  async getAttachedFile (userId, eventData, fileId) {
+  async getAttachment (userId, eventData, fileId) {
     const [storeId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.id);
     const eventsStore = this.eventsStores.get(storeId);
     if (!eventsStore) {
       throw errorFactory.unknownResource(`Unknown store "${storeId}"`, storeId);
     }
-    return await eventsStore.getAttachedFile(userId, storeEventId, fileId);
+    return await eventsStore.getAttachment(userId, storeEventId, fileId);
   }
 
   /**

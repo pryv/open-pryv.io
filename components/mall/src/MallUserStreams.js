@@ -80,6 +80,17 @@ class MallUserStreams {
     }
     const streamsStore = this.streamsStores.get(storeId);
     if (!streamsStore) { return null; }
+
+    if (streamId === '*' && storeId !== 'local') {
+      return streamsUtils.createStoreRootStream({
+        id: storeId,
+        name: this.storeNames.get(storeId)
+      }, {
+        children: [],
+        childrenHidden: true // To be discussed
+      });
+    }
+
     const stream = await streamsStore.getOne(userId, streamId, {
       includeTrashed: true,
       childrenDepth: 0

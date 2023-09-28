@@ -706,6 +706,35 @@ describe('accesses (personal)', function () {
         });
     });
 
+    it('[R8H5] must accept requested permissions with store ":dummy:" and adapt to correct name', function (done) {
+      const data = {
+        requestingAppId: 'mall-dummy',
+        deviceName: 'For sure',
+        requestedPermissions: [
+          {
+            streamId: ':dummy:',
+            level: 'read',
+            defaultName: 'Ignored, must be cleaned up'
+          }
+        ]
+      };
+      req()
+        .post(path)
+        .send(data)
+        .end(function (res) {
+          validation.check(res, {
+            status: 200,
+            schema: methodsSchema.checkApp.result
+          });
+          should.exist(res.body.checkedPermissions);
+          const expected = structuredClone(data.requestedPermissions);
+          expected[0].name = 'Dummy Store';
+          delete expected[0].defaultName;
+          res.body.checkedPermissions.should.eql(expected);
+          done();
+        });
+    });
+
     it('[R8H4] must accept requested permissions with "*" for "all streams"', function (done) {
       const data = {
         requestingAppId: 'lobabble-dabidabble',

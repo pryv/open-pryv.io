@@ -181,7 +181,7 @@ class MethodContext {
       if (customAuthStep != null) { await this.performCustomAuthStep(customAuthStep); }
       // those 2 last are executed in callbatch for each call.
       // Load the streams we can access.
-      if (!access.isPersonal()) { access.loadPermissions(); }
+      if (!access.isPersonal()) { await access.loadPermissions(); }
     } catch (err) {
       if (err != null && !(err instanceof APIError)) {
         throw errors.unexpectedError(err);

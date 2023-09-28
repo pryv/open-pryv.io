@@ -27,7 +27,7 @@ After images are built, you can run the command above just without "--build" par
 
 Fetch the [rec-la](https://github.com/pryv/rec-la) SSL certificates:
 
-- Run `bash ../scripts/download-recla-certificates`
+- Run `bash ../scripts/update-recla-certificates`
 
 Run `TAG=latest docker-compose -f local/docker-compose.with-ssl-build.yml up --build`
 

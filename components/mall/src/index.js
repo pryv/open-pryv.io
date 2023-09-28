@@ -74,6 +74,7 @@ async function getMall () {
       const storeDescription = {
         id: storeDef.id,
         name: storeDef.name,
+        includeInStarPermission: true,
         settings: storeDef.settings
       };
       mall.addStore(store, storeDescription);

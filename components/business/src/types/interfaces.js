@@ -1,4 +1,3 @@
-
 /** @typedef {any | string | number | boolean} Content */
 
 /**

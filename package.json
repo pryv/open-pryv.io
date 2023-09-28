@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.9.0-alpha-open",
+  "version": "1.9.0-1-open",
   "private": true,
   "description": "Pryv core server app components",
   "homepage": "https://pryv.com",
@@ -34,7 +34,7 @@
     "**/xmlhttprequest-ssl": "^1.6.2"
   },
   "dependencies": {
-    "@pryv/boiler": "https://github.com/pryv/pryv-boiler.git#semver:^1.2.1",
+    "@pryv/boiler": "https://github.com/pryv/pryv-boiler.git#semver:^1.2.3",
     "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
     "@pryv/stable-object-representation": "^1.1.4",
     "async": "^2.6.4",
@@ -66,13 +66,14 @@
     "opentracing": "^0.14.5",
     "protobufjs": "^6.11.3",
     "pryv": "^2.0.2",
-    "rec-la": "latest",
+    "rec.la": "latest",
     "shimmer": "^1.2.0",
     "slug": "^5.3.0",
     "socket.io": "^4.6.1",
     "socketio-wildcard": "^2.0.0",
     "superagent": "^8.0.3",
     "tchannel": "https://github.com/pryv/tchannel-node#v4.0.2",
+    "unix-dgram": "2.0.6",
     "unix-timestamp": "^1.0.3",
     "url": "^0.11.0",
     "winston": "^3.8.2",

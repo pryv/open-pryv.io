@@ -37,22 +37,22 @@ const config = require('./config');
 const headPath = require('api-server/src/routes/Paths').Register;
 
 class ExpressMock {
-  constructor(expressApp) {
+  constructor (expressApp) {
     this.app = expressApp;
   }
 
-  use(fn) {
+  use (fn) {
     this.app.use(headPath, fn);
   }
 
-  get(path, cb1, cb2) {
+  get (path, cb1, cb2) {
     if (cb2) {
       return this.app.get(headPath + path, cb1, cb2);
     }
     this.app.get(headPath + path, cb1);
   }
 
-  post(path, cb1, cb2) {
+  post (path, cb1, cb2) {
     if (cb2) {
       return this.app.post(headPath + path, cb1, cb2);
     }

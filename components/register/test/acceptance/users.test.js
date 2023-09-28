@@ -72,7 +72,7 @@ describe('register /users', function () {
 
   before(async function () {
     await mongoFixtures.user(username, {
-      email: email
+      email
     });
   });
 
@@ -111,7 +111,7 @@ describe('register /users', function () {
       const res = await server
         .request()
         .post(regPath + '/username/check')
-        .send({ username: username })
+        .send({ username })
         .set('Accept', 'application/json');
       assert.equal(res.status, 410);
     });

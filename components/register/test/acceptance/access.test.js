@@ -102,7 +102,7 @@ describe('access', function () {
   });
 });
 
-async function requestAccess() {
+async function requestAccess () {
   const accessRequestData = {
     requestingAppId: 'test-app-id',
     requestedPermissions: [

@@ -122,8 +122,8 @@ function createUserEvents () {
       const streamQuery = query.filter((i) => { return i.type === 'streamsQuery'; });
       if (streamQuery.length > 0 && streamQuery[0].content[0]) {
         const firstOrItem = streamQuery[0].content[0];
-        const filterByStreamId = firstOrItem[0]?.any[0];
-        events = events.filter((e) => e.streamIds.includes(filterByStreamId));
+        const anyStreamList = firstOrItem[0]?.any || [];
+        events = events.filter((e) => anyStreamList.includes(e.streamIds[0]));
       }
       ds.defaults.applyOnEvents(events);
       return events;

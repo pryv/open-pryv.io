@@ -294,15 +294,23 @@ module.exports = async function produceAccessesApiMethods (api) {
         }
         return;
       }
-      if (!commonFns.isValidStreamIdForCreation(permission.streamId)) {
-        throw errors.invalidRequestStructure(`Error while creating stream for access. Invalid 'permission' parameter, forbidden chartacter(s) in streamId '${permission.streamId}'. StreamId should be of length 1 to 100 chars, with lowercase letters, numbers or dashes.`, permission);
-      }
       // create new stream
       const newStream = {
         id: permission.streamId,
         name: permission.defaultName,
         parentId: null
       };
+
+      // check validity of Id if stream is local store
+      const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(permission.streamId);
+      if (storeId === 'local') {
+        if (!commonFns.isValidStreamIdForCreation(permission.streamId)) {
+          throw errors.invalidRequestStructure(`Error while creating stream for access. Invalid 'permission' parameter, forbidden chartacter(s) in streamId '${permission.streamId}'. StreamId should be of length 1 to 100 chars, with lowercase letters, numbers or dashes.`, permission);
+        }
+      } else {
+        newStream.parentId = ':' + storeId + ':';
+      }
+
       context.initTrackingProperties(newStream);
       try {
         await mall.streams.create(context.user.id, newStream);

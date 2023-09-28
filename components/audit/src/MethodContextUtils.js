@@ -31,7 +31,7 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
-function setAuditAccessId(accessId) {
+function setAuditAccessId (accessId) {
   return function (context, params, result, next) {
     next();
   };
@@ -49,6 +49,6 @@ const AuditAccessIds = {
 Object.freeze(AuditAccessIds);
 
 module.exports = {
-  setAuditAccessId: setAuditAccessId,
-  AuditAccessIds: AuditAccessIds
+  setAuditAccessId,
+  AuditAccessIds
 };

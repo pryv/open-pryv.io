@@ -99,7 +99,7 @@ async function attachmentsAccessMiddleware (req, res, next) {
       res.header('Digest', digest);
     }
   }
-  const fileReadStream = await mall.events.getAttachedFile(req.context.user.id, event, req.params.fileId);
+  const fileReadStream = await mall.events.getAttachment(req.context.user.id, event, req.params.fileId);
   // for Audit
   req.context.originalQuery = req.params;
   const pipedStream = fileReadStream.pipe(res);

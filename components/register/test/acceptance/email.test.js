@@ -71,7 +71,7 @@ describe('register /email', function () {
 
   before(async function () {
     await mongoFixtures.user(username, {
-      email: email
+      email
     });
   });
 
@@ -102,7 +102,7 @@ describe('register /email', function () {
   describe('POST /email/check', function () {
     const callPath = regPath + '/email/check';
     it('[REZ7] should return 410 gone resource', async function () {
-      const res = await server.request().post(callPath).send({ email: email });
+      const res = await server.request().post(callPath).send({ email });
       assert.equal(res.status, 410);
     });
   });

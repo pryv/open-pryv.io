@@ -4,10 +4,10 @@ SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
 cd $SCRIPT_FOLDER
 
 mkdir -p ./rec.la-certificates
-mkdir -p ./public_html
-curl -o ./rec.la-certificates/rec.la-key.pem https://www.rec.la/rec.la-key.pem
-curl -o ./rec.la-certificates/rec.la-bundle.crt https://www.rec.la/rec.la-bundle.crt
-cp -af ../public_html/* ./public_html
+echo "run ../scripts/update-recla-certificates to download rec.la ssl certs" > ./rec.la-certificates/README
+cp -rf ../public_html/ ./public_html
+
+cp ../scripts/update-recla-certificates ./scripts
 
 tar czfv dockerized-open-pryv.io.tgz \
   ./local/dockerized-config.yml \
@@ -20,10 +20,7 @@ tar czfv dockerized-open-pryv.io.tgz \
   ./README.md \
   ./rec.la-certificates \
   ./public_html \
-  ./scripts/backup-database-docker \
-  ./scripts/restore-database-docker \
-  ./scripts/backup-attachments-docker \
-  ./scripts/restore-attachments-docker \
+  ./scripts/ \
 
 rm -r ./rec.la-certificates
 rm -r ./public_html

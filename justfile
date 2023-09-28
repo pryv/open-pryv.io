@@ -17,9 +17,9 @@ setup-dev-env:
 setup-private-libs:
     scripts/setup-private-libs
 
-# Install node modules afresh
+# Install node modules afresh (no optionals)
 install *params: clean
-    npm install {{params}}
+    npm install --omit=optional {{params}}
 
 # Clean up node modules
 clean:

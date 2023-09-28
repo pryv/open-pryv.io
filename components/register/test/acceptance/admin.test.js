@@ -77,7 +77,7 @@ describe('register /admin', function () {
 
   before(async function () {
     await mongoFixtures.user(username, {
-      email: email,
+      email,
       created: Date.now() / 1000
     });
   });

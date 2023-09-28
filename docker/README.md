@@ -56,13 +56,13 @@ It will run Open Pryv.io on http://0.0.0.0:3000. However, all [service informati
 ## Backup
 
 Run `./scripts/backup-database-docker` to generate a dump of the current database contents in `var-pryv/backup/`.
-Run `./scripts/backup-attachments-docker ${BACKUP_FOLDER}` to copy the current attachment files.
+Run `./scripts/backup-usersfiles-docker ${BACKUP_FOLDER}` to copy the current attachment files.
 Depending on your setup, you may need additional access rights.
 
 ## Restore
 
 Run `./scripts/restore-database-docker` to restore data from `var-pryv/backup/`.
-Run `./scripts/restore-attachments-docker ${BACKUP_FOLDER}` to restore attachments data from the provided backup folder.
+Run `./scripts/restore-usersfiles-docker ${BACKUP_FOLDER}` to restore attachments data from the provided backup folder.
 Depending on your setup, you may need additional access rights.
 
 

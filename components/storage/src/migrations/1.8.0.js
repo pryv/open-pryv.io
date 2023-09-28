@@ -75,6 +75,7 @@ module.exports = async function (context, callback) {
       const event = await cursor.next();
       await usersIndex.addUser(event.content, event.userId);
       await eventsCollection.deleteMany({ userId: event.userId, _id: event._id });
+      logger.info('Migrating userId: ' + event.userId + ' username: ' + event.content);
     }
   }
 
@@ -86,6 +87,7 @@ module.exports = async function (context, callback) {
       const event = await cursor.next();
       await userAccountStorage.addPasswordHash(event.userId, event.content, event.createdBy || 'system', event.created);
       await eventsCollection.deleteMany({ userId: event.userId, _id: event._id });
+      logger.info('Migrating password for userId: ' + event.userId);
     }
   }
 
@@ -99,6 +101,7 @@ module.exports = async function (context, callback) {
     for (let i = 0; i < users.length; i++) {
       const user = users[i];
       const username = user.username;
+      logger.info(' migrating ' + indexedFields.length + ' fields for userId: ' + user.id);
       for (const field of indexedFields) {
         const value = user[field];
         if (value == null) { continue; }

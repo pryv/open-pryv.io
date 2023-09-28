@@ -52,7 +52,7 @@ echo "Hostname is $HOSTNAME"
 # =====================================================================
 
 # download or update rec.la domain certificates
-bash ../scripts/download-recla-certificates
+bash ../scripts/update-recla-certificates
 
 # =====================================================================
 # ================= Start docker compose          =====================

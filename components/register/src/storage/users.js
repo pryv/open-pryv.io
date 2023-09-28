@@ -35,7 +35,6 @@
  * Extension of database.js dedicated to user management
  */
 const db = require('./database');
-const lodash = require('lodash');
 const domain = '.' + require('../config').get('dns:domain');
 const info = require('../business/service-info');
 const Pryv = require('pryv');
@@ -47,7 +46,7 @@ const Pryv = require('pryv');
  * @param callback function(error,result), result being a json object containing new user data
  */
 exports.create = function create(host, inUser, callback) {
-  const user = lodash.clone(inUser);
+  const user = structuredClone(inUser);
   // We store usernames and emails as lower case, allowing comparison with any
   // other lowercase string.
   user.username = user.username.toLowerCase();

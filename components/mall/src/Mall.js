@@ -52,6 +52,11 @@ class Mall {
    * @type {Map<DataStore, {id: string, name: string, settings: object}>}
    */
   storeDescriptionsByStore = new Map();
+  /**
+   * Contains the list of stores included in star permissions.
+   * @type {string[]}
+   */
+  includedInStarPermissions = [];
 
   _events;
   _streams;
@@ -76,6 +81,9 @@ class Mall {
     if (this.initialized) { throw new Error('Sources cannot be added after init()'); }
     this.storesById.set(storeDescription.id, store);
     this.storeDescriptionsByStore.set(store, storeDescription);
+    if (storeDescription.includeInStarPermission) {
+      this.includedInStarPermissions.push(storeDescription.id);
+    }
   }
 
   /**

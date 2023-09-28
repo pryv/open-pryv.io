@@ -98,6 +98,8 @@ Each service independently - logs will be displayed on the console
 
 - `npm run proxy` (with database) and `npm run proxied` (without database) based on [rec-la](https://github.com/pryv/rec-la), it will expose the server running on http://localhost:3000 with an SSL certificate on https://my-computer.rec.la:4443 in this case you need to edit `configs/rec-la.yml`.
 
+Note: if rec.la certificate are expired you can refresh them with ./scripts/update-recla-certificates
+
 #### Native Server setup with built-in SSL
 
 [setup the environment](#native)
@@ -226,10 +228,10 @@ To make a backup of your data:
 ### Backup: native
 
 Run `./scripts/backup-database-native ${BACKUP_FOLDER}` to generate a dump of the current database contents
-Run `./scripts/backup-attachments-native ${BACKUP_FOLDER}` to copy the current attachment files.
+Run `./scripts/backup-usersfiles-native ${BACKUP_FOLDER}` to copy the current usersfiles files.
 
 To restore the database, run `./scripts/restore-database-native ${BACKUP_FOLDER}` to restore data from the provided backup folder.
-To restore attachments, run `./scripts/restore-attachments-native ${BACKUP_FOLDER}` to restore data from the provided backup folder.
+To restore attachments, run `./scripts/restore-usersfiles-native ${BACKUP_FOLDER}` to restore data from the provided backup folder.
 Depending on your setup, you may need additional access rights.
 
 ### Backup: dockerized

@@ -74,6 +74,7 @@ async function moveAttachments () {
     const userLocalDir = await userLocalDirectory.ensureUserDirectory(userId);
     const newAttachmentDirPath = path.join(userLocalDir, 'attachments');
     await move(oldAttachmentUserDirPath, newAttachmentDirPath);
+    logger.info('Attachmend moved for userId: ' + userId + ' to: ' + newAttachmentDirPath);
   }
 }
 

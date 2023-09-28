@@ -121,7 +121,7 @@ class AccessLogic {
    * Loads permissions from `this.permissions`.
    * - Loads tag permissions into `tagPermissions`/`tagPermissionsMap`.
    */
-  loadPermissions () {
+  async loadPermissions () {
     if (!this.permissions) {
       return;
     }
@@ -134,7 +134,7 @@ class AccessLogic {
 
     for (const perm of this.permissions) {
       if (perm.streamId != null) {
-        this._loadStreamPermission(perm);
+        await this._loadStreamPermission(perm);
       } else if (perm.tag != null) {
         this._loadTagPermission(perm);
       } else if (perm.feature != null) {
@@ -148,10 +148,19 @@ class AccessLogic {
     }
   }
 
-  _loadStreamPermission (perm) {
+  async _loadStreamPermission (perm) {
     const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(perm.streamId);
     if (this._streamByStorePermissionsMap[storeId] == null) this._streamByStorePermissionsMap[storeId] = {};
     this._streamByStorePermissionsMap[storeId][storeStreamId] = { streamId: storeStreamId, level: perm.level };
+
+    if (perm.streamId === '*') { // add mall stores to permissions
+      const mall = await getMall();
+      const mallStoreIds = mall.includedInStarPermissions;
+      for (const mallStoreId of mallStoreIds) {
+        if (this._streamByStorePermissionsMap[mallStoreId] == null) this._streamByStorePermissionsMap[mallStoreId] = {};
+        this._streamByStorePermissionsMap[mallStoreId]['*'] = { streamId: '*', level: perm.level };
+      }
+    }
   }
 
   /**

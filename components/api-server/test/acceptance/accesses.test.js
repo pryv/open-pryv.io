@@ -546,6 +546,52 @@ describe('accesses', () => {
             assert.strictEqual(res.body.error.message, 'expireAfter cannot be negative.');
           });
         });
+        describe('Store accesses', () => {
+          it('[JZWH] create an access on :dummy: store', async () => {
+            const attrs = {
+              name: 'Dummy Access',
+              type: 'app',
+              permissions: [
+                {
+                  streamId: ':dummy:',
+                  defaultName: 'Blip',
+                  level: 'read'
+                }
+              ]
+            };
+
+            const res = await server
+              .request()
+              .post(`/${userId}/accesses`)
+              .set('Authorization', accessToken)
+              .send(attrs);
+            assert.strictEqual(res.status, 201);
+          });
+
+          it('[JUWH] create an access :dummy:marcella on :dummy: store', async () => {
+            const attrs = {
+              name: 'Dummy Access',
+              type: 'app',
+              permissions: [
+                {
+                  streamId: ':dummy:marcella',
+                  defaultName: 'Marcella',
+                  level: 'read'
+                }
+              ]
+            };
+
+            const res = await server
+              .request()
+              .post(`/${userId}/accesses`)
+              .set('Authorization', accessToken)
+              .send(attrs);
+            assert.strictEqual(res.status, 501);
+            assert.exists(res.body.error);
+            assert.equal(res.body.error.id, 'api-unavailable');
+            assert.equal(res.body.error.message, 'streams.create');
+          });
+        });
       });
       describe('accesses.checkApp', () => {
         describe('when the matching access is not expired', () => {
