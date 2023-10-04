@@ -71,7 +71,7 @@ exports.emailExists = emailExists;
 exports.uidExists = async function (uid, callback) {
   try {
     const username = uid.toLowerCase();
-    const exists = usersRepository.usernameExists(username);
+    const exists = await usersRepository.usernameExists(username);
     return callback(null, exists);
   } catch (err) {
     return callback(err);
@@ -94,8 +94,10 @@ exports.getServer = function (uid, callback) {
 async function getUIDFromMail(mail, callback) {
   try {
     const cleanmail = mail.toLowerCase();
-    const username = await platform.getLocalUsersUniqueField('email', mail);
-    return callback(null, username);
+    platform.getLocalUsersUniqueField('email', cleanmail).then(
+      (result) => { callback(null, result); },
+      (error) => { callback(error, null); }
+    );
   } catch (err) {
     return callback(err, null);
   }

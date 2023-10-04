@@ -159,39 +159,6 @@ module.exports = function (app) {
     }
   });
 
-  /**
-   * PUT /users: update the user only in service-register (system call)
-   * no validation is applied because it is system call
-   */
-  app.put('/users', requireRoles('system'), async (req, res, next) => {
-    const body = req.body;
-    // Allow update and delete for all fields except for username
-    const username = body.username;
-
-    const fieldsforDeletion = body.fieldsToDelete ? body.fieldsToDelete : {};
-    const fieldsforUpdate = body.user ? body.user : {};
-
-    // just make sure that username would not be changed
-    delete fieldsforDeletion.username;
-    delete fieldsforUpdate.username;
-    try {
-      await users.validateUpdateFields(username, fieldsforUpdate);
-      const response = await users.updateFields(username, fieldsforUpdate, fieldsforDeletion);
-
-      // null if 0 fields were updated and false if something went wrong
-      if (!response) {
-        res.status(400).json({ user: response });
-      } else {
-        res.status(200).json({ user: true });
-      }
-    } catch (error) {
-      if (typeof error === 'object') {
-        return res.status(400).json({ user: false, error });
-      }
-      next(error);
-    }
-  });
-
 
   /**
    * POST /username/check: check the existence/validity of a given username
@@ -314,6 +281,7 @@ function _check (req, res, next, raw) {
     }
     db.uidExists(username, function (error, exists) {
       if (error) {
+        console.log(error);
         return next(messages.ei(error));
       }
       if (raw) {

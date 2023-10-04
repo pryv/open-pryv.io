@@ -98,7 +98,7 @@ describe('service', function () {
                   name: 'Pryv.io',
                   description: 'Self hosted',
                   available: true,
-                  availableCore: 'http://127.0.0.1:3000'
+                  availableCore: 'http://127.0.0.1:3000/'
                 }
               }
             }

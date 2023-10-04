@@ -1,6 +1,4 @@
-# Open Pryv.io - 1.9.0-ALPHA
-
-This version is **unstable** 
+# Open Pryv.io
 
 ![Pryv-Logo](readme/logo-data-privacy-management-pryv.png)
 

@@ -1,5 +1,5 @@
 dnsLess:
-  publicUrl: https://my-computer.rec.la:4443
+  publicUrl: "https://my-computer.rec.la:4443/"
 http:
   port: 3000
   ip: 127.0.0.1
@@ -9,6 +9,7 @@ auth:
 eventFiles:
   attachmentsDirPath: var-pryv/attachment-files
 service:
+  serial: 1000001 # change serial number each time assets content needs to be reloaded by clients
   name: Open-Pryv.io
   support: https://pryv.com/open-pryv-non-configured-page/
   terms: https://pryv.com/open-pryv-non-configured-page/
@@ -21,3 +22,15 @@ services:
     enabled:
       welcome: true
       resetPassword: true
+custom:
+  systemStreams:
+    account:
+      -
+        isIndexed: true
+        isUnique: true
+        isShown: true
+        isEditable: true
+        type: email/string
+        name: Email
+        id: email
+        isRequiredInValidation: true

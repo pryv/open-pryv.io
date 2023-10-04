@@ -2,3 +2,6 @@ openSource:
   isActive: true
 dnsLess:
   isActive: true
+service:
+  features:
+    noHF: true

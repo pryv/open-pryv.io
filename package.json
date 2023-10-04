@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.9.0-1-open",
+  "version": "1.9.0-4-open",
   "private": true,
   "description": "Pryv core server app components",
   "homepage": "https://pryv.com",
@@ -17,11 +17,12 @@
   },
   "scripts": {
     "api": "LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./config.yml",
+    "apirecla": "LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/rec-la.yml",
     "database": "scripts/start-mongo",
-    "local": "npm run database >> ./var-pryv/logs/mongodb.log & npm run mail >> ./var-pryv/logs/mail.log & npm run proxy & NODE_ENV=production ./dist/components/api-server/bin/server --config ./configs/rec-la.yml",
+    "local": "npm run database >> ./var-pryv/logs/mongodb.log & npm run mail >> ./var-pryv/logs/mail.log & npm run proxy & npm run apirecla",
     "mail": "cd service-mail ; ./bin/server",
-    "proxied": "./node_modules/rec-la/bin/proxy.js localhost:3000 & LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/rec-la.yml",
-    "proxy": "./node_modules/rec-la/bin/proxy.js localhost:3000",
+    "proxied": "./node_modules/rec.la/bin/proxy.js localhost:3000 & LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/rec-la.yml",
+    "proxy": "./node_modules/rec.la/bin/proxy.js localhost:3000",
     "pryv": "npm run database >> ./var-pryv/logs/mongodb.log & npm run mail >> ./var-pryv/logs/mail.log & npm run api",
     "test": "echo 'This project doesn’t use npm scripts – enter `just` for the available development commands\n' && exit 1"
   },

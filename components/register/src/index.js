@@ -71,6 +71,7 @@ module.exports = async (expressApp) => {
   require('./routes/access')(app);
   require('./routes/admin')(app);
   require('./routes/server')(app);
+  require('./routes/users')(app);
   require('./middleware/app-errors')(app);
 
   // register all reg routes
