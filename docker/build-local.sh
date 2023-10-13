@@ -29,7 +29,7 @@ fi
 # ================= like registration button style and etc=============
 # =====================================================================
 
-bash ../scripts/setup-assets.bash
+bash ../scripts/setup-assets
 
 # =====================================================================
 # ================= Config parsing starts         =====================
@@ -52,7 +52,7 @@ echo "Hostname is $HOSTNAME"
 # =====================================================================
 
 # download or update rec.la domain certificates
-bash ../scripts/download-recla-certificates.sh
+bash ../scripts/update-recla-certificates
 
 # =====================================================================
 # ================= Start docker compose          =====================
@@ -64,8 +64,8 @@ PORT=80
 PORT_SSL=4443
 if [ -z "$DOCKER_COMPOSE_FILE" ]
 then
-    echo "No docker compose file was given so starting default with ./local/docker-compose.no-ssl.yml"
-    HOSTNAME=$HOSTNAME TAG=latest docker-compose -f local/docker-compose.no-ssl.yml up --build
+    echo "No docker compose file was given so starting default with ./local/docker-compose-build.no-ssl.yml"
+    HOSTNAME=$HOSTNAME TAG=latest docker-compose -f local/docker-compose.no-ssl-build.yml up --build
 else
     if [ -z "$DOCKER_COMMAND" ]
     then

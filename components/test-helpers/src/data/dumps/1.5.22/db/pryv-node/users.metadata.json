@@ -1,0 +1,1 @@
+{"options":{},"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_","ns":"pryv-node.users"}],"uuid":"a35793e41a334a8aa12e5bb789fa9a04"}

@@ -1,67 +1,58 @@
 /**
  * @license
- * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
- * 
+ * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- * 
- * Redistribution and use in source and binary forms, with or without 
+ *
+ * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
- * 
- * 1. Redistributions of source code must retain the above copyright notice, 
- *    this list of conditions and the following disclaimer.
- * 
- * 2. Redistributions in binary form must reproduce the above copyright notice, 
- *    this list of conditions and the following disclaimer in the documentation 
- *    and/or other materials provided with the distribution.
- * 
- * 3. Neither the name of the copyright holder nor the names of its contributors 
- *    may be used to endorse or promote products derived from this software 
- *    without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE 
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL 
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR 
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER 
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, 
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *   this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors
+ *   may be used to endorse or promote products derived from this software
+ *   without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * 
+ *
  * SPDX-License-Identifier: BSD-3-Clause
  */
-// @flow
-
-const APIError = require('errors/src/APIError');
-
 const errors = require('errors').factory;
 const validation = require('../../schema/validation');
-
 const { findForbiddenChar, isStreamIdValidForCreation } = require('../../schema/streamId');
-
-exports.requirePersonalAccess = function requirePersonalAccess(context, params, result, next) {
-  if (! context.access.isPersonal()) {
-    return next(errors.forbidden('You cannot access this resource using the given access ' +
-        'token.'));
+exports.requirePersonalAccess = function requirePersonalAccess (context, params, result, next) {
+  if (!context.access.isPersonal()) {
+    return next(errors.forbidden('You cannot access this resource using the given access ' + 'token.'));
   }
   next();
 };
-
-
 /**
  * Basic check for authorized access based on context.methodId
  */
 exports.basicAccessAuthorizationCheck = function (context, params, result, next) {
   const res = context.access.can(context.methodId);
-  if (res === true) return next();
-
-  const message = (typeof res === "boolean") ? 
-    'You cannot access ' + context.methodId + ' resource using the given access' :
-    '' + res;
+  if (res === true) { return next(); }
+  const message = typeof res === 'boolean'
+    ? 'You cannot access ' +
+            context.methodId +
+            ' resource using the given access'
+    : '' + res;
   return next(errors.forbidden(message));
 };
-
 /**
  * Returns a check whether the given app ID / origin pair match a trusted app defined in settings.
  * (Lazy-loads and caches the `trustedApps` setting.)
@@ -70,33 +61,33 @@ exports.basicAccessAuthorizationCheck = function (context, params, result, next)
  * @param {Object} authSettings
  * @return {Function}
  */
-exports.getTrustedAppCheck = function getTrustedAppCheck(authSettings) {
-  var trustedApps;
-  return function requireTrustedApp(context, params, result, next) {
-    if (! isTrustedApp(params.appId, params.origin)) {
-      return next(errors.invalidCredentials('The app id ("appId") is either missing or ' +
-          'not trusted.'));
+exports.getTrustedAppCheck = function getTrustedAppCheck (authSettings) {
+  let trustedApps;
+  return function requireTrustedApp (context, params, result, next) {
+    if (!isTrustedApp(params.appId, params.origin)) {
+      return next(errors.invalidCredentials('The app id ("appId") is either missing or ' + 'not trusted.'));
     }
     next();
   };
-
-  function isTrustedApp(appId, origin) {
-    if (! trustedApps) {
+  function isTrustedApp (appId, origin) {
+    if (!trustedApps) {
       trustedApps = [];
       authSettings.trustedApps.split(',').forEach(function (pair) {
-        var parts = /^\s*(\S+)\s*@\s*(\S+)\s*$/.exec(pair);
-        if (parts.length !== 3) { return; }
+        const parts = /^\s*(\S+)\s*@\s*(\S+)\s*$/.exec(pair);
+        if (parts.length !== 3) {
+          return;
+        }
         trustedApps.push({
-          appId: parts[1], // index 0 is the original string
+          appId: parts[1],
           originRegExp: getRegExp(parts[2])
         });
       });
     }
-
-    if (! appId) { return false; }
-
-    var trustedApp;
-    for (var i = 0, n = trustedApps.length; i < n; i++) {
+    if (!appId) {
+      return false;
+    }
+    let trustedApp;
+    for (let i = 0, n = trustedApps.length; i < n; i++) {
       trustedApp = trustedApps[i];
       // accept wildcards for app ids (for use in tests/dev/staging only)
       if (trustedApp.appId !== appId && trustedApp.appId !== '*') {
@@ -106,60 +97,50 @@ exports.getTrustedAppCheck = function getTrustedAppCheck(authSettings) {
         return true;
       }
     }
-
     return false;
   }
-
-  function getRegExp(origin) {
+  function getRegExp (origin) {
     // BUG The blacklist approach taken here is probably wrong; we're assuming
-    //  that we can escape all the active parts of a string using a list of 
+    //  that we can escape all the active parts of a string using a list of
     //  special chars; we're almost sure to miss something while doing that. A
-    //  better approach would be to whitelist all characters that are allowed 
-    //  in the input language. 
-    
+    //  better approach would be to whitelist all characters that are allowed
+    //  in the input language.
     // first escape the origin string
-    var rxString = origin.replace(/([.*+?^=!:${}()|[\]\/\\])/g, '\\$1');
+    let rxString = origin.replace(/([.*+?^=!:${}()|[\]\/\\])/g, '\\$1'); // eslint-disable-line no-useless-escape
     // then replace wildcards
     rxString = rxString.replace(/\\\*/g, '\\S*');
     return new RegExp('^' + rxString + '$');
   }
 };
-
-
 /** Produces a middleware function to verify parameters against the schema
  * given in `paramsSchema`.
- *  
+ *
  * @param  {Object} paramsSchema JSON Schema for the parameters
  * @return {void}
- */ 
+ */
 exports.getParamsValidation = function getParamsValidation (paramsSchema) {
   return function validateParams (context, params, result, next) {
     validation.validate(params, paramsSchema, function (err) {
       if (err) {
-        const errorsList = err.map(error => _addCustomMessage(error, paramsSchema));
-        return next(errors.invalidParametersFormat(
-          "The parameters' format is invalid.", errorsList
-        ));
+        const errorsList = err.map((error) => _addCustomMessage(error, paramsSchema));
+        return next(errors.invalidParametersFormat("The parameters' format is invalid.", errorsList));
       }
       next();
     });
   };
 };
-
-exports.isValidStreamIdForQuery = function isValidStreamIdForQuery(streamId: string, parameter: {}, parameterName: string): void {
-  const forbiddenChar: ?string = findForbiddenChar(streamId);
-  if (forbiddenChar != null) throw (new Error(`Error in '${parameterName}' parameter: ${JSON.stringify(parameter)}, forbidden chartacter(s) in streamId '${streamId}'.`));
-}
-
-exports.isValidStreamIdForCreation = function isValidStreamIdForCreation(streamId: string): boolean {
+exports.isValidStreamIdForQuery = function isValidStreamIdForQuery (streamId, parameter, parameterName) {
+  const forbiddenChar = findForbiddenChar(streamId);
+  if (forbiddenChar != null) { throw new Error(`Error in '${parameterName}' parameter: ${JSON.stringify(parameter)}, forbidden chartacter(s) in streamId '${streamId}'.`); }
+};
+exports.isValidStreamIdForCreation = function isValidStreamIdForCreation (streamId) {
   return isStreamIdValidForCreation(streamId);
-}
-
+};
 /**
  * Replaces z-schema message and code with a custom message given in the schema
  * !!! Important - it also removes error params and schemaId and
  * adds "param" that is equal to failing param id
- * 
+ *
  * Before this function validation errors could look like this:
  * "error": {
         "id": "invalid-parameters-format",
@@ -176,9 +157,9 @@ exports.isValidStreamIdForCreation = function isValidStreamIdForCreation(streamI
             }
         ]
     },
-    
+
     And if custom error messages are provided, it could be changed to something like this:
- * 
+ *
  * "error": {
         "id": "invalid-parameters-format",
         "message": "The parameters' format is invalid.",
@@ -191,58 +172,53 @@ exports.isValidStreamIdForCreation = function isValidStreamIdForCreation(streamI
             }
         ]
     },
- * 
- * @param object error 
- * @param object schema 
+ *
+ * @param object error
+ * @param object schema
+ * @returns {any}
  */
-function _addCustomMessage(error, schema){
-  const pathElements = error.path.split("/");
-  let paramId = pathElements[pathElements.length -1];
-
+function _addCustomMessage (error, schema) {
+  const pathElements = error.path.split('/');
+  let paramId = pathElements[pathElements.length - 1];
   // when field is missing paramId will be empty
-  if(paramId === '' && error.params.length >= 1){
-    paramId = error.params[0]
+  if (paramId === '' && error.params.length >= 1) {
+    paramId = error.params[0];
   }
-
   // if there are custom messages set, replace default z-schema message
   if (schema?.messages?.[paramId] != null) {
     // if there is a message, set it
-    if(schema.messages[paramId][error.code]?.message){
+    if (schema.messages[paramId][error.code]?.message) {
       error.message = schema.messages[paramId][error.code].message;
     }
     // if there is a custom error code, set it
-    if(schema.messages[paramId][error.code]?.code){
+    if (schema.messages[paramId][error.code]?.code) {
       error.code = schema.messages[paramId][error.code].code;
     }
-
     // delete missleading error parameters
-    if ('params' in error){
+    if ('params' in error) {
       delete error.params;
     }
-
     // delete schemaId
-    if ('schemaId' in error){
+    if ('schemaId' in error) {
       delete error.schemaId;
     }
-
     // make frontenders happier and instead of having 'path' with
     // modified param name, pass not modified param too
     error.param = paramId;
   }
   // if there are no custom messages, just return default z-schema message
-  return error;  
+  return error;
 }
-
-exports.catchForbiddenUpdate = function catchForbiddenUpdate(paramsSchema, ignoreProtectedFieldUpdates, logger) {
+exports.catchForbiddenUpdate = function catchForbiddenUpdate (paramsSchema, ignoreProtectedFieldUpdates, logger) {
   return function validateParams (context, params, result, next) {
     const allowed = paramsSchema.alterableProperties;
-
-    const forbidden = Object.keys(params.update)
-      .filter(key => !allowed.includes(key));
-    if(forbidden.length > 0) {
-      const errorMsg = 'Forbidden update was attempted on the following protected field(s): [' + forbidden + '].';
+    const forbidden = Object.keys(params.update).filter((key) => !allowed.includes(key));
+    if (forbidden.length > 0) {
+      const errorMsg = 'Forbidden update was attempted on the following protected field(s): [' +
+                forbidden +
+                '].';
       // Strict mode: throw a forbidden error
-      if(!ignoreProtectedFieldUpdates) {
+      if (!ignoreProtectedFieldUpdates) {
         return next(errors.forbidden(errorMsg));
       }
       // Non-strict mode:
@@ -251,8 +227,9 @@ exports.catchForbiddenUpdate = function catchForbiddenUpdate(paramsSchema, ignor
         delete params.update[key];
       });
       // Log a warning
-      logger.warn(errorMsg + '\n' +
-        'Server has "ignoreProtectedFieldUpdates" turned on: Fields are not updated, but no error is thrown.');
+      logger.warn(errorMsg +
+                '\n' +
+                'Server has "ignoreProtectedFieldUpdates" turned on: Fields are not updated, but no error is thrown.');
     }
     next();
   };

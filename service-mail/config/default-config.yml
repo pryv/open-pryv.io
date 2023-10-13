@@ -1,0 +1,33 @@
+---
+# Logging settings
+logs:
+  prefix: ''
+  console:
+    active: true
+    level: info
+    colorize: true
+  file:
+    active: false
+email:
+  message:
+    # Sender name and email address
+    from:
+      name: REPLACE_ME
+      address: replace-me@domain.ext
+  preview: false # If true, it will open a webpage with a preview
+  send: true # Activate/deactivate the actual sending (prod/test env)
+# By default, service-mail will use SMTP as transport
+smtp:
+  host: smtp.domain.ext
+  port: 587
+# Alternative transport, using the sendmail command of the machine
+sendmail:
+  active: true
+  path: "/usr/sbin/sendmail"
+http:
+  ip: 127.0.0.1
+  port: 9000
+  auth: REPLACE_ME
+templates:
+  root: "./templates"
+  defaultLang: en

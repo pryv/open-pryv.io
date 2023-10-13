@@ -1,91 +1,109 @@
 /**
  * @license
- * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
- * 
+ * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- * 
- * Redistribution and use in source and binary forms, with or without 
+ *
+ * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
- * 
- * 1. Redistributions of source code must retain the above copyright notice, 
- *    this list of conditions and the following disclaimer.
- * 
- * 2. Redistributions in binary form must reproduce the above copyright notice, 
- *    this list of conditions and the following disclaimer in the documentation 
- *    and/or other materials provided with the distribution.
- * 
- * 3. Neither the name of the copyright holder nor the names of its contributors 
- *    may be used to endorse or promote products derived from this software 
- *    without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE 
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL 
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR 
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER 
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, 
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *   this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors
+ *   may be used to endorse or promote products derived from this software
+ *   without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * 
+ *
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-// @flow
-
 /**
- * Data Store aggregator. 
- * Pack configured datastores into one
+ * “Data stores aggregator”.
+ * Provides a uniform interface to all data stores (built-in and custom).
  */
 
-const { getConfig, getLogger } = require('@pryv/boiler');
+const { setTimeout } = require('timers/promises');
+const { getConfig, getLogger } = require('@pryv/boiler');
 const Mall = require('./Mall');
 
-import typeof DataStore from '../interfaces/DataStore';
+module.exports = {
+  getMall,
+  // TODO: eventually remove this once all the store id logic is safely contained within the mall
+  storeDataUtils: require('./helpers/storeDataUtils')
+};
 
-let mall: Mall;
-let initializing: boolean = false;
-async function getMall(): Array<DataStore> {
+let mall;
+let initializing = false;
+
+/**
+ * @returns {Promise<any>}
+ */
+async function getMall () {
+  // eslint-disable-next-line no-unmodified-loop-condition
   while (initializing) {
-    await new Promise((r) => setTimeout(r, 5));
+    await setTimeout(5);
   }
-  if (mall != null) return mall;
+  if (mall != null) { return mall; }
   initializing = true;
 
-  const config: {} = await getConfig();
-  const logger: {} = getLogger('mall');
+  const config = await getConfig();
+  const logger = getLogger('mall');
   mall = new Mall();
-  
-  // -- DataStores (Imported After to avoid cycles);
-  const externalStores: Array<{}> = config.get('stores:loadExternal');
-  if (externalStores) { // keep it like this .. to be sure we test null, undefined, [], false
-    for (const externalStore of externalStores) {
-      const NewStore: Function = require(externalStore.path);
-      const newStore: DataStore = new NewStore(externalStore.config);
-      newStore.id = externalStore.id;
-      newStore.name = externalStore.name;
-      mall.addStore(newStore); 
-      logger.info('Loading store [' + newStore.name + '] with id [' + newStore.id + '] from ' + externalStore.path);
+
+  // load external stores from config (imported after to avoid cycles);
+  const customStoresDef = config.get('custom:dataStores');
+  if (customStoresDef) {
+    for (const storeDef of customStoresDef) {
+      logger.info(`Loading store "${storeDef.name}" with id "${storeDef.id}" from ${storeDef.path}`);
+      const store = require(storeDef.path);
+      const storeDescription = {
+        id: storeDef.id,
+        name: storeDef.name,
+        includeInStarPermission: true,
+        settings: storeDef.settings
+      };
+      mall.addStore(store, storeDescription);
     }
   }
 
-  // -- Builds in
-
-  const LocalStore: DataStore = require('../implementations/local/LocalDataStore');
-  mall.addStore(new LocalStore());
-
-  if ( (! config.get('openSource:isActive')) && config.get('audit:active')) {
-    const AuditDataStore = require('audit/src/AuditDataStore');
-    mall.addStore(new AuditDataStore());
+  // Load built-in stores
+  const localSettings = {
+    attachments: { setFileReadToken: true },
+    versioning: config.get('versioning')
+  };
+  if (config.get('database:engine') === 'sqlite') {
+    logger.info('Using PoC SQLite data store');
+    const sqlite = require('storage/src/localDataStoreSQLite');
+    mall.addStore(sqlite, { id: 'local', name: 'Local', settings: localSettings });
+  } else {
+    const mongo = require('storage/src/localDataStore');
+    mall.addStore(mongo, { id: 'local', name: 'Local', settings: localSettings });
   }
-  await mall.init()
+  // audit
+  if (!config.get('openSource:isActive') && config.get('audit:active')) {
+    const auditDataStore = require('audit/src/datastore/auditDataStore');
+    mall.addStore(auditDataStore, { id: '_audit', name: 'Audit', settings: {} });
+  }
+
+  await mall.init();
+
   initializing = false;
   return mall;
-};
+}
 
-
-module.exports = {
-  getMall : getMall,
-  StreamsUtils: require('./lib/StreamsUtils')
-};
+/** @typedef {Class<import>} DataStore */

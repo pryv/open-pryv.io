@@ -1,0 +1,3 @@
+root: true
+extends: 'semistandard'
+ignorePatterns: ['build/test/pryv/*']

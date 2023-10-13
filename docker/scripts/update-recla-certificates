@@ -1,0 +1,17 @@
+#!/bin/bash
+
+SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
+cd $SCRIPT_FOLDER/.. # root
+
+# download rec.la certificates
+CERTIFICATED_FOLDER="./rec.la-certificates"
+if [ ! -d $CERTIFICATED_FOLDER ]; then
+	echo "Downloading default certificates to $CERTIFICATED_FOLDER"
+	mkdir $CERTIFICATED_FOLDER
+else
+    echo "Refreshing default certificates in $CERTIFICATED_FOLDER"
+fi
+
+pushd $CERTIFICATED_FOLDER
+curl -O https://www.rec.la/rec.la-bundle.crt
+curl -O https://www.rec.la/rec.la-key.pem

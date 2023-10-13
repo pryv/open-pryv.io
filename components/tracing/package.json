@@ -1,8 +1,8 @@
 {
   "name": "tracing",
-  "version": "1.0.0",
+  "version": "1.8.1",
   "private": true,
-  "description": "tracing utilitaries for service-core",
+  "description": "Tracing utilities",
   "homepage": "https://pryv.com",
   "license": "BSD-3-Clause",
   "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)",

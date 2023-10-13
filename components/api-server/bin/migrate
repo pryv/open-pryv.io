@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 
-// Binary for launching the db migration process. 
+// Binary for launching the db migration process.
 
 const { getApplication } = require('api-server/src/application');
-const bluebird = require('bluebird');
 const { getLogger, getConfig } = require('@pryv/boiler');
 let logger;
 
@@ -19,9 +18,9 @@ let logger;
   await app.initiate();
   logger = getLogger('migration-process');
 
-  // This bit is useful to trace down promise rejections that aren't caught. 
+  // This bit is useful to trace down promise rejections that aren't caught.
   process.on('unhandledRejection', (reason, promise) => {
-    logger.warn('Unhandled promise rejection:', promise, 'reason:', reason.stack || reason); 
+    logger.warn('Unhandled promise rejection:', promise, 'reason:', reason.stack || reason);
   });
   process.on('exit', function () {
     logger.info('Process exiting.');
@@ -40,16 +39,14 @@ let logger;
       logger.error(e, e);
       process.exit(1);
     });
-})()
+})();
 
-async function connectAndMigrate(app) {
-
+async function connectAndMigrate (app) {
   logger.info('Connecting to storage...');
   await app.storageLayer.waitForConnection();
-  
+
   logger.info('Storage connected.');
-  
+
   logger.info('Starting migration...');
-  return await bluebird.fromCallback(
-    (cb) => app.storageLayer.versions.migrateIfNeeded(cb));
+  return await app.storageLayer.versions.migrateIfNeeded();
 }

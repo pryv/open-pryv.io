@@ -10,9 +10,9 @@ This guide explains how to build your own docker Open Pryv.io docker images.
 
 Prepare the various assets, run the following commands from the `docker/` directory:
 
-- `bash ../scripts/setup-app-web-auth3.bash`
-- `bash ../scripts/setup-assets.bash`
-- `bash ../scripts/setup-admin-key.bash`
+- `bash ../scripts/setup-app-web-auth3`
+- `bash ../scripts/setup-assets`
+- `bash ../scripts/setup-admin-key`
 
 ## with external SSL
 
@@ -27,7 +27,7 @@ After images are built, you can run the command above just without "--build" par
 
 Fetch the [rec-la](https://github.com/pryv/rec-la) SSL certificates:
 
-- Run `bash ../scripts/download-recla-certificates.sh`
+- Run `bash ../scripts/update-recla-certificates`
 
 Run `TAG=latest docker-compose -f local/docker-compose.with-ssl-build.yml up --build`
 

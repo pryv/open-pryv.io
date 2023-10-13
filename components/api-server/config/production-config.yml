@@ -6,7 +6,7 @@ http:
 database:
   authUser: api-server
   authPassword: OVERRIDE ME
-  host: localhost
+  host: 127.0.0.1
   port: 27017
   name: pryv-node
 eventFiles:
@@ -43,7 +43,3 @@ logs:
     path: "${PRYV_LOGSDIR}/api-server.errors.log"
     maxFileBytes: 4096
     maxNbFiles: 20
-  airbrake:
-    active: true
-    key: OVERRIDE ME
-    projectId: OVERRIDE ME

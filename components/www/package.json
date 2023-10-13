@@ -6,9 +6,9 @@
   "homepage": "https://pryv.com",
   "license": "BSD-3-Clause",
   "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)",
-  "main": "source/index.js",
+  "main": "src/index.js",
   "scripts": {
-    "test": "NODE_ENV=test PRYV_CONFIG=../api-server/config/test.json  ../../node_modules/.bin/mocha --timeout 10000 --reporter=dot 'test/**/*.test.js' --exit"
+    "test": "NODE_ENV=test ../../node_modules/.bin/mocha --timeout 10000 --reporter=dot 'test/**/*.test.js' --exit"
   },
   "dependencies": {},
   "devDependencies": {}

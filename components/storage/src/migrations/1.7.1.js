@@ -1,58 +1,50 @@
 /**
  * @license
- * Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
- * 
+ * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- * 
- * Redistribution and use in source and binary forms, with or without 
+ *
+ * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
- * 
- * 1. Redistributions of source code must retain the above copyright notice, 
- *    this list of conditions and the following disclaimer.
- * 
- * 2. Redistributions in binary form must reproduce the above copyright notice, 
- *    this list of conditions and the following disclaimer in the documentation 
- *    and/or other materials provided with the distribution.
- * 
- * 3. Neither the name of the copyright holder nor the names of its contributors 
- *    may be used to endorse or promote products derived from this software 
- *    without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE 
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL 
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR 
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER 
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, 
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *   this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its contributors
+ *   may be used to endorse or promote products derived from this software
+ *   without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * 
+ *
  * SPDX-License-Identifier: BSD-3-Clause
  */
-const bluebird = require('bluebird');
-const { UsersRepository, getUsersRepository, User } = require('business/src/users');
 
 const { getLogger } = require('@pryv/boiler');
 /**
- * v1.7.1: 
- * - change delete date from numbers to daate 
+ * v1.7.1:
+ * - change delete date from numbers to daate
  */
 module.exports = async function (context, callback) {
-
   const logger = getLogger('migration-1.7.1');
   logger.info('V1.7.0 => v1.7.1 Migration started');
 
-  const eventsCollection = await bluebird.fromCallback(cb =>
-    context.database.getCollection({ name: 'events' }, cb));
-  const streamsCollection = await bluebird.fromCallback(cb =>
-    context.database.getCollection({ name: 'streams' }, cb));
-  const accessesCollection = await bluebird.fromCallback(cb =>
-    context.database.getCollection({ name: 'accesses' }, cb));
-  const webhooksCollection = await bluebird.fromCallback(cb =>
-      context.database.getCollection({ name: 'webhooks' }, cb));
-
+  const eventsCollection = await context.database.getCollection({ name: 'events' });
+  const streamsCollection = await context.database.getCollection({ name: 'streams' });
+  const accessesCollection = await context.database.getCollection({ name: 'accesses' });
+  const webhooksCollection = await context.database.getCollection({ name: 'webhooks' });
 
   await migrateDeletedDates(accessesCollection);
   await migrateDeletedDates(eventsCollection);
@@ -62,10 +54,10 @@ module.exports = async function (context, callback) {
   logger.info('V1.7.0 => v1.7.1 Migration finished');
   callback();
 
-  //----------------- DELETED Dates to Number
+  // ----------------- DELETED Dates to Number
 
-  async function migrateDeletedDates(collection) {
-    const cursor = await collection.find({ deleted: { $type: 'date' } });
+  async function migrateDeletedDates (collection) {
+    const cursor = collection.find({ deleted: { $type: 'date' } });
     let requests = [];
     let document;
     let eventsMigrated = 0;
@@ -73,16 +65,16 @@ module.exports = async function (context, callback) {
       document = await cursor.next();
       eventsMigrated++;
       requests.push({
-        'updateOne': {
-          'filter': { '_id': document._id },
-          'update': {
-            '$set': { deleted: document.deleted.getTime() / 1000 },
+        updateOne: {
+          filter: { _id: document._id },
+          update: {
+            $set: { deleted: document.deleted.getTime() / 1000 }
           }
         }
       });
 
       if (requests.length === 1000) {
-        //Execute per 1000 operations and re-init
+        // Execute per 1000 operations and re-init
         await collection.bulkWrite(requests);
         console.log('Updated date for ' + eventsMigrated + ' ' + collection.namespace);
         requests = [];
@@ -95,5 +87,4 @@ module.exports = async function (context, callback) {
     }
     console.log('Finalizing date update for ' + collection.namespace);
   }
-
 };

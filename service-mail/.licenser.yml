@@ -1,0 +1,54 @@
+files:
+  "**/*.js":
+    header:
+      startBlock: |
+        /**
+         * @license
+      linePrefix: " * "
+      endBlock: " */"
+
+  "**/package.json":
+    json:
+      force:
+        author: "{AUTHOR_NAME} <{AUTHOR_EMAIL}> ({AUTHOR_WEB})"
+        license: "{SPDX}"
+        private: true
+      defaults:
+        homepage: "{HOMEPAGE}"
+        description: "{DESCRIPTION}"
+      sortPackage: true
+
+    siblingLicenseFile:
+      name: "LICENSE"
+
+  "**/README.md":
+    footer:
+      startBlock: "\n\n## License\n\n"
+      linePrefix: ""
+      endBlock: ""
+      license: "[{SPDX}](LICENSE)"
+
+ignore:
+- .git
+- .vscode
+- coverage
+- dist
+- flow-coverage
+- flow-typed
+- node_modules
+
+license: |
+  Copyright (C) {YEARS} {AUTHOR_NAME} {AUTHOR_WEB} - All Rights Reserved
+  Unauthorized copying of this file, via any medium is strictly prohibited
+  Proprietary and confidential
+
+substitutions:
+  YEARS:
+    start: 2018
+    end: CURRENT_YEAR
+  AUTHOR_NAME: "Pryv S.A."
+  AUTHOR_EMAIL: info@pryv.com
+  AUTHOR_WEB: https://pryv.com
+  DESCRIPTION: "This package is part of Pryv.io, a Pryv S.A. software"
+  HOMEPAGE: https://pryv.com
+  SPDX: UNLICENSED

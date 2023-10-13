@@ -1,0 +1,1 @@
+{ "indexes" : [ { "v" : 1, "key" : { "_id" : 1 }, "ns" : "pryv-node.u_0.bookmarks", "name" : "_id_" }, { "v" : 1, "key" : { "name" : 1 }, "unique" : true, "ns" : "pryv-node.u_0.bookmarks", "name" : "name_1" }, { "v" : 1, "key" : { "username" : 1, "accessToken" : 1 }, "unique" : true, "ns" : "pryv-node.u_0.bookmarks", "name" : "username_1_accessToken_1" } ] }

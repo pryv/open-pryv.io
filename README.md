@@ -68,44 +68,41 @@ Once it is running, you can continue with the [tutorials](#start).
 
 *Prerequisites*:
 
-- Node v12.13.1 [Node.js home page](https://nodejs.org/)
-- Yarn v1 `npm install -g yarn`
+- Node v18.14.2 [Node.js home page](https://nodejs.org/)
+- [just](https://github.com/casey/just#installation)
 
 The installation script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
 
-- `yarn setup`: (see `scripts/` for details)
-  - Fetch dependencies
-  - Install mongodb
-  - Install service mail
-  - Install assets & app-web-auth3
-  - Generate random alpha-numeric adminKey
-- `yarn release` create distribution for release
+1. `just setup-dev-env` to setup local file structure and install MongoDB
+2. `just install [--no-optional]` to install node modules
 
 #### Native setup with external SSL
 
 [setup the environment](#native)
 
-- `yarn pryv` - mail and database logs will be kept in `var-pryv/logs/local-*.log`
+- `npm run pryv` - mail and database logs will be kept in `var-pryv/logs/local-*.log`
 
 Each service independently - logs will be displayed on the console
 
-- `yarn database` start mongodb
-- `yarn api` start the API server on port 3000 (default)
-- `yarn mail` start the mail service
+- `npm run database` start mongodb
+- `npm run api` start the API server on port 3000 (default)
+- `npm run mail` start the mail service
 
 #### Local native setup
 
 [setup the environment](#native)
 
-- `yarn local` is the equivalent of running `yarn pryv` + `yarn proxy` using `configs/rec-la.yml`. This setup is useful to test Open Pryv.io locally.
+- `npm run local` is the equivalent of running `npm run pryv` + `npm run proxy` using `configs/rec-la.yml`. This setup is useful to test Open Pryv.io locally.
 
-- `yarn proxy` based on [rec-la](https://github.com/pryv/rec-la), it will expose the server running on http://localhost:3000 with an SSL certificate on https://my-computer.rec.la:4443 in this case you need to edit `configs/rec-la.yml`.
+- `npm run proxy` (with database) and `npm run proxied` (without database) based on [rec-la](https://github.com/pryv/rec-la), it will expose the server running on http://localhost:3000 with an SSL certificate on https://my-computer.rec.la:4443 in this case you need to edit `configs/rec-la.yml`.
+
+Note: if rec.la certificate are expired you can refresh them with ./scripts/update-recla-certificates
 
 #### Native Server setup with built-in SSL
 
 [setup the environment](#native)
 
-1. Run `yarn pryv` to start the API
+1. Run `npm run pryv` to start the API
 2. Configure NGINX and certificate
 
 You can find a NGINX configuration that you can include in your `sites-enabled/` in [configs/site.conf](configs/site.conf).
@@ -203,7 +200,7 @@ To customize your own, clone the [Data Types repository](https://github.com/pryv
 
 ### MongoDB data folder
 
-By default the MongoDB data are stored in `var-pryv/mongodb-data`. If you want to modify the folder where the MongoDB data files are stored, you can modify in `scripts/setup-mongodb.bash` the variable `MONGO_DATA_FOLDER`.
+By default the MongoDB data are stored in `var-pryv/mongodb-data`. If you want to modify the folder where the MongoDB data files are stored, you can modify in `scripts/setup-mongodb` the variable `MONGO_DATA_FOLDER`.
 
 
 ### Visual assets and icons
@@ -214,7 +211,7 @@ Your platforms visuals can be customized in `public_html/assets/`, please refer 
 
 Pryv.io can send e-mails at registration and password reset request.
 
-The emails can be sent either by local sendmail (default) or SMTP.  
+The emails can be sent either by local sendmail (default) or SMTP.
 
 This service, its documentation and mail templates can be found in [`service-mail/`](service-mail/).
 
@@ -228,11 +225,11 @@ To make a backup of your data:
 
 ### Backup: native
 
-Run `./scripts/backup-database-native.sh ${BACKUP_FOLDER}` to generate a dump of the current database contents
-Run `./scripts/backup-attachments-native.sh ${BACKUP_FOLDER}` to copy the current attachment files.
+Run `./scripts/backup-database-native ${BACKUP_FOLDER}` to generate a dump of the current database contents
+Run `./scripts/backup-usersfiles-native ${BACKUP_FOLDER}` to copy the current usersfiles files.
 
-To restore the database, run `./scripts/restore-database-native.sh ${BACKUP_FOLDER}` to restore data from the provided backup folder.
-To restore attachments, run `./scripts/restore-attachments-native.sh ${BACKUP_FOLDER}` to restore data from the provided backup folder.
+To restore the database, run `./scripts/restore-database-native ${BACKUP_FOLDER}` to restore data from the provided backup folder.
+To restore attachments, run `./scripts/restore-usersfiles-native ${BACKUP_FOLDER}` to restore data from the provided backup folder.
 Depending on your setup, you may need additional access rights.
 
 ### Backup: dockerized
@@ -243,35 +240,40 @@ Follow the guide in the [docker](#docker) package.
 
 Contributions are welcome. Get in touch with the Pryv team or submit a PR with your changes or adaptation.
 
-#
-# License
-Copyright (C) 2020-2021 Pryv S.A. https://pryv.com 
+## License
+
+Copyright (c) 2020 Pryv S.A. https://pryv.com
 
 This file is part of Open-Pryv.io and released under BSD-Clause-3 License
 
-Redistribution and use in source and binary forms, with or without 
+Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
 
-1. Redistributions of source code must retain the above copyright notice, 
+1. Redistributions of source code must retain the above copyright notice,
    this list of conditions and the following disclaimer.
 
-2. Redistributions in binary form must reproduce the above copyright notice, 
-   this list of conditions and the following disclaimer in the documentation 
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
    and/or other materials provided with the distribution.
 
-3. Neither the name of the copyright holder nor the names of its contributors 
-   may be used to endorse or promote products derived from this software 
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
    without specific prior written permission.
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE 
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL 
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR 
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER 
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, 
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 SPDX-License-Identifier: BSD-3-Clause
+
+
+# License
+
+[BSD-3-Clause](LICENSE)

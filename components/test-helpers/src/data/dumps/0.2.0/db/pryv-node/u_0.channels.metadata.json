@@ -1,0 +1,1 @@
+{ "indexes" : [ { "v" : 1, "key" : { "_id" : 1 }, "ns" : "pryv-node.u_0.channels", "name" : "_id_" }, { "v" : 1, "key" : { "name" : 1 }, "unique" : true, "ns" : "pryv-node.u_0.channels", "name" : "name_1" }, { "v" : 1, "key" : { "trashed" : 1 }, "ns" : "pryv-node.u_0.channels", "name" : "trashed_1" } ] }

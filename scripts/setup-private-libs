@@ -1,0 +1,26 @@
+#!/bin/bash
+set -e
+
+# Sets up private libraries (i.e. that are not accessible from the Docker build)
+
+# working dir fix
+SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
+cd $SCRIPT_FOLDER/..
+
+LIBS_DIR="private-libs"
+if [[ ! -d $LIBS_DIR ]]; then
+  echo "Missing private libraries folder '$LIBS_DIR'; creating..."
+  mkdir -p $LIBS_DIR
+fi
+
+cd $LIBS_DIR
+
+LIB_REPORTING=lib-reporting
+if [[ ! -d $LIB_REPORTING ]]; then
+  echo "Missing '$LIB_REPORTING'; cloning repo..."
+  git clone git@github.com:pryv/$LIB_REPORTING.git
+else
+  echo "Updating private lib '$LIB_REPORTING'..."
+  cd $LIB_REPORTING
+  git pull
+fi
