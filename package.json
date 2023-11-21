@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.9.0-4-open",
+  "version": "1.9.0-11-open",
   "private": true,
   "description": "Pryv core server app components",
   "homepage": "https://pryv.com",
@@ -18,12 +18,13 @@
   "scripts": {
     "api": "LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./config.yml",
     "apirecla": "LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/rec-la.yml",
-    "database": "scripts/start-mongo",
+    "database": "DEVELOPMENT=true scripts/start-mongo",
     "local": "npm run database >> ./var-pryv/logs/mongodb.log & npm run mail >> ./var-pryv/logs/mail.log & npm run proxy & npm run apirecla",
     "mail": "cd service-mail ; ./bin/server",
     "proxied": "./node_modules/rec.la/bin/proxy.js localhost:3000 & LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/rec-la.yml",
     "proxy": "./node_modules/rec.la/bin/proxy.js localhost:3000",
     "pryv": "npm run database >> ./var-pryv/logs/mongodb.log & npm run mail >> ./var-pryv/logs/mail.log & npm run api",
+    "setup-dev-env": "scripts/setup-dev-env",
     "test": "echo 'This project doesn’t use npm scripts – enter `just` for the available development commands\n' && exit 1"
   },
   "pre-commit": "",

@@ -50,7 +50,8 @@ exports = module.exports = function () {
     support: string(),
     terms: string(),
     eventTypes: string(),
-    assets: object({})
+    assets: object({}),
+    features: object({})
   }, {
     required: ['serial', 'api', 'access', 'register', 'name', 'home', 'support', 'terms', 'eventTypes'],
     additionalProperties: false

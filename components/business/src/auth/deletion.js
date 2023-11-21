@@ -172,8 +172,6 @@ class Deletion {
    * @returns {Promise<any>}
    */
   async deleteAuditData (context, params, result, next) {
-    if (this.config.get('openSource:isActive')) { return next(); }
-    // dynamic loading , because series functionality does not exist in opensource
     const deleteUserDirectory = require('storage').userLocalDirectory.deleteUserDirectory;
     await deleteUserDirectory(context.user.id);
     next();

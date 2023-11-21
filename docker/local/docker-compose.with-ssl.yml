@@ -1,7 +1,7 @@
 version: "3.8"
 services:
   open-pryv.io:
-    image: pryvio/open-pryv.io:latest
+    image: pryvio/open-pryv.io:1.9.0
     command: "yarn api"
     container_name: "open-pryv.io"
     restart: "always"
@@ -15,7 +15,7 @@ services:
       - app-network
 
   open-pryv-mail:
-    image: pryvio/open-pryv.io:latest
+    image: pryvio/open-pryv.io:1.9.0
     command: "/bin/sh /app/mail.sh"
     container_name: "open-pryv-mail"
     restart: "always"
@@ -28,7 +28,7 @@ services:
       - app-network
 
   open-pryv-mongo:
-    image: mongo:4.2.9
+    image: mongo:6.0.5
     container_name: "open-pryv-mongo"
     restart: "always"
     volumes:

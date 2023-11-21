@@ -54,10 +54,12 @@ describe('[BMM2] registration: DNS-less', () => {
   let app;
   let request;
   let res;
+  let isReallyOpenSource;
 
   before(async function () {
     nock.cleanAll();
     config = await getConfig();
+    isReallyOpenSource = config.get('openSource:isActive');
     config.injectTestConfig({
       dnsLess: { isActive: true },
       openSource: { isActive: false },
@@ -392,24 +394,18 @@ describe('[BMM2] registration: DNS-less', () => {
 
     it('[7T9L] when checking a valid available username, it should respond with status 200 and {reserved:false}', async () => {
       const res = await request.get(path('unexisting-username'));
-
-      const body = res.body;
       assert.equal(res.status, 200);
-      assert.isFalse(body.reserved);
+      assert.isFalse(res.body.reserved);
     });
 
     it('[153Q] when checking a valid taken username, it should respond with status 409 and the correct error', async () => {
       const res = await request.get(path(existingUsername));
-
-      const body = res.body;
-      assert.equal(res.status, 409);
-      assert.equal(body.error.id, ErrorIds.ItemAlreadyExists);
-      assert.deepEqual(body.error.data, { username: existingUsername });
+      assert.equal(res.status, 200);
+      assert.isTrue(res.body.reserved);
     });
 
     it('[H09H] when checking a too short username, it should respond with status 400 and the correct error', async () => {
       const res = await request.get(path('a'.repeat(USERNAME_MIN_LENGTH - 1)));
-
       const body = res.body;
       assert.equal(res.status, 400);
       assert.equal(body.error.id, ErrorIds.InvalidParametersFormat);

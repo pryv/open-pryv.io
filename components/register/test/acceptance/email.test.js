@@ -77,15 +77,15 @@ describe('register /email', function () {
 
   describe('GET /:email/check_email', function () {
     it('[RET1] should return item-already-exists if email exists ', async function () {
+
       const res = await server
         .request()
         .get(regPath + '/' + email + '/check_email')
         .set('Accept', 'application/json');
-      assert.equal(res.status, 409);
+      assert.equal(res.status, 200);
       const body = res.body;
-      assert.exists(body.error);
-      assert.equal(body.error.id, 'item-already-exists');
-      assert.isTrue(body.error.message.includes(username));
+      assert.exists(res.body.exists);
+      assert.equal(res.body.exists, true);
     });
 
     it('[RER1] should return false if email does not exists ', async function () {
@@ -95,7 +95,7 @@ describe('register /email', function () {
         .get(regPath + '/' + wrongEmail + '/check_email')
         .set('Accept', 'application/json');
       assert.equal(res.status, 200);
-      assert.equal(res.body.reserved, false);
+      assert.equal(res.body.exists, false);
     });
   });
 

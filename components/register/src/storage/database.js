@@ -41,15 +41,6 @@ exports.init = async function init() {
   usersRepository = await getUsersRepository();
 }
 
-/** @returns {any} */
-function systemCall(...args) {
-  return references.systemAPI.call(...args);
-}
-/** @returns {void} */
-function createUser(request, callback) {
-  systemCall('system.createUser', {}, request, callback);
-}
-exports.createUser = createUser;
 /**
  * Check if an email address exists in the database
  * @param {string} email  : the email address to verify

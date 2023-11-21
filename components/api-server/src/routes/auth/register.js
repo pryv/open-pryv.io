@@ -50,16 +50,18 @@ module.exports = function (expressApp, app) {
     req.context.host = req.headers.host;
     api.call(req.context, req.body, methodCallback(res, next, 201));
   });
-  if (isDnsLess && !isOpenSource) {
+  if (isDnsLess) {
+    if (!isOpenSource) {
+      expressApp.get(path.join(regPath, '/:email/check_email'), setMinimalMethodContext, setMethodId('auth.emailCheck'), (req, res, next) => {
+        api.call(req.context, req.params, methodCallback(res, next, 200));
+      });
+    }
     expressApp.post(path.join(regPath, '/user'), setMinimalMethodContext, setMethodId('auth.register'), function (req, res, next) {
       req.context.host = req.headers.host;
       if (req.body) { req.body.appId = req.body.appid; }
       api.call(req.context, req.body, methodCallback(res, next, 201));
     });
     expressApp.get(path.join(regPath, '/:username/check_username'), setMinimalMethodContext, setMethodId('auth.usernameCheck'), (req, res, next) => {
-      api.call(req.context, req.params, methodCallback(res, next, 200));
-    });
-    expressApp.get(path.join(regPath, '/:email/check_email'), setMinimalMethodContext, setMethodId('auth.emailCheck'), (req, res, next) => {
       api.call(req.context, req.params, methodCallback(res, next, 200));
     });
     expressApp.post(path.join(regPath, '/username/check'), (req, res, next) => {

@@ -69,12 +69,11 @@ Once it is running, you can continue with the [tutorials](#start).
 *Prerequisites*:
 
 - Node v18.14.2 [Node.js home page](https://nodejs.org/)
-- [just](https://github.com/casey/just#installation)
 
 The installation script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
 
-1. `just setup-dev-env` to setup local file structure and install MongoDB
-2. `just install [--no-optional]` to install node modules
+1. `npm run setup-dev-env` to setup local file structure and install MongoDB
+2. `npm install [--no-optional]` to install node modules
 
 #### Native setup with external SSL
 

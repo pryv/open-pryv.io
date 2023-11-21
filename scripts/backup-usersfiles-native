@@ -11,4 +11,4 @@ echo "Backup dir: ${BACKUP_DIR}"
 
 export VAR_PRYV_FOLDER="${PARENT_DIR}/var-pryv"
 
-rsync --recursive --times --human-readable --verbose --perms "${VAR_PRYV_FOLDER}/attachment-files/" $BACKUP_DIR
+rsync --recursive --times --human-readable --verbose --perms "${VAR_PRYV_FOLDER}/users/" $BACKUP_DIR

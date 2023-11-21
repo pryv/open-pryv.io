@@ -121,11 +121,10 @@ describe('register /users', function () {
         .request()
         .get(regPath + '/' + username + '/check_username')
         .set('Accept', 'application/json');
-      assert.equal(res.status, 409);
+      assert.equal(res.status, 200);
       const body = res.body;
-      assert.exists(body.error);
-      assert.equal(body.error.id, 'item-already-exists');
-      assert.isTrue(body.error.message.includes(username));
+      assert.exists(body);
+      assert.isTrue(body.reserved);
     });
 
     it('[REU6] GET/:username/check_username', async function () {

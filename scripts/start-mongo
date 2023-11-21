@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
 VAR_PRYV_FOLDER=$SCRIPT_FOLDER/../var-pryv
@@ -8,6 +8,9 @@ BASE_OPTS="--logpath $VAR_PRYV_FOLDER/mongodb-logs/mongod.log --dbpath $VAR_PRYV
 if [[ "$DEVELOPMENT" == "true" ]]; then
   # attach process, no sharding
   $MONGO_BIN_FOLDER/mongod $BASE_OPTS
+elif [[ "$IS_CI" == "true" ]]; then
+   # detach process, no sharding
+  $MONGO_BIN_FOLDER/mongod $BASE_OPTS --fork
 else
   # detach process, convert standalone to replicaSet
   # https://docs.mongodb.com/manual/tutorial/convert-shard-standalone-to-shard-replica-set/

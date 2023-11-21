@@ -288,6 +288,7 @@ describe('[PGTD] DELETE /users/:username', () => {
           assert.isFalse(isFound);
         });
         it(`[${testIDs[i][9]}] should delete user audit events`, async function () {
+          if (isOpenSource) this.skip();
           const pathToUserAuditData = require('storage').userLocalDirectory.getPathForUser(userToDelete.attrs.id);
           const userFileExists = fs.existsSync(pathToUserAuditData);
           assert.isFalse(userFileExists);

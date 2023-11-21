@@ -63,6 +63,9 @@ describe('config: serviceInfo', () => {
             eventTypes: 'https://api.pryv.com/event-types/flat.json',
             assets: {
               definitions: 'http://127.0.0.1:3000/www/assets/index.json'
+            },
+            features: {
+              noHF: true
             }
           });
         }
