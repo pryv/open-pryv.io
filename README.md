@@ -90,12 +90,18 @@ Each service independently - logs will be displayed on the console
 #### Local native setup
 
 [setup the environment](#native)
+- `npm run database` to start mongodb 
+- (optional) `npm run mail` start the mail service
+- `npm run apirecla` to start api server using `configs/rec-la.yml`
+- `npm run proxy` to start [rec.la](https://github.com/pryv/rec.la) proxy
 
-- `npm run local` is the equivalent of running `npm run pryv` + `npm run proxy` using `configs/rec-la.yml`. This setup is useful to test Open Pryv.io locally.
+You can now access you API from you own computer with SSL on 
+- `https://my-computer.rec.la:4443`
 
-- `npm run proxy` (with database) and `npm run proxied` (without database) based on [rec-la](https://github.com/pryv/rec-la), it will expose the server running on http://localhost:3000 with an SSL certificate on https://my-computer.rec.la:4443 in this case you need to edit `configs/rec-la.yml`.
+You can check by opening [https://my-computer.rec.la:4443/reg/service/info](https://my-computer.rec.la:4443/reg/service/info)
 
-Note: if rec.la certificate are expired you can refresh them with ./scripts/update-recla-certificates
+And create new users or access token from the [Pryv Access Token Generation Page](https://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://l.rec.la:4443/reg/service/info)
+
 
 #### Native Server setup with built-in SSL
 
