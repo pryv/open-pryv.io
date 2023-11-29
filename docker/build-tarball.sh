@@ -3,24 +3,22 @@
 SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
 cd $SCRIPT_FOLDER
 
-mkdir -p ./rec.la-certificates
-echo "run ../scripts/update-recla-certificates to download rec.la ssl certs" > ./rec.la-certificates/README
-cp -rf ../public_html/ ./public_html
+. ./src/env_config
 
-cp ../scripts/update-recla-certificates ./scripts
+TEMPDEST=./dockerized-open-pryv
+rm -rf $TEMPDEST
+mkdir -p $TEMPDEST
+cp -r ./src/* $TEMPDEST/
 
-tar czfv dockerized-open-pryv.io.tgz \
-  ./local/dockerized-config.yml \
-  ./local/dockerized-service-mail-config.hjson \
-  ./local/nginx-templates/ \
-  ./local/dhparam.pem \
-  ./local/docker-compose.with-ssl.yml \
-  ./production-no-ssl \
-  ./production-with-ssl \
-  ./README.md \
-  ./rec.la-certificates \
-  ./public_html \
-  ./scripts/ \
+cp -r ../configs $TEMPDEST
+cp -r ../public_html $TEMPDEST
+mkdir -p $TEMPDEST/var-pryv
+mkdir -p $TEMPDEST/mail-logs
+mkdir -p $TEMPDEST/var-pryv/mongo/backup
+mkdir -p $TEMPDEST/var-pryv/mongo/db
 
-rm -r ./rec.la-certificates
-rm -r ./public_html
+DEST=dockerized-open-pryv-${PRYV_TAG}.tgz
+
+tar -cvzf $DEST $TEMPDEST
+rm -rf $TEMPDEST
+echo "Docker base packed in ${DEST}"

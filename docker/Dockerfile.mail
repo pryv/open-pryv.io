@@ -1,0 +1,23 @@
+FROM node:18
+
+WORKDIR /app
+
+# Copy necessary files
+COPY ./service-mail /app
+
+RUN apt-get update -y 
+
+# install service-mail
+
+# install rsync needed for copying files to dist folder
+RUN apt-get -y install rsync sendmail && yes "Y" | /usr/sbin/sendmailconfig
+
+RUN echo 'echo "$(tail -n 1 /etc/hosts) localhost localhost.localdomain $HOSTNAME" >> /etc/hosts' > /app/mail.sh
+RUN echo 'yes "Y" | /usr/sbin/sendmailconfig' >> /app/mail.sh
+
+RUN npm install
+CMD ["/app/bin/server", "--config", "api", "/app/configs/mail-config.yml"]
+
+
+EXPOSE 9000
+

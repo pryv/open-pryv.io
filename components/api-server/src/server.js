@@ -35,6 +35,9 @@
 // Always require application first to be sure boiler is initialized
 const { getApplication } = require('api-server/src/application');
 const http = require('http');
+const https = require('https');
+const fs = require('fs');
+const recLaOptionsAsync = require('rec.la').httpsOptionsAsync;
 const { axonMessaging } = require('messages');
 const { pubsub } = require('messages');
 const { getUsersRepository } = require('business/src/users');
@@ -75,9 +78,36 @@ class Server {
     // register API methods
     await this.registerApiMethods();
     // Setup HTTP and register server; setup Socket.IO.
-    const server = http.createServer(app.expressApp);
+    let server = null;
+    const serverInfos = {
+      hostname: null
+    };
+    if (config.get('http:ssl:rec.la')) { // SSL is used in openSource version
+      await new Promise((resolve, reject) => {
+        recLaOptionsAsync((err, recLaOptions) => {
+          if (err) return reject(err);
+          server = https.createServer(recLaOptions, app.expressApp);
+          serverInfos.hostname = 'my-computer.rec.la';
+          resolve();
+        });
+      });
+      this.logger.info('SSL Mode using rec.la certificates');
+    } else if (config.get('http:ssl:keyFile')) { // https with local files
+      const options = {
+        key: fs.readFileSync(config.get('http:ssl:keyFile')),
+        cert: fs.readFileSync(config.get('http:ssl:certFile'))
+      };
+      if (config.get('http:ssl:caFile')) {
+        options.ca = [fs.readFileSync(config.get('http:ssl:caFile'))];
+      }
+      server = https.createServer(options, app.expressApp);
+      serverInfos.hostname = 'custom-according-to-your-ssl-cert';
+      this.logger.info('SSL Mode using custom certificates');
+    } else { // http
+      server = http.createServer(app.expressApp);
+    }
     await this.setupSocketIO(server);
-    await this.startListen(server);
+    await this.startListen(server, serverInfos);
     if (!this.isOpenSource) {
       await this.setupReporting();
     }
@@ -139,7 +169,7 @@ class Server {
    * @param {http.Server} server
    * @returns {Promise<void>}
    */
-  async startListen (server) {
+  async startListen (server, info = {}) {
     const config = this.config;
     const logger = this.logger;
     const port = config.get('http:port');
@@ -171,8 +201,9 @@ class Server {
       });
     });
     const address = server.address();
-    const protocol = 'http';
-    const serverUrl = protocol + '://' + address.address + ':' + address.port;
+    const protocol = server.key == null ? 'http' : 'https';
+    const hostnameStr = info.hostname || address.address;
+    const serverUrl = protocol + '://' + hostnameStr + ':' + address.port;
     logger.debug('listening on ' + serverUrl);
     logger.info(`Core Server (API module) listening on ${serverUrl}`);
     // Warning if ignoring forbidden updates

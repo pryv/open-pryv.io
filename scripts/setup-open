@@ -7,4 +7,3 @@ bash ./setup-assets
 bash ./setup-service-mail
 bash ./setup-app-web-auth3
 bash ./setup-admin-key
-bash ./update-recla-certificates

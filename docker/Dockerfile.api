@@ -1,0 +1,20 @@
+FROM node:18
+
+WORKDIR /app
+
+# Copy necessary files
+COPY ./components/ /app/components
+COPY ./docker/override-config.yml /app/components/api-server/config/override-config.yml
+COPY ./scripts/ /app/scripts
+COPY ./.api-version/ /app/.api-version
+COPY ./package-lock.json/ /app/package-lock.json
+COPY ./package.json/ /app/package.json
+
+RUN apt-get update -y 
+
+RUN npm install
+
+CMD ["npm", "run", "api"]
+
+EXPOSE 3000
+

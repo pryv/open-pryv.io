@@ -1,0 +1,36 @@
+dnsLess:
+  publicUrl: http://localhost:3000/ # the "Public" URL to reach the service, you need to change this if you use a third party SSL service such as NGNIX.
+http:
+  port: 3000 # (ignored with docker) The local port to listen
+  ip: 127.0.0.1 # (ignored with docker) The IP adress to use. Keep it 127.0.0.1 unless you explicitely want to expose the service in `http` to another network.
+  ssl:
+    keyFile: false # to enable HTTPS give the full path to your SSL key file in pem format
+    certFile: false # to enable HTTPS give the full path to your SSL certificate file in pem format
+    caFile: false # (optional) full path to your SSL certificate-authority file in pem format
+auth:
+  adminAccessKey: REPLACE_ME # key to use for system calls such as `/reg/admin/users`. A random key should be generated on setup.
+  trustedApps: "*@https://pryv.github.io*, *@https://*.rec.la*" # list of web apps that can be trusted-app functionalities
+service:
+  serial: 1000001 # change serial number each time assets content needs to be reloaded by clients
+  name: Open-Pryv.io
+  support: https://pryv.com/open-pryv-non-configured-page/
+  terms: https://pryv.com/open-pryv-non-configured-page/
+  home: https://pryv.com/open-pryv-non-configured-page/
+  eventTypes: https://api.pryv.com/event-types/flat.json
+services:
+  email:
+    enabled:
+      welcome: true
+      resetPassword: true
+custom:
+  systemStreams:
+    account:
+      -
+        isIndexed: true
+        isUnique: true
+        isShown: true
+        isEditable: true
+        type: email/string
+        name: Email
+        id: email
+        isRequiredInValidation: true

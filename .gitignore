@@ -2,7 +2,7 @@ var-pryv/
 public_html/
 app-web-auth3/
 node_modules/
-rec.la-certificates/
+docker/dockerized-open-pryv
 
 # not commiting this into OS version
 

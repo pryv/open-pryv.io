@@ -50,7 +50,6 @@ Choose your Set-up
   - Native installation
 - Launch Pryv.io on a server exposed to the Internet with built-in SSL, this requires to have a hostname pointing to the public IP of your server.
   - Download docker images (quick start)
-  - Launch image with Open Pryv.io installed on Exoscale hosting provider: [link to guide](https://api.pryv.com/image-exoscale-open-pryv.io/) (quick start including hosting)
   - Native installation
 - Launch Pryv.io on a server with an external SSL termination. You know what you are doing.
   - Download docker images
@@ -58,7 +57,7 @@ Choose your Set-up
 
 ### Docker
 
-The dockerized versions and their instructions are available at this link: [Download link](https://api.pryv.com/open-pryv.io/docker/dockerized-open-pryv.io.tgz).
+The dockerized versions and their instructions are available at this link: [Download link](https://api.pryv.com/open-pryv.io/docker/dockerized-open-pryv-1.9.0.io.tgz).
 
 If you wish to build the images yourself, refer to the following README: [docker/README-build.md](docker/README-build.md).
 
@@ -73,13 +72,11 @@ Once it is running, you can continue with the [tutorials](#start).
 The installation script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
 
 1. `npm run setup-dev-env` to setup local file structure and install MongoDB
-2. `npm install [--no-optional]` to install node modules
+2. `npm install` to install node modules
 
-#### Native setup with external SSL
+#### Native setup with no SSL
 
 [setup the environment](#native)
-
-- `npm run pryv` - mail and database logs will be kept in `var-pryv/logs/local-*.log`
 
 Each service independently - logs will be displayed on the console
 
@@ -87,13 +84,14 @@ Each service independently - logs will be displayed on the console
 - `npm run api` start the API server on port 3000 (default)
 - `npm run mail` start the mail service
 
-#### Local native setup
+#### Local native setup with rec.la loopback SSL
+
+[rec.la](https://rec.la) certificates facilitate local developpment by enabling https on localhost. 
 
 [setup the environment](#native)
 - `npm run database` to start mongodb 
 - (optional) `npm run mail` start the mail service
-- `npm run apirecla` to start api server using `configs/rec-la.yml`
-- `npm run proxy` to start [rec.la](https://github.com/pryv/rec.la) proxy
+- `npm run apirecla` to start api server using `configs/api-recla.yml`
 
 You can now access you API from you own computer with SSL on 
 - `https://my-computer.rec.la:4443`
@@ -103,30 +101,17 @@ You can check by opening [https://my-computer.rec.la:4443/reg/service/info](http
 And create new users or access token from the [Pryv Access Token Generation Page](https://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://l.rec.la:4443/reg/service/info)
 
 
-#### Native Server setup with built-in SSL
+#### Native setup with custom SSL
 
 [setup the environment](#native)
 
-1. Run `npm run pryv` to start the API
-2. Configure NGINX and certificate
-
-You can find a NGINX configuration that you can include in your `sites-enabled/` in [configs/site.conf](configs/site.conf).
-
-You must change `${HOSTNAME}` to match the hostname of the public URL.
-
-##### SSL certificate
-
-Using [certbot](https://certbot.eff.org/), you can generate a SSL certificate for your platform using `sudo certbot --nginx -d ${HOSTNAME}`.
-
-To set an automatic renewal, run `crontab -e` and append the following line:
-
-```cron
-0 12 * * * /usr/bin/certbot renew --quiet
-```
+1. Edit `http:ssl` part in `./configs/api.yml` file to point to your certificates an key files.
+2. Update `dnsLess:publicUrl` in `./configs/api.yml` to match 
+3. Run `npm run pryv` to start the API
 
 ### Config
 
-For the native installation, edit `config.yml`, otherwise `docker/local/dockerized-config.yml`:
+For the native installation, edit `./configs/api.yml`
 
 ```yaml
 dnsLess:
@@ -135,7 +120,7 @@ http:
   port: 3000
   ip: 127.0.0.1
 auth:
-  adminAccessKey: iuahwd0ba87hw0bd7a8hwd
+  adminAccessKey: REPLACE_ME 
   trustedApps: "*@https://pryv.github.io*, *@https://*.rec.la*"
 eventFiles:
   attachmentsDirPath: var-pryv/attachment-files
@@ -162,8 +147,6 @@ services:
   - **trustedApps** list of web apps that can be trusted-app functionalities
      API for trusted apps: [API reference](https://api.pryv.com/reference/)
     see: [SETUP Guide - customize authentication](https://api.pryv.com/customer-resources/pryv.io-setup/#customize-authentication-registration-and-reset-password-apps)
-- **eventFiles**
-  - **attachmentsDirPath** Directory where event attachment files will be stored on the file system.
 - **service** [API documentation on Service Information](https://api.pryv.com/reference/#service-info)
 - **services:email** see [Options & Customization](#custom-email) below
 
@@ -247,7 +230,7 @@ Contributions are welcome. Get in touch with the Pryv team or submit a PR with y
 
 ## License
 
-Copyright (c) 2020 Pryv S.A. https://pryv.com
+Copyright (c) 2019-2023 Pryv S.A. https://pryv.com
 
 This file is part of Open-Pryv.io and released under BSD-Clause-3 License
 
