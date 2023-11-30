@@ -57,7 +57,7 @@ Choose your Set-up
 
 ### Docker
 
-The dockerized versions and their instructions are available at this link: [Download link](https://api.pryv.com/open-pryv.io/docker/dockerized-open-pryv-1.9.0.io.tgz).
+The dockerized versions and their instructions are available at this link: [Download link](https://pryv.github.io/open-pryv.io/docker/dockerized-open-pryv-1.9.0.tgz).
 
 If you wish to build the images yourself, refer to the following README: [docker/README-build.md](docker/README-build.md).
 
