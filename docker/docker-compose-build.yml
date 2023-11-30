@@ -1,0 +1,13 @@
+version: "3.8"
+services:
+  open-pryv-api:
+    build: 
+      context: ../
+      dockerfile: ./docker/Dockerfile.api
+    image: pryvio/open-pryv.io-api:${PRYV_TAG}
+
+  open-pryv-mail:
+    build: 
+      context: ../
+      dockerfile: ./docker/Dockerfile.mail
+    image: pryvio/open-pryv.io-mail:${PRYV_TAG}

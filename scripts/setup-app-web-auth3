@@ -11,6 +11,7 @@ if [[ ! -d $APP_WEB_AUTH_FOLDER ]]; then
   cd $APP_WEB_AUTH_FOLDER
   rm -rf .git
   echo "module.exports = {DNSLess: true};" > "./src/defaults.js"
+  npm install -g yarn
   yarn setup
   yarn build
   cp -R ./dist/* ../public_html/

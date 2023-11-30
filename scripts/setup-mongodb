@@ -11,9 +11,15 @@ if [ `uname` = "Linux" ]; then
   "https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2204-x86_64-100.7.0.tgz"
   "https://downloads.mongodb.com/compass/mongosh-1.8.2-linux-x64.tgz")
 elif [ `uname` = "Darwin" ]; then # MacOS
-  URLS=("https://fastdl.mongodb.org/osx/mongodb-macos-arm64-6.0.5.tgz"
-  "https://fastdl.mongodb.org/tools/db/mongodb-database-tools-macos-x86_64-100.7.0.zip"
-  "https://downloads.mongodb.com/compass/mongosh-1.8.2-darwin-arm64.zip")
+  if [[ $(arch) == 'arm64' ]]; then
+    URLS=("https://fastdl.mongodb.org/osx/mongodb-macos-arm64-6.0.5.tgz"
+    "https://fastdl.mongodb.org/tools/db/mongodb-database-tools-macos-x86_64-100.7.0.zip"
+    "https://downloads.mongodb.com/compass/mongosh-1.8.2-darwin-arm64.zip")
+  else 
+    URLS=("https://fastdl.mongodb.org/osx/mongodb-macos-x86_64-6.0.5.tgz"
+    "https://fastdl.mongodb.org/tools/db/mongodb-database-tools-macos-x86_64-100.7.0.zip"
+    "https://downloads.mongodb.com/compass/mongosh-1.8.2-darwin-x64.zip")
+  fi
 else
   echo "Installation is meant to be on Linux or MacOS"
   exit 1

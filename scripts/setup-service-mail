@@ -8,6 +8,7 @@ cd $SCRIPT_FOLDER/.. # root
 SERVICE_MAIL_FOLDER="service-mail"
 
 if [[ ! -d "${SERVICE_MAIL_FOLDER}/node_modules" ]]; then
+  npm install -g yarn
   yarn --cwd $SERVICE_MAIL_FOLDER install
   echo "Service-Mail Installed!"
 else

@@ -6,32 +6,23 @@ This guide explains how to build your own docker Open Pryv.io docker images.
 
 - [Docker v19.03](https://docs.docker.com/engine/install/)
 - [Docker-compose v1.26](https://docs.docker.com/compose/install/)
-- [Yarn v1.22.4](https://classic.yarnpkg.com/en/docs/install/)
 
-Prepare the various assets, run the following commands from the `docker/` directory:
 
-- `bash ../scripts/setup-app-web-auth3`
-- `bash ../scripts/setup-assets`
-- `bash ../scripts/setup-admin-key`
+From `./docker/` folder
 
-## with external SSL
+1. Make the images
 
-Run `TAG=latest docker-compose -f local/docker-compose.no-ssl-build.yml up --build`
+  Run `docker compose --env-file src/env_config -f docker-compose-build.yml build`
 
-- [Config](https://github.com/pryv/open-pryv.io#config) file `local/dockerized-config-no-ssl.yml`
-- launch API on `http://localhost:3000`
+2. Prepare the various assets
 
-After images are built, you can run the command above just without "--build" part.
+  - `bash ../scripts/setup-app-web-auth3`
+  - `bash ../scripts/setup-assets`
 
-## with built-in SSL
+3. Pack the base directory 
 
-Fetch the [rec-la](https://github.com/pryv/rec-la) SSL certificates:
+  This will pack in `dockerized-open-pryv-1.9.0` the content of `./src` , the config files in `../configs/` an `../public.html` in `dockerized-open-pryv-${PRYV_TAG}.tgz`
 
-- Run `bash ../scripts/update-recla-certificates`
+  **Warning** the configuration files will be packaged make sure that adminKeys are not set if your intent is to publish it. 
 
-Run `TAG=latest docker-compose -f local/docker-compose.with-ssl-build.yml up --build`
-
-- [Config](https://github.com/pryv/open-pryv.io#config) file `local/dockerized-config.yml`
-- Launch API on `https://my-computer.rec.la:4443`
-
-After images are built, you can run the command above just without "--build" part.
+  run `./build-tarball.sh`

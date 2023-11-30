@@ -48,6 +48,7 @@ module.exports = async function (context, callback) {
   await SystemStreamsSerializer.init();
   try {
     await moveAttachments();
+    await migratePasswords(context);
     await migrateHistory(context);
   } catch (e) {
     return callback(e);
@@ -75,6 +76,22 @@ async function moveAttachments () {
     const newAttachmentDirPath = path.join(userLocalDir, 'attachments');
     await move(oldAttachmentUserDirPath, newAttachmentDirPath);
     logger.info('Attachmend moved for userId: ' + userId + ' to: ' + newAttachmentDirPath);
+  }
+}
+
+async function migratePasswords (context) {
+  const logger = getLogger('migration-1.9.0:passwords');
+  const userAccountStorage = await require('storage').getUserAccountStorage();
+  const query = { streamIds: { $in: [':_system:passwordHash'] } };
+  const eventsCollection = await context.database.getCollection({
+    name: 'events'
+  });
+  const cursor = await eventsCollection.find(query, { projection: { _id: 1, userId: 1, content: 1, created: 1, createdBy: 1 } });
+  while (await cursor.hasNext()) {
+    const event = await cursor.next();
+    await userAccountStorage.addPasswordHash(event.userId, event.content, event.createdBy || 'system', event.created);
+    await eventsCollection.deleteMany({ userId: event.userId, _id: event._id });
+    logger.info('Migrating password for userId: ' + event.userId);
   }
 }
 
@@ -110,7 +127,10 @@ async function migrateHistory (context) {
       }
     };
     requests.push(request);
-    if (requests.length > BUFFER_SIZE) { requests = await flushToDb(requests, eventsCollection); }
+    if (requests.length > BUFFER_SIZE) {
+      requests = [];
+      await flushToDb(requests, eventsCollection);
+    }
   }
   await flushToDb(requests, eventsCollection);
 

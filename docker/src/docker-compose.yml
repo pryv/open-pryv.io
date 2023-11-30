@@ -1,0 +1,42 @@
+version: "3.8"
+services:
+  open-pryv-api:
+    image: pryvio/open-pryv.io-api:${PRYV_TAG}
+    container_name: "open-pryv-api"
+    restart: "always"
+    ports:
+      - ${PRYV_PORT}:3000
+    volumes:
+      - ${PRYV_BASE}/configs:/app/configs
+      - ${PRYV_BASE}/public_html:/app/public_html
+      - ${PRYV_BASE}/var-pryv/api:/app/var-pryv
+    depends_on:
+      - open-pryv-mongo
+    networks:
+      - app-network
+
+  open-pryv-mail:
+    image: pryvio/open-pryv.io-mail:${PRYV_TAG}
+    container_name: "open-pryv-mail"
+    restart: "always"
+    depends_on:
+      - open-pryv-api
+    volumes:
+      - ${PRYV_BASE}/configs:/app/configs
+      - ${PRYV_BASE}/mail-logs/:/app/var-pryv/mail-logs
+    networks:
+      - app-network
+
+  open-pryv-mongo:
+    image: mongo:6.0.5
+    container_name: "open-pryv-mongo"
+    restart: "always"
+    volumes:
+      - ${PRYV_BASE}/var-pryv/mongo/backup/:/data/backup/
+      - ${PRYV_BASE}/var-pryv/mongo/db/:/data/db/
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

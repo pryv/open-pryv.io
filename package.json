@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.9.0-10-open",
+  "version": "1.9.0-13-open",
   "private": true,
   "description": "Pryv core server app components",
   "homepage": "https://pryv.com",
@@ -16,14 +16,12 @@
     ]
   },
   "scripts": {
-    "api": "LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./config.yml",
-    "apirecla": "LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/rec-la.yml",
-    "database": "scripts/start-mongo",
-    "local": "npm run database >> ./var-pryv/logs/mongodb.log & npm run mail >> ./var-pryv/logs/mail.log & npm run proxy & npm run apirecla",
+    "api": "LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/api.yml",
+    "apirecla": "LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/api-recla.yml",
+    "database": "DEVELOPMENT=true scripts/start-mongo",
     "mail": "cd service-mail ; ./bin/server",
-    "proxied": "./node_modules/rec.la/bin/proxy.js localhost:3000 & LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/rec-la.yml",
-    "proxy": "./node_modules/rec.la/bin/proxy.js localhost:3000",
     "pryv": "npm run database >> ./var-pryv/logs/mongodb.log & npm run mail >> ./var-pryv/logs/mail.log & npm run api",
+    "setup-dev-env": "scripts/setup-dev-env",
     "test": "echo 'This project doesn’t use npm scripts – enter `just` for the available development commands\n' && exit 1"
   },
   "pre-commit": "",
@@ -67,7 +65,7 @@
     "opentracing": "^0.14.5",
     "protobufjs": "^6.11.3",
     "pryv": "^2.0.2",
-    "rec.la": "^0.3.2",
+    "rec.la": "latest",
     "shimmer": "^1.2.0",
     "slug": "^5.3.0",
     "socket.io": "^4.6.1",

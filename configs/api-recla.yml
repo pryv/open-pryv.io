@@ -1,13 +1,13 @@
 dnsLess:
-  publicUrl: "https://my-computer.rec.la:4443/"
+  publicUrl: "https://my-computer.rec.la:3000/"
 http:
-  port: 3000
-  ip: 127.0.0.1
+  port: 3000 # (ignored with docker)
+  ip: 127.0.0.1 # (ignored with docker)
+  ssl:
+    rec.la: true
 auth:
-  adminAccessKey: REPLACE_ME
+  adminAccessKey: RECLA-ADMIN-KEY-UNSECURE
   trustedApps: "*@https://pryv.github.io, *@https://*.rec.la*"
-eventFiles:
-  attachmentsDirPath: var-pryv/attachment-files
 service:
   serial: 1000001 # change serial number each time assets content needs to be reloaded by clients
   name: Open-Pryv.io
@@ -15,8 +15,6 @@ service:
   terms: https://pryv.com/open-pryv-non-configured-page/
   home: https://pryv.com/open-pryv-non-configured-page/
   eventTypes: https://api.pryv.com/event-types/flat.json
-  assets:
-    definitions: https://my-computer.rec.la:4443/www/assets/index.json
 services:
   email:
     enabled:

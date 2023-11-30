@@ -1,0 +1,20 @@
+# This is a specifc config for docker packaging 
+# All seeting here will override settings for api
+openSource:
+  isActive: true
+dnsLess:
+  isActive: true
+service:
+  features:
+    noHF: true
+http:
+  ip: "0.0.0.0"
+  port: "3000"
+database:
+  host: "open-pryv-mongo" # Map hostname to mongo container
+  port: 27017
+  name: "pryv-node"
+email:
+    method: "microservice"
+    url: "http://open-pryv-mail:9000/sendmail" # Map to mail container
+    key: "SHOULD_MATCH_SERVICE_MAIL"
