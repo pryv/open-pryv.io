@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -165,9 +165,10 @@ function nullifyFromStore (eventData) {
  * @returns {any}
  */
 function removeStoreIds (storeId, eventData) {
+  const original = structuredClone(eventData);
   const [eventStoreId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.id);
   if (eventStoreId !== storeId) {
-    throw errorFactory.invalidRequestStructure('Cannot create event with id and streamIds belonging to different stores', eventData);
+    throw errorFactory.invalidRequestStructure('Cannot create or update an event with id and streamIds belonging to different stores', original);
   }
   eventData.id = storeEventId;
   // cleanup storeId from streamId
@@ -179,7 +180,7 @@ function removeStoreIds (storeId, eventData) {
       if (storeId == null) {
         storeId = testStoreId;
       } else if (testStoreId !== storeId) {
-        throw errorFactory.invalidRequestStructure('Cannot create event with id and streamIds belonging to different stores', eventData);
+        throw errorFactory.invalidRequestStructure('Cannot create or update an event with id and streamIds belonging to different stores', original);
       }
       eventData.streamIds[i] = storeStreamId;
     }

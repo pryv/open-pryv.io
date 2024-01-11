@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -34,6 +34,9 @@
 const errors = require('../errors');
 const Template = require('./Template.js');
 
+const { getLogger } = require('@pryv/boiler');
+const logger = getLogger('template');
+
 class TemplateRepository {
   constructor (defaultLanguage, templateExists) {
     this.defaultLanguage = defaultLanguage;
@@ -51,6 +54,7 @@ class TemplateRepository {
       const mailTemplate = await this.produceTemplate(mailType, currentLanguage);
       if (mailTemplate != null) return mailTemplate;
     }
+    logger.error('Cannot find template', { mailType, requestedLanguage });
 
     throw errors.unknownResource('No template found.');
   }

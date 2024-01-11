@@ -5,7 +5,7 @@ cd $SCRIPT_FOLDER/.. # root
 
 set="abcdefghijklmonpqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 n=20
-rand="REPLACE_ME_"
+rand="AUTO_GEN_"
 DEFAULT_VALUE="REPLACE_ME"
 for i in `seq 1 $n`; do
     char=${set:$RANDOM % ${#set}:1}

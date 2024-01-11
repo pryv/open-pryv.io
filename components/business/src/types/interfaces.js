@@ -2,7 +2,7 @@
 
 /**
  * @license
- * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *

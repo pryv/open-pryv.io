@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -185,7 +185,14 @@ module.exports = async function (api) {
     return next();
   }
   // CREATION
-  api.register('streams.create', forbidSystemStreamsActions, commonFns.getParamsValidation(methodsSchema.create.params), applyDefaultsForCreation, applyPrerequisitesForCreation, createStream);
+  api.register(
+    'streams.create',
+    forbidSystemStreamsActions,
+    commonFns.getParamsValidation(methodsSchema.create.params),
+    applyDefaultsForCreation,
+    applyPrerequisitesForCreation,
+    createStream);
+
   function applyDefaultsForCreation (context, params, result, next) {
     params.parentId ??= null;
     next();
@@ -213,11 +220,14 @@ module.exports = async function (api) {
     if (Object.hasOwnProperty.call(params, 'children')) {
       delete params.children;
     }
+
     if (params.id) {
-      if (string.isReservedId(params.id) ||
-                string.isReservedId((params.id = slugify(params.id)))) {
+      const [storeId, streamId] = storeDataUtils.parseStoreIdAndStoreItemId(params.id);
+      const slugId = slugify(streamId);
+      if (string.isReservedId(streamId) || string.isReservedId(slugId)) {
         return process.nextTick(next.bind(null, errors.invalidItemId('The specified id "' + params.id + '" is not allowed.')));
       }
+      params.id = storeDataUtils.getFullItemId(storeId, slugId);
     }
     context.initTrackingProperties(params);
     next();
@@ -284,7 +294,7 @@ module.exports = async function (api) {
       return process.nextTick(next.bind(null, errors.forbidden()));
     }
     // check target parent if needed
-    if (params.update.parentId) {
+    if (params.update.parentId && params.update.parentId !== stream.parentId) {
       const targetParentArray = await mall.streams.get(context.user.id, {
         id: params.update.parentId,
         includeTrashed: true,

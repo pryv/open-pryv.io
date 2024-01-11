@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -54,12 +54,10 @@ describe('[BMM2] registration: DNS-less', () => {
   let app;
   let request;
   let res;
-  let isReallyOpenSource;
 
   before(async function () {
     nock.cleanAll();
     config = await getConfig();
-    isReallyOpenSource = config.get('openSource:isActive');
     config.injectTestConfig({
       dnsLess: { isActive: true },
       openSource: { isActive: false },

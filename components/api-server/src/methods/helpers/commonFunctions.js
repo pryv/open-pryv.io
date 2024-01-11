@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -34,6 +34,9 @@
 const errors = require('errors').factory;
 const validation = require('../../schema/validation');
 const { findForbiddenChar, isStreamIdValidForCreation } = require('../../schema/streamId');
+const { getLogger } = require('@pryv/boiler');
+const logger = getLogger('commonFunctions');
+
 exports.requirePersonalAccess = function requirePersonalAccess (context, params, result, next) {
   if (!context.access.isPersonal()) {
     return next(errors.forbidden('You cannot access this resource using the given access ' + 'token.'));
@@ -74,7 +77,8 @@ exports.getTrustedAppCheck = function getTrustedAppCheck (authSettings) {
       trustedApps = [];
       authSettings.trustedApps.split(',').forEach(function (pair) {
         const parts = /^\s*(\S+)\s*@\s*(\S+)\s*$/.exec(pair);
-        if (parts.length !== 3) {
+        if (parts == null || !Array.isArray(parts) || parts.length !== 3) {
+          logger.error('Invalid Trusted app settings, please check: ' + pair);
           return;
         }
         trustedApps.push({

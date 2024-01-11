@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -59,7 +59,7 @@ async function sendMail (ctx, req, res) {
   const loadedTemplate = await ctx.templateRepository.find(template, lang);
   const result = await ctx.sender.renderAndSend(loadedTemplate, substitutions, recipient);
 
-  logger.info('Email sent:', result);
+  logger.info('Email sent:', {recipient, template, lang, response: result?.response, rejected: result?.rejected});
 
   res
     .status(200)

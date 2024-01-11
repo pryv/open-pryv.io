@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -78,7 +78,7 @@ exports = module.exports = function (action) {
 
   if (action === Action.CREATE) {
     // only allow cuid-like strings for custom ids
-    schema.properties.id.pattern = '^c[a-z0-9-]{24}$';
+    schema.properties.id.pattern = '(?=^\\:[a-z0-9-]+\\:)(^\\:[a-z0-9-]+\\:[a-z0-9A-Z-]{1,256})|(^c[a-z0-9-]{24}$)';
     // only allow "files" (raw file data) on create; no further checks as it's
     // created internally
     schema.properties.files = array(object({}));

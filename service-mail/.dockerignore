@@ -1,0 +1,15 @@
+# commented ones are actually needed
+
+.git
+.github
+.vscode
+#build
+node_modules
+**/test
+.gitignore
+.eslintrc.yml
+.licenser.yml
+.mocharc.js
+application.log
+npm-debug.log
+README.md

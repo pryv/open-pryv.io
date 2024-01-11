@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2023 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -71,7 +71,21 @@ function createUserStreams () {
       await keyValueData.set(userId, 'lastStreamCall', Object.assign({ id: streamId }, query));
       const stream = findStream(streamId, genStreams(userId));
       return stream;
+    },
+
+    async create (userId, streamData) {
+      if (streamData.id !== 'fluffy') throw ds.errors.unsupportedOperation('streams.create');
+      const newStream = structuredClone(streamData);
+      newStream.name = 'Bluppy';
+      return newStream;
+    },
+
+    async update (userId, streamData) {
+      const newStream = structuredClone(streamData);
+      newStream.name = 'Bluppy';
+      return newStream;
     }
+
   });
 
   function findStream (streamId, streams) {
@@ -96,6 +110,35 @@ function createUserEvents () {
       const events = await this.get(userId, query, options);
       const readable = Readable.from(events);
       return readable;
+    },
+
+    async create (userId, eventData) {
+      const event = structuredClone(eventData);
+      event.content = 'Received';
+      delete event.integrity;
+      ds.defaults.applyOnEvents([event]);
+      return event;
+    },
+
+    async update (userId, eventData) {
+      const event = structuredClone(eventData);
+      event.content = 'Updated';
+      delete event.integrity;
+      ds.defaults.applyOnEvents([event]);
+      return event;
+    },
+
+    async getOne (userId, eventId) {
+      if (eventId !== 'dummyevent0') throw ds.errors.invalidItemId('Unkown event', { eventId });
+      const event = {
+        id: 'dummyevent0',
+        type: 'note/txt',
+        streamIds: ['mariana'],
+        content: 'hello',
+        time: timestamp.now()
+      };
+      ds.defaults.applyOnEvents([event]);
+      return event;
     },
 
     /**
