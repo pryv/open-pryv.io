@@ -100,7 +100,7 @@ class MallUserStreams {
 
   /**
    * Get the stream that will be set as root for all Stream Structure of this Data Store.
-   * @see https://api.pryv.com/reference/#get-streams
+   * @see https://pryv.github.io/reference/#get-streams
    * @param {string} userId  undefined
    * @param {StoreQuery} params  undefined
    * @returns {Promise<any[]>} - the stream or null if not found:

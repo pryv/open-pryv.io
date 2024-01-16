@@ -58,9 +58,9 @@ describe('config: serviceInfo', () => {
             register: 'http://127.0.0.1:3000/reg/',
             name: 'Pryv Lab',
             home: 'https://sw.pryv.me',
-            support: 'https://pryv.com/helpdesk',
+            support: 'https://github.com/orgs/pryv/discussions',
             terms: 'https://pryv.com/terms-of-use/',
-            eventTypes: 'https://api.pryv.com/event-types/flat.json',
+            eventTypes: 'https://pryv.github.io/event-types/flat.json',
             assets: {
               definitions: 'http://127.0.0.1:3000/www/assets/index.json'
             },

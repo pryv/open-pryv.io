@@ -25,8 +25,8 @@ Maintained and developed by Pryv.
 
 ## Documentation
 
-- API Documentation & Guides: [api.pryv.com](https://api.pryv.com)
-- Support: [support.pryv.com](https://support.pryv.com)
+- API Documentation & Guides: [pryv.github.io](https://pryv.github.io)
+- Support: [https://github.com/orgs/pryv/discussions](https://github.com/orgs/pryv/discussions)
 - More information about Pryv : [Pryv Home](https://pryv.com)
 
 ## Summary
@@ -98,7 +98,7 @@ You can now access you API from you own computer with SSL on
 
 You can check by opening [https://my-computer.rec.la:4443/reg/service/info](https://my-computer.rec.la:4443/reg/service/info)
 
-And create new users or access token from the [Pryv Access Token Generation Page](https://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://l.rec.la:4443/reg/service/info)
+And create new users or access token from the [Pryv Access Token Generation Page](https://pryv.github.io/app-web-access/?pryvServiceInfoUrl=https://l.rec.la:4443/reg/service/info)
 
 
 #### Native setup with custom SSL
@@ -129,7 +129,7 @@ service:
   support: https://pryv.com/open-pryv-non-configured-page/
   terms: https://pryv.com/open-pryv-non-configured-page/
   home: https://pryv.com/open-pryv-non-configured-page/
-  eventTypes: https://api.pryv.com/event-types/flat.json
+  eventTypes: https://pryv.github.io/event-types/flat.json
 services:
   email:
     enabled:
@@ -145,27 +145,27 @@ services:
 - **auth**
   - **adminAccesskey** key to use for system calls such as `/reg/admin/users`. A random key should be generated on setup.
   - **trustedApps** list of web apps that can be trusted-app functionalities
-     API for trusted apps: [API reference](https://api.pryv.com/reference/)
-    see: [SETUP Guide - customize authentication](https://api.pryv.com/customer-resources/pryv.io-setup/#customize-authentication-registration-and-reset-password-apps)
-- **service** [API documentation on Service Information](https://api.pryv.com/reference/#service-info)
+     API for trusted apps: [API reference](https://pryv.github.io/reference/)
+    see: [SETUP Guide - customize authentication](https://pryv.github.io/customer-resources/pryv.io-setup/#customize-authentication-registration-and-reset-password-apps)
+- **service** [API documentation on Service Information](https://pryv.github.io/reference/#service-info)
 - **services:email** see [Options & Customization](#custom-email) below
 
 ## Start
 
 At this moment you should have your application running on the public URL you defined.
 
-- Create an account and launch the [authentication process](https://api.pryv.com/reference/#authenticate-your-app) on **App-Web-Access**: [https://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la:4443/reg/service/info](https://api.pryv.com/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la:4443/reg/service/info).
+- Create an account and launch the [authentication process](https://pryv.github.io/reference/#authenticate-your-app) on **App-Web-Access**: [https://pryv.github.io/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la:4443/reg/service/info](https://pryv.github.io/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la:4443/reg/service/info).
 - The service info URL to your platform is: [https://my-computer.rec.la:4443/reg/service/info](https://my-computer.rec.la:4443/reg/service/info)
 
 If you are using another public URL, replace `https://my-computer.rec.la:4443` by it in the link above.
 
 ### Design your Data Model
 
-Data in Pryv is stored in streams and events. We provide you with all necessary information to design your own data model in our [Data Modelling Guide](https://api.pryv.com/guides/data-modelling/) through a broad range of use cases and scenarios you might encounter.
+Data in Pryv is stored in streams and events. We provide you with all necessary information to design your own data model in our [Data Modelling Guide](https://pryv.github.io/guides/data-modelling/) through a broad range of use cases and scenarios you might encounter.
 
 ### Try the API
 
-After this process, you should have an account on your Open Pryv.io platform with a valid authorization token in the form of an API endpoint, you can try various **API requests** using **Postman** following this guide [https://api.pryv.com/open-api/](https://api.pryv.com/open-api/).
+After this process, you should have an account on your Open Pryv.io platform with a valid authorization token in the form of an API endpoint, you can try various **API requests** using **Postman** following this guide [https://pryv.github.io/open-api/](https://pryv.github.io/open-api/).
 
 You can also try our [example apps with guides and tutorials](https://github.com/pryv/example-apps-web/).
 
@@ -182,7 +182,7 @@ To use a new build, simply copy the contents of the generated files from `app-we
 ### Event types
 
 Open Pryv.io comes with default **event types**.
-The default ones are fetched at boot from the URL defined in service:eventTypes in the `.yml` config file, set to https://api.pryv.com/event-types/flat.json.
+The default ones are fetched at boot from the URL defined in service:eventTypes in the `.yml` config file, set to https://pryv.github.io/event-types/flat.json.
 
 To customize your own, clone the [Data Types repository](https://github.com/pryv/data-types) and follow the guide there.
 

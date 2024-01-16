@@ -91,7 +91,7 @@ module.exports = root;
  * @returns {void}
  */
 function rootIndex (req, res) {
-  const devSiteURL = 'https://api.pryv.com/';
+  const devSiteURL = 'https://pryv.github.io/';
   const result = commonMeta.setCommonMeta({});
 
   if (req.accepts('application/json')) {

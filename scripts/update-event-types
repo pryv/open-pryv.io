@@ -3,7 +3,7 @@
 # This script updates the default event types JSON schema file,
 # used as a fallback by the server for validating incoming event values.
 
-SCHEMA_URL=https://api.pryv.com/event-types/flat.json
+SCHEMA_URL=https://pryv.github.io/event-types/flat.json
 LOCAL_PATH=components/business/src/types/event-types.default.json
 
 # working dir fix
