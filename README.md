@@ -84,21 +84,21 @@ Each service independently - logs will be displayed on the console
 - `npm run api` start the API server on port 3000 (default)
 - `npm run mail` start the mail service
 
-#### Local native setup with rec.la loopback SSL
+#### Local native setup with backloop.dev loopback SSL
 
-[rec.la](https://rec.la) certificates facilitate local developpment by enabling https on localhost. 
+[backloop.dev](https://backloop.dev) certificates facilitate local developpment by enabling https on localhost. 
 
 [setup the environment](#native)
 - `npm run database` to start mongodb 
 - (optional) `npm run mail` start the mail service
-- `npm run apirecla` to start api server using `configs/api-recla.yml`
+- `npm run apibackloop` to start api server using `configs/api-backloop.yml`
 
 You can now access you API from you own computer with SSL on 
-- `https://my-computer.rec.la:4443`
+- `https://my-computer.backloop.dev:4443`
 
-You can check by opening [https://my-computer.rec.la:4443/reg/service/info](https://my-computer.rec.la:4443/reg/service/info)
+You can check by opening [https://my-computer.backloop.dev:4443/reg/service/info](https://my-computer.backloop.dev:4443/reg/service/info)
 
-And create new users or access token from the [Pryv Access Token Generation Page](https://pryv.github.io/app-web-access/?pryvServiceInfoUrl=https://l.rec.la:4443/reg/service/info)
+And create new users or access token from the [Pryv Access Token Generation Page](https://pryv.github.io/app-web-access/?pryvServiceInfoUrl=https://l.backloop.dev:4443/reg/service/info)
 
 
 #### Native setup with custom SSL
@@ -121,7 +121,7 @@ http:
   ip: 127.0.0.1
 auth:
   adminAccessKey: REPLACE_ME 
-  trustedApps: "*@https://pryv.github.io*, *@https://*.rec.la*"
+  trustedApps: "*@https://pryv.github.io*, *@https://*.rec.la*, *@https://*.backloop.dev*"
 eventFiles:
   attachmentsDirPath: var-pryv/attachment-files
 service:
@@ -154,10 +154,10 @@ services:
 
 At this moment you should have your application running on the public URL you defined.
 
-- Create an account and launch the [authentication process](https://pryv.github.io/reference/#authenticate-your-app) on **App-Web-Access**: [https://pryv.github.io/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la:4443/reg/service/info](https://pryv.github.io/app-web-access/?pryvServiceInfoUrl=https://my-computer.rec.la:4443/reg/service/info).
-- The service info URL to your platform is: [https://my-computer.rec.la:4443/reg/service/info](https://my-computer.rec.la:4443/reg/service/info)
+- Create an account and launch the [authentication process](https://pryv.github.io/reference/#authenticate-your-app) on **App-Web-Access**: [https://pryv.github.io/app-web-access/?pryvServiceInfoUrl=https://my-computer.backloop.dev:4443/reg/service/info](https://pryv.github.io/app-web-access/?pryvServiceInfoUrl=https://my-computer.backloop.dev:4443/reg/service/info).
+- The service info URL to your platform is: [https://my-computer.backloop.dev:4443/reg/service/info](https://my-computer.backloop.dev:4443/reg/service/info)
 
-If you are using another public URL, replace `https://my-computer.rec.la:4443` by it in the link above.
+If you are using another public URL, replace `https://my-computer.backloop.dev:4443` by it in the link above.
 
 ### Design your Data Model
 

@@ -457,7 +457,7 @@ describe('Socket.IO', function () {
 
     // Spawns A and B.
     beforeEach(async () => {
-      // Stop a few servers here; this is just so that we can maybe reclaim
+      // Stop a few servers here; this is just so that we can maybe backloopim
       // some memory and sockets. Actual cleanup is done in `after()` below.
       if (servers && servers.length > 0) {
         for (const server of servers) { server.stop(); }
