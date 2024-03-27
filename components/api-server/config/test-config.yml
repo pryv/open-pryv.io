@@ -84,3 +84,5 @@ backwardCompatibility:
       isActive: false
 trace:
   enable: true
+platform:
+  db: 'mongodb'
