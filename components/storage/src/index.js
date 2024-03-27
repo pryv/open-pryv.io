@@ -38,7 +38,7 @@ const StorageLayer = require('./StorageLayer');
 const { getConfigUnsafe, getConfig } = require('@pryv/boiler');
 const { dataBaseTracer } = require('tracing');
 const usersLocalIndex = require('./usersLocalIndex');
-const userAccountStorage = require('./userAccountStorage');
+const userAccountStorage = require('./userAccountStorageMongo');
 
 module.exports = {
   Database: require('./Database'),

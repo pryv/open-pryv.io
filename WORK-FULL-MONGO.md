@@ -8,6 +8,9 @@
 
 Task is completed when a script to migrate is provided and settings to activate. 
 
+### Know issue
+- [ ] B2I7 **storage** test is failing after migrations test because indexes are lost. But runs fine idenpendently. 
+
 ### Move Attachments to an online storage
 
 - GridFS ? // S3 ??
@@ -18,6 +21,7 @@ Task is completed when a script to migrate is provided and settings to activate.
 
 27/03/2024 - Made a MongoDB of platform/DB 
 
-- can be actiavted with setting `platform:db = 'mongodb'`
+- migrated to 'pryv-node-platform' as the db should behave differntly that user-based DB.
+- can be activated with setting `platform:db = 'mongodb'`
 - migration with `LOGS=info node components/platform/src/switch1.9.0sqlite-mongo.js --config configs/api.yml`
 
