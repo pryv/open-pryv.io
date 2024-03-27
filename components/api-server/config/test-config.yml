@@ -84,5 +84,7 @@ backwardCompatibility:
       isActive: false
 trace:
   enable: true
-platform:
-  db: 'mongodb'
+storagePlatform:
+  engine: 'mongodb'
+storageUserAccount:
+  engine: 'mongodb'

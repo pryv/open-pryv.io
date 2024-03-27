@@ -36,7 +36,7 @@ let db;
 
 async function getPlatformDB () {
   if (db != null) return db;
-  if ((await getConfig()).get('platform:db') === 'mongodb') {
+  if ((await getConfig()).get('storagePlatform:engine') === 'mongodb') {
     const DB = require('./DBmongodb');
     db = new DB();
   } else {
