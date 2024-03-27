@@ -35,7 +35,6 @@
 const Database = require('storage').Database;
 
 const { getLogger, getConfig } = require('@pryv/boiler');
-const { cloneDeep } = require('lodash');
 const logger = getLogger('platform:db');
 
 class DB {
@@ -45,7 +44,7 @@ class DB {
   db;
 
   async init () {
-    const settings = cloneDeep((await getConfig()).get('database'));
+    const settings = structuredClone((await getConfig()).get('database'));
     settings.name = settings.name + '-platform';
     this.db = new Database(settings);
     this.platformUnique = await this.db.getCollection({
