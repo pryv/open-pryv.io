@@ -37,7 +37,7 @@
 const { getApplication } = require('api-server/src/application');
 
 async function switchDB () {
-  const Sqlite = require('./DB');
+  const Sqlite = require('./DBsqlite');
   const Mongo = require('./DBmongodb');
 
   const app = getApplication();

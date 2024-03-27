@@ -40,7 +40,7 @@ async function getPlatformDB () {
     const DB = require('./DBmongodb');
     db = new DB();
   } else {
-    const DB = require('./DB');
+    const DB = require('./DBsqlite');
     db = new DB();
   }
   await db.init();
