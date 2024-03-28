@@ -12,10 +12,10 @@ for i in `seq 1 $n`; do
     rand+=$char
 done
 sed -i ".bak" "s/${DEFAULT_VALUE}/${rand}/g" "./configs/api.yml"
-sed -i ".bak" "s/${DEFAULT_VALUE}/${rand}/g" "./configs/api-recla.yml"
+sed -i ".bak" "s/${DEFAULT_VALUE}/${rand}/g" "./configs/api-backloop.yml"
 
 rm "./config.yml.bak"
-rm "./configs/api-recla.yml.bak"
+rm "./configs/api-backloop.yml.bak"
 
 echo "Set new random key for admin"
 

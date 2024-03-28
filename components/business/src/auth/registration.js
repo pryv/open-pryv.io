@@ -150,7 +150,7 @@ class Registration {
    */
   async createUser (context, params, result, next) {
     // if it is testing user, skip registration process
-    if (context.newUser.username === 'recla') {
+    if (context.newUser.username === 'backloop') {
       result.id = 'dummy-test-user';
       context.newUser.id = result.id;
       context.user.username = context.newUser.username;

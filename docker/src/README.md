@@ -22,9 +22,9 @@ You may change the port exposed by Docker from the file `./env_config`
 
 ### SSL 
 
-**Rec.la** Loop back
-You can run dockerized version in local by replacing `./config/api.yml` with `./config/api-recla.yml`.
-Then the api will be accessible **From the local machine only** on `https://my-computer.rec.la:3000`
+**backloop.dev** Loop back
+You can run dockerized version in local by replacing `./config/api.yml` with `./config/api-backloop.yml`.
+Then the api will be accessible **From the local machine only** on `https://my-computer.backloop.dev:3000`
 
 **Own certificate**
 Create a `secrets` folder in `./configs/` with your `key.pem`, `cert.pem` and optional `ca.pem` files. 
