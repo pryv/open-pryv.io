@@ -12,7 +12,7 @@ logs:
       days: 14
 auth:
   adminAccessKey: CHANGE_ME_WITH_SOMETHING
-  trustedApps: "*@https://pryv.github.io*, *@https://*.rec.la*, *@http://127.0.0.1*"
+  trustedApps: "*@https://pryv.github.io*, *@https://*.rec.la*, *@https://*.backloop.dev*, *@http://127.0.0.1*"
 serviceInfoUrl: file://test/service-info.json
 services:
   email:

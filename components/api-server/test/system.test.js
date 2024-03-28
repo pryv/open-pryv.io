@@ -303,7 +303,7 @@ describe('[SYER] system (ex-register)', function () {
     describe('when it just replies OK', function () {
       before(server.ensureStarted.bind(server, helpers.dependencies.settings));
 
-      it('[9K71] must run the process but not save anything for test username "recla"',
+      it('[9K71] must run the process but not save anything for test username "backloop"',
         async function () {
           const settings = structuredClone(helpers.dependencies.settings);
 
@@ -327,9 +327,9 @@ describe('[SYER] system (ex-register)', function () {
 
           // create user
           const data = {
-            username: 'recla',
+            username: 'backloop',
             passwordHash: encryption.hashSync('youpi'),
-            email: 'recla@rec.la',
+            email: 'backloop@backloop.dev',
             language: 'fr'
           };
           const res = await bluebird.fromCallback(cb => post(data, cb));

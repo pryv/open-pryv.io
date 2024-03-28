@@ -1,6 +1,6 @@
 {
   "name": "open-pryv.io",
-  "version": "1.9.0-23-open",
+  "version": "1.9.0-25-open",
   "private": true,
   "description": "Pryv core server app components",
   "homepage": "https://pryv.com",
@@ -17,7 +17,7 @@
   },
   "scripts": {
     "api": "LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/api.yml",
-    "apirecla": "LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/api-recla.yml",
+    "apibackloop": "LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/api-backloop.yml",
     "database": "DEVELOPMENT=true scripts/start-mongo",
     "mail": "cd service-mail ; ./bin/server",
     "pryv": "npm run database >> ./var-pryv/logs/mongodb.log & npm run mail >> ./var-pryv/logs/mail.log & npm run api",
@@ -39,6 +39,7 @@
     "async": "^2.6.4",
     "awaiting": "^3.0.0",
     "axon": "2.0.x",
+    "backloop.dev": "latest",
     "bcrypt": "^5.1.0",
     "better-sqlite3": "^7.6.2",
     "bluebird": "^3.5.0",
@@ -65,7 +66,6 @@
     "opentracing": "^0.14.5",
     "protobufjs": "^6.11.3",
     "pryv": "^2.0.2",
-    "rec.la": "latest",
     "shimmer": "^1.2.0",
     "slug": "^5.3.0",
     "socket.io": "^4.6.1",

@@ -37,7 +37,7 @@ const { getApplication } = require('api-server/src/application');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
-const recLaOptionsAsync = require('rec.la').httpsOptionsAsync;
+const recLaOptionsAsync = require('backloop.dev').httpsOptionsAsync;
 const { axonMessaging } = require('messages');
 const { pubsub } = require('messages');
 const { getUsersRepository } = require('business/src/users');
@@ -82,16 +82,16 @@ class Server {
     const serverInfos = {
       hostname: null
     };
-    if (config.get('http:ssl:rec.la')) { // SSL is used in openSource version
+    if (config.get('http:ssl:backloop.dev')) { // SSL is used in openSource version
       await new Promise((resolve, reject) => {
         recLaOptionsAsync((err, recLaOptions) => {
           if (err) return reject(err);
           server = https.createServer(recLaOptions, app.expressApp);
-          serverInfos.hostname = 'my-computer.rec.la';
+          serverInfos.hostname = 'my-computer.backloop.dev';
           resolve();
         });
       });
-      this.logger.info('SSL Mode using rec.la certificates');
+      this.logger.info('SSL Mode using backloop.dev certificates');
     } else if (config.get('http:ssl:keyFile')) { // https with local files
       const options = {
         key: fs.readFileSync(config.get('http:ssl:keyFile')),

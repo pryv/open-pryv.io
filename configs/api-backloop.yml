@@ -1,13 +1,13 @@
 dnsLess:
-  publicUrl: "https://my-computer.rec.la:3000/"
+  publicUrl: "https://my-computer.backloop.dev:3000/"
 http:
   port: 3000 # (ignored with docker)
   ip: 127.0.0.1 # (ignored with docker)
   ssl:
-    rec.la: true
+    backloop.dev: true
 auth:
-  adminAccessKey: RECLA-ADMIN-KEY-UNSECURE
-  trustedApps: "*@https://pryv.github.io, *@https://*.rec.la*"
+  adminAccessKey: BACKLOOP-ADMIN-KEY-UNSECURE
+  trustedApps: "*@https://pryv.github.io, *@https://*.rec.la*, *@https://*.backloop.dev*"
 service:
   serial: 1000001 # change serial number each time assets content needs to be reloaded by clients
   name: Open-Pryv.io
