@@ -31,8 +31,8 @@ Task is completed when a script to migrate is provided and settings to activate.
 
 #### Settings
 
-- Platform: ``storagePlatform:engine = 'mongodb'`
-- userStorage: ``storageUserAccount:engine = 'mongodb'`
+- Platform: `storagePlatform:engine = 'mongodb'`
+- userStorage: `storageUserAccount:engine = 'mongodb'`
 - storageUserIndex: `storageUserIndex:engine = 'mongodb'`
 
 ### Know issue
