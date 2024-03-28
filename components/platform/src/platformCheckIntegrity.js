@@ -38,7 +38,7 @@ module.exports = async function platformCheckIntegrity (platformWideDB) {
   const { getUsersRepository } = require('business/src/users/repository'); // to avoid some circular import
 
   // --- platformDB
-  const allEntries = platformWideDB.getAllWithPrefix('user');
+  const allEntries = await platformWideDB.getAllWithPrefix('user');
   const platformEntryByUser = {};
   for (const entry of allEntries) {
     if (platformEntryByUser[entry.username] == null) platformEntryByUser[entry.username] = {};

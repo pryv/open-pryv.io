@@ -35,11 +35,7 @@
  * Contains UserName >> UserId Mapping
  */
 
-const mkdirp = require('mkdirp');
-const SQLite3 = require('better-sqlite3');
-const concurrentSafeWrite = require('./sqliteUtils/concurrentSafeWrite');
-
-const { getLogger, getConfig } = require('@pryv/boiler');
+const { getConfig, getLogger } = require('@pryv/boiler');
 const cache = require('cache');
 
 const logger = getLogger('users:local-index');
@@ -59,7 +55,14 @@ class UsersLocalIndex {
     if (this.initialized) { return; }
     this.initialized = true;
 
-    this.db = new DBIndex();
+    if ((await getConfig()).get('storageUserIndex:engine') === 'mongodb') {
+      const DBIndex = require('./usersLocalIndexMongoDB');
+      this.db = new DBIndex();
+    } else {
+      const DBIndex = require('./usersLocalIndexSQLite');
+      this.db = new DBIndex();
+    }
+
     await this.db.init();
 
     logger.debug('init');
@@ -109,7 +112,7 @@ class UsersLocalIndex {
   async getUserId (username) {
     let userId = cache.getUserId(username);
     if (userId == null) {
-      userId = this.db.getIdForName(username);
+      userId = await this.db.getIdForName(username);
       if (userId != null) {
         cache.setUserId(username, userId);
       }
@@ -119,7 +122,7 @@ class UsersLocalIndex {
   }
 
   async getUsername (userId) {
-    const res = this.db.getNameForId(userId);
+    const res = await this.db.getNameForId(userId);
     logger.debug('nameForId', userId, res);
     return res;
   }
@@ -129,7 +132,7 @@ class UsersLocalIndex {
    */
   async getAllByUsername () {
     logger.debug('getAllByUsername');
-    return this.db.getAllByUsername();
+    return await this.db.getAllByUsername();
   }
 
   /**
@@ -153,78 +156,6 @@ async function getAllKnownUserIdsFromDB (collectionName) {
   const collection = await database.getCollection({ name: collectionName });
   const userIds = await collection.distinct('userId', {});
   return userIds;
-}
-
-class DBIndex {
-  db;
-  queryGetIdForName;
-  queryGetNameForId;
-  queryGetAll;
-  queryInsert;
-  queryDeleteAll;
-  queryDeleteById;
-
-  async init () {
-    const config = await getConfig();
-    const basePath = config.get('userFiles:path');
-    mkdirp.sync(basePath);
-
-    this.db = new SQLite3(basePath + '/user-index.db');
-    await concurrentSafeWrite.initWALAndConcurrentSafeWriteCapabilities(this.db);
-
-    concurrentSafeWrite.execute(() => {
-      this.db.prepare('CREATE TABLE IF NOT EXISTS id4name (username TEXT PRIMARY KEY, userId TEXT NOT NULL);').run();
-    });
-    concurrentSafeWrite.execute(() => {
-      this.db.prepare('CREATE INDEX IF NOT EXISTS id4name_id ON id4name(userId);').run();
-    });
-
-    this.queryGetIdForName = this.db.prepare('SELECT userId FROM id4name WHERE username = ?');
-    this.queryGetNameForId = this.db.prepare('SELECT username FROM id4name WHERE userId = ?');
-    this.queryInsert = this.db.prepare('INSERT INTO id4name (username, userId) VALUES (@username, @userId)');
-    this.queryGetAll = this.db.prepare('SELECT username, userId FROM id4name');
-    this.queryDeleteById = this.db.prepare('DELETE FROM id4name WHERE userId = @userId');
-    this.queryDeleteAll = this.db.prepare('DELETE FROM id4name');
-  }
-
-  getIdForName (username) {
-    return this.queryGetIdForName.get(username)?.userId;
-  }
-
-  getNameForId (userId) {
-    return this.queryGetNameForId.get(userId)?.username;
-  }
-
-  async addUser (username, userId) {
-    let result = null;
-    await concurrentSafeWrite.execute(() => {
-      result = this.queryInsert.run({ username, userId });
-    });
-    return result;
-  }
-
-  async deleteById (userId) {
-    await concurrentSafeWrite.execute(() => {
-      return this.queryDeleteById.run({ userId });
-    });
-  }
-
-  /**
-   * @returns {Object} An object whose keys are the usernames and values are the user ids.
-   */
-  getAllByUsername () {
-    const users = {};
-    for (const user of this.queryGetAll.iterate()) {
-      users[user.username] = user.userId;
-    }
-    return users;
-  }
-
-  async deleteAll () {
-    concurrentSafeWrite.execute(() => {
-      return this.queryDeleteAll.run();
-    });
-  }
 }
 
 module.exports = new UsersLocalIndex();
