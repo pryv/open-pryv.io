@@ -63,7 +63,8 @@ module.exports = {
   getCurrentPasswordTime,
   passwordExistsInHistory,
   clearHistory,
-  getKeyValueDataForStore
+  getKeyValueDataForStore,
+  _addKeyValueData
 };
 
 async function init () {
@@ -143,6 +144,13 @@ async function passwordExistsInHistory (userId, password, historyLength) {
 }
 
 // PER-STORE KEY-VALUE DB
+
+/**
+ * Raw insert used for migration
+ */
+async function _addKeyValueData (storeId, userId, key, value) {
+  await storesKeyValueCollection.insertOne({ storeId, userId, key, value });
+}
 
 function getKeyValueDataForStore (storeId) {
   return new StoreKeyValueData(storeId);

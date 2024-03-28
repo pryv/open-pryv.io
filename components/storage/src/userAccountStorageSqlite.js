@@ -71,7 +71,10 @@ module.exports = {
   getCurrentPasswordTime,
   passwordExistsInHistory,
   clearHistory,
-  getKeyValueDataForStore
+  getKeyValueDataForStore,
+  _getPasswordHistory,
+  _getAllStoreData,
+  _clearStoreData
 };
 
 async function init () {
@@ -126,6 +129,40 @@ async function passwordExistsInHistory (userId, password, historyLength) {
     }
   }
   return false;
+}
+
+/**
+ * Retreive all password history, used for Migration
+ */
+async function _getPasswordHistory (userId) {
+  const db = await getUserDB(userId);
+  const res = [];
+  const getALL = db.prepare('SELECT hash, time FROM passwords');
+  for (const entry of getALL.iterate()) {
+    res.push(entry);
+  }
+  return res;
+}
+
+/**
+ * Retreive all strore data, used for Migration
+ */
+async function _getAllStoreData (userId) {
+  const db = await getUserDB(userId);
+  const res = [];
+  const getALL = db.prepare('SELECT * FROM storeKeyValueData');
+  for (const entry of getALL.iterate()) {
+    res.push(entry);
+  }
+  return res;
+}
+
+/**
+ * Clear data for user, used for migration
+ */
+async function _clearStoreData (userId) {
+  const db = await getUserDB(userId);
+  db.prepare('DELETE FROM storeKeyValueData').run();
 }
 
 // PER-STORE KEY-VALUE DB
