@@ -37,7 +37,6 @@ Task is completed when a script to migrate is provided and settings to activate.
 
 ### Know issue
 - [ ] B2I7 **storage** test is failing after migrations test because indexes are lost. But runs fine idenpendently. 
-- [ ] Tests are running idenpendently but - timing out randomly on Mac, All OK on Linux setup. I suspect mongoDB connection not being closed. Or indexes buiding for new introduced collections.  
 
 ## Log
 
