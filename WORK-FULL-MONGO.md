@@ -5,7 +5,7 @@
 ### Remove 'sqlite' from
 
 - [x] [platform/DB](https://github.com/pryv/open-pryv.io/blob/full-mongo/components/platform/src/) which contains all unique and indexed field. This DB should be distributed among servers
-- [ ] [userLocalDir](https://github.com/pryv/open-pryv.io/blob/full-mongo/components/storage/src/userLocalDirectory.js) map userId / userName
+- [x] [userLocalDir](https://github.com/pryv/open-pryv.io/blob/full-mongo/components/storage/src/userLocalDirectory.js) map userId / userName
 - [x] [userAccountStorage](https://github.com/pryv/open-pryv.io/full-mongo/master/components/storage/src/userAccountStorage.js) contains password and password history
 
 Task is completed when a script to migrate is provided and settings to activate. 
@@ -27,14 +27,17 @@ Task is completed when a script to migrate is provided and settings to activate.
 
 - platform: `LOGS=info node components/storage/src/migrations/switchSqliteMongo/platformDB.js --config configs/api.yml`
 - userStorage: `LOGS=info node components/storage/src/migrations/switchSqliteMongo/userAccountStorage.js --config configs/api.yml`
+- userIndex: `LOGS=info node components/storage/src/migrations/switchSqliteMongo/userIndex.js --config configs/api.yml`
 
 #### Settings
 
 - Platform: ``storagePlatform:engine = 'mongodb'`
 - userStorage: ``storageUserAccount:engine = 'mongodb'`
+- storageUserIndex: `storageUserIndex:engine = 'mongodb'`
 
 ### Know issue
 - [ ] B2I7 **storage** test is failing after migrations test because indexes are lost. But runs fine idenpendently. 
+- [ ] Tests are running idenpendently but - timing out randomly. I suspect mongoDB connection not being closed. Or indexes buiding for new introduced collections.  
 
 ## Log
 
@@ -46,3 +49,7 @@ Task is completed when a script to migrate is provided and settings to activate.
 27/03/2024 - Made a MongoDB verion of userStorage 
 
 - migrated to in `pryv-node` in collections `passwords` & `stores-key-value`
+
+28/03/2024 - Made a MongoDB verion of userIndex 
+
+- migrated to in `pryv-node` in collection `id4name` 
