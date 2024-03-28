@@ -1,4 +1,6 @@
-# TASKLIST to provide a Full-Mongo distribution
+# Provide a Full-Mongo distribution
+
+## TASKLIST
 
 ### Remove 'sqlite' from
 
@@ -7,6 +9,19 @@
 - [x] [userAccountStorage](https://github.com/pryv/open-pryv.io/full-mongo/master/components/storage/src/userAccountStorage.js) contains password and password history
 
 Task is completed when a script to migrate is provided and settings to activate. 
+
+### Move Attachments to an online storage
+
+- [ ] GridFS
+- [ ] S3
+
+### (Optional) Put all config in MongoDB
+
+- For docker version of onpen-pryv.io. 
+  - default config to be hardcoded in container 
+  - Custom value saved in mongoDB, with connection parameters given by `env`   
+
+## Usage
 
 #### Migration scripts
 
@@ -20,12 +35,6 @@ Task is completed when a script to migrate is provided and settings to activate.
 
 ### Know issue
 - [ ] B2I7 **storage** test is failing after migrations test because indexes are lost. But runs fine idenpendently. 
-
-### Move Attachments to an online storage
-
-- GridFS ? // S3 ??
-
-### (Optional) Put all config in MongoDB
 
 ## Log
 
