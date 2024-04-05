@@ -15,6 +15,11 @@ Task is completed when a script to migrate is provided and settings to activate.
 - [ ] GridFS
 - [ ] S3
 
+### Documentation
+
+- [ ] Add instructions on how to move / copy previous user data 
+- [ ] Add instructions on how to remove previous configurations associated with user files 
+
 ### (Optional) Put all config in MongoDB
 
 - For docker version of onpen-pryv.io. 
@@ -27,7 +32,7 @@ Task is completed when a script to migrate is provided and settings to activate.
 
 - platform: `LOGS=info node components/storage/src/migrations/switchSqliteMongo/platformDB.js --config configs/api.yml`
 - userStorage: `LOGS=info node components/storage/src/migrations/switchSqliteMongo/userAccountStorage.js --config configs/api.yml`
-- userIndex: `LOGS=info node components/storage/src/migrations/switchSqliteMongo/userIndex.js --config configs/api.yml`
+- usersIndex: `LOGS=info node components/storage/src/migrations/switchSqliteMongo/usersIndex.js --config configs/api.yml`
 
 #### Settings
 
