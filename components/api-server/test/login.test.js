@@ -192,7 +192,7 @@ describe('auth', function () {
     it('[509A] must accept "wildcarded" app ids and origins', function (done) {
       request
         .post(path(authData.username))
-        .set('Origin', 'https://test.rec.la:1234')
+        .set('Origin', 'https://test.backloop.dev:1234')
         .send(authData)
         .end(function (err, res) {
           should.not.exist(err);
@@ -310,7 +310,7 @@ describe('auth', function () {
       async.times(loginCount, function (n, next) {
         request
           .post(path(authData.username))
-          .set('Origin', 'https://test.rec.la:1234')
+          .set('Origin', 'https://test.backloop.dev:1234')
           .send({
             username: user.username,
             password: user.password,
