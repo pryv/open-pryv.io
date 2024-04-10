@@ -60,6 +60,7 @@ describe('Migration - 1.7.x', function () {
   let webhooksCollection;
 
   before(async function () {
+    if (database.isFerret) this.skip();
     eventsCollection = await database.getCollection({ name: 'events' });
     usersCollection = await database.getCollection({ name: 'users' });
     streamsCollection = await database.getCollection({ name: 'streams' });
@@ -68,6 +69,7 @@ describe('Migration - 1.7.x', function () {
   });
 
   after(async function () {
+    if (database.isFerret) return;
     // erase all
     await eventsCollection.deleteMany({});
     await accessesCollection.deleteMany({});

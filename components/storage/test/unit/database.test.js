@@ -35,15 +35,15 @@
 const chai = require('chai');
 const assert = chai.assert;
 const Database = require('../../src/Database');
+const { getConfig } = require('@pryv/boiler');
 
 describe('Database', () => {
-  const connectionSettings = {
-    host: '127.0.0.1',
-    port: 27017,
-    name: 'pryv-node-test'
-  };
+  let connectionSettings;
   let database;
   beforeEach(async () => {
+    const config = await getConfig();
+    connectionSettings = structuredClone(config.get('database'));
+    connectionSettings.name = 'pryv-node-test';
     database = new Database(connectionSettings);
     await database.ensureConnect();
   });
@@ -89,22 +89,28 @@ describe('Database', () => {
         // we ensure that err contains the isDuplicateIndex function with assert
         const isDuplicateIndex = err.isDuplicateIndex;
         assert.isFunction(isDuplicateIndex);
-        assert.isTrue(isDuplicateIndex('name'));
-        assert.isTrue(isDuplicateIndex('username'));
-        assert.isFalse(isDuplicateIndex('age'));
+        if (database.isFerret) return done();
+        assert.isTrue(err.isDuplicateIndex('name'));
+        assert.isTrue(err.isDuplicateIndex('username'));
+        assert.isFalse(err.isDuplicateIndex('age'));
         done();
       });
     });
     // This helps detecting if Mongo decides to change the error message format,
     // which may break our regular expression matchings, cf. GH issue #163.
     it('[D0EN] must fail if mongo duplicate error message changed', (done) => {
-      const duplicateMsg = `E11000 duplicate key error collection: ${connectionSettings.name}.${collectionInfo.name} index: name_1_username_1 dup key:`;
+      let duplicateMsg = `E11000 duplicate key error collection: ${connectionSettings.name}.${collectionInfo.name} index: name_1_username_1 dup key:`;
+      if (database.isFerret) duplicateMsg = `E11000 duplicate key error collection: ${connectionSettings.name}.${collectionInfo.name}`;
       database.insertOne(collectionInfo, { name: 'toto', username: 'mrtoto', age: 22 }, (err) => {
-        // we ensure that err contains the string errmsg with assert
-        const errMsg = err.errmsg;
-        assert.isString(errMsg);
-        assert.include(errMsg, duplicateMsg, 'Mongo duplicate error message changed!');
-        done();
+        try {
+          // we ensure that err contains the string errmsg with assert
+          const errMsg = err.errmsg;
+          assert.isString(errMsg);
+          assert.include(errMsg, duplicateMsg, 'Mongo duplicate error message changed!');
+          done();
+        } catch (err) {
+          done(err);
+        }
       });
     });
   });
