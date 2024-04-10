@@ -43,8 +43,9 @@ describe('Migrations - new install', () => {
   let isOpenSource = false;
 
   before(async () => {
+    const config = await getConfig();
     await versions.removeAll();
-    isOpenSource = (await getConfig()).get('openSource:isActive');
+    isOpenSource = config.get('openSource:isActive');
   });
 
   it('[OVYL] must set the initial version to the package file version and not perform other migrations', async () => {

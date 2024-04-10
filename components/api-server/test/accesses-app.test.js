@@ -242,6 +242,7 @@ describe('[ACCP] accesses (app)', function () {
           expected.createdBy = res.body.access.createdBy;
           expected.modified = res.body.access.modified;
           expected.modifiedBy = res.body.access.modifiedBy;
+          expected.deviceName = null;
           integrity.accesses.set(expected);
           validation.checkObjectEquality(res.body.access, expected);
           should(accessesNotifCount).be.eql(1, 'accesses notifications');

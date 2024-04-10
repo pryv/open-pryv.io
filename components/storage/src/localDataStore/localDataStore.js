@@ -54,6 +54,7 @@ module.exports = ds.createDataStore({
     const eventFilesStorage = (await storage.getStorageLayer()).eventFiles;
     for (const item of eventsIndexes) {
       item.options.background = true;
+      database.ferretIndexAndOptionsAdaptationsIfNeeded(item);
       await eventsCollection.createIndex(item.index, item.options);
     }
     // forward settings to userEvents
@@ -64,6 +65,7 @@ module.exports = ds.createDataStore({
     const streamsCollection = await database.getCollection({ name: 'streams' });
     for (const item of streamIndexes) {
       item.options.background = true;
+      database.ferretIndexAndOptionsAdaptationsIfNeeded(item);
       await streamsCollection.createIndex(item.index, item.options);
     }
     const userStreamsStorage = (await storage.getStorageLayer()).streams;

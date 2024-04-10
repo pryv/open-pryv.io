@@ -6,7 +6,7 @@ services:
       - POSTGRES_PASSWORD=password
       - POSTGRES_DB=ferretdb
     volumes:
-      - ./data:/var/lib/postgresql/data
+      - ../var-pryv/ferretDB-data:/var/lib/postgresql/data
 
   ferretdb:
     image: ghcr.io/ferretdb/ferretdb
