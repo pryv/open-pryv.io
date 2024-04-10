@@ -71,7 +71,7 @@ Once it is running, you can continue with the [tutorials](#start).
 
 The installation script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
 
-1. `npm run setup-dev-env` to setup local file structure and install MongoDB
+1. `npm run setup-dev-env` to setup local file structure 
 2. `npm install` to install node modules
 
 #### Native setup with no SSL
@@ -80,7 +80,7 @@ The installation script has been tested on Linux Ubuntu 18.04 LTS and MacOSX.
 
 Each service independently - logs will be displayed on the console
 
-- `npm run database` start mongodb
+- `npm run database` start mongodb **or** start [ferretDB](./ferretDB/README.md)
 - `npm run api` start the API server on port 3000 (default)
 - `npm run mail` start the mail service
 
@@ -89,7 +89,7 @@ Each service independently - logs will be displayed on the console
 [backloop.dev](https://backloop.dev) certificates facilitate local developpment by enabling https on localhost. 
 
 [setup the environment](#native)
-- `npm run database` to start mongodb 
+- `npm run database` to start mongodb  **or** start [ferretDB](./ferretDB/README.md)
 - (optional) `npm run mail` start the mail service
 - `npm run apibackloop` to start api server using `configs/api-backloop.yml`
 
@@ -188,7 +188,11 @@ To customize your own, clone the [Data Types repository](https://github.com/pryv
 
 ### MongoDB data folder
 
-By default the MongoDB data are stored in `var-pryv/mongodb-data`. If you want to modify the folder where the MongoDB data files are stored, you can modify in `scripts/setup-mongodb` the variable `MONGO_DATA_FOLDER`.
+By default the MongoDB data are stored in `var-pryv/mongodb-data`. If you want to modify the folder where the MongoDB data files are stored, read [ferretDB README](./ferretDB/README.md).
+
+### FerretDB data folder
+
+By default the FerretDB data are stored in `var-pryv/ferretdb-data`. If you want to modify the folder where the FerretDB data files are stored, you can modify in `scripts/setup-mongodb` the variable `MONGO_DATA_FOLDER`.
 
 
 ### Visual assets and icons

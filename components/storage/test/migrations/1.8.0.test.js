@@ -60,6 +60,7 @@ describe('Migration - 1.8.0', function () {
   let usersIndex;
 
   before(async function () {
+    if (database.isFerret) this.skip();
     const newVersion = getVersions('1.8.0');
     await SystemStreamsSerializer.init();
     await bluebird.fromCallback(cb => testData.restoreFromDump('1.7.5', mongoFolder, cb));

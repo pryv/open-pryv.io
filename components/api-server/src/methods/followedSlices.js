@@ -38,6 +38,8 @@ const methodsSchema = require('../schema/followedSlicesMethods');
 
 const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
+const { getConfig } = require('@pryv/boiler');
+
 /**
  * Followed slices methods implementations.
  * TODO: refactor methods as chains of functions
@@ -47,7 +49,8 @@ const { getStorageLayer } = require('storage');
 module.exports = async function (api) {
   const storageLayer = await getStorageLayer();
   const userFollowedSlicesStorage = storageLayer.followedSlices;
-
+  const config = await getConfig();
+  const isFerret = config.get('database:isFerret');
   // RETRIEVAL
 
   api.register('followedSlices.get',
@@ -117,6 +120,11 @@ module.exports = async function (api) {
    * Returns the error to propagate given `dbError` and `params` as input.
    */
   function getCreationOrUpdateError (dbError, params) {
+    if (isFerret) {
+      if (dbError.isDuplicate) {
+        return errors.itemAlreadyExists('access', { info: 'FerretDB does not provide duplicate information' });
+      }
+    }
     // Duplicate errors
     if (dbError.isDuplicateIndex('name')) {
       return errors.itemAlreadyExists('followed slice',

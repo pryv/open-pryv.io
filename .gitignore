@@ -3,6 +3,7 @@ public_html/
 app-web-auth3/
 node_modules/
 docker/dockerized-open-pryv
+ferretDB/data
 
 # not commiting this into OS version
 
