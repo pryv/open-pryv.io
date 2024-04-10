@@ -37,3 +37,8 @@ Run Api-Server
 - Migration from MongoDB is still to be done. 
 - A Docker version of Open-Pryv.io to be done
 
+
+
+# License
+
+[BSD-3-Clause](LICENSE)
