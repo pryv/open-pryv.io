@@ -36,6 +36,7 @@ const async = require('async');
 const should = require('should'); // explicit require to benefit from static functions
 const { assert } = require('chai');
 const _ = require('lodash');
+const { getConfig } = require('@pryv/boiler');
 
 require('./test-helpers');
 const helpers = require('./helpers');
@@ -46,14 +47,20 @@ const methodsSchema = require('../src/schema/followedSlicesMethods');
 const storage = helpers.dependencies.storage.user.followedSlices;
 const testData = helpers.data;
 
-describe('followed slices', function () {
+describe('[FOLS] followed slices', function () {
   const user = structuredClone(testData.users[0]);
   const basePath = '/' + user.username + '/followed-slices';
   let request = null; // must be set after server instance started
+  let isFerret = null;
 
   function path (id) {
     return basePath + '/' + id;
   }
+
+  before(async function () {
+    const config = await getConfig();
+    isFerret = config.get('database:isFerret');
+  });
 
   // to verify data change notifications
   let followedSlicesNotifCount;
@@ -163,10 +170,14 @@ describe('followed slices', function () {
           accessToken: testData.followedSlices[0].accessToken
         };
         request.post(basePath).send(data).end(function (res) {
+          let expectedData = { url: data.url, accessToken: data.accessToken };
+          if (isFerret) {
+            expectedData = { info: 'FerretDB does not provide duplicate information' };
+          }
           validation.checkError(res, {
             status: 409,
             id: ErrorIds.ItemAlreadyExists,
-            data: { url: data.url, accessToken: data.accessToken }
+            data: expectedData
           }, done);
         });
       });
@@ -178,11 +189,15 @@ describe('followed slices', function () {
           url: 'https://hippolyte.pryv.io/',
           accessToken: 'some-token'
         };
+        let expectedData = { name: data.name };
+        if (isFerret) {
+          expectedData = { info: 'FerretDB does not provide duplicate information' };
+        }
         request.post(basePath).send(data).end(function (res) {
           validation.checkError(res, {
             status: 409,
             id: ErrorIds.ItemAlreadyExists,
-            data: { name: data.name }
+            data: expectedData
           }, done);
         });
       });
@@ -230,11 +245,15 @@ describe('followed slices', function () {
     it('[T256] must return a correct error if a followed slice with the same name already exists',
       function (done) {
         const update = { name: testData.followedSlices[0].name };
+        let expectedData = { name: update.name };
+        if (isFerret) {
+          expectedData = { info: 'FerretDB does not provide duplicate information' };
+        }
         request.put(path(testData.followedSlices[1].id)).send(update).end(function (res) {
           validation.checkError(res, {
             status: 409,
             id: ErrorIds.ItemAlreadyExists,
-            data: { name: update.name }
+            data: expectedData
           }, done);
         });
       });

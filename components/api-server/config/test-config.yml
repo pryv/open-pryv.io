@@ -34,8 +34,9 @@ database:
   host: 127.0.0.1
   port: 27017
   name: pryv-node-test
-  authUser: ''
-  authPassword: ''
+  authUser: 'username'
+  authPassword: 'password'
+  isFerret: true
 openSource:
   isActive: false
 dnsLess:

@@ -92,6 +92,7 @@ module.exports = [
     modified: timestamp.now(),
     modifiedBy: 'test',
     lastUsed: 0,
+    deviceName: null,
     calls: {}
   },
   {

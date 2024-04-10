@@ -83,7 +83,8 @@ exports = module.exports = function (action) {
 
   const shared = structuredClone(base);
   _.extend(shared.properties, {
-    type: string({ enum: ['shared'] })
+    type: string({ enum: ['shared'] }),
+    deviceName: helpers.null()
   });
 
   switch (action) {
