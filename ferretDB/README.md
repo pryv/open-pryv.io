@@ -32,6 +32,12 @@ docker run --rm -it --network=ferretdb --entrypoint=mongosh mongo \
 
 Run Api-Server
 
+### Testing
+
+Add ferretDB configuration items `isFerret`, `username` and `password` to file `components/api-server/config/test-config.yml`
+
+Run `just test all`
+
 ### Notes & Feature requests
 
 - Migration from MongoDB is still to be done. 
