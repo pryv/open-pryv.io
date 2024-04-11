@@ -130,7 +130,7 @@ module.exports = async function (api) {
       return errors.itemAlreadyExists('followed slice',
         { name: params.name }, dbError);
     }
-    if (dbError.isDuplicateIndex('username') && dbError.isDuplicateIndex('accessToken')) {
+    if (dbError.isDuplicateIndex('url') && dbError.isDuplicateIndex('accessToken')) {
       return errors.itemAlreadyExists('followed slice',
         { url: params.url, accessToken: params.accessToken }, dbError);
     }
