@@ -498,7 +498,7 @@ describe('accesses (personal)', function () {
         name: testData.accesses[2].name,
         permissions: []
       };
-      let expectedData = { type: 'shared', name: testData.accesses[2].name };
+      let expectedData = { type: 'shared', name: testData.accesses[2].name, deviceName: null };
       if (isFerret) {
         expectedData = { info: 'FerretDB does not provide duplicate information' };
       }
