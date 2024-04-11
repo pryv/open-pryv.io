@@ -150,8 +150,9 @@ module.exports = ds.createUserStreams({
     return await bluebird.fromCallback((cb) => this.userStreamsStorage.removeMany(userId, {}, cb));
   },
 
-  async _getUserStorageSize (userId) {
-    return await this.userStreamsStorage.getTotalSize(userId);
+  async _getStorageInfos (userId) {
+    const count = await bluebird.fromCallback((cb) => this.userStreamsStorage.countAll(userId, cb));
+    return { count };
   }
 });
 

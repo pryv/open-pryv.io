@@ -42,18 +42,22 @@ const userStreams = require('../localDataStore/localUserStreams');
 const userEvents = require('./localUserEventsSQLite');
 const LocalTransaction = require('../localDataStore/LocalTransaction');
 const { getStorage } = require('../userSQLite');
+const { getEventFiles } = require('../eventFiles/getEventFiles');
 
 module.exports = ds.createDataStore({
 
   async init (params) {
     this.settings = params.settings;
+
     await SystemStreamsSerializer.init();
     const database = await storage.getDatabase();
 
     // init events
-    const eventFilesStorage = (await storage.getStorageLayer()).eventFiles;
+    const eventFilesStorage = await getEventFiles();
+
     const userStorage = await getStorage('local');
     userEvents.init(userStorage, eventFilesStorage, this.settings, params.integrity.setOnEvent);
+    eventFilesStorage.attachToEventStore(userEvents, params.integrity.setOnEvent);
 
     // init streams
     const streamsCollection = await database.getCollection({ name: 'streams' });
@@ -79,10 +83,11 @@ module.exports = ds.createDataStore({
     await userEvents._deleteUser(uid);
   },
 
-  async getUserStorageSize (uid) {
+  async getUserStorageInfos (uid) {
     // TODO: ultimately here we should simply look at the DB file size
-    const streamsSize = await userStreams._getUserStorageSize(uid);
-    const eventsSize = await userEvents._getUserStorageSize(uid);
-    return streamsSize + eventsSize;
+    const streams = await userStreams._getStorageInfos(uid);
+    const events = await userEvents._getStorageInfos(uid);
+    const files = await userEvents._getFilesStorageInfos(uid);
+    return { streams, events, files };
   }
 });

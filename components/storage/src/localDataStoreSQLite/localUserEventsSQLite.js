@@ -120,43 +120,6 @@ module.exports = ds.createUserEvents({
     }
   },
 
-  async addAttachment (userId, eventId, attachmentItem, transaction) {
-    const fileId = await this.eventsFileStorage.saveAttachmentFromStream(attachmentItem.attachmentData, userId, eventId);
-    const attachment = Object.assign({ id: fileId }, attachmentItem);
-    delete attachment.attachmentData;
-    const event = await this.getOne(userId, eventId);
-    event.attachments ??= [];
-    event.attachments.push(attachment);
-    this.setIntegrityOnEvent(event);
-    await this.update(userId, event, transaction);
-    return event;
-  },
-  /**
-   * @param {string} userId
-   * @param {string} fileId
-   * @returns {Promise<any>}
-   */
-  async getAttachment (userId, eventId, fileId) {
-    return this.eventsFileStorage.getAttachmentStream(userId, eventId, fileId);
-  },
-
-  /**
-   * @param {string} userId
-   * @param {string} fileId
-   * @param {Transaction} transaction
-   * @returns {Promise<any>}
-   */
-  async deleteAttachment (userId, eventId, fileId, transaction) {
-    const eventData = await this.getOne(userId, eventId);
-    const newEventData = structuredClone(eventData);
-    newEventData.attachments = newEventData.attachments.filter((attachment) => {
-      return attachment.id !== fileId;
-    });
-    await this.eventsFileStorage.removeAttachment(userId, eventId, fileId);
-    await this.update(userId, newEventData, transaction);
-    return newEventData;
-  },
-
   /**
    * @returns {Promise<any>}
    */
@@ -221,6 +184,7 @@ module.exports = ds.createUserEvents({
    */
   async _deleteUser (userId) {
     const db = await this.storage.forUser(userId);
+    await this.eventsFileStorage.removeAllForUser(userId);
     return await db.deleteEvents({ query: [] });
   },
 
@@ -228,10 +192,15 @@ module.exports = ds.createUserEvents({
    * @param {string} userId
    * @returns {Promise<any>}
    */
-  async _getUserStorageSize (userId) {
+  async _getStorageInfos (userId) {
     const db = await this.storage.forUser(userId);
-    // TODO: fix this total HACK
-    return db.countEvents();
+    const count = db.countEvents();
+    return { count };
+  },
+
+  async _getFilesStorageInfos (userId) {
+    const sizeKb = await this.eventsFileStorage.getFileStorageInfos(userId);
+    return { sizeKb };
   },
 
   /**
@@ -242,6 +211,7 @@ module.exports = ds.createUserEvents({
     const allAccountStreamIds = SystemStreamsSerializer.getAccountStreamIds();
     const query = [{ type: 'streamsQuery', content: [[{ any: ['*'] }, { not: allAccountStreamIds }]] }];
     const res = await db.deleteEvents({ query, options: {} });
+    await this.eventsFileStorage.removeAllForUser(userId);
     return res;
   }
 });

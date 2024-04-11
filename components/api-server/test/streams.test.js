@@ -33,11 +33,9 @@
  */
 
 const async = require('async');
-const fs = require('fs');
 const should = require('should'); // explicit require to benefit from static function
 const timestamp = require('unix-timestamp');
 const _ = require('lodash');
-const bluebird = require('bluebird');
 const chai = require('chai');
 const assert = chai.assert;
 
@@ -47,7 +45,6 @@ const server = helpers.dependencies.instanceManager;
 const commonTests = helpers.commonTests;
 const validation = helpers.validation;
 const ErrorIds = require('errors').ErrorIds;
-const eventFilesStorage = helpers.dependencies.storage.user.eventFiles;
 const methodsSchema = require('../src/schema/streamsMethods');
 
 const testData = helpers.data;
@@ -876,6 +873,7 @@ describe('[STRE] streams', function () {
         return e.streamIds[0] === id;
       });
       const deletedEventWithAtt = deletedEvents[0];
+      let deletedEventWithAttPost = null;
       let deletionTime;
 
       const ADD_N_EVENTS = 100;
@@ -886,6 +884,7 @@ describe('[STRE] streams', function () {
             .attach('image', testData.attachments.image.path,
               testData.attachments.image.fileName)
             .end(function (res) {
+              deletedEventWithAttPost = res.body.event;
               validation.check(res, { status: 200 });
               eventsNotifCount = 0; // reset
               stepDone();
@@ -946,39 +945,14 @@ describe('[STRE] streams', function () {
               'Deletion time must be correct.');
             assert.equal(actual.id, e.id);
           });
-
-          const dirPath = eventFilesStorage.getEventPath(user.id, deletedEventWithAtt.id);
-
-          // some time after returning to the client. Let's hang around and try
-          // this several times.
-          await bluebird.fromCallback(cb => {
-            assertEventuallyTrue(
-              () => !fs.existsSync(dirPath),
-              5, // second(s)
-              'Event directory must be deleted' + dirPath,
-              cb
-            );
-          });
+          try {
+            await mall.events.getAttachment(user.id, { id: deletedEventWithAttPost.id }, deletedEventWithAttPost.attachments[0].id);
+            throw new Error('Should not find attachment');
+          } catch (err) {
+            err.id.should.eql('unknown-resource');
+          }
         }
       ], done);
-
-      function assertEventuallyTrue (property, maxWaitSeconds, msg, cb) {
-        const deadline = new Date().getTime() + maxWaitSeconds;
-        const checker = () => {
-          if (new Date().getTime() > deadline) {
-            return cb(new chai.AssertionError('Timeout: ' + msg));
-          }
-
-          const result = property();
-          if (result) return cb();
-
-          // assert: result is false, try again in a bit.
-          setImmediate(checker);
-        };
-
-        // Launch first check
-        setImmediate(checker);
-      }
     });
 
     it('[1U1M] must return a correct error if the item is unknown', function (done) {

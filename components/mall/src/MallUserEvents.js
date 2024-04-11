@@ -222,38 +222,18 @@ class MallUserEvents {
    *
    * @param {*} userId
    * @param {*} eventData
+   * @param {boolean} [doNotOverrideIntegrity] - Used by tests to create event with preset integrity such as historical data
    * @returns {Promise<any>}
    */
-  async create (userId, eventData, mallTransaction) {
+  async create (userId, eventData, mallTransaction, doNotOverrideIntegrity = false) {
     assert.ok(eventData.attachments == null || eventData.attachments.length === 0,
       'Attachments must be added after event creation');
-    const { storeId, eventsStore, storeEvent, storeTransaction } = await this.prepareForStore(eventData, mallTransaction);
+    const { storeId, eventsStore, storeEvent, storeTransaction } = await this.prepareForStore(eventData, mallTransaction, doNotOverrideIntegrity);
     try {
       const res = await eventsStore.create(userId, storeEvent, storeTransaction);
       return eventsUtils.convertEventFromStore(storeId, res);
     } catch (e) {
       storeDataUtils.throwAPIError(e, storeId);
-    }
-  }
-
-  /**
-   * @returns {Promise<void>}
-   */
-  async createMany (userId, eventsData, mallTransaction) {
-    for (const eventData of eventsData) {
-      await this.create(userId, eventData, mallTransaction);
-    }
-  }
-
-  /**
-   * Support creating events with headId for history and already deleted events
-   * Implies that events have already integrity calculated
-   * @returns {Promise<void>}
-   */
-  async createManyForTests (userId, eventsData) {
-    for (const eventData of eventsData) {
-      const { eventsStore, storeEvent, storeTransaction } = await this.prepareForStore(eventData, null, true);
-      await eventsStore.create(userId, storeEvent, storeTransaction);
     }
   }
 
@@ -277,7 +257,7 @@ class MallUserEvents {
   /**
    * @param {string} userId
    * @param {string} fileId
-   * @returns {Promise<any>}
+   * @returns {Promise<ReadableStream>}
    */
   async getAttachment (userId, eventData, fileId) {
     const [storeId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.id);
@@ -461,10 +441,11 @@ class MallUserEvents {
    * Common utils for events.create and events.createWithAttachmentss
    * @param {Object} eventData
    * @param {MallTransaction} [mallTransaction]
+   * @param {boolean} [doNotOverrideIntegrity] - Used during tests to store raw events (ex: history or deleted event)
    * @private
    * @returns {Promise<{ storeId: any; eventsStore: any; storeEvent: any; storeTransaction: any; }>}
    */
-  async prepareForStore (eventData, mallTransaction, isFromTests = false) {
+  async prepareForStore (eventData, mallTransaction, doNotOverrideIntegrity = false) {
     let storeId = null;
     // add eventual missing id and get storeId from first streamId then
     if (eventData.id == null) {
@@ -476,7 +457,7 @@ class MallUserEvents {
     }
     // set integrity
     if (eventData.integrity != null) {
-      if (!isFromTests) integrity.events.set(eventData);
+      if (!doNotOverrideIntegrity) integrity.events.set(eventData);
     } else {
       integrity.events.set(eventData);
     }

@@ -110,7 +110,12 @@ exports.check = function (response, expected, done) {
     expected.sanitizeFn(response.body[expected.sanitizeTarget]);
   }
   if (expected.body) {
-    assert.deepEqual(response.body, expected.body);
+    try {
+      assert.deepEqual(response.body, expected.body);
+    } catch (e) {
+      if (e.messgae) e.message = e.message.substr(0, 3000);
+      throw (e);
+    }
   }
 
   // restore ignored metadata

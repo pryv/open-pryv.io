@@ -18,11 +18,7 @@ const { getUsersRepository } = require('business/src/users/repository');
 
   // Construct storage size object
   const storage = require('../../storage');
-  const storageLayer = app.storageLayer;
-  const storageSize = new storage.Size(
-    [storageLayer.accesses, storageLayer.followedSlices, storageLayer.profile],
-    [storageLayer.eventFiles]
-  );
+  const storageSize = new storage.Size();
 
   // This bit is useful to trace down promise rejections that aren't caught.
   process.on('unhandledRejection', (reason, promise) => {
@@ -36,7 +32,7 @@ const { getUsersRepository } = require('business/src/users/repository');
     process.exit(2);
   });
 
-  runNightlyTasks(storageLayer, storageSize)
+  runNightlyTasks(storageSize)
     .then(() => {
       logger.info('Nightly tasks completed.');
       process.exit(0);
@@ -50,7 +46,7 @@ const { getUsersRepository } = require('business/src/users/repository');
 /**
  * Standalone script to perform nightly tasks (such as updating storage sizes for all users).
  */
-async function runNightlyTasks (storageLayer, storageSize) {
+async function runNightlyTasks (storageSize) {
   logger.info('Starting update of storage size');
 
   // Retrieve all existing users

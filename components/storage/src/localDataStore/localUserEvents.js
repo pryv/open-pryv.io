@@ -131,32 +131,6 @@ module.exports = ds.createUserEvents({
     }
   },
 
-  async addAttachment (userId, eventId, attachmentItem, transaction) {
-    const fileId = await this.eventsFileStorage.saveAttachmentFromStream(attachmentItem.attachmentData, userId, eventId);
-    const attachment = Object.assign({ id: fileId }, attachmentItem);
-    delete attachment.attachmentData;
-    const event = await this.getOne(userId, eventId);
-    event.attachments ??= [];
-    event.attachments.push(attachment);
-    this.setIntegrityOnEvent(event);
-    await this.update(userId, event, transaction);
-    return event;
-  },
-
-  async getAttachment (userId, eventId, fileId) {
-    return this.eventsFileStorage.getAttachmentStream(userId, eventId, fileId);
-  },
-
-  async deleteAttachment (userId, eventId, fileId, transaction) {
-    const event = await this.getOne(userId, eventId);
-    event.attachments = event.attachments.filter((attachment) => {
-      return attachment.id !== fileId;
-    });
-    await this.eventsFileStorage.removeAttachment(userId, eventId, fileId);
-    await this.update(userId, event, transaction);
-    return event;
-  },
-
   async update (userId, eventData, transaction) {
     const update = structuredClone(eventData);
     update._id = update.id;
@@ -240,12 +214,18 @@ module.exports = ds.createUserEvents({
   async _deleteUser (userId) {
     const query = { userId };
     const res = await this.eventsCollection.deleteMany(query, {});
+    await this.eventsFileStorage.removeAllForUser(userId);
     return res;
   },
 
-  async _getUserStorageSize (userId) {
-    // TODO: fix this total HACK
-    return await this.eventsCollection.countDocuments({ userId });
+  async _getStorageInfos (userId) {
+    const count = await this.eventsCollection.countDocuments({ userId });
+    return { count };
+  },
+
+  async _getFilesStorageInfos (userId) {
+    const sizeKb = await this.eventsFileStorage.getFileStorageInfos(userId);
+    return { sizeKb };
   },
 
   /**
@@ -255,6 +235,7 @@ module.exports = ds.createUserEvents({
     const allAccountStreamIds = SystemStreamsSerializer.getAccountStreamIds();
     const query = { userId, streamIds: { $nin: allAccountStreamIds } };
     const res = await this.eventsCollection.deleteMany(query, {});
+    await this.eventsFileStorage.removeAllForUser(userId);
     return res;
   }
 });

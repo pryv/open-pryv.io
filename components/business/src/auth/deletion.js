@@ -111,12 +111,10 @@ class Deletion {
    */
   async validateUserFilepaths (context, params, result, next) {
     const dirPaths = [
-      this.storageLayer.eventFiles.getUserPath(context.user.id),
       path.join(this.config.get('eventFiles:previewsDirPath'), context.user.id)
     ];
     // NOTE User specific paths are constructed by appending the user _id_ to the
-    // `paths` constant above. I know this because I read EventFiles#getXPath(...)
-    // in components/storage/src/user/EventFiles.js.
+    // `paths` constant above.
     // NOTE Since user specific paths are created lazily, we should not expect
     //  them to be there. But _if_ they are, they need be accessible.
     // Let's check if we can change into and write into the user's paths:

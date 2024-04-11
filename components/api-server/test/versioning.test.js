@@ -82,7 +82,6 @@ describe('Versioning', function () {
       testData.resetAccesses,
       testData.resetStreams,
       testData.resetEvents,
-      testData.resetAttachments,
       server.ensureStarted.bind(server, settings),
       function (stepDone) {
         request = helpers.request(server.url);

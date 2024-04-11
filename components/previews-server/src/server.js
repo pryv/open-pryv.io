@@ -93,7 +93,7 @@ async function start () {
   const { expressApp, routesDefined } = require('./expressApp')(await middleware.commonHeaders(), require('./middleware/errors')(logger), middleware.requestTrace(null, logger));
   // setup routes
   require('./routes/index')(expressApp);
-  await require('./routes/event-previews')(expressApp, initContextMiddleware, loadAccessMiddleware, storageLayer.eventFiles, logger);
+  await require('./routes/event-previews')(expressApp, initContextMiddleware, loadAccessMiddleware, logger);
   // Finalize middleware stack:
   routesDefined();
   // setup HTTP

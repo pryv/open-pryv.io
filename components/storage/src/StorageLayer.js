@@ -36,7 +36,6 @@ const Versions = require('./Versions');
 const PasswordResetRequests = require('./PasswordResetRequests');
 const Sessions = require('./Sessions');
 const Accesses = require('./user/Accesses');
-
 const FollowedSlices = require('./user/FollowedSlices');
 const Profile = require('./user/Profile');
 const Streams = require('./user/Streams');
@@ -53,7 +52,6 @@ class StorageLayer {
   passwordResetRequests;
   sessions;
   accesses;
-  eventFiles;
   followedSlices;
   profile;
   streams;
@@ -78,9 +76,6 @@ class StorageLayer {
     this.sessions = new Sessions(connection, { maxAge: sessionMaxAge });
     this.accesses = new Accesses(connection);
     // require() here to avoid depencency cycles
-    const EventFiles = require('./user/EventFiles');
-    this.eventFiles = new EventFiles();
-    await this.eventFiles.init();
     this.followedSlices = new FollowedSlices(connection);
     this.profile = new Profile(connection);
     this.streams = new Streams(connection);
