@@ -45,6 +45,7 @@ describe('[UAST] Users Account Storage', () => {
   let userAccountStorage;
 
   before(async () => {
+    await userLocalDirectory.init();
     userAccountStorage = await getUserAccountStorage();
     // create five passwords with one day delay between each other
     const now = timestamp.now();

@@ -86,8 +86,7 @@ async function init () {
       },
       {
         index: { userId: 1, time: 1 },
-        options: { unique: true },
-        background: false
+        options: { unique: true, background: false }
       }
     ]
   });

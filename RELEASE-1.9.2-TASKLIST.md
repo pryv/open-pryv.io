@@ -15,6 +15,9 @@
 
 Task is completed when a script to migrate is provided and settings to activate. 
 
+### Known issues 
+- [ ] test B2I7 is failing when testing `storage` with `full-mongo` as indexes for passowrd is not yet created. Run `just test-full-mongo storage` to reproduce
+
 ### Move Attachments to an online storage
 
 - [ ] GridFS
