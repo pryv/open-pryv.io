@@ -78,13 +78,17 @@ test component *params:
 
 # Same as `test` but using SQLite PoC storage
 test-sqlite component *params:
-    database__engine=sqlite NODE_ENV=test COMPONENT={{component}} scripts/components-run  \
-        npx mocha -- {{params}}
+    database__engine=sqlite just test {{component}} {{params}}
+
+# Same as `test` but using ferretDB storage
+test-ferret component *params:
+    database__authUser=username database__authPassword=password database__isFerret=true  \
+        just test {{component}} {{params}}
 
 # Run tests with storages: [Platform, userStorage, usersIndex] using mongoDB engine an not sqLite
 test-full-mongo component *params:
     storagePlatform__engine=mongodb storageUserAccount__engine=mongodb storageUserIndex__engine=mongodb \
-         NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha -- {{params}}
+        just test {{component}} {{params}}
 
 # Run tests with detailed output
 test-detailed component *params:
