@@ -1,4 +1,9 @@
-# Provide a Full-Mongo distribution
+# RELEASE 1.9.2
+
+- Provide a Full-Mongo distribution
+- Provide cloud management for Attachments (Files) 
+- Provide ferretDB Compantibility to be full Open-Source
+- (Optional) provides hooks for encryption mechanisms
 
 ## TASKLIST
 
@@ -22,7 +27,7 @@ Task is completed when a script to migrate is provided and settings to activate.
 
 ### (Optional) Put all config in MongoDB
 
-- For docker version of onpen-pryv.io. 
+- For docker version of open-pryv.io. 
   - default config to be hardcoded in container 
   - Custom value saved in mongoDB, with connection parameters given by `env`   
 
