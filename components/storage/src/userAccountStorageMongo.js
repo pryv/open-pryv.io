@@ -43,19 +43,11 @@
  * into a single "user-centric" storage
  */
 
-const path = require('path');
-const SQLite3 = require('better-sqlite3');
-const LRU = require('lru-cache');
 const timestamp = require('unix-timestamp');
 const encryption = require('utils').encryption;
 
-const userLocalDirectory = require('./userLocalDirectory');
-
-const CACHE_SIZE = 100;
-const VERSION = '1.0.0';
-const DB_OPTIONS = {};
-
-let dbCache = null;
+let passwordsCollection = null;
+let storesKeyValueCollection = null;
 
 const InitStates = {
   NOT_INITIALIZED: -1,
@@ -71,7 +63,8 @@ module.exports = {
   getCurrentPasswordTime,
   passwordExistsInHistory,
   clearHistory,
-  getKeyValueDataForStore
+  getKeyValueDataForStore,
+  _addKeyValueData
 };
 
 async function init () {
@@ -82,35 +75,58 @@ async function init () {
     return;
   }
   initState = InitStates.INITIALIZING;
-
-  await userLocalDirectory.init();
-
-  dbCache = new LRU({
-    max: CACHE_SIZE,
-    dispose: function (db/* , key */) { db.close(); }
+  const { getDatabase } = require('storage');
+  const db = await getDatabase();
+  passwordsCollection = await db.getCollection({
+    name: 'passwords',
+    indexes: [
+      {
+        index: { userId: 1 },
+        options: { }
+      },
+      {
+        index: { userId: 1, time: 1 },
+        options: { unique: true },
+        background: false
+      }
+    ]
   });
-
+  storesKeyValueCollection = await db.getCollection({
+    name: 'stores-key-value',
+    indexes: [
+      {
+        index: { storeId: 1, userId: 1, key: 1 },
+        options: { unique: true }
+      }
+    ]
+  });
   initState = InitStates.READY;
 }
 
 // PASSWORD MANAGEMENT
 
 async function getPasswordHash (userId) {
-  const db = await getUserDB(userId);
-  const last = db.prepare('SELECT hash FROM passwords ORDER BY time DESC LIMIT 1').get();
+  const last = await passwordsCollection.findOne({ userId }, { sort: { time: -1 } });
   return last?.hash;
 }
 
 async function addPasswordHash (userId, passwordHash, createdBy, time = timestamp.now()) {
-  const db = await getUserDB(userId);
-  const result = { time, hash: passwordHash, createdBy };
-  db.prepare('INSERT INTO passwords (time, hash, createdBy) VALUES (@time, @hash, @createdBy)').run(result);
-  return result;
+  const item = { userId, time, hash: passwordHash, createdBy };
+  try {
+    await passwordsCollection.insertOne(item);
+  } catch (e) {
+    console.log(e.message);
+    if (e.message && e.message.startsWith('E11000 duplicate key error collection: pryv-node-test.passwords index: userId_1_time_1 dup key')) {
+      throw new Error('UNIQUE constraint failed: passwords.time');
+    }
+    throw e;
+  }
+
+  return item;
 }
 
 async function getCurrentPasswordTime (userId) {
-  const db = await getUserDB(userId);
-  const last = db.prepare('SELECT hash, time FROM passwords ORDER BY time DESC LIMIT 1').get();
+  const last = await passwordsCollection.findOne({ userId }, { sort: { time: -1 } });
   if (!last) {
     throw new Error(`No password found in database for user id "${userId}"`);
   }
@@ -118,9 +134,8 @@ async function getCurrentPasswordTime (userId) {
 }
 
 async function passwordExistsInHistory (userId, password, historyLength) {
-  const db = await getUserDB(userId);
-  const getLastN = db.prepare('SELECT hash, time FROM passwords ORDER BY time DESC LIMIT ?');
-  for (const entry of getLastN.iterate(historyLength)) {
+  const lastCursor = await passwordsCollection.find({ userId }, { sort: { time: -1 }, limit: historyLength });
+  for await (const entry of lastCursor) {
     if (await encryption.compare(password, entry.hash)) {
       return true;
     }
@@ -129,6 +144,13 @@ async function passwordExistsInHistory (userId, password, historyLength) {
 }
 
 // PER-STORE KEY-VALUE DB
+
+/**
+ * Raw insert used for migration
+ */
+async function _addKeyValueData (storeId, userId, key, value) {
+  await storesKeyValueCollection.insertOne({ storeId, userId, key, value });
+}
 
 function getKeyValueDataForStore (storeId) {
   return new StoreKeyValueData(storeId);
@@ -143,39 +165,24 @@ function StoreKeyValueData (storeId) {
 }
 
 StoreKeyValueData.prototype.getAll = async function (userId) {
-  const db = await getUserDB(userId);
-  const query = db.prepare('SELECT key, value FROM storeKeyValueData WHERE storeId = @storeId');
+  const resultCursor = await storesKeyValueCollection.find({ userId, storeId: this.storeId });
   const res = {};
-  for (const item of query.iterate({ storeId: this.storeId })) {
-    res[item.key] = JSON.parse(item.value);
+  for await (const item of resultCursor) {
+    res[item.key] = item.value;
   }
   return res;
 };
 
 StoreKeyValueData.prototype.get = async function (userId, key) {
-  const db = await getUserDB(userId);
-  const res = db.prepare('SELECT value FROM storeKeyValueData WHERE storeId = @storeId AND key = @key').get({
-    storeId: this.storeId,
-    key
-  });
-  if (res?.value == null) return null;
-  return JSON.parse(res.value);
+  const res = await storesKeyValueCollection.findOne({ userId, storeId: this.storeId, key });
+  return res?.value || null;
 };
 
 StoreKeyValueData.prototype.set = async function (userId, key, value) {
-  const db = await getUserDB(userId);
   if (value == null) {
-    db.prepare('DELETE FROM storeKeyValueData WHERE storeId = @storeId AND key = @key)').run({
-      storeId: this.storeId,
-      key
-    });
+    await storesKeyValueCollection.deleteOne({ userId, storeId: this.storeId, key });
   } else {
-    const valueStr = JSON.stringify(value);
-    db.prepare('REPLACE INTO storeKeyValueData (storeId, key, value) VALUES (@storeId, @key, @value)').run({
-      storeId: this.storeId,
-      key,
-      value: valueStr
-    });
+    await storesKeyValueCollection.updateOne({ userId, storeId: this.storeId, key }, { $set: { userId, storeId: this.storeId, key, value } }, { upsert: true });
   }
 };
 
@@ -185,25 +192,5 @@ StoreKeyValueData.prototype.set = async function (userId, key, value) {
  * For tests
  */
 async function clearHistory (userId) {
-  const db = await getUserDB(userId);
-  db.prepare('DELETE FROM passwords').run();
-}
-
-async function getUserDB (userId) {
-  return dbCache.get(userId) || (await openUserDB(userId));
-}
-
-async function openUserDB (userId) {
-  const userPath = await userLocalDirectory.ensureUserDirectory(userId);
-  const dbPath = path.join(userPath, `account-${VERSION}.sqlite`);
-  const db = new SQLite3(dbPath, DB_OPTIONS);
-  db.pragma('journal_mode = WAL');
-  // db.pragma('busy_timeout = 0'); // We take care of busy timeout ourselves as long as current driver does not go below the second
-  db.unsafeMode(true);
-  db.prepare('CREATE TABLE IF NOT EXISTS passwords (time REAL PRIMARY KEY, hash TEXT NOT NULL, createdBy TEXT NOT NULL);').run();
-  db.prepare('CREATE INDEX IF NOT EXISTS passwords_hash ON passwords(hash);').run();
-  db.prepare('CREATE TABLE IF NOT EXISTS storeKeyValueData (storeId TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (storeId, key));').run();
-  db.prepare('CREATE INDEX IF NOT EXISTS storeKeyValueData_storeId ON storeKeyValueData(storeId);').run();
-  dbCache.set(userId, db);
-  return db;
+  await passwordsCollection.deleteMany({ userId });
 }

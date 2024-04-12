@@ -81,6 +81,11 @@ test-sqlite component *params:
     database__engine=sqlite NODE_ENV=test COMPONENT={{component}} scripts/components-run  \
         npx mocha -- {{params}}
 
+# Run tests with storages: [Platform, userStorage, usersIndex] using mongoDB engine an not sqLite
+test-full-mongo component *params:
+    storagePlatform__engine=mongodb storageUserAccount__engine=mongodb storageUserIndex__engine=mongodb \
+         NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha -- {{params}}
+
 # Run tests with detailed output
 test-detailed component *params:
     NODE_ENV=test COMPONENT={{component}} scripts/components-run \

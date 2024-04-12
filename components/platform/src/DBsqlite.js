@@ -70,7 +70,7 @@ class DB {
     return res;
   }
 
-  getAllWithPrefix (prefix) {
+  async getAllWithPrefix (prefix) {
     logger.debug('getAllWithPrefix', prefix);
     return this.queries.getAllWithKeyStartsWith.all(prefix).map(parseEntry);
   }
@@ -148,6 +148,11 @@ class DB {
 
   async close () {
     this.db.close();
+    this.db = null;
+  }
+
+  isClosed () {
+    return this.db == null;
   }
 }
 
