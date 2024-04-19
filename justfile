@@ -116,6 +116,10 @@ test-cover component *params:
 test-cover-all:
     NODE_ENV=test nyc --reporter=html --report-dir=./coverage scripts/coverage
 
+# Run all possible tests (with both Mongo and SQLite storage) and generate LCOV coverage report
+test-cover-lcov:
+    NODE_ENV=test nyc --reporter=lcov scripts/coverage
+
 # Set up test results report generation
 test-results-init-repo:
     scripts/test-results/init-repo

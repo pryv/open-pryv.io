@@ -37,7 +37,7 @@ jobs:
 
     - name: Run tests on Open Pryv.io with coverage
       run: |
-        IS_CI=true just test-all-lcov
+        IS_CI=true just test-cover-lcov
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4.0.1
