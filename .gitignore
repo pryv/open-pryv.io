@@ -3,7 +3,8 @@ public_html/
 app-web-auth3/
 node_modules/
 docker/dockerized-open-pryv
-
+.nyc_output/
+coverage/
 # not commiting this into OS version
 
 
