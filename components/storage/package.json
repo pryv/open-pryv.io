@@ -1,6 +1,6 @@
 {
   "name": "storage",
-  "version": "1.9.0",
+  "version": "1.9.2",
   "private": true,
   "description": "Handles storage of user data on MongoDB",
   "homepage": "https://pryv.com",
