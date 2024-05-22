@@ -92,7 +92,6 @@ describe('[PGTD] DELETE /users/:username', () => {
     influx = produceInfluxConnection(app.config);
     influxRepository = new InfluxRepository(influx);
     usersRepository = await getUsersRepository();
-    app.storageLayer.eventFiles.removeAll();
     username1 = charlatan.Internet.userName();
     username2 = charlatan.Internet.userName();
     authKey = config.get('auth:adminAccessKey');
@@ -101,7 +100,6 @@ describe('[PGTD] DELETE /users/:username', () => {
   after(async function () {
     config.injectTestConfig({});
     await mongoFixtures.context.cleanEverything();
-    app.storageLayer.eventFiles.removeAll();
   });
   describe('[USAD] depending on "user-account:delete"  config parameter', function () {
     let personalAccessToken;
@@ -277,9 +275,8 @@ describe('[PGTD] DELETE /users/:username', () => {
           assert(sessions === null || sessions === []);
         });
         it(`[${testIDs[i][2]}] should delete user event files`, async function () {
-          const pathToUserFiles = app.storageLayer.eventFiles.getUserPath(userToDelete.attrs.id);
-          const userFileExists = fs.existsSync(pathToUserFiles);
-          assert.isFalse(userFileExists);
+          const infos = await mall.getUserStorageInfos(userToDelete.attrs.id);
+          assert.equal(infos.local.files.sizeKb, 0);
         });
         it(`[${testIDs[i][8]}] should delete HF data`, async function () {
           if (isOpenSource) { this.skip(); }
@@ -328,8 +325,8 @@ describe('[PGTD] DELETE /users/:username', () => {
           assert(sessions !== null || sessions !== []);
         });
         it(`[${testIDs[i][4]}] should not delete other user event files`, async function () {
-          const totalFilesSize = await app.storageLayer.eventFiles.getTotalSize({ id: username2 });
-          assert.notEqual(totalFilesSize, 0);
+          const sizeInfo = await mall.getUserStorageInfos(username2);
+          assert.notEqual(sizeInfo.local.files.sizeKb, 0);
         });
         it(`[${testIDs[i][7]}] should delete on register`, async function () {
           if (settingsToTest[i][0]) { this.skip(); } // isDnsLess
@@ -435,13 +432,15 @@ describe('[PGTD] DELETE /users/:username', () => {
   });
 });
 /**
- * @param {string} username
+ * @param {string} userId
  * @returns {Promise<any>}
  */
-async function initiateUserWithData (username) {
-  const user = await mongoFixtures.user(username);
+async function initiateUserWithData (userId) {
+  const user = await mongoFixtures.user(userId);
   const stream = await user.stream({ id: charlatan.Lorem.word() });
+  const eventId = cuid();
   await stream.event({
+    id: eventId,
     type: 'mass/kg',
     content: charlatan.Number.digit()
   });
@@ -454,18 +453,25 @@ async function initiateUserWithData (username) {
   });
   await user.session(charlatan.Lorem.word());
   if (!isOpenSource) { user.webhook({ id: charlatan.Lorem.word() }, charlatan.Lorem.word()); }
-  const filePath = `test-file-${username}`;
+  const filePath = `test-file-${userId}`;
   fs.writeFileSync(filePath, 'Just some text');
-  await app.storageLayer.eventFiles.saveAttachmentFromTemp(path.resolve(filePath), username, charlatan.Lorem.word());
+  const attachmentItem = {
+    fileName: 'sample-file.txt',
+    type: 'text/txt',
+    size: 'Just some text'.length,
+    attachmentData: fs.createReadStream(path.resolve(filePath)) // simulate full pass-thru of attachement until implemented
+  };
+  await mall.events.addAttachment(userId, eventId, attachmentItem);
+  await fs.promises.unlink(filePath);
   if (!isOpenSource) {
-    const usersSeries = await influxRepository.get(`user.${username}`, `event.${cuid()}`);
+    const usersSeries = await influxRepository.get(`user.${userId}`, `event.${cuid()}`);
     const data = new DataMatrix(['deltaTime', 'value'], [
       [0, 10],
       [1, 20]
     ]);
     usersSeries.append(data);
     // generate audit trace
-    await request.get(`/${username}/events`).set('Authorization', token);
+    await request.get(`/${userId}/events`).set('Authorization', token);
   }
   return user;
 }

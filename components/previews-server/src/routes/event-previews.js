@@ -31,6 +31,7 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
+const fs = require('fs');
 const path = require('path');
 const Cache = require('../cache');
 const childProcess = require('child_process');
@@ -44,6 +45,9 @@ const bluebird = require('bluebird');
 const getAuth = require('middleware/src/getAuth');
 const { getLogger } = require('@pryv/boiler');
 const { getMall } = require('mall');
+const attachmentManagement = require('../attachmentManagement');
+const { getConfig } = require('@pryv/boiler');
+
 // constants
 const StandardDimensions = [256, 512, 768, 1024];
 const SmallestStandardDimension = StandardDimensions[0];
@@ -55,11 +59,11 @@ const StandardDimensionsLength = StandardDimensions.length;
  * @param expressApp
  * @param initContextMiddleware
  * @param loadAccessMiddleware
- * @param userEventFilesStorage
  * @param logging
  */
-module.exports = async function (expressApp, initContextMiddleware, loadAccessMiddleware, userEventFilesStorage, logging) {
+module.exports = async function (expressApp, initContextMiddleware, loadAccessMiddleware, logging) {
   const mall = await getMall();
+  const previewsCacheCleanUpCronTime = (await getConfig()).get('eventFiles:previewsCacheCleanUpCronTime') || '00 00 2 * * *';
   // SERVING PREVIEWS
   expressApp.all('/*', getAuth);
   expressApp.all('/:username/events/*', initContextMiddleware, loadAccessMiddleware);
@@ -87,11 +91,17 @@ module.exports = async function (expressApp, initContextMiddleware, loadAccessMi
       if (!canHavePreview(event)) {
         return res.sendStatus(204);
       }
+
       const attachment = getSourceAttachment(event);
       if (attachment == null) {
         throw errors.corruptedData('Corrupt event data: expected an attachment.');
       }
-      const attachmentPath = userEventFilesStorage.getAttachmentPath(context.user.id, id, attachment.id);
+      const attachmentPath = await attachmentManagement.ensurePreviewPath(req.context.user, req.params.id, 0);
+      if (!fs.existsSync(attachmentPath)) { // load file
+        const attachmentStream = await mall.events.getAttachment(context.user.id, { id }, attachment.id);
+        await fs.promises.writeFile(attachmentPath, attachmentStream);
+      }
+      await xattr.set(attachmentPath, Cache.LastAccessedXattrKey, timestamp.now().toString());
       // Get aspect ratio
       if (attachment.width != null) {
         originalSize = { width: attachment.width, height: attachment.height };
@@ -108,7 +118,7 @@ module.exports = async function (expressApp, initContextMiddleware, loadAccessMi
         width: req.query.width || req.query.w,
         height: req.query.height || req.query.h
       });
-      previewPath = await bluebird.fromCallback((cb) => userEventFilesStorage.ensurePreviewPath(req.context.user, req.params.id, Math.max(targetSize.width, targetSize.height), cb));
+      previewPath = await attachmentManagement.ensurePreviewPath(req.context.user, req.params.id, Math.max(targetSize.width, targetSize.height));
       try {
         const cacheModified = await xattr.get(previewPath, Cache.EventModifiedXattrKey);
         cached = cacheModified.toString() === event.modified.toString();
@@ -205,8 +215,7 @@ module.exports = async function (expressApp, initContextMiddleware, loadAccessMi
     });
   }
   const cronJob = new CronJob({
-    cronTime: userEventFilesStorage.settings.previewsCacheCleanUpCronTime ||
-            '00 00 2 * * *',
+    cronTime: previewsCacheCleanUpCronTime,
     onTick: function () {
       if (workerRunning) {
         return;

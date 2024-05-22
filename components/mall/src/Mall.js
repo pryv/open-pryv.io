@@ -125,29 +125,28 @@ class Mall {
   }
 
   /**
-   * Return the quantity of storage used by the user in bytes.
+   * Return storage informations per store Id.
    * @param {string} userId
-   * @returns {Promise<number>}
+   * @returns {Promise<Object<storeId,UserStorageInfos>>}
   */
-  async getUserStorageSize (userId) {
-    let storageUsed = 0;
+  async getUserStorageInfos (userId) {
+    const storageInfos = { };
     for (const [storeId, store] of this.storesById) {
       try {
-        if (store.getUserStorageSize != null) {
+        if (store.getUserStorageInfos != null) {
           // undocumented feature of DataStore, skip if not implemented
-          storageUsed += await store.getUserStorageSize(userId);
+          storageInfos[storeId] = await store.getUserStorageInfos(userId);
         }
       } catch (error) {
         storeDataUtils.throwAPIError(error, storeId);
       }
     }
-    return storageUsed;
+    return storageInfos;
   }
 
   /**
-   * @param {string} storeId
-   * @returns {Promise<any>}
-  */
+ * @returns {Promise<any>}
+ */
   async newTransaction () {
     return new MallTransaction(this);
   }

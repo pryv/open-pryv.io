@@ -38,7 +38,6 @@ const StorageLayer = require('./StorageLayer');
 const { getConfigUnsafe, getConfig } = require('@pryv/boiler');
 const { dataBaseTracer } = require('tracing');
 const usersLocalIndex = require('./usersLocalIndex');
-const userAccountStorage = require('./userAccountStorage');
 
 module.exports = {
   Database: require('./Database'),
@@ -48,7 +47,6 @@ module.exports = {
   Versions: require('./Versions'),
   user: {
     Accesses: Access,
-    EventFiles: require('./user/EventFiles'),
     FollowedSlices: require('./user/FollowedSlices'),
     Profile: require('./user/Profile'),
     Streams: Stream,
@@ -75,10 +73,14 @@ async function getUsersLocalIndex () {
 let userAccount;
 async function getUserAccountStorage () {
   if (!userAccount) {
-    userAccount = userAccountStorage;
-    await userAccountStorage.init();
+    if ((await getConfig()).get('storageUserAccount:engine') === 'mongodb') {
+      userAccount = require('./userAccountStorageMongo');
+    } else {
+      userAccount = require('./userAccountStorageSqlite');
+    }
+    await userAccount.init();
   }
-  return userAccountStorage;
+  return userAccount;
 }
 
 let storageLayer;

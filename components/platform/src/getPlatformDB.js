@@ -31,29 +31,20 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
+const { getConfig } = require('@pryv/boiler');
+let db;
 
-const ds = require('@pryv/datastore');
-
-/**
- * Faulty data store that always fails.
- * (Implements no data methods, so all calls will throw "not supported" errors.)
- */
-module.exports = ds.createDataStore({
-  async init (keyValueData) { // eslint-disable-line no-unused-vars
-    this.streams = createUserStreams();
-    this.events = createUserEvents();
-    return this;
-  },
-
-  async deleteUser (userId) {}, // eslint-disable-line no-unused-vars
-
-  async getUserStorageInfos (userId) { return { }; } // eslint-disable-line no-unused-vars
-});
-
-function createUserStreams () {
-  return ds.createUserStreams({});
+async function getPlatformDB () {
+  if (db != null) return db;
+  if ((await getConfig()).get('storagePlatform:engine') === 'mongodb') {
+    const DB = require('./DBmongodb');
+    db = new DB();
+  } else {
+    const DB = require('./DBsqlite');
+    db = new DB();
+  }
+  await db.init();
+  return db;
 }
 
-function createUserEvents () {
-  return ds.createUserEvents({});
-}
+module.exports = getPlatformDB;

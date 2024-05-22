@@ -52,6 +52,7 @@ const charlatan = require('charlatan');
 const { getConfigUnsafe, getConfig, getLogger } = require('@pryv/boiler');
 const { getMall } = require('mall');
 const logger = getLogger('test-helpers:data');
+const { integrity } = require('business');
 
 // users
 
@@ -85,10 +86,10 @@ exports.resetAccesses = function (done, user, personalAccessToken, addToId) {
     for (let i = 0; i < data.length; i++) {
       data[i].id += u.id;
     }
-    resetData(storage.user.accesses, u, data, done);
+    resetMongoDBCollectionFor(storage.user.accesses, u, data, done);
     return;
   }
-  resetData(storage.user.accesses, u, accesses, done);
+  resetMongoDBCollectionFor(storage.user.accesses, u, accesses, done);
 };
 
 // profile
@@ -96,7 +97,7 @@ exports.resetAccesses = function (done, user, personalAccessToken, addToId) {
 const profile = (exports.profile = require('./data/profile'));
 
 exports.resetProfile = function (done, user) {
-  resetData(storage.user.profile, user || defaultUser, profile, done);
+  resetMongoDBCollectionFor(storage.user.profile, user || defaultUser, profile, done);
 };
 
 // followed slices
@@ -112,14 +113,29 @@ const followedSlices = (exports.followedSlices =
     require('./data/followedSlices')(followedSlicesURL));
 
 exports.resetFollowedSlices = function (done, user) {
-  resetData(storage.user.followedSlices, user || defaultUser, followedSlices, done);
+  resetMongoDBCollectionFor(storage.user.followedSlices, user || defaultUser, followedSlices, done);
 };
 
 // events
 
 const events = (exports.events = require('./data/events'));
+const dynCreateAttachmentIdMap = {}; // contains real ids of created attachment per event:
+exports.dynCreateAttachmentIdMap = dynCreateAttachmentIdMap;
 
-exports.resetEvents = function (done, user) {
+// add createdAttachmentsId to events
+function addCorrectAttachmentIds (allEvents) {
+  const allEventsCorrected = structuredClone(allEvents);
+  for (const e of allEventsCorrected) {
+    if (dynCreateAttachmentIdMap[e.id]) {
+      e.attachments = dynCreateAttachmentIdMap[e.id];
+    }
+    integrity.events.set(e);
+  }
+  return allEventsCorrected;
+}
+exports.addCorrectAttachmentIds = addCorrectAttachmentIds;
+
+exports.resetEvents = function resetEvents (done, user) {
   // deleteData(storage.user.events, user || defaultUser, events, done);
   user = user || defaultUser;
   const eventsToWrite = events.map((e) => {
@@ -134,7 +150,23 @@ exports.resetEvents = function (done, user) {
       await mall.events.localRemoveAllNonAccountEventsForUser(user.id);
     },
     async function createEvents () {
-      await mall.events.createManyForTests(user.id, eventsToWrite);
+      for (const event of eventsToWrite) {
+        const eventSource = structuredClone(event);
+        if (eventSource.attachments != null && eventSource.attachments.length > 0) {
+          const attachments = eventSource.attachments;
+          delete eventSource.attachments;
+          const attachmentItems = [];
+          for (const file of attachments) {
+            const filePath = path.resolve(__dirname, 'data/attachments/' + file.fileName);
+            file.attachmentData = fs.createReadStream(filePath);
+            attachmentItems.push(file);
+          }
+          const e = await mall.events.createWithAttachments(user.id, eventSource, attachmentItems);
+          dynCreateAttachmentIdMap[event.id] = e.attachments;
+        } else {
+          await mall.events.create(user.id, eventSource, null, true);
+        }
+      }
     },
     function removeZerosDuration (done2) {
       events.forEach((e) => {
@@ -173,7 +205,7 @@ exports.resetStreams = function (done, user) {
 /**
  * @returns {void}
  */
-function resetData (storage, user, items, done) {
+function resetMongoDBCollectionFor (storage, user, items, done) {
   async.series([
     storage.removeAll.bind(storage, user),
     storage.insertMany.bind(storage, user, items)
@@ -187,14 +219,12 @@ function resetData (storage, user, items, done) {
  */
 const testsAttachmentsDirPath = (exports.testsAttachmentsDirPath = path.join(__dirname, '/data/attachments/'));
 
-const attachments = (exports.attachments = {
-  animatedGif: getAttachmentInfo('animatedGif', 'animated.gif', 'image/gif'),
+const attachments = {
   document: getAttachmentInfo('document', 'document.pdf', 'application/pdf'),
-  document_modified: getAttachmentInfo('document', 'document.modified.pdf', 'application/pdf'),
   image: getAttachmentInfo('image', 'image (space and special chars)é__.png', 'image/png'),
-  imageBigger: getAttachmentInfo('imageBigger', 'image-bigger.jpg', 'image/jpeg'),
   text: getAttachmentInfo('text', 'text.txt', 'text/plain')
-});
+};
+exports.attachments = attachments;
 
 // following https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity
 // compute sri with openssl
@@ -228,40 +258,6 @@ function getAttachmentInfo (id, filename, type) {
   };
 }
 
-exports.resetAttachments = function (done, user) {
-  if (!user) {
-    user = defaultUser;
-  }
-  storage.user.eventFiles.removeAllForUser(user);
-  async.series([
-    copyAttachmentFn(attachments.document, user, events[0].id),
-    copyAttachmentFn(attachments.image, user, events[0].id),
-    copyAttachmentFn(attachments.imageBigger, user, events[2].id),
-    copyAttachmentFn(attachments.animatedGif, user, events[12].id)
-  ], done);
-};
-
-/**
- * @returns {(callback: any) => any}
- */
-function copyAttachmentFn (attachmentInfo, user, eventId) {
-  return function (callback) {
-    const tmpPath = '/tmp/' + attachmentInfo.filename;
-    try {
-      childProcess.execSync('cp "' + attachmentInfo.path + '" "' + tmpPath + '"');
-    } catch (e) {
-      return callback(e);
-    }
-    storage.user.eventFiles
-      .saveAttachmentFromTemp(tmpPath, user.id, eventId, attachmentInfo.id)
-      .then((fileID) => {
-        callback(null, fileID);
-      }, (err) => {
-        callback(err);
-      });
-  };
-}
-
 // data dump & restore (for testing data migration)
 
 /**
@@ -285,7 +281,6 @@ exports.dumpCurrent = function (mongoFolder, version, callback) {
     exports.resetFollowedSlices,
     exports.resetStreams,
     exports.resetEvents,
-    exports.resetAttachments,
     fs.rm.bind(null, outputFolder, { recursive: true, force: true }),
     childProcess.exec.bind(null, mongodump +
             (settings.database.authUser
@@ -378,7 +373,6 @@ exports.getStructure = function (version) {
  */
 function clearAllData (callback) {
   deleteUsersDataDirectory();
-  storage.user.eventFiles.removeAll();
   storage.database.dropDatabase(callback);
 }
 

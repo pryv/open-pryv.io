@@ -47,11 +47,11 @@ const ErrorIds = require('errors').ErrorIds;
 const validation = helpers.validation;
 const methodsSchema = require('../src/schema/accountMethods');
 const pwdResetReqsStorage = helpers.dependencies.storage.passwordResetRequests;
-const storageSize = helpers.dependencies.storage.size;
 const testData = helpers.data;
 const { getUsersRepository } = require('business/src/users');
 const { getUserAccountStorage } = require('storage');
 const { getConfig } = require('@pryv/boiler');
+const { getMall } = require('mall');
 const encryption = require('utils').encryption;
 
 let isOpenSource = false;
@@ -60,12 +60,14 @@ describe('[ACCO] account', function () {
   const user = structuredClone(testData.users[0]);
   let usersRepository = null;
   let userAccountStorage = null;
+  let mall = null;
 
   before(async () => {
     const config = await getConfig();
     isOpenSource = config.get('openSource:isActive');
     usersRepository = await getUsersRepository();
     userAccountStorage = await getUserAccountStorage();
+    mall = await getMall();
   });
 
   const basePath = '/' + user.username + '/account';
@@ -84,7 +86,6 @@ describe('[ACCO] account', function () {
       testData.resetFollowedSlices,
 
       testData.resetStreams,
-      testData.resetAttachments,
       server.ensureStarted.bind(server, helpers.dependencies.settings),
       function (stepDone) {
         request = helpers.request(server.url);
@@ -247,7 +248,6 @@ describe('[ACCO] account', function () {
         testData.resetFollowedSlices,
 
         testData.resetStreams,
-        testData.resetAttachments,
         server.ensureStarted.bind(server, helpers.dependencies.settings),
         function (stepDone) {
           request = helpers.request(server.url);
@@ -264,27 +264,22 @@ describe('[ACCO] account', function () {
     it('[NFJQ] must properly compute used storage size for a given user when called', async () => {
       const newAtt = testData.attachments.image;
 
-      let storageUsed = await storageSize.computeForUser(user);
-      assert.isAbove(storageUsed.dbDocuments, 0);
+      const storageInfoInitial = await mall.getUserStorageInfos(user.id);
 
       const expectedAttsSize = _.reduce(testData.events, function (total, evt) {
         return total + getTotalAttachmentsSize(evt);
       }, 0);
 
       // On Ubuntu with ext4 FileSystem the size difference is 4k, not 1k. I still dunno why.
-      assert.approximately(storageUsed.attachedFiles, expectedAttsSize, filesystemBlockSize);
-      const initialStorageUsed = storageUsed;
+      assert.approximately(storageInfoInitial.local.files.sizeKb, expectedAttsSize, filesystemBlockSize);
 
       await bluebird.fromCallback(cb => addEventWithAttachment(newAtt, cb));
-      storageUsed = await storageSize.computeForUser(user);
+      const storageInfoAfter = await mall.getUserStorageInfos(user.id);
 
       // hard to know what the exact difference should be, so we just expect it's bigger
-      assert.isAbove(storageUsed.dbDocuments, initialStorageUsed.dbDocuments);
-      assert.approximately(storageUsed.attachedFiles, initialStorageUsed.attachedFiles +
+      assert.isAbove(storageInfoAfter.local.events.count, storageInfoInitial.local.events.count);
+      assert.approximately(storageInfoAfter.local.files.sizeKb, storageInfoInitial.local.files.sizeKb +
         newAtt.size, filesystemBlockSize);
-      const updatedStorageUsed = storageUsed;
-      const retrievedUser = await usersRepository.getUserById(user.id);
-      assert.deepEqual(retrievedUser.storageUsed, updatedStorageUsed);
     });
 
     // test nightly job script
@@ -296,8 +291,8 @@ describe('[ACCO] account', function () {
       execSync('node ./bin/nightly');
 
       // Verify initial storage usage
-      const initialStorageUsed = await storageSize.computeForUser(user);
-      initialStorageUsed.attachedFiles.should.be.above(0);
+      const initialStorageInfo = await mall.getUserStorageInfos(user.id);
+      initialStorageInfo.local.files.sizeKb.should.be.above(0);
 
       // Add an attachment
       await bluebird.fromCallback(
@@ -307,11 +302,11 @@ describe('[ACCO] account', function () {
       execSync('node ./bin/nightly');
 
       // Verify updated storage usage
-      const updatedStorageUsed = await storageSize.computeForUser(user);
+      const updatedStorageInfo = await mall.getUserStorageInfos(user.id);
 
-      updatedStorageUsed.dbDocuments.should.be.above(initialStorageUsed.dbDocuments);
-      updatedStorageUsed.attachedFiles.should.be.approximately(
-        initialStorageUsed.attachedFiles + newAtt.size, filesystemBlockSize);
+      updatedStorageInfo.local.events.count.should.be.above(initialStorageInfo.local.events.count);
+      updatedStorageInfo.local.files.sizeKb.should.be.approximately(
+        initialStorageInfo.local.files.sizeKb + newAtt.size, filesystemBlockSize);
     });
 
     function addEventWithAttachment (attachment, callback) {
@@ -351,8 +346,8 @@ describe('[ACCO] account', function () {
     });
 
     it('[93AP] must be approximately updated (diff) when deleting an attached file', async function () {
-      const deletedAtt = testData.events[0].attachments[0];
-      const initialStorageUsed = await storageSize.computeForUser(user);
+      const deletedAtt = testData.dynCreateAttachmentIdMap[testData.events[0].id][0];
+      const initialStorageInfo = await mall.getUserStorageInfos(user.id);
 
       const path = '/' + user.username + '/events/' + testData.events[0].id + '/' +
         deletedAtt.id;
@@ -363,17 +358,17 @@ describe('[ACCO] account', function () {
         // either we do the request with superagent, or we update request()
       }
 
-      const updatedStoragedUsed = await storageSize.computeForUser(user);
-      assert.equal(updatedStoragedUsed.dbDocuments, initialStorageUsed.dbDocuments);
-      assert.approximately(updatedStoragedUsed.attachedFiles,
-        initialStorageUsed.attachedFiles - deletedAtt.size,
+      const updatedStorageInfo = await mall.getUserStorageInfos(user.id);
+      assert.equal(updatedStorageInfo.local.events.count, initialStorageInfo.local.events.count);
+      assert.approximately(updatedStorageInfo.local.files.sizeKb,
+        initialStorageInfo.local.files.sizeKb - deletedAtt.size,
         filesystemBlockSize);
     });
 
     it('[5WO0] must be approximately updated (diff) when deleting an event', async function () {
       const deletedEvt = testData.events[2];
       const deletedEvtPath = '/' + user.username + '/events/' + deletedEvt.id;
-      const initialStorageUsed = await storageSize.computeForUser(user);
+      const initialStorageInfo = await mall.getUserStorageInfos(user.id);
       try {
         await request.del(deletedEvtPath);
       } catch (e) {}
@@ -381,10 +376,10 @@ describe('[ACCO] account', function () {
         await request.del(deletedEvtPath);
       } catch (e) {}
 
-      const updatedStoragedUsed = await storageSize.computeForUser(user);
-      assert.equal(updatedStoragedUsed.dbDocuments, initialStorageUsed.dbDocuments);
-      assert.approximately(updatedStoragedUsed.attachedFiles,
-        initialStorageUsed.attachedFiles - getTotalAttachmentsSize(deletedEvt),
+      const updatedStorageInfo = await mall.getUserStorageInfos(user.id);
+      assert.equal(updatedStorageInfo.local.events.count, initialStorageInfo.local.events.count);
+      assert.approximately(updatedStorageInfo.local.files.sizeKb,
+        initialStorageInfo.local.files.sizeKb - getTotalAttachmentsSize(deletedEvt),
         filesystemBlockSize);
     });
 

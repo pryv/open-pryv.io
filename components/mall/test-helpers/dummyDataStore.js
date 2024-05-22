@@ -52,7 +52,7 @@ module.exports = ds.createDataStore({
 
   async deleteUser (userId) {}, // eslint-disable-line no-unused-vars
 
-  async getUserStorageSize (userId) { return 0; } // eslint-disable-line no-unused-vars
+  async getUserStorageInfos (userId) { return { }; } // eslint-disable-line no-unused-vars
 });
 
 function createUserStreams () {

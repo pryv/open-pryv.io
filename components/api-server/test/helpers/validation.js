@@ -110,7 +110,12 @@ exports.check = function (response, expected, done) {
     expected.sanitizeFn(response.body[expected.sanitizeTarget]);
   }
   if (expected.body) {
-    assert.deepEqual(response.body, expected.body);
+    try {
+      assert.deepEqual(response.body, expected.body);
+    } catch (e) {
+      if (e.messgae) e.message = e.message.substr(0, 3000);
+      throw (e);
+    }
   }
 
   // restore ignored metadata
@@ -153,17 +158,21 @@ function checkAccessIntegrity (access) {
  * @param {Function} [done] Optional
  */
 exports.checkError = function (response, expected, done) {
-  response.statusCode.should.eql(expected.status);
-  checkJSON(response, schemas.errorResult);
+  try {
+    response.statusCode.should.eql(expected.status);
+    checkJSON(response, schemas.errorResult);
 
-  const error = response.body.error;
-  assert.equal(error.id, expected.id);
+    const error = response.body.error;
+    assert.equal(error.id, expected.id);
 
-  if (expected.data != null) {
-    assert.deepEqual(error.data, expected.data);
+    if (expected.data != null) {
+      assert.deepEqual(error.data, expected.data);
+    }
+    if (done) done();
+  } catch (e) {
+    if (done) return done(e);
+    throw (e);
   }
-
-  if (done) done();
 };
 
 function checkJSON (response, schema) {

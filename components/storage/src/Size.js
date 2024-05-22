@@ -36,23 +36,6 @@ const { getUsersRepository, UserRepositoryOptions, User } = require('business/sr
 const { getMall } = require('mall');
 
 class Size {
-  dbDocumentsItems;
-  attachedFilesItems;
-
-  /**
-   * Computes storage size used by user accounts.
-   * Will sum sizes returned by `getTotalSize(user)` on the given storage objects,
-   * if function is present.
-   *
-   * @param {Array} dbDocumentsItems
-   * @param {Array} attachedFilesItems
-   * @constructor
-   */
-  constructor (dbDocumentsItems, attachedFilesItems) {
-    this.dbDocumentsItems = dbDocumentsItems;
-    this.attachedFilesItems = attachedFilesItems;
-  }
-
   /**
    * Computes and updates storage size for the given user.
    *
@@ -60,10 +43,18 @@ class Size {
    */
   async computeForUser (user) {
     const mall = await getMall();
-    const mallSize = await mall.getUserStorageSize(user.id);
+    const storageInfo = await mall.getUserStorageInfos(user.id);
+    let dbDocuments = 0;
+    let attachedFiles = 0;
+    for (const entry of Object.entries(storageInfo)) {
+      if (entry.streams?.count) dbDocuments += entry.streams?.count;
+      if (entry.events?.count) dbDocuments += entry.events?.count;
+      if (entry.files?.sizeKb) attachedFiles += entry.files?.sizeKb;
+    }
+    // reconstruct previous system
     const storageUsed = {
-      dbDocuments: mallSize + (await computeCategory(this.dbDocumentsItems)),
-      attachedFiles: await computeCategory(this.attachedFilesItems)
+      dbDocuments,
+      attachedFiles
     };
     const userObject = new User(user);
     const usersRepository = await getUsersRepository();
@@ -73,18 +64,7 @@ class Size {
       UserRepositoryOptions.SYSTEM_USER_ACCESS_ID
     );
 
-    return storageUsed;
-
-    async function computeCategory (storageItems) {
-      let total = 0;
-
-      for (let i = 0; i < storageItems.length; i++) {
-        if (typeof storageItems[i].getTotalSize !== 'function') { return; }
-        const size = await storageItems[i].getTotalSize(user);
-        total += size;
-      }
-      return total;
-    }
+    return storageInfo;
   }
 }
 module.exports = Size;

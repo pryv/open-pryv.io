@@ -32,7 +32,6 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 const storage = require('storage');
-const _ = require('lodash');
 
 const { getConfigUnsafe, getLogger } = require('@pryv/boiler');
 const config = getConfigUnsafe(true);
@@ -42,7 +41,7 @@ const database = storage.getDatabaseSync(true);
 /**
  * Test process dependencies.
  */
-const deps = module.exports = {
+module.exports = {
   settings: config.get(),
   storage: {
     database,
@@ -51,7 +50,6 @@ const deps = module.exports = {
     sessions: new storage.Sessions(database),
     user: {
       accesses: new storage.user.Accesses(database),
-      eventFiles: new storage.user.EventFiles(),
       followedSlices: new storage.user.FollowedSlices(database),
       streams: new storage.user.Streams(database), // TODO: reomove when mall is fully implemented for streams
       profile: new storage.user.Profile(database),
@@ -62,11 +60,5 @@ const deps = module.exports = {
    * Called by global.test.js to initialize async components
    */
   init: async function () {
-    await this.storage.user.eventFiles.init();
   }
 };
-
-const dbDocumentsItems = _.values(_.pick(deps.storage.user,
-  'accesses', 'followedSlices', 'profile'));
-const attFilesItems = _.values(_.pick(deps.storage.user, 'eventFiles'));
-deps.storage.size = new storage.Size(dbDocumentsItems, attFilesItems);

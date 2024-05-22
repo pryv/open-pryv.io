@@ -34,13 +34,12 @@ Run Api-Server
 
 ### Testing
 
-Add ferretDB configuration items `isFerret`, `username` and `password` to file `components/api-server/config/test-config.yml`
-
-Run `just test all`
+1. Start FerretDB
+2. Run `just test-ferret all`
 
 ### Notes & Feature requests
 
-- Migration from MongoDB is still to be done. 
+- Migration from MongoDB to FerretDB is still to be done. 
 - A Docker version of Open-Pryv.io to be done
 
 

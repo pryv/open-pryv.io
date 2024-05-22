@@ -307,7 +307,7 @@ class UsersRepository {
       const events = await user.getEvents();
       // add the user to local index
       await this.usersIndex.addUser(user.username, user.id);
-      await this.mall.events.createMany(user.id, events, mallTransaction);
+      for (const event of events) await this.mall.events.create(user.id, event, mallTransaction);
       // set user password
       if (user.passwordHash) {
         // if coming from deprecated `system.createUser`; TODO: remove when that method is removed

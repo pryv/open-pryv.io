@@ -31,29 +31,34 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
+// prototype, run the following command to test
+// node components/platform/src/switch1.9.0sqlite-mongo.js --config config/api.yml
 
-const ds = require('@pryv/datastore');
+const { getApplication } = require('api-server/src/application');
 
-/**
- * Faulty data store that always fails.
- * (Implements no data methods, so all calls will throw "not supported" errors.)
- */
-module.exports = ds.createDataStore({
-  async init (keyValueData) { // eslint-disable-line no-unused-vars
-    this.streams = createUserStreams();
-    this.events = createUserEvents();
-    return this;
-  },
+async function switchDB () {
+  const Sqlite = require('platform/src/DBsqlite');
+  const Mongo = require('platform/src/DBmongodb');
 
-  async deleteUser (userId) {}, // eslint-disable-line no-unused-vars
+  getApplication();
 
-  async getUserStorageInfos (userId) { return { }; } // eslint-disable-line no-unused-vars
-});
+  const sqlite = new Sqlite();
+  await sqlite.init();
+  const mongo = new Mongo();
+  await mongo.init();
 
-function createUserStreams () {
-  return ds.createUserStreams({});
+  const users = await sqlite.getAllWithPrefix('user');
+  for (const user of users) {
+    if (user.isUnique) {
+      await mongo.setUserUniqueField(user.username, user.field, user.value);
+      await sqlite.deleteUserUniqueField(user.field, user.value);
+    } else {
+      await mongo.setUserIndexedField(user.username, user.field, user.value);
+      await sqlite.deleteUserIndexedField(user.username, user.field);
+    }
+  }
+  console.log('Transfered to mongo ' + users.length + ' users');
+  process.exit(0);
 }
 
-function createUserEvents () {
-  return ds.createUserEvents({});
-}
+switchDB();

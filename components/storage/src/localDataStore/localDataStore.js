@@ -41,6 +41,7 @@ const SystemStreamsSerializer = require('business/src/system-streams/serializer'
 const userStreams = require('./localUserStreams');
 const userEvents = require('./localUserEvents');
 const LocalTransaction = require('./LocalTransaction');
+const { getEventFiles } = require('../eventFiles/getEventFiles');
 
 module.exports = ds.createDataStore({
 
@@ -51,7 +52,9 @@ module.exports = ds.createDataStore({
 
     // init events
     const eventsCollection = await database.getCollection({ name: 'events' });
-    const eventFilesStorage = (await storage.getStorageLayer()).eventFiles;
+    // file storage
+    const eventFilesStorage = await getEventFiles();
+
     for (const item of eventsIndexes) {
       item.options.background = true;
       database.ferretIndexAndOptionsAdaptationsIfNeeded(item);
@@ -60,6 +63,7 @@ module.exports = ds.createDataStore({
     // forward settings to userEvents
     userEvents.settings = this.settings;
     userEvents.init(eventsCollection, eventFilesStorage, params.integrity.setOnEvent);
+    eventFilesStorage.attachToEventStore(userEvents, params.integrity.setOnEvent);
 
     // init streams
     const streamsCollection = await database.getCollection({ name: 'streams' });
@@ -89,10 +93,11 @@ module.exports = ds.createDataStore({
     await userEvents._deleteUser(userId);
   },
 
-  async getUserStorageSize (userId) {
-    const streamsSize = await userStreams._getUserStorageSize(userId);
-    const eventsSize = await userEvents._getUserStorageSize(userId);
-    return streamsSize + eventsSize;
+  async getUserStorageInfos (userId) {
+    const streams = await userStreams._getStorageInfos(userId);
+    const events = await userEvents._getStorageInfos(userId);
+    const files = await userEvents._getFilesStorageInfos(userId);
+    return { streams, events, files };
   }
 });
 

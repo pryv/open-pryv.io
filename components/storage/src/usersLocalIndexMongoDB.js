@@ -31,29 +31,64 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
-
-const ds = require('@pryv/datastore');
-
 /**
- * Faulty data store that always fails.
- * (Implements no data methods, so all calls will throw "not supported" errors.)
+ * Contains UserName >> UserId Mapping
  */
-module.exports = ds.createDataStore({
-  async init (keyValueData) { // eslint-disable-line no-unused-vars
-    this.streams = createUserStreams();
-    this.events = createUserEvents();
-    return this;
-  },
 
-  async deleteUser (userId) {}, // eslint-disable-line no-unused-vars
+class DBIndex {
+  id4nameCollection;
 
-  async getUserStorageInfos (userId) { return { }; } // eslint-disable-line no-unused-vars
-});
+  async init () {
+    const { getDatabase } = require('storage');
+    const db = await getDatabase();
+    this.id4nameCollection = await db.getCollection({
+      name: 'id4name',
+      indexes: [
+        {
+          index: { userId: 1 },
+          options: { unique: true }
+        },
+        {
+          index: { username: 1 },
+          options: { unique: true }
+        }
+      ]
+    });
+  }
 
-function createUserStreams () {
-  return ds.createUserStreams({});
+  async getIdForName (username) {
+    const res = await this.id4nameCollection.findOne({ username });
+    return res?.userId;
+  }
+
+  async getNameForId (userId) {
+    const res = await this.id4nameCollection.findOne({ userId });
+    return res?.username;
+  }
+
+  async addUser (username, userId) {
+    return await this.id4nameCollection.insertOne({ userId, username });
+  }
+
+  async deleteById (userId) {
+    return await this.id4nameCollection.deleteOne({ userId });
+  }
+
+  /**
+   * @returns {Object} An object whose keys are the usernames and values are the user ids.
+   */
+  async getAllByUsername () {
+    const allCursor = this.id4nameCollection.find({});
+    const users = {};
+    for await (const user of allCursor) {
+      users[user.username] = user.userId;
+    }
+    return users;
+  }
+
+  async deleteAll () {
+    return await this.id4nameCollection.deleteMany({});
+  }
 }
 
-function createUserEvents () {
-  return ds.createUserEvents({});
-}
+module.exports = DBIndex;

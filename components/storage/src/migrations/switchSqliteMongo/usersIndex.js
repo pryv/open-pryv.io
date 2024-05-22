@@ -32,28 +32,29 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-const ds = require('@pryv/datastore');
+const { getApplication } = require('api-server/src/application');
 
-/**
- * Faulty data store that always fails.
- * (Implements no data methods, so all calls will throw "not supported" errors.)
- */
-module.exports = ds.createDataStore({
-  async init (keyValueData) { // eslint-disable-line no-unused-vars
-    this.streams = createUserStreams();
-    this.events = createUserEvents();
-    return this;
-  },
+async function switchDB () {
+  const MongoDB = require('../../usersLocalIndexMongoDB');
+  const SqliteDB = require('../../usersLocalIndexSQLite');
+  const mongo = new MongoDB();
+  const sqlite = new SqliteDB();
 
-  async deleteUser (userId) {}, // eslint-disable-line no-unused-vars
+  getApplication();
 
-  async getUserStorageInfos (userId) { return { }; } // eslint-disable-line no-unused-vars
-});
+  await sqlite.init();
+  await mongo.init();
 
-function createUserStreams () {
-  return ds.createUserStreams({});
+  const allUsers = await sqlite.getAllByUsername();
+
+  let migratedCount = 0;
+  for (const [username, userId] of Object.entries(allUsers)) {
+    await mongo.addUser(username, userId);
+    await sqlite.deleteById(userId);
+    migratedCount++;
+  }
+  console.log('Migrated ' + migratedCount + ' users');
+  process.exit(0);
 }
 
-function createUserEvents () {
-  return ds.createUserEvents({});
-}
+switchDB();

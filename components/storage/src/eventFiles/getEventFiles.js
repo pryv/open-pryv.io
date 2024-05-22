@@ -32,28 +32,25 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-const ds = require('@pryv/datastore');
+const { getConfig } = require('@pryv/boiler');
+const EventLocalFiles = require('./EventLocalFiles');
 
-/**
- * Faulty data store that always fails.
- * (Implements no data methods, so all calls will throw "not supported" errors.)
- */
-module.exports = ds.createDataStore({
-  async init (keyValueData) { // eslint-disable-line no-unused-vars
-    this.streams = createUserStreams();
-    this.events = createUserEvents();
-    return this;
-  },
+module.exports = {
+  getEventFiles
+};
 
-  async deleteUser (userId) {}, // eslint-disable-line no-unused-vars
+let eventFiles = null;
 
-  async getUserStorageInfos (userId) { return { }; } // eslint-disable-line no-unused-vars
-});
+async function getEventFiles () {
+  if (eventFiles) return eventFiles;
 
-function createUserStreams () {
-  return ds.createUserStreams({});
-}
-
-function createUserEvents () {
-  return ds.createUserEvents({});
+  const settings = (await getConfig()).get('eventFiles');
+  if (settings.engine) {
+    const EventEngine = require(settings.engine.modulePath);
+    eventFiles = new EventEngine(settings.engine);
+  } else {
+    eventFiles = new EventLocalFiles();
+  }
+  await eventFiles.init();
+  return eventFiles;
 }

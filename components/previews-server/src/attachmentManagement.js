@@ -31,29 +31,49 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
+const mkdirp = require('mkdirp');
+const path = require('path');
+const fs = require('fs');
+const { getConfigUnsafe } = require('@pryv/boiler');
 
-const ds = require('@pryv/datastore');
+const previewsDirPath = getConfigUnsafe(true).get('eventFiles:previewsDirPath');
 
 /**
- * Faulty data store that always fails.
- * (Implements no data methods, so all calls will throw "not supported" errors.)
+ * Ensures the preview path for the specific event exists.
+ * Only support JPEG preview images (fixed size) at the moment.
+ *
+ * @param {Object} user
+ * @param {String} eventId
+ * @param {Number} dimension
  */
-module.exports = ds.createDataStore({
-  async init (keyValueData) { // eslint-disable-line no-unused-vars
-    this.streams = createUserStreams();
-    this.events = createUserEvents();
-    return this;
-  },
-
-  async deleteUser (userId) {}, // eslint-disable-line no-unused-vars
-
-  async getUserStorageInfos (userId) { return { }; } // eslint-disable-line no-unused-vars
-});
-
-function createUserStreams () {
-  return ds.createUserStreams({});
+async function ensurePreviewPath (user, eventId, dimension) {
+  const dirPath = path.join(previewsDirPath, user.id, eventId);
+  await mkdirp(dirPath);
+  return path.join(dirPath, getPreviewFileName(dimension));
 }
 
-function createUserEvents () {
-  return ds.createUserEvents({});
+exports.ensurePreviewPath = ensurePreviewPath;
+
+/**
+ * @param {Object} user
+ * @param {String} eventId
+ * @param {Number} dimension
+ * @returns {String}
+ */
+function getPreviewPath (user, eventId, dimension) {
+  return path.join(previewsDirPath, user.id, eventId, getPreviewFileName(dimension));
 }
+exports.getPreviewPath = getPreviewPath;
+
+function getPreviewFileName (dimension) {
+  return dimension + '.jpg';
+}
+
+/**
+ * Primarily meant for tests.
+ * Synchronous until all related code is async/await.
+ */
+function removeAllPreviews () {
+  fs.rmSync(previewsDirPath, { recursive: true, force: true });
+}
+exports.removeAllPreviews = removeAllPreviews;

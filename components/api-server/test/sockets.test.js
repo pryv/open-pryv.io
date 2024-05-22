@@ -238,7 +238,7 @@ describe('Socket.IO', function () {
         const actualAccountStreamsEvents = separatedEvents.accountStreamsEvents;
         validation.validateAccountEvents(actualAccountStreamsEvents);
         expectedEvents.forEach(integrity.events.set);
-        result.events.should.eql(expectedEvents);
+        result.events.should.eql(testData.addCorrectAttachmentIds(expectedEvents));
         // check deletions
         const deleted = _.filter(testData.events, { deleted: true });
         for (const el of deleted) {
@@ -253,7 +253,7 @@ describe('Socket.IO', function () {
           .sortBy('id')
           .value();
         activeTestEvents.forEach(integrity.events.set);
-        should(resultEvents).be.eql(activeTestEvents);
+        should(resultEvents).be.eql(testData.addCorrectAttachmentIds(activeTestEvents));
         validation.checkMeta(result);
         done();
       });
