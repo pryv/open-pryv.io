@@ -2,10 +2,10 @@
 ## 1.9
 
 ### 1.9.2
-- Refactored Attachments (Event Files) Logic to b modular
+- Refactored Attachments (Event Files) Logic to be modular for future cloud storage of files such as S3.
 
 ### 1.9.1
-- Implemented furretDB compatibility
+- Implemented ferretDB compatibility allowing full-open source modules
 - Replaced rec.la by backloop.dev
 
 ### 1.9.0

@@ -18,7 +18,7 @@ jobs:
 
     steps:
     - name: Install `just`
-      uses: extractions/setup-just@v1
+      uses: extractions/setup-just@v2
 
     - name: Checkout repository with submodules
       uses: actions/checkout@v4

@@ -1,3 +1,5 @@
+[![codecov](https://codecov.io/gh/pryv/open-pryv.io/graph/badge.svg?token=9HBYZUZT7U)](https://codecov.io/gh/pryv/open-pryv.io)
+
 # Open Pryv.io
 
 ![Pryv-Logo](readme/logo-data-privacy-management-pryv.png)
@@ -11,6 +13,11 @@ Pryv.io is a solid foundation on which you build your own digital health solutio
 Maintained and developed by Pryv.
 
 ![Solution](readme/pryv.io-ecosystem.jpg)
+
+## Digital Public Good
+
+![BPG BADGE](readme/dpg-badge.png) 
+Open-Pryv.io is recognized as a digital public good by [DPGAlliance](https://digitalpublicgoods.net/registry/) a UN-endorsed initiative that facilitates the discovery and deployment of open-source technologies.
 
 ## Features
 
@@ -57,7 +64,7 @@ Choose your Set-up
 
 ### Docker
 
-The dockerized versions and their instructions are available at this link: [Download link](https://pryv.github.io/open-pryv.io/docker/dockerized-open-pryv-1.9.0.tgz).
+The dockerized versions and their instructions are available at this link: [Download link](https://pryv.github.io/open-pryv.io/docker/dockerized-open-pryv-1.9.2.tgz).
 
 If you wish to build the images yourself, refer to the following README: [docker/README-build.md](docker/README-build.md).
 
@@ -170,6 +177,10 @@ After this process, you should have an account on your Open Pryv.io platform wit
 You can also try our [example apps with guides and tutorials](https://github.com/pryv/example-apps-web/).
 
 ## Options & Customization
+
+### From version 1.9.2 OpenPryv.io supports Full MongoDB/FerretDB
+
+Read [README-DBs](README-DBs.md) for more information.
 
 ### Authentication & Registration web app.
 
