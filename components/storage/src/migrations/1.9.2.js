@@ -31,7 +31,7 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
-const { getLogger, getConfig } = require('@pryv/boiler');
+const { getLogger } = require('@pryv/boiler');
 
 /**
  * v1.9.2:
