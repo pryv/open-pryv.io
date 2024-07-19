@@ -44,7 +44,7 @@ const path = require('path');
  */
 module.exports = async function (context, callback) {
   const logger = getLogger('migration-1.9.0');
-  logger.info('V1.9.0 => v1.9.0 Migration started');
+  logger.info('V1.8.0 => v1.9.0 Migration started');
   await SystemStreamsSerializer.init();
   try {
     await moveAttachments();

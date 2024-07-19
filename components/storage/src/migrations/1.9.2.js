@@ -31,17 +31,15 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
+const { getLogger, getConfig } = require('@pryv/boiler');
+
 /**
- * Each migration must be:
- *
- * - Idempotent: results in the same state whether run once or multiple times
- * - Interruption-resistant: if interrupted, is able to proceed when run again
+ * v1.9.2:
+ * - nothing to do
  */
-module.exports = {
-  '1.7.0': require('./1.7.0'),
-  '1.7.1': require('./1.7.1.js'),
-  '1.7.5': require('./1.7.5'),
-  '1.8.0': require('./1.8.0'),
-  '1.9.0': require('./1.9.0'),
-  '1.9.2': require('./1.9.2')
+module.exports = async function (context, callback) {
+  const logger = getLogger('migration-1.9.2');
+  logger.info('V1.9.0 => v1.9.2 Migration started');
+  logger.info('V1.8.0 => v1.9.2 Migration finished');
+  callback();
 };
