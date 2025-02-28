@@ -108,9 +108,6 @@ class Server {
     }
     await this.setupSocketIO(server);
     await this.startListen(server, serverInfos);
-    if (!this.isOpenSource) {
-      await this.setupReporting();
-    }
     this.logger.info('Server ready. API Version: ' + apiVersion);
     pubsub.status.emit(pubsub.SERVER_READY);
     this.logger.debug('start completed');
@@ -235,28 +232,6 @@ class Server {
     pubsub.setTestNotifier(testNotifier);
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
-  async setupReporting () {
-    const reporting = require('lib-reporting');
-    const serviceInfoUrl = this.config.get('serviceInfoUrl');
-    async function collectClientData () {
-      return {
-        userCount: await this.getUserCount(),
-        serviceInfoUrl
-      };
-    }
-    const reportingSettings = this.config.get('reporting');
-    const templateVersion = reportingSettings.templateVersion;
-    const reportingUrl = process.env.NODE_ENV === 'test' ? 'http://127.0.0.1:4001' : null;
-    const licenseName = reportingSettings.licenseName;
-    const role = 'api-server';
-    const mylog = function (str) {
-      this.logger.info(str);
-    }.bind(this);
-    reporting.start(licenseName, role, templateVersion, collectClientData.bind(this), mylog, reportingUrl);
-  }
 
   /**
    * @returns {Promise<Number>}
