@@ -52,12 +52,11 @@ module.exports = {
     if (settingPublicUrl.slice(-1) !== '/') {
       settingPublicUrl += '/';
     }
-    const pathPublicUrl = settingPublicUrl.slice(0, -1);
+    // const pathPublicUrl = settingPublicUrl.slice(0, -1);
     config.publicUrl = settingPublicUrl;
     config['access:trustedAuthUrls'] = [settingPublicUrl];
-    config['access:defaultAuthUrl'] = [
-      pathPublicUrl + wwwPath + '/access/access.html'
-    ];
+    config['access:defaultAuthUrl'] = [settings.get('hds:defaultAuthUrl')];
+    // pathPublicUrl + wwwPath + '/access/access.html' ];
 
     // load admin keys
     config.adminKey = settings.get('auth:adminAccessKey');
