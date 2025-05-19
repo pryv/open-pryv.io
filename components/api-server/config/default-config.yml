@@ -7,7 +7,6 @@ dnsLess:
   isActive: true
 
 reporting:
-  licenseName: 'pryv.io'
   templateVersion: '1.0.0'
 
 http:

@@ -23,7 +23,6 @@ services:
     url: http://127.0.0.1:8080
     key: test-system-key
 reporting:
-  licenseName: pryv.io-dev-license
   templateVersion: 1.0.0
 axonMessaging:
   enabled: false

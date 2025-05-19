@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -40,7 +40,7 @@ const cuid = require('cuid');
 const { assert } = require('chai');
 const SystemStreamsSerializer = require('business/src/system-streams/serializer');
 
-describe('Audit logs events', () => {
+describe('[AUDI] Audit logs events', () => {
   let config;
   let mongoFixtures;
   let server;
@@ -50,7 +50,7 @@ describe('Audit logs events', () => {
   before(async function () {
     config = await getConfig();
     await SystemStreamsSerializer.init();
-    if (config.get('openSource:isActive')) this.skip();
+    if (!config.get('audit:active')) this.skip();
 
     mongoFixtures = databaseFixture(await produceMongoConnection());
 

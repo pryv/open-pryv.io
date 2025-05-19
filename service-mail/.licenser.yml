@@ -1,4 +1,12 @@
 files:
+  "**/.mocharc.js":
+    header:
+      startBlock: |
+        /**
+         * @license
+      linePrefix: " * "
+      endBlock: " */"
+      
   "**/*.js":
     header:
       startBlock: |
@@ -20,6 +28,37 @@ files:
 
     siblingLicenseFile:
       name: "LICENSE"
+      license: |
+        Copyright (C) {YEARS} {AUTHOR_NAME} {AUTHOR_WEB} 
+
+        This file is part of Open-Pryv.io and released under BSD-Clause-3 License
+
+        Redistribution and use in source and binary forms, with or without 
+        modification, are permitted provided that the following conditions are met:
+
+        1. Redistributions of source code must retain the above copyright notice, 
+          this list of conditions and the following disclaimer.
+
+        2. Redistributions in binary form must reproduce the above copyright notice, 
+          this list of conditions and the following disclaimer in the documentation 
+          and/or other materials provided with the distribution.
+
+        3. Neither the name of the copyright holder nor the names of its contributors 
+          may be used to endorse or promote products derived from this software 
+          without specific prior written permission.
+
+        THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+        AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
+        IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
+        DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE 
+        FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL 
+        DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR 
+        SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER 
+        CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, 
+        OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+        OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+        SPDX-License-Identifier: BSD-3-Clause
 
   "**/README.md":
     footer:
@@ -38,17 +77,17 @@ ignore:
 - node_modules
 
 license: |
-  Copyright (C) {YEARS} {AUTHOR_NAME} {AUTHOR_WEB} - All Rights Reserved
-  Unauthorized copying of this file, via any medium is strictly prohibited
-  Proprietary and confidential
+  Copyright (C) {AUTHOR_NAME} {AUTHOR_WEB} 
+  This file is part of Pryv.io and released under BSD-Clause-3 License
+  Refer to LICENSE file
 
 substitutions:
   YEARS:
     start: 2018
     end: CURRENT_YEAR
-  AUTHOR_NAME: "Pryv S.A."
+  AUTHOR_NAME: "Pryv"
   AUTHOR_EMAIL: info@pryv.com
   AUTHOR_WEB: https://pryv.com
-  DESCRIPTION: "This package is part of Pryv.io, a Pryv S.A. software"
+  DESCRIPTION: "This package is part of Pryv.io software"
   HOMEPAGE: https://pryv.com
-  SPDX: UNLICENSED
+  SPDX: BSD-3-Clause

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -41,11 +41,11 @@ describe('[MSTE] Stores Streams & Events', function () {
   let user, username, password, access, appAccessDummy, appAccessMaster;
   let personalToken;
   let mongoFixtures;
-  let isOpenSource;
+  let isAuditActive;
   let accessesPath, streamsPath, eventsPath;
 
   before(async () => {
-    isOpenSource = (await getConfig()).get('openSource:isActive');
+    isAuditActive = (await getConfig()).get('audit:active');
   });
 
   const streamId = 'yo';
@@ -110,11 +110,11 @@ describe('[MSTE] Stores Streams & Events', function () {
           .query({});
         const streams = res.body.streams;
         assert.exists(streams);
-        assert.equal(streams.length, isOpenSource ? 2 : 3);
+        assert.equal(streams.length, !isAuditActive ? 2 : 3);
         assert.equal(streams[0].id, streamId);
         assert.equal(streams[0].children.length, 1);
         assert.equal(streams[1].id, ':dummy:');
-        if (!isOpenSource) { assert.equal(streams[2].id, ':_audit:access-' + appAccessDummy.id); }
+        if (isAuditActive) { assert.equal(streams[2].id, ':_audit:access-' + appAccessDummy.id); }
       });
 
       it('[XC20] master token must retrieve "yo" streams and all stores when requesting "*"', async () => {
@@ -125,10 +125,10 @@ describe('[MSTE] Stores Streams & Events', function () {
         const streams = res.body.streams;
         assert.exists(streams);
         // we also get helpers here, because with the current implementation, it is returned.
-        assert.equal(streams.length, isOpenSource ? 4 : 5);
+        assert.equal(streams.length, !isAuditActive ? 4 : 5);
         assert.equal(streams[0].id, ':dummy:');
         assert.equal(streams[1].id, ':faulty:');
-        if (!isOpenSource) {
+        if (isAuditActive) {
           assert.equal(streams[2].id, ':_audit:');
           assert.equal(streams[3].id, streamId);
           assert.equal(streams[3].children.length, 1);

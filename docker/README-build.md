@@ -21,7 +21,7 @@ From `./docker/` folder
 
 3. Pack the base directory 
 
-  This will pack in `dockerized-open-pryv-1.9.2` the content of `./src` , the config files in `../configs/` an `../public.html` in `dockerized-open-pryv-${PRYV_TAG}.tgz`
+  This will pack in `dockerized-open-pryv-${PRYV_TAG}` the content of `./src` , the config files in `../configs/` an `../public.html` in `dockerized-open-pryv-${PRYV_TAG}.tgz`
 
   **Warning** the configuration files will be packaged make sure that adminKeys are not set if your intent is to publish it. 
 

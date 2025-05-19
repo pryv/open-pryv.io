@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -76,7 +76,7 @@ describe('Migration - 1.9.0', function () {
 
   after(async () => { });
 
-  it('Check attachments', async () => {
+  it('[MCHA] Check attachments', async () => {
     const mall = await getMall();
     const allUserEvents = await mall.events.get(userWithAttachments, {});
     for (const event of allUserEvents) {

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -31,7 +31,7 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
-const { getLogger, getConfig } = require('@pryv/boiler');
+const { getLogger } = require('@pryv/boiler');
 
 /**
  * v1.9.2:
@@ -40,6 +40,6 @@ const { getLogger, getConfig } = require('@pryv/boiler');
 module.exports = async function (context, callback) {
   const logger = getLogger('migration-1.9.2');
   logger.info('V1.9.0 => v1.9.2 Migration started');
-  logger.info('V1.8.0 => v1.9.2 Migration finished');
+  logger.info('V1.9.0 => v1.9.2 Migration finished');
   callback();
 };

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -43,5 +43,6 @@ module.exports = {
   '1.7.5': require('./1.7.5'),
   '1.8.0': require('./1.8.0'),
   '1.9.0': require('./1.9.0'),
-  '1.9.2': require('./1.9.2')
+  '1.9.2': require('./1.9.2'),
+  '1.9.3': require('./1.9.3')
 };

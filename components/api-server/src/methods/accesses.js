@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -83,7 +83,6 @@ const { integrity } = require('business');
 
 module.exports = async function produceAccessesApiMethods (api) {
   const config = await getConfig();
-  const isOpenSource = config.get('openSource:isActive');
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };
   const mall = await getMall();
   const storageLayer = await getStorageLayer();
@@ -616,7 +615,6 @@ module.exports = async function produceAccessesApiMethods (api) {
         integrity: result.access.integrity
       };
       if (process.env.NODE_ENV === 'test' &&
-                !isOpenSource &&
                 integrity.accesses.isActive) {
         // double check integrity when running tests only
         if (result.access.integrity !== integrity.accesses.hash(result.access)) {

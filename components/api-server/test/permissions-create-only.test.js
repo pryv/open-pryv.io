@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -51,7 +51,7 @@ describe('permissions create-only level', () => {
   before(async function () {
     mongoFixtures = databaseFixture(await produceMongoConnection());
     const config = await getConfig();
-    isAuditActive = (!config.get('openSource:isActive')) && config.get('audit:active');
+    isAuditActive = config.get('audit:active');
   });
   after(async () => {
     await mongoFixtures.clean();

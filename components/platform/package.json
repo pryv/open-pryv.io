@@ -2,7 +2,7 @@
   "name": "platform",
   "version": "1.8.1",
   "private": true,
-  "description": "This package is part of Pryv.io, a Pryv S.A. software",
+  "description": "This package is part of Pryv.io, a Pryv software",
   "homepage": "https://pryv.com",
   "license": "BSD-3-Clause",
   "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)",

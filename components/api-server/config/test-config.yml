@@ -28,7 +28,6 @@ axonMessaging:
 nats:
  uri: 'nats://127.0.0.1:4222'
 reporting:
-  licenseName: pryv.io-test-license
   templateVersion: 1.0.0
 database:
   host: 127.0.0.1

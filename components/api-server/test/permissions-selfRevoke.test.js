@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -149,7 +149,7 @@ describe('permissions selfRevoke', function () {
       assert.equal(res.body.error.id, 'invalid-parameters-format');
     });
 
-    it('[UZR] an appToken with managed rights should allow to create an access with selfRevoke forbidden', async function () {
+    it('[UZRA] an appToken with managed rights should allow to create an access with selfRevoke forbidden', async function () {
       const res = await server.request()
         .post(basePathAccess)
         .set('Authorization', appToken)

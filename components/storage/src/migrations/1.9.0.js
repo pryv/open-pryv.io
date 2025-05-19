@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -44,7 +44,7 @@ const path = require('path');
  */
 module.exports = async function (context, callback) {
   const logger = getLogger('migration-1.9.0');
-  logger.info('V1.98.0 => v1.9.0 Migration started');
+  logger.info('V1.8.0 => v1.9.0 Migration started');
   await SystemStreamsSerializer.init();
   try {
     await moveAttachments();

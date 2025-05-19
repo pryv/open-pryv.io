@@ -1,0 +1,45 @@
+# previous version made to publish on Azure should be adapted to publish on dockerHub
+name: Service mail publish release
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  release:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [16.4]
+
+    steps:
+    - name: Install `just`
+      uses: extractions/setup-just@v1
+
+    - name: Download master branch
+      uses: actions/checkout@v2
+
+    - name: Install Node.js with version ${{ matrix.node-version }}
+      uses: actions/setup-node@v1
+      with:
+        node-version: ${{ matrix.node-version }}
+
+    - name: Install dependencies
+      run: just install-stable
+
+    - name: Run tests
+      run: just test
+
+    - name: Login to the docker private registry
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ secrets.REGISTRY_PRYV_SERVER }}
+        username: ${{ secrets.REGISTRY_PRYV_USERNAME }}
+        password: ${{ secrets.REGISTRY_PRYV_PASSWORD }}
+
+    - name: Build image and release it
+      working-directory: build
+      run: ./build

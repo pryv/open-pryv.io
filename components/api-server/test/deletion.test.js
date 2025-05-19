@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -65,6 +65,7 @@ let influx;
 let influxRepository;
 let config;
 let isOpenSource = false;
+let isAuditActive = false;
 let regUrl;
 let mall;
 describe('[PGTD] DELETE /users/:username', () => {
@@ -72,6 +73,7 @@ describe('[PGTD] DELETE /users/:username', () => {
     config = await getConfig();
     regUrl = config.get('services:register:url');
     isOpenSource = config.get('openSource:isActive');
+    isAuditActive = config.get('audit:active');
     app = getApplication();
     await app.initiate();
     await require('api-server/src/methods/auth/delete')(app.api);
@@ -285,7 +287,7 @@ describe('[PGTD] DELETE /users/:username', () => {
           assert.isFalse(isFound);
         });
         it(`[${testIDs[i][9]}] should delete user audit events`, async function () {
-          if (isOpenSource) this.skip();
+          if (!isAuditActive) this.skip();
           const pathToUserAuditData = require('storage').userLocalDirectory.getPathForUser(userToDelete.attrs.id);
           const userFileExists = fs.existsSync(pathToUserAuditData);
           assert.isFalse(userFileExists);

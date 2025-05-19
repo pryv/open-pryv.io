@@ -1,13 +1,10 @@
 {
   "name": "audit",
-  "version": "0.0.1",
+  "version": "1.8.1",
   "private": true,
-  "description": "Dummy Audit Logic",
-  "homepage": "http://pryv.com",
+  "description": "Audit logic",
+  "homepage": "https://pryv.com",
   "license": "BSD-3-Clause",
   "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)",
-  "main": "src/index.js",
-  "scripts": {
-    "test": "echo 'hi, I have no tests, but the component needs to exist'"
-  }
+  "main": "src/index.js"
 }

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -47,8 +47,7 @@ const updateAccessUsageStats = require('./helpers/updateAccessUsageStats');
 module.exports = async function (api) {
   const logger = getLogger('methods:batch');
   const config = await getConfig();
-  const isOpenSource = config.get('openSource:isActive');
-  const isAuditActive = !isOpenSource && config.get('audit:active');
+  const isAuditActive = config.get('audit:active');
   const updateAccessUsage = await updateAccessUsageStats();
   const passwordRules = await getPasswordRules();
   let audit;
