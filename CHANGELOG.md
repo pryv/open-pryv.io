@@ -1,6 +1,9 @@
 
 ## 1.9
 
+### 1.9.3
+- Added Audit from Entreprise version to Open-Pryv.io.
+
 ### 1.9.2
 - Refactored Attachments (Event Files) Logic to be modular for future cloud storage of files such as S3.
 

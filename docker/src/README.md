@@ -51,6 +51,11 @@ On a fresh install (never started)
 
 
 
+## License
+
+[BSD-3-Clause](LICENSE)
+
+
 # License
 
 [BSD-3-Clause](LICENSE)

@@ -4,7 +4,7 @@
 
 ```yaml
  core:
-    image: "eu.gcr.io/pryvio/core:1.7.0-rc10"
+    image: "docker.io/pryvio/core:1.7.0-rc10"
     container_name: pryvio_core
     networks:
       - frontend

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -33,6 +33,11 @@
  */
 function setAuditAccessId (accessId) {
   return function (context, params, result, next) {
+    if (!context.access) context.access = {};
+    if (context.access.id != null) {
+      return next(new Error('Access Id was already set to ' + context.access.id + ' when trying to set it to ' + accessId));
+    }
+    context.access.id = accessId;
     next();
   };
 }

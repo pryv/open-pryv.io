@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -45,7 +45,6 @@ const ready = require('readyness');
 
 const info = require('./business/service-info');
 const config = require('./config');
-const reporting = require('lib-reporting');
 
 ready.setLogger(logger.info);
 
@@ -122,29 +121,8 @@ class ServerWithUrl {
       this.config.get('dns:domains');
     logger.info(readyMessage);
     appListening(readyMessage);
-    this.collectUsageAndSendReport();
     // start dns
     require('./app-dns');
-  }
-
-  /**
-   * @returns {Promise<void>}
-   */
-  async collectUsageAndSendReport () {
-    // Check if the PRYV_REPORTING_OFF environment variable is set to true.
-    // If it is, don't collect data and don't send report
-    const optOutReporting = this.config.get('reporting:optOut');
-    if (optOutReporting === 'true') {
-      logger.info('Reporting opt-out is set to true, not reporting');
-      return;
-    }
-    reporting.start(
-      this.config.get('reporting:licenseName'),
-      this.config.get('reporting:role'),
-      this.config.get('reporting:templateVersion'),
-      this.collectClientData.bind(this),
-      logger.info
-    );
   }
 
   /**

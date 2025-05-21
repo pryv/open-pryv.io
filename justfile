@@ -13,10 +13,6 @@ _help:
 setup-dev-env:
     scripts/setup-dev-env
 
-# Setup/update private repositories (also run by setup-dev-env)
-setup-private-libs:
-    scripts/setup-private-libs
-
 # Install node modules afresh (no optionals)
 install *params: clean
     npm install --omit=optional {{params}}

@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -39,7 +39,7 @@ const Result = require('./Result');
 const _ = require('lodash');
 const { getConfigUnsafe } = require('@pryv/boiler');
 
-let audit, throwIfMethodIsNotDeclared, isOpenSource, isAuditActive;
+let audit, throwIfMethodIsNotDeclared, isAuditActive;
 
 // When storing full events.get request instead of streaming it, the maximum
 // array size before returning an error.
@@ -92,8 +92,7 @@ class API {
     this.map = new Map();
     this.filters = [];
     const config = getConfigUnsafe();
-    isOpenSource = config.get('openSource:isActive');
-    isAuditActive = !isOpenSource && config.get('audit:active');
+    isAuditActive = config.get('audit:active');
     if (isAuditActive) {
       audit = require('audit');
       throwIfMethodIsNotDeclared =

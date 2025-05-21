@@ -9,7 +9,7 @@ services:
       - ../var-pryv/ferretDB-data:/var/lib/postgresql/data
 
   ferretdb:
-    image: ghcr.io/ferretdb/ferretdb
+    image: ghcr.io/ferretdb/ferretdb:1.21.0
     restart: on-failure
     ports:
       - 27017:27017

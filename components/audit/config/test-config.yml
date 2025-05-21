@@ -1,0 +1,37 @@
+---
+logs:
+  console:
+    active: false
+    level: debug
+    format:
+      color: true
+      time: false
+      aligned: true
+
+  file:
+    active: true
+    filename: test-application.log
+
+trace:
+  enable: true
+
+audit: 
+  active: true # set to false to fully deactivate
+  storage:
+    filter:
+      methods:
+        include: ['all']
+        exclude: []
+
+  syslog:
+    formats:
+      test: # for 'log/test' event.type
+        template: "{userid} {type} createdBy:{createdBy} streamIds:{streamIds} {content.message}"
+        level: notice 
+      test-filtered: # for 'log/filtered' event.type
+        plugin: "./config/syslog-plugins/test-filtered.js"
+        level: notice # can be overriden by plugin
+    filter:
+      methods:
+        include: ['all']
+        exclude: []

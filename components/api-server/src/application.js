@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -159,7 +159,7 @@ class Application {
     logger.debug('Init started');
     this.config = await getConfig();
     this.isOpenSource = this.config.get('openSource:isActive');
-    this.isAuditActive = !this.isOpenSource && this.config.get('audit:active');
+    this.isAuditActive = this.config.get('audit:active');
     await userLocalDirectory.init();
     if (this.isAuditActive) {
       const audit = require('audit');

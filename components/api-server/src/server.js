@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright (C) 2020–2024 Pryv S.A. https://pryv.com
+ * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
  *
  * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
  *
@@ -68,6 +68,7 @@ class Server {
     const config = await getConfig();
     this.config = config;
     this.isOpenSource = config.get('openSource:isActive');
+    this.isAuditActive = config.get('audit:active');
     const defaultParam = this.findDefaultParam();
     if (defaultParam != null) {
       this.logger.error(`Config parameter "${defaultParam}" has a default value, please change it`);
@@ -108,9 +109,6 @@ class Server {
     }
     await this.setupSocketIO(server);
     await this.startListen(server, serverInfos);
-    if (!this.isOpenSource) {
-      await this.setupReporting();
-    }
     this.logger.info('Server ready. API Version: ' + apiVersion);
     pubsub.status.emit(pubsub.SERVER_READY);
     this.logger.debug('start completed');
@@ -146,7 +144,7 @@ class Server {
     await require('./methods/profile')(app.api);
     await require('./methods/streams')(app.api);
     await require('./methods/events')(app.api);
-    if (!this.isOpenSource) {
+    if (this.isAuditActive) {
       require('audit/src/methods/audit-logs')(app.api);
     }
     this.logger.debug('api methods registered');
@@ -233,29 +231,6 @@ class Server {
   async setupTestsNotificationBus () {
     const testNotifier = await axonMessaging.getTestNotifier();
     pubsub.setTestNotifier(testNotifier);
-  }
-
-  /**
-   * @returns {Promise<void>}
-   */
-  async setupReporting () {
-    const reporting = require('lib-reporting');
-    const serviceInfoUrl = this.config.get('serviceInfoUrl');
-    async function collectClientData () {
-      return {
-        userCount: await this.getUserCount(),
-        serviceInfoUrl
-      };
-    }
-    const reportingSettings = this.config.get('reporting');
-    const templateVersion = reportingSettings.templateVersion;
-    const reportingUrl = process.env.NODE_ENV === 'test' ? 'http://127.0.0.1:4001' : null;
-    const licenseName = reportingSettings.licenseName;
-    const role = 'api-server';
-    const mylog = function (str) {
-      this.logger.info(str);
-    }.bind(this);
-    reporting.start(licenseName, role, templateVersion, collectClientData.bind(this), mylog, reportingUrl);
   }
 
   /**

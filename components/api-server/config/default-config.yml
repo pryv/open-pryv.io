@@ -7,7 +7,6 @@ dnsLess:
   isActive: true
 
 reporting:
-  licenseName: 'REPLACE ME'
   templateVersion: '1.0.0'
 
 http:
