@@ -1,3 +1,5 @@
+hds:
+  defaultAuthUrl: https://healthdatasafe.github.io/app-web-auth3-hds/access/access.html
 dnsLess:
   publicUrl: http://localhost:3000/ # the "Public" URL to reach the service, you need to change this if you use a third party SSL service such as NGNIX.
 http:

@@ -19,7 +19,7 @@
     "api": "LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/api.yml",
     "apibackloop": "LOGS=info NODE_ENV=production ./components/api-server/bin/server --config ./configs/api-backloop.yml",
     "database": "DEVELOPMENT=true scripts/start-mongo",
-    "mail": "cd service-mail ; ./bin/server",
+    "mail": "cd service-mail ; ./bin/server --config=../configs/mail-config.yml",
     "pryv": "npm run database >> ./var-pryv/logs/mongodb.log & npm run mail >> ./var-pryv/logs/mail.log & npm run api",
     "setup-dev-env": "scripts/setup-dev-env",
     "test": "echo 'This project doesn’t use npm scripts – enter `just` for the available development commands\n' && exit 1"

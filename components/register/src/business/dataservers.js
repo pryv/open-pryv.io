@@ -45,8 +45,8 @@ function getHostings() {
             hostings: {
               hosting1: {
                 url: home,
-                name: 'Pryv.io',
-                description: 'Self hosted',
+                name: 'Switzerland',
+                description: 'Infomaniak',
                 available: true,
                 availableCore: publicUrl
               }
