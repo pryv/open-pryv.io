@@ -55,9 +55,9 @@ module.exports = {
     const pathPublicUrl = settingPublicUrl.slice(0, -1);
     config.publicUrl = settingPublicUrl;
     config['access:trustedAuthUrls'] = [settingPublicUrl];
-    config['access:defaultAuthUrl'] = [
-      pathPublicUrl + wwwPath + '/access/access.html'
-    ];
+    // defaultAuthUrl is assigned to locally served app web auth unless configured
+    const defaultAuthUrl = settings.get('access:defaultAuthUrl') || pathPublicUrl + wwwPath + '/access/access.html';
+    config['access:defaultAuthUrl'] = [defaultAuthUrl];
 
     // load admin keys
     config.adminKey = settings.get('auth:adminAccessKey');
