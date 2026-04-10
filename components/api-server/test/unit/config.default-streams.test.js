@@ -1,42 +1,15 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
-const chai = require('chai');
+const assert = require('node:assert');
 const nconf = require('nconf');
-const assert = chai.assert;
-const systemStreamsConfig = require('api-server/config/components/systemStreams');
-const SystemStreamsSerializer = require('business/src/system-streams/serializer');
+const systemStreamsConfig = require('../../../../config/plugins/systemStreams');
+const accountStreams = require('business/src/system-streams');
+const { addCustomerPrefixToStreamId } = require('test-helpers/src/systemStreamFilters');
 const treeUtils = require('utils/src/treeUtils');
 const { defaults: dataStoreDefaults } = require('@pryv/datastore');
 const PRIVATE_PREFIX = ':_system:';
@@ -46,20 +19,20 @@ describe('[SSDC] SystemStreams config', () => {
   let store;
   const customRootStreamId = 'myNewStream';
   const DEFAULT_VALUES_FOR_FIELDS = {
-    [systemStreamsConfig.features.IS_INDEXED]: false,
-    [systemStreamsConfig.features.IS_UNIQUE]: false,
-    [systemStreamsConfig.features.IS_SHOWN]: true,
-    [systemStreamsConfig.features.IS_EDITABLE]: true,
-    [systemStreamsConfig.features.IS_REQUIRED_IN_VALIDATION]: false,
+    isIndexed: false,
+    isUnique: false,
+    isShown: true,
+    isEditable: true,
+    isRequiredInValidation: false,
     created: dataStoreDefaults.UnknownDate,
     modified: dataStoreDefaults.UnknownDate,
     createdBy: dataStoreDefaults.SystemAccessId,
     modifiedBy: dataStoreDefaults.SystemAccessId
   };
   after(async () => {
-    await SystemStreamsSerializer.reloadSerializer();
+    await accountStreams.reloadForTests();
   });
-  describe('when valid custom systemStreams are provided', () => {
+  describe('[SD01] when valid custom systemStreams are provided', () => {
     let customStreams, customStreamIds;
     before(async () => {
       customStreams = {
@@ -108,17 +81,17 @@ describe('[SSDC] SystemStreams config', () => {
       store.set('custom:systemStreams', customStreams);
       store.set('NODE_ENV', 'test');
       systemStreamsConfig.load(store);
-      await SystemStreamsSerializer.reloadSerializer(store);
+      await accountStreams.reloadForTests(store);
       customStreamIds = treeUtils
         .flattenTree(customStreams.account)
         .concat(treeUtils.flattenTree(customStreams.other))
-        .map((s) => SystemStreamsSerializer.addCustomerPrefixToStreamId(s.id));
+        .map((s) => addCustomerPrefixToStreamId(s.id));
     });
     it('[GB8G] must set default values and other fields', () => {
       const systemStreams = store.get('systemStreams');
       for (const streamId of customStreamIds) {
-        const configStream = treeUtils.findById(customStreams.account, SystemStreamsSerializer.removePrefixFromStreamId(streamId)) ||
-                    treeUtils.findById(customStreams.other, SystemStreamsSerializer.removePrefixFromStreamId(streamId));
+        const configStream = treeUtils.findById(customStreams.account, accountStreams.toFieldName(streamId)) ||
+                    treeUtils.findById(customStreams.other, accountStreams.toFieldName(streamId));
         const systemStream = treeUtils.findById(systemStreams, streamId);
         for (const [key, value] of Object.entries(systemStream)) {
           if (configStream[key] == null && !isIgnoredKey(key)) {
@@ -151,7 +124,7 @@ describe('[SSDC] SystemStreams config', () => {
         'active',
         'unique'
       ].forEach((streamId) => {
-        assert.exists(treeUtils.findById(PRIVATE_PREFIX + streamId));
+        assert.ok(treeUtils.findById(PRIVATE_PREFIX + streamId) != null);
       });
     });
     it('[PVDC] must prefix custom streams with the customer prefix', () => {
@@ -164,35 +137,11 @@ describe('[SSDC] SystemStreams config', () => {
         customRootStreamId,
         'field2'
       ].forEach((streamId) => {
-        assert.exists(treeUtils.findById(CUSTOMER_PREFIX + streamId));
+        assert.ok(treeUtils.findById(CUSTOMER_PREFIX + streamId) != null);
       });
     });
   });
-  describe('When retro-compatibility is activated and a streamId unicity conflict exists between a custom system streamId and a default one', () => {
-    it('[3Z9N] must throw a config error', () => {
-      const streamId = 'language';
-      const customStreams = {
-        account: [
-          {
-            id: streamId,
-            type: 'string/pryv'
-          }
-        ],
-        other: []
-      };
-      store = new nconf.Provider();
-      store.use('memory');
-      store.set('custom:systemStreams', customStreams);
-      store.set('backwardCompatibility:systemStreams:prefix:isActive', true);
-      try {
-        systemStreamsConfig.load(store);
-        assert.fail('supposed to throw');
-      } catch (err) {
-        assert.include(err.message, `Config error: Custom system stream id unicity collision with default one. Deactivate retro-compatibility prefix or change streamId: "${streamId}".`);
-      }
-    });
-  });
-  describe('When custom system streams contain duplicate streamIds', () => {
+  describe('[SD03] When custom system streams contain duplicate streamIds', () => {
     it('[CHEF] must throw a config error', () => {
       const streamId = 'field1';
       const customStreams = {
@@ -216,11 +165,11 @@ describe('[SSDC] SystemStreams config', () => {
         systemStreamsConfig.load(store);
         assert.fail('supposed to throw');
       } catch (err) {
-        assert.include(err.message, `Config error: Custom system stream id duplicate. Remove duplicate custom system stream with streamId: "${streamId}".`);
+        assert.ok(err.message.includes(`Config error: Custom system stream id duplicate. Remove duplicate custom system stream with streamId: "${streamId}".`));
       }
     });
   });
-  describe('When providing a custom system stream that is unique but not indexed', () => {
+  describe('[SD04] When providing a custom system stream that is unique but not indexed', () => {
     it('[42A1] must throw a config error', () => {
       const store = new nconf.Provider();
       store.use('memory');
@@ -228,19 +177,19 @@ describe('[SSDC] SystemStreams config', () => {
         {
           id: 'faulty-params',
           type: 'string/pryv',
-          [systemStreamsConfig.features.IS_INDEXED]: false,
-          [systemStreamsConfig.features.IS_UNIQUE]: true
+          isIndexed: false,
+          isUnique: true
         }
       ]);
       try {
         systemStreamsConfig.load(store);
         assert.fail('supposed to throw.');
       } catch (err) {
-        assert.include(err.message, 'Config error: custom system stream cannot be unique and not indexed. Stream: ');
+        assert.ok(err.message.includes('Config error: custom system stream cannot be unique and not indexed. Stream: '));
       }
     });
   });
-  describe('When providing a custom system stream that has an invalid type', () => {
+  describe('[SD05] When providing a custom system stream that has an invalid type', () => {
     it.skip('[LU0A] must throw a config error', () => {
       const store = new nconf.Provider();
       store.use('memory');
@@ -254,11 +203,11 @@ describe('[SSDC] SystemStreams config', () => {
         systemStreamsConfig.load(store);
         assert.fail('supposed to throw.');
       } catch (err) {
-        assert.include(err.message, 'Config error: custom system stream cannot be unique and not indexed. Stream: ');
+        assert.ok(err.message.includes('Config error: custom system stream cannot be unique and not indexed. Stream: '));
       }
     });
   });
-  describe('When providing an "other" custom stream that is unique', () => {
+  describe('[SD06] When providing an "other" custom stream that is unique', () => {
     it('[GZEK] must throw a config error', async () => {
       const store = new nconf.Provider();
       store.use('memory');
@@ -266,18 +215,18 @@ describe('[SSDC] SystemStreams config', () => {
         {
           id: 'faulty-params',
           type: 'string/pryv',
-          [systemStreamsConfig.features.IS_UNIQUE]: true
+          isUnique: true
         }
       ]);
       try {
         systemStreamsConfig.load(store);
         assert.fail('supposed to throw.');
       } catch (err) {
-        assert.include(err.message, 'Config error: custom "other" system stream cannot be unique. Only "account" streams can be unique. Stream: ');
+        assert.ok(err.message.includes('Config error: custom "other" system stream cannot be unique. Only "account" streams can be unique. Stream: '));
       }
     });
   });
-  describe('When providing an "other" custom stream that is indexed', () => {
+  describe('[SD07] When providing an "other" custom stream that is indexed', () => {
     it('[2IBL] must throw a config error', async () => {
       const store = new nconf.Provider();
       store.use('memory');
@@ -285,18 +234,18 @@ describe('[SSDC] SystemStreams config', () => {
         {
           id: 'faulty-params',
           type: 'string/pryv',
-          [systemStreamsConfig.features.IS_INDEXED]: true
+          isIndexed: true
         }
       ]);
       try {
         systemStreamsConfig.load(store);
         assert.fail('supposed to throw.');
       } catch (err) {
-        assert.include(err.message, 'Config error: custom "other" system stream cannot be indexed. Only "account" streams can be indexed. Stream: ');
+        assert.ok(err.message.includes('Config error: custom "other" system stream cannot be indexed. Only "account" streams can be indexed. Stream: '));
       }
     });
   });
-  describe('When providing an "other" custom stream that is non editable', () => {
+  describe('[SD08] When providing an "other" custom stream that is non editable', () => {
     it('[655X] must throw a config error', async () => {
       const store = new nconf.Provider();
       store.use('memory');
@@ -304,18 +253,18 @@ describe('[SSDC] SystemStreams config', () => {
         {
           id: 'faulty-params',
           type: 'string/pryv',
-          [systemStreamsConfig.features.IS_EDITABLE]: false
+          isEditable: false
         }
       ]);
       try {
         systemStreamsConfig.load(store);
         assert.fail('supposed to throw.');
       } catch (err) {
-        assert.include(err.message, 'Config error: custom "other" system stream cannot be non-editable. Only "account" streams can be non-editable. Stream: ');
+        assert.ok(err.message.includes('Config error: custom "other" system stream cannot be non-editable. Only "account" streams can be non-editable. Stream: '));
       }
     });
   });
-  describe('When providing an "other" custom stream that is required at registration', () => {
+  describe('[SD09] When providing an "other" custom stream that is required at registration', () => {
     it('[OJJ0] must throw a config error', async () => {
       const store = new nconf.Provider();
       store.use('memory');
@@ -323,14 +272,14 @@ describe('[SSDC] SystemStreams config', () => {
         {
           id: 'faulty-params',
           type: 'string/pryv',
-          [systemStreamsConfig.features.IS_REQUIRED_IN_VALIDATION]: true
+          isRequiredInValidation: true
         }
       ]);
       try {
         systemStreamsConfig.load(store);
         assert.fail('supposed to throw.');
       } catch (err) {
-        assert.include(err.message, 'Config error: custom "other" system stream cannot be required at registration. Only "account" streams can be required at registration. Stream: ');
+        assert.ok(err.message.includes('Config error: custom "other" system stream cannot be required at registration. Only "account" streams can be required at registration. Stream: '));
       }
     });
   });

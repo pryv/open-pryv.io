@@ -30,11 +30,15 @@ install-stable:
 # Run
 # –––––––––––––----------------------------------------------------------------
 
-# Run all dependency services (e.g. nats server, Mongo, Influx…)
+# Run all dependency services (e.g. Mongo, Influx…)
 start-deps:
-    DEVELOPMENT=true concurrently --names "nats,mongo,influx" \
-        --prefix-colors "cyan,green,magenta" \
-        nats-server scripts/start-mongo influxd
+    DEVELOPMENT=true concurrently --names "mongo,influx" \
+        --prefix-colors "green,magenta" \
+        storages/engines/mongodb/scripts/start influxd
+
+# Start the master process (cluster mode with N API workers)
+start-master *params:
+    NODE_ENV=development node bin/master.js {{params}}
 
 # Start the given server component for dev (expects '{component}/bin/server')
 start component *params:
@@ -59,9 +63,9 @@ run component bin:
 lint *options:
     eslint {{options}} .
 
-# Run code linting only on changed files
+# Run code linting only on changed files (excludes deleted files)
 lint-changes *options:
-    eslint {{options}} $(git diff --name-only HEAD | grep -E '\.(js|jsx)$' | xargs)
+    eslint {{options}} $(git diff --name-only --diff-filter=d HEAD | grep -E '\.(js|jsx)$' | xargs)
 
 # Tag each test with a unique id if missing
 tag-tests:
@@ -72,19 +76,26 @@ test component *params:
     NODE_ENV=test COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}
 
+# Same as `test` but using PostgreSQL storage engine
+test-pg component *params:
+    STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
+        npx mocha -- {{params}}
+
+# Same as `test-parallel` but using PostgreSQL storage engine
+test-pg-parallel component *params:
+    STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
+        npx mocha -- {{params}}
+
 # Same as `test` but using SQLite PoC storage
 test-sqlite component *params:
-    database__engine=sqlite just test {{component}} {{params}}
+    database__engine=sqlite NODE_ENV=test COMPONENT={{component}} scripts/components-run \
+        npx mocha -- {{params}}
 
-# Same as `test` but using ferretDB storage
-test-ferret component *params:
-    database__authUser=username database__authPassword=password database__isFerret=true  \
-        just test {{component}} {{params}}
-
-# Run tests with storages: [Platform, userStorage, usersIndex] using mongoDB engine an not sqLite
+# Run tests with storages: [Platform, userStorage, usersIndex] using mongoDB engine and not sqLite
 test-full-mongo component *params:
     storagePlatform__engine=mongodb storageUserAccount__engine=mongodb storageUserIndex__engine=mongodb \
-        just test {{component}} {{params}}
+        NODE_ENV=test COMPONENT={{component}} scripts/components-run \
+        npx mocha -- {{params}}
 
 # Run tests with detailed output
 test-detailed component *params:
@@ -96,6 +107,25 @@ test-debug component *params:
     NODE_ENV=test COMPONENT={{component}} scripts/components-run \
         npx mocha -- --timeout 3600000 --reporter=spec --inspect-brk=40000 {{params}}
 
+# Run tests with parallel file execution (excludes tests that can't parallelize)
+# Uses MOCHA_PARALLEL=1 to enable parallel mode in .mocharc.js
+test-parallel component *params:
+    NODE_ENV=test DISABLE_INTEGRITY_CHECK=1 MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
+        npx mocha -- {{params}}
+
+# Run parallel tests first, then sequential tests
+test-fast component *params:
+    NODE_ENV=test DISABLE_INTEGRITY_CHECK=1 MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
+        npx mocha -- {{params}} && \
+    NODE_ENV=test MOCHA_NON_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
+        npx mocha -- {{params}}
+
+# Run only non-parallel tests (tests excluded from parallel mode)
+# Use after test-parallel to run the remaining tests sequentially
+test-non-parallel component *params:
+    NODE_ENV=test MOCHA_NON_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
+        npx mocha -- {{params}}
+
 # ⚠️  OBSOLETE?: Run tests for profiling
 test-profile component *params:
     NODE_ENV=test COMPONENT={{component}} scripts/components-run \
@@ -103,18 +133,24 @@ test-profile component *params:
     tick-processor > profiling-output.txt && \
     open profiling-output.txt
 
-# Run tests and generate HTML coverage report
+# Run tests and generate HTML coverage report for a single component
 test-cover component *params:
-    NODE_ENV=test COMPONENT={{component}} nyc --reporter=html --report-dir=./coverage \
+    NODE_ENV=test COMPONENT={{component}} nyc \
         scripts/components-run npx mocha -- {{params}}
 
-# Run all possible tests (with both Mongo and SQLite storage) and generate HTML coverage report
+# Run all tests across all engines (MongoDB + PG + SQLite) and generate coverage report
 test-cover-all:
-    NODE_ENV=test nyc --reporter=html --report-dir=./coverage scripts/coverage
+    scripts/coverage
+    npx nyc report
 
-# Run all possible tests (with both Mongo and SQLite storage) and generate LCOV coverage report
+# Full coverage: runs mocha from project root so storages/engines/ files are instrumented
+test-cover-full *engines:
+    tools/coverage/run.sh {{engines}}
+
+# Run all tests with LCOV output (for CI)
 test-cover-lcov:
-    NODE_ENV=test nyc --reporter=lcov scripts/coverage
+    scripts/coverage
+    npx nyc report --reporter=lcov
 
 # Set up test results report generation
 test-results-init-repo:
@@ -137,12 +173,25 @@ trace:
 test-data command version:
     NODE_ENV=development node components/test-helpers/scripts/{{command}}-test-data {{version}}
 
+# Reset test state: SQLite DBs, user dirs, and MongoDB user collections (keeps MongoDB running)
+clean-test-data:
+    # SQLite user index + legacy pre-Plan-25 platform-wide.db (retained for safety)
+    rm -f ./var-pryv/users/user-index.db ./var-pryv/users/user-index.db-wal ./var-pryv/users/user-index.db-shm
+    rm -f ./var-pryv/users/platform-wide.db ./var-pryv/users/platform-wide.db-wal ./var-pryv/users/platform-wide.db-shm
+    # Per-user directories
+    find ./var-pryv/users -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
+    # MongoDB test database (reset only — keeps server running)
+    ./var-pryv/mongodb-bin/bin/mongosh --quiet pryv-node-test --eval 'db.dropDatabase()' > /dev/null 2>&1 || echo "MongoDB not reachable (skipping mongo reset)"
+    # rqlite PlatformDB key-value table (Plan 25: rqlite is the only platform engine)
+    curl -s -X POST -H 'Content-Type: application/json' 'http://localhost:4001/db/execute' -d '[["DELETE FROM keyValue"]]' > /dev/null 2>&1 || echo "rqlite not reachable (skipping rqlite reset)"
+    @echo "Test data cleaned (SQLite DBs + user dirs + MongoDB pryv-node-test + rqlite keyValue)"
+
 # Cleanup users data and MongoDB data in `var-pryv/`
 clean-data:
     rm -rf ./var-pryv/users/*
     (killall mongod && sleep 2) || echo "MongoDB was not running"
     rm -rf ./var-pryv/mongodb-data/*
-    DEVELOPMENT=true ./scripts/start-mongo
+    DEVELOPMENT=true ./storages/engines/mongodb/scripts/start
 
 # Run security assessment and output to `security-assessment`
 security-assessment:

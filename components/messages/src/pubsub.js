@@ -1,81 +1,53 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
 const EventEmitter = require('events');
-const { getConfigUnsafe, getLogger } = require('@pryv/boiler');
+const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('messages:pubsub');
 const CONSTANTS = require('./constants');
-const isOpenSource = getConfigUnsafe(true).get('openSource:isActive');
 
 // Generic implementation of pub / sub messaging
 
 class PubSub extends EventEmitter {
   options;
-  nats;
+  transport;
   scopeName;
   logger;
-  natsSubscriptionMap; // map that contains nats subscriptions by key
+  transportSubMap; // map that contains transport subscriptions by key
 
   constructor (scopeName, options = {}) {
     super();
     this.options = Object.assign({
-      nats: CONSTANTS.NATS_MODE_ALL,
+      transport: CONSTANTS.TRANSPORT_MODE_ALL,
       forwardToTests: false,
       forwardToInternal: true
     }, options);
 
     this.scopeName = scopeName;
     this.logger = logger.getLogger(this.scopeName);
-    this.natsSubscriptionMap = {};
+    this.transportSubMap = {};
 
-    if (this.options.nats !== CONSTANTS.NATS_MODE_NONE) {
-      initNats();
+    if (this.options.transport !== CONSTANTS.TRANSPORT_MODE_NONE) {
+      initTransport();
     }
-    if ((nats != null) && (this.options.nats === CONSTANTS.NATS_MODE_ALL)) {
-      nats.subscribe(this.scopeName, this);
+    if ((transport != null) && (this.options.transport === CONSTANTS.TRANSPORT_MODE_ALL)) {
+      transport.subscribe(this.scopeName, this);
     }
   }
 
   on (eventName, listener) {
-    // nats "keyed" listeners
-    if ((nats != null) && (this.options.nats === CONSTANTS.NATS_MODE_KEY)) {
-      if (this.natsSubscriptionMap[eventName] == null) { // not yet listening .. subscribe
-        nats.subscribe(this.scopeName + '.' + eventName, this).then((sub) => {
-          this.natsSubscriptionMap[eventName] = { sub, counter: 1 };
+    // keyed listeners
+    if ((transport != null) && (this.options.transport === CONSTANTS.TRANSPORT_MODE_KEY)) {
+      if (this.transportSubMap[eventName] == null) { // not yet listening .. subscribe
+        transport.subscribe(this.scopeName + '.' + eventName, this).then((sub) => {
+          this.transportSubMap[eventName] = { sub, counter: 1 };
         });
       } else {
-        this.natsSubscriptionMap[eventName].counter++; // count listners for nats eventName
+        this.transportSubMap[eventName].counter++; // count listeners
       }
     }
     super.on(eventName, listener);
@@ -89,12 +61,12 @@ class PubSub extends EventEmitter {
     this.on(eventName, listener);
     return function () {
       this.off(eventName, listener);
-      if ((nats != null) && (this.options.nats === CONSTANTS.NATS_MODE_KEY) && (this.natsSubscriptionMap[eventName] != null)) {
+      if ((transport != null) && (this.options.transport === CONSTANTS.TRANSPORT_MODE_KEY) && (this.transportSubMap[eventName] != null)) {
         this.logger.debug('off', eventName);
-        this.natsSubscriptionMap[eventName].counter--;
-        if (this.natsSubscriptionMap[eventName].counter === 0) { // no more listeners .. close nats subscription
-          this.natsSubscriptionMap[eventName].sub.unsubscribe();
-          delete this.natsSubscriptionMap[eventName];
+        this.transportSubMap[eventName].counter--;
+        if (this.transportSubMap[eventName].counter === 0) { // no more listeners
+          this.transportSubMap[eventName].sub.unsubscribe();
+          delete this.transportSubMap[eventName];
         }
       }
     }.bind(this);
@@ -106,9 +78,9 @@ class PubSub extends EventEmitter {
 
     if (this.options.forwardToTests) forwardToTests(eventName, payload);
 
-    if (nats != null) {
-      if (this.options.nats === CONSTANTS.NATS_MODE_ALL) nats.deliver(this.scopeName, eventName, payload);
-      if (this.options.nats === CONSTANTS.NATS_MODE_KEY) nats.deliver(this.scopeName + '.' + eventName, eventName, payload);
+    if (transport != null) {
+      if (this.options.transport === CONSTANTS.TRANSPORT_MODE_ALL) transport.deliver(this.scopeName, eventName, payload);
+      if (this.options.transport === CONSTANTS.TRANSPORT_MODE_KEY) transport.deliver(this.scopeName + '.' + eventName, eventName, payload);
     }
   }
 
@@ -118,29 +90,28 @@ class PubSub extends EventEmitter {
   }
 }
 
-// ----- NATS
+// ----- Transport
 
-let nats = null;
-function initNats () {
-  if (nats != null || isOpenSource) return;
-  nats = require('./nats_pubsub');
-  logger.debug('initNats');
+let transport = null;
+function initTransport () {
+  if (transport != null) return;
+  transport = require('./tcp_pubsub');
+  logger.debug('initTransport');
 }
 
 // ----- TEST Messaging
 
 const testMessageMap = {};
-testMessageMap[CONSTANTS.USERNAME_BASED_EVENTS_CHANGED] = 'axon-events-changed';
-testMessageMap[CONSTANTS.USERNAME_BASED_STREAMS_CHANGED] = 'axon-streams-changed';
-testMessageMap[CONSTANTS.USERNAME_BASED_FOLLOWEDSLICES_CHANGED] = 'axon-followed-slices-changed';
-testMessageMap[CONSTANTS.USERNAME_BASED_ACCESSES_CHANGED] = 'axon-accesses-changed';
-testMessageMap[CONSTANTS.USERNAME_BASED_ACCOUNT_CHANGED] = 'axon-account-changed';
+testMessageMap[CONSTANTS.USERNAME_BASED_EVENTS_CHANGED] = 'test-events-changed';
+testMessageMap[CONSTANTS.USERNAME_BASED_STREAMS_CHANGED] = 'test-streams-changed';
+testMessageMap[CONSTANTS.USERNAME_BASED_ACCESSES_CHANGED] = 'test-accesses-changed';
+testMessageMap[CONSTANTS.USERNAME_BASED_ACCOUNT_CHANGED] = 'test-account-changed';
 
 let globalTestNotifier = null;
 
 function forwardToTests (eventName, payload) {
   if (eventName === CONSTANTS.SERVER_READY) {
-    return globalTestNotifier.emit('axon-server-ready');
+    return globalTestNotifier.emit('test-server-ready');
   }
   const testMessageKey = testMessageMap[payload];
   if (testMessageKey) {
@@ -157,7 +128,7 @@ class PubSubFactory {
   _notifications;
   _cache;
   get status () {
-    if (this._status == null) this._status = new PubSub('status', { nats: CONSTANTS.NATS_MODE_NONE, forwardToTests: true });
+    if (this._status == null) this._status = new PubSub('status', { transport: CONSTANTS.TRANSPORT_MODE_NONE, forwardToTests: true });
     this._status.setMaxListeners(1); // 1 is enough
     return this._status;
   }
@@ -176,7 +147,7 @@ class PubSubFactory {
 
   get notifications () {
     if (this._notifications == null) {
-      this._notifications = new PubSub('notifications', { nats: CONSTANTS.NATS_MODE_KEY, forwardToTests: true });
+      this._notifications = new PubSub('notifications', { transport: CONSTANTS.TRANSPORT_MODE_KEY, forwardToTests: true });
       this._notifications.setMaxListeners(100); // Number of max socket.io or webhooks connections
     }
     return this._notifications;
@@ -184,7 +155,7 @@ class PubSubFactory {
 
   get cache () {
     if (this._cache == null) {
-      this._cache = new PubSub('cache', { nats: CONSTANTS.NATS_MODE_KEY, forwardToInternal: false });
+      this._cache = new PubSub('cache', { transport: CONSTANTS.TRANSPORT_MODE_KEY, forwardToInternal: false });
       this._cache.setMaxListeners(1); // 1 is enough
     }
     return this._cache;
@@ -194,16 +165,16 @@ class PubSubFactory {
     globalTestNotifier = testNotifier;
   }
 
-  setTestNatsDeliverHook (deliverHook) {
-    if (nats == null) {
-      console.log(new Error('NATS not initialized'));
+  setTestDeliverHook (deliverHook) {
+    if (transport == null) {
+      console.log(new Error('Transport not initialized'));
     }
-    nats.setTestNatsDeliverHook(deliverHook);
+    transport.setTestDeliverHook(deliverHook);
   }
 
   // used by tests to detect true "OpenSource" setup
-  isNatsEnabled () {
-    return nats != null;
+  isTransportEnabled () {
+    return transport != null;
   }
 }
 

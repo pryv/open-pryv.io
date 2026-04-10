@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 /**
  * Helper stuff for validating objects against schemas.
@@ -40,10 +13,11 @@ const Action = require('../../src/schema/Action');
 const encryption = require('utils').encryption;
 const Validator = require('z-schema');
 const validator = new Validator();
-const { assert, expect } = require('chai');
+const assert = require('node:assert');
 const util = require('util');
 const _ = require('lodash');
-const SystemStreamsSerializer = require('business/src/system-streams/serializer');
+const accountStreams = require('business/src/system-streams');
+const { removeSystemEvents, removeSystemStreams, separateSystemEvents } = require('test-helpers/src/systemStreamFilters');
 const { integrity } = require('business');
 
 /**
@@ -52,7 +26,6 @@ const { integrity } = require('business');
 const schemas = exports.schemas = {
   access: require('../../src/schema/access'),
   event: require('../../src/schema/event'),
-  followedSlice: require('../../src/schema/followedSlice'),
   stream: require('../../src/schema/stream'),
   user: require('../../src/schema/user'),
   errorResult: {
@@ -79,9 +52,9 @@ const schemas = exports.schemas = {
  * @param {Function} [done] Optional
  */
 exports.check = function (response, expected, done) {
-  assert.exists(response, '"response" must be a valid HTTP response object');
+  assert.ok(response, '"response" must be a valid HTTP response object');
 
-  response.statusCode.should.eql(expected.status);
+  assert.strictEqual(response.statusCode, expected.status);
 
   // ignore common metadata
   const meta = response.body.meta;
@@ -105,12 +78,12 @@ exports.check = function (response, expected, done) {
   }
 
   if (expected.sanitizeFn) {
-    assert.exists(expected.sanitizeTarget);
+    assert.ok(expected.sanitizeTarget);
     expected.sanitizeFn(response.body[expected.sanitizeTarget]);
   }
   if (expected.body) {
     try {
-      assert.deepEqual(response.body, expected.body);
+      assert.deepStrictEqual(response.body, expected.body);
     } catch (e) {
       if (e.messgae) e.message = e.message.substr(0, 3000);
       throw (e);
@@ -156,14 +129,14 @@ function checkAccessIntegrity (access) {
  */
 exports.checkError = function (response, expected, done) {
   try {
-    response.statusCode.should.eql(expected.status);
+    assert.strictEqual(response.statusCode, expected.status);
     checkJSON(response, schemas.errorResult);
 
     const error = response.body.error;
-    assert.equal(error.id, expected.id);
+    assert.strictEqual(error.id, expected.id);
 
     if (expected.data != null) {
-      assert.deepEqual(error.data, expected.data);
+      assert.deepStrictEqual(error.data, expected.data);
     }
     if (done) done();
   } catch (e) {
@@ -173,7 +146,7 @@ exports.checkError = function (response, expected, done) {
 };
 
 function checkJSON (response, schema) {
-  assert.include(response.headers['content-type'], 'application/json');
+  assert.ok(response.headers['content-type'].includes('application/json'));
   checkSchema(response.body, schema);
 }
 
@@ -184,7 +157,7 @@ function checkJSON (response, schema) {
  * @param {Object} schema
  */
 function checkSchema (data, schema) {
-  validator.validate(data, schema).should.equal(true,
+  assert.strictEqual(validator.validate(data, schema), true,
     util.inspect(validator.getLastErrors(), { depth: 5 }));
 }
 exports.checkSchema = checkSchema;
@@ -200,13 +173,13 @@ exports.checkStoredItem = function (item, schemaName) {
 };
 
 function checkMeta (parentObject) {
-  assert.exists(parentObject.meta);
+  assert.ok(parentObject.meta);
 
   const meta = parentObject.meta;
 
   assert.match(meta.apiVersion, /^\d+\.\d+\.\d+/);
-  assert.match(meta.serverTime, /^\d+\.?\d*$/);
-  assert.exists(meta.serial);
+  assert.match(meta.serverTime + '', /^\d+\.?\d*$/);
+  assert.ok(meta.serial);
 }
 exports.checkMeta = checkMeta;
 
@@ -214,15 +187,15 @@ exports.checkMeta = checkMeta;
  * Specific error check for convenience.
  */
 exports.checkErrorInvalidParams = function (res, done) {
-  expect(res.statusCode).to.equal(400);
+  assert.strictEqual(res.statusCode, 400);
 
   checkJSON(res, schemas.errorResult);
   const body = res.body;
   const error = body.error;
 
-  assert.exists(error);
-  expect(error.id).to.equal(ErrorIds.InvalidParametersFormat);
-  assert.exists(res.body.error.data); // expect validation errors
+  assert.ok(error);
+  assert.strictEqual(error.id, ErrorIds.InvalidParametersFormat);
+  assert.ok(res.body.error.data); // expect validation errors
 
   if (done) done();
 };
@@ -231,10 +204,10 @@ exports.checkErrorInvalidParams = function (res, done) {
  * Specific error check for convenience.
  */
 exports.checkErrorInvalidAccess = function (res, done) {
-  expect(res.statusCode).to.equal(401);
+  assert.strictEqual(res.statusCode, 401);
 
   checkJSON(res, schemas.errorResult);
-  res.body.error.id.should.eql(ErrorIds.InvalidAccessToken);
+  assert.strictEqual(res.body.error.id, ErrorIds.InvalidAccessToken);
 
   if (done) done();
 };
@@ -243,9 +216,9 @@ exports.checkErrorInvalidAccess = function (res, done) {
  * Specific error check for convenience.
  */
 exports.checkErrorForbidden = function (res, done) {
-  expect(res.statusCode).to.equal(403);
+  assert.strictEqual(res.statusCode, 403);
   checkJSON(res, schemas.errorResult);
-  res.body.error.id.should.eql(ErrorIds.Forbidden);
+  assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
 
   if (done) done();
 };
@@ -254,10 +227,10 @@ exports.checkErrorForbidden = function (res, done) {
  * Specific error check for convenience.
  */
 exports.checkErrorUnknown = function (res, done) {
-  res.statusCode.should.eql(404);
+  assert.strictEqual(res.statusCode, 404);
 
   checkJSON(res, schemas.errorResult);
-  res.body.error.id.should.eql(ErrorIds.UnknownResource);
+  assert.strictEqual(res.body.error.id, ErrorIds.UnknownResource);
 
   if (done) done();
 };
@@ -300,7 +273,7 @@ function checkObjectEquality (actual, expected, verifiedProps = []) {
   }
 
   if (expected.children != null) {
-    assert.exists(actual.children);
+    assert.ok(actual.children);
     assert.strictEqual(actual.children.length, expected.children.length);
 
     for (let i = 0, n = expected.children.length; i < n; i++) {
@@ -311,7 +284,7 @@ function checkObjectEquality (actual, expected, verifiedProps = []) {
   verifiedProps.push('children');
 
   if (expected.attachments != null) {
-    assert.exists(actual.attachments);
+    assert.ok(actual.attachments);
 
     assert.strictEqual(actual.attachments.length, expected.attachments.length,
       `Must have ${expected.attachments.length} attachments.`);
@@ -321,7 +294,7 @@ function checkObjectEquality (actual, expected, verifiedProps = []) {
 
     for (const act of actual.attachments) {
       const ex = expectMap.get(act.id);
-      assert.isNotNull(ex);
+      assert.ok(ex != null);
 
       checkObjectEquality(act, ex);
     }
@@ -333,13 +306,13 @@ function checkObjectEquality (actual, expected, verifiedProps = []) {
 
   const remaining = _.omit(actual, verifiedProps);
   const expectedRemaining = _.omit(expected, verifiedProps);
-  assert.deepEqual(remaining, expectedRemaining);
+  assert.deepStrictEqual(remaining, expectedRemaining);
   return isApprox; // (forward to eventual recursive calls)
 }
 
 function checkApproxTimeEquality (actual, expected, epsilon = 2) {
   const diff = (expected - actual);
-  assert.isBelow(Math.abs(diff), epsilon);
+  assert.ok(Math.abs(diff) < epsilon);
 }
 
 /**
@@ -349,12 +322,12 @@ function checkApproxTimeEquality (actual, expected, epsilon = 2) {
 exports.checkHeaders = function (response, expectedHeaders) {
   expectedHeaders.forEach(function (expected) {
     const value = response.headers[expected.name.toLowerCase()];
-    assert.exists(value);
+    assert.ok(value);
     if (expected.value) {
-      value.should.eql(expected.value);
+      assert.strictEqual(value, expected.value);
     }
     if (expected.valueRegExp) {
-      value.should.match(expected.valueRegExp);
+      assert.match(value, expected.valueRegExp);
     }
   });
 };
@@ -377,7 +350,7 @@ exports.checkFilesReadToken = function (eventOrEvents, access, secret) {
     if (!evt.attachments) { return; }
 
     evt.attachments.forEach(function (att) {
-      att.readToken.should.eql(encryption.fileReadToken(att.id, access.id, access.token, secret));
+      assert.strictEqual(att.readToken, encryption.fileReadToken(att.id, access.id, access.token, secret));
     });
   }
 };
@@ -390,8 +363,6 @@ exports.checkFilesReadToken = function (eventOrEvents, access, secret) {
  */
 exports.sanitizeEvent = function (event) {
   if (!event) { return; }
-
-  delete event.streamId;
 
   if (event.attachments) {
     event.attachments.forEach(function (att) {
@@ -435,32 +406,16 @@ exports.removeDeletionsAndHistory = function (items) {
 };
 
 exports.removeAccountStreamsEvents = function (items) {
-  // get streams ids from the config that should be retrieved
-  const expectedAccountStreams = SystemStreamsSerializer.getAccountMap();
-  return items.filter(function (e) { return !(e.streamIds.some(streamId => Object.keys(expectedAccountStreams).indexOf(streamId) >= 0)); });
+  return removeSystemEvents(items);
 };
 
 exports.separateAccountStreamsAndOtherEvents = function (items) {
-  const readableAccountStreams = SystemStreamsSerializer.getAccountStreamIds();
-  const normalEvents = items.filter(function (e) {
-    return (!e.streamIds) || !(e.streamIds.some(streamId => readableAccountStreams.indexOf(streamId) >= 0));
-  });
-  const accountStreamsEvents = items.filter(function (e) {
-    return (e.streamIds) && (e.streamIds.some(streamId => readableAccountStreams.indexOf(streamId) >= 0));
-  });
-  return { events: normalEvents, accountStreamsEvents };
+  const { events, systemEvents } = separateSystemEvents(items);
+  return { events, accountStreamsEvents: systemEvents };
 };
 
 exports.removeAccountStreams = function (streams) {
-  let i = streams.length;
-  while (i--) {
-    if (streams[i]?.id === SystemStreamsSerializer.options.STREAM_ID_ACCOUNT) {
-      streams.splice(i, 1);
-    } else if (streams[i]?.id === SystemStreamsSerializer.options.STREAM_ID_HELPERS) {
-      streams.splice(i, 1);
-    }
-  }
-  return streams;
+  return removeSystemStreams(streams);
 };
 
 // TODO: cleanup this mess, we shouldn't have data creation logic in "validation", nor these `require()` mid-file
@@ -486,7 +441,9 @@ exports.addStoreStreams = async function (streams, storesId, atTheEnd) {
   return streams;
 
   function isShown (storeId) {
-    if (storeId === 'local') return false;
+    const storeDataUtils = require('mall/src/helpers/storeDataUtils');
+    // Passthrough stores (local, account) don't have pseudo-root streams
+    if (storeDataUtils.isPassthroughStore(storeId)) return false;
     if (storesId == null) return true;
     return storesId.includes(storeId);
   }
@@ -521,7 +478,8 @@ exports.removeTrackingProperties = function (items) {
 exports.validateAccountEvents = function (actualAccountEvents) {
   // get streams ids from the config that should be retrieved
 
-  const expectedAccountStreams = SystemStreamsSerializer.getReadableAccountMapForTests();
+  const expectedAccountStreams = Object.fromEntries(Object.entries(accountStreams.accountMap).filter(([, s]) => s.isShown));
+  delete expectedAccountStreams[':_system:storageUsed'];
   // iterate through expected account events and check that they exists in actual
   // account events
   const expectedSreamIds = Object.keys(expectedAccountStreams);
@@ -530,14 +488,10 @@ exports.validateAccountEvents = function (actualAccountEvents) {
     actualAccountEvents.forEach(event => {
       if (event.streamIds.includes(streamId)) {
         foundEvent = true;
-        // validate that event is indexed/unique if needed
-        if (expectedAccountStreams[streamId].isUnique) {
-          assert.isTrue(event.streamIds.includes(SystemStreamsSerializer.options.STREAM_ID_UNIQUE), `":_system:unique" streamId not found in ${event} for ${streamId}`);
-        }
         // validate type
-        assert.equal(event.type, expectedAccountStreams[streamId].type, `type mismatch between ${event} and ${expectedAccountStreams[streamId]}`);
+        assert.strictEqual(event.type, expectedAccountStreams[streamId].type, `type mismatch between ${event} and ${expectedAccountStreams[streamId]}`);
       }
     });
-    assert.isTrue(foundEvent, `account event ${streamId} not found.`);
+    assert.strictEqual(foundEvent, true, `account event ${streamId} not found.`);
   });
 };

@@ -12,6 +12,7 @@ const fs = require('fs'),
       chalk = require('chalk');
 
 const componentsPath = path.resolve(__dirname, '../components'),
+      storagesPath = path.resolve(__dirname, '../storages'),
       args = process.argv.slice(2);
 
 if (args.length === 0) {
@@ -29,15 +30,54 @@ if (process.env.COMPONENT && process.env.COMPONENT != 'all') {
   singleComponent = process.env.COMPONENT;
 }
 
-let status = 0;
-fs.readdirSync(componentsPath).forEach(function (name) {
-  const subPath = path.join(componentsPath, name);
-  if (!fs.existsSync(path.join(subPath, 'package.json'))) {
-    return;
+let interrupted = false;
+process.on('SIGINT', () => {
+  if (interrupted) {
+    // Second Ctrl+C — exit immediately
+    process.exit(130);
   }
+  interrupted = true;
+});
+
+let status = 0;
+
+// Build list of runnable entries: components/* + storages/ + storages/engines/*
+const entries = [];
+for (const name of fs.readdirSync(componentsPath)) {
+  const dir = path.join(componentsPath, name);
+  if (fs.existsSync(path.join(dir, 'package.json'))) {
+    entries.push({ name, dir });
+  }
+}
+if (fs.existsSync(path.join(storagesPath, 'package.json'))) {
+  entries.push({ name: 'storages', dir: storagesPath });
+}
+const enginesDir = path.join(storagesPath, 'engines');
+const storageEngine = process.env.STORAGE_ENGINE || '';
+if (fs.existsSync(enginesDir)) {
+  for (const eng of fs.readdirSync(enginesDir)) {
+    const dir = path.join(enginesDir, eng);
+    if (!fs.existsSync(path.join(dir, 'package.json'))) continue;
+    // Skip engine test suites that don't match the active STORAGE_ENGINE.
+    // e.g. when STORAGE_ENGINE=postgresql, skip storages:mongodb and vice versa.
+    if (storageEngine && eng !== storageEngine) {
+      const manifestPath = path.join(dir, 'manifest.json');
+      if (fs.existsSync(manifestPath)) {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        if (manifest.storageTypes && manifest.storageTypes.includes('baseStorage')) {
+          continue; // this is a primary storage engine that doesn't match — skip
+        }
+      }
+    }
+    entries.push({ name: `storages:${eng}`, dir });
+  }
+}
+
+for (const { name, dir: subPath } of entries) {
+  if (interrupted) break;
 
   if (singleComponent && singleComponent != name) {
-    return;
+    continue;
   }
 
   console.log(chalk.green(formatHeading(name)));
@@ -45,9 +85,9 @@ fs.readdirSync(componentsPath).forEach(function (name) {
   // HACK: if running mocha on all components, ignore those that have no "test" folder;
   //       mocha's "failZero" option would be cleaner, but as of 2022-03-29 it doesn't work
   //       (cf. https://github.com/mochajs/mocha/issues/4858)
-  if(args.slice(1)[0] == 'mocha' && !singleComponent && !fs.existsSync(path.join(subPath, 'test'))){
+  if (args.slice(1)[0] == 'mocha' && !singleComponent && !fs.existsSync(path.join(subPath, 'test'))) {
     console.log('No "test" folder, skipping');
-    return;
+    continue;
   }
 
   const res = childProcess.spawnSync(args[0], args.slice(1), {
@@ -63,10 +103,19 @@ fs.readdirSync(componentsPath).forEach(function (name) {
       logError(res.error);
     }
   }
-  status += (res.status === null ? 1 : res.status);
-});
 
-process.exit(status);
+  // Child killed by signal (e.g. SIGINT/SIGTERM) — exit immediately.
+  // Also check for status 130 (128+SIGINT): mocha catches SIGINT internally
+  // and exits with code 130 rather than being killed by the signal directly,
+  // so res.signal is null but res.status is 130.
+  if (res.signal === 'SIGINT' || res.signal === 'SIGTERM' || res.status === 130) {
+    process.exit(130);
+  }
+
+  status += (res.status === null ? 1 : res.status);
+}
+
+process.exit(interrupted ? 130 : status);
 
 function logError(message) {
   console.error(chalk.bold(`${chalk.red('Error')}: ${message}`));

@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 const fs = require('fs');
 const path = require('path');
@@ -37,11 +10,10 @@ const Cache = require('../cache');
 const childProcess = require('child_process');
 const CronJob = require('cron').CronJob;
 const errors = require('errors').factory;
-const gm = require('gm');
+const sharp = require('sharp');
 const timestamp = require('unix-timestamp');
 const xattr = require('fs-xattr');
 const _ = require('lodash');
-const bluebird = require('bluebird');
 const getAuth = require('middleware/src/getAuth');
 const { getLogger } = require('@pryv/boiler');
 const { getMall } = require('mall');
@@ -82,7 +54,7 @@ module.exports = async function (expressApp, initContextMiddleware, loadAccessMi
       let canReadEvent = false;
       for (let i = 0; i < event.streamIds.length; i++) {
         // ok if at least one
-        if (await context.access.canGetEventsOnStreamAndWithTags(event.streamIds[i], event.tags)) {
+        if (await context.access.canGetEventsOnStream(event.streamIds[i], 'local')) {
           canReadEvent = true;
           break;
         }
@@ -107,11 +79,12 @@ module.exports = async function (expressApp, initContextMiddleware, loadAccessMi
         originalSize = { width: attachment.width, height: attachment.height };
       }
       try {
-        originalSize = await bluebird.fromCallback((cb) => gm(attachmentPath).size(cb));
+        const metadata = await sharp(attachmentPath).metadata();
+        originalSize = { width: metadata.width, height: metadata.height };
         attachment.width = originalSize.width;
         attachment.height = originalSize.height;
       } catch (err) {
-        return next(adjustGMResultError(err));
+        return next(adjustImageError(err));
       }
       // Prepare path
       const targetSize = getPreviewSize(originalSize, {
@@ -127,13 +100,12 @@ module.exports = async function (expressApp, initContextMiddleware, loadAccessMi
       }
       if (!cached) {
         try {
-          await bluebird.fromCallback((cb) => gm(attachmentPath + '[0]') // to cover animated GIFs
-            .resize(targetSize.width, targetSize.height)
-            .noProfile()
-            .interlace('Line') // progressive JPEG
-            .write(previewPath, cb));
+          await sharp(attachmentPath, { pages: 1 }) // pages: 1 extracts first frame (animated GIFs)
+            .resize(Math.round(targetSize.width), Math.round(targetSize.height))
+            .jpeg({ progressive: true })
+            .toFile(previewPath);
         } catch (err) {
-          return next(adjustGMResultError(err));
+          return next(adjustImageError(err));
         }
         await xattr.set(previewPath, Cache.EventModifiedXattrKey, event.modified.toString());
       }
@@ -153,11 +125,12 @@ module.exports = async function (expressApp, initContextMiddleware, loadAccessMi
       return true;
     });
   }
-  function adjustGMResultError (err) {
-    // assume file not found if code = 1 (gm command result)
-    return err.code === 1
-      ? errors.corruptedData('Corrupt event data: expected an attached file.', err)
-      : err;
+  function adjustImageError (err) {
+    // sharp throws on corrupt/missing files with specific messages
+    if (err.message && (err.message.includes('Input file is missing') || err.message.includes('unsupported image format'))) {
+      return errors.corruptedData('Corrupt event data: expected an attached file.', err);
+    }
+    return err;
   }
   function getPreviewSize (original, desired) {
     if (!(desired.width || desired.height)) {

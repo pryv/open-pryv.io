@@ -1,38 +1,11 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
-const SystemStreamsSerializer = require('business/src/system-streams/serializer');
+const accountStreams = require('business/src/system-streams');
 
 module.exports = async function platformCheckIntegrity (platformWideDB) {
   const { getUsersRepository } = require('business/src/users/repository'); // to avoid some circular import
@@ -41,6 +14,12 @@ module.exports = async function platformCheckIntegrity (platformWideDB) {
   const allEntries = await platformWideDB.getAllWithPrefix('user');
   const platformEntryByUser = {};
   for (const entry of allEntries) {
+    // Skip internal fields (e.g. _core for multi-core mapping)
+    if (entry.field && entry.field.startsWith('_')) continue;
+    // Skip entries without a username (e.g. user-core/ prefix entries)
+    if (entry.username == null) continue;
+    // Skip reserved usernames (e.g. __cores__ for core registration)
+    if (entry.username.startsWith('__')) continue;
     if (platformEntryByUser[entry.username] == null) platformEntryByUser[entry.username] = {};
     platformEntryByUser[entry.username][entry.field] = { value: entry.value, isUnique: entry.isUnique };
   }
@@ -49,7 +28,7 @@ module.exports = async function platformCheckIntegrity (platformWideDB) {
   // Retrieve all existing users
   const usersRepository = await getUsersRepository();
   const usersFromRepository = await usersRepository.getAll();
-  const indexedFields = SystemStreamsSerializer.getIndexedAccountStreamsIdsWithoutPrefix();
+  const indexedFields = accountStreams.indexedFieldNames;
 
   const infos = {
     usersCountOnPlatform: Object.keys(platformEntryByUser).length,
@@ -73,7 +52,7 @@ module.exports = async function platformCheckIntegrity (platformWideDB) {
 
       if (valueRepo == null) continue; // we do not expect to find null values in repo
 
-      const isUnique = SystemStreamsSerializer.isUniqueAccountField(field);
+      const isUnique = accountStreams.uniqueFieldNames.includes(field);
 
       if (platformEntryByUser[username] == null) {
         errors.push(`Cannot find username "${username}" data in platform db while looking for field "${field}" expected value:  "${valueRepo}"`);

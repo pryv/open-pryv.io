@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 const async = require('async');
 const slugify = require('utils').slugify;
@@ -47,16 +20,14 @@ const { ApiEndpoint } = require('utils');
 const commonFns = require('./helpers/commonFunctions');
 const methodsSchema = require('../schema/accessesMethods');
 const string = require('./helpers/string');
-const SystemStreamsSerializer = require('business/src/system-streams/serializer');
+const accountStreams = require('business/src/system-streams');
 
 const cache = require('cache');
 
-const { getConfig } = require('@pryv/boiler');
 const { getMall, storeDataUtils } = require('mall');
 const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
 
-const { changeStreamIdsInPermissions } = require('./helpers/backwardCompatibility');
 const { integrity } = require('business');
 
 /**
@@ -82,13 +53,9 @@ const { integrity } = require('business');
  */
 
 module.exports = async function produceAccessesApiMethods (api) {
-  const config = await getConfig();
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };
   const mall = await getMall();
   const storageLayer = await getStorageLayer();
-
-  const isStreamIdPrefixBackwardCompatibilityActive = config.get('backwardCompatibility:systemStreams:prefix:isActive');
-  const isFerret = config.get('database:isFerret');
 
   // RETRIEVAL
 
@@ -114,15 +81,8 @@ module.exports = async function produceAccessesApiMethods (api) {
       if (excludeExpired(params)) {
         accesses = accesses.filter((a) => !isAccessExpired(a));
       }
-      // Add apiEndpoind
+      // Add apiEndpoint
       for (let i = 0; i < accesses.length; i++) {
-        if (accesses[i].permissions != null) {
-          // assert is personal access
-          if (isStreamIdPrefixBackwardCompatibilityActive &&
-                        !context.disableBackwardCompatibility) {
-            accesses[i].permissions = changeStreamIdsInPermissions(accesses[i].permissions);
-          }
-        }
         accesses[i].apiEndpoint = ApiEndpoint.build(context.user.username, accesses[i].token);
       }
       result.accesses = accesses;
@@ -148,13 +108,6 @@ module.exports = async function produceAccessesApiMethods (api) {
     }
     try {
       const deletions = await bluebird.fromCallback((cb) => accessesRepository.findDeletions(context.user, query, { projection: { calls: 0 } }, cb));
-      if (isStreamIdPrefixBackwardCompatibilityActive &&
-                !context.disableBackwardCompatibility) {
-        for (const access of deletions) {
-          if (access.permissions == null) { continue; }
-          access.permissions = changeStreamIdsInPermissions(access.permissions);
-        }
-      }
       result.accessDeletions = deletions;
       next();
     } catch (err) {
@@ -164,8 +117,8 @@ module.exports = async function produceAccessesApiMethods (api) {
 
   // CREATION
 
-  const notVisibleAccountStreamsIds = SystemStreamsSerializer.getAccountStreamsIdsForbiddenForReading();
-  const visibleAccountStreamsIds = SystemStreamsSerializer.getReadableAccountStreamIds();
+  const notVisibleAccountStreamsIds = accountStreams.hiddenStreamIds;
+  const visibleAccountStreamsIds = Object.keys(accountStreams.accountMap).filter(id => accountStreams.accountMap[id].isShown);
 
   api.register(
     'accesses.create',
@@ -187,10 +140,6 @@ module.exports = async function produceAccessesApiMethods (api) {
   async function applyPrerequisitesForCreation (context, params, result, next) {
     if (params.type === 'personal') {
       return next(errors.forbidden('Personal accesses are created automatically on login.'));
-    }
-    if (isStreamIdPrefixBackwardCompatibilityActive &&
-            !context.disableBackwardCompatibility) {
-      params.permissions = changeStreamIdsInPermissions(params.permissions, false);
     }
     const permissions = params.permissions;
     for (const permission of permissions) {
@@ -257,8 +206,8 @@ module.exports = async function produceAccessesApiMethods (api) {
     }
 
     function isUnknownSystemStream (streamId) {
-      return (SystemStreamsSerializer.hasSystemStreamPrefix(streamId) &&
-                SystemStreamsSerializer.removePrefixFromStreamId(streamId) === streamId);
+      return ((streamId.startsWith(':_system:') || streamId.startsWith(':system:')) &&
+                accountStreams.toFieldName(streamId) === streamId);
     }
     return next();
   }
@@ -343,11 +292,6 @@ module.exports = async function produceAccessesApiMethods (api) {
     if (params.type === 'shared') params.deviceName = null;
     accessesRepository.insertOne(context.user, params, function (err, newAccess) {
       if (err != null) {
-        if (isFerret) {
-          if (err.isDuplicate) {
-            return next(errors.itemAlreadyExists('access', { info: 'FerretDB does not provide duplicate information' }));
-          }
-        }
         // Duplicate errors
         if (err.isDuplicateIndex('token')) {
           return next(errors.itemAlreadyExists('access', { token: '(hidden)' }));
@@ -519,8 +463,8 @@ module.exports = async function produceAccessesApiMethods (api) {
         return false;
       }
     }
-    // Compare clientData
-    if (!_.isEqual(access.clientData, clientData)) {
+    // Compare clientData (treat null and undefined as equivalent)
+    if (!_.isEqual(access.clientData ?? null, clientData ?? null)) {
       return false;
     }
     return true;

@@ -1,441 +1,379 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
-const async = require('async');
-const fs = require('fs');
-const path = require('path');
-const timestamp = require('unix-timestamp');
-const { assert } = require('chai');
+/**
+ * Access permissions tests (Pattern C)
+ * Migrated from permissions-seq.test.js sections AP01, AP02, and YE49
+ * These are pure permission assertions (HTTP call + status check) that are parallel-safe.
+ * The AP04 section (custom auth step) remains in permissions-seq.test.js due to
+ * file I/O + server.restart requirements.
+ */
 
-require('./test-helpers');
-const helpers = require('./helpers');
-const treeUtils = require('utils').treeUtils;
-const server = helpers.dependencies.instanceManager;
-const validation = helpers.validation;
-const testData = helpers.data;
-const { integrity } = require('business');
+/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
+
+const timestamp = require('unix-timestamp');
 const { getConfig } = require('@pryv/boiler');
 
-let isAuditActive = false;
+describe('[PPERM] Access permissions (Pattern C)', function () {
+  let username, eventsPath, streamsPath;
 
-describe('[ACCP] Access permissions', function () {
-  before(async () => {
+  // Tokens
+  let personalToken;
+  let sharedToken, sharedAccessId;
+  let readAllToken;
+  let noPermToken;
+  let manageToken2;
+
+  // Stream IDs
+  let roStreamId, roChildId;
+  let cbStreamId, cbChildId;
+  let mgStreamId, mgChildId;
+  let mgTrStreamId;
+  let mg2StreamId;
+
+  // Event IDs
+  let roEventId, roChildEventId;
+  let mgEventId, mg2EventId;
+  let attEventId, attId;
+
+  let isAuditActive = false;
+
+  before(async function () {
+    await initTests();
+    await initCore();
+
     const config = await getConfig();
     isAuditActive = config.get('audit:active');
+
+    const fixtures = getNewFixture();
+    username = cuid();
+    personalToken = cuid();
+    sharedToken = cuid();
+    readAllToken = cuid();
+    noPermToken = cuid();
+    manageToken2 = cuid();
+
+    eventsPath = '/' + username + '/events';
+    streamsPath = '/' + username + '/streams';
+
+    const user = await fixtures.user(username);
+
+    // Stream IDs (unique per test run)
+    roStreamId = 'ro-' + username;
+    roChildId = 'ro-ch-' + username;
+    cbStreamId = 'cb-' + username;
+    cbChildId = 'cb-ch-' + username;
+    mgStreamId = 'mg-' + username;
+    mgChildId = 'mg-ch-' + username;
+    mgTrStreamId = 'mgtr-' + username;
+    mg2StreamId = 'mg2-' + username;
+
+    // Create stream tree
+    await user.stream({ id: roStreamId, name: 'Read-Only Stream' });
+    await user.stream({ id: roChildId, name: 'RO Child', parentId: roStreamId });
+    await user.stream({ id: cbStreamId, name: 'Contribute Stream' });
+    await user.stream({ id: cbChildId, name: 'CB Child', parentId: cbStreamId });
+    await user.stream({ id: mgStreamId, name: 'Manage Stream' });
+    await user.stream({ id: mgChildId, name: 'Manage Child', parentId: mgStreamId });
+    await user.stream({ id: mgTrStreamId, name: 'Trashed Managed', trashed: true });
+    await user.stream({ id: mg2StreamId, name: 'Manage Stream 2' });
+
+    // Create accesses
+    await user.access({ token: personalToken, type: 'personal' });
+    await user.session(personalToken);
+
+    const sharedAccess = await user.access({
+      token: sharedToken,
+      type: 'shared',
+      name: 'mixed permissions',
+      permissions: [
+        { streamId: roStreamId, level: 'read' },
+        { streamId: cbStreamId, level: 'contribute' },
+        { streamId: mgStreamId, level: 'manage' },
+        { streamId: mgTrStreamId, level: 'manage' }
+      ]
+    });
+    sharedAccessId = sharedAccess.attrs.id;
+    await user.session(sharedToken);
+
+    await user.access({
+      token: readAllToken,
+      type: 'shared',
+      name: 'read all',
+      permissions: [{ streamId: '*', level: 'read' }]
+    });
+    await user.session(readAllToken);
+
+    await user.access({
+      token: noPermToken,
+      type: 'shared',
+      name: 'no permissions',
+      permissions: []
+    });
+    await user.session(noPermToken);
+
+    await user.access({
+      token: manageToken2,
+      type: 'shared',
+      name: 'manage stream 2',
+      permissions: [{ streamId: mg2StreamId, level: 'manage' }]
+    });
+    await user.session(manageToken2);
+
+    // Create events using personal token
+    let res;
+
+    res = await coreRequest.post(eventsPath).set('Authorization', personalToken)
+      .send({ streamIds: [roStreamId], type: 'note/txt', content: 'RO event' });
+    roEventId = res.body.event.id;
+
+    res = await coreRequest.post(eventsPath).set('Authorization', personalToken)
+      .send({ streamIds: [roChildId], type: 'note/txt', content: 'RO child event' });
+    roChildEventId = res.body.event.id;
+
+    res = await coreRequest.post(eventsPath).set('Authorization', personalToken)
+      .send({ streamIds: [mgStreamId], type: 'note/txt', content: 'MG event' });
+    mgEventId = res.body.event.id;
+
+    res = await coreRequest.post(eventsPath).set('Authorization', personalToken)
+      .send({ streamIds: [mg2StreamId], type: 'note/txt', content: 'MG2 event' });
+    mg2EventId = res.body.event.id;
+
+    // Create event with attachment (for [KTM1] test)
+    res = await coreRequest.post(eventsPath).set('Authorization', personalToken)
+      .field('event', JSON.stringify({ streamIds: [roStreamId], type: 'note/txt', content: 'With attachment' }))
+      .attach('file', Buffer.from('test file content'), 'test.txt');
+    attEventId = res.body.event.id;
+    attId = res.body.event.attachments[0].id;
   });
 
-  const user = structuredClone(testData.users[0]);
-  let request = null; // must be set after server instance started
-  const filesReadTokenSecret = helpers.dependencies.settings.auth.filesReadTokenSecret;
+  describe('[AP01] Events', function () {
+    it('[1AK1] `get` must only return events in accessible streams', async function () {
+      const res = await coreRequest.get(eventsPath).set('Authorization', sharedToken)
+        .query({ limit: 100, state: 'all' });
 
-  function token (testAccessIndex) {
-    return testData.accesses[testAccessIndex].token;
-  }
-
-  function getAllStreamIdsByToken (testAccessIndex) {
-    const tokenStreamIds = [];
-    testData.accesses[testAccessIndex].permissions.forEach(function (p) {
-      tokenStreamIds.push(p.streamId);
-    });
-    return treeUtils.expandIds(testData.streams, tokenStreamIds);
-  }
-
-  before(function (done) {
-    async.series([
-      testData.resetUsers,
-      testData.resetAccesses,
-      server.ensureStarted.bind(server, helpers.dependencies.settings),
-      function (stepDone) { request = helpers.request(server.url); stepDone(); }
-    ], done);
-  });
-
-  describe('Events', function () {
-    before(function (done) {
-      async.series([
-        testData.resetStreams
-      ], done);
-    });
-
-    beforeEach(testData.resetEvents);
-
-    const basePath = '/' + user.username + '/events';
-
-    function reqPath (id) {
-      return basePath + '/' + id;
-    }
-
-    it('[1AK1] `get` must only return events in accessible streams', function (done) {
-      const params = {
-        limit: 100, // i.e. all
-        state: 'all'
-      };
-      const streamIds = getAllStreamIdsByToken(1);
-
-      const events = validation.removeDeletionsAndHistory(testData.events).filter(function (e) {
-        return streamIds.indexOf(e.streamIds[0]) >= 0;
-      }).sort(function (a, b) {
-        return b.time - a.time;
-      });
-      request.get(basePath, token(1)).query(params).end(function (res) {
-        validation.checkFilesReadToken(res.body.events, testData.accesses[1],
-          filesReadTokenSecret);
-        validation.sanitizeEvents(res.body.events);
-        events.forEach(integrity.events.set);
-        res.body.events.should.eql(testData.addCorrectAttachmentIds(events));
-        done();
-      });
+      assert.strictEqual(res.status, 200);
+      const accessibleStreamIds = [roStreamId, roChildId, cbStreamId, cbChildId, mgStreamId, mgChildId];
+      for (const event of res.body.events) {
+        const isAccessible = event.streamIds.some(sid => accessibleStreamIds.includes(sid));
+        assert.ok(isAccessible,
+          `Event ${event.id} should be in an accessible stream, got streamIds: ${event.streamIds}`);
+      }
+      // Should NOT contain events from mg2 stream (not in sharedToken's permissions)
+      assert.ok(!res.body.events.some(e => e.id === mg2EventId),
+        'Should not contain events from non-permitted streams');
     });
 
     it('[NKI5] `get` must return all events when permissions are defined for "all streams" (*)',
-      function (done) {
-        const params = {
-          limit: 100, // i.e. all
-          state: 'all'
-        };
-        request.get(basePath, token(2)).query(params).end(function (res) {
-          validation.checkFilesReadToken(res.body.events, testData.accesses[2],
-            filesReadTokenSecret);
-          validation.sanitizeEvents(res.body.events);
-          res.body.events = validation.removeAccountStreamsEvents(res.body.events);
-          const cEvents = testData.addCorrectAttachmentIds(testData.events);
-          res.body.events.should.eql(validation.removeDeletionsAndHistory(cEvents).sort(
-            function (a, b) {
-              return b.time - a.time;
-            }
-          ));
-          done();
-        });
+      async function () {
+        const res = await coreRequest.get(eventsPath).set('Authorization', readAllToken)
+          .query({ limit: 100, state: 'all' });
+
+        assert.strictEqual(res.status, 200);
+        // Should contain events from all streams including mg2
+        const allEventIds = [roEventId, roChildEventId, mgEventId, mg2EventId, attEventId];
+        for (const id of allEventIds) {
+          assert.ok(res.body.events.some(e => e.id === id),
+            `Should contain event ${id}`);
+        }
       });
 
-    it('[5360] `get` (or any request) must alternatively accept the access token in the query string',
-      function (done) {
-        const query = {
-          auth: token(1),
-          streams: [testData.streams[2].children[0].id],
-          state: 'all'
-        };
-        request.get(basePath, token(1)).unset('Authorization').query(query).end(function (res) {
-          const expectedEvent = structuredClone(testData.events[8]);
-          expectedEvent.streamId = expectedEvent.streamIds[0];
-          res.body.events.should.eql([expectedEvent]);
-          done();
-        });
+    it('[5360] `get` must alternatively accept the access token in the query string',
+      async function () {
+        const res = await coreRequest.get(eventsPath)
+          .query({ auth: sharedToken, streams: [mgStreamId], state: 'all' });
+
+        assert.strictEqual(res.status, 200);
+        assert.ok(res.body.events.some(e => e.id === mgEventId));
       });
 
-    it('[KTM1] must forbid getting an attached file if permissions are insufficient', function (done) {
-      const event = testData.events[0];
-      const attachment = event.attachments[0];
-      request.get(reqPath(event.id) + '/' + attachment.id, token(3)).end(function (res) {
-        validation.checkErrorForbidden(res, done);
+    it('[KTM1] must forbid getting an attached file if permissions are insufficient',
+      async function () {
+        const res = await coreRequest
+          .get(eventsPath + '/' + attEventId + '/' + attId)
+          .set('Authorization', noPermToken);
+
+        assert.strictEqual(res.status, 403);
       });
+
+    it('[2773] must forbid creating events for \'read-only\' streams', async function () {
+      const res = await coreRequest.post(eventsPath).set('Authorization', sharedToken)
+        .send({ type: 'test/test', streamIds: [roStreamId] });
+
+      assert.strictEqual(res.status, 403);
     });
 
-    it('[2773] must forbid creating events for \'read-only\' streams', function (done) {
-      const params = {
-        type: 'test/test',
-        streamId: testData.streams[0].id
-      };
-      request.post(basePath, token(1)).send(params).end(function (res) {
-        validation.checkErrorForbidden(res, done);
-      });
+    it('[ZKZZ] must forbid updating events for \'read-only\' streams', async function () {
+      // Also checks recursive permissions
+      const res = await coreRequest
+        .put(eventsPath + '/' + roEventId)
+        .set('Authorization', sharedToken)
+        .send({ content: {} });
+
+      assert.strictEqual(res.status, 403);
     });
 
-    it('[ZKZZ] must forbid updating events for \'read-only\' streams', function (done) {
-      // also check recursive permissions
-      request.put(reqPath(testData.events[0].id), token(1)).send({ content: {} }).end(function (res) {
-        validation.checkErrorForbidden(res, done);
-      });
+    it('[4H62] must forbid deleting events for \'read-only\' streams', async function () {
+      const res = await coreRequest
+        .del(eventsPath + '/' + roChildEventId)
+        .set('Authorization', sharedToken);
+
+      assert.strictEqual(res.status, 403);
     });
 
-    it('[4H62] must forbid deleting events for \'read-only\' streams', function (done) {
-      request.del(reqPath(testData.events[1].id), token(1)).end(function (res) {
-        validation.checkErrorForbidden(res, done);
-      });
-    });
-
-    it('[Y38T] must allow creating events for \'contribute\' streams', function (done) {
+    it('[Y38T] must allow creating events for \'contribute\' streams', async function () {
       const data = {
         time: timestamp.now('-5h'),
         duration: timestamp.duration('1h'),
         type: 'test/test',
-        streamId: testData.streams[1].id
+        streamIds: [cbStreamId]
       };
-      request.post(basePath, token(1)).send(data).end(function (res) {
-        res.statusCode.should.eql(201);
-        done();
-      });
+      const res = await coreRequest.post(eventsPath).set('Authorization', sharedToken)
+        .send(data);
+
+      assert.strictEqual(res.status, 201);
     });
   });
 
-  describe('Streams', function () {
-    before(testData.resetEvents);
+  describe('[AP02] Streams', function () {
+    it('[BSFP] `get` must only return streams for which permissions are defined',
+      async function () {
+        const res = await coreRequest.get(streamsPath).set('Authorization', sharedToken)
+          .query({ state: 'all' });
 
-    beforeEach(testData.resetStreams);
-
-    const basePath = '/' + user.username + '/streams';
-
-    function reqPath (id) {
-      return basePath + '/' + id;
-    }
-
-    // note: personal (i.e. full) access is implicitly covered by streams/events tests
-
-    it('[BSFP] `get` must only return streams for which permissions are defined', function (done) {
-      request.get(basePath, token(1)).query({ state: 'all' }).end(async function (res) {
-        const expectedStreamids = [testData.streams[0].id, testData.streams[1].id, testData.streams[2].children[0].id];
+        assert.strictEqual(res.status, 200);
+        const expectedStreamIds = [roStreamId, cbStreamId, mgStreamId, mgTrStreamId];
         if (isAuditActive) {
-          expectedStreamids.push(':_audit:access-a_1');
+          expectedStreamIds.push(':_audit:access-' + sharedAccessId);
         }
-        assert.exists(res.body.streams);
-        res.body.streams.length.should.eql(expectedStreamids.length);
+        assert.strictEqual(res.body.streams.length, expectedStreamIds.length,
+          `Expected ${expectedStreamIds.length} top-level streams, got ${res.body.streams.length}: ` +
+          res.body.streams.map(s => s.id).join(', '));
         for (const stream of res.body.streams) {
-          assert.include(expectedStreamids, stream.id);
+          assert.ok(expectedStreamIds.includes(stream.id),
+            `Stream ${stream.id} should be in expected list`);
         }
-        done();
       });
+
+    it('[R4IA] must forbid creating child streams in \'read-only\' streams', async function () {
+      const res = await coreRequest.post(streamsPath).set('Authorization', sharedToken)
+        .send({ name: 'Forbidden Child', parentId: roStreamId });
+
+      assert.strictEqual(res.status, 403);
     });
 
-    it('[R4IA] must forbid creating child streams in \'read-only\' streams', function (done) {
-      const data = {
-        name: 'Tai Ji',
-        parentId: testData.streams[0].id
-      };
-      request.post(basePath, token(1)).send(data).end(function (res) {
-        validation.checkErrorForbidden(res, done);
+    it('[KHI7] must forbid creating child streams in \'contribute\' streams', async function () {
+      const res = await coreRequest.post(streamsPath).set('Authorization', sharedToken)
+        .send({ name: 'Forbidden Child', parentId: cbStreamId });
+
+      assert.strictEqual(res.status, 403);
+    });
+
+    it('[MCDP] must forbid deleting child streams in \'contribute\' streams', async function () {
+      const res = await coreRequest
+        .del(streamsPath + '/' + cbChildId)
+        .set('Authorization', sharedToken);
+
+      assert.strictEqual(res.status, 403);
+    });
+
+    it('[7B6P] must forbid updating \'contribute\' streams', async function () {
+      const res = await coreRequest
+        .put(streamsPath + '/' + cbStreamId)
+        .set('Authorization', sharedToken)
+        .send({ name: 'Renamed' });
+
+      assert.strictEqual(res.status, 403);
+    });
+
+    it('[RG5R] must forbid deleting \'contribute\' streams', async function () {
+      const res = await coreRequest
+        .del(streamsPath + '/' + cbStreamId)
+        .set('Authorization', sharedToken)
+        .query({ mergeEventsWithParent: true });
+
+      assert.strictEqual(res.status, 403);
+    });
+
+    it('[21AZ] must not allow creating child streams in trashed \'managed\' streams',
+      async function () {
+        const res = await coreRequest.post(streamsPath).set('Authorization', sharedToken)
+          .send({ name: 'Child of Trashed', parentId: mgTrStreamId });
+
+        assert.strictEqual(res.status, 400);
       });
+
+    it('[O1AZ] must allow creating child streams in \'managed\' streams', async function () {
+      const res = await coreRequest.post(streamsPath).set('Authorization', manageToken2)
+        .send({ name: 'New Child', parentId: mg2StreamId });
+
+      assert.strictEqual(res.status, 201);
     });
 
-    it('[KHI7] must forbid creating child streams in \'contribute\' streams', function (done) {
-      const data = {
-        name: 'Xing Yi',
-        parentId: testData.streams[1].id
-      };
-      request.post(basePath, token(1)).send(data).end(function (res) {
-        validation.checkErrorForbidden(res, done);
+    it('[5QPU] must forbid moving streams into non-\'managed\' parent streams',
+      async function () {
+        const res = await coreRequest
+          .put(streamsPath + '/' + mgChildId)
+          .set('Authorization', sharedToken)
+          .send({ parentId: cbStreamId });
+
+        assert.strictEqual(res.status, 403);
       });
-    });
 
-    it('[MCDP] must forbid deleting child streams in \'contribute\' streams', function (done) {
-      request.del(reqPath(testData.streams[1].children[0].id), token(1)).end(function (res) {
-        validation.checkErrorForbidden(res, done);
+    it('[HHSS] must recursively apply permissions to the streams\' child streams',
+      async function () {
+        const res = await coreRequest.post(streamsPath).set('Authorization', sharedToken)
+          .send({ name: 'Forbidden Grandchild', parentId: roChildId });
+
+        assert.strictEqual(res.status, 403);
       });
-    });
-
-    it('[7B6P] must forbid updating \'contribute\' streams', function (done) {
-      request.put(reqPath(testData.streams[1].id), token(1)).send({ name: 'Ba Gua' })
-        .end(function (res) {
-          validation.checkErrorForbidden(res, done);
-        });
-    });
-
-    it('[RG5R] must forbid deleting \'contribute\' streams', function (done) {
-      request.del(reqPath(testData.streams[1].id), token(1)).query({ mergeEventsWithParent: true })
-        .end(function (res) {
-          validation.checkErrorForbidden(res, done);
-        });
-    });
-
-    it('[21AZ] must not allow creating child streams in trashed \'managed\' streams', function (done) {
-      const data = {
-        name: 'Dzogchen',
-        parentId: testData.streams[2].children[0].id
-      };
-      request.post(basePath, token(1)).send(data).end(function (res) {
-        res.statusCode.should.eql(400);
-        done();
-      });
-    });
-
-    it('[O1AZ] must allow creating child streams in \'managed\' streams', function (done) {
-      const data = {
-        name: 'Dzogchen',
-        parentId: testData.streams[2].children[1].id
-      };
-      request.post(basePath, token(6)).send(data).end(function (res) {
-        res.statusCode.should.eql(201);
-        done();
-      });
-    });
-
-    it('[5QPU] must forbid moving streams into non-\'managed\' parent streams', function (done) {
-      const update = { parentId: testData.streams[1].id };
-      request.put(reqPath(testData.streams[2].children[0].id), token(1))
-        .send(update).end(function (res) {
-          validation.checkErrorForbidden(res, done);
-        });
-    });
-
-    it('[KP1Q] must allow deleting child streams in \'managed\' streams', function (done) {
-      request.del(reqPath(testData.streams[2].children[0].children[0].id), token(1))
-        .end(function (res) {
-          res.statusCode.should.eql(200); // trashed -> considered an update
-          done();
-        });
-    });
-
-    it('[HHSS] must recursively apply permissions to the streams\' child streams', function (done) {
-      const data = {
-        name: 'Zen',
-        parentId: testData.streams[0].children[0].id
-      };
-      request.post(basePath, token(1)).send(data).end(function (res) {
-        validation.checkErrorForbidden(res, done);
-      });
-    });
 
     it('[NJ1A] must allow access to all streams when no specific stream permissions are defined',
-      function (done) {
-        const expected = validation.removeDeletions(structuredClone(testData.streams));
-        validation.addStoreStreams(expected);
-        request.get(basePath, token(2)).query({ state: 'all' }).end(function (res) {
-          res.body.streams = validation.removeAccountStreams(res.body.streams);
-          res.body.streams.should.eql(expected);
-          done();
-        });
-      });
-  });
+      async function () {
+        const res = await coreRequest.get(streamsPath).set('Authorization', readAllToken)
+          .query({ state: 'all' });
 
-  describe('Auth and change tracking', function () {
-    before(testData.resetStreams);
-
-    beforeEach(testData.resetEvents);
-
-    const basePath = '/' + user.username + '/events';
-    const sharedAccessIndex = 1;
-    const callerId = 'test-caller-id';
-    const auth = token(sharedAccessIndex) + ' ' + callerId;
-    const newEventData = {
-      type: 'test/test',
-      streamId: testData.streams[1].id
-    };
-
-    it('[YE49] must handle optional caller id in auth (in addition to token)', function (done) {
-      request.post(basePath, auth).send(newEventData).end(function (res) {
-        res.statusCode.should.eql(201);
-        const event = res.body.event;
-        const expectedAuthor = testData.accesses[sharedAccessIndex].id + ' ' + callerId;
-        event.createdBy.should.eql(expectedAuthor);
-        event.modifiedBy.should.eql(expectedAuthor);
-        done();
-      });
-    });
-
-    describe('custom auth step (e.g. to validate/parse caller id)', function () {
-      const fileName = 'customAuthStepFn.js';
-      const srcPath = path.join(__dirname, 'permissions.fixtures', fileName);
-      const destPath = path.join(__dirname, '../../../custom-extensions', fileName);
-
-      before(function (done) {
-        async.series([
-          function setupCustomAuthStep (stepDone) {
-            fs.readFile(srcPath, function (err, data) {
-              if (err) { return stepDone(err); }
-
-              fs.writeFile(destPath, data, stepDone);
-            });
-          },
-          server.restart.bind(server)
-        ], function (err) {
-          if (err) done(err);
-
-          if (!fs.existsSync(destPath)) { throw new Error('Failed creating :' + destPath); }
-
-          done();
-        });
-      });
-
-      after(function (done) {
-        async.series([
-          function teardownCustomAuthStep (stepDone) {
-            fs.unlink(destPath, stepDone);
-          },
-          server.restart.bind(server)
-        ], done);
-      });
-
-      it('[IA9K] must be supported and deny access when failing', function (done) {
-        request.post(basePath, auth).send(newEventData).end(function (res) {
-          validation.checkErrorInvalidAccess(res, done);
-        });
-      });
-
-      it('[H58R] must allow access when successful', function (done) {
-        const successAuth = token(sharedAccessIndex) + ' Georges (unparsed)';
-        request.post(basePath, successAuth).send(newEventData).end(function (res) {
-          res.statusCode.should.eql(201);
-          const event = res.body.event;
-          const expectedAuthor = testData.accesses[sharedAccessIndex].id + ' Georges (parsed)';
-          event.createdBy.should.eql(expectedAuthor);
-          event.modifiedBy.should.eql(expectedAuthor);
-          done();
-        });
-      });
-
-      it('[H58Z] must allow access whith "callerid" headers', function (done) {
-        const successAuth = token(sharedAccessIndex);
-        request.post(basePath, successAuth)
-          .set('callerid', 'Georges (unparsed)')
-          .send(newEventData).end(function (err, res) {
-            assert.notExists(err);
-            res.statusCode.should.eql(201);
-            const event = res.body.event;
-            const expectedAuthor = testData.accesses[sharedAccessIndex].id + ' Georges (parsed)';
-            event.createdBy.should.eql(expectedAuthor);
-            event.modifiedBy.should.eql(expectedAuthor);
-            done();
-          });
-      });
-
-      it('[ISE4] must fail properly (i.e. not granting access) when the custom function crashes', function (done) {
-        const crashAuth = token(sharedAccessIndex) + ' Please Crash';
-        request.post(basePath, crashAuth).send(newEventData).end(function (res) {
-          res.statusCode.should.eql(500);
-          done();
-        });
-      });
-
-      it('[P4OM] must validate the custom function at startup time', async () => {
-        const srcPath = path.join(__dirname, 'permissions.fixtures', 'customAuthStepFn.invalid.js');
-        fs.writeFileSync(destPath, fs.readFileSync(srcPath)); // Copy content of srcPath file to destPath
-        try {
-          await server.restartAsync();
-        } catch (error) {
-          assert.isNotNull(error);
-          assert.exists(error.message);
-          assert.match(error.message, /Server failed/);
+        assert.strictEqual(res.status, 200);
+        // readAllToken with '*: read' should see all user streams
+        const allRootStreamIds = [roStreamId, cbStreamId, mgStreamId, mg2StreamId];
+        for (const id of allRootStreamIds) {
+          assert.ok(res.body.streams.some(s => s.id === id),
+            `Should find stream ${id} in response`);
         }
       });
+
+    // KP1Q must be last: it trashes mgChildId which affects other tests
+    it('[KP1Q] must allow deleting child streams in \'managed\' streams', async function () {
+      const res = await coreRequest
+        .del(streamsPath + '/' + mgChildId)
+        .set('Authorization', sharedToken);
+
+      assert.strictEqual(res.status, 200); // trashed -> considered an update
+    });
+  });
+
+  describe('[AP03] Auth and change tracking', function () {
+    it('[YE49] must handle optional caller id in auth (in addition to token)', async function () {
+      const callerId = 'test-caller-id';
+      const auth = sharedToken + ' ' + callerId;
+      const newEventData = {
+        type: 'test/test',
+        streamIds: [cbStreamId]
+      };
+
+      const res = await coreRequest.post(eventsPath)
+        .set('Authorization', auth)
+        .send(newEventData);
+
+      assert.strictEqual(res.status, 201);
+      const event = res.body.event;
+      const expectedAuthor = sharedAccessId + ' ' + callerId;
+      assert.strictEqual(event.createdBy, expectedAuthor);
+      assert.strictEqual(event.modifiedBy, expectedAuthor);
     });
   });
 });

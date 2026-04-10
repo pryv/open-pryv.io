@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 /**
  * Utilities for events.get stream queries.
@@ -282,67 +255,6 @@ async function expandAndTransformStreamQuery (streamQuery, expandSet) {
   }
   return containsAtLeastOneInclusion ? res : null;
 }
-/**
- * Transform queries for MongoDB - to be run on
- * @param {Array.<StreamQuery>} streamQueriesArray - array of streamQuery
- * @returns {mongoQuery} - the necessary components to query streams. Either with a {streamIds: ..} or { $or: ....}
- */
-exports.toMongoDBQuery = function toMongoDBQuery (streamQueriesArray) {
-  let mongoQuery = null; // no streams
-  if (streamQueriesArray !== null) {
-    if (streamQueriesArray.length === 1) {
-      mongoQuery = streamQueryToMongoDBQuery(streamQueriesArray[0]);
-    } else {
-      // pack in $or
-      mongoQuery = { $or: streamQueriesArray.map(streamQueryToMongoDBQuery) };
-    }
-  }
-  if (mongoQuery === null) { mongoQuery = { streamIds: { $in: [] } }; } // no streams
-  return mongoQuery;
-};
-/**
- * Convert a streamQuery to a query usable by MongoDB
- * @param {Array<StreamQuery>|null} streamQuery
- * @returns {{}}
- */
-function streamQueryToMongoDBQuery (streamQuery) {
-  if (streamQuery == null) return {};
-
-  const ands = [];
-
-  for (const item of streamQuery) {
-    addItem(item);
-  }
-
-  if (ands.length === 0) {
-    return {};
-  } else if (ands.length === 1) {
-    return ands[0];
-  } else {
-    return { $and: ands };
-  }
-
-  function addItem (item) {
-    if (item.any && item.any.length > 0) {
-      if (!item.any.includes('*')) {
-        // ignore queries that contains '*';
-        if (item.any.length === 1) {
-          ands.push({ streamIds: { $eq: item.any[0] } });
-        } else {
-          ands.push({ streamIds: { $in: item.any } });
-        }
-      }
-    }
-    if (item.not && item.not.length > 0) {
-      if (item.not.length === 1) {
-        ands.push({ streamIds: { $ne: item.not[0] } });
-      } else {
-        ands.push({ streamIds: { $nin: item.not } });
-      }
-    }
-  }
-}
-
 // ------------------------ helpers ----------------------------------//
 /**
  * for nice error message with clear query content

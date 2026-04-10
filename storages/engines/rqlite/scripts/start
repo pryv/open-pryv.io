@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# Starts the local rqlited instance from var-pryv/rqlite-bin.
+# Mirrors the start-mongo / start-postgresql pattern.
+#
+# Modes:
+#   DEVELOPMENT=true  — attached (foreground) process
+#   default           — detached background process, log to var-pryv/logs/rqlited.log
+#
+# Single-node only — multi-core peer discovery is master.js's job at runtime.
+
+SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
+VAR_PRYV_FOLDER=${VAR_PRYV_FOLDER:-$SCRIPT_FOLDER/../../../../var-pryv}
+VAR_PRYV_FOLDER="$(cd "$VAR_PRYV_FOLDER" && pwd)"
+
+RQLITE_BIN=$VAR_PRYV_FOLDER/rqlite-bin/rqlited
+RQLITE_DATA=$VAR_PRYV_FOLDER/rqlite-data
+RQLITE_LOGS=$VAR_PRYV_FOLDER/logs
+PIDFILE=$VAR_PRYV_FOLDER/rqlite-data/rqlited.pid
+
+if [[ ! -x "$RQLITE_BIN" ]]; then
+  echo "Error: rqlited not found at $RQLITE_BIN"
+  echo "Run ./storages/engines/rqlite/scripts/setup first."
+  exit 1
+fi
+
+mkdir -p "$RQLITE_DATA" "$RQLITE_LOGS"
+
+# Check if already running (via pidfile)
+if [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+  echo "rqlited is already running (PID $(cat "$PIDFILE"))."
+  exit 0
+fi
+
+ARGS=(
+  -node-id single
+  -http-addr 0.0.0.0:4001
+  -http-adv-addr 127.0.0.1:4001
+  -raft-addr 127.0.0.1:4002
+  -raft-cluster-remove-shutdown
+  "$RQLITE_DATA"
+)
+
+if [[ "$DEVELOPMENT" == "true" ]]; then
+  echo "Starting rqlited (foreground)..."
+  exec "$RQLITE_BIN" "${ARGS[@]}"
+else
+  echo "Starting rqlited (background)..."
+  nohup "$RQLITE_BIN" "${ARGS[@]}" > "$RQLITE_LOGS/rqlited.log" 2>&1 &
+  echo $! > "$PIDFILE"
+
+  # Wait for HTTP API to become ready
+  for i in $(seq 1 60); do
+    if curl -fs http://127.0.0.1:4001/readyz >/dev/null 2>&1; then
+      echo "rqlited running (PID $(cat "$PIDFILE"))."
+      echo "  Logs: $RQLITE_LOGS/rqlited.log"
+      echo "  Stop: kill \$(cat $PIDFILE)"
+      exit 0
+    fi
+    sleep 0.5
+  done
+
+  echo "Error: rqlited did not become ready within 30s. See $RQLITE_LOGS/rqlited.log"
+  exit 1
+fi

@@ -1,55 +1,27 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
-const cuid = require('cuid');
-const chai = require('chai');
-const assert = chai.assert;
-const charlatan = require('charlatan');
+/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, charlatan */
 
-const helpers = require('./helpers');
-const testData = helpers.data;
-const settings = structuredClone(helpers.dependencies.settings);
+const path = require('path');
 
-const { databaseFixture } = require('test-helpers');
-const { produceMongoConnection, context } = require('./test-helpers');
+// Test attachment for upload tests
+const attachmentPath = path.resolve(__dirname, '../../test-helpers/src/data/attachments/document.pdf');
+const attachmentFilename = 'document.pdf';
+
 const { getConfig } = require('@pryv/boiler');
 let isAuditActive = true;
 
-describe('permissions create-only level', () => {
+describe('[PCRO] permissions create-only level', () => {
   let mongoFixtures;
   before(async function () {
-    mongoFixtures = databaseFixture(await produceMongoConnection());
+    await initTests();
+    await initCore();
+    mongoFixtures = getNewFixture();
     const config = await getConfig();
     isAuditActive = config.get('audit:active');
   });
@@ -90,14 +62,6 @@ describe('permissions create-only level', () => {
     createOnlyEventId = cuid();
     streamParentIdAndCreateOnlyEventId = cuid();
     eventOutId = cuid();
-  });
-
-  let server;
-  before(async () => {
-    server = await context.spawn();
-  });
-  after(() => {
-    server.stop();
   });
 
   before(async () => {
@@ -209,7 +173,7 @@ describe('permissions create-only level', () => {
     });
   });
 
-  describe('Permissions - create-only level', function () {
+  describe('[PC01] Permissions - create-only level', function () {
     let basePath;
     before(() => {
       basePath = `/${username}/accesses`;
@@ -219,27 +183,27 @@ describe('permissions create-only level', () => {
       return `${basePath}/${id}`;
     }
 
-    describe('Accesses', function () {
-      describe('GET /', function () {
-        describe('when using an access with a "create-only" permissions', function () {
+    describe('[PC02] Accesses', function () {
+      describe('[PC07] GET /', function () {
+        describe('[PC08] when using an access with a "create-only" permissions', function () {
           let accesses;
           before(async function () {
-            const res = await server.request()
+            const res = await coreRequest
               .get(basePath)
               .set('Authorization', createOnlyToken);
             accesses = res.body.accesses;
           });
           it('[HOTO] should return an empty list', async function () {
-            assert.exists(accesses);
-            assert.equal(accesses.length, 0);
+            assert.ok(accesses);
+            assert.strictEqual(accesses.length, 0);
           });
         });
       });
 
-      describe('POST /', function () {
-        describe('when using an access with a "create-only" permission', function () {
+      describe('[PC09] POST /', function () {
+        describe('[PC10] when using an access with a "create-only" permission', function () {
           it('[X4Z1] a masterToken should allow to create an access with a "create-only" permissions', async function () {
-            const res = await server.request()
+            const res = await coreRequest
               .post(basePath)
               .set('Authorization', masterToken)
               .send({
@@ -250,13 +214,13 @@ describe('permissions create-only level', () => {
                   level: 'create-only'
                 }]
               });
-            assert.equal(res.status, 201);
+            assert.strictEqual(res.status, 201);
             const access = res.body.access;
-            assert.exists(access);
+            assert.ok(access);
           });
 
           it('[ATCO] an appToken with managed rights should allow to create an access with a "create-only" permissions', async function () {
-            const res = await server.request()
+            const res = await coreRequest
               .post(basePath)
               .set('Authorization', manageAccessToken)
               .send({
@@ -267,13 +231,13 @@ describe('permissions create-only level', () => {
                   level: 'create-only'
                 }]
               });
-            assert.equal(res.status, 201);
+            assert.strictEqual(res.status, 201);
             const access = res.body.access;
-            assert.exists(access);
+            assert.ok(access);
           });
 
           it('[ATCY] an appToken with managed rights should allow to create an access with a "create-only" permissions and selfRevoke forbidden', async function () {
-            const res = await server.request()
+            const res = await coreRequest
               .post(basePath)
               .set('Authorization', manageAccessToken)
               .send({
@@ -287,13 +251,13 @@ describe('permissions create-only level', () => {
                   setting: 'forbidden'
                 }]
               });
-            assert.equal(res.status, 201);
+            assert.strictEqual(res.status, 201);
             const access = res.body.access;
-            assert.exists(access);
+            assert.ok(access);
           });
 
           it('[ATCR] an appToken with read rights should be forbidden to create an access with a "create-only" permissions', async function () {
-            const res = await server.request()
+            const res = await coreRequest
               .post(basePath)
               .set('Authorization', readAccessToken)
               .send({
@@ -304,13 +268,13 @@ describe('permissions create-only level', () => {
                   level: 'create-only'
                 }]
               });
-            assert.equal(res.status, 403);
+            assert.strictEqual(res.status, 403);
             const error = res.body.error;
-            assert.exists(error);
+            assert.ok(error);
           });
 
           it('[ATCC] an appToken with contribute rights should be allowed to create an access with a "create-only" permissions', async function () {
-            const res = await server.request()
+            const res = await coreRequest
               .post(basePath)
               .set('Authorization', contributeAccessToken)
               .send({
@@ -321,14 +285,13 @@ describe('permissions create-only level', () => {
                   level: 'create-only'
                 }]
               });
-            assert.equal(res.status, 201);
+            assert.strictEqual(res.status, 201);
             const access = res.body.access;
-            assert.exists(access);
+            assert.ok(access);
           });
 
           it('[FEGI] a createOnlyToken should forbid to create an access with a "read" level permission permission', async function () {
-            const res = await server
-              .request()
+            const res = await coreRequest
               .post(basePath)
               .set('Authorization', coWithContributeParentToken)
               .send({
@@ -341,13 +304,12 @@ describe('permissions create-only level', () => {
                 ]
               });
             const error = res.body.error;
-            assert.exists(error);
-            assert.equal(res.status, 403);
-            assert.notExists(res.body.access);
+            assert.ok(error);
+            assert.strictEqual(res.status, 403);
+            assert.ok(res.body.access == null);
           });
           it('[SL4P] should forbid to create an access with a "contribute" level permission', async function () {
-            const res = await server
-              .request()
+            const res = await coreRequest
               .post(basePath)
               .set('Authorization', coWithContributeParentToken)
               .send({
@@ -360,13 +322,12 @@ describe('permissions create-only level', () => {
                 ]
               });
             const error = res.body.error;
-            assert.exists(error);
-            assert.equal(res.status, 403);
-            assert.notExists(res.body.access);
+            assert.ok(error);
+            assert.strictEqual(res.status, 403);
+            assert.ok(res.body.access == null);
           });
           it('[ZX1M] should forbid to create an access with a "manage" level permission', async function () {
-            const res = await server
-              .request()
+            const res = await coreRequest
               .post(basePath)
               .set('Authorization', coWithContributeParentToken)
               .send({
@@ -379,16 +340,16 @@ describe('permissions create-only level', () => {
                 ]
               });
             const error = res.body.error;
-            assert.exists(error);
-            assert.equal(res.status, 403);
-            assert.notExists(res.body.access);
+            assert.ok(error);
+            assert.strictEqual(res.status, 403);
+            assert.ok(res.body.access == null);
           });
         });
       });
 
-      describe('PUT /', function () {
+      describe('[PC11] PUT /', function () {
         it('[1WXJ] should forbid updating accesses', async function () {
-          const res = await server.request()
+          const res = await coreRequest
             .put(reqPath(readAccessId))
             .set('Authorization', createOnlyToken)
             .send({
@@ -396,22 +357,22 @@ describe('permissions create-only level', () => {
                 a: 'b'
               }
             });
-          assert.equal(res.status, 410);
+          assert.strictEqual(res.status, 410);
         });
       });
 
-      describe('DELETE /', function () {
+      describe('[PC12] DELETE /', function () {
         it('[G6IP] should forbid deleting accesses', async function () {
-          const res = await server.request()
+          const res = await coreRequest
             .del(reqPath(readAccessId))
             .set('Authorization', createOnlyToken);
-          assert.equal(res.status, 403);
+          assert.strictEqual(res.status, 403);
         });
       });
     });
   });
 
-  describe('Events', function () {
+  describe('[PC03] Events', function () {
     let basePath;
     before(() => {
       basePath = `/${username}/events`;
@@ -421,175 +382,163 @@ describe('permissions create-only level', () => {
       return `${basePath}/${id}`;
     }
 
-    describe('GET /', function () {
+    describe('[PC13] GET /', function () {
       it('[CKF3] should return an error list when fetching explicitly "create-only" streams', async function () {
         const query = {
           streams: [streamCreateOnlyId]
         };
 
-        const res = await server
-          .request()
+        const res = await coreRequest
           .get(basePath)
           .set('Authorization', createOnlyToken)
           .query(query);
-        assert.equal(res.status, 403);
-        assert.equal(res.body.error.id, 'forbidden');
+        assert.strictEqual(res.status, 403);
+        assert.strictEqual(res.body.error.id, 'forbidden');
       });
 
       it('[V4KJ] should not return events when fetching "create-only" streams that are children of "read" streams', async function () {
-        const res = await server
-          .request()
+        const res = await coreRequest
           .get(basePath)
           .set('Authorization', coWithReadParentToken);
         const events = res.body.events;
-        assert.equal(events.length, 1);
+        assert.strictEqual(events.length, 1);
         for (const event of events) {
-          assert.include(event.streamIds, streamParentId, 'Should only include "readable" streamId');
+          assert.ok(event.streamIds.includes(streamParentId), 'Should only include "readable" streamId');
         }
       });
 
       it('[SYRW] should not return events when fetching "create-only" streams that are children of "contribute" streams', async function () {
-        const res = await server
-          .request()
+        const res = await coreRequest
           .get(basePath)
           .set('Authorization', coWithContributeParentToken);
         const events = res.body.events;
-        assert.equal(events.length, 1);
+        assert.strictEqual(events.length, 1);
         for (const event of events) {
-          assert.include(event.streamIds, streamParentId, 'Should only include "readable" streamId');
+          assert.ok(event.streamIds.includes(streamParentId), 'Should only include "readable" streamId');
         }
       });
     });
 
-    describe('GET /:id', function () {
+    describe('[PC14] GET /:id', function () {
       it('[N61I] should forbid fetching an event when using a "create-only" permission', async function () {
-        const res = await server
-          .request()
+        const res = await coreRequest
           .get(reqPath(createOnlyEventId))
           .set('Authorization', createOnlyToken);
-        assert.equal(res.status, 403); // recieve unexistant to avoid discovery
+        assert.strictEqual(res.status, 403); // recieve unexistant to avoid discovery
       });
     });
 
-    describe('POST /', function () {
+    describe('[PC15] POST /', function () {
       it('[0G8I] should forbid creating events for out of scope streams', async function () {
         const params = {
           type: 'test/test',
-          streamId: streamOutId
+          streamIds: [streamOutId]
         };
 
-        const res = await server
-          .request()
+        const res = await coreRequest
           .post(basePath)
           .set('Authorization', createOnlyToken)
           .send(params);
-        assert.equal(res.status, 403);
+        assert.strictEqual(res.status, 403);
       });
 
       it('[F406] should allow creating events for "create-only" streams', async function () {
         const params = {
           type: 'test/test',
-          streamId: streamCreateOnlyId
+          streamIds: [streamCreateOnlyId]
         };
-        const res = await server
-          .request()
+        const res = await coreRequest
           .post(basePath)
           .set('Authorization', createOnlyToken)
           .send(params);
-        assert.equal(res.status, 201);
+        assert.strictEqual(res.status, 201);
       });
     });
 
-    describe('PUT /', function () {
+    describe('[PC16] PUT /', function () {
       it('[V0UO] should forbid updating events for "create-only" streams', async function () {
         const params = {
           content: 12
         };
-        const res = await server
-          .request()
+        const res = await coreRequest
           .put(reqPath(createOnlyEventId))
           .set('Authorization', createOnlyToken)
           .send(params);
-        assert.equal(res.status, 403);
+        assert.strictEqual(res.status, 403);
       });
       // skipping cases "... streams that are children of "read" streams" & "... streams that are children of "contribute" streams"
       // because they are covered by the GET above
     });
 
-    describe('DELETE /', function () {
+    describe('[PC17] DELETE /', function () {
       it('[5OUT] should forbid deleting events for "create-only" streams', async function () {
-        const res = await server
-          .request()
+        const res = await coreRequest
           .del(reqPath(createOnlyEventId))
           .set('Authorization', createOnlyToken);
-        assert.equal(res.status, 403);
+        assert.strictEqual(res.status, 403);
       });
       // skipping cases "... streams that are children of "read" streams" & "... streams that are children of "contribute" streams"
       // because they are covered by the GET above
     });
 
-    describe('attachments', function () {
+    describe('[PC04] attachments', function () {
       let eventId, fileId;
       before(async function () {
-        const res = await server.request()
+        const res = await coreRequest
           .post(basePath)
           .set('Authorization', createOnlyToken)
           .field('event', JSON.stringify({
-            streamId: streamCreateOnlyId,
+            streamIds: [streamCreateOnlyId],
             type: 'picture/attached'
           }))
-          .attach('document', testData.attachments.document.path,
-            testData.attachments.document.filename);
-        assert.equal(res.status, 201);
+          .attach('document', attachmentPath, attachmentFilename);
+        assert.strictEqual(res.status, 201);
         eventId = res.body.event.id;
         fileId = res.body.event.fileId;
       });
 
       // cleaning up explicitly as we are not using fixtures
       after(async function () {
-        await server.request()
+        await coreRequest
           .delete(reqPath(eventId))
           .set('Authorization', masterToken);
-        await server.request()
+        await coreRequest
           .delete(reqPath(eventId))
           .set('Authorization', masterToken);
       });
       // not covering addAttachment as it calls events.update
 
-      describe('GET /events/{id}/{fileId}[/{fileName}]', function () {
+      describe('[PC18] GET /events/{id}/{fileId}[/{fileName}]', function () {
         it('[VTU4] should be forbidden', async function () {
-          const res = await server
-            .request()
+          const res = await coreRequest
             .get(reqPath(eventId) + `/${fileId}`)
             .set('Authorization', createOnlyToken);
-          assert.equal(res.status, 403);
+          assert.strictEqual(res.status, 403);
         });
       });
 
-      describe('POST /events/{id}', function () {
+      describe('[PC19] POST /events/{id}', function () {
         it('[8J8O] should be forbidden', async function () {
-          const res = await server.request()
+          const res = await coreRequest
             .post(reqPath(eventId))
             .set('Authorization', createOnlyToken)
-            .attach('document', testData.attachments.document.path,
-              testData.attachments.document.filename + '-2');
-          assert.equal(res.status, 403);
+            .attach('document', attachmentPath, attachmentFilename + '-2');
+          assert.strictEqual(res.status, 403);
         });
       });
 
-      describe('DELETE /events/{id}/{fileId}', function () {
+      describe('[PC20] DELETE /events/{id}/{fileId}', function () {
         it('[GY6M] should be forbidden', async function () {
-          const res = await server
-            .request()
+          const res = await coreRequest
             .delete(reqPath(eventId) + `/${fileId}`)
             .set('Authorization', createOnlyToken);
-          assert.equal(res.status, 403);
+          assert.strictEqual(res.status, 403);
         });
       });
     });
   });
 
-  describe('Streams', function () {
+  describe('[PC05] Streams', function () {
     let basePath;
     before(() => {
       basePath = `/${username}/streams`;
@@ -599,74 +548,68 @@ describe('permissions create-only level', () => {
       return `${basePath}/${id}`;
     }
 
-    describe('GET /', function () {
+    describe('[PC21] GET /', function () {
       it('[J12F] should only return streams for which permissions are defined', async function () {
-        const res = await server
-          .request()
+        const res = await coreRequest
           .get(basePath)
           .set('Authorization', createOnlyToken)
           .query({ state: 'all' });
         const streams = res.body.streams;
-        assert.equal(streams.length, isAuditActive ? 2 : 1);
+        assert.strictEqual(streams.length, isAuditActive ? 2 : 1);
         const stream = streams[0];
-        assert.equal(stream.id, streamCreateOnlyId);
+        assert.strictEqual(stream.id, streamCreateOnlyId);
       });
     });
 
-    describe('POST /', function () {
+    describe('[PC22] POST /', function () {
       it('[TFWF] should forbid creating child streams in "create-only" streams', async function () {
         const data = {
           name: charlatan.Lorem.word(),
           parentId: streamCreateOnlyId
         };
-        const res = await server
-          .request()
+        const res = await coreRequest
           .post(basePath)
           .set('Authorization', createOnlyToken)
           .send(data);
-        assert.equal(res.status, 403);
+        assert.strictEqual(res.status, 403);
       });
     });
 
-    describe('PUT /', function () {
+    describe('[PC23] PUT /', function () {
       it('[PCO8] should forbid updating "create-only" streams', async function () {
-        const res = await server
-          .request()
+        const res = await coreRequest
           .put(reqPath(streamCreateOnlyId))
           .set('Authorization', createOnlyToken)
           .send({ name: charlatan.Lorem.word() });
-        assert.equal(res.status, 403);
+        assert.strictEqual(res.status, 403);
       });
     });
 
-    describe('DELETE /', function () {
+    describe('[PC24] DELETE /', function () {
       it('[PCO9] should forbid deleting "create-only" streams', async function () {
-        const res = await server
-          .request()
+        const res = await coreRequest
           .del(reqPath(streamCreateOnlyId))
           .set('Authorization', createOnlyToken);
-        assert.equal(res.status, 403);
+        assert.strictEqual(res.status, 403);
       });
     });
   });
 
-  describe('Webhooks', function () {
+  describe('[PC06] Webhooks', function () {
     let basePath;
     before(function () {
-      if (settings.openSource.isActive) this.skip();
       basePath = `/${username}/webhooks`;
     });
 
-    describe('CREATE /', function () {
+    describe('[PC25] CREATE /', function () {
       it('[3AE9] should allow creating webhooks', async function () {
-        const res = await server
-          .request()
+        const res = await coreRequest
           .post(basePath)
           .set('Authorization', createOnlyToken)
           .send({
             url: charlatan.Internet.url()
           });
-        assert.equal(res.status, 201);
+        assert.strictEqual(res.status, 201);
       });
     });
 

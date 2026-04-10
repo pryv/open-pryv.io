@@ -1,0 +1,15 @@
+{
+  "name": "@pryv/engine-filesystem",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pryv filesystem storage engine for event file attachments",
+  "homepage": "https://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv <info@pryv.com> (https://pryv.com)",
+  "main": "src/index.js",
+  "dependencies": {
+    "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
+    "cuid": "^2.1.8",
+    "mkdirp": "1.0.4"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "storages",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Storage engine plugin system for service-core",
+  "homepage": "https://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv <info@pryv.com> (https://pryv.com)",
+  "main": "./index.js"
+}

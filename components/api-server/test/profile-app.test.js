@@ -1,167 +1,188 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
-require('./test-helpers');
-const helpers = require('./helpers');
+/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, _ */
+
 const ErrorIds = require('errors').ErrorIds;
-const server = helpers.dependencies.instanceManager;
-const async = require('async');
-const validation = helpers.validation;
+const validation = require('./helpers/validation');
 const methodsSchema = require('../src/schema/profileMethods');
-const testData = helpers.data;
-const _ = require('lodash');
 
-describe('profile (app)', function () {
-  const user = structuredClone(testData.users[0]);
-  const basePath = '/' + user.username + '/profile';
-  let request = null; // must be set after server instance started
-  const appAccess = testData.accesses[4];
-  const appProfile = testData.profile[2];
-  const sharedAccess = testData.accesses[1];
+describe('[PRFA] profile (app)', function () {
+  let username;
+  let basePath;
+  let appToken;
+  let appName;
+  let sharedToken;
+  let personalToken;
+  let profileData;
 
-  before(function (done) {
-    async.series([
-      testData.resetUsers,
-      testData.resetAccesses,
-      server.ensureStarted.bind(server, helpers.dependencies.settings),
-      function (stepDone) { request = helpers.request(server.url); stepDone(); }
-    ], done);
+  before(async function () {
+    await initTests();
+    await initCore();
+
+    // Create fixture data
+    const fixtures = getNewFixture();
+    username = cuid();
+    appName = 'test-3rd-party-app-id';
+    appToken = cuid();
+    sharedToken = cuid();
+    personalToken = cuid();
+    basePath = '/' + username;
+
+    profileData = {
+      keyOne: 'value One',
+      keyTwo: 2,
+      keyThree: true,
+      keyFour: [1, 2, 3, 4],
+      keyFive: { giveMe: 5 }
+    };
+
+    const user = await fixtures.user(username);
+
+    // Create app access
+    await user.access({
+      type: 'app',
+      name: appName,
+      token: appToken,
+      permissions: [{ streamId: '*', level: 'contribute' }]
+    });
+
+    // Create shared access
+    await user.access({
+      type: 'shared',
+      name: 'shared-access',
+      token: sharedToken,
+      permissions: [{ streamId: '*', level: 'read' }]
+    });
+
+    // Create personal access
+    await user.access({
+      type: 'personal',
+      token: personalToken
+    });
+    await user.session(personalToken);
+
+    // Create public profile
+    await fixtures.context.profile(username, {
+      id: 'public',
+      data: profileData
+    });
+
+    // Create app profile
+    await fixtures.context.profile(username, {
+      id: appName,
+      data: profileData
+    });
   });
 
-  describe('GET /public', function () {
-    before(testData.resetProfile);
+  describe('[PA01] GET /public', function () {
+    it('[FWG1] must return publicly shared key-value profile info', async function () {
+      const res = await coreRequest
+        .get(basePath + '/profile/public')
+        .set('Authorization', appToken);
 
-    const path = basePath + '/public';
-
-    it('[FWG1] must return publicly shared key-value profile info', function (done) {
-      request.get(path, appAccess.token).end(function (res) {
-        validation.check(res, {
-          status: 200,
-          schema: methodsSchema.get.result,
-          body: { profile: testData.profile[0].data }
-        }, done);
+      validation.check(res, {
+        status: 200,
+        schema: methodsSchema.get.result,
+        body: { profile: profileData }
       });
     });
   });
 
-  describe('GET /app', function () {
-    before(testData.resetProfile);
+  describe('[PA02] GET /app', function () {
+    it('[13DL] must return key-value settings for the current app', async function () {
+      const res = await coreRequest
+        .get(basePath + '/profile/app')
+        .set('Authorization', appToken);
 
-    const path = basePath + '/app';
-
-    it('[13DL] must return key-value settings for the current app', function (done) {
-      request.get(path, appAccess.token).end(function (res) {
-        validation.check(res, {
-          status: 200,
-          schema: methodsSchema.get.result,
-          body: { profile: appProfile.data }
-        }, done);
+      validation.check(res, {
+        status: 200,
+        schema: methodsSchema.get.result,
+        body: { profile: profileData }
       });
     });
 
-    it('[J37U] must refuse requests with a shared access token', function (done) {
-      request.get(path, sharedAccess.token).end(function (res) {
-        validation.checkError(res, {
-          status: 400,
-          id: ErrorIds.InvalidOperation
-        }, done);
+    it('[J37U] must refuse requests with a shared access token', async function () {
+      const res = await coreRequest
+        .get(basePath + '/profile/app')
+        .set('Authorization', sharedToken);
+
+      validation.checkError(res, {
+        status: 400,
+        id: ErrorIds.InvalidOperation
       });
     });
 
-    it('[GYBN] must refuse requests with a personal access token', function (done) {
-      const personalRequest = helpers.request(server.url);
-      async.series([
-        personalRequest.login.bind(personalRequest, user),
-        function (stepDone) {
-          personalRequest.get(path).end(function (res) {
-            validation.checkError(res, {
-              status: 400,
-              id: ErrorIds.InvalidOperation
-            }, stepDone);
-          });
-        }
-      ], done);
+    it('[GYBN] must refuse requests with a personal access token', async function () {
+      const res = await coreRequest
+        .get(basePath + '/profile/app')
+        .set('Authorization', personalToken);
+
+      validation.checkError(res, {
+        status: 400,
+        id: ErrorIds.InvalidOperation
+      });
     });
   });
 
-  describe('PUT /app', function () {
-    beforeEach(testData.resetProfile);
+  describe('[PA03] PUT /app', function () {
+    beforeEach(async function () {
+      // Reset app profile
+      const fixtures = getNewFixture();
+      await fixtures.context.profile(username, {
+        id: appName,
+        data: structuredClone(profileData)
+      });
+    });
 
-    const path = basePath + '/app';
-
-    it('[1QFB] must add/update/remove the specified keys without touching the others', function (done) {
+    it('[1QFB] must add/update/remove the specified keys without touching the others', async function () {
       const data = {
         newKey: 'New Value', // add
         keyOne: 'No One', // update
         keyTwo: null // delete
       };
-      request.put(path, appAccess.token).send(data).end(function (res) {
-        validation.check(res, {
-          status: 200,
-          schema: methodsSchema.update.result
-        });
 
-        const expectedData = _.extend(structuredClone(appProfile.data), data);
-        delete expectedData.keyTwo;
-        res.body.profile.should.eql(expectedData);
+      const res = await coreRequest
+        .put(basePath + '/profile/app')
+        .set('Authorization', appToken)
+        .send(data);
 
-        done();
+      validation.check(res, {
+        status: 200,
+        schema: methodsSchema.update.result
+      });
+
+      const expectedData = _.extend(structuredClone(profileData), data);
+      delete expectedData.keyTwo;
+      assert.deepStrictEqual(res.body.profile, expectedData);
+    });
+
+    it('[0H9A] must refuse requests with a shared access token', async function () {
+      const res = await coreRequest
+        .put(basePath + '/profile/app')
+        .set('Authorization', sharedToken)
+        .send({ any: 'thing' });
+
+      validation.checkError(res, {
+        status: 400,
+        id: ErrorIds.InvalidOperation
       });
     });
 
-    it('[0H9A] must refuse requests with a shared access token', function (done) {
-      request.put(path, sharedAccess.token).send({ any: 'thing' }).end(function (res) {
-        validation.checkError(res, {
-          status: 400,
-          id: ErrorIds.InvalidOperation
-        }, done);
-      });
-    });
+    it('[JC5F] must refuse requests with a personal access token', async function () {
+      const res = await coreRequest
+        .put(basePath + '/profile/app')
+        .set('Authorization', personalToken)
+        .send({ any: 'thing' });
 
-    it('[JC5F] must refuse requests with a personal access token', function (done) {
-      const personalRequest = helpers.request(server.url);
-      async.series([
-        personalRequest.login.bind(personalRequest, user),
-        function (stepDone) {
-          personalRequest.put(path).send({ any: 'thing' }).end(function (res) {
-            validation.checkError(res, {
-              status: 400,
-              id: ErrorIds.InvalidOperation
-            }, stepDone);
-          });
-        }
-      ], done);
+      validation.checkError(res, {
+        status: 400,
+        id: ErrorIds.InvalidOperation
+      });
     });
   });
 });

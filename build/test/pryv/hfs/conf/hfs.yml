@@ -1,0 +1,36 @@
+---
+http:
+  ip: "0.0.0.0"
+database:
+  host: "mongodb"
+influxdb:
+  host: "influxdb"
+  port: 8086
+trace:
+  enable: false
+  agent:
+    host: "jaeger"
+userFiles:
+  path: "/app/data/users"
+eventFiles:
+  attachmentsDirPath: "/app/data/attachments"
+  previewsDirPath: "/app/data/previews"
+tcpBroker:
+  port: 4222
+services:
+  register:
+    url: "http:register:9000"
+serviceInfoUrl: "http://register:9000/service/info"
+logs:
+  file:
+    active: true
+    level: "info"
+    path: "/app/log/hfs.log"
+    rotation:
+      isActive: true
+      days: 60
+  console:
+    active: true
+    level: "info"
+uploads:
+  maxSizeMb: 20

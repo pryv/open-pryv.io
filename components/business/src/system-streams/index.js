@@ -1,38 +1,150 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
-module.exports = {
-  serializer: require('./serializer')
+
+/**
+ * Account streams — config-derived queries for account streams.
+ * All values pre-computed at init (dataset is ~15 streams — no lazy caching needed).
+ */
+
+const treeUtils = require('utils').treeUtils;
+const { getConfig } = require('@pryv/boiler');
+const IS_SHOWN = 'isShown';
+const IS_INDEXED = 'isIndexed';
+const IS_UNIQUE = 'isUnique';
+
+const PRYV_PREFIX = ':_system:';
+const CUSTOMER_PREFIX = ':system:';
+const STREAM_ID_ACCOUNT = PRYV_PREFIX + 'account';
+const ALL = 'all';
+
+// Module-level state — all set by initializeState()
+let initialized = false;
+let streamIdWithPrefixToWithout = null;
+let accountStreamIdWithoutPrefixToWith = null;
+
+// ── Init ──────────────────────────────────────────────────────────
+
+async function init () {
+  if (initialized) { return; }
+  const config = await getConfig();
+  const settings = config.get('systemStreams');
+  if (settings == null) {
+    throw Error('Invalid system streams settings');
+  }
+  initializeState(settings);
+  initialized = true;
+}
+
+/**
+ * Test-only — reloads from a custom config.
+ * See "config.default-streams.test.js" (V9QB, 5T5S, ARD9).
+ */
+async function reloadForTests (config) {
+  config = config || (await getConfig());
+  if (config.get('NODE_ENV') !== 'test') {
+    console.error('this is meant to be used in test only');
+    process.exit(1);
+  }
+  initializeState(config.get('systemStreams'));
+  initialized = true;
+}
+
+// ── Pre-computed data (all set at init) ───────────────────────────
+
+function initializeState (settings) {
+  exports_.allAsTree = settings;
+  exports_.accountChildren = treeUtils.findById(settings, STREAM_ID_ACCOUNT).children;
+
+  // Account stream maps (flat)
+  exports_.accountMap = filterMapStreams(exports_.accountChildren, ALL);
+  exports_.accountLeavesMap = buildLeavesMap(exports_.accountChildren);
+  // ID arrays
+  const accountStreamIds = Object.keys(exports_.accountMap);
+  const readableIds = Object.keys(filterMapStreams(exports_.accountChildren, IS_SHOWN));
+  const readableSet = new Set(readableIds);
+  exports_.hiddenStreamIds = accountStreamIds.filter(k => !readableSet.has(k));
+  exports_.indexedFieldNames = Object.keys(filterMapStreams(exports_.accountChildren, IS_INDEXED)).map(stripPrefix);
+  exports_.uniqueFieldNames = Object.keys(filterMapStreams(exports_.accountChildren, IS_UNIQUE)).map(stripPrefix);
+
+  // Prefix translation maps
+  streamIdWithPrefixToWithout = {};
+  accountStreamIdWithoutPrefixToWith = {};
+  const allStreamIds = treeUtils.flattenTree(settings).map((s) => s.id);
+  for (const prefixed of allStreamIds) {
+    const unprefixed = stripPrefix(prefixed);
+    streamIdWithPrefixToWithout[prefixed] = unprefixed;
+    if (exports_.accountMap[prefixed] != null) {
+      accountStreamIdWithoutPrefixToWith[unprefixed] = prefixed;
+    }
+  }
+}
+
+function buildLeavesMap (children) {
+  const flatList = treeUtils.flattenTreeWithoutParents(children);
+  const map = {};
+  for (const stream of flatList) {
+    map[stream.id] = stream;
+  }
+  return map;
+}
+
+// ── Prefix utilities ──────────────────────────────────────────────
+
+function toFieldName (streamIdWithPrefix) {
+  return streamIdWithPrefixToWithout[streamIdWithPrefix] || streamIdWithPrefix;
+}
+
+function toStreamId (fieldName) {
+  const prefixed = accountStreamIdWithoutPrefixToWith[fieldName];
+  if (prefixed == null) {
+    throw new Error('trying to call toStreamId() with non-account fieldName: ' + fieldName);
+  }
+  return prefixed;
+}
+
+// ── Internal helpers ──────────────────────────────────────────────
+
+function filterMapStreams (streams, filter = IS_SHOWN) {
+  const streamsMap = {};
+  if (!Array.isArray(streams)) { return streamsMap; }
+  const flatList = treeUtils.flattenTree(streams);
+  for (const stream of flatList) {
+    if (filter === ALL || stream[filter]) {
+      streamsMap[stream.id] = stream;
+    }
+  }
+  return streamsMap;
+}
+
+function stripPrefix (streamId) {
+  if (streamId.startsWith(PRYV_PREFIX)) { return streamId.substring(PRYV_PREFIX.length); }
+  if (streamId.startsWith(CUSTOMER_PREFIX)) { return streamId.substring(CUSTOMER_PREFIX.length); }
+  throw new Error('accountStreams initialization: stripPrefix(streamId) should be called with a prefixed streamId');
+}
+
+// ── Exports ───────────────────────────────────────────────────────
+
+const exports_ = module.exports = {
+  // Constants
+  STREAM_ID_ACCOUNT,
+  // Lifecycle
+  init,
+  reloadForTests,
+  // Data properties (set by initializeState, null before init)
+  allAsTree: null,
+  accountChildren: null,
+  accountMap: null,
+  accountLeavesMap: null,
+  hiddenStreamIds: null,
+  indexedFieldNames: null,
+  uniqueFieldNames: null,
+  // Prefix utilities
+  toFieldName,
+  toStreamId
 };
 
 /**

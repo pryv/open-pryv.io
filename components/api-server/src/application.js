@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
 // A central registry for singletons and configuration-type instances; pass this
@@ -41,7 +14,7 @@ const { setTimeout } = require('timers/promises');
 require('@pryv/boiler').init({
   appName: 'api-server',
   baseFilesDir: path.resolve(__dirname, '../../../'),
-  baseConfigDir: path.resolve(__dirname, '../config/'),
+  baseConfigDir: path.resolve(__dirname, '../../../config/'),
   extraConfigs: [
     {
       scope: 'serviceInfo',
@@ -50,32 +23,31 @@ require('@pryv/boiler').init({
     },
     {
       scope: 'default-paths',
-      file: path.resolve(__dirname, '../config/paths-config.js')
+      file: path.resolve(__dirname, '../../../config/plugins/paths-config.js')
     },
     {
-      plugin: require('../config/components/systemStreams')
+      plugin: require('../../../config/plugins/systemStreams')
     },
     {
-      plugin: require('../config/public-url')
+      plugin: require('../../../config/plugins/core-identity')
     },
     {
-      scope: 'default-audit',
-      file: path.resolve(__dirname, '../../audit/config/default-config.yml')
+      plugin: require('../../../config/plugins/public-url')
     },
     {
       scope: 'default-audit-path',
-      file: path.resolve(__dirname, '../../audit/config/default-path.js')
+      file: path.resolve(__dirname, '../../../config/plugins/default-path.js')
     },
     {
-      plugin: require('../config/config-validation')
+      plugin: require('../../../config/plugins/config-validation')
     },
     {
       plugin: {
         load: async () => {
           // this is not a plugin, but a way to ensure some component are initialized after config
           // @sgoumaz - should we promote this pattern for all singletons that need to be initialized ?
-          const SystemStreamsSerializer = require('business/src/system-streams/serializer');
-          await SystemStreamsSerializer.init();
+          const accountStreams = require('business/src/system-streams');
+          await accountStreams.init();
         }
       }
     }
@@ -133,12 +105,10 @@ class Application {
 
   expressApp;
 
-  isOpenSource;
   isAuditActive;
 
   constructor () {
     this.initalized = false;
-    this.isOpenSource = false;
     this.isAuditActive = false;
     this.initializing = false;
   }
@@ -158,17 +128,17 @@ class Application {
     this.produceLogSubsystem();
     logger.debug('Init started');
     this.config = await getConfig();
-    this.isOpenSource = this.config.get('openSource:isActive');
     this.isAuditActive = this.config.get('audit:active');
     await userLocalDirectory.init();
+    await require('storages').init(this.config);
     if (this.isAuditActive) {
       const audit = require('audit');
       await audit.init();
     }
     this.api = new API();
     this.systemAPI = new API();
-    this.database = await storage.getDatabase();
     this.storageLayer = await storage.getStorageLayer();
+    this.database = this.storageLayer.connection;
     await this.createExpressApp();
     const apiVersion = await getAPIVersion();
     const hostname = require('os').hostname();
@@ -232,17 +202,16 @@ class Application {
    * @returns {Promise<void>}
    */
   async initiateRoutes () {
-    if (this.config.get('dnsLess:isActive')) {
-      require('./routes/register')(this.expressApp, this);
-    }
+    // Register routes — always available (register functionality is built-in)
+    require('./routes/register')(this.expressApp, this);
+    require('./routes/reg/access')(this.expressApp, this);
+    require('./routes/reg/records')(this.expressApp, this);
+    require('./routes/reg/apps')(this.expressApp, this);
+    require('./routes/reg/legacy')(this.expressApp, this);
 
     // system, root, register and delete MUST come first
     require('./routes/auth/delete')(this.expressApp, this);
     require('./routes/auth/register')(this.expressApp, this);
-    if (this.isOpenSource) {
-      require('www')(this.expressApp, this);
-      await require('register')(this.expressApp, this);
-    }
 
     require('./routes/system')(this.expressApp, this);
     require('./routes/root')(this.expressApp, this);
@@ -250,15 +219,13 @@ class Application {
     require('./routes/accesses')(this.expressApp, this);
     require('./routes/account')(this.expressApp, this);
     require('./routes/auth/login')(this.expressApp, this);
+    require('./routes/mfa')(this.expressApp, this);
     await require('./routes/events')(this.expressApp, this);
-    require('./routes/followed-slices')(this.expressApp, this);
     require('./routes/profile')(this.expressApp, this);
     require('./routes/service')(this.expressApp, this);
     require('./routes/streams')(this.expressApp, this);
 
-    if (!this.isOpenSource) {
-      require('./routes/webhooks')(this.expressApp, this);
-    }
+    require('./routes/webhooks')(this.expressApp, this);
     if (this.isAuditActive) {
       require('audit/src/routes/audit.route')(this.expressApp, this);
     }

@@ -1,0 +1,11 @@
+{
+  "storageTypes": ["seriesStorage"],
+  "entrypoint": "src/index.js",
+  "requiredInternals": [],
+  "configuration": {
+    "fields": {
+      "host":  { "type": "string",  "default": "127.0.0.1",  "description": "InfluxDB host" },
+      "port":  { "type": "number",  "default": 8086,         "description": "InfluxDB port" }
+    }
+  }
+}

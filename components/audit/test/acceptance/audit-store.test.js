@@ -1,42 +1,15 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
 /* global assert, cuid, initTests, initCore, coreRequest, getNewFixture, addActionStreamIdPrefix, addAccessStreamIdPrefix, charlatan */
 
 const timestamp = require('unix-timestamp');
 
-describe('Audit Streams and Events', function () {
+describe('[ASTE] Audit Streams and Events', function () {
   let user, username, password, access, appAccess, anotherAppAccess;
   let personalToken;
   let eventsPath, streamsPath, accessesPath;
@@ -82,7 +55,7 @@ describe('Audit Streams and Events', function () {
         permissions: [{ streamId, level: 'manage' }]
       });
     const access = res.body.access;
-    assert.exists(access);
+    assert.ok(access);
     return access;
   }
   function validGet (path, access) { return coreRequest.get(path).set('Authorization', access.token); }
@@ -100,7 +73,7 @@ describe('Audit Streams and Events', function () {
     await validGet(eventsPath, anotherAppAccess);
   });
 
-  describe('streams.get', () => {
+  describe('[AS01] streams.get', () => {
     it('[U2PV] must retrieve access and actions substreams ', async () => {
       const res = await coreRequest
         .get(streamsPath)
@@ -108,10 +81,10 @@ describe('Audit Streams and Events', function () {
         .set('Authorization', appAccess.token);
 
       const expectedStreamids = ['yo', ':_audit:access-' + appAccess.id];
-      assert.exists(res.body.streams);
-      assert.equal(res.body.streams.length, expectedStreamids.length);
+      assert.ok(res.body.streams);
+      assert.strictEqual(res.body.streams.length, expectedStreamids.length);
       for (const stream of res.body.streams) {
-        assert.include(expectedStreamids, stream.id);
+        assert.ok(expectedStreamids.includes(stream.id));
       }
     });
 
@@ -120,8 +93,8 @@ describe('Audit Streams and Events', function () {
         .get(streamsPath)
         .query({ parentId: ':_audit:accesses' })
         .set('Authorization', appAccess.token);
-      assert.equal(res.status, 403);
-      assert.exists(res.body.error);
+      assert.strictEqual(res.status, 403);
+      assert.ok(res.body.error);
     });
 
     it('[7SGO] must allow listing one accesses (stream) with appAccess', async () => {
@@ -129,8 +102,8 @@ describe('Audit Streams and Events', function () {
         .get(streamsPath)
         .query({ id: ':_audit:access-' + appAccess.id })
         .set('Authorization', appAccess.token);
-      assert.equal(res.body.streams.length, 1);
-      assert.equal(res.body.streams[0].id, ':_audit:access-' + appAccess.id);
+      assert.strictEqual(res.body.streams.length, 1);
+      assert.strictEqual(res.body.streams[0].id, ':_audit:access-' + appAccess.id);
     });
 
     it('[XP27] must retrieve all available streams with a personal token', async () => {
@@ -138,7 +111,7 @@ describe('Audit Streams and Events', function () {
         .get(streamsPath)
         .query({ parentId: ':_audit:accesses' })
         .set('Authorization', personalToken);
-      assert.isAtLeast(res.body.streams.length, 2);
+      assert.ok(res.body.streams.length >= 2);
     });
 
     it('[WOIG] appToken must not retrieve list of available actions', async () => {
@@ -146,8 +119,8 @@ describe('Audit Streams and Events', function () {
         .get(streamsPath)
         .query({ parentId: ':_audit:actions' })
         .set('Authorization', appAccess.token);
-      assert.equal(res.status, 403);
-      assert.exists(res.body.error);
+      assert.strictEqual(res.status, 403);
+      assert.ok(res.body.error);
     });
 
     it('[TFZL] personalToken must retrieve list of available actions', async () => {
@@ -155,26 +128,26 @@ describe('Audit Streams and Events', function () {
         .get(streamsPath)
         .query({ parentId: ':_audit:actions' })
         .set('Authorization', personalToken);
-      assert.exists(res.body.streams);
-      assert.isAtLeast(res.body.streams.length, 1);
+      assert.ok(res.body.streams);
+      assert.ok(res.body.streams.length >= 1);
       for (const stream of res.body.streams) {
-        assert.isTrue(stream.id.startsWith(':_audit:action-'), 'StreamId should starts With ":_audit:actions-", found: "' + stream.id + '"');
+        assert.strictEqual(stream.id.startsWith(':_audit:action-'), true, 'StreamId should starts With ":_audit:actions-", found: "' + stream.id + '"');
       }
     });
   });
 
-  describe('events.get', () => {
+  describe('[AS02] events.get', () => {
     it('[TJ8S] must retrieve logs by time range', async () => {
       const res = await coreRequest
         .get(eventsPath)
         .set('Authorization', appAccess.token)
         .query({ streams: [':_audit:access-' + appAccess.id], fromTime: start, toTime: stop });
-      assert.equal(res.status, 200);
+      assert.strictEqual(res.status, 200);
       const logs = res.body.events;
-      assert.isAtLeast(logs.length, 2);
+      assert.ok(logs.length >= 2);
       for (const event of logs) {
-        assert.isAtLeast(event.time, start);
-        assert.isAtMost(event.time, stop);
+        assert.ok(event.time >= start);
+        assert.ok(event.time <= stop);
       }
       validateResults(logs, appAccess.id);
     });
@@ -185,12 +158,12 @@ describe('Audit Streams and Events', function () {
         .set('Authorization', appAccess.token)
         .query({ streams: JSON.stringify([{ any: [':_audit:access-' + appAccess.id], all: [':_audit:action-events.get'] }]) });
 
-      assert.equal(res.status, 200);
+      assert.strictEqual(res.status, 200);
       const logs = res.body.events;
-      assert.isAtLeast(logs.length, 1);
+      assert.ok(logs.length >= 1);
       for (const event of logs) {
-        assert.exists(event.content);
-        assert.equal(event.content.action, 'events.get');
+        assert.ok(event.content);
+        assert.strictEqual(event.content.action, 'events.get');
       }
       validateResults(logs, appAccess.id);
     });
@@ -203,7 +176,7 @@ describe('Audit Streams and Events', function () {
       assert.strictEqual(res.status, 200);
       const logs = res.body.events;
 
-      assert.isAtLeast(logs.length, 5);
+      assert.ok(logs.length >= 5);
       validateResults(logs);
     });
 
@@ -214,7 +187,7 @@ describe('Audit Streams and Events', function () {
         .query({ streams: [':_audit:access-' + appAccess.id] });
       assert.strictEqual(res.status, 200);
       const logs = res.body.events;
-      assert.isAtLeast(logs.length, 1);
+      assert.ok(logs.length >= 1);
       validateResults(logs, appAccess.id);
     });
 
@@ -223,40 +196,40 @@ describe('Audit Streams and Events', function () {
         .get(eventsPath)
         .set('Authorization', 'invalid');
       assert.strictEqual(res.status, 403);
-      assert.exists(res.body.error);
-      assert.equal(res.body.error.id, 'invalid-access-token');
+      assert.ok(res.body.error);
+      assert.strictEqual(res.body.error.id, 'invalid-access-token');
     });
   });
 });
 
 function validateResults (auditLogs, expectedAccessId, expectedErrorId) {
-  assert.isArray(auditLogs);
+  assert.ok(Array.isArray(auditLogs));
 
   auditLogs.forEach(event => {
-    assert.include(['audit-log/pryv-api', 'audit-log/pryv-api-error'], event.type, 'wrong event type');
+    assert.ok(['audit-log/pryv-api', 'audit-log/pryv-api-error'].includes(event.type), 'wrong event type');
 
-    assert.isString(event.id);
-    assert.isNumber(event.time);
+    assert.strictEqual(typeof event.id, 'string');
+    assert.strictEqual(typeof event.time, 'number');
 
-    assert.isDefined(event.content.query);
-    assert.isString(event.content.action);
-    assert.include(event.streamIds, addActionStreamIdPrefix(event.content.action), 'missing Action StreamId');
+    assert.ok(event.content.query !== undefined);
+    assert.strictEqual(typeof event.content.action, 'string');
+    assert.ok(event.streamIds.includes(addActionStreamIdPrefix(event.content.action)), 'missing Action StreamId');
 
-    assert.isDefined(event.content.source);
-    assert.isString(event.content.source.name);
-    assert.isString(event.content.source.ip);
+    assert.ok(event.content.source !== undefined);
+    assert.strictEqual(typeof event.content.source.name, 'string');
+    assert.strictEqual(typeof event.content.source.ip, 'string');
 
     if (expectedAccessId) {
-      assert.include(event.streamIds, addAccessStreamIdPrefix(expectedAccessId), '<< missing Access StreamId >>');
+      assert.ok(event.streamIds.includes(addAccessStreamIdPrefix(expectedAccessId)), '<< missing Access StreamId >>');
     }
 
     if (event.type === 'audit-log/pryv-api-error') {
       if (expectedErrorId) {
         assert.strictEqual(event.content.id, expectedErrorId);
       } else {
-        assert.isString(event.content.id);
+        assert.strictEqual(typeof event.content.id, 'string');
       }
-      assert.isString(event.content.message);
+      assert.strictEqual(typeof event.content.message, 'string');
     }
   });
 }

@@ -1,0 +1,13 @@
+# Config overlay for running lib-js tests via HTTPS proxy.
+# API server runs on HTTP :3001 (no SSL), proxy on HTTPS :3000 (backloop.dev).
+# Loaded via override-config.yml mechanism (highest priority).
+http:
+  port: 3001
+
+dnsLess:
+  isActive: true
+  publicUrl: https://l.backloop.dev:3000/
+
+service:
+  assets:
+    definitions: https://pryv.github.io/assets-pryv.me/index.json

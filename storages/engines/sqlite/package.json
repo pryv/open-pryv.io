@@ -1,0 +1,18 @@
+{
+  "name": "@pryv/engine-sqlite",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pryv SQLite storage engine",
+  "homepage": "https://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv <info@pryv.com> (https://pryv.com)",
+  "main": "src/index.js",
+  "dependencies": {
+    "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
+    "better-sqlite3": "^11.8.1",
+    "cuid": "^2.1.8",
+    "lru-cache": "^7.14.1",
+    "mkdirp": "1.0.4",
+    "unix-timestamp": "^1.0.3"
+  }
+}

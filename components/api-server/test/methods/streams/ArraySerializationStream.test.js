@@ -1,49 +1,23 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
 'use strict';
 
+require('test-helpers/src/api-server-tests-config');
 const ArraySerializationStream = require('../../../src/methods/streams/ArraySerializationStream');
 const Writable = require('stream').Writable;
 const inherits = require('util').inherits;
-const should = require('should');
+const assert = require('node:assert');
 const Source = require('../../helpers').SourceStream;
 
-describe('ArraySerializationStream', function () {
+describe('[ARSR] ArraySerializationStream', function () {
   const arraySize = new ArraySerializationStream('getSize', true).size;
 
-  describe('testing around the array size limit', function () {
+  describe('[AR01] testing around the array size limit', function () {
     const testIDs = ['U21Z', 'MKNL', 'MUPF', 'CM4Q', 'F8S9', '6T4V', 'QBOS', 'BY67', 'JNVS', 'N9HG'];
 
     for (let i = -3; i <= 3; i++) {
@@ -51,14 +25,14 @@ describe('ArraySerializationStream', function () {
       it(`[${testIDs[i + 3]}] must return a valid array when receiving limit` + sign + i + ' items',
         function (done) {
           const n = arraySize + i;
-          n.should.be.above(0);
+          assert.ok(n > 0);
           pipeAndCheck(n, true, null, done);
         }
       );
     }
   });
 
-  describe('testing with small number of items', function () {
+  describe('[AR02] testing with small number of items', function () {
     const testIDs = ['69F6', 'BJRT', 'YJI0', 'EKQQ', '5SUK', 'FPL8', 'ZMO9', 'WFSL', '1YQS', '25IQ'];
 
     for (let i = 0; i <= 3; i++) {
@@ -84,14 +58,14 @@ describe('ArraySerializationStream', function () {
     new Source(items)
       .pipe(new ArraySerializationStream(name, isFirst))
       .pipe(new DestinationStream(isFirst, (err, res) => {
-        should.not.exist(err);
-        should.exist(res);
+        assert.strictEqual(err, null);
+        assert.ok(res);
         if (typeof (resultMapping) === 'function') {
           res = resultMapping(res);
         }
         res = JSON.parse(res);
-        should.exist(res[name]);
-        res[name].should.eql(items);
+        assert.ok(res[name]);
+        assert.deepStrictEqual(res[name], items);
         done();
       }));
   }

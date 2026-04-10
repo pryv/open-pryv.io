@@ -1,0 +1,25 @@
+{
+  "storageTypes": ["baseStorage", "dataStore", "platformStorage", "seriesStorage", "auditStorage"],
+  "entrypoint": "src/index.js",
+  "requiredInternals": [
+    "databasePG",
+    "storageLayer",
+    "getEventFiles",
+    "migrations",
+    "MigrationContext",
+    "softwareVersion",
+    "cache",
+    "createUserAccountStorage"
+  ],
+  "configuration": {
+    "fields": {
+      "host":      { "type": "string",  "default": "127.0.0.1",  "description": "PostgreSQL host" },
+      "port":      { "type": "number",  "default": 5432,         "description": "PostgreSQL port" },
+      "database":  { "type": "string",  "required": true,        "description": "Database name" },
+      "user":      { "type": "string",  "required": true,        "description": "PostgreSQL user" },
+      "password":  { "type": "string",  "default": "",           "description": "PostgreSQL password" },
+      "max":       { "type": "number",  "default": 20,           "description": "Connection pool size" },
+      "auditPoolSize": { "type": "number", "default": 5, "description": "Dedicated audit connection pool size" }
+    }
+  }
+}

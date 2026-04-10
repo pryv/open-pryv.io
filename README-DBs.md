@@ -8,8 +8,6 @@ From v1.7.0 Sqlite has been investigated in order to provide  back the ability t
 
 From v1.8.0 a Sqlite version for Event has been provided on top of the [datastore](https://github.com/pryv/pryv-datastore) abstraction. 
 
-From v1.9.x [FerretDB](https://www.ferretdb.com) has been implemented as on optional replacement of MongoDB. 
-
 Since v1.9.2 Pryv.io can be deployed in "full-cloud" setup without relying on the file system. This can be done by configuring all storage modules to use MongoDB. For the attachments and S3 implementation is in development. 
 
 For future v1.9.3 Pryv.io will be also capable in being "full local" with only SQLite databases. 
@@ -35,10 +33,7 @@ This database is a per-server index to map userId and userName. In the future it
 - With SQLite (default) the db file can be usually found at `var-pryv/user-index.db`
 - With MongoDB the collection is `id4name` and stored in the main host database `pryv-node`
 
-Settings to activate MongoDB/ferretDB instead of SQLite: `storageUserIndex:engine = 'mongodb'`
-
-Script to migrate userIndex from SQLite to MongoDB:  [read first](#sql2mongo)
-`LOGS=info node components/storage/src/migrations/switchSqliteMongo/usersIndex.js --config configs/api.yml`
+Settings to activate MongoDB instead of SQLite: `storageUserIndex:engine = 'mongodb'`
 
 #### User account storage
 
@@ -49,27 +44,19 @@ This database contains the password and passwords history of the user.
 - With SQLite (default) it can be found in the "User local directory" named as `account-1.0.0.sqlite` . 
 - With MongoDB the collection is `passwords` and stored in the main host database `pryv-node`
 
-Settings to activate MongoDB/ferretDB instead of SQLite: `storageUserAccount:engine = 'mongodb'`
-
-Script to migrate from SQLite to MongoDB:  [read first](#sql2mongo)
-`LOGS=info node components/storage/src/migrations/switchSqliteMongo/userAccountStorage.js --config configs/api.yml`
+Settings to activate MongoDB instead of SQLite: `storageUserAccount:engine = 'mongodb'`
 
 #### Platform Wide Shared Storage
 
 base code: [components/platform](components/platform)
 
-This database contains all indexed and unique fields for users such as emails and custom systems streams data.
+This database contains all indexed and unique fields for users such as emails and custom systems streams data, plus the user→core mapping in multi-core deployments.
 
-In the Enterprise version of Pryv, it acts as a local cache and report to `service-register` being the main index. For Open-Pryv.io platformDB should evolve in a shared database between running service-core. 
+Since v2 the platform DB is **always** rqlite (distributed SQLite). `bin/master.js` spawns and supervises an embedded `rqlited` in single-core mode (one node) and in multi-core mode (each core runs its own node, joined into one Raft cluster via DNS discovery on `lsc.{dns.domain}`).
 
-- With SQLite (default) the db file can be usually found at `var-pryv/platform-wide.db`
-- With MongoDB 
-
-Settings to activate MongoDB/ferretDB instead of SQLite:`storagePlatform:engine = 'mongodb'`
-
-Script to migrate from SQLite to MongoDB: [read first](#sql2mongo)
-
-`LOGS=info node components/storage/src/migrations/switchSqliteMongo/platformDB.js --config configs/api.yml`
+- Data lives in `var-pryv/rqlite-data/` (Raft log + SQLite snapshot)
+- HTTP API: `http://localhost:4001` (default)
+- Other engines (mongodb, postgresql) still ship `PlatformDB` implementations for conformance tests, but rqlite is the only engine that can be selected at runtime via `storages.platform.engine`
 
 #### Events, Streams & Attachments Storage
 
@@ -77,26 +64,17 @@ base code:  [components/storage/src/localDataStore](components/storage/src/local
 
 Main storage for `events` ,  `streams`  & `attachments` this implementation follows the modular API of [datastore](https://github.com/pryv/pryv-datastore) abstraction. 
 
-- Fully implemented with MongoDB/FerretDB
+- Fully implemented with MongoDB
 - Only events are implemented with SQLite - Expecting full SQLite implementation in v1.9.3
 
 #### Profile, Accesses, FollowedSlices & Webhooks Storage
 
 base code:  [components/storage/src/user](components/storage/src/user)  
 
-Only implemented for MongoDB/FerretDB - Expecting full SQLite implementation in v1.9.3
+Only implemented for MongoDB - Expecting full SQLite implementation in v1.9.3
 
 ### Notes
 
-#### Known issues 
+#### Known issues
 
 - [ ] test B2I7 is failing when testing `storage` with `full-mongo` as indexes for password is not yet created. Run `just test-full-mongo storage` to reproduce
-
-#### <a name="sql2mongo"/>Using SQlite to MongoDB migration scripts
-
-1. Make sure that all Pryv.io components are stopped but `MongoDB`
-2. Do not set the `storage*:engine` setting to `mongodb` yet !
-3. Run the scripts
-4. Change appropriate setting to  `storage*:engine = 'mongodb'`
-5. Start all services and check
-6. If all is fine, related SQLite DB should be deleted manually

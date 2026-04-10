@@ -1,11 +1,59 @@
 #!/bin/bash
 
-# Run every possible test, with both Mongo and SQLite storage;
-# meant to be called from `just test-cover-all`
+# Run every possible test across all storage engines (MongoDB, PostgreSQL, SQLite)
+# to maximize code path coverage. Each component runs under its own nyc process;
+# results are merged at the end.
+#
+# Usage: just test-cover-all
 
+set -e
+
+OUTDIR=".nyc_output"
+rm -rf "$OUTDIR"
+mkdir -p "$OUTDIR"
+
+run_component() {
+  local engine="$1"
+  local component="$2"
+  local extra_env="$3"
+
+  local label="${engine:-mongo}-${component}"
+  local tmpdir="$OUTDIR/tmp-${label}"
+  mkdir -p "$tmpdir"
+
+  echo "=== Coverage: $label ==="
+  local env_prefix=""
+  if [ -n "$engine" ]; then
+    env_prefix="STORAGE_ENGINE=$engine"
+  fi
+  if [ -n "$extra_env" ]; then
+    env_prefix="$env_prefix $extra_env"
+  fi
+
+  local abs_tmpdir="$(cd "$(dirname "$0")/.." && pwd)/$tmpdir"
+  env $env_prefix NODE_ENV=test COMPONENT="$component" \
+    npx nyc --silent --no-clean --temp-dir "$abs_tmpdir" \
+    scripts/components-run npx mocha -- || true
+}
+
+# MongoDB — all components
 just clean-data &
-just test all
+run_component "" "all"
+
+# PostgreSQL — all components
 just clean-data &
-just test-sqlite api-server
-just test-sqlite storage
-just test-sqlite mall
+run_component "postgresql" "all"
+
+# SQLite — all components
+just clean-data &
+run_component "" "all" "database__engine=sqlite"
+
+# Merge all temp dirs into main output
+echo "=== Merging coverage data ==="
+for tmpdir in "$OUTDIR"/tmp-*; do
+  if [ -d "$tmpdir" ]; then
+    cp "$tmpdir"/*.json "$OUTDIR/" 2>/dev/null || true
+  fi
+done
+
+echo "=== Coverage collection complete ==="

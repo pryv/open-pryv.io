@@ -1,43 +1,15 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 /**
  * JSON Schema specification of methods data for auth.
  */
 const ErrorIds = require('errors/src/ErrorIds');
 const ErrorMessages = require('errors/src/ErrorMessages');
-const { features } = require('api-server/config/components/systemStreams');
-const SystemStreamsSerializer = require('business/src/system-streams/serializer');
+const accountStreams = require('business/src/system-streams');
 const helpers = require('./helpers');
 const object = helpers.object;
 const string = helpers.string;
@@ -233,11 +205,11 @@ module.exports = {
 function loadCustomValidationSettings (validationSchema) {
   // iterate account stream settings and APPEND validation with relevant properties
   // etc additional required fields or regex validation
-  const accountStreamsSettings = SystemStreamsSerializer.getAccountMap();
+  const accountStreamsSettings = accountStreams.accountMap;
   for (const [streamIdWithPrefix, systemStream] of Object.entries(accountStreamsSettings)) {
     // if streamIdWithPrefix is set as required - add required validation
-    const streamId = SystemStreamsSerializer.removePrefixFromStreamId(streamIdWithPrefix);
-    if (systemStream[features.IS_REQUIRED_IN_VALIDATION] &&
+    const streamId = accountStreams.toFieldName(streamIdWithPrefix);
+    if (systemStream.isRequiredInValidation &&
             !validationSchema.required.includes(streamIdWithPrefix)) {
       validationSchema.required.push(streamId);
       // the error message of required property by z-schema is still obscure
@@ -245,7 +217,7 @@ function loadCustomValidationSettings (validationSchema) {
     // if accountStream hasfield has type validation - add regex type rule
     // etc : '^(series:)?[a-z0-9-]+/[a-z0-9-]+$'
     if (validationSchema.properties[streamId] == null) {
-      if (systemStream[features.REGEX_VALIDATION] != null) {
+      if (systemStream.regexValidation != null) {
         validationSchema.properties[streamId] = string({
           pattern: systemStream.regexValidation
         });

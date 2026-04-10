@@ -1,0 +1,105 @@
+---
+auth:
+  adminAccessKey: some_key_yo
+  trustedApps: pryv-test@http://test.pryv.local, pryv-test-no-cors@*, *@https://*.rec.la*, *@https://*.backloop.dev*
+  filesReadTokenSecret: 'some_token'
+logs:
+  console:
+    active: false
+    level: info
+    timestamp: false
+  file:
+    active: true
+    filename: test-application.log
+serviceInfoUrl: file://test/service-info.json
+services:
+  email:
+    enabled:
+      welcome: false
+      resetPassword: false
+    method: mandrill
+    url: https://mandrillapp.local/api/1.0/messages/send-template.json
+    key: "doesnt-matter-in-test"
+    welcomeTemplate: welcome-email
+    resetPasswordTemplate: reset-password"
+  register:
+    url: http://127.0.0.1:5123
+    key: test-system-key
+testNotifications:
+  enabled: true
+tcpBroker:
+  port: 4222
+reporting:
+  templateVersion: 1.0.0
+storages:
+  engines:
+    mongodb:
+      host: 127.0.0.1
+      port: 27017
+      name: pryv-node-test
+      authUser: ''
+      authPassword: ''
+    influxdb:
+      host: 127.0.0.1
+      port: 8086
+dnsLess:
+  isActive: false
+  publicUrl: http://127.0.0.1:3000/
+custom:
+  systemStreams:
+    account:
+    - id: insurancenumber
+      isIndexed: true
+      isShown: true
+      type: string/pryv
+      isRequiredInValidation: true
+      regexValidation: "^[0-9]*$"
+      regexError:
+        message: Cool error
+        code: cool-error
+      isEditable: true
+    - id: phoneNumber
+      isEditable: true
+      isShown: true
+      type: string/pryv
+    - id: email
+      isIndexed: true
+      isUnique: true
+      isShown: true
+      isEditable: true
+      type: email/string
+      name: Email
+      isRequiredInValidation: true
+  dataStores:
+    - id: dummy
+      name: Dummy Store
+      path: ../../mall/test-helpers/dummyDataStore # should be fully qualified path
+      settings: null
+    - id: faulty
+      name: Faulty Store
+      path: ../../mall/test-helpers/faultyDataStore # should be fully qualified path
+      settings: null
+trace:
+  enable: true
+
+# --- Audit test overrides ---
+audit:
+  active: true
+  storage:
+    filter:
+      methods:
+        include: ['all']
+        exclude: []
+
+  syslog:
+    formats:
+      test: # for 'log/test' event.type
+        template: "{userid} {type} createdBy:{createdBy} streamIds:{streamIds} {content.message}"
+        level: notice
+      test-filtered: # for 'log/filtered' event.type
+        plugin: "config/plugins/syslog/test-filtered.js"
+        level: notice # can be overriden by plugin
+    filter:
+      methods:
+        include: ['all']
+        exclude: []

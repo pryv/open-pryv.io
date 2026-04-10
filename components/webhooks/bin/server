@@ -1,0 +1,17 @@
+#!/usr/bin/env node
+
+// Service that receives notifications from api-server and send them to existing Webhooks.
+
+const Application = require('../src/application');
+
+// Start the app
+startup();
+
+async function startup () {
+  // new config has to be loadded before the application
+
+  const app = new Application();
+  await app.setup();
+
+  await app.run();
+}

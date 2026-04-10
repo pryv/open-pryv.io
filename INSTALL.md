@@ -1,0 +1,291 @@
+# Installing service-core
+
+## Prerequisites
+
+- **Node.js** 22.x
+- **Database**: PostgreSQL 14+ (recommended) or MongoDB 4.2+
+- **rqlite** — distributed SQLite used for the platform DB. The `rqlited` binary is bundled under `var-pryv/rqlite-bin/` after `just setup-dev-env`. `bin/master.js` spawns and supervises it; no manual install needed in single- or multi-core deployments.
+- **SQLite** (bundled — used for audit and per-user account/index storage)
+- **InfluxDB** 1.x (optional — for high-frequency series; PostgreSQL can also serve as series engine)
+- **GraphicsMagick** (optional — for image previews): `apt install graphicsmagick`
+- [just](https://github.com/casey/just#installation) (task runner)
+
+## Setup
+
+```bash
+git clone <repo-url> service-core && cd service-core
+just setup-dev-env    # local file structure + MongoDB (dev)
+just install          # npm install across all workspaces
+```
+
+## Configuration
+
+YAML config files, loaded in order (last wins):
+
+1. `config/default-config.yml`
+2. `config/{NODE_ENV}-config.yml`
+3. `--config /path/to/override.yml`
+4. `--key:path=value` on command line
+
+### Minimal production config
+
+```yaml
+# override-config.yml
+auth:
+  adminAccessKey: <random-32-char-string>
+  filesReadTokenSecret: <random-32-char-string>
+  trustedApps: '*@https://your-domain.com*'
+
+cluster:
+  apiWorkers: 2       # N API workers sharing :3000
+  hfsWorkers: 1       # M HFS workers sharing :4000 (0 = disabled)
+  previewsWorker: true
+
+dnsLess:
+  isActive: true
+  publicUrl: https://your-domain.com
+
+http:
+  ip: 0.0.0.0
+  port: 3000
+
+service:
+  name: My Pryv Instance
+  eventTypes: https://pryv.github.io/event-types/flat.json
+  home: https://your-domain.com
+  support: https://your-domain.com
+  terms: https://your-domain.com
+  assets:
+    definitions: https://pryv.github.io/assets-pryv.me/index.json
+
+storages:
+  base:
+    engine: postgresql    # or mongodb
+  platform:
+    engine: rqlite        # only supported value; master.js spawns the embedded rqlited
+  file:
+    engine: filesystem
+  series:
+    engine: postgresql    # or influxdb
+  audit:
+    engine: sqlite
+  engines:
+    postgresql:
+      host: localhost
+      port: 5432
+      database: pryv_db
+      user: postgres
+      password: <db-password>
+      max: 20
+    filesystem:
+      attachmentsDirPath: /path/to/data/users
+      previewsDirPath: /path/to/data/previews
+    sqlite:
+      path: /path/to/data/users
+    rqlite:
+      url: http://localhost:4001
+      raftPort: 4002
+      dataDir: /path/to/data/rqlite-data
+      binPath: /path/to/rqlited        # default: var-pryv/rqlite-bin/rqlited
+```
+
+### Assets
+
+`service.assets.definitions` points to a JSON file describing UI assets (CSS, icons, login button). If not set, it auto-generates `{publicUrl}/www/assets/index.json` — but service-core does **not** serve this path.
+
+Options:
+- Use the public Pryv assets: `https://pryv.github.io/assets-pryv.me/index.json`
+- Host your own and set the URL in config
+
+### Email (optional)
+
+For password resets and welcome emails, deploy `service-mail` and configure:
+
+```yaml
+services:
+  email:
+    enabled:
+      resetPassword: true
+      welcome: true
+    method: microservice
+    url: http://service-mail-host:9000/sendmail/
+    key: <shared-secret>
+```
+
+
+## Running — standalone with HTTPS
+
+master.js supports built-in SSL — no reverse proxy needed.
+
+### Option A: backloop.dev (development)
+
+```yaml
+http:
+  ssl:
+    backloop.dev: true
+dnsLess:
+  isActive: true
+  publicUrl: https://my-computer.backloop.dev:3000
+```
+
+```bash
+NODE_ENV=development node bin/master.js --config override.yml
+```
+
+### Option B: custom certificates (production)
+
+```yaml
+http:
+  ip: 0.0.0.0
+  port: 443
+  ssl:
+    keyFile: /path/to/privkey.pem
+    certFile: /path/to/fullchain.pem
+    caFile: /path/to/chain.pem       # optional
+dnsLess:
+  isActive: true
+  publicUrl: https://your-domain.com
+```
+
+```bash
+NODE_ENV=production node bin/master.js --config override.yml
+```
+
+**Note**: When using built-in HTTPS, all three ports (API :3000, HFS :4000, Previews :3001) are served directly by master.js. No additional routing is needed — the client-facing `publicUrl` only covers the API port; HFS and previews are accessed internally or via the API.
+
+> **HFS in standalone mode**: The HFS high-frequency series endpoints (`/{user}/events/{id}/series`) are served on port 4000. In standalone mode without nginx, clients need to reach port 4000 directly. If your firewall only exposes port 443, you will need nginx (see below) or to configure HFS on the same port (not yet supported).
+
+
+## Running — behind nginx
+
+Use nginx for SSL termination and multi-port routing.
+
+```yaml
+# override-config.yml — no SSL, nginx handles it
+http:
+  ip: 0.0.0.0
+  port: 3000
+dnsLess:
+  isActive: true
+  publicUrl: https://your-domain.com
+```
+
+```bash
+NODE_ENV=production node bin/master.js --config override.yml
+```
+
+### Ports exposed by master.js
+
+| Port | Service | Description |
+|------|---------|-------------|
+| 3000 | API (N workers) | REST endpoints, Socket.IO, registration |
+| 4000 | HFS (M workers) | `/{user}/events/{id}/series`, `/{user}/series/batch` |
+| 3001 | Previews (0-1) | Image preview generation (internal) |
+
+### nginx configuration
+
+```nginx
+upstream api_backend {
+    server 127.0.0.1:3000;
+}
+
+upstream hfs_backend {
+    server 127.0.0.1:4000;
+}
+
+server {
+    listen 443 ssl;
+    server_name core.example.com;
+
+    ssl_certificate     /path/to/fullchain.pem;
+    ssl_certificate_key /path/to/privkey.pem;
+
+    client_max_body_size 50m;  # match config uploads.maxSizeMb
+
+    # Default — API server
+    location / {
+        proxy_pass http://api_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Socket.IO — WebSocket upgrade
+    location /socket.io/ {
+        proxy_pass http://api_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    # HFS — high-frequency series
+    location ~ ^/[^/]+/events/[^/]+/series {
+        proxy_pass http://hfs_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host 127.0.0.1:4000;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ~ ^/[^/]+/series/batch {
+        proxy_pass http://hfs_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host 127.0.0.1:4000;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen 80;
+    server_name core.example.com;
+    return 301 https://$host$request_uri;
+}
+```
+
+### Important nginx notes
+
+**HFS Host header** — The `proxy_set_header Host` for HFS locations must be a plain IP:port (e.g. `127.0.0.1:4000`), not the domain. The HFS `subdomainToPath` middleware extracts the subdomain from Host and prepends it to the URL path, which corrupts the route if a real domain is passed.
+
+**Socket.IO in cluster mode** — When `apiWorkers > 1`, the server only accepts WebSocket transport (no HTTP long-polling). This is because cluster round-robin scheduling breaks polling session state across workers. Clients must connect with `transports: ['websocket']`.
+
+
+## Data directories
+
+| Path | Content |
+|------|---------|
+| `data/users/` | SQLite DBs (audit, user index, per-user account) |
+| `data/users/{userId}/` | Per-user file attachments |
+| `data/previews/` | Generated image previews |
+| `data/rqlite-data/` | Platform DB (rqlite Raft log + SQLite snapshot) |
+
+
+## Troubleshooting
+
+### Socket.IO: "Transport unknown" or "xhr poll error"
+
+In cluster mode (`apiWorkers > 1`), HTTP long-polling is disabled. Clients must use:
+```js
+io(endpoint, { transports: ['websocket'] });
+```
+**Workaround**: set `cluster.apiWorkers: 1` (not recommended for production).
+
+### HFS: "Unknown resource" on series endpoints
+
+The HFS runs on port 4000. If your reverse proxy only forwards to 3000, series endpoints return 404. Add the HFS nginx locations shown above.
+
+The `Host` header sent to HFS must be a plain IP:port — see "HFS Host header" above.
+
+### Previews: "Could not load the sharp module"
+
+```bash
+npm install --os=linux --cpu=x64 sharp
+```
+Or disable: `cluster.previewsWorker: false`.

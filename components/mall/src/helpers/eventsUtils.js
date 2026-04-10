@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 const Transform = require('stream').Transform;
 const storeDataUtils = require('./storeDataUtils');
@@ -180,6 +153,13 @@ function removeStoreIds (storeId, eventData) {
       if (storeId == null) {
         storeId = testStoreId;
       } else if (testStoreId !== storeId) {
+        // Account stream IDs (e.g. :_system:language) are passthrough and valid
+        // in local store events — they keep their full prefix in MongoDB.
+        if (storeId === storeDataUtils.LocalStoreId &&
+            testStoreId === storeDataUtils.AccountStoreId) {
+          eventData.streamIds[i] = storeStreamId;
+          continue;
+        }
         throw errorFactory.invalidRequestStructure('Cannot create or update an event with id and streamIds belonging to different stores', original);
       }
       eventData.streamIds[i] = storeStreamId;
@@ -212,7 +192,14 @@ function removeEmptyAttachments (eventData) {
  */
 function convertEventToStore (storeId, eventData) {
   const event = structuredClone(eventData);
-  removeStoreIds(storeId, event);
+  if (storeId === storeDataUtils.AccountStoreId) {
+    // Account events: extract field name from stream-ID-based event ID
+    // ':system:email' → 'email', ':_system:language' → 'language'
+    const lastColon = event.id.lastIndexOf(':');
+    if (lastColon >= 0) event.id = event.id.substring(lastColon + 1);
+  } else {
+    removeStoreIds(storeId, event);
+  }
   durationToStoreEndTime(event);
   stateToStore(event);
   deletionToStore(event);
@@ -228,7 +215,15 @@ function convertEventFromStore (storeId, eventData) {
   stateFromStore(event);
   deletionFromStore(event);
   removeEmptyAttachments(event);
-  addStoreId(storeId, event);
+  if (storeId === storeDataUtils.AccountStoreId) {
+    // Account events: use first stream ID as event ID for correct Mall routing
+    // 'email' → ':system:email' (so parseStoreIdAndStoreItemId routes to account store)
+    if (event.streamIds && event.streamIds.length > 0) {
+      event.id = event.streamIds[0];
+    }
+  } else {
+    addStoreId(storeId, event);
+  }
   nullifyFromStore(event);
   return event;
 }

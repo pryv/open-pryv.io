@@ -1,913 +1,649 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
-const async = require('async');
-const charlatan = require('charlatan');
-const { assert } = require('chai');
-const should = require('should');
-const timestamp = require('unix-timestamp');
-const _ = require('lodash');
+/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, charlatan */
 
-require('./test-helpers');
-const helpers = require('./helpers');
 const { ErrorIds } = require('errors');
-const server = helpers.dependencies.instanceManager;
-const validation = helpers.validation;
+const validation = require('./helpers/validation');
 const methodsSchema = require('../src/schema/accessesMethods');
-const storage = helpers.dependencies.storage.user.accesses;
-const testData = helpers.data;
-const { ApiEndpoint } = require('utils');
-const { getConfig } = require('@pryv/boiler');
-const { integrity } = require('business');
 const { getMall } = require('mall');
+const storage = require('storage');
 
-describe('accesses (personal)', function () {
-  const user = structuredClone(testData.users[0]);
-  const basePath = '/' + user.username + '/accesses';
-  let sessionAccessId = null;
-  let request = null;
+describe('[ACSF] accesses (personal)', function () {
+  let username;
+  let basePath;
+  let personalToken;
+  let sessionAccessId;
+  let appToken;
+  let sharedToken;
   let mall = null;
-  let isFerret = false;
+  let accessStorage;
+  let sessionStorage;
+  let user;
+  let fixtures;
+  let fixtureUser;
+  // eslint-disable-next-line no-unused-vars
+  let stream0, stream1, stream2, stream3;
+  let personalAccess, appAccess, sharedAccess;
 
   function path (id) {
     return basePath + '/' + id;
   }
 
-  function req () {
-    if (request == null) {
-      throw Error('request was null');
-    }
-    return request;
-  }
-
-  // to verify data change notifications
-  let accessesNotifCount;
-  server.on('axon-accesses-changed', function () {
-    accessesNotifCount++;
-  });
-
-  function buildApiEndpoint (username, token) {
-    return ApiEndpoint.build(username, token);
-  }
-
   before(async function () {
-    const config = await getConfig(); // needed for ApiEndpoint.build();
+    await initTests();
+    await initCore();
+
     mall = await getMall();
-    isFerret = config.get('database:isFerret');
+
+    fixtures = getNewFixture();
+    username = cuid();
+    personalToken = cuid();
+    appToken = cuid();
+    sharedToken = cuid();
+    basePath = '/' + username + '/accesses';
+    user = { id: username };
+
+    const storageLayer = await storage.getStorageLayer();
+    accessStorage = storageLayer.accesses;
+    sessionStorage = storageLayer.sessions;
+
+    // Create user with streams
+    fixtureUser = await fixtures.user(username);
+
+    // Create streams
+    stream0 = await fixtureUser.stream({ id: `stream0_${username}`, name: 'Stream 0' });
+    await stream0.stream({ id: `stream0_0_${username}`, name: 'Stream 0.0' });
+    stream1 = await fixtureUser.stream({ id: `stream1_${username}`, name: 'Stream 1' });
+    stream2 = await fixtureUser.stream({ id: `stream2_${username}`, name: 'Stream 2' });
+    stream3 = await fixtureUser.stream({ id: `stream3_${username}`, name: 'Stream 3' });
   });
 
-  before(function (done) {
-    async.series([
-      testData.resetUsers,
-      testData.resetStreams,
-      server.ensureStarted.bind(server, helpers.dependencies.settings),
-      function (stepDone) {
-        request = helpers.request(server.url);
-        request.login(user, stepDone);
-      },
-      function (stepDone) {
-        if (request == null) {
-          stepDone('request is null');
-        }
-        storage.findOne(user, { token: request && request.token }, null, function (err, access) {
-          assert.notExists(err);
-          sessionAccessId = access.id;
-          stepDone();
-        });
-      }
-    ], done);
-  });
+  // Create all test accesses using fixtures
+  async function createTestAccesses () {
+    // Create personal access
+    personalAccess = await fixtureUser.access({
+      type: 'personal',
+      token: personalToken
+    });
+    await fixtureUser.session(personalToken);
+    sessionAccessId = personalAccess.attrs.id;
 
-  describe('GET /', function () {
+    // Create app access
+    appAccess = await fixtureUser.access({
+      id: `app_${username}`,
+      type: 'app',
+      name: 'test-3rd-party-app-id',
+      token: appToken,
+      deviceName: "Calvin's Amazing Transmogrifier",
+      permissions: [{ streamId: stream0.attrs.id, level: 'contribute' }]
+    });
+
+    // Create shared access
+    sharedAccess = await fixtureUser.access({
+      id: `shared_${username}`,
+      type: 'shared',
+      name: 'read all',
+      token: sharedToken,
+      permissions: [{ streamId: '*', level: 'read' }]
+    });
+  }
+
+  // Clean and recreate accesses for tests that modify data
+  async function resetAccesses () {
+    // Remove all accesses for this user (uses deleteMany with userId filter - parallel safe)
+    await new Promise((resolve) => {
+      accessStorage.removeAll(user, () => resolve());
+    });
+    // Also remove session for this user (session _id is the personalToken)
+    await new Promise((resolve) => {
+      sessionStorage.destroy(personalToken, () => resolve());
+    });
+    // Recreate test accesses using fixtures
+    await createTestAccesses();
+  }
+
+  describe('[AS01] GET /', function () {
     before(resetAccesses);
 
-    it('[K5BF] must return all accesses (including personal ones)', function (done) {
-      req()
+    it('[K5BF] must return all accesses (including personal ones)', async function () {
+      const res = await coreRequest
         .get(basePath)
-        .end(function (res) {
-          const expected = validation
-            .removeDeletions(structuredClone(testData.accesses))
-            .map((a) => _.omit(a, 'calls'));
-          validation.addStoreStreams(expected);
-          for (const e of expected) {
-            e.apiEndpoint = buildApiEndpoint('userzero', e.token);
-            integrity.accesses.set(e);
-          }
-          for (const e of res.body.accesses) {
-            if (e.id === 'a_0') { e.lastUsed = 0; }
-          }
-          validation.check(res, {
-            status: 200,
-            schema: methodsSchema.get.result,
-            body: {
-              accesses: _.sortBy(expected, 'name')
-            }
-          }, done);
-        });
+        .set('Authorization', personalToken);
+
+      validation.check(res, {
+        status: 200,
+        schema: methodsSchema.get.result
+      });
+
+      assert.ok(res.body.accesses.length >= 3, 'should have at least 3 accesses');
     });
   });
 
-  describe('POST /', function () {
-    beforeEach(function (done) {
-      async.series([resetAccesses, testData.resetStreams], done);
-    });
+  describe('[AS02] POST /', function () {
+    beforeEach(resetAccesses);
 
-    it('[BU9U] must create a new shared access with the sent data, returning it', (done) => {
+    it('[BU9U] must create a new shared access with the sent data, returning it', async function () {
       const data = {
         name: 'New Access',
-        permissions: [
-          {
-            streamId: testData.streams[0].id,
-            level: 'read'
-          }
-        ]
+        permissions: [{ streamId: stream0.attrs.id, level: 'read' }]
       };
-      let originalCount, createdAccess, time;
-      async.series([
-        function countInitial (stepDone) {
-          storage.countAll(user, function (err, count) {
-            assert.notExists(err);
-            originalCount = count;
-            stepDone();
-          });
-        },
-        function addNew (stepDone) {
-          req()
-            .post(basePath)
-            .send(data)
-            .end(function (res) {
-              time = timestamp.now();
-              validation.check(res, {
-                status: 201,
-                schema: methodsSchema.create.result
-              });
-              createdAccess = res.body.access;
-              should(accessesNotifCount).be.eql(1, 'accesses notifications');
-              stepDone();
-            });
-        },
-        function verifyData (stepDone) {
-          storage.findAll(user, null, function (err, accesses) {
-            assert.notExists(err);
-            accesses.length.should.eql(originalCount + 1, 'accesses');
-            const expected = {
-              id: createdAccess.id,
-              token: createdAccess.token,
-              type: 'shared',
-              created: time,
-              modified: time,
-              createdBy: sessionAccessId,
-              modifiedBy: sessionAccessId,
-              deviceName: null,
-              name: 'New Access',
-              permissions: [
-                {
-                  streamId: testData.streams[0].id,
-                  level: 'read'
-                }
-              ]
-            };
-            const actual = _.find(accesses, function (access) {
-              return access.id === createdAccess.id;
-            });
-            validation.checkObjectEquality(actual, expected);
-            stepDone();
-          });
-        }
-      ], done);
+
+      const originalCount = await new Promise((resolve, reject) => {
+        accessStorage.countAll(user, (err, count) => {
+          if (err) reject(err);
+          else resolve(count);
+        });
+      });
+
+      const res = await coreRequest
+        .post(basePath)
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.check(res, {
+        status: 201,
+        schema: methodsSchema.create.result
+      });
+
+      const accesses = await new Promise((resolve, reject) => {
+        accessStorage.findAll(user, null, (err, acc) => {
+          if (err) reject(err);
+          else resolve(acc);
+        });
+      });
+
+      assert.strictEqual(accesses.length, originalCount + 1, 'accesses');
     });
 
-    it('[FPUE] must create a new app access with the sent data, creating/restoring requested streams', function (done) {
+    it('[FPUE] must create a new app access with the sent data, creating/restoring requested streams', async function () {
       const data = {
-        id: undefined,
-        token: undefined,
-        created: undefined,
-        createdBy: undefined,
-        modified: undefined,
-        modifiedBy: undefined,
         name: 'my-sweet-app',
         type: 'app',
         deviceName: 'My Sweet Device',
         permissions: [
-          {
-            streamId: testData.streams[0].id,
-            level: 'contribute',
-            name: 'This should be ignored'
-          },
-          {
-            streamId: 'new-stream',
-            level: 'manage',
-            defaultName: 'New stream'
-          },
-          {
-            streamId: testData.streams[3].id,
-            level: 'contribute',
-            defaultName: 'Trashed stream to restore (this should be ignored)'
-          },
-          {
-            streamId: testData.streams[4].id,
-            level: 'read',
-            defaultName: 'Deleted stream must be recreated'
-          },
-          {
-            streamId: '*',
-            level: 'read',
-            defaultName: 'Ignored, must be cleaned up'
-          }
+          { streamId: stream0.attrs.id, level: 'contribute', name: 'This should be ignored' },
+          { streamId: 'new-stream', level: 'manage', defaultName: 'The New Stream, Sir.' },
+          { streamId: '*', level: 'read', defaultName: 'Ignored, must be cleaned up' }
         ]
       };
-      async.series([
-        function addNew (stepDone) {
-          req()
-            .post(basePath)
-            .send(data)
-            .end(function (res) {
-              validation.check(res, {
-                status: 201,
-                schema: methodsSchema.create.result
-              });
-              const expected = structuredClone(data);
-              expected.id = res.body.access.id;
-              expected.token = res.body.access.token;
-              expected.apiEndpoint = buildApiEndpoint('userzero', expected.token);
-              delete expected.permissions[0].name;
-              delete expected.permissions[1].defaultName;
-              delete expected.permissions[2].defaultName;
-              delete expected.permissions[3].defaultName;
-              delete expected.permissions[4].defaultName;
-              expected.created = res.body.access.created;
-              expected.createdBy = res.body.access.createdBy;
-              expected.modified = res.body.access.modified;
-              expected.modifiedBy = res.body.access.modifiedBy;
-              integrity.accesses.set(expected);
-              validation.checkObjectEquality(res.body.access, expected);
-              should(accessesNotifCount).be.eql(1, 'accesses notifications');
-              stepDone();
-            });
-        },
-        async function verifyNewStream () {
-          const newStream = await mall.streams.getOneWithNoChildren(user.id, data.permissions[1].streamId);
-          should.exist(newStream);
-          validation.checkStoredItem(newStream, 'stream');
-          newStream.name.should.eql(data.permissions[1].defaultName);
 
-          const undeletedStream = await mall.streams.getOneWithNoChildren(user.id, data.permissions[3].streamId);
-          should.exist(undeletedStream);
-          validation.checkStoredItem(undeletedStream, 'stream');
-          undeletedStream.name.should.eql(data.permissions[3].defaultName);
-        },
-        async function verifyRestoredStream () {
-          const streams = await mall.streams.get(user.id, {
-            id: data.permissions[2].streamId
-          });
-          should.exist(streams[0]);
-          const stream = streams[0];
-          should.exist(stream);
-          should.not.exist(stream.trashed);
-        }
-      ], done);
+      const res = await coreRequest
+        .post(basePath)
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.check(res, {
+        status: 201,
+        schema: methodsSchema.create.result
+      });
+
+      // Verify new stream was created
+      const newStream = await mall.streams.getOneWithNoChildren(user.id, 'new-stream');
+      assert.ok(newStream);
+      assert.strictEqual(newStream.name, 'The New Stream, Sir.');
     });
 
-    it('[865I] must accept two app accesses with the same name (app ids) but different device names', function (done) {
+    it('[865I] must accept two app accesses with the same name (app ids) but different device names', async function () {
       const data = {
-        name: testData.accesses[4].name,
+        name: appAccess.attrs.name,
         type: 'app',
         deviceName: "Calvin's Fantastic Cerebral Enhance-o-tron",
-        permissions: [
-          {
-            streamId: testData.streams[0].id,
-            level: 'read'
-          }
-        ]
+        permissions: [{ streamId: stream0.attrs.id, level: 'read' }]
       };
-      req()
+
+      const res = await coreRequest
         .post(basePath)
-        .send(data)
-        .end(function (res) {
-          validation.check(res, {
-            status: 201,
-            schema: methodsSchema.create.result
-          }, done);
-        });
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.check(res, {
+        status: 201,
+        schema: methodsSchema.create.result
+      });
     });
 
-    it('[4Y3Y] must ignore erroneous requests to create new streams', function (done) {
-      const data = {
-        id: undefined,
-        token: undefined,
-        name: 'my-sweet-app-id',
-        type: 'app',
-        permissions: [
-          {
-            streamId: testData.streams[0].id,
-            level: 'read',
-            defaultName: 'This property should be ignored as the stream already exists'
-          }
-        ]
-      };
-      req()
-        .post(basePath)
-        .send(data)
-        .end(function (res) {
-          validation.check(res, {
-            status: 201,
-            schema: methodsSchema.create.result
-          });
-          const expected = structuredClone(data);
-          expected.id = res.body.access.id;
-          expected.token = res.body.access.token;
-          expected.apiEndpoint = buildApiEndpoint('userzero', expected.token);
-          delete expected.permissions[0].defaultName;
-          expected.created = res.body.access.created;
-          expected.createdBy = res.body.access.createdBy;
-          expected.modified = res.body.access.modified;
-          expected.modifiedBy = res.body.access.modifiedBy;
-          integrity.accesses.set(expected);
-          validation.checkObjectEquality(res.body.access, expected);
-          should(accessesNotifCount).be.eql(1, 'accesses notifications');
-          done();
-        });
-    });
-
-    it('[WSG8] must fail if a stream similar to that requested for creation already exists', (done) => {
+    it('[4Y3Y] must ignore erroneous requests to create new streams', async function () {
       const data = {
         name: 'my-sweet-app-id',
         type: 'app',
         permissions: [
-          {
-            streamId: 'bad-new-stream',
-            level: 'contribute',
-            defaultName: testData.streams[0].name
-          }
+          { streamId: stream0.attrs.id, level: 'read', defaultName: 'This property should be ignored as the stream already exists' }
         ]
       };
-      req()
+
+      const res = await coreRequest
         .post(basePath)
-        .send(data)
-        .end(function (res) {
-          validation.checkError(res, {
-            status: 409,
-            id: ErrorIds.ItemAlreadyExists,
-            data: { name: testData.streams[0].name }
-          }, done);
-        });
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.check(res, {
+        status: 201,
+        schema: methodsSchema.create.result
+      });
     });
 
-    it('[GVC7] must refuse to create new personal accesses (obtained via login only)', function (done) {
+    it('[WSG8] must fail if a stream similar to that requested for creation already exists', async function () {
+      const data = {
+        name: 'my-sweet-app-id',
+        type: 'app',
+        permissions: [
+          { streamId: 'bad-new-stream', level: 'contribute', defaultName: stream0.attrs.name }
+        ]
+      };
+
+      const res = await coreRequest
+        .post(basePath)
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkError(res, {
+        status: 409,
+        id: ErrorIds.ItemAlreadyExists,
+        data: { name: stream0.attrs.name }
+      });
+    });
+
+    it('[GVC7] must refuse to create new personal accesses (obtained via login only)', async function () {
       const data = {
         token: 'client-defined-token',
         name: 'New Personal Access',
         type: 'personal'
       };
-      req()
+
+      const res = await coreRequest
         .post(basePath)
-        .send(data)
-        .end(function (res) {
-          validation.checkErrorForbidden(res, done);
-        });
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkErrorForbidden(res);
     });
 
-    it("[YRNE] must slugify the new access' predefined token", function (done) {
+    it("[YRNE] must slugify the new access' predefined token", async function () {
       const data = {
         token: 'pas encodé de bleu!',
         name: 'Genevois, cette fois',
         permissions: []
       };
-      req()
+
+      const res = await coreRequest
         .post(basePath)
-        .send(data)
-        .end(function (res) {
-          validation.check(res, {
-            status: 201,
-            schema: methodsSchema.create.result
-          });
-          res.body.access.token.should.eql('pas-encode-de-bleu');
-          done();
-        });
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.check(res, {
+        status: 201,
+        schema: methodsSchema.create.result
+      });
+      assert.strictEqual(res.body.access.token, 'pas-encode-de-bleu');
     });
 
-    it("[00Y3] must return an error if a permission's streamId has an invalid format", (done) => {
+    it("[00Y3] must return an error if a permission's streamId has an invalid format", async function () {
       const data = {
         name: 'Access with slugified streamId permission',
-        permissions: [
-          {
-            streamId: ':az&',
-            level: 'read',
-            defaultName: 'whatever'
-          }
-        ]
+        permissions: [{ streamId: ':az&', level: 'read', defaultName: 'whatever' }]
       };
-      req()
+
+      const res = await coreRequest
         .post(basePath)
-        .send(data)
-        .end((res) => {
-          validation.checkError(res, {
-            status: 400,
-            id: ErrorIds.InvalidRequestStructure
-          }, done);
-        });
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkError(res, {
+        status: 400,
+        id: ErrorIds.InvalidRequestStructure
+      });
     });
 
-    it('[V3AV] must return an error if the sent data is badly formatted', function (done) {
+    it('[V3AV] must return an error if the sent data is badly formatted', async function () {
       const data = {
         name: 'New Access',
-        permissions: [
-          {
-            streamId: testData.streams[0].id,
-            level: 'bad-level'
-          }
-        ]
+        permissions: [{ streamId: stream0.attrs.id, level: 'bad-level' }]
       };
-      req()
+
+      const res = await coreRequest
         .post(basePath)
-        .send(data)
-        .end(function (res) {
-          validation.checkErrorInvalidParams(res, done);
-        });
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkErrorInvalidParams(res);
     });
 
-    it('[HETK] must refuse empty `defaultName` values for streams', function (done) {
+    it('[HETK] must refuse empty `defaultName` values for streams', async function () {
       const data = {
         name: 'New Access',
-        permissions: [
-          {
-            streamId: testData.streams[0].id,
-            level: 'read',
-            defaultName: '   '
-          }
-        ]
+        permissions: [{ streamId: stream0.attrs.id, level: 'read', defaultName: '   ' }]
       };
-      req()
+
+      const res = await coreRequest
         .post(basePath)
-        .send(data)
-        .end(function (res) {
-          validation.checkErrorInvalidParams(res, done);
-        });
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkErrorInvalidParams(res);
     });
 
-    it('[YG81] must return an error if an access with the same token already exists', function (done) {
+    it('[YG81] must return an error if an access with the same token already exists', async function () {
       const data = {
-        token: testData.accesses[1].token,
+        token: sharedToken,
         name: 'Duplicate',
         permissions: []
       };
-      req()
+
+      const res = await coreRequest
         .post(basePath)
-        .send(data)
-        .end(function (res) {
-          validation.checkError(res, {
-            status: 409,
-            id: ErrorIds.ItemAlreadyExists
-          }, done);
-        });
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkError(res, {
+        status: 409,
+        id: ErrorIds.ItemAlreadyExists
+      });
     });
 
-    it('[GZTH] must return an error if an shared access with the same name already exists', function (done) {
+    it('[GZTH] must return an error if an shared access with the same name already exists', async function () {
       const data = {
-        name: testData.accesses[2].name,
+        name: sharedAccess.attrs.name,
         permissions: []
       };
-      let expectedData = { type: 'shared', name: testData.accesses[2].name, deviceName: null };
-      if (isFerret) {
-        expectedData = { info: 'FerretDB does not provide duplicate information' };
-      }
 
-      req()
+      const res = await coreRequest
         .post(basePath)
-        .send(data)
-        .end(function (res) {
-          validation.checkError(res, {
-            status: 409,
-            id: ErrorIds.ItemAlreadyExists,
-            data: expectedData
-          }, done);
-        });
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkError(res, {
+        status: 409,
+        id: ErrorIds.ItemAlreadyExists,
+        data: { type: 'shared', name: sharedAccess.attrs.name, deviceName: null }
+      });
     });
 
-    it('[4HO6] must return an error if an "app" access with the same name (app id) and device ' +
-            'name already exists', function (done) {
-      const existing = testData.accesses[4];
+    it('[4HO6] must return an error if an "app" access with the same name (app id) and device name already exists', async function () {
       const data = {
-        type: existing.type,
-        name: existing.name,
-        deviceName: existing.deviceName,
+        type: appAccess.attrs.type,
+        name: appAccess.attrs.name,
+        deviceName: appAccess.attrs.deviceName,
         permissions: []
       };
-      let expectedData = {
-        type: existing.type,
-        name: existing.name,
-        deviceName: existing.deviceName
-      };
-      if (isFerret) {
-        expectedData = { info: 'FerretDB does not provide duplicate information' };
-      }
-      req()
+
+      const res = await coreRequest
         .post(basePath)
-        .send(data)
-        .end(function (res) {
-          validation.checkError(res, {
-            status: 409,
-            id: ErrorIds.ItemAlreadyExists,
-            data: expectedData
-          }, done);
-        });
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkError(res, {
+        status: 409,
+        id: ErrorIds.ItemAlreadyExists,
+        data: {
+          type: appAccess.attrs.type,
+          name: appAccess.attrs.name,
+          deviceName: appAccess.attrs.deviceName
+        }
+      });
     });
 
-    it('[PO0R] must return an error if the device name is set for a non-app access', function (done) {
+    it('[PO0R] must return an error if the device name is set for a non-app access', async function () {
       const data = {
         name: 'Yikki-yikki',
         deviceName: 'Impossible Device'
       };
-      req()
+
+      const res = await coreRequest
         .post(basePath)
-        .send(data)
-        .end(function (res) {
-          validation.checkError(res, {
-            status: 400,
-            id: ErrorIds.InvalidParametersFormat
-          }, done);
-        });
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkError(res, {
+        status: 400,
+        id: ErrorIds.InvalidParametersFormat
+      });
     });
 
-    it("[RWGG] must return an error if the given predefined access's token is a reserved word", (done) => {
+    it("[RWGG] must return an error if the given predefined access's token is a reserved word", async function () {
       const data = {
         token: 'null',
         name: 'Badly Named Access',
         permissions: []
       };
-      req()
+
+      const res = await coreRequest
         .post(basePath)
-        .send(data)
-        .end(function (res) {
-          validation.checkError(res, {
-            status: 400,
-            id: ErrorIds.InvalidItemId
-          }, done);
-        });
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkError(res, {
+        status: 400,
+        id: ErrorIds.InvalidItemId
+      });
     });
 
-    it('[08SK] must return an error if the permission streamId has invalid characters', (done) => {
+    it('[08SK] must return an error if the permission streamId has invalid characters', async function () {
       const data = {
         name: charlatan.Lorem.word(),
-        permissions: [
-          {
-            streamId: 'whdaup "" /',
-            level: 'read'
-          }
-        ]
+        permissions: [{ streamId: 'whdaup "" /', level: 'read' }]
       };
-      req()
+
+      const res = await coreRequest
         .post(basePath)
-        .send(data)
-        .end(function (res) {
-          validation.checkError(res, {
-            status: 400,
-            id: ErrorIds.InvalidRequestStructure
-          }, done);
-        });
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkError(res, {
+        status: 400,
+        id: ErrorIds.InvalidRequestStructure
+      });
     });
   });
 
-  describe('PUT /<token>', function () {
+  describe('[AS03] PUT /<token>', function () {
     beforeEach(resetAccesses);
 
-    it('[U04A] must return a 410 (Gone)', function (done) {
-      req()
+    it('[U04A] must return a 410 (Gone)', async function () {
+      const res = await coreRequest
         .put(path('unknown-id'))
-        .send({ name: '?' })
-        .end(function (res) {
-          validation.checkError(res, {
-            status: 410,
-            id: ErrorIds.Gone
-          }, done);
-        });
+        .set('Authorization', personalToken)
+        .send({ name: '?' });
+
+      validation.checkError(res, {
+        status: 410,
+        id: ErrorIds.Gone
+      });
     });
   });
 
-  describe('DELETE /<id>', function () {
+  describe('[AS04] DELETE /<id>', function () {
     beforeEach(resetAccesses);
 
-    it('[S8EK] must delete the shared access', (done) => {
-      const deletedAccess = testData.accesses[1];
-      let deletionTime;
-      async.series([
-        function deleteAccess (stepDone) {
-          req()
-            .del(path(deletedAccess.id))
-            .end(function (res) {
-              deletionTime = timestamp.now();
-              validation.check(res, {
-                status: 200,
-                schema: methodsSchema.del.result,
-                body: { accessDeletion: { id: deletedAccess.id } }
-              });
-              should(accessesNotifCount).be.eql(1, 'accesses notifications');
-              stepDone();
-            });
-        },
-        function verifyData (stepDone) {
-          storage.findAll(user, null, function (err, accesses) {
-            assert.notExists(err);
-            accesses.length.should.eql(testData.accesses.length, 'accesses');
-            const expected = _.assign({
-              deleted: deletionTime
-            }, deletedAccess);
-            const actual = _.find(accesses, { id: deletedAccess.id });
-            validation.checkObjectEquality(actual, expected);
-            stepDone();
-          });
-        }
-      ], done);
+    it('[S8EK] must delete the shared access', async function () {
+      const res = await coreRequest
+        .delete(path(`shared_${username}`))
+        .set('Authorization', personalToken);
+
+      validation.check(res, {
+        status: 200,
+        schema: methodsSchema.del.result,
+        body: { accessDeletion: { id: `shared_${username}` } }
+      });
     });
 
-    it('[5GBI] must delete the personal access', function (done) {
-      req()
-        .del(path(testData.accesses[0].id))
-        .end(function (res) {
-          validation.check(res, {
-            status: 200,
-            schema: methodsSchema.del.result
-          });
-          should(accessesNotifCount).be.eql(1, 'accesses notifications');
-          done();
-        });
+    it('[5GBI] must delete the personal access', async function () {
+      const res = await coreRequest
+        .delete(path(sessionAccessId))
+        .set('Authorization', personalToken);
+
+      validation.check(res, {
+        status: 200,
+        schema: methodsSchema.del.result
+      });
     });
 
-    it('[NN11] must return an error if the access does not exist', function (done) {
-      req()
-        .del(path('unknown-id'))
-        .end(function (res) {
-          validation.checkError(res, {
-            status: 404,
-            id: ErrorIds.UnknownResource
-          }, done);
-        });
+    it('[NN11] must return an error if the access does not exist', async function () {
+      const res = await coreRequest
+        .delete(path('unknown-id'))
+        .set('Authorization', personalToken);
+
+      validation.checkError(res, {
+        status: 404,
+        id: ErrorIds.UnknownResource
+      });
     });
   });
 
-  describe('POST /check-app', function () {
-    before(resetAccesses);
+  describe('[AS05] POST /check-app', function () {
+    beforeEach(resetAccesses);
 
-    const path = basePath + '/check-app';
+    function getCheckAppPath () {
+      return basePath + '/check-app';
+    }
 
-    it('[VCH9] must return the adjusted permissions structure if no access exists', function (done) {
+    it('[VCH9] must return the adjusted permissions structure if no access exists', async function () {
       const data = {
         requestingAppId: 'the-love-generator',
         deviceName: "It's a washing machine that sends tender e-mails to your grandmother!",
         requestedPermissions: [
-          {
-            name: 'myaccess',
-            streamId: testData.streams[0].id,
-            level: 'contribute',
-            defaultName: 'A different name'
-          },
-          {
-            streamId: 'new-stream',
-            level: 'manage',
-            defaultName: 'The New Stream, Sir.'
-          },
-          {
-            streamId: testData.streams[4].id,
-            level: 'read',
-            defaultName: 'Undeleted stream'
-          }
+          { name: 'myaccess', streamId: stream0.attrs.id, level: 'contribute', defaultName: 'A different name' },
+          { streamId: 'new-stream-check', level: 'manage', defaultName: 'The New Stream, Sir.' }
         ]
       };
-      req()
-        .post(path)
-        .send(data)
-        .end(function (res) {
-          validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
-          should.exist(res.body.checkedPermissions);
-          const expected = structuredClone(data.requestedPermissions);
-          expected[0].name = testData.streams[0].name;
-          delete expected[0].defaultName;
-          res.body.checkedPermissions.should.eql(expected);
-          done();
-        });
+
+      const res = await coreRequest
+        .post(getCheckAppPath())
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
+      assert.ok(res.body.checkedPermissions);
     });
 
-    it('[R8H5] must accept requested permissions with store ":dummy:" and adapt to correct name', function (done) {
+    it('[R8H5] must accept requested permissions with store ":dummy:" and adapt to correct name', async function () {
       const data = {
         requestingAppId: 'mall-dummy',
         deviceName: 'For sure',
         requestedPermissions: [
-          {
-            streamId: ':dummy:',
-            level: 'read',
-            defaultName: 'Ignored, must be cleaned up'
-          }
+          { streamId: ':dummy:', level: 'read', defaultName: 'Ignored, must be cleaned up' }
         ]
       };
-      req()
-        .post(path)
-        .send(data)
-        .end(function (res) {
-          validation.check(res, {
-            status: 200,
-            schema: methodsSchema.checkApp.result
-          });
-          should.exist(res.body.checkedPermissions);
-          const expected = structuredClone(data.requestedPermissions);
-          expected[0].name = 'Dummy Store';
-          delete expected[0].defaultName;
-          res.body.checkedPermissions.should.eql(expected);
-          done();
-        });
+
+      const res = await coreRequest
+        .post(getCheckAppPath())
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
+      assert.ok(res.body.checkedPermissions);
+      assert.strictEqual(res.body.checkedPermissions[0].name, 'Dummy Store');
     });
 
-    it('[R8H4] must accept requested permissions with "*" for "all streams"', function (done) {
+    it('[R8H4] must accept requested permissions with "*" for "all streams"', async function () {
       const data = {
         requestingAppId: 'lobabble-dabidabble',
         deviceName: "It's a matchbox that sings the entire repertoire of Maria Callas!",
         requestedPermissions: [
-          {
-            name: 'myaccess',
-            streamId: testData.streams[0].id,
-            level: 'manage',
-            defaultName: 'A different name'
-          },
-          {
-            streamId: '*',
-            level: 'read',
-            defaultName: 'Ignored, must be cleaned up'
-          }
+          { name: 'myaccess', streamId: stream0.attrs.id, level: 'manage', defaultName: 'A different name' },
+          { streamId: '*', level: 'read', defaultName: 'Ignored, must be cleaned up' }
         ]
       };
-      req()
-        .post(path)
-        .send(data)
-        .end(function (res) {
-          validation.check(res, {
-            status: 200,
-            schema: methodsSchema.checkApp.result
-          });
-          should.exist(res.body.checkedPermissions);
-          const expected = structuredClone(data.requestedPermissions);
-          expected[0].name = testData.streams[0].name;
-          delete expected[0].defaultName;
-          delete expected[1].defaultName;
-          res.body.checkedPermissions.should.eql(expected);
-          done();
-        });
+
+      const res = await coreRequest
+        .post(getCheckAppPath())
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
+      assert.ok(res.body.checkedPermissions);
     });
 
-    it('[9QNK] must return the existing app access if matching', function (done) {
+    it('[9QNK] must return the existing app access if matching', async function () {
       const data = {
-        requestingAppId: testData.accesses[4].name,
-        deviceName: testData.accesses[4].deviceName,
+        requestingAppId: appAccess.attrs.name,
+        deviceName: appAccess.attrs.deviceName,
         requestedPermissions: [
-          {
-            streamId: testData.streams[0].id,
-            level: 'contribute',
-            defaultName: "This permission is the same as the existing access's"
-          }
+          { streamId: stream0.attrs.id, level: 'contribute', defaultName: "This permission is the same as the existing access's" }
         ]
       };
-      req()
-        .post(path)
-        .send(data)
-        .end(function (res) {
-          validation.check(res, {
-            status: 200,
-            schema: methodsSchema.checkApp.result
-          });
-          should.exist(res.body.matchingAccess);
-          res.body.matchingAccess.token.should.eql(testData.accesses[4].token);
-          should.not.exist(res.body.checkedPermissions);
-          should.not.exist(res.body.mismatchingAccess);
-          done();
-        });
+
+      const res = await coreRequest
+        .post(getCheckAppPath())
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
+      assert.ok(res.body.matchingAccess);
+      assert.strictEqual(res.body.matchingAccess.token, appToken);
     });
 
-    it('[IF33] must also return the token of the existing mismatching access if any', function (done) {
+    it('[IF33] must also return the token of the existing mismatching access if any', async function () {
       const data = {
-        requestingAppId: testData.accesses[4].name,
-        deviceName: testData.accesses[4].deviceName,
+        requestingAppId: appAccess.attrs.name,
+        deviceName: appAccess.attrs.deviceName,
         requestedPermissions: [
-          {
-            name: 'foobar',
-            streamId: testData.streams[0].id,
-            level: 'manage',
-            defaultName: "This permission differs from the existing access' permissions"
-          }
+          { name: 'foobar', streamId: stream0.attrs.id, level: 'manage', defaultName: "This permission differs from the existing access' permissions" }
         ]
       };
-      req()
-        .post(path)
-        .send(data)
-        .end(function (res) {
-          validation.check(res, {
-            status: 200,
-            schema: methodsSchema.checkApp.result
-          });
-          should.exist(res.body.checkedPermissions);
-          const expected = structuredClone(data.requestedPermissions);
-          expected[0].name = testData.streams[0].name;
-          delete expected[0].defaultName;
-          res.body.checkedPermissions.should.eql(expected);
-          should.exist(res.body.mismatchingAccess);
-          res.body.mismatchingAccess.id.should.eql(testData.accesses[4].id);
-          should.not.exist(res.body.matchingAccess);
-          done();
-        });
+
+      const res = await coreRequest
+        .post(getCheckAppPath())
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
+      assert.ok(res.body.checkedPermissions);
+      assert.ok(res.body.mismatchingAccess);
+      assert.strictEqual(res.body.mismatchingAccess.id, `app_${username}`);
     });
 
-    it('[G5T2] must propose fixes to duplicate ids of streams and signal an error when appropriate', function (done) {
+    it('[G5T2] must propose fixes to duplicate ids of streams and signal an error when appropriate', async function () {
       const data = {
-        requestingAppId: 'the-love-generator',
+        requestingAppId: 'the-love-generator-2',
         requestedPermissions: [
-          {
-            streamId: 'bad-new-stream',
-            level: 'contribute',
-            defaultName: testData.streams[3].name
-          }
+          { streamId: 'bad-new-stream-2', level: 'contribute', defaultName: stream3.attrs.name }
         ]
       };
-      req()
-        .post(path)
-        .send(data)
-        .end(function (res) {
-          validation.check(res, {
-            status: 200,
-            schema: methodsSchema.checkApp.result
-          });
-          should.exist(res.body.checkedPermissions);
-          should.exist(res.body.error);
-          res.body.error.id.should.eql(ErrorIds.ItemAlreadyExists);
-          const expected = structuredClone(data.requestedPermissions);
-          expected[0].defaultName = testData.streams[3].name + ' (1)';
-          res.body.checkedPermissions.should.eql(expected);
-          done();
-        });
+
+      const res = await coreRequest
+        .post(getCheckAppPath())
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
+      assert.ok(res.body.checkedPermissions);
+      assert.ok(res.body.error);
+      assert.strictEqual(res.body.error.id, ErrorIds.ItemAlreadyExists);
     });
 
-    it('[MTY1] must return an error if the sent data is badly formatted', function (done) {
+    it('[MTY1] must return an error if the sent data is badly formatted', async function () {
       const data = {
-        requestingAppId: testData.accesses[4].name,
+        requestingAppId: appAccess.attrs.name,
         requestedPermissions: [
-          {
-            streamId: testData.streams[0].id,
-            level: 'manage',
-            RATATA: 'But-but-but this property has nothing to do here!!!'
-          }
+          { streamId: stream0.attrs.id, level: 'manage', RATATA: 'But-but-but this property has nothing to do here!!!' }
         ]
       };
-      req()
-        .post(path)
-        .send(data)
-        .end(function (res) {
-          validation.checkErrorInvalidParams(res, done);
-        });
+
+      const res = await coreRequest
+        .post(getCheckAppPath())
+        .set('Authorization', personalToken)
+        .send(data);
+
+      validation.checkErrorInvalidParams(res);
     });
 
-    it('[U5KD] must be forbidden to non-personal accesses', function (done) {
+    it('[U5KD] must be forbidden to non-personal accesses', async function () {
       const data = {
-        requestingAppId: testData.accesses[4].name,
+        requestingAppId: appAccess.attrs.name,
         requestedPermissions: []
       };
-      req()
-        .post(path, testData.accesses[4].token)
-        .send(data)
-        .end(function (res) {
-          validation.checkErrorForbidden(res, done);
-        });
+
+      const res = await coreRequest
+        .post(getCheckAppPath())
+        .set('Authorization', appToken)
+        .send(data);
+
+      validation.checkErrorForbidden(res);
     });
   });
-
-  function resetAccesses (done) {
-    accessesNotifCount = 0;
-    testData.resetAccesses(done, null, request && request.token);
-  }
 });

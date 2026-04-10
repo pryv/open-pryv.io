@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Builds a single 'service-core' docker image.
+# master.js manages all workers (API, HFS, Previews) — no runit needed.
+set -e
+
+SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
+
+if [ "$1" == "preview" ]
+then
+  if [ -z "$2" ]; then
+    echo "preview requires a tag argument for the version"
+    exit 0
+  fi
+  version=$2"-preview"
+  echo "This is a preview build: it will be published to the Docker registry with tag: ${version}"
+  host='docker.io'
+  release=true
+elif [ "$1" != "test" ]
+then
+  $SCRIPT_FOLDER/scripts/build_name
+  version=$(cat build_tag)
+  if [ -e release_build ]; then
+    echo "This is a release build, it will update 'latest' tags."
+  fi
+  host='docker.io'
+  release=true
+
+  # Copy the release version to the project root, so we can later display it to
+  # clients:
+  cp ./build_tag ./.api-version
+else ## test
+  version=test
+  host=localhost
+  release=false
+fi
+
+echo "---------------------------- building service-core --------------------------------"
+docker build --build-arg BUILD_HOST=$host --build-arg BUILD_VERSION=$version \
+  -f $SCRIPT_FOLDER/Dockerfile -t $host/pryvio/core:$version .
+
+if [ "$release" = true ]; then
+  docker push $host/pryvio/core:$version
+fi

@@ -1,52 +1,36 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
 require('./test-helper');
-const assert = require('chai').assert;
+const assert = require('node:assert');
 const { pubsub } = require('messages');
 
-describe('Notifications', () => {
-  let axonMsgs = [];
+// Helper to replace chai's deepInclude
+function assertDeepInclude (array, value) {
+  const found = array.some(item => {
+    try {
+      assert.deepStrictEqual(item, value);
+      return true;
+    } catch { return false; }
+  });
+  assert.ok(found, `Expected array to deep-include ${JSON.stringify(value)}`);
+}
+
+describe('[NOTF] Notifications', () => {
+  let testMsgs = [];
   let emittedMsgs = [];
   // Clear out received messages before each test.
   beforeEach(() => {
-    axonMsgs = [];
+    testMsgs = [];
     emittedMsgs = [];
   });
-  // stub out axonSocket
-  const axonSocket = {
-    emit: (...args) => axonMsgs.push(args)
+  // stub out test notifier
+  const testNotifier = {
+    emit: (...args) => testMsgs.push(args)
   };
   before(async () => {
     // intercept internal events
@@ -56,76 +40,62 @@ describe('Notifications', () => {
     pubsub.notifications.on('USERNAME', (message) => {
       emittedMsgs.push(message);
     });
-    // attach "fake" axonSocket to pubsub.
-    pubsub.setTestNotifier(axonSocket);
+    // attach "fake" test notifier to pubsub.
+    pubsub.setTestNotifier(testNotifier);
   });
-  describe('#serverReady', () => {
+  describe('[NF01] #serverReady', () => {
     beforeEach(() => {
       pubsub.status.emit(pubsub.SERVER_READY);
     });
     it('[B76G] notifies internal listeners', () => {
-      assert.deepInclude(emittedMsgs, pubsub.SERVER_READY);
+      assertDeepInclude(emittedMsgs, pubsub.SERVER_READY);
     });
-    it('[SRAU] notifies axon listeners', () => {
-      assert.deepInclude(axonMsgs, ['axon-server-ready']);
+    it('[SRAU] notifies test listeners', () => {
+      assertDeepInclude(testMsgs, ['test-server-ready']);
     });
   });
-  describe('#accountChanged', () => {
+  describe('[NF02] #accountChanged', () => {
     beforeEach(() => {
       pubsub.notifications.emit('USERNAME', pubsub.USERNAME_BASED_ACCOUNT_CHANGED);
     });
     it('[P6ZD] notifies internal listeners', () => {
-      assert.deepInclude(emittedMsgs, pubsub.USERNAME_BASED_ACCOUNT_CHANGED);
+      assertDeepInclude(emittedMsgs, pubsub.USERNAME_BASED_ACCOUNT_CHANGED);
     });
-    it('[Q96S] notifies axon listeners', () => {
-      assert.deepInclude(axonMsgs, ['axon-account-changed', 'USERNAME']);
+    it('[Q96S] notifies test listeners', () => {
+      assertDeepInclude(testMsgs, ['test-account-changed', 'USERNAME']);
     });
   });
-  describe('#accessesChanged', () => {
+  describe('[NF03] #accessesChanged', () => {
     beforeEach(() => {
       pubsub.notifications.emit('USERNAME', pubsub.USERNAME_BASED_ACCESSES_CHANGED);
     });
     it('[P5CG] notifies internal listeners', () => {
-      assert.deepInclude(emittedMsgs, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
+      assertDeepInclude(emittedMsgs, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
     });
-    it('[VSN6] notifies axon listeners', () => {
-      assert.deepInclude(axonMsgs, ['axon-accesses-changed', 'USERNAME']);
-    });
-  });
-  describe('#followedSlicesChanged', () => {
-    beforeEach(() => {
-      pubsub.notifications.emit('USERNAME', pubsub.USERNAME_BASED_FOLLOWEDSLICES_CHANGED);
-    });
-    it('[VU4A] notifies internal listeners', () => {
-      assert.deepInclude(emittedMsgs, pubsub.USERNAME_BASED_FOLLOWEDSLICES_CHANGED);
-    });
-    it('[UD2B] notifies axon listeners', () => {
-      assert.deepInclude(axonMsgs, [
-        'axon-followed-slices-changed',
-        'USERNAME'
-      ]);
+    it('[VSN6] notifies test listeners', () => {
+      assertDeepInclude(testMsgs, ['test-accesses-changed', 'USERNAME']);
     });
   });
-  describe('#streamsChanged', () => {
+  describe('[NF05] #streamsChanged', () => {
     beforeEach(() => {
       pubsub.notifications.emit('USERNAME', pubsub.USERNAME_BASED_STREAMS_CHANGED);
     });
     it('[LDUQ] notifies internal listeners', () => {
-      assert.deepInclude(emittedMsgs, pubsub.USERNAME_BASED_STREAMS_CHANGED);
+      assertDeepInclude(emittedMsgs, pubsub.USERNAME_BASED_STREAMS_CHANGED);
     });
-    it('[BUR1] notifies axon listeners', () => {
-      assert.deepInclude(axonMsgs, ['axon-streams-changed', 'USERNAME']);
+    it('[BUR1] notifies test listeners', () => {
+      assertDeepInclude(testMsgs, ['test-streams-changed', 'USERNAME']);
     });
   });
-  describe('#eventsChanged', () => {
+  describe('[NF06] #eventsChanged', () => {
     beforeEach(() => {
       pubsub.notifications.emit('USERNAME', pubsub.USERNAME_BASED_EVENTS_CHANGED);
     });
     it('[N8RI] notifies internal listeners', () => {
-      assert.deepInclude(emittedMsgs, pubsub.USERNAME_BASED_EVENTS_CHANGED);
+      assertDeepInclude(emittedMsgs, pubsub.USERNAME_BASED_EVENTS_CHANGED);
     });
-    it('[TRMW] notifies axon listeners', () => {
-      assert.deepInclude(axonMsgs, ['axon-events-changed', 'USERNAME']);
+    it('[TRMW] notifies test listeners', () => {
+      assertDeepInclude(testMsgs, ['test-events-changed', 'USERNAME']);
     });
   });
 });

@@ -1,0 +1,18 @@
+{
+  "name": "@pryv/engine-mongodb",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pryv MongoDB storage engine",
+  "homepage": "https://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv <info@pryv.com> (https://pryv.com)",
+  "main": "src/index.js",
+  "dependencies": {
+    "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
+    "bluebird": "^3.5.0",
+    "cuid": "^2.1.8",
+    "lodash": "^4.17.4",
+    "mongodb": "^4.11.0",
+    "unix-timestamp": "^1.0.3"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "@pryv/engine-rqlite",
+  "version": "0.1.0",
+  "private": true,
+  "description": "rqlite PlatformDB engine for distributed multi-core deployments",
+  "homepage": "https://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv <info@pryv.com> (https://pryv.com)"
+}

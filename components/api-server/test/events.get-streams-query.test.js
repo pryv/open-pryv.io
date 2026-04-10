@@ -1,44 +1,15 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
-const cuid = require('cuid');
-const { assert } = require('chai');
-const { databaseFixture } = require('test-helpers');
-const { produceMongoConnection, context } = require('./test-helpers');
+/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
 const eventsQueryUtils = require('mall/src/helpers/eventsQueryUtils');
 const streamsQueryUtils = require('../src/methods/helpers/streamsQueryUtils');
+const { toMongoDBQuery } = require('storages/engines/mongodb/src/dataStore/streamsQueryToMongo');
 const { storeDataUtils } = require('mall');
 
 /**
@@ -86,7 +57,7 @@ const EVENTS = {
   f: { streamIds: ['F'] },
   t: { streamIds: ['T'] }
 };
-const EVENT4ID = {};
+// Note: EVENT4ID is created per-test in describe block to avoid parallel conflicts
 
 const ALL_ACCESSIBLE_STREAMS_LOCAL = [];
 const ALL_ACCESSIBLE_ROOT_STREAMS_LOCAL = [];
@@ -135,7 +106,7 @@ function customExpand (streamId, storeId = 'local', excludedIds = []) {
 }
 
 describe('[EGSQ] events.get streams query', function () {
-  describe('Internal query helpers', function () {
+  describe('[EQ01] Internal query helpers', function () {
     async function validateQuery (query) {
       if (!Array.isArray(query)) query = [query];
       query = streamsQueryUtils.transformArrayOfStringsToStreamsQuery(query);
@@ -144,25 +115,25 @@ describe('[EGSQ] events.get streams query', function () {
       return expandedQuery;
     }
 
-    describe('when transforming streams parameters', function () {
+    describe('[EQ02] when transforming streams parameters', function () {
       it('[D2B5] must convert strings array to expanded array inside [{any: []}]', async function () {
         const res = await validateQuery(['A', 'B']);
-        assert.deepEqual(res, [{ any: ['A', 'B', 'C'], storeId: 'local' }]);
+        assert.deepStrictEqual(res, [{ any: ['A', 'B', 'C'], storeId: 'local' }]);
       });
 
       it('[JZWE] must convert single string "B" to [{any: ["B"]}]', async function () {
         const res = await validateQuery('B');
-        assert.deepEqual(res, [{ any: ['B'], storeId: 'local' }]);
+        assert.deepStrictEqual(res, [{ any: ['B'], storeId: 'local' }]);
       });
 
       it('[8VV4] must convert streams query with only "any" property to expanded streams query inside array [{any: []}])', async function () {
         const res = await validateQuery({ any: ['A', 'B'] });
-        assert.deepEqual(res, [{ any: ['A', 'B', 'C'], storeId: 'local' }]);
+        assert.deepStrictEqual(res, [{ any: ['A', 'B', 'C'], storeId: 'local' }]);
       });
 
       it('[HFT2] must convert streams query property "all" to "and: [{any..}, {any..}]) with each containing expanded streamIds', async function () {
         const res = await validateQuery({ any: ['A'], all: ['D', 'F'] });
-        assert.deepEqual(res, [
+        assert.deepStrictEqual(res, [
           {
             any: ['A', 'B', 'C'],
             and: [
@@ -175,7 +146,7 @@ describe('[EGSQ] events.get streams query', function () {
 
       it('[PLMO] must convert streams query property "all" to "and: [{any..}]) with each containing expanded streamIds', async function () {
         const res = await validateQuery({ any: ['A'], all: ['F'] });
-        assert.deepEqual(res, [
+        assert.deepStrictEqual(res, [
           {
             any: ['A', 'B', 'C'],
             and: [
@@ -187,7 +158,7 @@ describe('[EGSQ] events.get streams query', function () {
 
       it('[JYUR] must convert streams query property "all" and "not" to "and: [{any..}] not:) with each containing expanded streamIds', async function () {
         const res = await validateQuery({ any: ['A'], all: ['F'], not: ['D', 'E'] });
-        assert.deepEqual(res, [
+        assert.deepStrictEqual(res, [
           {
             storeId: 'local',
             any: ['A', 'B', 'C'],
@@ -197,17 +168,17 @@ describe('[EGSQ] events.get streams query', function () {
 
       it('[2W2K] must accept two streams queries expanding them', async function () {
         const res = await validateQuery([{ any: ['A'] }, { any: ['D'] }]);
-        assert.deepEqual(res, [{ any: ['A', 'B', 'C'], storeId: 'local' }, { any: ['D', 'E', 'F'], storeId: 'local' }]);
+        assert.deepStrictEqual(res, [{ any: ['A', 'B', 'C'], storeId: 'local' }, { any: ['D', 'E', 'F'], storeId: 'local' }]);
       });
 
       it('[2EF9] must convert streams query {any: ["*"]} to [{any: [all accessible streams]}]', async function () {
         const res = await validateQuery({ any: ['*'] });
-        assert.deepEqual(res, [{ any: ['A', 'B', 'C', 'D', 'E', 'F', '.account', '.account-email'], storeId: 'local' }]);
+        assert.deepStrictEqual(res, [{ any: ['A', 'B', 'C', 'D', 'E', 'F', '.account', '.account-email'], storeId: 'local' }]);
       });
 
       it('[TUZT] must convert streams query {any: [*], not: ["A"]} to [{any: [all accessible streams], [expanded "A"]}]', async function () {
         const res = await validateQuery({ any: ['*'], not: ['A'] });
-        assert.deepEqual(res, [{ any: ['D', 'E', 'F', '.account', '.account-email'], and: [{ not: ['A', 'B', 'C'] }], storeId: 'local' }]);
+        assert.deepStrictEqual(res, [{ any: ['D', 'E', 'F', '.account', '.account-email'], and: [{ not: ['A', 'B', 'C'] }], storeId: 'local' }]);
       });
 
       it('[NHGF] not accept any: "*" query mixed with "all" query. like: {any: [*], all: ["D"], not: ["A"]}', async function () {
@@ -215,7 +186,7 @@ describe('[EGSQ] events.get streams query', function () {
           await validateQuery({ any: ['*'], all: ['D'], not: ['A'] });
           assert(false);
         } catch (e) {
-          assert.include(e.message, '\'*\'} cannot be mixed with \'all\'');
+          assert.ok(e.message.includes('\'*\'} cannot be mixed with \'all\''));
         }
       });
 
@@ -224,19 +195,19 @@ describe('[EGSQ] events.get streams query', function () {
           await validateQuery({ any: ['*', 'D'], not: ['A'] });
           assert(false);
         } catch (e) {
-          assert.include(e.message, '\'*\' cannot be mixed with other streamIds in \'any\'');
+          assert.ok(e.message.includes('\'*\' cannot be mixed with other streamIds in \'any\''));
         }
       });
 
       it('[N3Q6] must convert {any: "*", not: ["A"]} to [{any: [all accessible streams], not: [expanded "A"]}]', async function () {
         const res = await validateQuery({ any: ['*'], not: ['A'] });
-        assert.deepEqual(res, [{ any: ['D', 'E', 'F', '.account', '.account-email'], and: [{ not: ['A', 'B', 'C'] }], storeId: 'local' }]);
+        assert.deepStrictEqual(res, [{ any: ['D', 'E', 'F', '.account', '.account-email'], and: [{ not: ['A', 'B', 'C'] }], storeId: 'local' }]);
       });
 
-      describe('with multiple stores', function () {
+      describe('[EQ03] with multiple stores', function () {
         it('[U6GS] group query streamIds per store', async function () {
           const res = streamsQueryUtils.transformArrayOfStringsToStreamsQuery(['A', ':_audit:test']);
-          assert.deepEqual(res, [{ any: ['A'] }, { any: [':_audit:test'] }]);
+          assert.deepStrictEqual(res, [{ any: ['A'] }, { any: [':_audit:test'] }]);
         });
 
         it('[I7GF] should throw an error if two different store are mixed in a query item', async function () {
@@ -244,7 +215,7 @@ describe('[EGSQ] events.get streams query', function () {
             await validateQuery([{ any: ['A', ':_audit:test'] }]);
             assert(false);
           } catch (e) {
-            assert.include(e.message, 'queries must me grouped by store');
+            assert.ok(e.message.includes('queries must me grouped by store'));
           }
         });
 
@@ -255,7 +226,7 @@ describe('[EGSQ] events.get streams query', function () {
       });
     });
 
-    describe('exception and errors', function () {
+    describe('[EQ04] exception and errors', function () {
       it('[IOLA] must throw on malformed expressions', async function () {
         const malformed = {
           'streams queries and streamIds cannot be mixed': [
@@ -288,7 +259,7 @@ describe('[EGSQ] events.get streams query', function () {
               await validateQuery(streamsQuery);
             } catch (e) {
               hasThrown = true;
-              assert.include(e.message, error);
+              assert.ok(e.message.includes(error));
             }
             if (!hasThrown) throw new Error('checkPermissionsAndApplyToScope was expected to throw [' + error + '] with query: <<' + JSON.stringify(streamsQuery) + '>>');
           }));
@@ -296,34 +267,34 @@ describe('[EGSQ] events.get streams query', function () {
       });
     });
 
-    describe('toMongoQuery()', function () {
+    describe('[EQ05] toMongoQuery()', function () {
       it('[KKIH] must convert to MongoDB including expansion', async function () {
         const clean = await validateQuery(['A', 'B']);
         const storeQuery = eventsQueryUtils.normalizeStreamQuery(clean);
-        const mongo = streamsQueryUtils.toMongoDBQuery(storeQuery);
-        assert.deepEqual(mongo, { streamIds: { $in: ['A', 'B', 'C'] } });
+        const mongo = toMongoDBQuery(storeQuery);
+        assert.deepStrictEqual(mongo, { streamIds: { $in: ['A', 'B', 'C'] } });
       });
 
       it('[4QMR] must convert to MongoDB including with "ALL"', async function () {
         const clean = await validateQuery({ any: ['A', 'B'], all: ['E'] });
         const storeQuery = eventsQueryUtils.normalizeStreamQuery(clean);
-        const mongo = streamsQueryUtils.toMongoDBQuery(storeQuery);
-        assert.deepEqual(mongo, { $and: [{ streamIds: { $in: ['A', 'B', 'C'] } }, { streamIds: { $eq: 'E' } }] });
+        const mongo = toMongoDBQuery(storeQuery);
+        assert.deepStrictEqual(mongo, { $and: [{ streamIds: { $in: ['A', 'B', 'C'] } }, { streamIds: { $eq: 'E' } }] });
       });
 
       it('[NG7F] must convert to MongoDB including expansion with "NOT"', async function () {
         const clean = await validateQuery({ any: ['A', 'B'], not: ['E'] });
         const storeQuery = eventsQueryUtils.normalizeStreamQuery(clean);
-        const mongo = streamsQueryUtils.toMongoDBQuery(storeQuery);
-        assert.deepEqual(mongo, {
+        const mongo = toMongoDBQuery(storeQuery);
+        assert.deepStrictEqual(mongo, {
           $and: [{ streamIds: { $in: ['A', 'B', 'C'] } }, { streamIds: { $ne: 'E' } }]
         });
       });
 
       it('[HC6X] must convert to MongoDB including expansion with "ALL" and "NOT"', async function () {
         const clean = await validateQuery({ any: ['A', 'E'], all: ['D', 'C'], not: ['D', 'F'] });
-        const mongo = streamsQueryUtils.toMongoDBQuery(eventsQueryUtils.normalizeStreamQuery(clean));
-        assert.deepEqual(mongo, {
+        const mongo = toMongoDBQuery(eventsQueryUtils.normalizeStreamQuery(clean));
+        assert.deepStrictEqual(mongo, {
           $and: [
             { streamIds: { $in: ['A', 'B', 'C', 'E'] } },
             { streamIds: { $eq: 'C' } },
@@ -334,7 +305,7 @@ describe('[EGSQ] events.get streams query', function () {
 
       it('[0RNW] must handle array of queries', async function () {
         const clean = await validateQuery([{ any: ['B'] }, { any: ['D'], not: ['E'] }]);
-        const mongo = streamsQueryUtils.toMongoDBQuery(eventsQueryUtils.normalizeStreamQuery(clean));
+        const mongo = toMongoDBQuery(eventsQueryUtils.normalizeStreamQuery(clean));
         const expected = {
           $or: [
             { streamIds: { $eq: 'B' } },
@@ -343,23 +314,23 @@ describe('[EGSQ] events.get streams query', function () {
             }
           ]
         };
-        assert.deepEqual(mongo, expected);
+        assert.deepStrictEqual(mongo, expected);
       });
     });
   });
 
-  describe('GET /events with streams queries', function () {
-    let server;
-    before(async () => {
-      server = await context.spawn();
-    });
-    after(() => {
-      server.stop();
-    });
-
+  describe('[EQ06] GET /events with streams queries', function () {
     let mongoFixtures;
+    // EVENT4ID maps event IDs to their keys - must be per-test-run for parallel safety
+    const EVENT4ID = {};
+
     before(async function () {
-      mongoFixtures = databaseFixture(await produceMongoConnection());
+      await initTests();
+      await initCore();
+      mongoFixtures = getNewFixture();
+    });
+    after(async () => {
+      await mongoFixtures.clean();
     });
 
     let user,
@@ -396,182 +367,183 @@ describe('[EGSQ] events.get streams query', function () {
           }
         ]
       });
-      for (const [key, event] of Object.entries(EVENTS)) {
-        event.type = 'note/txt';
-        event.content = key;
-        event.id = cuid();
+      for (const [key, eventTemplate] of Object.entries(EVENTS)) {
+        // Create a copy to avoid modifying shared EVENTS object
+        const event = {
+          ...eventTemplate,
+          type: 'note/txt',
+          content: key,
+          id: cuid()
+        };
         EVENT4ID[event.id] = key;
         await user.event(event);
       }
     });
-    after(async () => {
-      await mongoFixtures.clean();
-    });
 
     it('[NKH8] must accept a simple string', async function () {
-      const res = await server.request()
+      const res = await coreRequest
         .get(basePathEvent)
         .set('Authorization', tokenRead)
         .query({ streams: ['A'] });
 
-      assert.exists(res.body.events);
+      assert.ok(res.body.events);
       const events = res.body.events;
-      assert.equal(events.length, 6);
+      assert.strictEqual(events.length, 6);
       events.forEach(e => {
         let isFound = false;
         customExpand('A').forEach(streamId => {
           if (e.streamIds.includes(streamId)) isFound = true;
         });
-        assert.isTrue(isFound);
+        assert.strictEqual(isFound, true);
       });
     });
 
     it('[BW6Z] must accept array of strings', async function () {
-      const res = await server.request()
+      const res = await coreRequest
         .get(basePathEvent)
         .set('Authorization', tokenRead)
         .query({ streams: ['A', 'D'] });
-      assert.exists(res.body.events);
+      assert.ok(res.body.events);
       const events = res.body.events;
-      assert.equal(events.length, 9);
+      assert.strictEqual(events.length, 9);
       events.forEach(e => {
         let isFound = false;
         const streamIds = customExpand('A').concat(customExpand('D'));
         streamIds.forEach(streamId => {
           if (e.streamIds.includes(streamId)) isFound = true;
         });
-        assert.isTrue(isFound);
+        assert.strictEqual(isFound, true);
       });
     });
 
     it('[HFA2] must accept * (star) with a not without including items in trashed streams', async function () {
-      const res = await server.request()
+      const res = await coreRequest
         .get(basePathEvent)
         .set('Authorization', tokenRead)
         .query({ streams: JSON.stringify({ any: ['*'], not: ['D'] }) });
       const events = res.body.events;
-      assert.equal(events.length, 3);
+      assert.strictEqual(events.length, 3);
       events.forEach(e => {
         let isFound = false;
         const streamIds = customExpand('A');
         streamIds.forEach(streamId => {
           if (e.streamIds.includes(streamId)) isFound = true;
         });
-        assert.isTrue(isFound);
+        assert.strictEqual(isFound, true);
         isFound = false;
         const badStreamIds = customExpand('D').concat('T');
         badStreamIds.forEach(streamId => {
           if (e.streamIds.includes(streamId)) isFound = true;
         });
-        assert.isFalse(isFound);
+        assert.strictEqual(isFound, false);
       });
     });
 
     it('[MMB0] must accept * (star) with !B && !E without including items in trashed streams', async function () {
-      const res = await server.request()
+      const res = await coreRequest
         .get(basePathEvent)
         .set('Authorization', tokenRead)
         .query({ streams: JSON.stringify({ any: ['*'], not: ['B', 'E'] }) });
-      assert.exists(res.body.events);
+      assert.ok(res.body.events);
       const events = res.body.events;
-      assert.equal(events.length, 6);
+      assert.strictEqual(events.length, 6);
       events.forEach(e => {
         let isFound = false;
         const streamIds = ['A', 'C', 'D', 'F'];
         streamIds.forEach(streamId => {
           if (e.streamIds.includes(streamId)) isFound = true;
         });
-        assert.isTrue(isFound);
+        assert.strictEqual(isFound, true);
         isFound = false;
         const badStreamIds = ['B', 'E', 'T'];
         badStreamIds.forEach(streamId => {
           if (e.streamIds.includes(streamId)) isFound = true;
         });
-        assert.isFalse(isFound);
+        assert.strictEqual(isFound, false);
       });
     });
 
     it('[VUER] must return events in A && E', async function () {
-      const res = await server.request()
+      const res = await coreRequest
         .get(basePathEvent)
         .set('Authorization', tokenRead)
         .query({ streams: JSON.stringify({ any: ['A'], all: ['E'] }) });
-      assert.exists(res.body.events);
+      assert.ok(res.body.events);
       const events = res.body.events;
-      assert.equal(events.length, 1);
+      assert.strictEqual(events.length, 1);
       events.forEach(e => {
         let isFoundA = false;
         const streamIds = customExpand('A');
         streamIds.forEach(streamId => {
           if (e.streamIds.includes(streamId)) isFoundA = true;
         });
-        assert.isTrue(isFoundA);
-        assert.isTrue(e.streamIds.includes('E'));
+        assert.strictEqual(isFoundA, true);
+        assert.strictEqual(e.streamIds.includes('E'), true);
       });
     });
 
     it('[CBP2] must return events in A && !B', async function () {
-      const res = await server.request()
+      const res = await coreRequest
         .get(basePathEvent)
         .set('Authorization', tokenRead)
         .query({ streams: JSON.stringify({ any: ['A'], not: ['B'] }) });
 
-      assert.exists(res.body.events);
+      assert.ok(res.body.events);
       const events = res.body.events;
-      assert.equal(events.length, 4);
+      assert.strictEqual(events.length, 4);
       events.forEach(e => {
         let isFound = false;
         const streamIds = ['A', 'C'];
         streamIds.forEach(streamId => {
           if (e.streamIds.includes(streamId)) isFound = true;
         });
-        assert.isTrue(isFound);
-        assert.isFalse(e.streamIds.includes('B'));
+        assert.strictEqual(isFound, true);
+        assert.strictEqual(e.streamIds.includes('B'), false);
       });
     });
 
     it('[I19H] must return events in A && !D', async function () {
-      const res = await server.request()
+      const res = await coreRequest
         .get(basePathEvent)
         .set('Authorization', tokenRead)
         .query({ streams: JSON.stringify({ any: ['A'], not: ['D'] }) });
 
-      assert.exists(res.body.events);
+      assert.ok(res.body.events);
       const events = res.body.events;
       const expectedEvents = ['b', 'a', 'c'];
-      assert.equal(events.length, expectedEvents.length);
+      assert.strictEqual(events.length, expectedEvents.length);
       events.forEach((e) => {
-        assert.exists(EVENT4ID[e.id]);
-        assert.include(expectedEvents, EVENT4ID[e.id]);
+        assert.ok(EVENT4ID[e.id]);
+        assert.ok(expectedEvents.includes(EVENT4ID[e.id]));
       });
     });
 
     it('[55HB] must return events in A && NOT-EQUAL D', async function () {
-      const res = await server.request()
+      const res = await coreRequest
         .get(basePathEvent)
         .set('Authorization', tokenRead)
         .query({ streams: JSON.stringify({ any: ['A'], not: ['D!'] }) });
-      assert.exists(res.body.events);
+      assert.ok(res.body.events);
       const events = res.body.events;
       const expectedEvents = ['a', 'b', 'fc', 'c', 'be'];
-      assert.equal(events.length, expectedEvents.length);
+      assert.strictEqual(events.length, expectedEvents.length);
       events.forEach(e => {
-        assert.exists(EVENT4ID[e.id]);
-        assert.include(expectedEvents, EVENT4ID[e.id]);
+        assert.ok(EVENT4ID[e.id]);
+        assert.ok(expectedEvents.includes(EVENT4ID[e.id]));
       });
     });
 
     it('[O4DJ] must return all events in B || (D && !E)', async function () {
-      const res = await server.request()
+      const res = await coreRequest
         .get(basePathEvent)
         .set('Authorization', tokenRead)
         .query({
           streams: JSON.stringify([{ any: ['B'] }, { any: ['D'], not: ['E'] }])
         });
-      assert.exists(res.body.events);
+      assert.ok(res.body.events);
       const events = res.body.events;
 
-      assert.equal(events.length, 6);
+      assert.strictEqual(events.length, 6);
 
       events.forEach(e => {
         if (e.streamIds.includes('B')) return;
@@ -581,13 +553,13 @@ describe('[EGSQ] events.get streams query', function () {
         streamIds.forEach(streamId => {
           if (e.streamIds.includes(streamId)) isFound = true;
         });
-        assert.isTrue(isFound);
-        assert.isFalse(e.streamIds.includes('E'));
+        assert.strictEqual(isFound, true);
+        assert.strictEqual(e.streamIds.includes('E'), false);
       });
     });
 
     it('[UJSB] must accept an object in a batch call (instead of a stringified one)', async function () {
-      const res = await server.request()
+      const res = await coreRequest
         .post(basePath)
         .set('Authorization', tokenRead)
         .send([
@@ -598,14 +570,14 @@ describe('[EGSQ] events.get streams query', function () {
             }
           }
         ]);
-      assert.exists(res.body.results);
-      assert.exists(res.body.results[0].events);
+      assert.ok(res.body.results);
+      assert.ok(res.body.results[0].events);
       const events = res.body.results[0].events;
-      assert.equal(events.length, 4);
+      assert.strictEqual(events.length, 4);
     });
 
     it('[ENFE] must accept a stringified object in a batch call', async function () {
-      const res = await server.request()
+      const res = await coreRequest
         .post(basePath)
         .set('Authorization', tokenRead)
         .send([
@@ -616,65 +588,65 @@ describe('[EGSQ] events.get streams query', function () {
             }
           }
         ]);
-      assert.exists(res.body.results);
-      assert.exists(res.body.results[0].events);
+      assert.ok(res.body.results);
+      assert.ok(res.body.results[0].events);
       const events = res.body.results[0].events;
-      assert.equal(events.length, 4);
+      assert.strictEqual(events.length, 4);
     });
 
-    describe('edge cases', () => {
+    describe('[EQ07] edge cases', () => {
       it('[X8B1] must return an error on non-existing stream', async function () {
-        const res = await server.request()
+        const res = await coreRequest
           .get(basePathEvent)
           .set('Authorization', tokenRead)
           .query({ streams: JSON.stringify({ any: ['A', 'Z', 'B'] }) });
-        assert.exists(res.body.error);
-        assert.equal(res.body.error.id, 'unknown-referenced-resource');
+        assert.ok(res.body.error);
+        assert.strictEqual(res.body.error.id, 'unknown-referenced-resource');
       });
 
       it('[WRVU] must return error when there is no "any"', async function () {
-        const res = await server.request()
+        const res = await coreRequest
           .get(basePathEvent)
           .set('Authorization', tokenRead)
           .query({ streams: JSON.stringify({ all: ['A', 'Z'] }) });
-        assert.exists(res.body.error);
-        assert.equal(res.body.error.id, 'invalid-request-structure');
+        assert.ok(res.body.error);
+        assert.strictEqual(res.body.error.id, 'invalid-request-structure');
       });
 
       it('[30NV] must return error when provided a boolean instead of a string', async function () {
-        const res = await server.request()
+        const res = await coreRequest
           .get(basePathEvent)
           .set('Authorization', tokenRead)
           .query({ streams: JSON.stringify({ any: ['A', 'Z', true] }) });
-        assert.exists(res.body.error);
-        assert.equal(res.body.error.id, 'invalid-request-structure');
+        assert.ok(res.body.error);
+        assert.strictEqual(res.body.error.id, 'invalid-request-structure');
       });
 
       it('[YOJ9] must return error when provided a null instead of a stream query', async function () {
-        const res = await server.request()
+        const res = await coreRequest
           .get(basePathEvent)
           .set('Authorization', tokenRead)
           .query({ streams: JSON.stringify([null, { any: ['A', 'Z'] }]) });
-        assert.exists(res.body.error);
-        assert.equal(res.body.error.id, 'invalid-request-structure');
+        assert.ok(res.body.error);
+        assert.strictEqual(res.body.error.id, 'invalid-request-structure');
       });
 
       it('[8NNP] must return an error when providing a non-stringified stream query', async function () {
-        const res = await server.request()
+        const res = await coreRequest
           .get(basePathEvent)
           .set('Authorization', tokenRead)
           .query({ streams: [{ any: ['A', 'Z'] }] });
-        assert.exists(res.body.error);
-        assert.equal(res.body.error.id, 'invalid-request-structure');
-        assert.include(res.body.error.message, 'should be an array of streamIds or JSON logical query');
+        assert.ok(res.body.error);
+        assert.strictEqual(res.body.error.id, 'invalid-request-structure');
+        assert.ok(res.body.error.message.includes('should be an array of streamIds or JSON logical query'));
       });
 
       it('[3X9I] must return an empty list when provided a trashed streamId', async function () {
-        const res = await server.request()
+        const res = await coreRequest
           .get(basePathEvent)
           .set('Authorization', tokenRead)
           .query({ streams: ['T'] });
-        assert.equal(res.body.events.length, 0);
+        assert.strictEqual(res.body.events.length, 0);
       });
     });
   });

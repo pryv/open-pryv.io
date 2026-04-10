@@ -1,0 +1,293 @@
+---
+# Unified service-core configuration
+# Merged from per-component configs into a single source of truth.
+#
+# Configuration model (see _plans/27-pre-open-pryv-merge-atwork/CONFIG-SEPARATION.md):
+#   - PER-CORE:      local to each node (ports, paths, workers, DB credentials)
+#   - PLATFORM-WIDE: MUST be identical across cores in a deployment (policy, schema, identity)
+#   - BOOTSTRAP:     platform-wide in meaning but YAML-only because needed before PlatformDB is reachable
+#
+# Multi-core operators: PlatformDB is authoritative for platform-wide items once seeded.
+# Keys below are annotated with their category. Drift warnings are logged on startup.
+
+# === BOOTSTRAP ===
+dnsLess:
+  isActive: true
+
+reporting:
+  templateVersion: '1.0.0'   # BOOTSTRAP
+
+# === PER-CORE: network bind ===
+http:
+  ip: '127.0.0.1'
+  port: 3000
+  hfsPort: 4000
+  previewsPort: 3001
+
+# === PER-CORE / BOOTSTRAP: storage engines ===
+# Engine choice is per-core (flexibility for staging/migration).
+# Connection strings and credentials are always per-core.
+# `storages.platform.engine` + rqlite settings are BOOTSTRAP — needed before PlatformDB is reachable.
+storages:
+  base:
+    engine: mongodb         # baseStorage + dataStore
+  platform:
+    engine: rqlite          # platformStorage
+  series:
+    engine: influxdb        # seriesStorage
+  file:
+    engine: filesystem      # fileStorage
+  audit:
+    engine: sqlite          # auditStorage
+
+  engines:
+    mongodb:
+      authUser: ''
+      authPassword: ''
+      host: '127.0.0.1'
+      port: 27017
+      name: 'pryv-node'
+      connectTimeoutMS: 60000
+      socketTimeoutMS: 60000
+    postgresql:
+      host: '127.0.0.1'
+      port: 5432
+      database: 'pryv-node'
+      user: 'pryv'
+      password: ''
+      max: 20
+    sqlite:
+      path: 'REPLACE ME'
+    filesystem:
+      attachmentsDirPath: 'REPLACE ME'
+      previewsDirPath: 'REPLACE ME'
+    influxdb:
+      host: 127.0.0.1
+      port: 8086
+    rqlite:
+      url: http://localhost:4001
+      raftPort: 4002                  # Raft consensus port (common across all cores)
+      dataDir: var-pryv/rqlite-data   # rqlite data directory (relative to service-core root)
+      binPath: var-pryv/rqlite-bin/rqlited  # rqlited binary path
+
+# === PER-CORE: local cache paths and schedules ===
+eventFiles:
+  previewsCacheMaxAge: 604800000 # 1 week in ms
+  previewsCacheCleanUpCronTime: 00 00 2 * * * # every day at 2:00:00AM
+
+# === BOOTSTRAP → PLATFORM-WIDE ===
+# Plan 17 Phase 13: seeded into PlatformDB on first boot, then PlatformDB is authoritative.
+invitationTokens: null  # null = allow all, [] = block all, ['token1'] = check list
+
+# === MIXED: per-core secrets + platform-wide policy ===
+# - `filesReadTokenSecret`, `ssoCookieSignSecret`: PER-CORE secrets (must be identical across cores for cross-core validation).
+# - `passwordComplexity*`, `passwordAge*`, `passwordPreventReuseHistoryLength`: PLATFORM-WIDE policy (documented as YAML-only in v2, targeted for post-v2 move to PlatformDB).
+# - `adminAccessKey`: BOOTSTRAP, operator-sync responsibility (see CONFIG-SEPARATION.md open question).
+auth:
+  filesReadTokenSecret: 'REPLACE ME'
+  passwordComplexityMinCharCategories: 0
+  passwordComplexityMinLength: 0
+  passwordAgeMaxDays: 0
+  passwordAgeMinDays: 0
+  passwordPreventReuseHistoryLength: 0
+
+# === PER-CORE: local plugin code references ===
+customExtensions:
+  defaultFolder: 'REPLACE ME'
+  customAuthStepFn: ''
+
+# === PER-CORE: external service integrations ===
+# SMS provider URLs and email provider credentials may legitimately vary per region/deployment.
+# MFA `mode` is PLATFORM-WIDE policy — documented as YAML-only in v2, targeted for post-v2 move.
+# --- Services (external integrations) ---
+services:
+  # Multi-factor authentication (Plan 26: merged from service-mfa)
+  # mode: disabled — no MFA enforcement (default, backwards-compatible)
+  # mode: challenge-verify — separate challenge + verify SMS endpoints
+  # mode: single — combined challenge+verify in one SMS endpoint
+  mfa:
+    mode: disabled
+    sms:
+      endpoints:
+        challenge:
+          url: ''
+          method: POST
+          body: ''
+          headers: {}
+        verify:
+          url: ''
+          method: POST
+          body: ''
+          headers: {}
+        single:
+          url: ''
+          method: POST
+          body: ''
+          headers: {}
+    sessions:
+      ttlSeconds: 1800
+
+# === PER-CORE: debug toggle ===
+testNotifications:
+  enabled: false
+
+# === PLATFORM-WIDE policy (YAML-only in v2, post-v2 move targeted) ===
+updates:
+  ignoreProtectedFields: false
+
+# === PER-CORE: local pub/sub broker ===
+tcpBroker:
+  port: 4222
+
+# === PLATFORM-WIDE policy (YAML-only in v2, post-v2 move targeted) ===
+# `minIntervalMs` and `maxRetries` define the user-visible webhook contract.
+# `runsSize` is a local buffer — PER-CORE is acceptable.
+webhooks:
+  minIntervalMs: 5000
+  maxRetries: 5
+  runsSize: 20
+
+# === PLATFORM-WIDE policy (YAML-only in v2, post-v2 move targeted) ===
+versioning:
+  forceKeepHistory: false
+  deletionMode: 'keep-nothing'
+
+# === PLATFORM-WIDE policy (YAML-only in v2, post-v2 move targeted) ===
+user-account:
+  delete: # array of entities that can delete a user account
+    - 'adminToken' # enable deletion from admin Panel
+    #- 'personalToken' # enable self deletion request with a personal token
+
+# === PLATFORM-WIDE schema (CRITICAL — drift corrupts user account data) ===
+# `custom.systemStreams` defines the account-field schema. All cores MUST agree.
+# Targeted for PlatformDB migration before v2 ships (Plan 27 Phase 2b follow-up).
+# `custom.dataStores` lists code plugins — must be identical because the code is identical.
+custom:
+  systemStreams:
+    account:
+    - id: email
+      isIndexed: true
+      isUnique: true
+      isShown: true
+      isEditable: true
+      type: email/string
+      name: Email
+      isRequiredInValidation: true
+  dataStores: []
+
+# === PER-CORE: local cache toggle ===
+caching:
+  isActive: true
+
+# === PER-CORE: local logs ===
+logs:
+  console:
+    active: false
+    level: info
+  file:
+    active: false
+    path: "var-pryv/logs/core.log"
+    level: info
+    rotation:
+      isActive: true
+      days: 14
+
+# === PLATFORM-WIDE policy (YAML-only in v2, post-v2 move targeted) ===
+uploads:
+  maxSizeMb: 50
+
+# === PER-CORE: local tracing toggle ===
+trace:
+  enable: false
+
+# === PLATFORM-WIDE policy (YAML-only in v2, post-v2 move targeted) ===
+# Integrity algorithm drift would break cross-core validation.
+integrity:
+  isActive:
+    attachments: true
+    events: true
+    accesses: true
+  algorithm: sha256
+
+# === PLATFORM-WIDE policy (YAML-only in v2, post-v2 move targeted) ===
+accessTracking:
+  isActive: true
+
+# === PER-CORE: this node's identity ===
+# --- Core identity (multi-core) ---
+# Single-core: only core.id needed (default 'single').
+# Multi-core: each core has its own id; FQDN = {core.id}.{dns.domain}
+core:
+  id: single            # core identifier; FQDN = {id}.{dns.domain}
+  ip: null              # A record for this core (null = no DNS record)
+  ipv6: null            # AAAA record
+  cname: null            # CNAME record (used if no ip/ipv6)
+  hosting: null          # hosting key this core belongs to (null = default)
+  available: true        # false = not accepting new registrations
+
+# === MIXED ===
+# `dns.domain` is BOOTSTRAP → PLATFORM-WIDE (seeded from YAML, PlatformDB authoritative after first boot — targeted for v2).
+# `dns.active`/`dns.port`/`dns.ip`/`dns.ip6`/`dns.defaultTTL`: PER-CORE (each node decides whether it runs an authoritative DNS server).
+# `dns.staticEntries` and `dns.records.root.*`: PER-CORE today; Plan 27 Phase 1 considers moving `staticEntries` to PlatformDB so runtime records replicate.
+dns:
+  domain: null           # primary domain (e.g. pryv.me); null = dnsLess mode
+  active: false          # start DNS server (default off)
+  port: 5353             # UDP port (5353 for dev, 53 for prod via Docker mapping)
+  ip: '0.0.0.0'         # bind address
+  ip6: null              # IPv6 bind address (null = disabled)
+  defaultTTL: 300        # TTL in seconds
+  staticEntries: {}      # subdomain → { cname: "..." } or { a: [...] } or { txt: [...] }
+  records:               # root domain records
+    root:
+      a: []
+      aaaa: []
+      ns: []
+      mx: []
+      txt: []
+      caa: []
+      soa: null
+
+# === PLATFORM-WIDE (targeted for PlatformDB migration before v2) ===
+# --- Hostings (regions/zones/providers) ---
+# Structure matches legacy /reg/hostings response for backward compatibility.
+# In single-core mode, a default hosting is auto-generated.
+# Availability bits (`available`, `availableCore`) already live in PlatformDB per Plan 17 Phase 6;
+# Plan 27 Phase 2b follow-up should move the hierarchy itself there too.
+hostings: null           # null = auto-generate; or { regions: { ... } }
+
+# === PER-CORE: process tuning ===
+cluster:
+  apiWorkers: 2
+  hfsWorkers: 1
+  previewsWorker: true
+  runMigrations: true
+
+# === MIXED ===
+# `audit.active` is PLATFORM-WIDE policy; `audit.storage`/`audit.syslog` contain per-core sinks.
+# --- Audit ---
+audit:
+  active: true
+  storage:
+    filter:
+      methods:
+        include: ['all']
+        exclude: []
+
+  syslog:
+    options:
+      host: localhost
+      #port: 514
+      protocol: unix
+      #path: /dev/log # set by config/default-path.js
+      localhost: ''
+      app_name: pryv-audit
+
+    formats:
+      default:
+        template: "{userid} {type} createdBy:{createdBy} {streamIds} {content}"
+        level: notice
+    filter:
+      methods:
+        include: ['all']
+        exclude: []
+

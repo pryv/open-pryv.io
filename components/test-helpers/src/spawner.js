@@ -1,55 +1,26 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 //
 
 const url = require('url');
 const childProcessNodeInternal = require('child_process');
-const net = require('net');
 const EventEmitter = require('events');
-const axon = require('axon');
 const path = require('path');
 const lodash = require('lodash');
 const msgpack = require('msgpack5')();
 const supertest = require('supertest');
 const _ = require('lodash');
 const { ConditionVariable, Fuse } = require('./condition_variable');
+const portAllocator = require('./portAllocator');
 // Set DEBUG=spawner to see these messages.
 const logger = require('@pryv/boiler').getLogger('spawner');
 
 const PRESPAWN_LIMIT = 2;
 
-let basePort = 3001;
 let debugPortCount = 1;
 let spawnCounter = 0;
 
@@ -60,7 +31,6 @@ let spawnCounter = 0;
 class SpawnContext {
   childPath;
 
-  basePort; // used for HTTP server and Axon server
   shuttingDown;
 
   pool;
@@ -75,8 +45,6 @@ class SpawnContext {
 
   constructor (childPath) {
     this.childPath = childPath || path.resolve(__dirname, '../../api-server/test/helpers/child_process');
-    this.basePort = basePort;
-    basePort += 10;
 
     this.shuttingDown = false;
     this.pool = [];
@@ -133,8 +101,6 @@ class SpawnContext {
     // TODO Free ports once done.
     const port = await this.allocatePort();
 
-    const axonPort = await this.allocatePort();
-
     // Obtain a process proxy
     const process = this.getProcess();
 
@@ -142,16 +108,12 @@ class SpawnContext {
     customSettings = customSettings || {};
     const settings = _.merge({
       http: {
-        port // use this port for http/express
+        port, // use this port for http/express
+        hfsPort: port,
+        previewsPort: port
       },
-      axonMessaging: {
-        enabled: true,
-        // for spawner, we boot api-servers before their Server holder objects
-        // so the api-server needs to listen on a socket before Server facade
-        // connects to it. It's the inverse for InstanceManager
-        pubConnectInsteadOfBind: false,
-        port: axonPort,
-        host: '127.0.0.1'
+      testNotifications: {
+        enabled: true
       }
     }, customSettings);
 
@@ -161,57 +123,17 @@ class SpawnContext {
     logger.debug(`spawned a child on port ${port}`);
 
     // Return to our caller - server should be up and answering at this point.
-    return new Server(port, process, axonPort);
+    return new Server(port, process);
   }
 
   // Returns the next free port to use for testing.
+  // Uses the shared portAllocator for consistent port management.
   //
   /**
    * @returns {Promise<number>}
    */
   async allocatePort () {
-    // Infinite loop, see below for exits.
-    while (true) {
-      // eslint-disable-line no-constant-condition
-      // Simple strategy: Keep increasing port numbers.
-      const nextPort = this.basePort;
-      this.basePort += 1;
-      // Exit 1: If this fires, we might reconsider the simple implementation
-      // here.
-      if (this.basePort > 9000) { throw new Error('AF: port numbers are <= 9000'); }
-      // Exit 2: If we can bind to the port, return it for our next child
-      // process.
-      if (await tryBindPort(nextPort)) { return nextPort; }
-    }
-    throw new Error('AF: NOT REACHED'); // eslint-disable-line no-unreachable
-    // Returns true if this process can bind a listener to the `port` given.
-    // Closes the port immediately after calling `listen()` so that a child
-    // can reuse the port number.
-    //
-    async function tryBindPort (port) {
-      const server = net.createServer();
-
-      logger.debug('Trying future child port', port);
-      return new Promise((resolve, reject) => {
-        try {
-          server.on('error', (err) => {
-            logger.debug('Future child port unavailable: ', err);
-            server.close();
-            resolve(false);
-          });
-
-          const host = '0.0.0.0';
-          const backlog = 511; // default
-          server.listen(port, host, backlog, () => {
-            server.close();
-            resolve(true);
-          });
-        } catch (err) {
-          logger.debug('Synchronous exception while looking for a future child port: ', err);
-          reject(err);
-        }
-      });
-    }
+    return portAllocator.allocatePort();
   }
 
   // Spawns and returns a process to use for testing. This will probably spawn
@@ -300,7 +222,10 @@ class ProcessProxy {
     const child = this.childProcess;
     child.on('error', (err) => this.onChildError(err));
     child.on('exit', () => this.onChildExit());
-    child.on('message', (wire) => this.dispatchChildMessage(wire));
+    child.on('message', (wire) => {
+      if (wire && wire.type === 'test-notification') return; // skip IPC test notifications
+      this.dispatchChildMessage(wire);
+    });
   }
 
   /**
@@ -432,18 +357,14 @@ class ProcessProxy {
 class Server extends EventEmitter {
   port;
 
-  axonPort;
   baseUrl;
   process;
 
-  messagingSocket;
-
   host;
 
-  constructor (port, proxy, axonPort) {
+  constructor (port, proxy) {
     super();
     this.port = port;
-    this.axonPort = axonPort;
     this.host = '127.0.0.1';
     this.baseUrl = `http://${this.host}:${port}`;
     this.process = proxy;
@@ -454,14 +375,13 @@ class Server extends EventEmitter {
    * @returns {void}
    */
   listen () {
-    const host = this.host;
-    this.messagingSocket = axon.socket('sub-emitter');
-    const mSocket = this.messagingSocket;
-    mSocket.connect(+this.axonPort, host);
-
-    mSocket.on('*', function (message, data) {
-      this.emit(message, data);
-    }.bind(this));
+    const child = this.process.childProcess;
+    child.on('message', (msg) => {
+      if (msg && msg.type === 'test-notification') {
+        this.emit(msg.event, msg.data);
+      }
+      // other messages (msgpack command responses) handled by ProcessProxy
+    });
   }
 
   // Stops the server as soon as possible. Eventually returns either `true` (for

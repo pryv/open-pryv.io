@@ -1,0 +1,20 @@
+{
+  "cwd": ".",
+  "include": [
+    "components/*/src/**/*.js",
+    "storages/**/*.js"
+  ],
+  "exclude": [
+    "**/test/**",
+    "**/node_modules/**",
+    "external-ressources/**",
+    "tools/**",
+    "storages/test/**",
+    "storages/engines/*/test/**",
+    "storages/datastores/*/test/**"
+  ],
+  "report-dir": "./coverage",
+  "temp-dir": "./.nyc_output",
+  "reporter": ["html", "text-summary", "json"],
+  "all": true
+}

@@ -1,0 +1,9 @@
+#!/bin/bash
+set -e
+
+# Sets up private libraries (i.e. that are not accessible from the Docker build)
+
+# working dir fix
+SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
+cd $SCRIPT_FOLDER/..
+

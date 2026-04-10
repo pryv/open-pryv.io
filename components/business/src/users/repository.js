@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
 const bluebird = require('bluebird');
@@ -38,7 +11,7 @@ const { setTimeout } = require('timers/promises');
 
 const User = require('./User');
 const UserRepositoryOptions = require('./UserRepositoryOptions');
-const SystemStreamsSerializer = require('business/src/system-streams/serializer');
+const accountStreams = require('business/src/system-streams');
 const encryption = require('utils').encryption;
 const errors = require('errors').factory;
 const { getMall } = require('mall');
@@ -131,13 +104,12 @@ class UsersRepository {
    * @returns {Promise<{ id: string, username: string, events: any[] }>}
    */
   async getUserById (userId) {
-    const userAccountStreamsIds = Object.keys(SystemStreamsSerializer.getAccountMap());
+    const userAccountStreamsIds = Object.keys(accountStreams.accountMap);
     const query = {
       state: 'all',
       streams: [
         {
-          any: userAccountStreamsIds,
-          and: [{ any: [SystemStreamsSerializer.options.STREAM_ID_ACTIVE] }]
+          any: userAccountStreamsIds
         }
       ]
     };
@@ -148,11 +120,14 @@ class UsersRepository {
       return null;
     }
     if (username == null) {
-      throw new Error('Inconsistency between userEvents and this.usersIndex, found null username for userId: "' +
-                userId +
-                '" with ' +
-                userAccountEvents.length +
-                ' user account events');
+      // Transient state: index entry already deleted (deleteOne removes it
+      // first) but mall data not yet removed.  Return null — the deletion
+      // will finish momentarily.
+      // Note: a truly stalled partial deletion would leave orphan events
+      // with no index entry.  These can be detected by scanning mall user
+      // collections that have no matching usersIndex entry (an admin task,
+      // not something getUserById should enforce).
+      return null;
     }
     const user = new User({
       id: userId,
@@ -206,7 +181,7 @@ class UsersRepository {
       streams: [
         {
           any: [
-            SystemStreamsSerializer.addCorrectPrefixToAccountStreamId(propertyKey)
+            accountStreams.toStreamId(propertyKey)
           ]
         }
       ]
@@ -260,28 +235,27 @@ class UsersRepository {
   /**
    * @param {User} user
    * @param {boolean | undefined | null} withSession
-   * @param {boolean | undefined | null} skipFowardToRegister
    * @returns {Promise<any>}
    */
-  async insertOne (user, withSession = false, skipFowardToRegister = false) {
-    // Create the User at a Platfrom Level..
+  async insertOne (user, withSession = false) {
+    // Create the User at a Platform Level
     const operations = [];
-    for (const key of SystemStreamsSerializer.getIndexedAccountStreamsIdsWithoutPrefix()) {
+    for (const key of accountStreams.indexedFieldNames) {
       // use default value is null;
       const value = user[key] != null
         ? user[key]
-        : SystemStreamsSerializer.getAccountFieldDefaultValue(key);
+        : accountStreams.accountMap[':_system:' + key]?.default;
       if (value != null) {
         operations.push({
           action: 'create',
           key,
           value,
-          isUnique: SystemStreamsSerializer.isUniqueAccountField(key),
+          isUnique: accountStreams.uniqueFieldNames.includes(key),
           isActive: true
         });
       }
     }
-    // check locally for username // <== maybe this this.usersIndex should be fully moved to platform
+    // check locally for username
     if (await this.usersIndex.usernameExists(user.username)) {
       // gather eventual other uniqueness conflicts
       const eventualPlatformUniquenessErrors = await this.platform.checkUpdateOperationUniqueness(user.username, operations);
@@ -290,7 +264,7 @@ class UsersRepository {
       throw uniquenessError;
     }
     // could throw uniqueness errors
-    await this.platform.updateUserAndForward(user.username, operations, skipFowardToRegister);
+    await this.platform.updateUser(user.username, operations);
     const mallTransaction = await this.mall.newTransaction();
     const localTransaction = await mallTransaction.getStoreTransaction('local');
     await localTransaction.exec(async () => {
@@ -304,17 +278,28 @@ class UsersRepository {
         user.token = access.token;
       }
       user.accessId = accessId;
-      const events = await user.getEvents();
       // add the user to local index
       await this.usersIndex.addUser(user.username, user.id);
-      for (const event of events) await this.mall.events.create(user.id, event, mallTransaction);
+      // Store account fields directly in userAccountStorage (Platform already called above)
+      const accountData = user.getFullAccount();
+      const accountLeavesMap = accountStreams.accountLeavesMap;
+      const now = timestamp.now();
+      for (const [streamId, stream] of Object.entries(accountLeavesMap)) {
+        const fieldName = accountStreams.toFieldName(streamId);
+        const value = accountData[fieldName] != null
+          ? accountData[fieldName]
+          : stream.default;
+        if (value != null) {
+          await this.userAccountStorage.setAccountField(user.id, fieldName, value, accessId, now);
+        }
+      }
       // set user password
       if (user.passwordHash) {
-        // if coming from deprecated `system.createUser`; TODO: remove when that method is removed
+        // if passwordHash was provided directly (via system.createUser)
         await this.userAccountStorage.addPasswordHash(user.id, user.passwordHash, user.accessId);
       } else {
         // regular user creation
-        await await this.setUserPassword(user.id, user.password, user.accessId);
+        await this.setUserPassword(user.id, user.password, user.accessId);
       }
     });
     return user;
@@ -339,15 +324,11 @@ class UsersRepository {
     await localTransaction.exec(async () => {
       // update all account streams and don't allow additional properties
       for (const [streamIdWithoutPrefix, content] of Object.entries(update)) {
-        // for (let i = 0; i < eventsForUpdate.length; i++) {
         const query = {
           streams: [
             {
               any: [
-                SystemStreamsSerializer.addCorrectPrefixToAccountStreamId(streamIdWithoutPrefix)
-              ],
-              and: [
-                { any: [SystemStreamsSerializer.options.STREAM_ID_ACTIVE] }
+                accountStreams.toStreamId(streamIdWithoutPrefix)
               ]
             }
           ]
@@ -365,21 +346,23 @@ class UsersRepository {
   /**
    * @param {string} userId
    * @param {string | null} username
-   * @param {boolean | null} skipFowardToRegister
    * @returns {Promise<number>}
    */
-  async deleteOne (userId, username, skipFowardToRegister) {
+  async deleteOne (userId, username) {
+    // Fetch user object BEFORE any deletions — platform.deleteUser needs it
+    // for unique field cleanup (e.g. email).
     const user = await this.getUserById(userId);
     if (username == null) {
       username = user?.username;
     }
+    // Delete index FIRST so that getAll() never lists a user whose data is
+    // being deleted.  The reverse race (index gone but events still exist)
+    // is handled by getUserById() returning null when username is null.
     await this.usersIndex.init();
     await this.usersIndex.deleteById(userId);
     if (username != null) {
-      // can happen during tests
       cache.unsetUser(username);
-      // Clear data for this user in Platform
-      await this.platform.deleteUser(username, user, skipFowardToRegister);
+      await this.platform.deleteUser(username, user);
     }
     await this.mall.deleteUser(userId);
   }
@@ -430,7 +413,7 @@ async function getUsersRepository () {
     await setTimeout(100);
   }
   if (!usersRepository) {
-    await SystemStreamsSerializer.init();
+    await accountStreams.init();
     usersRepositoryInitializing = true;
     usersRepository = new UsersRepository();
     await usersRepository.init();

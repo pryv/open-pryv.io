@@ -1,0 +1,30 @@
+{
+  "storageTypes": ["baseStorage", "dataStore", "platformStorage"],
+  "entrypoint": "src/index.js",
+  "requiredInternals": [
+    "database",
+    "storageLayer",
+    "getEventFiles",
+    "migrations",
+    "MigrationContext",
+    "softwareVersion",
+    "cache",
+    "createUserAccountStorage"
+  ],
+  "configuration": {
+    "fields": {
+      "host":              { "type": "string",  "default": "127.0.0.1",  "description": "MongoDB host" },
+      "port":              { "type": "number",  "default": 27017,        "description": "MongoDB port" },
+      "name":              { "type": "string",  "required": true,        "description": "Database name" },
+      "authUser":          { "type": "string",  "default": "",           "description": "MongoDB auth username" },
+      "authPassword":      { "type": "string",  "default": "",           "description": "MongoDB auth password" },
+      "connectTimeoutMS":  { "type": "number",  "default": 60000,       "description": "Connection timeout in ms" },
+      "socketTimeoutMS":   { "type": "number",  "default": 60000,       "description": "Socket timeout in ms" },
+      "mongoFolder":       { "type": "string",  "default": "",          "description": "Path to MongoDB binary folder (for migrations)" }
+    }
+  },
+  "scripts": {
+    "setup": "scripts/setup",
+    "start": "scripts/start"
+  }
+}

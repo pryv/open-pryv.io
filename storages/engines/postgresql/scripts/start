@@ -1,0 +1,79 @@
+#!/bin/bash
+
+# Starts the local PostgreSQL instance from var-pryv/postgresql-bin.
+# Mirrors the start-mongo pattern.
+#
+# Modes:
+#   DEVELOPMENT=true  — attached (foreground) process
+#   IS_CI=true        — detached, create pryv-node DB
+#   default           — detached, create pryv-node DB
+
+SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
+VAR_PRYV_FOLDER=${VAR_PRYV_FOLDER:-$SCRIPT_FOLDER/../../../../var-pryv}
+VAR_PRYV_FOLDER="$(cd "$VAR_PRYV_FOLDER" && pwd)"
+
+PG_BIN=$VAR_PRYV_FOLDER/postgresql-bin/bin
+PG_DATA=$VAR_PRYV_FOLDER/postgresql-data
+PG_LOGS=$VAR_PRYV_FOLDER/postgresql-logs
+
+if [[ ! -x "$PG_BIN/pg_ctl" ]]; then
+  echo "Error: PostgreSQL not found at $PG_BIN"
+  echo "Run ./storages/engines/postgresql/scripts/setup first."
+  exit 1
+fi
+
+if [[ ! -d "$PG_DATA" ]]; then
+  echo "Error: Data directory not found at $PG_DATA"
+  echo "Run ./storages/engines/postgresql/scripts/setup first."
+  exit 1
+fi
+
+# Check if already running
+if "$PG_BIN/pg_ctl" status -D "$PG_DATA" >/dev/null 2>&1; then
+  echo "PostgreSQL is already running."
+  exit 0
+fi
+
+mkdir -p "$PG_LOGS"
+
+create_role_and_db_if_needed() {
+  # Wait for PG to be ready
+  for i in $(seq 1 30); do
+    if "$PG_BIN/pg_isready" -h 127.0.0.1 -p 5432 >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.5
+  done
+
+  # Create 'pryv' role if it doesn't exist (matches default-config.yml)
+  if ! "$PG_BIN/psql" -h 127.0.0.1 -p 5432 -tAc "SELECT 1 FROM pg_roles WHERE rolname='pryv'" 2>/dev/null | grep -q 1; then
+    echo "Creating role 'pryv'..."
+    "$PG_BIN/psql" -h 127.0.0.1 -p 5432 -c "CREATE ROLE pryv WITH LOGIN CREATEDB;"
+  fi
+
+  # Create pryv-node database if it doesn't exist
+  if ! "$PG_BIN/psql" -h 127.0.0.1 -p 5432 -lqt 2>/dev/null | cut -d\| -f1 | grep -qw "pryv-node"; then
+    echo "Creating database 'pryv-node'..."
+    "$PG_BIN/createdb" -h 127.0.0.1 -p 5432 -U pryv "pryv-node"
+  fi
+}
+
+if [[ "$DEVELOPMENT" == "true" ]]; then
+  # Foreground — attached process
+  echo "Starting PostgreSQL (foreground)..."
+  create_role_and_db_if_needed &
+  exec "$PG_BIN/postgres" -D "$PG_DATA"
+else
+  # Background — detached process
+  echo "Starting PostgreSQL (background)..."
+  "$PG_BIN/pg_ctl" start \
+    -D "$PG_DATA" \
+    -l "$PG_LOGS/postgresql.log" \
+    -w
+
+  create_role_and_db_if_needed
+
+  echo "PostgreSQL running (PID $(head -1 "$PG_DATA/postmaster.pid"))."
+  echo "  Logs: $PG_LOGS/postgresql.log"
+  echo "  Stop: $PG_BIN/pg_ctl stop -D $PG_DATA"
+fi

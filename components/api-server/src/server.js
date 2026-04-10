@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
 // Always require application first to be sure boiler is initialized
@@ -38,11 +11,12 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const recLaOptionsAsync = require('backloop.dev').httpsOptionsAsync;
-const { axonMessaging } = require('messages');
+const { testMessaging } = require('messages');
 const { pubsub } = require('messages');
 const { getUsersRepository } = require('business/src/users');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const { getAPIVersion } = require('middleware/src/project_version');
+const WebhooksService = require('webhooks/src/service');
 let app;
 
 /**
@@ -52,7 +26,6 @@ let app;
  *    server.start();
  */
 class Server {
-  isOpenSource;
   logger;
   config;
 
@@ -67,14 +40,13 @@ class Server {
     await app.initiate();
     const config = await getConfig();
     this.config = config;
-    this.isOpenSource = config.get('openSource:isActive');
     this.isAuditActive = config.get('audit:active');
     const defaultParam = this.findDefaultParam();
     if (defaultParam != null) {
       this.logger.error(`Config parameter "${defaultParam}" has a default value, please change it`);
       process.exit(1);
     }
-    // start TCP pub axonMessaging
+    // setup test notification bus (IPC-based)
     await this.setupTestsNotificationBus();
     // register API methods
     await this.registerApiMethods();
@@ -111,6 +83,10 @@ class Server {
     await this.startListen(server, serverInfos);
     this.logger.info('Server ready. API Version: ' + apiVersion);
     pubsub.status.emit(pubsub.SERVER_READY);
+    // Start webhooks service in-process (unless explicitly disabled)
+    if (config.get('webhooks:inProcess') !== false) {
+      await this.startWebhooksService();
+    }
     this.logger.debug('start completed');
   }
 
@@ -133,14 +109,12 @@ class Server {
     await require('./methods/auth/login')(app.api);
     await require('./methods/auth/register')(app.api);
     await require('./methods/auth/delete')(app.api);
+    await require('./methods/mfa')(app.api);
     await require('./methods/accesses')(app.api);
     require('./methods/service')(app.api);
-    if (!this.isOpenSource) {
-      await require('./methods/webhooks')(app.api);
-    }
+    await require('./methods/webhooks')(app.api);
     await require('./methods/trackingFunctions')(app.api);
     await require('./methods/account')(app.api);
-    await require('./methods/followedSlices')(app.api);
     await require('./methods/profile')(app.api);
     await require('./methods/streams')(app.api);
     await require('./methods/events')(app.api);
@@ -215,7 +189,7 @@ class Server {
     if (process.env.NODE_ENV === 'test' && instanceTestSetup !== null) {
       logger.debug('specific test setup ');
       try {
-        const testNotifier = await axonMessaging.getTestNotifier();
+        const testNotifier = await testMessaging.getTestNotifier();
         require('test-helpers').instanceTestSetup.execute(instanceTestSetup, testNotifier);
       } catch (err) {
         logger.error(err);
@@ -229,8 +203,27 @@ class Server {
    * @returns {Promise<void>}
    */
   async setupTestsNotificationBus () {
-    const testNotifier = await axonMessaging.getTestNotifier();
+    const testNotifier = await testMessaging.getTestNotifier();
     pubsub.setTestNotifier(testNotifier);
+  }
+
+  /**
+   * Starts the webhooks service in-process, eliminating the need for a
+   * separate webhooks container/process.
+   * @returns {Promise<void>}
+   */
+  async startWebhooksService () {
+    const config = this.config;
+    const storage = require('storage');
+    const storageLayer = await storage.getStorageLayer();
+    const webhooksService = new WebhooksService({
+      storage: storageLayer,
+      logger: getLogger('webhooks_service'),
+      settings: config
+    });
+    app.webhooksService = webhooksService;
+    await webhooksService.start();
+    this.logger.info('Webhooks service started in-process');
   }
 
   /**

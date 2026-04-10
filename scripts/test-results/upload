@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# working dir fix
+scriptsFolder=$(cd $(dirname "$0"); pwd)
+cd $scriptsFolder/../..
+
+testResultsFolder="test-results";
+cd $testResultsFolder
+
+git add . && git add -u . && git commit -m "Update test results" && git push;

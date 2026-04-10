@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 const errors = require('errors').factory;
 const commonFns = require('./helpers/commonFunctions');
@@ -40,14 +13,10 @@ const string = require('./helpers/string');
 const utils = require('utils');
 const treeUtils = utils.treeUtils;
 const _ = require('lodash');
-const SystemStreamsSerializer = require('business/src/system-streams/serializer');
-const ErrorMessages = require('errors/src/ErrorMessages');
-const ErrorIds = require('errors/src/ErrorIds');
 const APIError = require('errors/src/APIError');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const logger = getLogger('methods:streams');
 const { getMall, storeDataUtils } = require('mall');
-const { changePrefixIdForStreams, replaceWithNewPrefix } = require('./helpers/backwardCompatibility');
 const { pubsub } = require('messages');
 const Readable = require('stream').Readable;
 /**
@@ -63,7 +32,6 @@ module.exports = async function (api) {
   const config = await getConfig();
   const updatesSettings = config.get('updates');
   const mall = await getMall();
-  const isStreamIdPrefixBackwardCompatibilityActive = config.get('backwardCompatibility:systemStreams:prefix:isActive');
   // RETRIEVAL
   api.register('streams.get', commonFns.getParamsValidation(methodsSchema.get.params), checkAuthorization, applyDefaultsForRetrieval, findAccessibleStreams, includeDeletionsIfRequested);
   function applyDefaultsForRetrieval (context, params, result, next) {
@@ -75,12 +43,6 @@ module.exports = async function (api) {
     if (params.parentId && params.id) {
       throw errors.invalidRequestStructure('Do not mix "parentId" and "id" parameter in request');
     }
-    if (params.parentId) {
-      if (isStreamIdPrefixBackwardCompatibilityActive &&
-                !context.disableBackwardCompatibility) {
-        params.parentId = replaceWithNewPrefix(params.parentId);
-      }
-    }
     const streamId = params.id || params.parentId || null;
     if (!streamId) { return next(); } // "*" is authorized for everyone
     if (!(await context.access.canListStream(streamId))) {
@@ -89,12 +51,6 @@ module.exports = async function (api) {
     return next();
   }
   async function findAccessibleStreams (context, params, result, next) {
-    if (params.parentId) {
-      if (isStreamIdPrefixBackwardCompatibilityActive &&
-                !context.disableBackwardCompatibility) {
-        params.parentId = replaceWithNewPrefix(params.parentId);
-      }
-    }
     let streamId = params.id || params.parentId || '*';
     let storeId = params.storeId; // might me null
     if (storeId == null) {
@@ -159,10 +115,6 @@ module.exports = async function (api) {
     if (params.parentId && streams.length === 1) {
       streams = streams[0].children;
     }
-    if (isStreamIdPrefixBackwardCompatibilityActive &&
-            !context.disableBackwardCompatibility) {
-      streams = changePrefixIdForStreams(streams);
-    }
     result.streams = streams;
     next();
   }
@@ -187,7 +139,6 @@ module.exports = async function (api) {
   // CREATION
   api.register(
     'streams.create',
-    forbidSystemStreamsActions,
     commonFns.getParamsValidation(methodsSchema.create.params),
     applyDefaultsForCreation,
     applyPrerequisitesForCreation,
@@ -247,36 +198,7 @@ module.exports = async function (api) {
     }
   }
   // UPDATE
-  api.register('streams.update', forbidSystemStreamsActions, commonFns.getParamsValidation(methodsSchema.update.params), commonFns.catchForbiddenUpdate(streamSchema('update'), updatesSettings.ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
-  /**
-   * Forbid to create or modify system streams, or add children to them
-   *
-   * @param {*} context
-   * @param {*} params
-   * @param {*} result
-   * @param {*} next
-   */
-  function forbidSystemStreamsActions (context, params, result, next) {
-    if (params.id != null) {
-      if (isStreamIdPrefixBackwardCompatibilityActive &&
-                !context.disableBackwardCompatibility) {
-        params.id = replaceWithNewPrefix(params.id);
-      }
-      if (SystemStreamsSerializer.isSystemStreamId(params.id)) {
-        return next(errors.invalidOperation(ErrorMessages[ErrorIds.ForbiddenAccountStreamsModification]));
-      }
-    }
-    if (params.parentId != null) {
-      if (isStreamIdPrefixBackwardCompatibilityActive &&
-                !context.disableBackwardCompatibility) {
-        params.parentId = replaceWithNewPrefix(params.parentId);
-      }
-      if (SystemStreamsSerializer.isSystemStreamId(params.parentId)) {
-        return next(errors.invalidOperation(ErrorMessages[ErrorIds.ForbiddenAccountStreamsModification]));
-      }
-    }
-    next();
-  }
+  api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), commonFns.catchForbiddenUpdate(streamSchema('update'), updatesSettings.ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
   async function applyPrerequisitesForUpdate (context, params, result, next) {
     if (params?.update?.parentId === params.id) {
       return next(errors.invalidOperation('The provided "parentId" is the same as the stream\'s "id".', params.update));
@@ -338,7 +260,7 @@ module.exports = async function (api) {
     }
   }
   // DELETION
-  api.register('streams.delete', forbidSystemStreamsActions, commonFns.getParamsValidation(methodsSchema.del.params), verifyStreamExistenceAndPermissions, deleteStream);
+  api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), verifyStreamExistenceAndPermissions, deleteStream);
   async function verifyStreamExistenceAndPermissions (context, params, result, next) {
     params.mergeEventsWithParent ??= null;
     context.stream = await context.streamForStreamId(params.id);
@@ -369,6 +291,9 @@ module.exports = async function (api) {
       pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_STREAMS_CHANGED);
       return next();
     } catch (err) {
+      if (err instanceof APIError) {
+        return next(err);
+      }
       return next(errors.unexpectedError(err));
     }
   }

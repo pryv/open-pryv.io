@@ -5,6 +5,6 @@
   "description": "Handles storage of user data on MongoDB",
   "homepage": "https://pryv.com",
   "license": "BSD-3-Clause",
-  "author": "Pryv S.A. <info@pryv.com> (https://pryv.com)",
+  "author": "Pryv <info@pryv.com> (https://pryv.com)",
   "main": "./src/index.js"
 }

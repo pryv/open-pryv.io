@@ -1,0 +1,116 @@
+#!/usr/bin/env node
+
+/**
+ * @license
+ * Copyright (C)  Pryv https://pryv.com - All Rights Reserved
+ * Unauthorized copying of this file, via any medium is strictly prohibited
+ * Proprietary and confidential
+ */
+
+/**
+ * Runs Mocha on each component (same principle as `components-run`)
+ * and saves the JSON reports into the `test-results` repo folder (assuming the `init` script ran beforehand).
+ */
+const fs = require('fs');
+const path = require('path');
+const childProcess = require('child_process');
+const moment = require('moment');
+const mkdirp = require('mkdirp');
+const temp = require('temp').track();
+
+const paths = initPaths();
+
+const testResults = [];
+
+fs.readdirSync(paths.components).forEach(function (name) {
+  const subPath = path.join(paths.components, name);
+  // skip if not a package
+  if (!fs.existsSync(path.join(subPath, 'package.json'))) {
+    return;
+  }
+  // skip if no `test` folder
+  if (!fs.existsSync(path.join(subPath, 'test'))) {
+    return;
+  }
+
+  console.log(formatHeading(name));
+
+  const componentOutputPath = temp.path() + '_' + name;
+  childProcess.spawnSync('LOGS=info NODE_ENV=test npx mocha', [`--reporter=json --reporter-option output="${componentOutputPath}"`], {
+    env: process.env,
+    cwd: subPath,
+    stdio: 'inherit',
+    shell: true // required to use `npx`
+  });
+
+  if (!fs.existsSync(componentOutputPath)) {
+    console.error('Cannot find file ' + componentOutputPath + ' for component ' + name);
+    return;
+  } 
+  const componentResults = JSON.parse(fs.readFileSync(componentOutputPath));
+  componentResults.componentName = name;
+  testResults.push(componentResults);
+});
+
+temp.cleanupSync();
+
+console.log('Writing test output to:', paths.output);
+fs.writeFileSync(paths.output, JSON.stringify(testResults, null, 2));
+
+paths.updateLatestSymlinks();
+
+function initPaths () {
+  const root = path.join(__dirname, '/../..');
+
+  const components = path.resolve(root, 'components');
+  if (!fs.existsSync(components)) {
+    console.error('"components" folder is missing');
+    process.exit(1);
+  }
+
+  const results = path.join(root, 'test-results/service-core/');
+  if (!fs.existsSync(results)) {
+    console.error(`Results repository folder '${results}' is missing. First 'just test-results-init-repo'`);
+    process.exit(1);
+  }
+
+  const versionName = getVersionName();
+  const version = path.join(results, versionName);
+  mkdirp.sync(version);
+
+  const time = moment().format('YYYYMMDD-hhmmss');
+  const outputName = time + '-service-core.json';
+  const output = path.join(version, outputName);
+
+  return {
+    root,
+    components,
+    results,
+    version,
+    output,
+    updateLatestSymlinks: function () {
+      updateLatestSymlink(version, outputName);
+      updateLatestSymlink(results, versionName);
+    }
+  };
+
+  function getVersionName () {
+    const res = childProcess.spawnSync('git', ['describe'], {
+      env: process.env,
+      cwd: root
+    });
+    const gitTagDirty = res.stdout.toString();
+    return gitTagDirty.split('-')[0];
+  }
+
+  function updateLatestSymlink (cwd, newName) {
+    childProcess.spawnSync('rm', ['latest'], { cwd: cwd });
+    childProcess.spawnSync('ln', ['-s', newName, 'latest'], { cwd: cwd });
+  }
+}
+
+function formatHeading (text) {
+  // = total available length - a space - the text
+  const padLength = process.stdout.columns - 1 - text.length;
+  return text + ' ' + '-'.repeat(padLength);
+}

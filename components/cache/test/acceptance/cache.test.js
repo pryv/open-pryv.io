@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
 /* global cache, describe, before, after, it, assert, cuid, config, initTests, initCore, coreRequest, getNewFixture, charlatan */
@@ -44,7 +17,7 @@ const STREAMS = {
   T: { }
 };
 
-describe('Cache', function () {
+describe('[CACH] Cache', function () {
   let user, username, password, access, appAccess;
   let personalToken;
   let mongoFixtures;
@@ -86,7 +59,7 @@ describe('Cache', function () {
       .set('Authorization', personalToken)
       .send({ type: 'app', name: 'app access', token: 'app-token', permissions: [{ streamId: 'A', level: 'manage' }] });
     appAccess = res.body.access;
-    assert.exists(appAccess);
+    assert.ok(appAccess);
   });
 
   after(async function () {
@@ -113,17 +86,17 @@ describe('Cache', function () {
 
   it('[FELT] Second get stream must be faster that first one', async () => {
     function isEmpty () {
-      assert.notExists(cache.getStreams(username, 'local'));
-      assert.notExists(cache.getAccessLogicForToken(username, appAccess.token));
-      assert.notExists(cache.getAccessLogicForId(username, appAccess.id));
-      assert.notExists(cache.getUserId(username));
+      assert.ok(cache.getStreams(username, 'local') == null);
+      assert.ok(cache.getAccessLogicForToken(username, appAccess.token) == null);
+      assert.ok(cache.getAccessLogicForId(username, appAccess.id) == null);
+      assert.ok(cache.getUserId(username) == null);
     }
 
     function isFull () {
-      assert.exists(cache.getStreams(username, 'local'));
-      assert.exists(cache.getAccessLogicForToken(username, appAccess.token));
-      assert.exists(cache.getAccessLogicForId(username, appAccess.id));
-      assert.exists(cache.getUserId(username));
+      assert.ok(cache.getStreams(username, 'local'));
+      assert.ok(cache.getAccessLogicForToken(username, appAccess.token));
+      assert.ok(cache.getAccessLogicForId(username, appAccess.id));
+      assert.ok(cache.getUserId(username));
     }
 
     // loop 3 times and calculate average time
@@ -136,13 +109,13 @@ describe('Cache', function () {
       const st1 = hrtime();
       const res1 = await coreRequest.get(streamsPath).set('Authorization', appAccess.token).query({});
       tFirstCallWithCache += hrtime(st1) / loop;
-      assert.equal(res1.status, 200);
+      assert.strictEqual(res1.status, 200);
 
       isFull();
       const st2 = hrtime();
       const res2 = await coreRequest.get(streamsPath).set('Authorization', appAccess.token).query({});
       tSecondCallWithCache += hrtime(st2) / loop;
-      assert.equal(res2.status, 200);
+      assert.strictEqual(res2.status, 200);
     }
     config.injectTestConfig({ caching: { isActive: false } }); // deactivate cache
     cache.clear(); // reset cache fully
@@ -152,35 +125,35 @@ describe('Cache', function () {
       const st3 = hrtime();
       const res3 = await coreRequest.get(streamsPath).set('Authorization', appAccess.token).query({});
       tNoCache += hrtime(st3) / loop;
-      assert.equal(res3.status, 200);
+      assert.strictEqual(res3.status, 200);
       isEmpty();
     }
 
     const data = `first-with-cache: ${tFirstCallWithCache}, second-with-cache: ${tSecondCallWithCache}, no-cache: ${tNoCache}  => `;
-    assert.isBelow(tSecondCallWithCache, tFirstCallWithCache, 'second-with-cache streams.get should be faster than first-with-cache' + data);
+    assert.ok(tSecondCallWithCache < tFirstCallWithCache, 'second-with-cache streams.get should be faster than first-with-cache' + data);
     if (process.env.IS_CI === 'true') return; // for some reason cache does not bring significant benefits during CI.
     const expectedGainPercent = 15;
     const percentGained = Math.round((tNoCache - tSecondCallWithCache) * 100 / tNoCache);
-    assert.isAbove(percentGained, expectedGainPercent, `cache streams.get should be at least ${expectedGainPercent}% longer than second-with-cache ${data}`);
+    assert.ok(percentGained > expectedGainPercent, `cache streams.get should be at least ${expectedGainPercent}% longer than second-with-cache ${data}`);
   });
 
   it('[XDP6] Cache should reset permissions on stream structure change when moving a stream in and out ', async () => {
     const res1 = await coreRequest.get(eventsPath).set('Authorization', appAccess.token).query({ streams: ['T'] });
-    assert.equal(res1.status, 403, 'should fail accessing forbiddden stream');
+    assert.strictEqual(res1.status, 403, 'should fail accessing forbiddden stream');
 
     // move stream T as child of A
     const res2 = await coreRequest.put(streamsPath + 'T').set('Authorization', personalToken).send({ parentId: 'A' });
-    assert.equal(res2.status, 200);
+    assert.strictEqual(res2.status, 200);
 
     const res3 = await coreRequest.get(eventsPath).set('Authorization', appAccess.token).query({ streams: ['T'] });
-    assert.equal(res3.status, 200, 'should have access to stream once moved into authorized scope');
+    assert.strictEqual(res3.status, 200, 'should have access to stream once moved into authorized scope');
 
     // move stream T out of A
     const res4 = await coreRequest.put(streamsPath + 'T').set('Authorization', personalToken).send({ parentId: null });
-    assert.equal(res4.status, 200);
+    assert.strictEqual(res4.status, 200);
 
     const res5 = await coreRequest.get(eventsPath).set('Authorization', appAccess.token).query({ streams: ['T'] });
-    assert.equal(res5.status, 403, 'should not have acces once move out of authorized scope');
+    assert.strictEqual(res5.status, 403, 'should not have acces once move out of authorized scope');
   });
 });
 

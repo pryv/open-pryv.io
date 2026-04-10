@@ -1,0 +1,20 @@
+{
+  "logs": {
+    "console": {
+      "active": true,
+      "level": "error",
+      "colorize": false
+    },
+    "file": {
+      "active": false
+    }
+  },
+  "database": {
+    "host": "127.0.0.1",
+    "name": "pryv-node-test"
+  },
+  "influxdb": {
+    "host": "127.0.0.1"
+  },
+  "serviceInfoUrl": "file://test/service-info.json"
+}

@@ -1,0 +1,128 @@
+#!/bin/bash
+set -e
+
+# Sets up PostgreSQL (compiled from source, local to var-pryv/) for server app(s)
+# Mirrors the setup-mongodb pattern: fully self-contained, no system packages.
+#
+# Result:
+#   var-pryv/postgresql-bin/   — compiled binaries (bin/, lib/, share/)
+#   var-pryv/postgresql-data/  — data directory (created by initdb)
+#   var-pryv/postgresql-logs/  — log files
+
+PG_VERSION=16.8
+
+# working dir fix
+SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
+cd $SCRIPT_FOLDER/
+
+# --- Resolve VAR_PRYV_FOLDER ---
+
+if [[ -z "$VAR_PRYV_FOLDER" ]]; then
+  VAR_PRYV_FOLDER=$SCRIPT_FOLDER/../../../../var-pryv
+fi
+mkdir -p "$VAR_PRYV_FOLDER"
+VAR_PRYV_FOLDER="$(cd "$VAR_PRYV_FOLDER" && pwd)"
+
+PG_INSTALL_DIR=$VAR_PRYV_FOLDER/postgresql-bin
+PG_DATA_DIR=$VAR_PRYV_FOLDER/postgresql-data
+PG_LOGS_DIR=$VAR_PRYV_FOLDER/postgresql-logs
+
+mkdir -p "$PG_LOGS_DIR"
+
+echo ""
+echo "Checking for PostgreSQL ($PG_INSTALL_DIR)..."
+
+if [[ -x "$PG_INSTALL_DIR/bin/pg_ctl" ]]; then
+  echo "...already installed ($($PG_INSTALL_DIR/bin/pg_ctl --version))"
+else
+  echo "...not found, building PostgreSQL $PG_VERSION from source"
+  echo ""
+
+  # --- Check build dependencies ---
+  MISSING_DEPS=()
+  for lib in libreadline-dev zlib1g-dev; do
+    if ! dpkg -s "$lib" >/dev/null 2>&1; then
+      MISSING_DEPS+=("$lib")
+    fi
+  done
+
+  if [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
+    echo "Installing build dependencies: ${MISSING_DEPS[*]}"
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq "${MISSING_DEPS[@]}"
+  fi
+
+  # --- Download source ---
+  BUILD_DIR=$(mktemp -d)
+  trap "rm -rf $BUILD_DIR" EXIT
+
+  SRC_URL="https://ftp.postgresql.org/pub/source/v${PG_VERSION}/postgresql-${PG_VERSION}.tar.bz2"
+  echo "Downloading $SRC_URL ..."
+  curl -fsSL -o "$BUILD_DIR/postgresql.tar.bz2" "$SRC_URL"
+
+  echo "Extracting..."
+  tar xjf "$BUILD_DIR/postgresql.tar.bz2" -C "$BUILD_DIR"
+
+  # --- Compile ---
+  cd "$BUILD_DIR/postgresql-${PG_VERSION}"
+  echo "Configuring (prefix=$PG_INSTALL_DIR)..."
+  ./configure \
+    --prefix="$PG_INSTALL_DIR" \
+    --without-icu \
+    --without-ldap \
+    --without-pam \
+    --without-gssapi \
+    --without-systemd \
+    --quiet
+
+  echo "Compiling ($(nproc) cores)..."
+  make -j"$(nproc)" --quiet
+
+  echo "Installing to $PG_INSTALL_DIR ..."
+  make install --quiet
+
+  cd "$SCRIPT_FOLDER"
+  echo "Build complete."
+fi
+
+# --- Initialize data directory ---
+
+if [[ ! -d "$PG_DATA_DIR" ]]; then
+  echo ""
+  echo "Initializing data directory ($PG_DATA_DIR)..."
+  "$PG_INSTALL_DIR/bin/initdb" \
+    -D "$PG_DATA_DIR" \
+    --auth=trust \
+    --no-locale \
+    --encoding=UTF8 \
+    >/dev/null
+  echo "Data directory initialized."
+else
+  echo "Data directory already exists ($PG_DATA_DIR)"
+fi
+
+# --- Configure for local dev ---
+# Use a unix socket in the data dir (no TCP by default in dev)
+# and set the port to the config default (5432)
+
+if ! grep -q "^port = 5432" "$PG_DATA_DIR/postgresql.conf" 2>/dev/null; then
+  cat >> "$PG_DATA_DIR/postgresql.conf" <<'PGCONF'
+
+# --- Pryv dev settings ---
+port = 5432
+listen_addresses = '127.0.0.1'
+log_destination = 'stderr'
+logging_collector = on
+log_directory = 'log'
+max_connections = 50
+shared_buffers = 128MB
+PGCONF
+  echo "Appended dev settings to postgresql.conf"
+fi
+
+echo ""
+echo "PostgreSQL setup complete."
+echo ""
+echo "To start PostgreSQL (creates 'pryv' role and 'pryv-node' database automatically):"
+echo "    ./storages/engines/postgresql/scripts/start"
+echo ""

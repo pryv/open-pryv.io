@@ -1,0 +1,14 @@
+{
+  "access": "http://access.backloop.dev:3000/access",
+  "api": "http://l.backloop.dev:3000/{username}/",
+  "serial": "2023061301",
+  "register": "http://reg.backloop.dev:3000",
+  "name": "Pryv Docker Local",
+  "home": "http://sw.backloop.dev",
+  "support": "https://github.com/orgs/pryv/discussions",
+  "terms": "https://pryv.com/terms-of-use/",
+  "eventTypes": "https://pryv.github.io/event-types/flat.json",
+  "assets": {
+    "definitions": "https://pryv.github.io/assets-pryv.me/index.json"
+  }
+}

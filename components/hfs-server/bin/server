@@ -1,0 +1,17 @@
+#!/usr/bin/env node
+
+// @flow
+
+// Starts a HTTP server for high frequency series. Main entry point for the high
+// frequency series server.
+
+const Application = require('../src/application');
+
+// new config has to be loadded before the application
+const { getConfig } = require('@pryv/boiler');
+(async () => {
+  await getConfig();
+  const app = new Application();
+  app.run()
+    .catch(err => console.error(err)); // eslint-disable-line no-console
+})();

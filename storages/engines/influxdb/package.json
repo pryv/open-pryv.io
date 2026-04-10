@@ -1,0 +1,13 @@
+{
+  "name": "@pryv/engine-influxdb",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pryv InfluxDB series storage engine",
+  "homepage": "https://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv <info@pryv.com> (https://pryv.com)",
+  "main": "src/index.js",
+  "dependencies": {
+    "influx": "^5.0.6"
+  }
+}

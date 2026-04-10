@@ -1,42 +1,14 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
-const chai = require('chai');
-const assert = chai.assert;
+const assert = require('node:assert');
 const nock = require('nock');
 const mailing = require('../../../src/methods/helpers/mailing');
 
-describe('Mailing helper methods', () => {
+describe('[MAIL] Mailing helper methods', () => {
   const template = 'welcome';
   const recipient = {
     name: 'bob',
@@ -57,7 +29,7 @@ describe('Mailing helper methods', () => {
     };
 
     mailing.sendmail(emailSettings, template, recipient, substitutions, lang, (err) => {
-      assert.isNotNull(err);
+      assert.ok(err != null);
     });
   });
 
@@ -68,11 +40,11 @@ describe('Mailing helper methods', () => {
     };
 
     mailing.sendmail(emailSettings, template, recipient, substitutions, lang, (err) => {
-      assert.isNotNull(err);
+      assert.ok(err != null);
     });
   });
 
-  describe('using Mandrill', () => {
+  describe('[ML01] using Mandrill', () => {
     const baseURL = 'https://mandrillapp.local';
     const path = '/messages/send';
     const emailSettings = {
@@ -81,7 +53,7 @@ describe('Mailing helper methods', () => {
       key: 'v3ryStrongK3y'
     };
 
-    describe('validating request body', () => {
+    describe('[ML02] validating request body', () => {
       let requestBody;
       before((done) => {
         nock(baseURL)
@@ -93,7 +65,7 @@ describe('Mailing helper methods', () => {
       });
 
       it('[GU60] should not be empty', () => {
-        assert.isNotNull(requestBody);
+        assert.ok(requestBody != null);
       });
 
       it('[8JJU] should contain a valid auth key', () => {
@@ -101,23 +73,23 @@ describe('Mailing helper methods', () => {
       });
 
       it('[G906] should contain a valid recipient', () => {
-        assert.deepEqual(requestBody.message.to, [recipient]);
+        assert.deepStrictEqual(requestBody.message.to, [recipient]);
       });
 
       it('[KBE0] should contain a valid substitution of variables', () => {
-        assert.deepEqual(requestBody.message.global_merge_vars, [
+        assert.deepStrictEqual(requestBody.message.global_merge_vars, [
           { name: 'name', content: recipient.name },
           { name: 'email', content: recipient.email }
         ]);
       });
 
       it('[2ABY] should contain valid tags', () => {
-        assert.deepEqual(requestBody.message.tags, [template]);
+        assert.deepStrictEqual(requestBody.message.tags, [template]);
       });
     });
   });
 
-  describe('using Microservice', () => {
+  describe('[ML03] using Microservice', () => {
     const baseURL = 'https://127.0.0.1:9000/sendmail/';
     const path = '/' + template + '/' + lang;
     const emailSettings = {
@@ -126,7 +98,7 @@ describe('Mailing helper methods', () => {
       key: 'v3ryStrongK3y'
     };
 
-    describe('validating request body', () => {
+    describe('[ML04] validating request body', () => {
       let requestBody;
       before((done) => {
         nock(baseURL)
@@ -138,7 +110,7 @@ describe('Mailing helper methods', () => {
       });
 
       it('[LHCB] should not be empty', () => {
-        assert.isNotNull(requestBody);
+        assert.ok(requestBody != null);
       });
 
       it('[9UEU] should contain a valid auth key', () => {
@@ -151,7 +123,7 @@ describe('Mailing helper methods', () => {
       });
 
       it('[UT8M] should contain a valid substitution of variables', () => {
-        assert.deepEqual(requestBody.substitutions, substitutions);
+        assert.deepStrictEqual(requestBody.substitutions, substitutions);
       });
     });
   });

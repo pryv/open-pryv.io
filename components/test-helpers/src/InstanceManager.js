@@ -1,38 +1,10 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 const async = require('async');
-const axon = require('axon');
 const EventEmitter = require('events').EventEmitter;
 const fs = require('fs');
 const spawn = require('child_process').spawn;
@@ -55,7 +27,7 @@ let spawnCounter = 0;
  *
  * Usage: just call `server.ensureStarted(settings, callback)` before running tests.
  *
- * @param {Object} settings Must contain `serverFilePath`, `axonMessaging` and `logging`
+ * @param {Object} settings Must contain `serverFilePath` and `logging`
  * @constructor
  */
 function InstanceManager (settings) {
@@ -65,23 +37,8 @@ function InstanceManager (settings) {
   const tempConfigPath = temp.path({ suffix: '.json' });
   let serverProcess = null;
   let serverReady = false;
-  const messagingSocket = axon.socket('sub-emitter');
   const logger = getLogger('instance-manager');
-
-  // setup TCP axonMessaging subscription
-
-  messagingSocket.bind(+settings.axonMessaging.port, settings.axonMessaging.host, function () {
-    logger.debug('TCP sub socket ready on ' + settings.axonMessaging.host + ':' +
-        settings.axonMessaging.port);
-  });
-
-  messagingSocket.on('*', function (message, data) {
-    if (message === 'axon-server-ready') {
-      serverReady = true;
-    }
-    // forward messages to our own listeners
-    this.emit(message, data);
-  }.bind(this));
+  const self = this;
 
   /**
    * Makes sure the instance is started with the given config settings, restarting it if needed;
@@ -146,9 +103,6 @@ function InstanceManager (settings) {
    * @api private
    */
   this.setup = function () {
-    // adjust config settings for test instance
-    serverSettings.axonMessaging.pubConnectInsteadOfBind = true;
-
     this.url = 'http://' + serverSettings.http.ip + ':' + serverSettings.http.port;
   };
 
@@ -183,8 +137,7 @@ function InstanceManager (settings) {
     // start proc
     logger.debug('Starting server instance... with config ' + tempConfigPath);
     const options = {
-      // Uncomment here if you want to see server output
-      stdio: 'inherit',
+      stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
       env: { ...process.env, PRYV_BOILER_SUFFIX: '-' + spawnCounter++ }
     };
     serverProcess = spawn(process.argv[0], args, options);
@@ -194,6 +147,12 @@ function InstanceManager (settings) {
       logger.debug('Server instance exited with code ' + code);
       serverExited = true;
       exitCode = code;
+    });
+    serverProcess.on('message', function (msg) {
+      if (msg && msg.type === 'test-notification') {
+        if (msg.event === 'test-server-ready') serverReady = true;
+        self.emit(msg.event, msg.data);
+      }
     });
 
     async.until(isReadyOrExited, function (next) { setTimeout(next, 100); }, function () {

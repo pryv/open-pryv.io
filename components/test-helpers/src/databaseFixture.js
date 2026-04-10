@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
 const bluebird = require('bluebird');
@@ -38,7 +11,7 @@ const generateId = require('cuid');
 const logger = require('@pryv/boiler').getLogger('databaseFixture');
 const timestamp = require('unix-timestamp');
 const _ = require('lodash');
-const storage = require('storage');
+const storage = require('storage'); // eslint-disable-line no-unused-vars -- used in JSDoc types
 const Webhook = require('business').webhooks.Webhook;
 const { getUsersRepository, User } = require('business/src/users');
 const integrityFinalCheck = require('test-helpers/src/integrity-final-check');
@@ -51,9 +24,22 @@ class Context {
    * @type {import('storage').Database}
    */
   db;
+  /**
+   * @type {import('storage').StorageLayer}
+   */
+  storageLayer;
 
-  constructor (db) {
-    this.db = db;
+  /**
+   * @param {import('storage').Database|import('storage').StorageLayer} dbOrStorageLayer
+   */
+  constructor (dbOrStorageLayer) {
+    const StorageLayer = require('storage/src/StorageLayer');
+    if (dbOrStorageLayer instanceof StorageLayer) {
+      this.storageLayer = dbOrStorageLayer;
+      this.db = dbOrStorageLayer.connection;
+    } else {
+      this.db = dbOrStorageLayer;
+    }
   }
 
   /**
@@ -68,15 +54,22 @@ class Context {
    * @returns {Promise<void>}
    */
   async cleanEverything () {
-    const collectionNames = [
-      'accesses',
-      'sessions',
-      'followedSlices',
-      'webhooks',
-      'versions'
-    ];
-    for (const collectionName of collectionNames) {
-      await bluebird.fromCallback((cb) => this.db.deleteMany({ name: collectionName }, {}, cb));
+    if (this.storageLayer) {
+      // Engine-agnostic path via StorageLayer.clearCollection()
+      for (const name of ['accesses', 'sessions', 'webhooks']) {
+        await this.storageLayer.clearCollection(name);
+      }
+    } else {
+      // Legacy raw DB path (MongoDB)
+      const collectionNames = [
+        'accesses',
+        'sessions',
+        'webhooks',
+        'versions'
+      ];
+      for (const collectionName of collectionNames) {
+        await bluebird.fromCallback((cb) => this.db.deleteMany({ name: collectionName }, {}, cb));
+      }
     }
     const usersRepository = await getUsersRepository();
     await usersRepository.deleteAll();
@@ -94,18 +87,30 @@ class UserContext {
     this.userName = userName;
     // NOTE For simplicity of debugging, we'll assume that user.id ===
     // user.username.
-    this.user = { id: userName };
+    this.user = { id: userName, username: userName };
   }
 
   /**
-   * @returns {{ sessions: Sessions; accesses: any; webhooks: any; }}
+   * @returns {{ sessions: SessionsFixture|Sessions; accesses: any; webhooks: any; }}
    */
   initStorage () {
+    if (this.context.storageLayer) {
+      // Engine-agnostic path via StorageLayer
+      const sl = this.context.storageLayer;
+      return {
+        sessions: new SessionsFixture(sl.sessions),
+        accesses: sl.accesses,
+        webhooks: sl.webhooks
+      };
+    }
+    // Legacy raw DB path (MongoDB)
     const db = this.context.db;
+    const MongoAccesses = require('storages/engines/mongodb/src/user/Accesses');
+    const MongoWebhooks = require('storages/engines/mongodb/src/user/Webhooks');
     return {
       sessions: new Sessions(db),
-      accesses: new storage.user.Accesses(db),
-      webhooks: new storage.user.Webhooks(db)
+      accesses: new MongoAccesses(db),
+      webhooks: new MongoWebhooks(db)
     };
   }
 }
@@ -249,11 +254,15 @@ class DatabaseFixture {
    */
   async clean () {
     let integrityError;
-    try {
-      // check integrity before reset--- This could trigger error related to previous test
-      await integrityFinalCheck.all();
-    } catch (err) {
-      integrityError = err; // keep it for later
+    // In parallel mode the integrity check scans ALL data in the shared
+    // database, including other workers' data, leading to false failures.
+    if (process.env.DISABLE_INTEGRITY_CHECK !== '1') {
+      try {
+        // check integrity before reset — this could trigger error related to previous test
+        await integrityFinalCheck.all();
+      } catch (err) {
+        integrityError = err; // keep it for later
+      }
     }
     // clean data anyway
     const done = await this.dependents.all((fixtureItem) => {
@@ -343,27 +352,18 @@ class FixtureUser extends FixtureItem {
    * @returns {Promise<FixtureUser>}
    */
   async remove () {
-    const storageItems = this.storage;
     const username = this.context.userName;
-    const collections = [storageItems.accesses, storageItems.webhooks];
     const usersRepository = await getUsersRepository();
+    // Delete user FIRST while events still exist — deleteOne calls getUserById
+    // which reads system-stream events (including email) so that
+    // platform.deleteUser can properly clean up unique fields.
+    // If dependents are removed first, getUserById returns null and unique
+    // platform entries (e.g. email) are orphaned, causing integrity check failures.
     await usersRepository.deleteOne(this.context.user.id, username, true);
-    const removeSessions = await bluebird.fromCallback((cb) => storageItems.sessions.removeForUser(username, cb));
-    return await bluebird
-      .all([removeSessions])
-      .then(() => bluebird.map(collections, (coll) => this.safeRemoveColl(coll)));
-  }
-
-  /**
-   * @returns {Promise<void>}
-   */
-  async safeRemoveColl (collection) {
-    const user = this.context.user;
-    try {
-      await bluebird.fromCallback((cb) => collection.dropCollection(user, cb));
-    } catch (err) {
-      if (!/ns not found/.test(err.message)) { throw err; }
-    }
+    // Then remove remaining dependents (accesses, webhooks,
+    // sessions). Events and streams are already gone via mall.deleteUser inside
+    // deleteOne; their individual remove() methods handle "not found" gracefully.
+    await this.dependents.all((fixtureItem) => fixtureItem.remove());
   }
 
   /**
@@ -419,6 +419,23 @@ class FixtureStream extends FixtureItem {
   }
 
   /**
+   * @returns {Promise<void>}
+   */
+  async remove () {
+    // First remove all dependents (child streams and events)
+    await this.dependents.all((fixtureItem) => fixtureItem.remove());
+    // Then remove this stream
+    const user = this.context.user;
+    if (mall == null) { mall = await getMall(); }
+    try {
+      await mall.streams.delete(user.id, this.attrs.id);
+    } catch (err) {
+      // Ignore "stream not found" errors
+      if (!err.message?.includes('unknown-resource')) throw err;
+    }
+  }
+
+  /**
    * @returns {{ id: string; name: any; parentId: string; }}
    */
   fakeAttributes () {
@@ -452,7 +469,22 @@ class FixtureEvent extends FixtureItem {
   }
 
   /**
-   * @returns {{ id: string; time: number; duration: number; type: any; tags: any[]; content: number; }}
+   * @returns {Promise<void>}
+   */
+  async remove () {
+    const user = this.context.user;
+    if (mall == null) { mall = await getMall(); }
+    try {
+      // mall.events.delete expects the event object
+      await mall.events.delete(user.id, this.attrs);
+    } catch (err) {
+      // Ignore "event not found" errors
+      if (!err.message?.includes('unknown-resource')) throw err;
+    }
+  }
+
+  /**
+   * @returns {{ id: string; time: number; duration: number; type: any; content: number; }}
    */
   fakeAttributes () {
     // NOTE no need to worry about streamId, this is enforced by the
@@ -462,7 +494,6 @@ class FixtureEvent extends FixtureItem {
       time: Charlatan.Date.backward().getTime() / 1000,
       duration: 0,
       type: Charlatan.Helpers.sample(['mass/kg']),
-      tags: [],
       content: 90
     };
   }
@@ -480,13 +511,22 @@ class FixtureAccess extends FixtureItem {
   }
 
   /**
+   * @returns {Promise<void>}
+   */
+  async remove () {
+    const storageItems = this.storage;
+    const user = this.context.user;
+    await bluebird.fromCallback((cb) => storageItems.accesses.removeOne(user, { id: this.attrs.id }, cb));
+  }
+
+  /**
    * @returns {{ id: string; token: any; name: any; type: any; }}
    */
   fakeAttributes () {
     return {
       id: `c${Charlatan.Number.number(15)}`,
       token: Charlatan.Internet.deviceToken(),
-      name: Charlatan.Internet.userName(),
+      name: Charlatan.Internet.userName() + '-' + generateId(),
       type: Charlatan.Helpers.sample(['personal', 'shared'])
     };
   }
@@ -506,6 +546,15 @@ class FixtureWebhook extends FixtureItem {
     const attributes = this.attrs;
     const webhook = new Webhook(attributes).forStorage();
     return await bluebird.fromCallback((cb) => storageItems.webhooks.insertOne(user, webhook, cb));
+  }
+
+  /**
+   * @returns {Promise<void>}
+   */
+  async remove () {
+    const storageItems = this.storage;
+    const user = this.context.user;
+    await bluebird.fromCallback((cb) => storageItems.webhooks.delete(user, { id: this.attrs.id }, cb));
   }
 
   /**
@@ -539,22 +588,54 @@ class FixtureSession extends FixtureItem {
   }
 
   /**
+   * @returns {Promise<void>}
+   */
+  async remove () {
+    const storageItems = this.storage;
+    // Session id is stored in attrs.id or attrs._id
+    const sessionId = this.attrs.id || this.attrs._id;
+    await bluebird.fromCallback((cb) => storageItems.sessions.destroy(sessionId, cb));
+  }
+
+  /**
    * @returns {{ _id: any; expires: any; data: { username: any; appId: any; }; }}
    */
   fakeAttributes () {
-    const getNewExpirationDate = storage.Sessions.prototype.getNewExpirationDate.bind({
-      options: {
-        maxAge: 1000 * 60 * 60 * 24 * 14 // two weeks
-      }
-    });
+    const twoWeeksMs = 1000 * 60 * 60 * 24 * 14;
     return {
       _id: generateId(),
-      expires: getNewExpirationDate(),
+      expires: new Date(Date.now() + twoWeeksMs),
       data: {
         username: this.context.user.username,
         appId: Charlatan.App.name()
       }
     };
+  }
+}
+
+/**
+ * Engine-agnostic fixture adapter for sessions.
+ * Uses the Sessions interface (importAll + destroy) to insert/remove
+ * sessions with specific ids, which the normal generate() method does not support.
+ */
+class SessionsFixture {
+  sessions;
+
+  constructor (sessions) {
+    this.sessions = sessions;
+  }
+
+  insertOne (user, attributes, cb) {
+    const doc = {
+      _id: attributes.id || attributes._id,
+      data: attributes.data,
+      expires: attributes.expires
+    };
+    this.sessions.importAll([doc], cb);
+  }
+
+  destroy (id, cb) {
+    this.sessions.destroy(id, cb);
   }
 }
 
@@ -597,21 +678,21 @@ class Sessions {
   }
 
   /**
-   * @param {string} userName
+   * @param {string} id
    * @param {() => void} cb
    * @returns {void}
    */
-  removeForUser (userName, cb) {
-    this.db.deleteMany(this.collectionInfo, { 'data.username': userName }, cb);
+  destroy (id, cb) {
+    this.db.deleteOne(this.collectionInfo, { _id: id }, cb);
   }
 }
 
 /**
- * @param {import('storage').Database} database
+ * @param {import('storage').Database|import('storage').StorageLayer} dbOrStorageLayer
  * @returns {DatabaseFixture}
  */
-function databaseFixture (database) {
-  const context = new Context(database);
+function databaseFixture (dbOrStorageLayer) {
+  const context = new Context(dbOrStorageLayer);
   return new DatabaseFixture(context);
 }
 

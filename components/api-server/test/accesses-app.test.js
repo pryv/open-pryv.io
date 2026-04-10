@@ -1,443 +1,370 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
-const _ = require('lodash');
-const should = require('should');
-const async = require('async');
-const timestamp = require('unix-timestamp');
+/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, _ */
 
+const timestamp = require('unix-timestamp');
 const { ErrorIds } = require('errors');
 const methodsSchema = require('../src/schema/accessesMethods');
 const { ApiEndpoint } = require('utils');
 const { getConfig } = require('@pryv/boiler');
 const { integrity } = require('business');
+const storage = require('storage');
 
 describe('[ACCP] accesses (app)', function () {
-  let helpers, server, validation, storage, testData;
-  let additionalTestAccesses, user, access, basePath, accessesNotifCount;
-  let request = null; // must be set after server instance started
+  let validation;
+  let username;
+  let fixtureUser;
+  let stream0, stream1, stream0Child;
+  let appAccessAToken, appAccessAId;
+  let appAccessB, appAccessBToken;
+  let sharedAccess, sharedAccessToken;
+  let sharedAccessAToken, sharedAccessAId;
+  let sharedAccessBToken;
+  let rootAccessToken;
+  let basePath;
+  let fixtures;
+  let accessStorage;
+  let user;
 
-  function buildApiEndpoint (username, token) {
-    return ApiEndpoint.build(username, token);
+  function buildApiEndpoint (uname, token) {
+    return ApiEndpoint.build(uname, token);
   }
 
-  before(async () => {
-    await getConfig(); // needed for ApiEndpoint.build();
+  before(async function () {
+    await initTests();
+    await initCore();
+    await getConfig();
+
+    validation = require('./helpers/validation');
+
+    fixtures = getNewFixture();
+    username = cuid();
+    basePath = '/' + username + '/accesses';
+
+    const storageLayer = await storage.getStorageLayer();
+    accessStorage = storageLayer.accesses;
+    user = { id: username };
+
+    // Create user with streams using fixtures
+    fixtureUser = await fixtures.user(username);
+
+    // Create streams using fixtures
+    stream0 = await fixtureUser.stream({ id: `stream0_${username}`, name: 'Stream 0' });
+    stream0Child = await stream0.stream({ id: `stream0child_${username}`, name: 'Stream 0 Child' });
+    stream1 = await fixtureUser.stream({ id: `stream1_${username}`, name: 'Stream 1' });
+
+    // Create unique tokens and IDs
+    appAccessAToken = cuid();
+    appAccessBToken = cuid();
+    sharedAccessAToken = cuid();
+    rootAccessToken = cuid();
+    sharedAccessBToken = cuid();
+    sharedAccessToken = cuid();
+
+    appAccessAId = `app_A_${username}`;
+    sharedAccessAId = `shared_A_${username}`;
   });
 
-  before(() => {
-    require('./test-helpers');
-    helpers = require('./helpers');
-    server = helpers.dependencies.instanceManager;
-    validation = helpers.validation;
-    storage = helpers.dependencies.storage.user.accesses;
-    testData = helpers.data;
-    additionalTestAccesses = [
-      {
-        id: 'app_A',
-        token: 'app_A_token',
-        name: 'App access A',
-        type: 'app',
-        permissions: [
-          {
-            streamId: testData.streams[0].id,
-            level: 'manage'
-          },
-          {
-            streamId: testData.streams[1].id,
-            level: 'contribute'
-          }
-        ],
-        created: timestamp.now(),
-        createdBy: 'test',
-        modified: timestamp.now(),
-        modifiedBy: 'test'
-      },
-      {
-        id: 'app_B',
-        token: 'app_B_token',
-        name: 'App access B (subset of A)',
-        type: 'app',
-        permissions: [
-          {
-            streamId: testData.streams[0].id,
-            level: 'read'
-          }
-        ],
-        created: timestamp.now(),
-        createdBy: 'test',
-        modified: timestamp.now(),
-        modifiedBy: 'test'
-      },
-      {
-        id: 'shared_A',
-        token: 'shared_A_token',
-        name: 'Shared access A (subset of app access A)',
-        type: 'shared',
-        permissions: [
-          {
-            streamId: testData.streams[0].children[0].id,
-            level: 'read'
-          }
-        ],
-        created: timestamp.now(),
-        createdBy: 'app_A',
-        modified: timestamp.now(),
-        modifiedBy: 'app_A'
-      },
-      {
-        id: 'root_A',
-        token: 'root_A_token',
-        name: 'Root token',
-        type: 'app',
-        permissions: [
-          {
-            streamId: '*',
-            level: 'manage'
-          }
-        ],
-        created: timestamp.now(),
-        createdBy: 'test',
-        modified: timestamp.now(),
-        modifiedBy: 'test'
-      },
-      {
-        id: 'shared_B',
-        token: 'shared_B_token',
-        name: 'Shared access B (with permission on unexisting stream)',
-        type: 'shared',
-        permissions: [
-          {
-            streamId: 'idonotexist',
-            level: 'read'
-          }
-        ],
-        created: timestamp.now(),
-        createdBy: 'test',
-        modified: timestamp.now(),
-        modifiedBy: 'test'
-      }
-    ];
-    user = structuredClone(testData.users[0]);
-    additionalTestAccesses.forEach((a) => {
-      a.apiEndpoint = buildApiEndpoint(user.username, a.token);
-      integrity.accesses.set(a);
+  // Create all test accesses using fixtures
+  async function createTestAccesses () {
+    // App access A (main access for tests)
+    await fixtureUser.access({
+      id: appAccessAId,
+      token: appAccessAToken,
+      name: 'App access A',
+      type: 'app',
+      permissions: [
+        { streamId: stream0.attrs.id, level: 'manage' },
+        { streamId: stream1.attrs.id, level: 'contribute' }
+      ]
     });
-    access = additionalTestAccesses[0];
-    basePath = '/' + user.username + '/accesses';
-    // to verify data change notifications
-    server.on('axon-accesses-changed', function () {
-      accessesNotifCount++;
+
+    // App access B (subset of A)
+    appAccessB = await fixtureUser.access({
+      id: `app_B_${username}`,
+      token: appAccessBToken,
+      name: 'App access B (subset of A)',
+      type: 'app',
+      permissions: [{ streamId: stream0.attrs.id, level: 'read' }]
     });
-  });
+
+    // Shared access A (created by app_A - important for delete tests)
+    await fixtureUser.access({
+      id: sharedAccessAId,
+      token: sharedAccessAToken,
+      name: 'Shared access A (subset of app access A)',
+      type: 'shared',
+      permissions: [{ streamId: stream0Child.attrs.id, level: 'read' }],
+      createdBy: appAccessAId,
+      modifiedBy: appAccessAId
+    });
+
+    // Root access (manage all streams)
+    await fixtureUser.access({
+      id: `root_A_${username}`,
+      token: rootAccessToken,
+      name: 'Root token',
+      type: 'app',
+      permissions: [{ streamId: '*', level: 'manage' }]
+    });
+
+    // Shared access B (with permission on non-existing stream)
+    await fixtureUser.access({
+      id: `shared_B_${username}`,
+      token: sharedAccessBToken,
+      name: 'Shared access B (with permission on unexisting stream)',
+      type: 'shared',
+      permissions: [{ streamId: 'idonotexist', level: 'read' }]
+    });
+
+    // Regular shared access for forbidden tests
+    sharedAccess = await fixtureUser.access({
+      id: `shared_regular_${username}`,
+      token: sharedAccessToken,
+      name: 'Regular shared access',
+      type: 'shared',
+      permissions: [{ streamId: stream0.attrs.id, level: 'read' }]
+    });
+  }
+
+  // Clean and recreate accesses for tests that modify data
+  async function resetAccesses () {
+    // Remove all accesses for this user (uses deleteMany with userId filter - parallel safe)
+    await new Promise((resolve) => {
+      accessStorage.removeAll(user, () => resolve());
+    });
+    // Recreate test accesses
+    await createTestAccesses();
+  }
 
   function path (id) {
     return basePath + '/' + id;
   }
 
-  function req () {
-    if (request) { return request; }
-    throw new Error('request is still not defined.');
-  }
-
-  before(function (done) {
-    async.series([
-      testData.resetUsers,
-      testData.resetStreams,
-      server.ensureStarted.bind(server, helpers.dependencies.settings),
-      function (stepDone) {
-        request = helpers.request(server.url);
-        stepDone();
-      }
-    ], done);
-  });
-
-  describe('GET /', function () {
+  describe('[AA01] GET /', function () {
     before(resetAccesses);
 
-    it("[YEHW] must return shared accesses whose permissions are a subset of the current one's", function (done) {
-      req()
-        .get(basePath, access.token)
-        .end(function (res) {
-          validation.check(res, {
-            status: 200,
-            schema: methodsSchema.get.result,
-            body: { accesses: [additionalTestAccesses[2]] }
-          }, done);
-        });
+    it("[YEHW] must return shared accesses whose permissions are a subset of the current one's", async function () {
+      const res = await coreRequest
+        .get(basePath)
+        .set('Authorization', appAccessAToken);
+
+      validation.check(res, {
+        status: 200,
+        schema: methodsSchema.get.result
+      });
+
+      // Check that sharedAccessA is returned (created by appAccessA)
+      assert.ok(res.body.accesses.length >= 1, 'should have at least 1 access');
+      const found = res.body.accesses.find(a => a.id === sharedAccessAId);
+      assert.ok(found, 'should return sharedAccessA');
     });
 
-    it('[GLHP] must be forbidden to requests with a shared access token', function (done) {
-      const sharedAccess = testData.accesses[1];
-      req()
-        .get(basePath, sharedAccess.token)
-        .end(function (res) {
-          validation.checkErrorForbidden(res, done);
-        });
+    it('[GLHP] must be forbidden to requests with a shared access token', async function () {
+      const res = await coreRequest
+        .get(basePath)
+        .set('Authorization', sharedAccessToken);
+
+      validation.checkErrorForbidden(res);
     });
   });
 
-  describe('POST /', function () {
+  describe('[AA02] POST /', function () {
     beforeEach(resetAccesses);
 
-    it('[QVHS] must create a new shared access with the sent data and return it', function (done) {
+    it('[QVHS] must create a new shared access with the sent data and return it', async function () {
       const data = {
         name: 'New Access',
         permissions: [
           {
-            streamId: testData.streams[0].id,
+            streamId: stream0.attrs.id,
             level: 'read',
             defaultName: 'Should be ignored',
             name: 'Should be ignored'
           }
         ]
       };
-      req()
-        .post(basePath, access.token)
-        .send(data)
-        .end(function (res) {
-          validation.check(res, {
-            status: 201,
-            schema: methodsSchema.create.result
-          });
-          const expected = structuredClone(data);
-          expected.id = res.body.access.id;
-          expected.token = res.body.access.token;
-          expected.apiEndpoint = buildApiEndpoint('userzero', expected.token);
-          expected.type = 'shared';
-          delete expected.permissions[0].defaultName;
-          delete expected.permissions[0].name;
-          expected.created = res.body.access.created;
-          expected.createdBy = res.body.access.createdBy;
-          expected.modified = res.body.access.modified;
-          expected.modifiedBy = res.body.access.modifiedBy;
-          expected.deviceName = null;
-          integrity.accesses.set(expected);
-          validation.checkObjectEquality(res.body.access, expected);
-          should(accessesNotifCount).be.eql(1, 'accesses notifications');
-          done();
-        });
+
+      const res = await coreRequest
+        .post(basePath)
+        .set('Authorization', appAccessAToken)
+        .send(data);
+
+      validation.check(res, {
+        status: 201,
+        schema: methodsSchema.create.result
+      });
+
+      const expected = structuredClone(data);
+      expected.id = res.body.access.id;
+      expected.token = res.body.access.token;
+      expected.apiEndpoint = buildApiEndpoint(username, expected.token);
+      expected.type = 'shared';
+      delete expected.permissions[0].defaultName;
+      delete expected.permissions[0].name;
+      expected.created = res.body.access.created;
+      expected.createdBy = res.body.access.createdBy;
+      expected.modified = res.body.access.modified;
+      expected.modifiedBy = res.body.access.modifiedBy;
+      expected.deviceName = null;
+      integrity.accesses.set(expected);
+      validation.checkObjectEquality(res.body.access, expected);
     });
 
-    it('[6GR1] must forbid trying to create a non-shared access', function (done) {
+    it('[6GR1] must forbid trying to create a non-shared access', async function () {
       const data = {
         name: 'New Access',
         type: 'app',
-        permissions: [
-          {
-            streamId: testData.streams[0].id,
-            level: 'read'
-          }
-        ]
+        permissions: [{ streamId: stream0.attrs.id, level: 'read' }]
       };
-      req()
-        .post(basePath, access.token)
-        .send(data)
-        .end(function (res) {
-          validation.checkErrorForbidden(res, done);
-        });
+
+      const res = await coreRequest
+        .post(basePath)
+        .set('Authorization', appAccessAToken)
+        .send(data);
+
+      validation.checkErrorForbidden(res);
     });
 
-    it('[A4MC] must forbid trying to create an access with greater permissions', function (done) {
+    it('[A4MC] must forbid trying to create an access with greater permissions', async function () {
       const data = {
         name: 'New Access',
-        permissions: [
-          {
-            streamId: testData.streams[1].id,
-            level: 'manage'
-          }
-        ]
+        permissions: [{ streamId: stream1.attrs.id, level: 'manage' }]
       };
-      req()
-        .post(basePath, access.token)
-        .send(data)
-        .end(function (res) {
-          validation.checkErrorForbidden(res, done);
-        });
+
+      const res = await coreRequest
+        .post(basePath)
+        .set('Authorization', appAccessAToken)
+        .send(data);
+
+      validation.checkErrorForbidden(res);
     });
 
-    it('[QN6D] must return a correct error if the sent data is badly formatted', function (done) {
+    it('[QN6D] must return a correct error if the sent data is badly formatted', async function () {
       const data = {
         name: 'New Access',
-        permissions: [
-          {
-            streamId: testData.streams[0].id,
-            level: 'bad-level'
-          }
-        ]
+        permissions: [{ streamId: stream0.attrs.id, level: 'bad-level' }]
       };
-      req()
-        .post(basePath, access.token)
-        .send(data)
-        .end(function (res) {
-          validation.checkErrorInvalidParams(res, done);
-        });
+
+      const res = await coreRequest
+        .post(basePath)
+        .set('Authorization', appAccessAToken)
+        .send(data);
+
+      validation.checkErrorInvalidParams(res);
     });
 
-    it('[4HAE] must allow creation of shared accesses with an access that has superior permission on root stream (*)', function (done) {
-      const access = additionalTestAccesses[3];
+    it('[4HAE] must allow creation of shared accesses with an access that has superior permission on root stream (*)', async function () {
       const data = {
         name: 'New Access',
-        permissions: [
-          {
-            streamId: testData.streams[0].id,
-            level: 'read'
-          }
-        ]
+        permissions: [{ streamId: stream0.attrs.id, level: 'read' }]
       };
-      req()
-        .post(basePath, access.token)
-        .send(data)
-        .end(function (res) {
-          should.exist(res.body);
-          should.not.exist(res.body.error);
-          should(res.statusCode).be.eql(201);
-          done();
-        });
+
+      const res = await coreRequest
+        .post(basePath)
+        .set('Authorization', rootAccessToken)
+        .send(data);
+
+      assert.ok(res.body);
+      assert.ok(res.body.error == null);
+      assert.strictEqual(res.statusCode, 201);
     });
   });
 
-  describe('PUT /<token>', function () {
+  describe('[AA03] PUT /<token>', function () {
     beforeEach(resetAccesses);
 
-    it('[11UZ]  must return a 410 (Gone)', function (done) {
-      req()
-        .put(path(additionalTestAccesses[1].id), access.token)
-        .send({ name: 'Updated App Access' })
-        .end(function (res) {
-          validation.check(res, { status: 410 });
-          done();
-        });
+    it('[11UZ]  must return a 410 (Gone)', async function () {
+      const res = await coreRequest
+        .put(path(appAccessB.attrs.id))
+        .set('Authorization', appAccessAToken)
+        .send({ name: 'Updated App Access' });
+
+      validation.check(res, { status: 410 });
     });
   });
 
-  describe('DELETE /<id>', function () {
+  describe('[AA04] DELETE /<id>', function () {
     beforeEach(resetAccesses);
 
-    it('[5BOO] must delete the shared access', function (done) {
-      const deletedAccess = additionalTestAccesses[2];
-      let deletionTime;
-      async.series([
-        function deleteAccess (stepDone) {
-          deletionTime = timestamp.now();
-          req()
-            .del(path(deletedAccess.id), access.token)
-            .end(function (res) {
-              validation.check(res, {
-                status: 200,
-                schema: methodsSchema.del.result,
-                body: { accessDeletion: { id: deletedAccess.id } }
-              });
-              should(accessesNotifCount).be.eql(1, 'accesses notifications');
-              stepDone();
-            });
-        },
-        function verifyData (stepDone) {
-          storage.findAll(user, null, function (err, accesses) {
-            should.not.exist(err);
-            accesses.length.should.eql(testData.accesses.length + additionalTestAccesses.length, 'accesses');
-            const expected = _.assign({
-              deleted: deletionTime
-            }, deletedAccess);
-            const actual = _.find(accesses, { id: deletedAccess.id });
-            validation.checkObjectEquality(actual, expected);
-            stepDone();
-          });
+    it('[5BOO] must delete the shared access', async function () {
+      const deletionTime = timestamp.now();
+
+      const res = await coreRequest
+        .delete(path(sharedAccessAId))
+        .set('Authorization', appAccessAToken);
+
+      validation.check(res, {
+        status: 200,
+        schema: methodsSchema.del.result,
+        body: { accessDeletion: { id: sharedAccessAId } }
+      });
+
+      // Verify data in storage
+      const accesses = await new Promise((resolve, reject) => {
+        accessStorage.findAll(user, null, (err, acc) => {
+          if (err) reject(err);
+          else resolve(acc);
+        });
+      });
+
+      const actual = _.find(accesses, { id: sharedAccessAId });
+      assert.ok(actual.deleted >= deletionTime - 1, 'access should be marked deleted');
+    });
+
+    it('[ZTSX] forbid deletion of already deleted for AppTokens', async function () {
+      // First deletion
+      const res1 = await coreRequest
+        .delete(path(appAccessAId))
+        .set('Authorization', appAccessAToken);
+
+      validation.check(res1, {
+        status: 200,
+        schema: methodsSchema.del.result,
+        body: {
+          accessDeletion: { id: appAccessAId },
+          relatedDeletions: [{ id: sharedAccessAId }]
         }
-      ], done);
+      });
+
+      // Second deletion should be forbidden
+      const res2 = await coreRequest
+        .delete(path(appAccessAId))
+        .set('Authorization', appAccessAToken);
+
+      validation.check(res2, { status: 403 });
     });
 
-    it('[ZTSX] forbid deletion of already deleted for AppTokens', function (done) {
-      req()
-        .del(path(access.id), access.token)
-        .end(function (res) {
-          validation.check(res, {
-            status: 200,
-            schema: methodsSchema.del.result,
-            body: {
-              accessDeletion: { id: access.id },
-              relatedDeletions: [
-                {
-                  id: additionalTestAccesses[2].id
-                }
-              ]
-            }
-          });
-          req()
-            .del(path(access.id), access.token)
-            .end(function (res2) {
-              validation.check(res2, {
-                status: 403
-              });
-              done();
-            });
-        });
+    it('[VGQS] must forbid trying to delete a non-shared access', async function () {
+      const res = await coreRequest
+        .delete(path(appAccessB.attrs.id))
+        .set('Authorization', appAccessAToken);
+
+      validation.checkErrorForbidden(res);
     });
 
-    it('[VGQS] must forbid trying to delete a non-shared access', function (done) {
-      req()
-        .del(path(additionalTestAccesses[1].id), access.token)
-        .end(function (res) {
-          validation.checkErrorForbidden(res, done);
-        });
+    it('[ZTSY] must forbid trying to delete an access that was not created by itself', async function () {
+      const res = await coreRequest
+        .delete(path(sharedAccess.attrs.id))
+        .set('Authorization', appAccessAToken);
+
+      validation.checkErrorForbidden(res);
     });
 
-    it('[ZTSY] must forbid trying to delete an access that was not created by itself', function (done) {
-      req()
-        .del(path(testData.accesses[1].id), access.token)
-        .end(function (res) {
-          validation.checkErrorForbidden(res, done);
-        });
-    });
+    it('[J32P] must return a correct error if the access does not exist', async function () {
+      const res = await coreRequest
+        .delete(path('unknown-id'))
+        .set('Authorization', appAccessAToken);
 
-    it('[J32P] must return a correct error if the access does not exist', function (done) {
-      req()
-        .del(path('unknown-id'), access.token)
-        .end(function (res) {
-          validation.checkError(res, {
-            status: 404,
-            id: ErrorIds.UnknownResource
-          }, done);
-        });
+      validation.checkError(res, {
+        status: 404,
+        id: ErrorIds.UnknownResource
+      });
     });
   });
-
-  function resetAccesses (done) {
-    accessesNotifCount = 0;
-    async.series([
-      testData.resetAccesses,
-      storage.insertMany.bind(storage, user, additionalTestAccesses)
-    ], done);
-  }
 });

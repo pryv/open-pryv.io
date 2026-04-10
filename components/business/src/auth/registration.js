@@ -1,43 +1,15 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
-const errors = require('errors').factory;
 const { errorHandling } = require('errors');
 const mailing = require('api-server/src/methods/helpers/mailing');
 const { getPlatform } = require('platform');
-const SystemStreamsSerializer = require('business/src/system-streams/serializer');
-const { getUsersRepository, User } = require('business/src/users');
+const accountStreams = require('business/src/system-streams');
+const { User } = require('business/src/users');
 const { getLogger } = require('@pryv/boiler');
 const { ApiEndpoint } = require('utils');
 
@@ -48,10 +20,10 @@ class Registration {
   logger;
 
   storageLayer;
-  /** @default SystemStreamsSerializer.getAccountMap() */
-  accountStreamsSettings = SystemStreamsSerializer.getAccountMap();
+  /** @default accountStreams.accountMap */
+  accountStreamsSettings = accountStreams.accountMap;
 
-  servicesSettings; // settigns to get the email to send user welcome email
+  servicesSettings; // settings to get the email to send user welcome email
 
   platform;
   constructor (logging, storageLayer, servicesSettings) {
@@ -72,15 +44,10 @@ class Registration {
 
   /**
    * Do minimal manipulation with data like username conversion to lowercase
-   * @param {MethodContext} context  undefined
-   * @param {unknown} params  undefined
-   * @param {Result} result  undefined
-   * @param {ApiCallback} next  undefined
-   * @returns {Promise<void>}
    */
   async prepareUserData (context, params, result, next) {
     context.newUser = new User(params);
-    // accept passwordHash at creation only; TODO: remove this once deprecated method `system.createUser` is removed
+    // accept passwordHash at creation only (used by system.createUser)
     context.newUser.passwordHash = params.passwordHash;
     context.user = {
       id: context.newUser.id,
@@ -90,26 +57,30 @@ class Registration {
   }
 
   /**
-   * Validation and reservation in service-register
-   * @param {MethodContext} context  undefined
-   * @param {unknown} params  undefined
-   * @param {Result} result  undefined
-   * @param {ApiCallback} next  undefined
-   * @returns {Promise<any>}
+   * Validate registration on PlatformDB:
+   * - Check invitation token
+   * - Check reserved usernames
+   * - Check username + unique field availability (atomically reserved)
    */
-  async createUserStep1_ValidateUserOnPlatform (context, params, result, next) {
+  async validateOnPlatform (context, params, result, next) {
     try {
       const uniqueFields = { username: context.newUser.username };
       for (const [streamIdWithPrefix, streamSettings] of Object.entries(this.accountStreamsSettings)) {
-        // if key is set as required - add required validation
         if (streamSettings?.isUnique) {
-          const streamIdWithoutPrefix = SystemStreamsSerializer.removePrefixFromStreamId(streamIdWithPrefix);
-          uniqueFields[streamIdWithoutPrefix] =
-                        context.newUser[streamIdWithoutPrefix];
+          const fieldName = accountStreams.toFieldName(streamIdWithPrefix);
+          uniqueFields[fieldName] = context.newUser[fieldName];
         }
       }
-      // do the validation and reservation in service-register
-      await this.platform.createUserStep1_ValidateUser(context.newUser.username, context.newUser.invitationToken, uniqueFields, context.host);
+      const validation = await this.platform.validateRegistration(
+        context.newUser.username,
+        context.newUser.invitationToken,
+        uniqueFields
+      );
+      // Multi-core: if registration should happen on another core, return redirect
+      if (validation?.redirect) {
+        result.redirect = validation.redirect;
+        return next();
+      }
     } catch (error) {
       return next(error);
     }
@@ -117,38 +88,11 @@ class Registration {
   }
 
   /**
-   * Check in service-register if email already exists
-   * @param {MethodContext} context  undefined
-   * @param {unknown} params  undefined
-   * @param {Result} result  undefined
-   * @param {ApiCallback} next  undefined
-   * @returns {Promise<any>}
-   */
-  async deletePartiallySavedUserIfAny (context, params, result, next) {
-    try {
-      // assert that we have obtained a lock on register, so any conflicting fields here
-      // would be failed registration attempts that partially saved user data.
-      const usersRepository = await getUsersRepository();
-      const matchingUserId = await usersRepository.getUserIdForUsername(context.newUser.username);
-      if (matchingUserId != null) {
-        await usersRepository.deleteOne(matchingUserId);
-        this.logger.error(`User with id ${matchingUserId} was deleted because it was not found on service-register but uniqueness conflicted on service-core`);
-      }
-    } catch (error) {
-      return next(errors.unexpectedError(error));
-    }
-    next();
-  }
-
-  /**
-   * Save user to the database
-   * @param {MethodContext} context  undefined
-   * @param {unknown} params  undefined
-   * @param {*} result
-   * @param {ApiCallback} next  undefined
-   * @returns {Promise<any>}
+   * Save user to the database, then store indexed fields in PlatformDB
    */
   async createUser (context, params, result, next) {
+    // Multi-core redirect: skip local user creation
+    if (result.redirect) return next();
     // if it is testing user, skip registration process
     if (context.newUser.username === 'backloop') {
       result.id = 'dummy-test-user';
@@ -157,7 +101,9 @@ class Registration {
       return next();
     }
     try {
+      const { getUsersRepository } = require('business/src/users');
       const usersRepository = await getUsersRepository();
+      // insertOne handles PlatformDB storage (unique + indexed fields) internally
       await usersRepository.insertOne(context.newUser, true);
     } catch (err) {
       return next(err);
@@ -166,63 +112,33 @@ class Registration {
   }
 
   /**
-   * Save user in service-register
-   * @param {MethodContext} context  undefined
-   * @param {unknown} params  undefined
-   * @param {Result} result  undefined
-   * @param {ApiCallback} next  undefined
-   * @returns {Promise<any>}
-   */
-  async createUserStep2_CreateUserOnPlatform (context, params, result, next) {
-    try {
-      // get streams ids from the config that should be retrieved
-      const userStreamsIds = SystemStreamsSerializer.getIndexedAccountStreamsIdsWithoutPrefix();
-      // build data that should be sent to service-register
-      // some default values and indexed/uinique fields of the system
-      const userData = {
-        user: {
-          id: context.newUser.id,
-          username: context.newUser.username
-        },
-        host: { name: context.host },
-        unique: [
-          'username',
-          ...SystemStreamsSerializer.getUniqueAccountStreamsIdsWithoutPrefix()
-        ]
-      };
-      userStreamsIds.forEach((streamId) => {
-        if (context.newUser[streamId] != null) { userData.user[streamId] = context.newUser[streamId]; }
-      });
-      await this.platform.createUserStep2_CreateUser(userData);
-    } catch (error) {
-      return next(errors.unexpectedError(error));
-    }
-    next();
-  }
-
-  /**
    * Build response for user registration
-   * @param {MethodContext} context  undefined
-   * @param {unknown} params  undefined
-   * @param {Result} result  undefined
-   * @param {ApiCallback} next  undefined
-   * @returns {Promise<void>}
    */
   async buildResponse (context, params, result, next) {
+    // Multi-core redirect: tell client to re-register on the correct core
+    if (result.redirect) {
+      result.core = { url: result.redirect };
+      delete result.redirect;
+      return next();
+    }
+    // Consume invitation token on successful registration
+    if (context.newUser.invitationToken) {
+      await this.platform.consumeInvitationToken(
+        context.newUser.invitationToken,
+        context.newUser.username
+      );
+    }
     result.username = context.newUser.username;
     result.apiEndpoint = ApiEndpoint.build(context.newUser.username, context.newUser.token);
     next();
   }
 
   /**
-   *
-   * @param {MethodContext} context  undefined
-   * @param {unknown} params  undefined
-   * @param {Result} result  undefined
-   * @param {ApiCallback} next  undefined
-   * @returns {any}
+   * Send welcome email
    */
   sendWelcomeMail (context, params, result, next) {
+    // Multi-core redirect: no user created locally, skip mail
+    if (result.core && !result.username) return next();
     const emailSettings = this.servicesSettings.email;
     // Skip this step if welcome mail is deactivated
     const emailActivation = emailSettings.enabled;

@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 /**
  * Standalone script to perform cache cleanup.
@@ -40,15 +13,12 @@ const path = require('path');
 const { getConfigUnsafe, getLogger } = require('@pryv/boiler').init({
   appName: 'previews-cache-clean',
   baseFilesDir: path.resolve(__dirname, '../../../'),
-  baseConfigDir: path.resolve(__dirname, '../../api-server/config'), // api-server config
+  baseConfigDir: path.resolve(__dirname, '../../../config/'),
   extraConfigs: [{
-    scope: 'defaults-previews',
-    file: path.resolve(__dirname, '../config/defaults-config.yml')
-  }, {
     scope: 'defaults-paths',
-    file: path.resolve(__dirname, '../../api-server/config/paths-config.js')
+    file: path.resolve(__dirname, '../../../config/plugins/paths-config.js')
   }, {
-    plugin: require('api-server/config/components/systemStreams')
+    plugin: require('../../../config/plugins/systemStreams')
   }]
 });
 
@@ -56,15 +26,17 @@ const Cache = require('./cache');
 const errorHandling = require('errors').errorHandling;
 
 const logger = getLogger('previews-cache-worker');
-const settings = getConfigUnsafe(true).get('eventFiles');
+const config = getConfigUnsafe(true);
+const previewsDirPath = config.get('storages:engines:filesystem:previewsDirPath');
+const previewsCacheMaxAge = config.get('eventFiles:previewsCacheMaxAge') || 604800000; // 1 week in ms
 
 const cache = new Cache({
-  rootPath: settings.previewsDirPath,
-  maxAge: (settings.previewsCacheMaxAge / 1000 || 60 * 60 * 24 * 7) / 1000, // 1w
+  rootPath: previewsDirPath,
+  maxAge: previewsCacheMaxAge / 1000, // convert ms to seconds
   logger
 });
 
-logger.info('Starting clean-up in ' + settings.previewsDirPath);
+logger.info('Starting clean-up in ' + previewsDirPath);
 cache.cleanUp()
   .then(() => {
     logger.info('Clean-up successful.');

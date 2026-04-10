@@ -1,0 +1,16 @@
+# Pattern C Test Files - Safe for Parallel Execution
+# These tests use supertest without binding to real ports
+
+test/accesses-app.test.js
+test/accesses-personal.test.js
+test/events-mutiple-streamIds.test.js
+test/events.get-streams-query.test.js
+test/permissions-create-only.test.js
+test/permissions-forcedStreams.test.js
+test/permissions-none.test.js
+test/permissions-selfRevoke.test.js
+test/profile-app.test.js
+test/profile-personal.test.js
+test/service-info.test.js
+test/webhooks.test.js
+test/acceptance/accesses.test.js

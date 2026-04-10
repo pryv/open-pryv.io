@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 const errorHandling = require('errors').errorHandling;
 const commonMeta = require('../methods/helpers/setCommonMeta');
@@ -58,16 +31,13 @@ class Manager {
 
   customAuthStepFn;
 
-  isOpenSource;
-
   apiVersion;
 
   hostname;
-  constructor (logger, io, api, storageLayer, customAuthStepFn, isOpenSource) {
+  constructor (logger, io, api, storageLayer, customAuthStepFn) {
     this.logger = logger;
     this.io = io;
     this.api = api;
-    this.isOpenSource = isOpenSource;
     this.contexts = new Map();
     this.storageLayer = storageLayer;
     this.customAuthStepFn = customAuthStepFn;
@@ -130,7 +100,7 @@ class Manager {
     let context = this.contexts.get(username);
     // Value is not missing, return it.
     if (typeof context === 'undefined') {
-      context = new NamespaceContext(username, this.io.of(namespaceName), this.api, this.logger, this.isOpenSource, this.apiVersion, this.hostname);
+      context = new NamespaceContext(username, this.io.of(namespaceName), this.api, this.logger, this.apiVersion, this.hostname);
       this.contexts.set(username, context);
     }
     await context.open();
@@ -162,12 +132,11 @@ class NamespaceContext {
   connections;
 
   pubsubRemover;
-  constructor (username, socketNs, api, logger, isOpenSource, apiVersion, hostname) {
+  constructor (username, socketNs, api, logger, apiVersion, hostname) {
     this.username = username;
     this.socketNs = socketNs;
     this.api = api;
     this.logger = logger;
-    this.isOpenSource = isOpenSource;
     this.connections = new Map();
     this.pubsubRemover = null;
     this.apiVersion = apiVersion;

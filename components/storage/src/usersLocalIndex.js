@@ -1,42 +1,17 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 /**
  * Contains UserName >> UserId Mapping
  */
 
-const { getConfig, getLogger } = require('@pryv/boiler');
+const { getLogger } = require('@pryv/boiler');
 const cache = require('cache');
+const { validateUsersLocalIndexDB } = require('storages/interfaces/baseStorage/UsersLocalIndexDB');
+const { pluginLoader } = require('storages');
 
 const logger = getLogger('users:local-index');
 
@@ -55,15 +30,13 @@ class UsersLocalIndex {
     if (this.initialized) { return; }
     this.initialized = true;
 
-    if ((await getConfig()).get('storageUserIndex:engine') === 'mongodb') {
-      const DBIndex = require('./usersLocalIndexMongoDB');
-      this.db = new DBIndex();
-    } else {
-      const DBIndex = require('./usersLocalIndexSQLite');
-      this.db = new DBIndex();
-    }
+    const engine = pluginLoader.getEngineFor('baseStorage');
+    const engineModule = pluginLoader.getEngineModule(engine);
+    const DBIndex = engineModule.getUsersLocalIndex();
+    this.db = new DBIndex();
 
     await this.db.init();
+    validateUsersLocalIndexDB(this.db);
 
     logger.debug('init');
   }
@@ -77,7 +50,7 @@ class UsersLocalIndex {
     const infos = {};
     const checkedMap = {};
 
-    for (const collectionName of ['events', 'streams', 'accesses', 'profile', 'webhooks', 'followedSlices']) {
+    for (const collectionName of ['events', 'streams', 'accesses', 'profile', 'webhooks']) {
       const userIds = await getAllKnownUserIdsFromDB(collectionName);
       infos['userIdsCount-' + collectionName] = userIds.length;
 
@@ -86,13 +59,13 @@ class UsersLocalIndex {
         const username = this.getUsername(userId);
         checkedMap[userId] = true;
         if (username == null) {
-          errors.push(`User id "${userId}" in mongo collection "${collectionName}" is unknown in the user index DB`);
+          errors.push(`User id "${userId}" in "${collectionName}" is unknown in the user index DB`);
           continue;
         }
       }
     }
     return {
-      title: 'Users local index vs MongoDB',
+      title: 'Users local index vs database',
       infos,
       errors
     };
@@ -151,11 +124,9 @@ class UsersLocalIndex {
 }
 
 async function getAllKnownUserIdsFromDB (collectionName) {
-  const { getDatabase } = require('storage'); // placed here to avoid some circular dependency
-  const database = await getDatabase();
-  const collection = await database.getCollection({ name: collectionName });
-  const userIds = await collection.distinct('userId', {});
-  return userIds;
+  const storage = require('storage'); // placed here to avoid some circular dependency
+  const storageLayer = await storage.getStorageLayer();
+  return await storageLayer.getAllUserIdsFromCollection(collectionName);
 }
 
 module.exports = new UsersLocalIndex();

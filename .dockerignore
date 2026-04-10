@@ -1,0 +1,24 @@
+# commented ones are actually needed
+
+.git
+.github
+.nyc_output
+.vscode
+#build
+coverage
+docs
+mongo-scripts
+node_modules
+#scripts
+security-assessment
+test-results
+var-pryv
+**/test
+**/test-helpers
+.gitignore
+.eslintrc.yml
+.licenser.yml
+.mocharc.js
+application.log
+npm-debug.log
+README.md

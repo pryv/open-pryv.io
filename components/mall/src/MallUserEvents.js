@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
 const _ = require('lodash');
@@ -86,9 +59,33 @@ class MallUserEvents {
     }
     try {
       const event = await eventsStore.getOne(userId, storeEventId);
-      if (event != null) { return eventsUtils.convertEventFromStore(storeId, event); }
+      if (event != null) {
+        const converted = eventsUtils.convertEventFromStore(storeId, event);
+        if (storeId === storeDataUtils.AccountStoreId && integrity.events.isActive) {
+          integrity.events.set(converted);
+        }
+        return converted;
+      }
     } catch (e) {
       storeDataUtils.throwAPIError(e, storeId);
+    }
+    // Account events have plain field-name IDs (e.g. 'language') that route
+    // to the local store. Fall back to the account store when not found locally.
+    if (storeId === storeDataUtils.LocalStoreId) {
+      const accountStoreId = storeDataUtils.AccountStoreId;
+      const accountStore = this.eventsStores.get(accountStoreId);
+      if (accountStore) {
+        try {
+          const event = await accountStore.getOne(userId, fullEventId);
+          if (event != null) {
+            const converted = eventsUtils.convertEventFromStore(accountStoreId, event);
+            if (integrity.events.isActive) integrity.events.set(converted);
+            return converted;
+          }
+        } catch (e) {
+          // Ignore — account store doesn't have it either
+        }
+      }
     }
     return null;
   }
@@ -103,7 +100,11 @@ class MallUserEvents {
     try {
       const events = await eventsStore.getHistory(userId, storeEventId);
       for (const event of events) {
-        res.push(eventsUtils.convertEventFromStore(storeId, event));
+        const converted = eventsUtils.convertEventFromStore(storeId, event);
+        if (storeId === storeDataUtils.AccountStoreId && integrity.events.isActive) {
+          integrity.events.set(converted);
+        }
+        res.push(converted);
       }
     } catch (e) {
       storeDataUtils.throwAPIError(e, storeId);
@@ -142,13 +143,6 @@ class MallUserEvents {
   }
 
   /**
-   * @returns {Promise<any>}
-   */
-  async getStreamed (userId, params) {
-    return await this.getStreamedWithParamsByStore(userId, eventsQueryUtils.getParamsByStore(params));
-  }
-
-  /**
    * Specific to Mall, allow query with a prepared query by store
    * @returns {Promise<any>}
    */
@@ -162,6 +156,7 @@ class MallUserEvents {
     try {
       const query = eventsQueryUtils.getStoreQueryFromParams(params);
       const options = eventsQueryUtils.getStoreOptionsFromParams(params);
+
       const eventsStreamFromDB = await eventsStore.getStreamed(userId, query, options);
       return eventsStreamFromDB.pipe(new eventsUtils.ConvertEventFromStoreStream(storeId));
     } catch (e) {
@@ -322,6 +317,12 @@ class MallUserEvents {
       for (const fullStreamId of newEventData.streamIds) {
         const [streamStoreId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(fullStreamId);
         if (streamStoreId !== storeId) {
+          // Account stream IDs (e.g. :_system:language) are valid in local store events
+          if (storeId === storeDataUtils.LocalStoreId &&
+              streamStoreId === storeDataUtils.AccountStoreId) {
+            storeStreamIds.push(storeStreamId);
+            continue;
+          }
           throw errorFactory.invalidRequestStructure('events cannot be moved to a different store', newEventData);
         }
         storeStreamIds.push(storeStreamId);
@@ -449,8 +450,18 @@ class MallUserEvents {
     let storeId = null;
     // add eventual missing id and get storeId from first streamId then
     if (eventData.id == null) {
-      [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.streamIds[0]);
-      eventData.id = storeDataUtils.getFullItemId(storeId, cuid());
+      const [streamStoreId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.streamIds[0]);
+      if (streamStoreId === storeDataUtils.AccountStoreId) {
+        // Account events route to the account store; use stream ID as event ID
+        // (account store extracts field name from the prefixed stream ID)
+        storeId = storeDataUtils.AccountStoreId;
+        eventData.id = eventData.streamIds[0];
+      } else {
+        storeId = storeDataUtils.isPassthroughStore(streamStoreId)
+          ? storeDataUtils.LocalStoreId
+          : streamStoreId;
+        eventData.id = storeDataUtils.getFullItemId(storeId, cuid());
+      }
     } else {
       // get storeId from event id
       [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.id);
@@ -476,4 +487,8 @@ class MallUserEvents {
     return await localEventsStore.removeAllNonAccountEventsForUser(userId);
   }
 }
+/**
+ * Account events live in the local MongoDB store (account store only provides
+ * stream definitions). Remap any account-store params into local-store params.
+ */
 module.exports = MallUserEvents;

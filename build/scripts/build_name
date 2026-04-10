@@ -1,0 +1,49 @@
+#!/usr/bin/env python
+
+# Looks at the local git checkout and determines a number of things, storing 
+# them to the files indicated below: 
+#
+#   * Is this a release branch? -> creates `release_build` (empty)
+#   * What tag should we assign this build? -> creates `build_tag`, containing 
+#     the docker tag we should assign to this build. 
+
+from operator import contains
+import re
+import subprocess
+import os
+import os.path
+
+def write(name, str): 
+    f = open(name, 'w')
+    f.write(str)
+    f.close()
+    
+def clean_files():
+    for name in ['release_build', 'build_tag']:
+        if os.path.isfile(name):
+            os.remove(name)
+            
+def shell(cmd): 
+  return subprocess.check_output(cmd, shell=True).decode("utf-8").rstrip()
+
+# '1.1.3-4-g2c1a80f'
+git_describe = shell('git describe --tags')
+
+# 'master', 'HEAD', ...
+git_branch = shell('git rev-parse --abbrev-ref HEAD')
+
+print(git_describe)
+print(git_branch)
+
+# We either a) are @ a tag, in which case we have a release build under us
+#   b) are somewhere post a tag, in which case no release must be made
+
+clean_files()
+
+# Might this be a release branch/tag? If so, touch the file `release_build`
+possible_release_branch = contains(['master', 'HEAD'], git_branch)
+
+if re.match('^\d{1,}\.\d{1,}\.\d{1,}$', git_describe) and possible_release_branch:
+    write('release_build', '')
+
+write('build_tag', git_describe)

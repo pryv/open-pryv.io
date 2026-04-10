@@ -1,62 +1,23 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
-const cuid = require('cuid');
-const { assert } = require('chai');
-
-require('./test-helpers');
-
-const { databaseFixture } = require('test-helpers');
-const { produceMongoConnection, context } = require('./test-helpers');
+/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
 require('date-utils');
 
-describe('permissions selfRevoke', function () {
-  let server;
-  before(async () => {
-    server = await context.spawn();
-  });
-  after(() => {
-    server.stop();
-  });
-
+describe('[PSLF] permissions selfRevoke', function () {
   let mongoFixtures;
   before(async function () {
-    mongoFixtures = databaseFixture((await produceMongoConnection()));
+    await initTests();
+    await initCore();
+    mongoFixtures = getNewFixture();
   });
 
-  describe('POST /accesses', function () {
+  describe('[PS01] POST /accesses', function () {
     let username,
       personalToken,
       appToken,
@@ -82,6 +43,7 @@ describe('permissions selfRevoke', function () {
       await user.access({
         type: 'app',
         token: appToken,
+        name: `test-app-${username}`, // Unique name per user
         permissions: [
           {
             streamId,
@@ -96,7 +58,7 @@ describe('permissions selfRevoke', function () {
     });
 
     it('[JYL5] must list accesses with forbidden selfRevoke by GET /accesses', async () => {
-      const res = await server.request().post(basePathAccess).set('Authorization', personalToken).send({
+      const res = await coreRequest.post(basePathAccess).set('Authorization', personalToken).send({
         type: 'app',
         name: 'toto',
         permissions: [{
@@ -108,32 +70,32 @@ describe('permissions selfRevoke', function () {
         }]
       });
 
-      assert.equal(res.status, 201);
-      assert.exists(res.body.access);
+      assert.strictEqual(res.status, 201);
+      assert.ok(res.body.access);
 
       // --- check that permissions are visible with a .get()
 
-      const res3 = await server.request().get(basePathAccess).set('Authorization', personalToken);
-      assert.equal(res3.status, 200);
-      assert.exists(res3.body.accesses);
+      const res3 = await coreRequest.get(basePathAccess).set('Authorization', personalToken);
+      assert.strictEqual(res3.status, 200);
+      assert.ok(res3.body.accesses);
       let found;
       for (let i = 0; i < res3.body.accesses.length && found == null; i++) {
         if (res3.body.accesses[i].id === res.body.access.id) found = res3.body.accesses[i];
       }
-      assert.isNotNull(found);
-      assert.exists(found.permissions);
+      assert.ok(found != null);
+      assert.ok(found.permissions);
       let featureFound = false;
       for (let i = 0; i < found.permissions.length; i++) {
         if (found.permissions[i].feature === 'selfRevoke') {
-          assert.equal(found.permissions[i].setting, 'forbidden');
+          assert.strictEqual(found.permissions[i].setting, 'forbidden');
           featureFound = true;
         }
       }
-      assert.isTrue(featureFound);
+      assert.strictEqual(featureFound, true);
     });
 
     it('[JYU5] must forbid creating accesses with selfRevoke different than forbidden ', async () => {
-      const res = await server.request().post(basePathAccess).set('Authorization', personalToken).send({
+      const res = await coreRequest.post(basePathAccess).set('Authorization', personalToken).send({
         type: 'app',
         name: 'toto',
         permissions: [{
@@ -144,13 +106,13 @@ describe('permissions selfRevoke', function () {
           setting: 'bob'
         }]
       });
-      assert.equal(res.status, 400);
-      assert.exists(res.body.error);
-      assert.equal(res.body.error.id, 'invalid-parameters-format');
+      assert.strictEqual(res.status, 400);
+      assert.ok(res.body.error);
+      assert.strictEqual(res.body.error.id, 'invalid-parameters-format');
     });
 
     it('[UZRA] an appToken with managed rights should allow to create an access with selfRevoke forbidden', async function () {
-      const res = await server.request()
+      const res = await coreRequest
         .post(basePathAccess)
         .set('Authorization', appToken)
         .send({
@@ -164,9 +126,9 @@ describe('permissions selfRevoke', function () {
             setting: 'forbidden'
           }]
         });
-      assert.equal(res.status, 201);
+      assert.strictEqual(res.status, 201);
       const access = res.body.access;
-      assert.exists(access);
+      assert.ok(access);
     });
   });
 
@@ -195,6 +157,7 @@ describe('permissions selfRevoke', function () {
         const data = {
           type: access.type || 'app',
           token: access.token,
+          name: `test-access-${i}-${username}`, // Unique name per user
           permissions: [{
             streamId: '*',
             level: 'contribute'
@@ -218,14 +181,14 @@ describe('permissions selfRevoke', function () {
       const accessDef = accessDefs[testKey];
       it(`[${accessDef.testCode}] ` + testKey, async function () {
         const access = accesses[testKey];
-        const res = await server.request().delete(basePathAccess + access.id).set('Authorization', access.token);
+        const res = await coreRequest.delete(basePathAccess + access.id).set('Authorization', access.token);
 
         if (access.selfRevoke) {
-          assert.equal(res.status, 200);
-          assert.exists(res.body.accessDeletion);
-          assert.equal(res.body.accessDeletion.id, access.id);
+          assert.strictEqual(res.status, 200);
+          assert.ok(res.body.accessDeletion);
+          assert.strictEqual(res.body.accessDeletion.id, access.id);
         } else {
-          assert.equal(res.status, 403);
+          assert.strictEqual(res.status, 403);
         }
       });
     }

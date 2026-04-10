@@ -1,0 +1,1936 @@
+{
+  "meta": {
+    "timestamp": "2026-03-24T08:33:23.954Z",
+    "type": "full",
+    "label": "postgresql",
+    "duration": 15,
+    "concurrency": 10,
+    "scenarios": [
+      "events-create",
+      "events-get",
+      "mixed-workload",
+      "series-read",
+      "series-write",
+      "streams-create",
+      "streams-update"
+    ]
+  },
+  "system": {
+    "os": "Linux 6.14.0-1018-aws",
+    "arch": "x64",
+    "cpuModel": "Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz",
+    "cpuCores": 8,
+    "memoryTotal": "31.0GB",
+    "nodeVersion": "v24.14.0",
+    "platform": "linux",
+    "gitCommit": "71ef953e",
+    "version": "2.0.0-pre.2"
+  },
+  "config": {
+    "target": "http://127.0.0.1:3000",
+    "profile": "manual",
+    "engines": {
+      "base": "postgresql",
+      "platform": "sqlite",
+      "series": "postgresql",
+      "file": "filesystem",
+      "audit": "sqlite"
+    },
+    "audit": true,
+    "integrity": {
+      "attachments": true,
+      "events": true,
+      "accesses": true
+    },
+    "clusterWorkers": 2
+  },
+  "scenarios": [
+    {
+      "scenario": "events-create",
+      "resources": {
+        "processCount": 5,
+        "peak": {
+          "rssMb": 1010.1,
+          "cpuPercent": 273
+        },
+        "avg": {
+          "rssMb": 886.2,
+          "cpuPercent": 191.4
+        },
+        "samples": [
+          {
+            "rssMb": 708.6,
+            "cpuPercent": 0
+          },
+          {
+            "rssMb": 731.1,
+            "cpuPercent": 273
+          },
+          {
+            "rssMb": 747.2,
+            "cpuPercent": 205
+          },
+          {
+            "rssMb": 750.9,
+            "cpuPercent": 219.4
+          },
+          {
+            "rssMb": 774.6,
+            "cpuPercent": 212
+          },
+          {
+            "rssMb": 781.7,
+            "cpuPercent": 199.8
+          },
+          {
+            "rssMb": 787.1,
+            "cpuPercent": 209.8
+          },
+          {
+            "rssMb": 790.5,
+            "cpuPercent": 195.8
+          },
+          {
+            "rssMb": 815,
+            "cpuPercent": 182
+          },
+          {
+            "rssMb": 817.4,
+            "cpuPercent": 191.8
+          },
+          {
+            "rssMb": 848.4,
+            "cpuPercent": 182
+          },
+          {
+            "rssMb": 858.6,
+            "cpuPercent": 186.8
+          },
+          {
+            "rssMb": 869,
+            "cpuPercent": 195
+          },
+          {
+            "rssMb": 870.8,
+            "cpuPercent": 198
+          },
+          {
+            "rssMb": 903.5,
+            "cpuPercent": 184.9
+          },
+          {
+            "rssMb": 937.5,
+            "cpuPercent": 183.1
+          },
+          {
+            "rssMb": 936.8,
+            "cpuPercent": 186.8
+          },
+          {
+            "rssMb": 944.5,
+            "cpuPercent": 181
+          },
+          {
+            "rssMb": 954,
+            "cpuPercent": 177.6
+          },
+          {
+            "rssMb": 927.5,
+            "cpuPercent": 191.9
+          },
+          {
+            "rssMb": 933,
+            "cpuPercent": 183
+          },
+          {
+            "rssMb": 938.4,
+            "cpuPercent": 181
+          },
+          {
+            "rssMb": 934,
+            "cpuPercent": 186.2
+          },
+          {
+            "rssMb": 939.1,
+            "cpuPercent": 185.8
+          },
+          {
+            "rssMb": 967.3,
+            "cpuPercent": 197.2
+          },
+          {
+            "rssMb": 995.7,
+            "cpuPercent": 181.8
+          },
+          {
+            "rssMb": 999.5,
+            "cpuPercent": 169
+          },
+          {
+            "rssMb": 995,
+            "cpuPercent": 187.9
+          },
+          {
+            "rssMb": 999.8,
+            "cpuPercent": 162.9
+          },
+          {
+            "rssMb": 1004.2,
+            "cpuPercent": 167.1
+          },
+          {
+            "rssMb": 1010.1,
+            "cpuPercent": 183.9
+          }
+        ]
+      },
+      "storage": {
+        "mongodb": {
+          "before": 1133463737,
+          "after": 1133466915,
+          "delta": 3178
+        },
+        "sqlite": {
+          "before": 1359416,
+          "after": 1359416,
+          "delta": 0
+        },
+        "influxdb": {
+          "before": 284505,
+          "after": 284505,
+          "delta": 0
+        },
+        "userDirs": {
+          "before": 329686016,
+          "after": 336210944,
+          "delta": 6524928
+        },
+        "syslogSize": {
+          "before": 314122392,
+          "after": 318006719,
+          "delta": 3884327
+        },
+        "syslogLines": {
+          "before": 907397,
+          "after": 916816,
+          "delta": 9419
+        }
+      },
+      "runs": [
+        {
+          "subScenario": "events-create-master",
+          "authMode": "master",
+          "results": {
+            "totalRequests": 4538,
+            "successfulRequests": 4538,
+            "failedRequests": 0,
+            "requestsPerSecond": 302.53,
+            "latency": {
+              "min": 9.49,
+              "p50": 28.54,
+              "p95": 64.66,
+              "p99": 93.33,
+              "max": 147.49,
+              "avg": 32.8
+            },
+            "errors": {}
+          }
+        },
+        {
+          "subScenario": "events-create-restricted",
+          "authMode": "restricted",
+          "results": {
+            "totalRequests": 4843,
+            "successfulRequests": 4843,
+            "failedRequests": 0,
+            "requestsPerSecond": 322.87,
+            "latency": {
+              "min": 8.2,
+              "p50": 26.13,
+              "p95": 63.08,
+              "p99": 88.9,
+              "max": 262.51,
+              "avg": 30.84
+            },
+            "errors": {}
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "events-get",
+      "resources": {
+        "processCount": 5,
+        "peak": {
+          "rssMb": 1295.5,
+          "cpuPercent": 226
+        },
+        "avg": {
+          "rssMb": 1220.1,
+          "cpuPercent": 174.9
+        },
+        "samples": [
+          {
+            "rssMb": 1001.7,
+            "cpuPercent": 0
+          },
+          {
+            "rssMb": 1017.2,
+            "cpuPercent": 218
+          },
+          {
+            "rssMb": 1034.4,
+            "cpuPercent": 208.8
+          },
+          {
+            "rssMb": 1070,
+            "cpuPercent": 214.8
+          },
+          {
+            "rssMb": 1065,
+            "cpuPercent": 226
+          },
+          {
+            "rssMb": 1085.5,
+            "cpuPercent": 201
+          },
+          {
+            "rssMb": 1100.1,
+            "cpuPercent": 206
+          },
+          {
+            "rssMb": 1117.7,
+            "cpuPercent": 208.8
+          },
+          {
+            "rssMb": 1133.2,
+            "cpuPercent": 202
+          },
+          {
+            "rssMb": 1149.9,
+            "cpuPercent": 216.8
+          },
+          {
+            "rssMb": 1174.5,
+            "cpuPercent": 206
+          },
+          {
+            "rssMb": 1186.3,
+            "cpuPercent": 216.8
+          },
+          {
+            "rssMb": 1193.3,
+            "cpuPercent": 211.8
+          },
+          {
+            "rssMb": 1198.1,
+            "cpuPercent": 205
+          },
+          {
+            "rssMb": 1200.8,
+            "cpuPercent": 206.8
+          },
+          {
+            "rssMb": 1203.2,
+            "cpuPercent": 200.6
+          },
+          {
+            "rssMb": 1209.2,
+            "cpuPercent": 210
+          },
+          {
+            "rssMb": 1216.3,
+            "cpuPercent": 201.8
+          },
+          {
+            "rssMb": 1221.8,
+            "cpuPercent": 195
+          },
+          {
+            "rssMb": 1228.7,
+            "cpuPercent": 197.8
+          },
+          {
+            "rssMb": 1236.9,
+            "cpuPercent": 196.6
+          },
+          {
+            "rssMb": 1243.9,
+            "cpuPercent": 199.2
+          },
+          {
+            "rssMb": 1249.6,
+            "cpuPercent": 203.8
+          },
+          {
+            "rssMb": 1254.1,
+            "cpuPercent": 196.5
+          },
+          {
+            "rssMb": 1260.2,
+            "cpuPercent": 202
+          },
+          {
+            "rssMb": 1204.4,
+            "cpuPercent": 225.8
+          },
+          {
+            "rssMb": 1209.8,
+            "cpuPercent": 196
+          },
+          {
+            "rssMb": 1219.8,
+            "cpuPercent": 190.8
+          },
+          {
+            "rssMb": 1228.3,
+            "cpuPercent": 192.8
+          },
+          {
+            "rssMb": 1235.7,
+            "cpuPercent": 194
+          },
+          {
+            "rssMb": 1244.1,
+            "cpuPercent": 197
+          },
+          {
+            "rssMb": 1245.1,
+            "cpuPercent": 134
+          },
+          {
+            "rssMb": 1246.3,
+            "cpuPercent": 135.8
+          },
+          {
+            "rssMb": 1247.4,
+            "cpuPercent": 121.8
+          },
+          {
+            "rssMb": 1251.3,
+            "cpuPercent": 130.2
+          },
+          {
+            "rssMb": 1252.3,
+            "cpuPercent": 115.2
+          },
+          {
+            "rssMb": 1253.5,
+            "cpuPercent": 113
+          },
+          {
+            "rssMb": 1254.2,
+            "cpuPercent": 106.8
+          },
+          {
+            "rssMb": 1255,
+            "cpuPercent": 108.5
+          },
+          {
+            "rssMb": 1255.8,
+            "cpuPercent": 117
+          },
+          {
+            "rssMb": 1256.7,
+            "cpuPercent": 119.6
+          },
+          {
+            "rssMb": 1231.4,
+            "cpuPercent": 123.7
+          },
+          {
+            "rssMb": 1232.9,
+            "cpuPercent": 117.3
+          },
+          {
+            "rssMb": 1233.8,
+            "cpuPercent": 124
+          },
+          {
+            "rssMb": 1234.9,
+            "cpuPercent": 119.9
+          },
+          {
+            "rssMb": 1236.1,
+            "cpuPercent": 114.8
+          },
+          {
+            "rssMb": 1237.1,
+            "cpuPercent": 118.9
+          },
+          {
+            "rssMb": 1238.1,
+            "cpuPercent": 144
+          },
+          {
+            "rssMb": 1238.9,
+            "cpuPercent": 115.6
+          },
+          {
+            "rssMb": 1214.8,
+            "cpuPercent": 165.3
+          },
+          {
+            "rssMb": 1217.1,
+            "cpuPercent": 152.9
+          },
+          {
+            "rssMb": 1212.9,
+            "cpuPercent": 166.8
+          },
+          {
+            "rssMb": 1213.8,
+            "cpuPercent": 152.7
+          },
+          {
+            "rssMb": 1215.2,
+            "cpuPercent": 154
+          },
+          {
+            "rssMb": 1212.3,
+            "cpuPercent": 189
+          },
+          {
+            "rssMb": 1216.3,
+            "cpuPercent": 158.2
+          },
+          {
+            "rssMb": 1217.4,
+            "cpuPercent": 137.7
+          },
+          {
+            "rssMb": 1218.6,
+            "cpuPercent": 129.5
+          },
+          {
+            "rssMb": 1219.4,
+            "cpuPercent": 125.2
+          },
+          {
+            "rssMb": 1221,
+            "cpuPercent": 141.9
+          },
+          {
+            "rssMb": 1222.4,
+            "cpuPercent": 150.8
+          },
+          {
+            "rssMb": 1224,
+            "cpuPercent": 189.8
+          },
+          {
+            "rssMb": 1214.6,
+            "cpuPercent": 226
+          },
+          {
+            "rssMb": 1216.8,
+            "cpuPercent": 204.9
+          },
+          {
+            "rssMb": 1219.3,
+            "cpuPercent": 211.1
+          },
+          {
+            "rssMb": 1224.8,
+            "cpuPercent": 201
+          },
+          {
+            "rssMb": 1227.1,
+            "cpuPercent": 203.8
+          },
+          {
+            "rssMb": 1229.2,
+            "cpuPercent": 200.2
+          },
+          {
+            "rssMb": 1231.3,
+            "cpuPercent": 208.8
+          },
+          {
+            "rssMb": 1233.6,
+            "cpuPercent": 217.1
+          },
+          {
+            "rssMb": 1248.1,
+            "cpuPercent": 210.8
+          },
+          {
+            "rssMb": 1244.2,
+            "cpuPercent": 215
+          },
+          {
+            "rssMb": 1246.4,
+            "cpuPercent": 208.8
+          },
+          {
+            "rssMb": 1248.5,
+            "cpuPercent": 202.9
+          },
+          {
+            "rssMb": 1250.3,
+            "cpuPercent": 200.1
+          },
+          {
+            "rssMb": 1252,
+            "cpuPercent": 196.8
+          },
+          {
+            "rssMb": 1254.3,
+            "cpuPercent": 165.7
+          },
+          {
+            "rssMb": 1256.8,
+            "cpuPercent": 143.7
+          },
+          {
+            "rssMb": 1260.3,
+            "cpuPercent": 159.9
+          },
+          {
+            "rssMb": 1265.2,
+            "cpuPercent": 179
+          },
+          {
+            "rssMb": 1268.6,
+            "cpuPercent": 166.5
+          },
+          {
+            "rssMb": 1271.4,
+            "cpuPercent": 171.6
+          },
+          {
+            "rssMb": 1274.4,
+            "cpuPercent": 162.5
+          },
+          {
+            "rssMb": 1280.1,
+            "cpuPercent": 171.8
+          },
+          {
+            "rssMb": 1272.5,
+            "cpuPercent": 184
+          },
+          {
+            "rssMb": 1276.7,
+            "cpuPercent": 173.1
+          },
+          {
+            "rssMb": 1280.4,
+            "cpuPercent": 167.7
+          },
+          {
+            "rssMb": 1284.4,
+            "cpuPercent": 164.1
+          },
+          {
+            "rssMb": 1287.2,
+            "cpuPercent": 145.8
+          },
+          {
+            "rssMb": 1291.1,
+            "cpuPercent": 166
+          },
+          {
+            "rssMb": 1295.5,
+            "cpuPercent": 171.9
+          }
+        ]
+      },
+      "storage": {
+        "mongodb": {
+          "before": 1133466915,
+          "after": 1133478238,
+          "delta": 11323
+        },
+        "sqlite": {
+          "before": 1359416,
+          "after": 1359416,
+          "delta": 0
+        },
+        "influxdb": {
+          "before": 284505,
+          "after": 284505,
+          "delta": 0
+        },
+        "userDirs": {
+          "before": 336210944,
+          "after": 344472576,
+          "delta": 8261632
+        },
+        "syslogSize": {
+          "before": 318006719,
+          "after": 322394985,
+          "delta": 4388266
+        },
+        "syslogLines": {
+          "before": 916816,
+          "after": 931354,
+          "delta": 14538
+        }
+      },
+      "runs": [
+        {
+          "subScenario": "no-filter-master",
+          "authMode": "master",
+          "filter": "no-filter",
+          "results": {
+            "totalRequests": 2849,
+            "successfulRequests": 2849,
+            "failedRequests": 0,
+            "requestsPerSecond": 189.93,
+            "latency": {
+              "min": 16.79,
+              "p50": 47.7,
+              "p95": 96.34,
+              "p99": 129.34,
+              "max": 258.32,
+              "avg": 52.12
+            },
+            "errors": {}
+          }
+        },
+        {
+          "subScenario": "no-filter-restricted",
+          "authMode": "restricted",
+          "filter": "no-filter",
+          "results": {
+            "totalRequests": 3195,
+            "successfulRequests": 3195,
+            "failedRequests": 0,
+            "requestsPerSecond": 213,
+            "latency": {
+              "min": 10.26,
+              "p50": 43.02,
+              "p95": 81.32,
+              "p99": 104.09,
+              "max": 151.02,
+              "avg": 46.41
+            },
+            "errors": {}
+          }
+        },
+        {
+          "subScenario": "stream-parent-master",
+          "authMode": "master",
+          "filter": "stream-parent",
+          "results": {
+            "totalRequests": 1527,
+            "successfulRequests": 1527,
+            "failedRequests": 0,
+            "requestsPerSecond": 101.8,
+            "latency": {
+              "min": 26.57,
+              "p50": 91.14,
+              "p95": 168.83,
+              "p99": 218.52,
+              "max": 320.07,
+              "avg": 97.7
+            },
+            "errors": {}
+          }
+        },
+        {
+          "subScenario": "stream-parent-restricted",
+          "authMode": "restricted",
+          "filter": "stream-parent",
+          "results": {
+            "totalRequests": 1740,
+            "successfulRequests": 1740,
+            "failedRequests": 0,
+            "requestsPerSecond": 116,
+            "latency": {
+              "min": 14.93,
+              "p50": 75.36,
+              "p95": 177.61,
+              "p99": 259.88,
+              "max": 445.69,
+              "avg": 85.74
+            },
+            "errors": {}
+          }
+        },
+        {
+          "subScenario": "time-range-master",
+          "authMode": "master",
+          "filter": "time-range",
+          "results": {
+            "totalRequests": 3011,
+            "successfulRequests": 3011,
+            "failedRequests": 0,
+            "requestsPerSecond": 200.73,
+            "latency": {
+              "min": 12.31,
+              "p50": 46.6,
+              "p95": 88.27,
+              "p99": 108.17,
+              "max": 142.39,
+              "avg": 49.34
+            },
+            "errors": {}
+          }
+        },
+        {
+          "subScenario": "time-range-restricted",
+          "authMode": "restricted",
+          "filter": "time-range",
+          "results": {
+            "totalRequests": 2143,
+            "successfulRequests": 2143,
+            "failedRequests": 0,
+            "requestsPerSecond": 142.87,
+            "latency": {
+              "min": 9.72,
+              "p50": 63.02,
+              "p95": 130.81,
+              "p99": 187,
+              "max": 286.75,
+              "avg": 69.28
+            },
+            "errors": {}
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "mixed-workload",
+      "resources": {
+        "processCount": 5,
+        "peak": {
+          "rssMb": 1297.5,
+          "cpuPercent": 216
+        },
+        "avg": {
+          "rssMb": 1262,
+          "cpuPercent": 198.1
+        },
+        "samples": [
+          {
+            "rssMb": 1295.7,
+            "cpuPercent": 0
+          },
+          {
+            "rssMb": 1297.5,
+            "cpuPercent": 198
+          },
+          {
+            "rssMb": 1256.8,
+            "cpuPercent": 216
+          },
+          {
+            "rssMb": 1259,
+            "cpuPercent": 200.2
+          },
+          {
+            "rssMb": 1260.6,
+            "cpuPercent": 206.8
+          },
+          {
+            "rssMb": 1249.8,
+            "cpuPercent": 211
+          },
+          {
+            "rssMb": 1251.3,
+            "cpuPercent": 196
+          },
+          {
+            "rssMb": 1252.7,
+            "cpuPercent": 184.9
+          },
+          {
+            "rssMb": 1253.6,
+            "cpuPercent": 189.9
+          },
+          {
+            "rssMb": 1255,
+            "cpuPercent": 199
+          },
+          {
+            "rssMb": 1256.4,
+            "cpuPercent": 195.7
+          },
+          {
+            "rssMb": 1257.9,
+            "cpuPercent": 202.2
+          },
+          {
+            "rssMb": 1259.4,
+            "cpuPercent": 198
+          },
+          {
+            "rssMb": 1261.1,
+            "cpuPercent": 199.9
+          },
+          {
+            "rssMb": 1262.4,
+            "cpuPercent": 194.9
+          },
+          {
+            "rssMb": 1263.5,
+            "cpuPercent": 178.8
+          }
+        ]
+      },
+      "storage": {
+        "mongodb": {
+          "before": 1133478238,
+          "after": 1133480447,
+          "delta": 2209
+        },
+        "sqlite": {
+          "before": 1359416,
+          "after": 1359416,
+          "delta": 0
+        },
+        "influxdb": {
+          "before": 284505,
+          "after": 284505,
+          "delta": 0
+        },
+        "userDirs": {
+          "before": 344472576,
+          "after": 346352640,
+          "delta": 1880064
+        },
+        "syslogSize": {
+          "before": 322394985,
+          "after": 323400590,
+          "delta": 1005605
+        },
+        "syslogLines": {
+          "before": 931354,
+          "after": 934516,
+          "delta": 3162
+        }
+      },
+      "runs": [
+        {
+          "subScenario": "mixed-workload",
+          "results": {
+            "totalRequests": 3163,
+            "successfulRequests": 3163,
+            "failedRequests": 0,
+            "requestsPerSecond": 210.87,
+            "latency": {
+              "min": 7.35,
+              "p50": 41.8,
+              "p95": 95.69,
+              "p99": 136.44,
+              "max": 224.19,
+              "avg": 47.17
+            },
+            "errors": {}
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "series-read",
+      "resources": {
+        "processCount": 5,
+        "peak": {
+          "rssMb": 1752.2,
+          "cpuPercent": 173
+        },
+        "avg": {
+          "rssMb": 1408.1,
+          "cpuPercent": 128.5
+        },
+        "samples": [
+          {
+            "rssMb": 1263.5,
+            "cpuPercent": 0
+          },
+          {
+            "rssMb": 1263.8,
+            "cpuPercent": 137.9
+          },
+          {
+            "rssMb": 1264.3,
+            "cpuPercent": 124.1
+          },
+          {
+            "rssMb": 1264.7,
+            "cpuPercent": 113.9
+          },
+          {
+            "rssMb": 1265.9,
+            "cpuPercent": 119.9
+          },
+          {
+            "rssMb": 1265.9,
+            "cpuPercent": 116.9
+          },
+          {
+            "rssMb": 1265.7,
+            "cpuPercent": 121
+          },
+          {
+            "rssMb": 1265.8,
+            "cpuPercent": 118.8
+          },
+          {
+            "rssMb": 1266,
+            "cpuPercent": 119
+          },
+          {
+            "rssMb": 1266.4,
+            "cpuPercent": 120
+          },
+          {
+            "rssMb": 1266,
+            "cpuPercent": 117.9
+          },
+          {
+            "rssMb": 1266.7,
+            "cpuPercent": 105
+          },
+          {
+            "rssMb": 1266.7,
+            "cpuPercent": 119.7
+          },
+          {
+            "rssMb": 1268.7,
+            "cpuPercent": 118
+          },
+          {
+            "rssMb": 1268.7,
+            "cpuPercent": 113
+          },
+          {
+            "rssMb": 1268.5,
+            "cpuPercent": 115
+          },
+          {
+            "rssMb": 1273.6,
+            "cpuPercent": 114.8
+          },
+          {
+            "rssMb": 1283.2,
+            "cpuPercent": 127.9
+          },
+          {
+            "rssMb": 1283.2,
+            "cpuPercent": 112
+          },
+          {
+            "rssMb": 1284,
+            "cpuPercent": 98.4
+          },
+          {
+            "rssMb": 1284.5,
+            "cpuPercent": 121.5
+          },
+          {
+            "rssMb": 1284.2,
+            "cpuPercent": 127
+          },
+          {
+            "rssMb": 1283.7,
+            "cpuPercent": 116.9
+          },
+          {
+            "rssMb": 1284.7,
+            "cpuPercent": 134
+          },
+          {
+            "rssMb": 1283.7,
+            "cpuPercent": 125
+          },
+          {
+            "rssMb": 1283.9,
+            "cpuPercent": 140
+          },
+          {
+            "rssMb": 1284.2,
+            "cpuPercent": 129
+          },
+          {
+            "rssMb": 1284.2,
+            "cpuPercent": 112.7
+          },
+          {
+            "rssMb": 1284.7,
+            "cpuPercent": 130
+          },
+          {
+            "rssMb": 1284.2,
+            "cpuPercent": 133
+          },
+          {
+            "rssMb": 1283.8,
+            "cpuPercent": 123
+          },
+          {
+            "rssMb": 1286.2,
+            "cpuPercent": 103
+          },
+          {
+            "rssMb": 1330.4,
+            "cpuPercent": 169.8
+          },
+          {
+            "rssMb": 1464.7,
+            "cpuPercent": 146.1
+          },
+          {
+            "rssMb": 1573.5,
+            "cpuPercent": 136.9
+          },
+          {
+            "rssMb": 1680.7,
+            "cpuPercent": 141
+          },
+          {
+            "rssMb": 1709.4,
+            "cpuPercent": 164
+          },
+          {
+            "rssMb": 1722,
+            "cpuPercent": 128.9
+          },
+          {
+            "rssMb": 1735.2,
+            "cpuPercent": 137
+          },
+          {
+            "rssMb": 1720.3,
+            "cpuPercent": 173
+          },
+          {
+            "rssMb": 1725.1,
+            "cpuPercent": 132
+          },
+          {
+            "rssMb": 1732.6,
+            "cpuPercent": 129
+          },
+          {
+            "rssMb": 1742.1,
+            "cpuPercent": 133.9
+          },
+          {
+            "rssMb": 1752.2,
+            "cpuPercent": 146.3
+          },
+          {
+            "rssMb": 1720.6,
+            "cpuPercent": 130.7
+          },
+          {
+            "rssMb": 1732.1,
+            "cpuPercent": 147
+          },
+          {
+            "rssMb": 1723,
+            "cpuPercent": 165.2
+          },
+          {
+            "rssMb": 1730.7,
+            "cpuPercent": 130
+          }
+        ]
+      },
+      "storage": {
+        "mongodb": {
+          "before": 1133480447,
+          "after": 1133485720,
+          "delta": 5273
+        },
+        "sqlite": {
+          "before": 1359416,
+          "after": 1359416,
+          "delta": 0
+        },
+        "influxdb": {
+          "before": 284505,
+          "after": 284505,
+          "delta": 0
+        },
+        "userDirs": {
+          "before": 346352640,
+          "after": 346352640,
+          "delta": 0
+        },
+        "syslogSize": {
+          "before": 323400590,
+          "after": 323415229,
+          "delta": 14639
+        },
+        "syslogLines": {
+          "before": 934516,
+          "after": 934568,
+          "delta": 52
+        }
+      },
+      "runs": [
+        {
+          "subScenario": "series-read-1k-points",
+          "range": "1k-points",
+          "rangeSeconds": 1000,
+          "results": {
+            "totalRequests": 8952,
+            "successfulRequests": 8952,
+            "failedRequests": 0,
+            "requestsPerSecond": 596.8,
+            "latency": {
+              "min": 3.94,
+              "p50": 14.73,
+              "p95": 30.28,
+              "p99": 48.77,
+              "max": 93.7,
+              "avg": 16.61
+            },
+            "errors": {}
+          }
+        },
+        {
+          "subScenario": "series-read-10k-points",
+          "range": "10k-points",
+          "rangeSeconds": 10000,
+          "results": {
+            "totalRequests": 560,
+            "successfulRequests": 560,
+            "failedRequests": 0,
+            "requestsPerSecond": 37.33,
+            "latency": {
+              "min": 84.2,
+              "p50": 249.4,
+              "p95": 428.61,
+              "p99": 511.99,
+              "max": 592.31,
+              "avg": 268.17
+            },
+            "errors": {}
+          }
+        },
+        {
+          "subScenario": "series-read-100k-points",
+          "range": "100k-points",
+          "rangeSeconds": 100000,
+          "results": {
+            "totalRequests": 56,
+            "successfulRequests": 56,
+            "failedRequests": 0,
+            "requestsPerSecond": 3.73,
+            "latency": {
+              "min": 1357.56,
+              "p50": 2884.18,
+              "p95": 3826.28,
+              "p99": 4021.76,
+              "max": 4021.76,
+              "avg": 2872.24
+            },
+            "errors": {}
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "series-write",
+      "resources": {
+        "processCount": 5,
+        "peak": {
+          "rssMb": 1782.8,
+          "cpuPercent": 104
+        },
+        "avg": {
+          "rssMb": 1709,
+          "cpuPercent": 78.3
+        },
+        "samples": [
+          {
+            "rssMb": 1710.3,
+            "cpuPercent": 0
+          },
+          {
+            "rssMb": 1711.1,
+            "cpuPercent": 99.9
+          },
+          {
+            "rssMb": 1712.9,
+            "cpuPercent": 98.9
+          },
+          {
+            "rssMb": 1715.1,
+            "cpuPercent": 83.8
+          },
+          {
+            "rssMb": 1717.3,
+            "cpuPercent": 90.1
+          },
+          {
+            "rssMb": 1717.8,
+            "cpuPercent": 93
+          },
+          {
+            "rssMb": 1720.1,
+            "cpuPercent": 96
+          },
+          {
+            "rssMb": 1722.3,
+            "cpuPercent": 95.5
+          },
+          {
+            "rssMb": 1724.6,
+            "cpuPercent": 101.8
+          },
+          {
+            "rssMb": 1728.6,
+            "cpuPercent": 104
+          },
+          {
+            "rssMb": 1731.5,
+            "cpuPercent": 93
+          },
+          {
+            "rssMb": 1736.4,
+            "cpuPercent": 90.9
+          },
+          {
+            "rssMb": 1738.6,
+            "cpuPercent": 87
+          },
+          {
+            "rssMb": 1741.7,
+            "cpuPercent": 78
+          },
+          {
+            "rssMb": 1744.8,
+            "cpuPercent": 92
+          },
+          {
+            "rssMb": 1747.5,
+            "cpuPercent": 84.9
+          },
+          {
+            "rssMb": 1750.6,
+            "cpuPercent": 70
+          },
+          {
+            "rssMb": 1753.2,
+            "cpuPercent": 74.9
+          },
+          {
+            "rssMb": 1755,
+            "cpuPercent": 69.9
+          },
+          {
+            "rssMb": 1757.9,
+            "cpuPercent": 73.1
+          },
+          {
+            "rssMb": 1760.7,
+            "cpuPercent": 71.9
+          },
+          {
+            "rssMb": 1762.3,
+            "cpuPercent": 75
+          },
+          {
+            "rssMb": 1762.9,
+            "cpuPercent": 72.1
+          },
+          {
+            "rssMb": 1764.7,
+            "cpuPercent": 60.9
+          },
+          {
+            "rssMb": 1766,
+            "cpuPercent": 72
+          },
+          {
+            "rssMb": 1768.2,
+            "cpuPercent": 72.9
+          },
+          {
+            "rssMb": 1771.1,
+            "cpuPercent": 77
+          },
+          {
+            "rssMb": 1772.7,
+            "cpuPercent": 73
+          },
+          {
+            "rssMb": 1775.5,
+            "cpuPercent": 74.9
+          },
+          {
+            "rssMb": 1777.7,
+            "cpuPercent": 74
+          },
+          {
+            "rssMb": 1779.9,
+            "cpuPercent": 70.1
+          },
+          {
+            "rssMb": 1782.8,
+            "cpuPercent": 68
+          },
+          {
+            "rssMb": 1711.8,
+            "cpuPercent": 78.9
+          },
+          {
+            "rssMb": 1717,
+            "cpuPercent": 67.9
+          },
+          {
+            "rssMb": 1720.1,
+            "cpuPercent": 68.1
+          },
+          {
+            "rssMb": 1722.3,
+            "cpuPercent": 75.9
+          },
+          {
+            "rssMb": 1725.8,
+            "cpuPercent": 74
+          },
+          {
+            "rssMb": 1727.2,
+            "cpuPercent": 70
+          },
+          {
+            "rssMb": 1730.7,
+            "cpuPercent": 74
+          },
+          {
+            "rssMb": 1732.9,
+            "cpuPercent": 65
+          },
+          {
+            "rssMb": 1737.7,
+            "cpuPercent": 66.9
+          },
+          {
+            "rssMb": 1740,
+            "cpuPercent": 69.1
+          },
+          {
+            "rssMb": 1472.4,
+            "cpuPercent": 81.9
+          },
+          {
+            "rssMb": 1477.2,
+            "cpuPercent": 67
+          },
+          {
+            "rssMb": 1480.3,
+            "cpuPercent": 71.1
+          },
+          {
+            "rssMb": 1482.5,
+            "cpuPercent": 71.9
+          },
+          {
+            "rssMb": 1486.5,
+            "cpuPercent": 68
+          },
+          {
+            "rssMb": 1487.3,
+            "cpuPercent": 72.7
+          }
+        ]
+      },
+      "storage": {
+        "mongodb": {
+          "before": 1133485720,
+          "after": 1133490047,
+          "delta": 4327
+        },
+        "sqlite": {
+          "before": 1359416,
+          "after": 1359416,
+          "delta": 0
+        },
+        "influxdb": {
+          "before": 284505,
+          "after": 284505,
+          "delta": 0
+        },
+        "userDirs": {
+          "before": 346352640,
+          "after": 346352640,
+          "delta": 0
+        },
+        "syslogSize": {
+          "before": 323415229,
+          "after": 323431696,
+          "delta": 16467
+        },
+        "syslogLines": {
+          "before": 934568,
+          "after": 934627,
+          "delta": 59
+        }
+      },
+      "runs": [
+        {
+          "subScenario": "series-write-batch10",
+          "batchSize": 10,
+          "results": {
+            "totalRequests": 2491,
+            "successfulRequests": 2491,
+            "failedRequests": 0,
+            "requestsPerSecond": 166.07,
+            "latency": {
+              "min": 24.31,
+              "p50": 48.9,
+              "p95": 126.6,
+              "p99": 194.32,
+              "max": 305.23,
+              "avg": 60.08
+            },
+            "errors": {}
+          }
+        },
+        {
+          "subScenario": "series-write-batch100",
+          "batchSize": 100,
+          "results": {
+            "totalRequests": 400,
+            "successfulRequests": 400,
+            "failedRequests": 0,
+            "requestsPerSecond": 26.67,
+            "latency": {
+              "min": 245.73,
+              "p50": 334.77,
+              "p95": 652.87,
+              "p99": 746.89,
+              "max": 765.98,
+              "avg": 378.71
+            },
+            "errors": {}
+          }
+        },
+        {
+          "subScenario": "series-write-batch1000",
+          "batchSize": 1000,
+          "results": {
+            "totalRequests": 50,
+            "successfulRequests": 50,
+            "failedRequests": 0,
+            "requestsPerSecond": 3.33,
+            "latency": {
+              "min": 2918.45,
+              "p50": 3464.7,
+              "p95": 3978.2,
+              "p99": 4033.69,
+              "max": 4033.69,
+              "avg": 3453.47
+            },
+            "errors": {}
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "streams-create",
+      "resources": {
+        "processCount": 5,
+        "peak": {
+          "rssMb": 1532.9,
+          "cpuPercent": 287.8
+        },
+        "avg": {
+          "rssMb": 1469.8,
+          "cpuPercent": 211.7
+        },
+        "samples": [
+          {
+            "rssMb": 1226.9,
+            "cpuPercent": 0
+          },
+          {
+            "rssMb": 1271.6,
+            "cpuPercent": 287.8
+          },
+          {
+            "rssMb": 1298.3,
+            "cpuPercent": 211
+          },
+          {
+            "rssMb": 1302.7,
+            "cpuPercent": 213.4
+          },
+          {
+            "rssMb": 1367.9,
+            "cpuPercent": 203.9
+          },
+          {
+            "rssMb": 1371,
+            "cpuPercent": 201.9
+          },
+          {
+            "rssMb": 1377.8,
+            "cpuPercent": 232.8
+          },
+          {
+            "rssMb": 1379.8,
+            "cpuPercent": 208
+          },
+          {
+            "rssMb": 1440.2,
+            "cpuPercent": 216.8
+          },
+          {
+            "rssMb": 1502.2,
+            "cpuPercent": 204
+          },
+          {
+            "rssMb": 1511.6,
+            "cpuPercent": 206.8
+          },
+          {
+            "rssMb": 1512.4,
+            "cpuPercent": 199.8
+          },
+          {
+            "rssMb": 1513.3,
+            "cpuPercent": 204.3
+          },
+          {
+            "rssMb": 1519.3,
+            "cpuPercent": 216
+          },
+          {
+            "rssMb": 1521.1,
+            "cpuPercent": 209.9
+          },
+          {
+            "rssMb": 1521.5,
+            "cpuPercent": 196.1
+          },
+          {
+            "rssMb": 1524.8,
+            "cpuPercent": 196.9
+          },
+          {
+            "rssMb": 1524.8,
+            "cpuPercent": 203
+          },
+          {
+            "rssMb": 1525.1,
+            "cpuPercent": 204.8
+          },
+          {
+            "rssMb": 1525.2,
+            "cpuPercent": 221
+          },
+          {
+            "rssMb": 1525.4,
+            "cpuPercent": 215.8
+          },
+          {
+            "rssMb": 1529.4,
+            "cpuPercent": 208.8
+          },
+          {
+            "rssMb": 1529.5,
+            "cpuPercent": 206.8
+          },
+          {
+            "rssMb": 1529.5,
+            "cpuPercent": 204.8
+          },
+          {
+            "rssMb": 1529.5,
+            "cpuPercent": 227.8
+          },
+          {
+            "rssMb": 1529.5,
+            "cpuPercent": 205
+          },
+          {
+            "rssMb": 1529.5,
+            "cpuPercent": 195.9
+          },
+          {
+            "rssMb": 1529.5,
+            "cpuPercent": 203.1
+          },
+          {
+            "rssMb": 1529.6,
+            "cpuPercent": 222
+          },
+          {
+            "rssMb": 1531,
+            "cpuPercent": 204.8
+          },
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 219.2
+          }
+        ]
+      },
+      "storage": {
+        "mongodb": {
+          "before": 1133490047,
+          "after": 1133492978,
+          "delta": 2931
+        },
+        "sqlite": {
+          "before": 1359416,
+          "after": 1359416,
+          "delta": 0
+        },
+        "influxdb": {
+          "before": 284505,
+          "after": 284505,
+          "delta": 0
+        },
+        "userDirs": {
+          "before": 346352640,
+          "after": 347610112,
+          "delta": 1257472
+        },
+        "syslogSize": {
+          "before": 323431696,
+          "after": 324055485,
+          "delta": 623789
+        },
+        "syslogLines": {
+          "before": 934627,
+          "after": 936910,
+          "delta": 2283
+        }
+      },
+      "runs": [
+        {
+          "subScenario": "streams-create-flat",
+          "mode": "flat",
+          "results": {
+            "totalRequests": 1366,
+            "successfulRequests": 1366,
+            "failedRequests": 0,
+            "requestsPerSecond": 91.07,
+            "latency": {
+              "min": 25.44,
+              "p50": 97.34,
+              "p95": 208.63,
+              "p99": 299.35,
+              "max": 491.24,
+              "avg": 109.93
+            },
+            "errors": {}
+          }
+        },
+        {
+          "subScenario": "streams-create-nested",
+          "mode": "nested",
+          "results": {
+            "totalRequests": 919,
+            "successfulRequests": 919,
+            "failedRequests": 0,
+            "requestsPerSecond": 61.27,
+            "latency": {
+              "min": 37.5,
+              "p50": 154.61,
+              "p95": 265.99,
+              "p99": 330.32,
+              "max": 463.82,
+              "avg": 163.77
+            },
+            "errors": {}
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "streams-update",
+      "resources": {
+        "processCount": 5,
+        "peak": {
+          "rssMb": 1539.5,
+          "cpuPercent": 225.8
+        },
+        "avg": {
+          "rssMb": 1533.3,
+          "cpuPercent": 206.3
+        },
+        "samples": [
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 0
+          },
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 205
+          },
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 203.4
+          },
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 205
+          },
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 196.8
+          },
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 215
+          },
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 225.8
+          },
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 199.8
+          },
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 204.9
+          },
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 203.9
+          },
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 206
+          },
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 208.2
+          },
+          {
+            "rssMb": 1532.9,
+            "cpuPercent": 206.9
+          },
+          {
+            "rssMb": 1533,
+            "cpuPercent": 201.7
+          },
+          {
+            "rssMb": 1533,
+            "cpuPercent": 200.6
+          },
+          {
+            "rssMb": 1539.5,
+            "cpuPercent": 211
+          }
+        ]
+      },
+      "storage": {
+        "mongodb": {
+          "before": 1133516837,
+          "after": 1133518312,
+          "delta": 1475
+        },
+        "sqlite": {
+          "before": 1359416,
+          "after": 1359416,
+          "delta": 0
+        },
+        "influxdb": {
+          "before": 284505,
+          "after": 284505,
+          "delta": 0
+        },
+        "userDirs": {
+          "before": 347610112,
+          "after": 347913216,
+          "delta": 303104
+        },
+        "syslogSize": {
+          "before": 324055485,
+          "after": 324215281,
+          "delta": 159796
+        },
+        "syslogLines": {
+          "before": 936910,
+          "after": 937501,
+          "delta": 591
+        }
+      },
+      "runs": [
+        {
+          "subScenario": "streams-update",
+          "results": {
+            "totalRequests": 584,
+            "successfulRequests": 584,
+            "failedRequests": 0,
+            "requestsPerSecond": 38.93,
+            "latency": {
+              "min": 78.72,
+              "p50": 234.64,
+              "p95": 454.27,
+              "p99": 692.31,
+              "max": 1002.11,
+              "avg": 257.98
+            },
+            "errors": {}
+          }
+        }
+      ]
+    }
+  ],
+  "totalStorage": {
+    "mongodb": {
+      "before": 1133463737,
+      "after": 1133518312,
+      "delta": 54575
+    },
+    "sqlite": {
+      "before": 1359416,
+      "after": 1359416,
+      "delta": 0
+    },
+    "influxdb": {
+      "before": 284505,
+      "after": 284505,
+      "delta": 0
+    },
+    "userDirs": {
+      "before": 329686016,
+      "after": 347913216,
+      "delta": 18227200
+    },
+    "syslogSize": {
+      "before": 314122392,
+      "after": 324216861,
+      "delta": 10094469
+    },
+    "syslogLines": {
+      "before": 907397,
+      "after": 937501,
+      "delta": 30104
+    }
+  },
+  "totalStorageFromBaseline": {
+    "mongodb": {
+      "before": 1133159606,
+      "after": 1133518312,
+      "delta": 358706
+    },
+    "sqlite": {
+      "before": 1202856,
+      "after": 1359416,
+      "delta": 156560
+    },
+    "influxdb": {
+      "before": 284505,
+      "after": 284505,
+      "delta": 0
+    },
+    "userDirs": {
+      "before": 192744640,
+      "after": 347913216,
+      "delta": 155168576
+    },
+    "syslogSize": {
+      "before": 251650163,
+      "after": 324216861,
+      "delta": 72566698
+    },
+    "syslogLines": {
+      "before": 755444,
+      "after": 937501,
+      "delta": 182057
+    }
+  }
+}

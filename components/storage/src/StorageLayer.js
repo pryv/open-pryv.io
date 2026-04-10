@@ -1,64 +1,45 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
-const Versions = require('./Versions');
-const PasswordResetRequests = require('./PasswordResetRequests');
-const Sessions = require('./Sessions');
-const Accesses = require('./user/Accesses');
-const FollowedSlices = require('./user/FollowedSlices');
-const Profile = require('./user/Profile');
-const Streams = require('./user/Streams');
-const Webhooks = require('./user/Webhooks');
 const { getConfig, getLogger } = require('@pryv/boiler');
+const { validateUserStorage } = require('storages/interfaces/baseStorage/UserStorage');
+const { validateSessions } = require('storages/interfaces/baseStorage/Sessions');
+const { validatePasswordResetRequests } = require('storages/interfaces/baseStorage/PasswordResetRequests');
+const { validateVersions } = require('storages/interfaces/baseStorage/Versions');
+const { pluginLoader } = require('storages');
 
 /**
  * 'StorageLayer' is a component that contains all the vertical registries
  * for various database models.
+ *
+ * Engine selection is handled by the pluginLoader — each engine plugin
+ * provides an `initStorageLayer()` method that populates this instance.
  */
 class StorageLayer {
   connection;
+  engine;
   versions;
   passwordResetRequests;
   sessions;
   accesses;
-  followedSlices;
   profile;
   streams;
+  events;
   webhooks;
   logger;
 
-  async init (connection) {
+  /**
+   * Initialize the storage layer.
+   * @param {Object} connection - Database connection (MongoDB Database instance,
+   *   DatabasePG instance, or null for SQLite).
+   * @param {Object} [options] - Additional options from the barrel.
+   * @param {Object} [options.integrityAccesses] - Integrity module for accesses.
+   */
+  async init (connection, options = {}) {
     if (this.connection != null) {
       this.logger.info('Already initialized');
       return;
@@ -66,21 +47,30 @@ class StorageLayer {
 
     const config = await getConfig();
     this.logger = getLogger('storage');
+
+    this.engine = pluginLoader.getEngineFor('baseStorage');
+
     const passwordResetRequestMaxAge = config.get('auth:passwordResetRequestMaxAge');
     const sessionMaxAge = config.get('auth:sessionMaxAge');
-    this.connection = connection;
-    this.versions = new Versions(connection, this.logger);
-    this.passwordResetRequests = new PasswordResetRequests(connection, {
-      maxAge: passwordResetRequestMaxAge
+
+    const engineModule = pluginLoader.getEngineModule(this.engine);
+    engineModule.initStorageLayer(this, connection, {
+      passwordResetRequestMaxAge,
+      sessionMaxAge,
+      integrityAccesses: options.integrityAccesses
     });
-    this.sessions = new Sessions(connection, { maxAge: sessionMaxAge });
-    this.accesses = new Accesses(connection);
-    // require() here to avoid depencency cycles
-    this.followedSlices = new FollowedSlices(connection);
-    this.profile = new Profile(connection);
-    this.streams = new Streams(connection);
-    this.webhooks = new Webhooks(connection);
+
+    // Validate all storage instances against their interface contracts
+    validateUserStorage(this.accesses);
+    validateUserStorage(this.profile);
+    validateUserStorage(this.streams);
+    validateUserStorage(this.webhooks);
+    validateSessions(this.sessions);
+    validatePasswordResetRequests(this.passwordResetRequests);
+    validateVersions(this.versions);
   }
+
+  // iterateAllEvents() is set by the engine's initStorageLayer()
 
   /**
    * @returns {Promise<any>}

@@ -1,38 +1,10 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 const timestamp = require('unix-timestamp');
-const { TAG_ROOT_STREAMID, TAG_PREFIX } = require('api-server/src/methods/helpers/backwardCompatibility');
 
 module.exports = [
   {
@@ -212,67 +184,5 @@ module.exports = [
     modified: timestamp.now('-10h'),
     modifiedBy: 'test',
     children: []
-  },
-  // migrated tags
-  {
-    id: TAG_ROOT_STREAMID,
-    name: 'Tags Migrated',
-    parentId: null,
-    created: timestamp.now(),
-    createdBy: 'test',
-    modified: timestamp.now(),
-    modifiedBy: 'test',
-    children: [
-      {
-        id: TAG_PREFIX + 'cali',
-        name: 'cali',
-        parentId: TAG_ROOT_STREAMID,
-        created: 1632320812.196,
-        createdBy: 'test',
-        modified: 1632320812.196,
-        modifiedBy: 'test',
-        children: []
-      },
-      {
-        id: TAG_PREFIX + 'docious',
-        name: 'docious',
-        parentId: TAG_ROOT_STREAMID,
-        created: 1632320812.196,
-        createdBy: 'test',
-        modified: 1632320812.196,
-        modifiedBy: 'test',
-        children: []
-      },
-      {
-        id: TAG_PREFIX + 'expiali',
-        name: 'expiali',
-        parentId: TAG_ROOT_STREAMID,
-        created: 1632320812.196,
-        createdBy: 'test',
-        modified: 1632320812.196,
-        modifiedBy: 'test',
-        children: []
-      },
-      {
-        id: TAG_PREFIX + 'fragilistic',
-        name: 'fragilistic',
-        parentId: TAG_ROOT_STREAMID,
-        created: 1632320812.196,
-        createdBy: 'test',
-        modified: 1632320812.196,
-        modifiedBy: 'test',
-        children: []
-      },
-      {
-        id: TAG_PREFIX + 'super',
-        name: 'super',
-        parentId: TAG_ROOT_STREAMID,
-        created: 1632320812.196,
-        createdBy: 'test',
-        modified: 1632320812.196,
-        modifiedBy: 'test',
-        children: []
-      }
-    ]
   }
 ];

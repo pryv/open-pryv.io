@@ -1,0 +1,14 @@
+{
+  "storageTypes": ["baseStorage", "dataStore", "auditStorage"],
+  "entrypoint": "src/index.js",
+  "requiredInternals": [
+    "userLocalDirectory",
+    "getEventFiles",
+    "createUserAccountStorage"
+  ],
+  "configuration": {
+    "fields": {
+      "path":  { "type": "string",  "required": true,  "description": "Base directory for user SQLite databases and index" }
+    }
+  }
+}

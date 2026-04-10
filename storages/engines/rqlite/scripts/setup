@@ -1,0 +1,86 @@
+#!/bin/bash
+set -e
+
+# Sets up rqlite (rqlited binary) for the platform DB.
+# Mirrors the setup-mongodb pattern: downloads a precompiled binary into var-pryv/.
+#
+# Result:
+#   var-pryv/rqlite-bin/rqlited   — the rqlited daemon binary
+#   var-pryv/rqlite-data/         — Raft log + SQLite snapshot directory (created on first start)
+
+RQLITE_VERSION=9.4.5
+
+# Detect OS / arch
+case "$(uname)" in
+  Linux)  RQLITE_OS=linux ;;
+  Darwin) RQLITE_OS=darwin ;;
+  *)
+    echo "Installation is meant to be on Linux or macOS"
+    exit 1
+    ;;
+esac
+
+case "$(uname -m)" in
+  x86_64|amd64) RQLITE_ARCH=amd64 ;;
+  arm64|aarch64) RQLITE_ARCH=arm64 ;;
+  *)
+    echo "Unsupported architecture: $(uname -m)"
+    exit 1
+    ;;
+esac
+
+# working dir fix
+SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
+cd $SCRIPT_FOLDER/
+
+# --- Resolve VAR_PRYV_FOLDER ---
+
+if [[ -z "$VAR_PRYV_FOLDER" ]]; then
+  VAR_PRYV_FOLDER=$SCRIPT_FOLDER/../../../../var-pryv
+fi
+mkdir -p "$VAR_PRYV_FOLDER"
+VAR_PRYV_FOLDER="$(cd "$VAR_PRYV_FOLDER" && pwd)"
+
+RQLITE_BIN_DIR=$VAR_PRYV_FOLDER/rqlite-bin
+RQLITE_DATA_DIR=$VAR_PRYV_FOLDER/rqlite-data
+
+mkdir -p "$RQLITE_DATA_DIR"
+
+echo ""
+echo "Checking for rqlited ($RQLITE_BIN_DIR/rqlited)..."
+
+if [[ -x "$RQLITE_BIN_DIR/rqlited" ]]; then
+  echo "...already installed ($($RQLITE_BIN_DIR/rqlited -version 2>&1 | head -1))"
+else
+  echo "...installing rqlite v$RQLITE_VERSION ($RQLITE_OS-$RQLITE_ARCH)"
+  echo ""
+
+  mkdir -p "$RQLITE_BIN_DIR"
+
+  TARBALL="rqlite-v${RQLITE_VERSION}-${RQLITE_OS}-${RQLITE_ARCH}.tar.gz"
+  URL="https://github.com/rqlite/rqlite/releases/download/v${RQLITE_VERSION}/${TARBALL}"
+
+  TMP_DIR=$(mktemp -d)
+  trap "rm -rf $TMP_DIR" EXIT
+
+  echo "Downloading $URL ..."
+  curl -fsSL -o "$TMP_DIR/$TARBALL" "$URL"
+
+  echo "Extracting..."
+  tar xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR" --strip-components 1
+
+  cp "$TMP_DIR/rqlited" "$RQLITE_BIN_DIR/"
+  # rqlite (CLI) and rqbench are nice-to-have, copy if present
+  [[ -f "$TMP_DIR/rqlite" ]] && cp "$TMP_DIR/rqlite" "$RQLITE_BIN_DIR/" || true
+  [[ -f "$TMP_DIR/rqbench" ]] && cp "$TMP_DIR/rqbench" "$RQLITE_BIN_DIR/" || true
+
+  chmod +x "$RQLITE_BIN_DIR/rqlited"
+  echo "Installed: $($RQLITE_BIN_DIR/rqlited -version 2>&1 | head -1)"
+fi
+
+echo ""
+echo "rqlite setup complete."
+echo ""
+echo "To start rqlited (single-node, foreground):"
+echo "    ./storages/engines/rqlite/scripts/start"
+echo ""

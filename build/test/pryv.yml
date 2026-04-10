@@ -1,0 +1,54 @@
+version: '3.5'
+services:
+
+  core:
+    image: "localhost/pryvio/core:test"
+    container_name: pryvio_core
+    networks:
+      - frontend
+      - backend
+    ports:
+      - "3000:3000"   # API
+      - "4000:4000"   # HFS
+      - "3001:3001"   # Previews
+    volumes:
+      - ${PRYV_CONF_ROOT}/pryv/core/conf/:/app/conf/:ro
+      - ${PRYV_CONF_ROOT}/pryv/core/data/:/app/data/
+      - ${PRYV_CONF_ROOT}/pryv/core/log/:/app/log/
+      - /dev/log:/dev/log-host # for audit log
+    environment:
+      - HOSTNAME=$HOSTNAME
+    links:
+      - mongodb
+      - influxdb
+    restart: always
+
+  mongodb:
+    image: "localhost/pryvio/mongodb:test"
+    container_name: pryvio_mongodb
+    networks:
+      - backend
+    volumes:
+      - ${PRYV_CONF_ROOT}/pryv/mongodb/conf/:/app/conf/:ro
+      - ${PRYV_CONF_ROOT}/pryv/mongodb/data/:/app/data/
+      - ${PRYV_CONF_ROOT}/pryv/mongodb/log/:/app/log/
+      - ${PRYV_CONF_ROOT}/pryv/mongodb/backup/:/app/backup/
+    restart: always
+
+  influxdb:
+    image: "influxdb:1.7.8"
+    container_name: pryvio_influxdb
+    networks:
+      - backend
+    volumes:
+      - ${PRYV_CONF_ROOT}/pryv/influxdb/data/:/var/lib/influxdb
+      - ${PRYV_CONF_ROOT}/pryv/influxdb/backup/:/pryv/backup/
+    restart: always
+
+networks:
+  frontend:
+    driver: bridge
+    name: pryv_frontend
+  backend:
+    driver: bridge
+    name: pryv_backend

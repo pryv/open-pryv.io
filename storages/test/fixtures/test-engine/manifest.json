@@ -1,0 +1,5 @@
+{
+  "storageTypes": ["baseStorage", "platformStorage"],
+  "entrypoint": "src/index.js",
+  "requiredInternals": ["userLocalDirectory"]
+}

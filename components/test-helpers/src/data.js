@@ -1,35 +1,8 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
 /**
@@ -45,7 +18,7 @@ const storage = dependencies.storage;
 const fs = require('fs');
 const path = require('path');
 const _ = require('lodash');
-const SystemStreamsSerializer = require('business/src/system-streams/serializer');
+const accountStreams = require('business/src/system-streams');
 const { getUsersRepository, User } = require('business/src/users');
 const { userLocalDirectory } = require('storage');
 const charlatan = require('charlatan');
@@ -62,7 +35,7 @@ const defaultUser = users[0];
 exports.resetUsers = async () => {
   logger.debug('resetUsers');
   await getConfig(); // lock up to the time config is ready
-  await SystemStreamsSerializer.init();
+  await accountStreams.init();
   const customAccountProperties = buildCustomAccountProperties();
   const usersRepository = await getUsersRepository();
   await usersRepository.deleteAll();
@@ -100,22 +73,6 @@ exports.resetProfile = function (done, user) {
   resetMongoDBCollectionFor(storage.user.profile, user || defaultUser, profile, done);
 };
 
-// followed slices
-
-const followedSlicesURL = 'http://' +
-    settings.http.ip +
-    ':' +
-    settings.http.port +
-    '/' +
-    users[0].username;
-
-const followedSlices = (exports.followedSlices =
-    require('./data/followedSlices')(followedSlicesURL));
-
-exports.resetFollowedSlices = function (done, user) {
-  resetMongoDBCollectionFor(storage.user.followedSlices, user || defaultUser, followedSlices, done);
-};
-
 // events
 
 const events = (exports.events = require('./data/events'));
@@ -138,11 +95,7 @@ exports.addCorrectAttachmentIds = addCorrectAttachmentIds;
 exports.resetEvents = function resetEvents (done, user) {
   // deleteData(storage.user.events, user || defaultUser, events, done);
   user = user || defaultUser;
-  const eventsToWrite = events.map((e) => {
-    const eventToWrite = structuredClone(e);
-    delete eventToWrite.tags;
-    return eventToWrite;
-  });
+  const eventsToWrite = events.map((e) => structuredClone(e));
   let mall;
   async.series([
     async function removeNonAccountEvents () {
@@ -278,27 +231,26 @@ exports.dumpCurrent = function (mongoFolder, version, callback) {
     exports.resetUsers,
     exports.resetAccesses,
     exports.resetProfile,
-    exports.resetFollowedSlices,
     exports.resetStreams,
     exports.resetEvents,
     fs.rm.bind(null, outputFolder, { recursive: true, force: true }),
     childProcess.exec.bind(null, mongodump +
-            (settings.database.authUser
+            (settings.storages.engines.mongodb.authUser
               ? ' -u ' +
-                    settings.database.authUser +
+                    settings.storages.engines.mongodb.authUser +
                     ' -p ' +
-                    settings.database.authPassword
+                    settings.storages.engines.mongodb.authPassword
               : '') +
             ' --host ' +
-            settings.database.host +
+            settings.storages.engines.mongodb.host +
             ':' +
-            settings.database.port +
+            settings.storages.engines.mongodb.port +
             ' --db ' +
-            settings.database.name +
+            settings.storages.engines.mongodb.name +
             ' --out ' +
             getDumpDBSubfolder(outputFolder)),
     childProcess.exec.bind(null, 'tar -C ' +
-            settings.eventFiles.attachmentsDirPath +
+            settings.storages.engines.filesystem.attachmentsDirPath +
             ' -czf ' +
             getDumpFilesArchive(outputFolder) +
             ' .')
@@ -329,26 +281,26 @@ exports.restoreFromDump = function (versionNum, mongoFolder, callback) {
     clearAllData,
     childProcess.exec.bind(null, mongorestore +
             ' --nsFrom "pryv-node.*" --nsTo "pryv-node-test.*" ' +
-            (settings.database.authUser
+            (settings.storages.engines.mongodb.authUser
               ? ' -u ' +
-                    settings.database.authUser +
+                    settings.storages.engines.mongodb.authUser +
                     ' -p ' +
-                    settings.database.authPassword
+                    settings.storages.engines.mongodb.authPassword
               : '') +
             ' --host ' +
-            settings.database.host +
+            settings.storages.engines.mongodb.host +
             ':' +
-            settings.database.port +
+            settings.storages.engines.mongodb.port +
             ' ' +
             sourceDBFolder),
     function (done) {
-      mkdirp.sync(settings.eventFiles.attachmentsDirPath);
+      mkdirp.sync(settings.storages.engines.filesystem.attachmentsDirPath);
       done();
     },
     childProcess.exec.bind(null, 'tar -xzf ' +
             sourceFilesArchive +
             ' -C ' +
-            settings.eventFiles.attachmentsDirPath)
+            settings.storages.engines.filesystem.attachmentsDirPath)
   ], function (err) {
     if (err) {
       return callback(err);
@@ -401,11 +353,11 @@ function getDumpFilesArchive (dumpFolder) {
  * @returns {{}}
  */
 function buildCustomAccountProperties () {
-  const accountStreams = getConfigUnsafe(true).get('custom:systemStreams:account');
-  if (accountStreams == null) { return {}; }
+  const customStreams = getConfigUnsafe(true).get('custom:systemStreams:account');
+  if (customStreams == null) { return {}; }
   const customProperties = {};
-  accountStreams.forEach((stream) => {
-    customProperties[SystemStreamsSerializer.removePrefixFromStreamId(stream.id)] = charlatan.Number.number(3);
+  customStreams.forEach((stream) => {
+    customProperties[accountStreams.toFieldName(stream.id)] = charlatan.Number.number(3);
   });
   return customProperties;
 }

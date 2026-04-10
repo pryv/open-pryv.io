@@ -1,0 +1,110 @@
+---
+domain: "backloop.dev"
+serviceInfoUrl: "file:///app/conf/service-info.json"
+http:
+  ip: "0.0.0.0"
+  port: "9000"
+database:
+  host: "mongodb"
+  port: 27017
+  name: "pryv-node"
+influxdb:
+  host: "influxdb"
+  port: 8086
+userFiles:
+  path: /app/data/users
+eventFiles:
+  attachmentsDirPath: "/app/data/attachments"
+  previewsDirPath: "/app/data/previews"
+auth:
+  trustedApps: "*@https://pryv.github.io*, *@https://*.rec.la*, *@https://*.backloop.dev*"
+  sessionMaxAge: 1209600000
+  ssoCookieDomain: ".backloop.dev"
+  ssoCookieSignSecret: "khsgd-uezoc-hszdt"
+  filesReadTokenSecret: "itqyg-plhz-tsfdu"
+  passwordResetRequestMaxAge: 3600000
+  passwordResetPageURL: "https://sw.backloop.dev/access/reset-password.html"
+  adminAccessKey: "no-key-admin"
+  passwordComplexityMinCharCategories: 1
+  passwordComplexityMinLength: 6
+  passwordAgeMaxDays: 0
+  passwordAgeMinDays: 0
+  passwordPreventReuseHistoryLength: 0
+services:
+  register:
+    url: "http://register:9000"
+    key: "no-key-reg"
+  email:
+    enabled: {"welcome":false,"resetPassword":false}
+    method: "microservice"
+    url: "http://mail:9000/sendmail/"
+    key: "no-key-mail"
+    welcomeTemplate: "welcome-email"
+    resetPasswordTemplate: "reset-password"
+reporting:
+  templateVersion: "1.8.1"
+updates:
+  ignoreProtectedFields: false
+versioning: {"forceKeepHistory":false,"deletionMode":"keep-nothing"}
+webhooks: {"minIntervalMs":5000,"maxRetries":5,"runsSize":50}
+logs:
+  file:
+    active: true
+    level: "info"
+    path: "/app/log/core.log"
+    rotation:
+      isActive: true
+      days: 60
+  console:
+    active: true
+    level: "info"
+    colorize: true
+  airbrake:
+    active: false
+    key: "no-key"
+    projectId: "95887"
+customExtensions:
+  defaultFolder: "/app/conf/custom-extensions"
+dnsLess:
+  isActive: true
+custom:
+  systemStreams:
+    account: [{"isIndexed": true,"isUnique": true,"isShown": true,"isEditable": true,"type": "email/string","name": "Email","id": "email","isRequiredInValidation": true}]
+    other: []
+  dataStores: []
+user-account:
+  delete: ["adminToken"]
+audit:
+  storage:
+    filter: {"methods":{"include":["accesses.create"],"exclude":[]}}
+  syslog:
+    options:
+      host: localhost #The host running syslogd, defaults to localhost.
+      #port: 514 #The port on the host that syslog is running on, defaults to syslogd's default port.
+      protocol: unix #The network protocol to log over (e.g. tcp4, udp4, tls4, unix, unix-connect, etc).
+      #protocolOptions:  #Socket connect options. See https://nodejs.org/api/net.html#net_socket_connect_options_connectlistener for available options.
+      path: /dev/log-host #The path to the syslog dgram socket (i.e. /dev/log or /var/run/syslog for OS X). !! set by audit/config/default-syslog-path.js
+      #pid: #PID of the process that log messages are coming from (Default process.pid).
+      #facility: local0 #Syslog facility to use (Default: local0).
+      localhost: '' #Host to indicate that log messages are coming from (Default: localhost).
+      #type: BSD #The type of the syslog protocol to use (Default: BSD, also valid: 5424).
+      app_name: pryv-audit #The name of the application (Default: process.title).
+      #eol:  #The end of line character to be added to the end of the message (Default: Message without modifications).
+    formats: # define your own template for each type of "log/<format>" event
+      default: {"template":"{userid} {type} createdBy:{createdBy} {streamIds} {content}","level":"notice"}
+    filter: {"methods":{"include":["accesses.create"],"exclude":[]}}
+uploads:
+  maxSizeMb: 20
+integrity: {"isActive":{"attachments":false,"events":false,"accesses":false},"algorithm":"sha256"}
+trace:
+  enable: false
+accessTracking:
+  isActive: true
+service:
+  name: Local Docker Test
+  support: https://pryv.com/open-pryv-non-configured-page/
+  terms: https://pryv.com/open-pryv-non-configured-page/
+  home: https://pryv.com/open-pryv-non-configured-page/
+  eventTypes: https://pryv.github.io/event-types/flat.json
+  assets:
+    definitions: https://my-computer.backloop.dev:4443/www/assets/index.json

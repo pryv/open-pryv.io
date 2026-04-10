@@ -1,51 +1,30 @@
 /**
  * @license
- * Copyright (C) 2020–2025 Pryv S.A. https://pryv.com
- *
- * This file is part of Open-Pryv.io and released under BSD-Clause-3 License
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- *   this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *   this list of conditions and the following disclaimer in the documentation
- *   and/or other materials provided with the distribution.
- *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- *   may be used to endorse or promote products derived from this software
- *   without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- * SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 /**
  * Note: Debug tests with: DEBUG=engine,socket.io* npm test --grep="Socket"
  */
+const cluster = require('node:cluster');
 const socketIO = require('socket.io')({
   cors: {
     origin: true,
     methods: 'GET,POST',
     credentials: true
   },
-  allowEIO3: true // for compatibility with v2 clients
+  allowEIO3: true, // for compatibility with v2 clients
+  // Force WebSocket transport when running in cluster mode.
+  // HTTP long-polling breaks with cluster round-robin scheduling because
+  // successive requests land on different workers that don't share session state.
+  // WebSocket connections are long-lived and stay on the same worker.
+  ...(cluster.isWorker ? { transports: ['websocket'] } : {})
 });
 const MethodContext = require('business').MethodContext;
 const Manager = require('./Manager');
 const Paths = require('../routes/Paths');
-const { getConfig, getLogger } = require('@pryv/boiler');
+const { getLogger } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 // Initializes the SocketIO subsystem.
 //
@@ -56,15 +35,13 @@ const { getStorageLayer } = require('storage');
  * @returns {Promise<void>}
  */
 async function setupSocketIO (server, api, customAuthStepFn) {
-  const config = await getConfig();
   const logger = getLogger('socketIO');
   const storageLayer = await getStorageLayer();
-  const isOpenSource = config.get('openSource:isActive');
   const io = socketIO.listen(server, {
     path: Paths.SocketIO
   });
     // Manages socket.io connections and delivers method calls to the api.
-  const manager = new Manager(logger, io, api, storageLayer, customAuthStepFn, isOpenSource);
+  const manager = new Manager(logger, io, api, storageLayer, customAuthStepFn);
   // dynamicNamspaces allow to "auto" create namespaces
   // when connected pass the socket to Manager
   const dynamicNamespace = io.of(/^\/.+$/).on('connect', async (socket) => {
