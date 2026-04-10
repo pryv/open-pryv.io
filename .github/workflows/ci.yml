@@ -19,16 +19,16 @@ jobs:
         run: just setup-dev-env
       - name: Install InfluxDB
         run: |
-          wget -qO- https://repos.influxdata.com/influxdata-archive_compat.key | sudo gpg --dearmor -o /etc/apt/keyrings/influxdata.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/influxdata.gpg] https://repos.influxdata.com/debian stable main" | sudo tee /etc/apt/sources.list.d/influxdata.list
-          sudo apt-get update -qq && sudo apt-get install -y -qq influxdb
+          wget -q https://dl.influxdata.com/influxdb/releases/influxdb-1.8.10_linux_amd64.tar.gz
+          tar xzf influxdb-1.8.10_linux_amd64.tar.gz
+          sudo cp influxdb-1.8.10-1/usr/bin/influx* /usr/local/bin/
       - name: Install dependencies
         run: npm install --omit=optional --ignore-scripts && npm rebuild
       - name: Start services
         run: |
           ./storages/engines/mongodb/scripts/start
           ./storages/engines/rqlite/scripts/start &
-          sudo influxd -config /etc/influxdb/influxdb.conf &
+          influxd &
           sleep 3
       - name: Run MongoDB test suite
         run: just clean-test-data && just test all
@@ -60,16 +60,16 @@ jobs:
         run: just setup-dev-env
       - name: Install InfluxDB
         run: |
-          wget -qO- https://repos.influxdata.com/influxdata-archive_compat.key | sudo gpg --dearmor -o /etc/apt/keyrings/influxdata.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/influxdata.gpg] https://repos.influxdata.com/debian stable main" | sudo tee /etc/apt/sources.list.d/influxdata.list
-          sudo apt-get update -qq && sudo apt-get install -y -qq influxdb
+          wget -q https://dl.influxdata.com/influxdb/releases/influxdb-1.8.10_linux_amd64.tar.gz
+          tar xzf influxdb-1.8.10_linux_amd64.tar.gz
+          sudo cp influxdb-1.8.10-1/usr/bin/influx* /usr/local/bin/
       - name: Install dependencies
         run: npm install --omit=optional --ignore-scripts && npm rebuild
       - name: Start services
         run: |
           ./storages/engines/mongodb/scripts/start
           ./storages/engines/rqlite/scripts/start &
-          sudo influxd -config /etc/influxdb/influxdb.conf &
+          influxd &
           sleep 3
       - name: Run PostgreSQL test suite
         run: just clean-test-data && just test-pg all
