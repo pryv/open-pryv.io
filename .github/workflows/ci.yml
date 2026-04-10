@@ -1,0 +1,99 @@
+name: Open Pryv.io v2 CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  test-mongo:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: extractions/setup-just@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Setup dev environment
+        run: just setup-dev-env
+      - name: Install dependencies
+        run: npm install --omit=optional --ignore-scripts && npm rebuild
+      - name: Start MongoDB + rqlite
+        run: |
+          ./storages/engines/mongodb/scripts/start
+          ./storages/engines/rqlite/scripts/start &
+          sleep 3
+      - name: Run MongoDB test suite
+        run: just clean-test-data && just test all
+
+  test-postgres:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pryv
+          POSTGRES_PASSWORD: pryv
+          POSTGRES_DB: pryv-node-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pryv"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: extractions/setup-just@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Setup dev environment
+        run: just setup-dev-env
+      - name: Install dependencies
+        run: npm install --omit=optional --ignore-scripts && npm rebuild
+      - name: Start rqlite
+        run: |
+          ./storages/engines/rqlite/scripts/start &
+          sleep 3
+      - name: Run PostgreSQL test suite
+        run: just clean-test-data && just test-pg all
+        env:
+          storages__engines__postgresql__host: localhost
+          storages__engines__postgresql__port: 5432
+          storages__engines__postgresql__user: pryv
+          storages__engines__postgresql__password: pryv
+          storages__engines__postgresql__database: pryv-node-test
+
+  lint:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --omit=optional --ignore-scripts
+      - name: Lint
+        run: npx eslint .
+
+  docker:
+    needs: [test-mongo, test-postgres, lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            pryvio/core:2.0.0-pre
+            pryvio/core:2.0.0-pre-${{ github.sha }}
