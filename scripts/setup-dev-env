@@ -37,8 +37,10 @@ mkdir -p $ATTACHMENTS_FOLDER
 
 # database
 
+REPO_ROOT="$(pwd)"
 . storages/engines/mongodb/scripts/setup
 EXIT_CODE=$?
+cd "$REPO_ROOT"
 if [[ ${EXIT_CODE} -ne 0 ]]; then
   echo ""
   echo "Error setting up MongoDB; setup aborted"
