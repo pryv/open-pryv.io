@@ -180,7 +180,7 @@ describe('[ASTE] Audit Streams and Events', function () {
       validateResults(logs);
     });
 
-    it('[31FM]  appAccess must retrieve only audit logs for this access (from auth token then converted by service-core)', async () => {
+    it('[31FM]  appAccess must retrieve only audit logs for this access (from auth token then converted by the core)', async () => {
       const res = await coreRequest
         .get(eventsPath)
         .set('Authorization', appAccess.token)

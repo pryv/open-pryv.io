@@ -14,29 +14,33 @@ const { getAPIVersion } = require('../../src/project_version');
 const versionFilePath = path.join(__dirname, '../../../../', '.api-version');
 
 describe('[APIV] APIVersion#version', () => {
+  let originalVersion;
+  before(() => {
+    originalVersion = fs.existsSync(versionFilePath)
+      ? fs.readFileSync(versionFilePath, { encoding: 'utf-8' })
+      : null;
+  });
+  after(() => {
+    if (originalVersion != null) {
+      fs.writeFileSync(versionFilePath, originalVersion, { encoding: 'utf-8' });
+    } else {
+      fs.rmSync(versionFilePath, { force: true });
+    }
+  });
+
   describe('[AV01] when a ".api-version" file exists in the project and is !== that 1.2.3', () => {
     before(() => {
-      fs.writeFileSync(versionFilePath, '1.2.4', {
-        encoding: 'utf-8'
-      });
-    });
-    after(() => {
-      // put test version back in place
-      fs.writeFileSync(versionFilePath, '1.2.3', {
-        encoding: 'utf-8'
-      });
+      fs.writeFileSync(versionFilePath, '1.2.4', { encoding: 'utf-8' });
     });
     it('[5ICP] reads .api-version and returns that constant', async () => {
       const version = await getAPIVersion(true);
       assert.strictEqual(version, '1.2.4');
     });
   });
-  describe('[AV02] when a ".api-version" file exists in the project and is 1.2.3', () => {
+
+  describe('[AV02] when a ".api-version" file exists in the project and is 1.2.3 (sentinel)', () => {
     before(() => {
-      const versionRead = fs.readFileSync(versionFilePath, {
-        encoding: 'utf-8'
-      });
-      assert(versionRead === '1.2.3', '.apiversion file content should be 1.2.3');
+      fs.writeFileSync(versionFilePath, '1.2.3', { encoding: 'utf-8' });
     });
     it('[HV40] should return git tag version', async function () {
       if (process.env.IS_CI === 'true') { this.skip(); } // does not work in Github_CI

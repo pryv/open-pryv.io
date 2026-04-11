@@ -68,7 +68,7 @@ function initPaths () {
     process.exit(1);
   }
 
-  const results = path.join(root, 'test-results/service-core/');
+  const results = path.join(root, 'test-results/open-pryv.io/');
   if (!fs.existsSync(results)) {
     console.error(`Results repository folder '${results}' is missing. First 'just test-results-init-repo'`);
     process.exit(1);
@@ -79,7 +79,7 @@ function initPaths () {
   mkdirp.sync(version);
 
   const time = moment().format('YYYYMMDD-hhmmss');
-  const outputName = time + '-service-core.json';
+  const outputName = time + '-open-pryv.io.json';
   const output = path.join(version, outputName);
 
   return {
@@ -95,6 +95,10 @@ function initPaths () {
   };
 
   function getVersionName () {
+    const apiVersionFile = path.join(root, '.api-version');
+    if (fs.existsSync(apiVersionFile)) {
+      return fs.readFileSync(apiVersionFile, 'utf8').trim();
+    }
     const res = childProcess.spawnSync('git', ['describe'], {
       env: process.env,
       cwd: root
