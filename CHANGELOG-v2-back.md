@@ -1,37 +1,37 @@
 # Changelog - Internal (no API impact)
 
-## Plan 28: Test hardening + deploy validation
+## Test hardening + deploy validation
 
-### Phase 3: Deploy validation — Dockerfile + external rqlite
-- `Dockerfile`: rqlite binary now bundled in the Docker image (`/app/var-pryv/rqlite-bin/rqlited`). Since Plan 25 master.js spawns rqlited directly — previous images lacked the binary. Also removed `--omit=optional` so `sharp` installs for the previews worker.
+### Dockerfile bundling & external rqlite mode
+- `Dockerfile`: rqlite binary now bundled in the Docker image (`/app/var-pryv/rqlite-bin/rqlited`). `master.js` spawns `rqlited` directly — previous images lacked the binary. Also removed `--omit=optional` so `sharp` installs for the previews worker.
 - `bin/master.js`: new `rqlite.external` mode — when `storages.engines.rqlite.external: true`, master.js skips spawning rqlited and connects to an already-running external instance (multi-core deployments sharing one rqlited on the host).
 - `storages/engines/rqlite/src/rqliteProcess.js`: new `waitForExternal(url, timeoutMs, log)` helper.
-- `components/api-server/src/methods/mfa.js`: removed redundant Plan 26 docstring header.
+- `components/api-server/src/methods/mfa.js`: removed redundant internal docstring header.
 
-### Phase 2 tooling: `just clean-test-data` now also resets MongoDB + rqlite
+### Test data cleanup: `just clean-test-data` resets MongoDB + rqlite
 - `justfile` `clean-test-data` recipe updated to drop `pryv-node-test` MongoDB database and wipe the rqlite `keyValue` table, in addition to the SQLite user index + per-user directories it already cleaned.
-- Rationale: Plan 25 made rqlite the only platform engine, but `clean-test-data` was still cleaning the obsolete pre-Plan-25 `var-pryv/users/platform-wide.db` SQLite file. As a result, full-suite runs on a previously-used workstation inherited stale `user-*` entries from rqlite and orphaned account-field rows from MongoDB, which caused the `root-seq.test.js [UA7B] beforeEach` integrity check to fail non-deterministically.
+- Rationale: the rqlite-only platform-engine migration made rqlite authoritative, but `clean-test-data` was still cleaning the obsolete legacy `var-pryv/users/platform-wide.db` SQLite file. As a result, full-suite runs on a previously-used workstation inherited stale `user-*` entries from rqlite and orphaned account-field rows from MongoDB, which caused the `root-seq.test.js [UA7B] beforeEach` integrity check to fail non-deterministically.
 - With the fix: `just clean-test-data && just test all` → **1568 / 0** with integrity checks ENABLED. Same for `just test-pg all` → **1543 / 0**. No `DISABLE_INTEGRITY_CHECK=1` workaround needed on sequential runs anymore. Parallel runs still use the workaround because parallel workers share state across processes.
 
-### Phase 1: Fix backup chunking bug
+### Backup chunking fix
 - `storages/interfaces/backup/FilesystemBackupWriter.js` `writeChunkedJsonlFiles()` — compressed-mode chunking check now also fires when `rawSize >= maxChunkSize`, not only every 100 items. Small datasets (< 100 items) with aggressive `maxChunkSize` previously produced a single chunk regardless of target; they now respect the soft limit. Large datasets are unaffected (100-item batch check still dominates; the raw-bytes trigger is a lower bound).
 - Two tests in `components/business/test/unit/backup/filesystem-writer-reader.test.js` were subtly wrong — they used highly compressible payloads (`'Hello world '.repeat(5)`, short fixed strings) that gzip to almost nothing, so the compressed size never reached `maxChunkSize`. Updated to use non-compressible pseudo-random payloads so the chunking assertions are deterministic.
 - New regression test `'round-trips a single event larger than maxChunkSize (soft-limit semantics)'` documents that an individual oversized item is written to exactly one chunk — chunks cannot split items.
 
-## Plan 27: Pre open-pryv.io merge readiness
+## Multi-core refinements & platform config model
 
-### Phase 2: DNSless multi-core minimum
+### DNSless multi-core minimum
 - `config/plugins/core-identity.js` now honors an explicit `core.url` YAML override as the highest-priority source for `core:url`. Falls back to id+domain derivation, then to `dnsLess.publicUrl`.
 - `Platform.js`:
   - New private `#coreUrlCache: Map<coreId, url>` populated by `_refreshCoreUrlCache()` from PlatformDB on `init()` and on `registerSelf()`. Lets `coreIdToUrl()` stay synchronous (~10 call sites in api-server) while honoring explicit URLs registered by other cores.
   - `registerSelf()` now writes `url: this.coreUrl || null` into the core info row so DNSless multi-core deployments can advertise their externally-correct URL.
-  - `coreIdToUrl(coreId)`: cache lookup → derivation from id+domain → self URL fallback. NOTE: cache stays cold for changes made by OTHER cores until the next `init()` — periodic refresh for dynamic cluster membership is tracked in `_plans/XXX-Backlog/PLATFORM-WIDE-CONFIG-MIGRATION.md`.
+  - `coreIdToUrl(coreId)`: cache lookup → derivation from id+domain → self URL fallback. NOTE: cache stays cold for changes made by OTHER cores until the next `init()` — periodic refresh for dynamic cluster membership is a planned follow-up.
 - New middleware `components/middleware/src/checkUserCore.js` — wrong-core check on `/:username/*`. Returns HTTP 421 Misdirected Request with `{ error: { id: 'wrong-core', message, coreUrl } }` when `platform.getUserCore(username) !== platform.coreId`. No-op in single-core mode and for unknown users (existing 401/404 paths handle them). Test hook `_resetPlatformCache()` exposed for cross-test isolation.
 - `components/middleware/src/index.js` exports the new middleware as `middleware.checkUserCore`.
 - `components/api-server/src/routes/root.js` mounts `middleware.checkUserCore` on `Paths.UserRoot + '/*'` BEFORE `getAuth` and `initContextMiddleware` so wrong-core requests don't pay the cost of user/access loading.
 - New tests in `components/api-server/test/reg-multicore-seq.test.js`: 5 wrong-core middleware tests `[MC09A..MC09E]` (wrong core, right core, unknown user, /reg bypass, single-core no-op) and 3 explicit-URL tests `[MC10A..MC10C]` (cache hit, derivation fallback, end-to-end through middleware).
 
-### Phase 1: Persistent DNS records via PlatformDB
+### Persistent DNS records via PlatformDB
 - `PlatformDB` interface gains `setDnsRecord(subdomain, records)` / `getDnsRecord(subdomain)` / `getAllDnsRecords()` / `deleteDnsRecord(subdomain)`. The rqlite backend (`storages/engines/rqlite/src/DBrqlite.js`) implements them on the existing `keyValue` table using a `dns-record/{subdomain}` key prefix — no schema migration needed.
 - `Platform.js` gains delegating methods for the four DNS record operations.
 - `DnsServer` (`components/dns-server/src/DnsServer.js`) now loads runtime DNS records from PlatformDB on `start()` and refreshes them every 30s by default (`platformRefreshIntervalMs` constructor option). YAML `dns.staticEntries` are authoritative — admin runtime entries cannot shadow them. `updateStaticEntry()` is now `async` and persists to PlatformDB before updating the in-memory map. New `deleteStaticEntry()` mirror.
@@ -39,13 +39,13 @@
 - `bin/master.js` IPC handler refreshes from PlatformDB on `dns:updateRecords` instead of trusting the IPC payload — single source of truth.
 - Multi-core impact: ACME challenges and other runtime DNS entries now survive master restart and propagate across all cores via rqlite RAFT replication.
 
-### Phase 2b: Configuration model — platform-wide vs per-core
+### Configuration model: platform-wide vs per-core
 - `default-config.yml` annotated with `# === PER-CORE / PLATFORM-WIDE / BOOTSTRAP / MIXED ===` section headers for every block.
-- New "Configuration model: platform-wide vs per-core" section in `service-core/README.md` explaining the three categories and how multi-core operators must respect the split.
+- New "Configuration model: platform-wide vs per-core" section in `README.md` explaining the three categories and how multi-core operators must respect the split.
 - `Platform.registerSelf()` logs a `[platform-config-snapshot]` line on boot with this core's observed values for known platform-wide keys (`dns.domain`, `integrity.algorithm`, `versioning.deletionMode`, `uploads.maxSizeMb`) plus a SHA-256 hash of `auth.adminAccessKey`. Operators can compare these across core logs to detect drift without the admin key value ever appearing in logs. `auth.adminAccessKey` is confirmed YAML-only (BOOTSTRAP, secret, never moves to PlatformDB).
-- Authoritative reference: `_plans/27-pre-open-pryv-merge-atwork/CONFIG-SEPARATION.md`. Post-v2 follow-up (full PlatformDB-backed `platform_config` table + live drift warnings + per-key migrations) tracked in `_plans/XXX-Backlog/PLATFORM-WIDE-CONFIG-MIGRATION.md`.
+- A full PlatformDB-backed `platform_config` table with live drift warnings and per-key migrations is a planned post-v2 follow-up.
 
-## Plan 26: Merge service-mfa into service-core
+## Multi-factor authentication implementation (merged from service-mfa)
 
 ### New business module `components/business/src/mfa/`
 - `Profile.js` — per-user MFA state model (content + recovery codes); replaces lodash `_.isEmpty` with native check
@@ -81,10 +81,10 @@
 - Added `require('api-server/src/methods/mfa')` to `components/api-server/test/helpers/core-process.js` (multi-core tests)
 
 ### Dropped
-- `service-mfa`'s separate HTTP proxy, Dockerfile, runit lane. Repo is archived (final commit adds README pointer to the service-core merge commit).
-- Copied and dropped: `service-mfa/src/business/pryv/Connection.js` (replaced by direct `userProfileStorage` + `usersRepository` calls), its own `middlewares/`, its own `errorsHandling.js` (replaced by service-core's `errors.factory`).
+- `service-mfa`'s separate HTTP proxy, Dockerfile, runit lane. Repo is archived (final commit adds README pointer to the merge commit).
+- Copied and dropped: `service-mfa/src/business/pryv/Connection.js` (replaced by direct `userProfileStorage` + `usersRepository` calls), its own `middlewares/`, its own `errorsHandling.js` (replaced by the core `errors.factory`).
 
-## Plan 25: rqlite as default platform engine
+## rqlite as the only platform engine
 
 ### Platform DB
 - `storages.platform.engine` default flipped from `sqlite` → `rqlite`. rqlite is now the only supported runtime platform engine in v2.
@@ -92,7 +92,7 @@
 - `mongodb` and `postgresql` engines still ship `PlatformDB` implementations for conformance tests, but cannot be selected as the runtime platform engine via config.
 
 ### master.js / lifecycle
-- `bin/master.js` always spawns and supervises an embedded `rqlited` (no engine guard, no `external` flag check). The `storages.engines.rqlite.external` config introduced in Plan 24 has been removed — master.js owns the rqlited lifecycle in both single- and multi-core mode.
+- `bin/master.js` always spawns and supervises an embedded `rqlited` (no engine guard, no `external` flag check). The `storages.engines.rqlite.external` config (previously available) has been removed — master.js owns the rqlited lifecycle in both single- and multi-core mode.
 - Single-core: rqlited runs as a standalone Raft node.
 - Multi-core: rqlited uses DNS discovery on `lsc.{dns.domain}` to join peers.
 
@@ -112,11 +112,11 @@
 - `README-DBs.md`: rewrote "Platform Wide Shared Storage" section to describe the rqlite-everywhere model
 - `storages/pluginLoader.js`: stale `platform: engine: sqlite` example updated
 
-### Bug fix discovered during Plan 25 live test (me-dns1.pryv.io v1.9.0 backup)
+### Bug fix discovered during rqlite-engine live test (me-dns1.pryv.io v1.9.0 backup)
 - `RestoreOrchestrator._restorePlatform`: v1 backups (and any future raw exports) write platform entries as `{key, value}` straight from the legacy SQLite/MongoDB platform-wide store, but `platformDB.importAll` expects the parsed shape `{username, field, value, isUnique}`. The orchestrator now bridges both shapes via a new `parseRawPlatformEntry` helper, so v1→v2 migrations restore platform data correctly. v2→v2 round-trips still pass entries through unchanged.
 - Verified live: me-dns1 backup (14 users, 28064 events, 271 streams, 211 accesses, 63 platform records, 23 password hashes) restores cleanly into a fresh v2 instance with rqlite as platform engine — including end-to-end email lookup `pm@perki.com → perki`.
 
-## Plan 24: Test Deploy with Dokku
+## Test deploy with Dokku
 
 ### Multi-core support
 - `storages.engines.rqlite.external` config: skip embedded rqlited, connect to external instance
@@ -135,14 +135,14 @@
 - Ensure default account fields for v1 backups (fixes "Unknown user" after migration)
 - Engine-agnostic backup sanitize: `streamId`/`profileId` → `id`
 
-## Plan 23: Migration Toolkit v1→v2
+## Migration toolkit v1→v2
 
 ### Backup writer: target file size on compressed output
 - `FilesystemBackupWriter` `maxChunkSize` now applies to the **compressed** output size (was uncompressed)
 - `bin/backup.js` accepts `--target-file-size <MB>` as alias for `--max-chunk-size`
 - Soft limit (~10% overshoot acceptable) — checks compressed size every 100 items
 
-## Plan 21: Backup, Restore & Integrity
+## Backup, restore & integrity
 
 ### Backup/restore system (`storages/interfaces/backup/`)
 - Engine-agnostic backup: JSONL+gzip format, chunked events/audit, flat attachments by fileId
@@ -167,7 +167,7 @@
 ### Tests
 - 22 unit tests: sanitize, filesystem round-trip, chunking, attachments (single/multi/1MB binary), multi-user, unicode
 
-## Plan 20: Test Coverage & Dead Code
+## Test coverage & dead-code removal
 
 ### Coverage tooling (`tools/coverage/`)
 - V8-native coverage via `NODE_V8_COVERAGE` + `c8 report` (replaces NYC)
@@ -186,7 +186,7 @@
 - 17 dead test data files: followedSlices, migrated data (0.3.0–0.5.0), structure versions (0.7.1–1.7.0)
 - Dead functions: `findStreamed`/`findDeletionsStreamed` stubs (MongoDB + PG), `stateToDB`, `LocalTransaction.commit/rollback`, `Database.findStreamed`, `hasStreamPermissions`, `User.getEvents/getUniqueFields`, `MallUserEvents.getStreamed`, `storage.getDatabase/getDatabasePG`, `pluginLoader.getConfigFor`
 
-## Plan 19: Full PostgreSQL
+## Full PostgreSQL backend
 
 ### PG as complete single-core engine
 - PostgreSQL now implements all 5 storage types: baseStorage, dataStore, platformStorage, seriesStorage, auditStorage
@@ -214,10 +214,10 @@
 - `storages.engines.postgresql.auditPoolSize` — configurable audit pool size (default 5)
 - `justfile`: removed `DISABLE_INTEGRITY_CHECK=1` from `test-pg` and `test-pg-parallel` recipes
 
-## Plan 18: Performance Tracking
+## Performance tracking
 
 ### Benchmark tool (`tools/performance/`)
-- Reusable performance test suite for service-core — measures throughput, latency, resource usage
+- Reusable performance test suite — measures throughput, latency, resource usage
 - 7 scenarios: events-create, events-get (no-filter/stream-parent/time-range × master/restricted auth), streams-create (flat+nested), streams-update, series-write (batch 10/100/1000), series-read (1K/10K points), mixed-workload
 - Two seed profiles based on real accounts: "manual" (perki.pryv.me, 100 streams) and "iot" (demo.datasafe.dev, 50 streams)
 - Resource monitoring: tracks master + worker PIDs, aggregated RSS/CPU in results
@@ -226,10 +226,10 @@
 - Helper scripts: `perf-clean`, `perf-seed`, `perf-run`, `perf-full`
 - Comparison tool: `bin/compare.js` for side-by-side result analysis
 
-## Plan 17: Merge service-register into service-core
+## Registration service merged into core (from service-register)
 
 ### Config & storage
-- Unified config at `service-core/config/` (merged from per-component configs)
+- Unified config at `config/` (merged from per-component configs)
 - Storage config restructured: `storages.{base,platform,series,file,audit}.engine` + `storages.engines.<name>`
 - PlatformDB `setUserUniqueFieldIfNotExists()` atomic method (all 4 backends)
 - rqlite engine (`storages/engines/rqlite/`) for distributed PlatformDB
@@ -269,14 +269,14 @@
 - `core-process.js` — child process boot script for integration tests
 - Removed all nock mocking for service-register
 
-## Plan 16: Replace GraphicsMagick with sharp
+## Replace GraphicsMagick with sharp
 
 - Replaced `gm` (GraphicsMagick wrapper, requires system binary) with `sharp` (npm-native, bundles libvips)
 - Removed `apt-get install graphicsmagick` from Dockerfile — no system image dependencies for previews
 - Removed GM availability check from `master.js` — previews worker always starts when enabled
 - Removed `bluebird` usage from event-previews.js (sharp is Promise-native)
 
-## Plan 15: Integrate lib-js tests into service-core
+## Integrate lib-js tests
 
 - Added `components/externals/` — runs lib-js test suite (169 tests) via `just test externals`
 - HTTPS proxy (backloop.dev) routes API (:3001) and HFS (:4000) through single endpoint (:3000)
@@ -285,13 +285,13 @@
 - Excluded `external-ressources/` from eslint and source-licenser
 - New lib-js tests: Streams CRUD, Accesses CRUD, Account/Password (contributed back to lib-js)
 
-## Plan 14: Merge service-core servers behind a single master process
+## Consolidated master process (single Docker image)
 
-### Phase 1: Quick wins
+### Quick wins (inlined RPC & webhooks)
 - Inlined metadata updater into HFS server — removed TChannel RPC, `metadata` and `tprpc` components, `tchannel`/`protobufjs` dependencies
 - Moved webhooks service in-process within API server — removed separate webhooks container and `build/webhooks/` (Dockerfile + runit)
 
-### Phase 2–3: Cluster master with API + HFS workers
+### Cluster master with API + HFS workers
 - Created `bin/master.js` — single master process using Node.js cluster module
 - TCP pub/sub broker runs in master; workers connect as clients
 - N API workers share port :3000 via cluster (config: `cluster:apiWorkers`, default 2)
@@ -299,23 +299,23 @@
 - Workers auto-restart on crash; graceful shutdown on SIGTERM/SIGINT
 - Worker log differentiation via `PRYV_BOILER_SUFFIX` (`-wN`, `-hfsN`)
 
-### Phase 4: Previews worker
+### Previews worker
 - Master forks 0 or 1 previews worker on port :3001 (config: `cluster:previewsWorker`, default true)
 - GraphicsMagick availability check at startup — gracefully skips if GM not installed
 
-### Phase 5: Single Dockerfile
-- Replaced 3 per-component Docker images (core, hfs, preview) with single `pryvio/core` image
+### Single Dockerfile
+- Replaced 3 per-component Docker images (core, hfs, preview) with a single image
 - Entry point: `node bin/master.js` — replaces runit-based orchestration
 - DB migrations run in master before forking workers (config: `cluster:runMigrations`, default true)
 - Removed: `build/core/`, `build/hfs/`, `build/preview/` (Dockerfiles + runit scripts), `Dockerfile.component-intermediate`, `Dockerfile.common-intermediate`
 - GraphicsMagick installed in unified image for previews support
 
-### Phase 6: Socket.IO cluster compatibility
+### Socket.IO cluster compatibility
 - Socket.IO uses WebSocket-only transport in cluster mode (no HTTP long-polling)
 - Avoids need for sticky sessions — WebSocket connections are long-lived and stay on one worker
 - Single-process mode (tests, dev) retains long-polling fallback
 
-## Plan 13: Remove `openSource:isActive` Flag
+## Removed: `openSource:isActive` flag
 
 - Removed `openSource:isActive` config flag and all gated code — features always enabled: webhooks, HFS/series events, distributed cache sync, email check route
 - Removed `isOpenSource` fields and constructor logic from Application, Server, Manager, NamespaceContext classes
@@ -327,9 +327,9 @@
 - Deleted dead code: `www`/`register` package requires in application.js that would crash if ever reached
 - Cleaned up unused imports across all modified files
 
-## Plan 12: Refactor System Streams
+## System streams refactor
 
-### Phase 1-6: Account store architecture
+### Account store architecture
 - Extended `UserAccountStorage` with account field CRUD methods (`getAccountFields`, `setAccountField`, `deleteAccountField`, `getAccountFieldHistory`)
 - Created `accountStore` adapter implementing pryv-datastore interface, wrapping baseStorage account operations
 - Registered `accountStore` in Mall alongside local + audit stores
@@ -337,7 +337,7 @@
 - Removed system stream merge from Mall — handled by store routing
 - Added migration 1.9.4: copies account events from local store to account-field storage
 
-### Phase 7: Dead code removal
+### Dead-code removal in system streams
 - Removed `forbidSystemStreamsActions()` from streams.js — account store handles rejection
 - Removed `filterNonePermissionsOnSystemStreams()` from utility.js — standard permissions apply
 - Removed 11 dead serializer methods + 5 static properties
@@ -345,35 +345,35 @@
 - Removed pre-1.9.0 migrations (1.7.0, 1.7.1, 1.8.0) + their test files
 - Removed debug `console.log('XXXXX')` traps from User.js
 
-### Phase 8: Simplify permissions
+### Simplify permissions on system streams
 - Removed redundant `isAccountStreamId` hard block from AccessLogic — `includedInStarPermissions` handles it
 - Simplified `none` prepend from serializer iterator to single `STREAM_ID_ACCOUNT` constant
 - Replaced permission-based account exclusion in eventsGetUtils with direct config-based exclusion
 
-### Phase 9: Decouple tests from SystemStreamsSerializer
+### Decouple tests from SystemStreamsSerializer
 - Created `systemStreamFilters.js` in test-helpers for test-only prefix helpers
 - Removed redundant `init()` calls from hfs-server tests
 
-### Phase 10: Remove active/unique markers
+### Remove active/unique markers
 - Removed `:_system:helpers` stream (parent of `active`/`unique` markers)
 - Account events: one event per field, no sibling demotion
 - Platform coordination moved to events.js middleware
 - Default event queries include both local and account stores
 - Account store returns `structuredClone()` to prevent readableTree mutation
 
-### Phase 11-12: Flatten and reduce serializer
+### Flatten and reduce serializer
 - Flattened SystemStreamsSerializer class to plain eager-init module
 - Dropped lodash dependency
 - Migrated all 16 production callers to direct data access
 - Removed all dead getter functions and helpers
 - 639 → 154 lines (76% reduction), 20+ → 13 exports
 
-### Phase 14+19: Rename and finalize
+### Rename and finalize system streams module
 - Extracted feature constants to `business/src/system-streams/features.js`, then inlined as plain strings
 - Renamed: `SystemStreamsSerializer` → `accountStreams`, `forbiddenStreamIds` → `hiddenStreamIds`, `removePrefixFromStreamId` → `toFieldName`, `addCorrectPrefixToAccountStreamId` → `toStreamId`, `indexedFieldsWithoutPrefix` → `indexedFieldNames`, `uniqueFieldsWithoutPrefix` → `uniqueFieldNames`
 - Deleted `serializer.js` — content moved to `system-streams/index.js`
 
-## Phase 6c: Cleanup NATS/Axon Naming Remnants
+## Cleanup NATS/Axon naming remnants
 
 - Renamed all internal `nats`/`NATS` variable names, function names, comments, and config references to generic `transport`/`Transport` terms
 - `NATS_MODE_ALL/KEY/NONE` → `TRANSPORT_MODE_ALL/KEY/NONE` (backward compat aliases kept)
@@ -381,7 +381,7 @@
 - Removed dead code: `NATS_CONNECTION_URI` in webhooks, `axonMessaging` export alias, `nats:uri` compat fallback
 - Removed NATS references from CI, README, .gitignore, .dockerignore, .licenser.yml
 
-## Phase 6b: Replace NATS with Built-in TCP Pub/Sub
+## Replace NATS with built-in TCP pub/sub
 
 - Replaced NATS server + `nats` npm package with zero-dependency TCP pub/sub broker using Node.js `net` module
 - Created `tcp_pubsub.js`: embedded broker/client — first process binds port, others connect as clients
@@ -393,7 +393,7 @@
 - Removed `nats` npm dependency
 - No changes to PubSub class, constants, or any consumer code
 
-## Phase 6a: Remove Axon Test Messaging
+## Remove Axon test messaging
 
 - Replaced axon TCP pub/sub with Node.js built-in IPC for test notification forwarding
 - Created `test_messaging.js` (IPC-based EventEmitter + `process.send()`), deleted `axon_messaging.js`
@@ -403,13 +403,13 @@
 - Removed `axon` npm dependency and `axonMessaging` config sections
 - No changes to production messaging (NATS) or caching
 
-## Phase 5e: Remove FerretDB Support
+## Remove FerretDB support
 
 - Removed FerretDB feature entirely — `ferretDB/` directory, `test-ferret` justfile recipe, `isFerret` config/property, FerretDB connection string, `ferretIndexAndOptionsAdaptationsIfNeeded()`, FerretDB duplicate error handling, FerretDB test guards
 - Fixed bug in `Database.isDuplicateError()`: FerretDB branch had missing `return`, causing all errors to be reported as duplicates
 - Cleaned: Database.js, localDataStore.js, accesses.js, accesses-personal.test.js, result-chunk-streaming-seq.test.js, database-seq.test.js, 4 migration test files, README-DBs.md
 
-## Phase 5d: Engine-Agnostic Series, Deletion, and Test Fixes
+## Engine-agnostic series, deletion, and test fixes
 
 ### Engine-Agnostic Series Connections for Tests
 - Replaced `produceInfluxConnection()` with async `produceSeriesConnection()` factory in hfs-server and api-server test helpers
@@ -429,7 +429,7 @@
 - Separated caching disable (`MOCHA_PARALLEL=1`) from integrity check disable (`DISABLE_INTEGRITY_CHECK=1`) in `helpers-base.js` and `helpers-c.js` — fixes cache tests failing under `just test-pg`
 - Fixed `Webhook.test.js` user object to include `id` property — PG requires non-NULL `user_id` for SQL equality comparisons (MongoDB was tolerant of `undefined` via collection naming)
 
-## Phase 5b: Fix PG Tests + Remove FollowedSlices + Engine-Agnostic Cleanup
+## Fix PG tests, remove FollowedSlices, engine-agnostic cleanup
 
 ### FollowedSlices Removal
 - Removed FollowedSlices feature entirely (storage backends, API methods, routes, schema, tests, audit, pubsub, deletion cascade)
@@ -451,7 +451,7 @@
 ### Integrity Checks
 - `integrity-final-check.js` — early return for non-MongoDB engines (uses raw MongoDB cursors)
 
-## Dual Storage Engine — Phase 2: PostgreSQL Backend (Phase 5)
+## Dual storage engine — PostgreSQL backend
 
 ### Global Storage PG Backends
 - `SessionsPG` — callback-based sessions with JSONB containment for `getMatching`
@@ -490,9 +490,9 @@
 ### Wiring
 - `StorageLayer._initPostgreSQL` instantiates all PG backends
 - All routing points wired: StorageLayer, index.js, mall, platform, hfs-server
-- All Phase 2 TODOs resolved
+- All PG backend TODOs resolved
 
-## Dual Storage Engine — Phase 1: Configuration & Abstraction (Phase 5)
+## Dual storage engine — configuration & abstraction
 
 ### Unified Storage Engine Configuration
 - Added `storageEngine` config key ('mongodb' | 'sqlite' | 'postgresql') to `default-config.yml`
@@ -521,16 +521,16 @@
 ### Dependency
 - Added `pg` (node-postgres) to root dependencies
 
-## Parallel Test Migration (Phase 4)
+## Parallel test migration
 
-### Step 0: Enforce Interface Usage
+### Enforce interface usage
 - Replaced `dropCollection()` with `removeAll()` in `business/src/auth/deletion.js` (interface compliance)
 
-### Step 1: Move Verified Pattern C Tests to Parallel
+### Move verified Pattern C tests to parallel
 - Renamed 3 sequential files to parallel: `webhooks`, `acceptance/accesses`, `login-parallel`
 - Evaluated 5 additional candidates; confirmed they must stay sequential (`getApplication()` shared state)
 
-### Step 2: Deduplicate Sequential Tests
+### Deduplicate sequential tests
 - Extracted `permissions-seq.test.js` sections AP01, AP02, YE49 → new `permissions.test.js` (Pattern C, parallel-safe)
 - Removed 19 duplicate tests from `events-seq.test.js` (covered by `events-patternc.test.js`)
 - Removed 18+5 duplicate tests from `streams-seq.test.js` (covered by `streams-patternc.test.js`)
@@ -541,23 +541,23 @@
 - Sequential: 21 → 13 files
 - 58 duplicate tests removed, 0 coverage lost
 
-## Formalize Storage Interfaces (Phase 3)
+## Formalize storage interfaces
 
-### User-Scoped Storage Interface (Group B) — Phase 3b
+### User-scoped storage interface (Group B)
 - New `UserStorage` interface with `validateUserStorage()` in `storage/src/interfaces/`
 - Validates all BaseStorage subclasses: Accesses, Profile, FollowedSlices, Streams, Webhooks
 - Added migration methods (`exportAll`, `importAll`, `clearAll`) to `BaseStorage`
 - Conformance test suite covering full CRUD + migration lifecycle
 - StorageLayer validates all user-scoped storages at construction time
 
-### Global Storage Interfaces (Group C) — Phase 3c
+### Global storage interfaces (Group C)
 - **Sessions**: `validateSessions()` interface, migration methods (`exportAll`, `importAll`)
 - **PasswordResetRequests**: `validatePasswordResetRequests()` interface, migration methods (`exportAll`, `importAll`)
 - **Versions**: `validateVersions()` interface, migration methods (`exportAll`, `importAll`)
 - Conformance test suites for all three
 - StorageLayer validates all global storages at construction time
 
-### Dual-Engine Storage Interfaces — Phase 3a
+### Dual-engine storage interfaces
 
 ### UserAccountStorage Interface (Group D)
 - New interface prototype + `createUserAccountStorage()` factory in `storage/src/interfaces/`
@@ -579,13 +579,13 @@
 - New interface prototype + `createEventFiles()` factory + `validateEventFiles()` in `storage/src/interfaces/`
 - Validation called after construction in `getEventFiles.js`
 
-### Series / InfluxDB Interface (Group I) — Phase 3d
+### Series / InfluxDB interface (Group I)
 - New `InfluxConnection` interface with `validateInfluxConnection()` in `business/src/interfaces/`
 - Added migration methods (`exportDatabase`, `importDatabase`) to `InfluxConnection`
 - Conformance test suite [IC01]-[IC09] covering full lifecycle
 - Exported via `business.series.interfaces.InfluxConnection`
 
-### Audit / UserSQLite Interfaces (Group J) — Phase 3d
+### Audit / UserSQLite interfaces (Group J)
 - New `UserSQLiteStorage` interface with `validateUserSQLiteStorage()` in `storage/src/interfaces/`
 - New `UserSQLiteDatabase` interface with `validateUserSQLiteDatabase()` in `storage/src/interfaces/`
 - Added migration methods (`exportAllEvents`, `importAllEvents`) to `UserDatabase`
@@ -596,13 +596,13 @@
 - `storage/src/index.js` exports all interfaces under `interfaces` key
 - Migration scripts (`switchSqliteMongo/`) simplified using standardized `exportAll`/`importAll`/`clearAll`
 
-## Remove Deprecated Features (Phase 2)
+## Removed deprecated features from v1
 
-### Phase 0: Trivial Cleanup
+### Trivial cleanup
 - Removed commented debug code in `components/audit/src/Audit.js`
 - Removed unused `factory.periodsOverlap` error and `ErrorIds.PeriodsOverlap`
 
-### Phase 1: Remove Stream ID Prefix Backward Compatibility
+### Stream ID prefix backward compatibility
 - Removed `backwardCompatibility.systemStreams.prefix` config from all config files
 - Removed `isStreamIdPrefixBackwardCompatibilityActive` variable and all guarded code in `events.js`, `streams.js`, `accesses.js`, `eventsGetUtils.js`
 - Removed prefix conversion functions from `backwardCompatibility.js`
@@ -612,12 +612,12 @@
 - Removed backward compatibility collision check in system streams config
 - Removed prefix-related tests (BW08-BW16, SD02)
 
-### Phase 2: Remove Deprecated `/register/create-user` Endpoint
+### Remove deprecated `/register/create-user` endpoint
 - Removed deprecated `POST /register/create-user` route from `system.js`
 - Removed backward-compatibility test `[ZG1L]`
 - `passwordHash` parameter kept (still used by standard `POST /system/create-user`)
 
-### Phase 3: Remove `streamId` (singular) Backward Compatibility
+### Remove `streamId` (singular) backward compatibility
 - Removed `streamId` property from event JSON schema (`event.js`)
 - Changed schema validation from `anyOf` (streamId or streamIds) to `required: ['type', 'streamIds']`
 - Simplified `normalizeStreamIdAndStreamIds` in `events.js` — removed `BOTH_STREAMID_STREAMIDS_ERROR` and all `event.streamId = event.streamIds[0]` assignments
@@ -626,7 +626,7 @@
 - Removed `event.streamId` assignment from `SetFileReadTokenStream.js`
 - Updated tests across api-server and webhooks components
 
-### Phase 4: Remove Tags Backward Compatibility
+### Remove tags backward compatibility
 - Deleted `backwardCompatibility.js`, `AddTagsStream.js`
 - Removed `backwardCompatibility.tags` from all config files
 - Removed all tag conversion logic from `events.js` (replaceTagsWithStreamIds, putOldTags, createStreamsForTagsIfNeeded, cleanupEventTags, migrateTagsToStreamQueries)
@@ -638,7 +638,7 @@
 - Deleted tag backward compatibility tests, updated all test files
 - Removed `permissions-tags.test.js` from test lists
 
-### Phase 5: Final Cleanup
+### Final cleanup
 - Removed deprecated `/service/infos` route duplicate
 - Cleaned stale deprecated JSDoc from Event typedef (removed streamId, tags)
 - Fixed typo: `newSreamIds` → `newStreamIds` in events.js

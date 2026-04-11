@@ -1,13 +1,12 @@
 # Changelog - API Changes
 
-## Plan 29: Publish service-core as open-pryv.io v2
+## 2.0.0-pre — Publication as open-pryv.io
 
 ### Docker image
 - **RENAMED**: Docker image `pryvio/core` → `pryvio/open-pryv.io` for the v2 line. Pull `pryvio/open-pryv.io:2.0.0-pre` (and the per-commit `pryvio/open-pryv.io:2.0.0-pre-<sha>` tag) instead of `pryvio/core:*`. The `pryvio/core` repository is preserved for the v1 line (`1.9.3` and earlier) and is no longer updated.
 
-## Plan 27: Pre open-pryv.io merge readiness
+## Multi-core (DNSless variant)
 
-### Multi-core (DNSless variant)
 - **NEW**: `core.url` config override (per-core, top-priority). Set explicit URLs in DNSless multi-core deployments where DNS is managed externally and FQDNs cannot be derived from `{core.id}.{dns.domain}`. Other cores discover this URL via `Platform.coreIdToUrl()`, which now reads from a PlatformDB-backed in-memory cache populated on `Platform.registerSelf()`.
 - **NEW**: `Platform.registerSelf()` now writes `url` into core info in PlatformDB so other cores can resolve the explicit URL via `/reg/cores`, `/system/admin/cores`, and the wrong-core middleware.
 - **NEW**: HTTP 421 Misdirected Request returned by `/:username/*` routes when the user is hosted on a different core in a multi-core deployment. Response shape: `{ error: { id: 'wrong-core', message, coreUrl } }`. Clients (SDKs) MUST retry against `coreUrl` directly — there is no HTTP redirect (cross-origin redirects strip Authorization headers, WebSockets cannot follow). The middleware is mounted on `/:username/*` only; `/reg/*` and `/system/*` are intentionally load-balanced. No-op in single-core mode.
@@ -15,11 +14,10 @@
 
 ## Known gaps in v2.0.0
 
-- **OAuth2 authorization code flow** (RFC 6749 `/oauth2/authorize`, `/oauth2/token`, client registration, refresh tokens, PKCE) is **not** in v2. Clients that need OAuth2-style authorization must continue using the existing `/reg/access` polling flow (ported from service-register in Plan 17 Phase 3). The design contract for a future OAuth2 layer — including the core-affinity invariants required for multi-core deployments — is frozen in `_plans/27-pre-open-pryv-merge-atwork/OAUTH2-DEFERRED.md`.
+- **OAuth2 authorization code flow** (RFC 6749 `/oauth2/authorize`, `/oauth2/token`, client registration, refresh tokens, PKCE) is **not** in v2. Clients that need OAuth2-style authorization must continue using the existing `/reg/access` polling flow (ported from the former `service-register`).
 
-## Plan 26: Merge service-mfa into service-core
+## Multi-factor authentication (merged from former service-mfa)
 
-### Multi-factor authentication (merged from service-mfa)
 - **NEW**: `POST /{username}/mfa/activate` — start MFA setup; personal access token required. Body carries the profile content (e.g. `{ phone: '+41...' }`) used as template substitutions for the SMS provider. Returns `{ mfaToken }` (HTTP 302).
 - **NEW**: `POST /{username}/mfa/confirm` — confirm MFA activation. Authorization header is the `mfaToken` from activate. Body has the SMS `code`. On success returns 10 recovery codes and persists `profile.private.data.mfa`.
 - **NEW**: `POST /{username}/mfa/challenge` — re-trigger the SMS challenge for a pending MFA login. Authorization header is the `mfaToken`.
@@ -30,7 +28,7 @@
 - **KEPT**: `system.deactivateMfa` (admin override) remains available alongside the new user-facing `mfa.deactivate`.
 - **CONFIG**: new `services.mfa` block — `mode` (`disabled`/`challenge-verify`/`single`), `sms.endpoints.{challenge,verify,single}.{url,method,body,headers}`, `sessions.ttlSeconds`. Default `mode: disabled` — backwards-compatible; existing deployments see no behaviour change.
 
-## Plan 17: Merge service-register into service-core
+## Registration service merged into core (formerly service-register)
 
 ### Registration & user management
 - **NEW**: `GET /reg/cores?username=X|email=X` — core discovery endpoint. Returns `{ core: { url } }` for the core hosting the given user. Single-instance always returns self.
@@ -69,43 +67,42 @@
 - **CHANGED**: Invitation tokens stored in PlatformDB instead of static config. Config `invitationTokens` seeds PlatformDB on first boot. Tokens consumed on successful registration.
 
 ### Removed
-- **REMOVED**: External service-register dependency — all registration logic is self-contained in service-core.
+- **REMOVED**: External service-register dependency — all registration logic is self-contained in the core binary.
 
-## Plan 14: Merge service-core servers
+## Consolidated master process (single Docker image)
 
 - **CHANGED**: Socket.IO connections now use WebSocket transport only when running in cluster mode. HTTP long-polling fallback is no longer available in clustered deployments. Single-process mode (development, tests) is unaffected.
-- **REMOVED**: Separate `pryvio/hfs` and `pryvio/preview` Docker images — all services now run in a single `pryvio/core` container via `node bin/master.js`.
+- **REMOVED**: Separate `pryvio/hfs` and `pryvio/preview` Docker images — all services now run in a single `pryvio/open-pryv.io` container via `node bin/master.js`.
 
-## Plan 12: Refactor System Streams
+## System streams refactor
 
 - **REMOVED**: `:_system:helpers` stream and its children (`:_system:active`, `:_system:unique`) — these internal marker streams are no longer part of the system streams tree. Account field uniqueness and indexing are now enforced directly by the platform coordination layer.
 - **No other API changes**: All other system stream IDs (`:_system:email`, `:_system:language`, `:system:email`, etc.) remain unchanged. Events, permissions, and stream queries work identically.
 
-## Plan 13: Remove `openSource:isActive` Flag
+## Removed: `openSource:isActive` flag
 
 - **REMOVED**: `openSource:isActive` configuration key — no longer recognized. All features (webhooks, HFS/series events, distributed cache sync, registration email check) are now always enabled regardless of deployment mode.
 
-## Remove Deprecated Features (Phase 2)
+## Removed deprecated features from v1
 
-### Phase 1: Remove Stream ID Prefix Backward Compatibility
+### Stream ID prefix backward compatibility
 - **REMOVED**: The old dot-prefix (`.`) notation for system stream IDs is no longer accepted or returned. Use the standard prefixes (`:_system:` for private, `:system:` for custom) exclusively.
 - **REMOVED**: The `disable-backward-compatibility-prefix` HTTP header is no longer supported (no longer needed since prefix conversion is removed).
 
-### Phase 2: Remove Deprecated Endpoint
+### Deprecated endpoint `/register/create-user`
 - **REMOVED**: `POST /register/create-user` endpoint. Use `POST /system/create-user` instead.
 
-### Phase 3: Remove `streamId` (singular) Backward Compatibility
+### `streamId` (singular) backward compatibility
 - **REMOVED**: Events no longer return `streamId` (singular). Only `streamIds` (array) is returned.
 - **REMOVED**: Event creation/update no longer accepts `streamId`. Use `streamIds: [...]` instead.
 
-### Phase 4: Remove Tags Backward Compatibility
+### Tags backward compatibility
 - **REMOVED**: `tags` property on events (input and output). Tags were previously converted to prefixed streamIds.
 - **REMOVED**: `tags` query parameter for events.get.
 - **REMOVED**: Tag-based access permissions (`{ tag: ..., level: ... }`).
 
-### Phase 5: Final Cleanup
+### Final cleanup
 - **REMOVED**: `/service/infos` endpoint (use `/service/info` instead).
 
-## Phase 5b: Remove FollowedSlices
-
+### FollowedSlices
 - **REMOVED**: FollowedSlices feature — API methods (`followedSlices.create`, `followedSlices.get`, `followedSlices.delete`), routes, and storage backends have been fully removed.
