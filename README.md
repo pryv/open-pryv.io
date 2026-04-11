@@ -37,7 +37,7 @@ docker run -d --name pryv-core \
   -e dnsLess__isActive=true \
   -e "dnsLess__publicUrl=http://localhost:3000/" \
   -e auth__adminAccessKey=my-admin-key \
-  pryvio/core:2.0.0-pre
+  pryvio/open-pryv.io:2.0.0-pre
 ```
 
 Test it:

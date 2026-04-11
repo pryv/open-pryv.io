@@ -112,5 +112,5 @@ jobs:
           context: .
           push: true
           tags: |
-            pryvio/core:2.0.0-pre
-            pryvio/core:2.0.0-pre-${{ github.sha }}
+            pryvio/open-pryv.io:2.0.0-pre
+            pryvio/open-pryv.io:2.0.0-pre-${{ github.sha }}

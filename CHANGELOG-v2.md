@@ -1,5 +1,10 @@
 # Changelog - API Changes
 
+## Plan 29: Publish service-core as open-pryv.io v2
+
+### Docker image
+- **RENAMED**: Docker image `pryvio/core` → `pryvio/open-pryv.io` for the v2 line. Pull `pryvio/open-pryv.io:2.0.0-pre` (and the per-commit `pryvio/open-pryv.io:2.0.0-pre-<sha>` tag) instead of `pryvio/core:*`. The `pryvio/core` repository is preserved for the v1 line (`1.9.3` and earlier) and is no longer updated.
+
 ## Plan 27: Pre open-pryv.io merge readiness
 
 ### Multi-core (DNSless variant)

@@ -210,7 +210,7 @@ security-assessment-owasp:
 # Run Grype audit, writing output to `security-assessment` (requires Grype and local Docker containers)
 security-assessment-grype:
     mkdir -p ./security-assessment/
-    grype local/pryvio/core:test  -o template -t build/grype-html.tmpl > ./security-assessment/grype.html
+    grype local/pryvio/open-pryv.io:test  -o template -t build/grype-html.tmpl > ./security-assessment/grype.html
 
 # –––––––––––––----------------------------------------------------------------
 # Misc. utils

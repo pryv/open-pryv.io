@@ -34,10 +34,10 @@ else ## test
   release=false
 fi
 
-echo "---------------------------- building service-core --------------------------------"
+echo "---------------------------- building open-pryv.io --------------------------------"
 docker build --build-arg BUILD_HOST=$host --build-arg BUILD_VERSION=$version \
-  -f $SCRIPT_FOLDER/Dockerfile -t $host/pryvio/core:$version .
+  -f $SCRIPT_FOLDER/Dockerfile -t $host/pryvio/open-pryv.io:$version .
 
 if [ "$release" = true ]; then
-  docker push $host/pryvio/core:$version
+  docker push $host/pryvio/open-pryv.io:$version
 fi
