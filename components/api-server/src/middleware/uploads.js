@@ -22,8 +22,6 @@ const storage = MulterDiskStorage({
 });
 const uploadMiddlewareFactory = multer({
   storage,
-  // fix for multer 1.4.5-lts.1 having an unwanted change of encoding for filenames
-  // might be removed when https://github.com/expressjs/multer/pull/1102
   fileFilter: (req, file, cb) => {
     file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
     cb(null, true);
