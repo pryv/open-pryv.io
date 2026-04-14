@@ -9,10 +9,12 @@ const ClusterCA = require('./ClusterCA');
 const Bundle = require('./Bundle');
 const BundleEncryption = require('./BundleEncryption');
 const TokenStore = require('./TokenStore');
+const DnsRegistration = require('./DnsRegistration');
 
 module.exports = {
   ClusterCA,
   Bundle,
   BundleEncryption,
-  TokenStore
+  TokenStore,
+  DnsRegistration
 };
