@@ -267,6 +267,53 @@ server {
 | `data/rqlite-data/` | Platform DB (rqlite Raft log + SQLite snapshot) |
 
 
+## Managing persistent DNS records
+
+When the embedded DNS server is active (`dns.active: true`), runtime DNS entries (ACME challenges, admin-managed subdomains) are persisted in PlatformDB so they survive restart and replicate across cores. Two ways to manage them:
+
+### HTTP (admin-key)
+
+```bash
+# Upsert
+curl -X POST https://api.example.com/reg/records \
+  -H "Authorization: $ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"subdomain": "_acme-challenge", "records": {"txt": ["token"]}}'
+
+# Delete
+curl -X DELETE https://api.example.com/reg/records/_acme-challenge \
+  -H "Authorization: $ADMIN_KEY"
+```
+
+### CLI (`bin/dns-records.js`)
+
+Useful during bootstrap, disaster recovery, or when the HTTP API is unreachable. The CLI writes directly to PlatformDB; a running master picks up changes within its refresh interval (default 30 s).
+
+```bash
+node bin/dns-records.js list                        # print all records (YAML)
+node bin/dns-records.js load records.yaml           # upsert from file
+node bin/dns-records.js load records.yaml --dry-run # preview only
+node bin/dns-records.js load records.yaml --replace # also delete records absent from file
+node bin/dns-records.js delete _acme-challenge
+node bin/dns-records.js export backup.yaml
+```
+
+File format:
+```yaml
+records:
+  - subdomain: _acme-challenge
+    records:
+      txt: ["validation-token"]
+  - subdomain: www
+    records:
+      a: ["1.2.3.4"]
+  - subdomain: reg
+    records:
+      cname: core-a.example.com
+```
+
+Static entries declared in `dns.staticEntries` config are authoritative and cannot be shadowed by PlatformDB entries; attempts to write a matching subdomain are rejected.
+
 ## Troubleshooting
 
 ### Socket.IO: "Transport unknown" or "xhr poll error"

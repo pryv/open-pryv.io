@@ -2,6 +2,26 @@
 
 ## 2.0.0-pre — Publication as open-pryv.io
 
+### Persistent DNS records — management endpoints and CLI
+- **NEW**: `DELETE /reg/records/:subdomain` — admin-key protected route to remove a persisted runtime DNS record. Symmetric to `POST /reg/records`. Returns 404 when the subdomain has no persisted record, 403 without admin auth. Master process is nudged over IPC so the local DnsServer drops the entry immediately; remote cores see the change on their next periodic refresh.
+- **NEW**: `bin/dns-records.js` admin CLI for managing persistent DNS records directly in PlatformDB — useful during bootstrap, disaster recovery, or when the API itself is misconfigured and cannot be reached. Subcommands:
+  - `list` — print all persisted records as YAML.
+  - `load <file>` — upsert records from a YAML file. `--dry-run` to preview, `--replace` to delete records not present in the file.
+  - `delete <subdomain>` — remove one record.
+  - `export [file]` — dump to a YAML file (stdout if omitted).
+
+  File format:
+  ```yaml
+  records:
+    - subdomain: _acme-challenge
+      records:
+        txt: ["validation-token"]
+    - subdomain: www
+      records:
+        a: ["1.2.3.4"]
+  ```
+  The CLI opens the storages barrel directly so it works with or without `master.js` running; a running DnsServer picks up changes within its refresh interval (default 30 s).
+
 ### Docker image
 - **RENAMED**: Docker image `pryvio/core` → `pryvio/open-pryv.io` for the v2 line. Pull `pryvio/open-pryv.io:2.0.0-pre` (and the per-commit `pryvio/open-pryv.io:2.0.0-pre-<sha>` tag) instead of `pryvio/core:*`. The `pryvio/core` repository is preserved for the v1 line (`1.9.3` and earlier) and is no longer updated.
 

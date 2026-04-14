@@ -1,5 +1,14 @@
 # Changelog - Internal (no API impact)
 
+## Persistent DNS records — admin surface
+
+- `components/api-server/src/routes/reg/records.js`: added `DELETE /reg/records/:subdomain`. Path refactored to share auth + IPC-nudge helpers with the existing POST handler.
+- `bin/dns-records.js` (new): standalone Node CLI — subcommands `list`, `load <file>`, `delete <subdomain>`, `export [file]`. Reads/writes PlatformDB directly via `storages` barrel (no HTTP dependency). Uses `js-yaml` (already transitively present; no new dependency). Parses `--help` before boiler init to avoid boiler's yargs swallowing it.
+- `components/api-server/test/dns-records-cli-seq.test.js` (new, `[DNSCLI]`): spawns the CLI as a subprocess and round-trips `list` / `load` (including `--dry-run` and `--replace`) / `export` / `delete`, plus error paths (missing subdomain, malformed file).
+- `components/api-server/test/reg-records-seq.test.js`: `[RR10]`-`[RR12]` cover the DELETE route happy path, missing-auth rejection, and unknown-subdomain 404.
+
+Context: end-to-end persistence of runtime DNS records (PlatformDB interface, rqlite backend, `DnsServer` load-on-start + 30 s refresh + write-through, `POST /reg/records` persistence, existing `[RGRC]` test) was shipped earlier in the 2.0.0-pre line. This change adds the DELETE symmetry and the offline-capable admin CLI — the remaining gap for operating DNS records in production without depending on the HTTP API being healthy.
+
 ## Test hardening + deploy validation
 
 ### Dockerfile bundling & external rqlite mode

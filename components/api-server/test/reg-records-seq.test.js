@@ -84,7 +84,7 @@ describe('[RGRC] Register records admin endpoint', () => {
     });
 
     it('[RR06] record must persist to PlatformDB and overwrite cleanly', async () => {
-      // Plan 27 Phase 1: PlatformDB is the source of truth for runtime DNS entries.
+      // PlatformDB is the source of truth for runtime DNS entries.
       const sub = '_acme-persist-' + cuid();
 
       let res = await coreRequest.post('/reg/records')
@@ -100,6 +100,36 @@ describe('[RGRC] Register records admin endpoint', () => {
       assert.deepStrictEqual(await platform.getDnsRecord(sub), { txt: ['second-value'] });
 
       await platform.deleteDnsRecord(sub);
+    });
+  });
+
+  describe('DELETE /reg/records/:subdomain', () => {
+    it('[RR10] must delete a persisted record with admin auth', async () => {
+      const sub = '_acme-del-' + cuid();
+      await platform.setDnsRecord(sub, { txt: ['to-delete'] });
+      assert.deepStrictEqual(await platform.getDnsRecord(sub), { txt: ['to-delete'] });
+
+      const res = await coreRequest.delete('/reg/records/' + sub)
+        .set('Authorization', adminAccessKey);
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.subdomain, sub);
+      assert.strictEqual(res.body.status, 'deleted');
+
+      assert.strictEqual(await platform.getDnsRecord(sub), null);
+    });
+
+    it('[RR11] must reject delete without admin auth', async () => {
+      const res = await coreRequest.delete('/reg/records/_acme-challenge');
+      assert.strictEqual(res.status, 403);
+      assert.strictEqual(res.body.error.id, 'forbidden');
+    });
+
+    it('[RR12] must 404 on unknown subdomain', async () => {
+      const sub = '_never-existed-' + cuid();
+      const res = await coreRequest.delete('/reg/records/' + sub)
+        .set('Authorization', adminAccessKey);
+      assert.strictEqual(res.status, 404);
+      assert.strictEqual(res.body.error.id, 'unknown-resource');
     });
   });
 });
