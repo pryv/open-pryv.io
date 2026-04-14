@@ -6,7 +6,11 @@
  */
 
 const ClusterCA = require('./ClusterCA');
+const Bundle = require('./Bundle');
+const BundleEncryption = require('./BundleEncryption');
 
 module.exports = {
-  ClusterCA
+  ClusterCA,
+  Bundle,
+  BundleEncryption
 };
