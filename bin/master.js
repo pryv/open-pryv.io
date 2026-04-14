@@ -62,6 +62,7 @@ if (cluster.isPrimary) {
         raftPort: rqliteConfig.raftPort || 4002,
         dnsDomain: config.get('dns:domain') || null,
         coreIp: config.get('core:ip') || null,
+        tls: rqliteConfig.tls || null,
         log
       });
     }

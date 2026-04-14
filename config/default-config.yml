@@ -69,6 +69,17 @@ storages:
       raftPort: 4002                  # Raft consensus port (common across all cores)
       dataDir: var-pryv/rqlite-data   # rqlite data directory (relative to service-core root)
       binPath: var-pryv/rqlite-bin/rqlited  # rqlited binary path
+      # tls: null = plain TCP for Raft (single-core / VPN-protected multi-core).
+      # To enable mutually-authenticated TLS on the Raft channel, set all of
+      # caFile / certFile / keyFile to PEM files on disk. See Plan 34
+      # bootstrap bundle for the CLI that issues these automatically.
+      tls: null
+      # tls:
+      #   caFile:   /etc/pryv/tls/ca.crt
+      #   certFile: /etc/pryv/tls/node.crt
+      #   keyFile:  /etc/pryv/tls/node.key
+      #   verifyClient: true           # require mTLS on incoming Raft
+      #   verifyServerName: null       # override SAN/CN expected on peers (null = use hostname)
 
 # === PER-CORE: local cache paths and schedules ===
 eventFiles:

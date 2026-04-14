@@ -7,7 +7,19 @@
       "url":      { "type": "string",  "default": "http://localhost:4001",           "description": "rqlite HTTP API URL" },
       "raftPort": { "type": "number",  "default": 4002,                              "description": "Raft consensus port" },
       "dataDir":  { "type": "string",  "default": "var-pryv/rqlite-data",            "description": "rqlite data directory" },
-      "binPath":  { "type": "string",  "default": "var-pryv/rqlite-bin/rqlited",     "description": "rqlited binary path" }
+      "binPath":  { "type": "string",  "default": "var-pryv/rqlite-bin/rqlited",     "description": "rqlited binary path" },
+      "tls": {
+        "type": "object",
+        "default": null,
+        "description": "TLS material for the inter-node (Raft) channel. When set, all three of {caFile, certFile, keyFile} are required. Null / absent = plain TCP (legacy / single-core / VPN-protected multi-core).",
+        "fields": {
+          "caFile":           { "type": "string",  "default": null, "description": "CA cert used to verify peer certs (maps to rqlited -node-ca-cert)" },
+          "certFile":         { "type": "string",  "default": null, "description": "This node's cert (maps to rqlited -node-cert)" },
+          "keyFile":          { "type": "string",  "default": null, "description": "This node's private key (maps to rqlited -node-key)" },
+          "verifyClient":     { "type": "boolean", "default": true, "description": "Require mTLS on incoming Raft connections (maps to rqlited -node-verify-client)" },
+          "verifyServerName": { "type": "string",  "default": null, "description": "Expected SAN/CN when connecting to peers; null = use the hostname (maps to rqlited -node-verify-server-name)" }
+        }
+      }
     }
   },
   "scripts": {

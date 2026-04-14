@@ -29,25 +29,30 @@ let rqliteChild = null;
  * @param {number} opts.raftPort - Raft consensus port (default 4002)
  * @param {string|null} opts.dnsDomain - dns.domain (null = single-core)
  * @param {string|null} opts.coreIp - this core's IP for raft-addr binding
+ * @param {Object|null} opts.tls - mTLS material for the Raft channel (null = plain TCP)
+ * @param {string} opts.tls.caFile - PEM CA cert used to verify peer certs
+ * @param {string} opts.tls.certFile - PEM cert for this node
+ * @param {string} opts.tls.keyFile - PEM key for this node
+ * @param {boolean} [opts.tls.verifyClient=true] - require mTLS on incoming Raft
+ * @param {string|null} [opts.tls.verifyServerName=null] - expected SAN/CN on peers; null = use hostname
  * @param {Function} opts.log - logging function
  * @returns {Promise<void>} resolves when rqlite HTTP API is ready
  */
-async function start (opts) {
+/**
+ * Build the argv passed to rqlited. Pure function — no side effects.
+ * Exported so Phase 1 (Plan 34) can unit-test argv construction without
+ * spawning a real process.
+ */
+function buildArgs (opts) {
   const {
     coreId,
-    binPath,
-    dataDir,
     httpPort = 4001,
     raftPort = 4002,
     dnsDomain = null,
     coreIp = null,
-    log = console.log
+    tls = null,
+    dataDir
   } = opts;
-
-  const absDataDir = path.isAbsolute(dataDir) ? dataDir : path.resolve(process.cwd(), dataDir);
-  const absBinPath = path.isAbsolute(binPath) ? binPath : path.resolve(process.cwd(), binPath);
-
-  mkdirp.sync(absDataDir);
 
   const advAddr = (coreIp || '127.0.0.1');
   const httpAddr = `0.0.0.0:${httpPort}`;
@@ -61,7 +66,6 @@ async function start (opts) {
     '-raft-cluster-remove-shutdown' // graceful leave on shutdown
   ];
 
-  // Multi-core: DNS-based discovery
   if (dnsDomain != null) {
     const discoName = 'lsc.' + dnsDomain;
     args.push(
@@ -70,7 +74,44 @@ async function start (opts) {
     );
   }
 
-  args.push(absDataDir);
+  if (tls != null) {
+    const { caFile, certFile, keyFile, verifyClient = true, verifyServerName = null } = tls;
+    if (caFile == null || certFile == null || keyFile == null) {
+      throw new Error('rqlite tls config requires caFile, certFile and keyFile (or set tls: null to disable)');
+    }
+    args.push(
+      '-node-ca-cert', caFile,
+      '-node-cert', certFile,
+      '-node-key', keyFile
+    );
+    if (verifyClient) args.push('-node-verify-client');
+    if (verifyServerName != null) args.push('-node-verify-server-name', verifyServerName);
+  }
+
+  args.push(dataDir);
+  return args;
+}
+
+async function start (opts) {
+  const {
+    binPath,
+    dataDir,
+    tls = null,
+    log = console.log
+  } = opts;
+
+  const absDataDir = path.isAbsolute(dataDir) ? dataDir : path.resolve(process.cwd(), dataDir);
+  const absBinPath = path.isAbsolute(binPath) ? binPath : path.resolve(process.cwd(), binPath);
+
+  mkdirp.sync(absDataDir);
+
+  const args = buildArgs({ ...opts, dataDir: absDataDir });
+
+  if (tls != null) {
+    log(`rqlited TLS enabled: ca=${tls.caFile} cert=${tls.certFile} verifyClient=${tls.verifyClient !== false}`);
+  }
+
+  const httpPort = opts.httpPort || 4001;
 
   log(`Starting rqlited: ${absBinPath} ${args.join(' ')}`);
 
@@ -163,4 +204,4 @@ async function waitForExternal (url, timeoutMs, log) {
   log('External rqlited HTTP API ready');
 }
 
-module.exports = { start, stop, isRunning, waitForExternal };
+module.exports = { start, stop, isRunning, waitForExternal, buildArgs };
