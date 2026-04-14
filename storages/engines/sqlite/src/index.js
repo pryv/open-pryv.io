@@ -8,7 +8,7 @@
 /**
  * SQLite storage engine plugin.
  *
- * Note: StorageLayer (Sessions, Versions, etc.) is NOT yet implemented for SQLite.
+ * Note: StorageLayer (Sessions, etc.) is NOT yet implemented for SQLite.
  * Note: dataStore streams fallback to MongoDB (incomplete).
  */
 

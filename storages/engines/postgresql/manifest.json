@@ -5,9 +5,6 @@
     "databasePG",
     "storageLayer",
     "getEventFiles",
-    "migrations",
-    "MigrationContext",
-    "softwareVersion",
     "cache",
     "createUserAccountStorage"
   ],

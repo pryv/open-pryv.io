@@ -9,7 +9,6 @@ const { getConfig, getLogger } = require('@pryv/boiler');
 const { validateUserStorage } = require('storages/interfaces/baseStorage/UserStorage');
 const { validateSessions } = require('storages/interfaces/baseStorage/Sessions');
 const { validatePasswordResetRequests } = require('storages/interfaces/baseStorage/PasswordResetRequests');
-const { validateVersions } = require('storages/interfaces/baseStorage/Versions');
 const { pluginLoader } = require('storages');
 
 /**
@@ -22,7 +21,6 @@ const { pluginLoader } = require('storages');
 class StorageLayer {
   connection;
   engine;
-  versions;
   passwordResetRequests;
   sessions;
   accesses;
@@ -67,7 +65,6 @@ class StorageLayer {
     validateUserStorage(this.webhooks);
     validateSessions(this.sessions);
     validatePasswordResetRequests(this.passwordResetRequests);
-    validateVersions(this.versions);
   }
 
   // iterateAllEvents() is set by the engine's initStorageLayer()

@@ -6,13 +6,12 @@
  */
 const storage = require('storage');
 
-const { getConfigUnsafe, getLogger } = require('@pryv/boiler');
+const { getConfigUnsafe } = require('@pryv/boiler');
 const config = getConfigUnsafe(true);
 
 const database = storage.getDatabaseSync(true);
 
 // MongoDB-specific classes used as initial placeholders until init() provides engine-agnostic instances
-const Versions = require('storages/engines/mongodb/src/Versions');
 const PasswordResetRequests = require('storages/engines/mongodb/src/PasswordResetRequests');
 const Sessions = require('storages/engines/mongodb/src/Sessions');
 const Accesses = require('storages/engines/mongodb/src/user/Accesses');
@@ -26,7 +25,6 @@ module.exports = {
   settings: config.get(),
   storage: {
     database,
-    versions: new Versions(database, getLogger('versions')),
     passwordResetRequests: new PasswordResetRequests(database),
     sessions: new Sessions(database),
     user: {
@@ -45,7 +43,6 @@ module.exports = {
     this.storage.user.profile = storageLayer.profile;
     this.storage.user.webhooks = storageLayer.webhooks;
     this.storage.sessions = storageLayer.sessions;
-    this.storage.versions = storageLayer.versions;
     this.storage.passwordResetRequests = storageLayer.passwordResetRequests;
   }
 };

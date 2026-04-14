@@ -32,7 +32,6 @@ function init (config, getLogger, internals) {
 // -- BaseStorage --------------------------------------------------------
 
 function initStorageLayer (storageLayer, connection, options) {
-  const VersionsPG = require('./VersionsPG');
   const PasswordResetRequestsPG = require('./PasswordResetRequestsPG');
   const SessionsPG = require('./SessionsPG');
   const AccessesPG = require('./user/AccessesPG');
@@ -41,7 +40,6 @@ function initStorageLayer (storageLayer, connection, options) {
   const WebhooksPG = require('./user/WebhooksPG');
 
   storageLayer.connection = connection;
-  storageLayer.versions = new VersionsPG(connection, storageLayer.logger);
   storageLayer.passwordResetRequests = new PasswordResetRequestsPG(connection, {
     maxAge: options.passwordResetRequestMaxAge
   });
@@ -188,6 +186,16 @@ function createAuditStorage () {
   return new AuditStoragePG(auditDb);
 }
 
+/**
+ * Build the migrations capability for the engine-agnostic MigrationRunner.
+ * Returns null when the engine hasn't been initialized yet (databasePG not registered).
+ */
+function getMigrationsCapability () {
+  if (!_internals.databasePG) return null;
+  const { buildMigrationsCapability } = require('./SchemaMigrations');
+  return buildMigrationsCapability();
+}
+
 module.exports = {
   init,
   initStorageLayer,
@@ -196,5 +204,6 @@ module.exports = {
   getDataStoreModule,
   createPlatformDB,
   createSeriesConnection,
-  createAuditStorage
+  createAuditStorage,
+  getMigrationsCapability
 };

@@ -1,5 +1,33 @@
 # Changelog - Internal (no API impact)
 
+## Engine-agnostic schema migration runner
+
+### New primitive
+- `storages/interfaces/migrations/` — contracts + conventions for forward-only, timestamp-ordered schema migrations. `migration.d.ts` defines the `{ up, down? }` shape; `MigrationRunner.d.ts` defines the runner + `MigrationCapableEngine` contract; `README.md` captures the model (integer version +1 per migration, `YYYYMMDD_HHMMSS_<slug>.js` filenames, idempotency requirement, per-engine `schema_migrations` storage).
+- `storages/interfaces/migrations/MigrationRunner.js` — runtime. `discoverMigrations()` walks an engine's `migrations/` dir and lex-sorts; `status()` reports per-engine `{ currentVersion, pending }`; `runAll({ targetVersion, dryRun })` applies `up()` in order and bumps version via the engine's `setVersion()`. `createMigrationRunner()` auto-wires from the active storages barrel, iterating engines that export `getMigrationsCapability()`.
+- Per-engine tracking:
+  - `storages/engines/postgresql/src/SchemaMigrations.js` — lazy `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, updated_at TIMESTAMPTZ ...)`; current version = `MAX(version)`.
+  - `storages/engines/rqlite/src/SchemaMigrations.js` — JSON row in the existing `keyValue` table under key `migrations/version`.
+  - Mongo does not participate in the v2 scheme — it has no schema evolution pressure in v2.
+
+### Legacy removed
+- Deleted `storages/engines/mongodb/src/Versions.js`, the entire `storages/engines/mongodb/src/migrations/` directory (`1.9.0.js`..`1.9.4.js`, `MigrationContext.js`, `index.js`), `storages/engines/mongodb/test/migrations/` (old test fixtures), `storages/engines/postgresql/src/VersionsPG.js`, `storages/interfaces/baseStorage/Versions.{js,d.ts}`, `storages/interfaces/baseStorage/conformance/Versions.test.js`.
+- Removed `versions` table DDL from `DatabasePG.js` (it was unused and never populated anyway — `_internals.migrations` was never registered).
+- Removed `migrations` / `MigrationContext` / `softwareVersion` from both engine `_internals.js` and the barrel's `registerInternals()`.
+- Updated both engine manifests (`storages/engines/{mongodb,postgresql}/manifest.json`) to drop the three dead `requiredInternals`.
+- `StorageLayer` no longer carries a `versions` field; `components/test-helpers/src/dependencies.js` + `data.js` + `databaseFixture.js` no longer reference it.
+- v1 → v2 migration is now explicitly an export-via-`dev-migrate-v1-v2` → `bin/backup.js --restore` operation. No code path in v2 reads pre-v1.9.3 shapes.
+
+### Wiring
+- `bin/master.js` — replaced `storageLayer.versions.migrateIfNeeded()` with `createMigrationRunner().runAll()` gated by `migrations.autoRunOnStart` (default true). Renamed from `cluster.runMigrations` in `config/default-config.yml`.
+- `bin/migrate.js` (new) — standalone CLI: `status` / `up [--target N] [--dry-run]`. Opens storages barrel directly; no HTTP; works whether master is running or not.
+- Each engine's `index.js` now exports `getMigrationsCapability()` returning `{ id, migrationsDir, getVersion, setVersion, buildContext }` or `null` when the engine is inactive. The runner auto-discovers capabilities across all loaded engines.
+
+### Tests
+- `components/api-server/test/migrations-runner-seq.test.js` — `[MIGRUN]` suite (9 cases): fresh state, single migration, ordered multi-migration, dry-run, target version, idempotent re-run, engine-switch independence (two in-memory engines), failure-stops-run, live-barrel wiring.
+- Legacy conformance `storages/interfaces/baseStorage/conformance/Versions.test.js` removed.
+- All pre-existing suites green in both engines: `storage` 13/13, `business` 126/126, `api-server` 908/908 (+9 new `[MIGRUN]` cases).
+
 ## Persistent DNS records — admin surface
 
 - `components/api-server/src/routes/reg/records.js`: added `DELETE /reg/records/:subdomain`. Path refactored to share auth + IPC-nudge helpers with the existing POST handler.

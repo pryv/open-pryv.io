@@ -1,0 +1,3 @@
+# Anchor the migrations directory for rqlite.
+# Migration files go here as YYYYMMDD_HHMMSS_<slug>.js per
+# storages/interfaces/migrations/README.md

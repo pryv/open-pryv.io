@@ -17,7 +17,7 @@
 //   cluster.apiWorkers      — number of API workers (default: 2)
 //   cluster.hfsWorkers      — number of HFS workers (default: 1, 0 = disabled)
 //   cluster.previewsWorker  — enable previews worker (default: true)
-//   cluster.runMigrations   — run DB migrations before forking workers (default: true)
+//   migrations.autoRunOnStart — run pending DB migrations before forking workers (default: true)
 
 const cluster = require('node:cluster');
 const path = require('node:path');
@@ -66,17 +66,25 @@ if (cluster.isPrimary) {
       });
     }
 
-    // Run DB migrations before starting services (same as runit core/run)
-    const runMigrations = config.get('cluster:runMigrations') ?? true;
-    if (runMigrations) {
-      log('Running storage migrations...');
-      const { getApplication } = require('../components/api-server/src/application');
-      const app = getApplication();
-      await app.initiate();
-      const storageLayer = app.storageLayer;
-      await storageLayer.waitForConnection();
-      await storageLayer.versions.migrateIfNeeded();
-      log('Storage migrations complete');
+    // Run pending schema migrations before starting services.
+    // Each migration-capable engine (see storages/interfaces/migrations/) gets
+    // its pending up() calls applied in filename order; version bumps persist
+    // in that engine's schema_migrations tracking row/table.
+    const autoRunMigrations = config.get('migrations:autoRunOnStart') ?? true;
+    if (autoRunMigrations) {
+      log('Running pending schema migrations...');
+      await require('../storages').init(config);
+      const { createMigrationRunner } = require('../storages/interfaces/migrations');
+      const runner = await createMigrationRunner({ logger: getLogger('migrations') });
+      const applied = await runner.runAll();
+      if (applied.length === 0) {
+        log('No pending migrations.');
+      } else {
+        for (const m of applied) {
+          log(`  ${m.engineId}: ${m.filename} (→ v${m.toVersion}, ${m.durationMs}ms)`);
+        }
+        log(`Applied ${applied.length} migration(s).`);
+      }
     }
 
     // Keep master alive while workers run (tcp_pubsub sockets are unref'd)

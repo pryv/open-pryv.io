@@ -260,7 +260,14 @@ cluster:
   apiWorkers: 2
   hfsWorkers: 1
   previewsWorker: true
-  runMigrations: true
+
+# === PER-CORE: schema migrations ===
+# Engine-agnostic schema migration runner (see storages/interfaces/migrations/).
+# When true, master.js applies pending migrations against each migration-capable
+# engine before forking workers. Set false to operate migrations manually via
+# `node bin/migrate.js`.
+migrations:
+  autoRunOnStart: true
 
 # === MIXED ===
 # `audit.active` is PLATFORM-WIDE policy; `audit.storage`/`audit.syslog` contain per-core sinks.

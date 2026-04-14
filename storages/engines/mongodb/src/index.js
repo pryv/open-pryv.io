@@ -41,7 +41,6 @@ function init (config, getLogger, internals) {
  * @param {Object} options - { passwordResetRequestMaxAge, sessionMaxAge }
  */
 function initStorageLayer (storageLayer, connection, options) {
-  const Versions = require('./Versions');
   const PasswordResetRequests = require('./PasswordResetRequests');
   const Sessions = require('./Sessions');
   const Accesses = require('./user/Accesses');
@@ -50,7 +49,6 @@ function initStorageLayer (storageLayer, connection, options) {
   const Webhooks = require('./user/Webhooks');
 
   storageLayer.connection = connection;
-  storageLayer.versions = new Versions(connection, storageLayer.logger);
   storageLayer.passwordResetRequests = new PasswordResetRequests(connection, {
     maxAge: options.passwordResetRequestMaxAge
   });

@@ -84,5 +84,3 @@ module.exports.platform = require('platform').platform;
 module.exports.integrityFinalCheck = require('test-helpers/src/integrity-final-check');
 module.exports.getUsersLocalIndex = require('storage').getUsersLocalIndex;
 module.exports.userLocalDirectory = require('storage').userLocalDirectory;
-module.exports.migrations = require('storages/engines/mongodb/src/migrations/index');
-module.exports.softwareVersion = require('storage/package.json').version;

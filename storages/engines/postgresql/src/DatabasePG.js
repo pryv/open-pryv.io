@@ -354,13 +354,6 @@ CREATE TABLE IF NOT EXISTS password_resets (
   expires TIMESTAMPTZ
 );
 
-CREATE TABLE IF NOT EXISTS versions (
-  id TEXT PRIMARY KEY,
-  migration_started DOUBLE PRECISION,
-  migration_completed DOUBLE PRECISION,
-  initial_install DOUBLE PRECISION
-);
-
 -- User account storage
 
 CREATE TABLE IF NOT EXISTS passwords (

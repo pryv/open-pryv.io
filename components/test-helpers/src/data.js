@@ -227,7 +227,6 @@ exports.dumpCurrent = function (mongoFolder, version, callback) {
   logger.info('Dumping current test data to ' + outputFolder);
   async.series([
     clearAllData,
-    storage.versions.migrateIfNeeded.bind(storage.versions),
     exports.resetUsers,
     exports.resetAccesses,
     exports.resetProfile,

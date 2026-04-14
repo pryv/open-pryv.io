@@ -64,8 +64,7 @@ class Context {
       const collectionNames = [
         'accesses',
         'sessions',
-        'webhooks',
-        'versions'
+        'webhooks'
       ];
       for (const collectionName of collectionNames) {
         await bluebird.fromCallback((cb) => this.db.deleteMany({ name: collectionName }, {}, cb));

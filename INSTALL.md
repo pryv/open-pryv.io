@@ -267,6 +267,36 @@ server {
 | `data/rqlite-data/` | Platform DB (rqlite Raft log + SQLite snapshot) |
 
 
+## Upgrades
+
+### From v1.x
+
+V1 → v2 is **not** an in-place upgrade. Steps:
+
+1. Bring the v1 install up to **v1.9.3** using the code on the `release/1.9.3` branch. Its MongoDB migrations handle that hop in place.
+2. Export v1.9.3 data with **`dev-migrate-v1-v2`** (see that repo's `README.md`). Produces a v2-compatible backup archive.
+3. Restore into v2:
+   ```bash
+   node bin/backup.js --restore /path/to/archive
+   ```
+
+Attempting `git pull + npm install` from a v1 data directory directly into v2 will leave orphaned data that v2 does not understand.
+
+### Within v2
+
+v2 uses a forward-only, engine-agnostic schema migration runner (see `storages/interfaces/migrations/README.md`). By default `bin/master.js` applies pending migrations before forking workers (`migrations.autoRunOnStart: true`).
+
+To operate migrations manually:
+
+```bash
+node bin/migrate.js status             # per-engine current version + pending
+node bin/migrate.js up                 # apply all pending
+node bin/migrate.js up --dry-run       # preview
+node bin/migrate.js up --target 3      # stop per-engine at version 3
+```
+
+Set `migrations.autoRunOnStart: false` in config to disable auto-run at startup and rely on the CLI only.
+
 ## Managing persistent DNS records
 
 When the embedded DNS server is active (`dns.active: true`), runtime DNS entries (ACME challenges, admin-managed subdomains) are persisted in PlatformDB so they survive restart and replicate across cores. Two ways to manage them:
