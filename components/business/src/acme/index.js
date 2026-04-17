@@ -10,6 +10,8 @@ const AcmeClient = require('./AcmeClient');
 const certUtils = require('./certUtils');
 const { CertRenewer, PlatformDBDnsWriter, acmeChallengeName, AT_REST_PURPOSE } = require('./CertRenewer');
 const { FileMaterializer, runRotateScript } = require('./FileMaterializer');
+const { deriveHostnames } = require('./deriveHostnames');
+const { AcmeOrchestrator, build: buildAcmeOrchestrator } = require('./AcmeOrchestrator');
 
 module.exports = {
   AtRestEncryption,
@@ -20,5 +22,8 @@ module.exports = {
   acmeChallengeName,
   AT_REST_PURPOSE,
   FileMaterializer,
-  runRotateScript
+  runRotateScript,
+  deriveHostnames,
+  AcmeOrchestrator,
+  buildAcmeOrchestrator
 };
