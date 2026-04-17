@@ -8,9 +8,14 @@
 const AtRestEncryption = require('./AtRestEncryption');
 const AcmeClient = require('./AcmeClient');
 const certUtils = require('./certUtils');
+const { CertRenewer, PlatformDBDnsWriter, acmeChallengeName, AT_REST_PURPOSE } = require('./CertRenewer');
 
 module.exports = {
   AtRestEncryption,
   AcmeClient,
-  certUtils
+  certUtils,
+  CertRenewer,
+  PlatformDBDnsWriter,
+  acmeChallengeName,
+  AT_REST_PURPOSE
 };
