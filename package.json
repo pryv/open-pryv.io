@@ -30,6 +30,7 @@
     "@pryv/boiler": "https://github.com/pryv/pryv-boiler.git#semver:^1.2.4",
     "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
     "@pryv/stable-object-representation": "^1.1.4",
+    "acme-client": "^5.4.0",
     "async": "^2.6.4",
     "awaiting": "^3.0.0",
     "backloop.dev": "^2.0.5",
@@ -92,10 +93,10 @@
     "supertest": "^6.3.1",
     "temp": "^0.9.4"
   },
-  "overrides": {
-    "fast-xml-parser": "^5.5.7"
-  },
   "engines": {
     "node": "22.x"
+  },
+  "overrides": {
+    "fast-xml-parser": "^5.5.7"
   }
 }
