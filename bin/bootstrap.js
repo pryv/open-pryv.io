@@ -175,9 +175,15 @@ async function getConfig () {
 }
 
 async function initPlatformDB (config) {
-  await require('storages').init(config);
-  const { getPlatform } = require('platform');
-  return await getPlatform();
+  const storages = require('storages');
+  await storages.init(config);
+  // cliOps.newCore + DnsRegistration talk to the PlatformDB directly
+  // (setCoreInfo / setDnsRecord / …), not through the Platform wrapper
+  // which exposes a higher-level API. Use the raw instance.
+  if (storages.platformDB == null) {
+    throw new Error('storages.platformDB unavailable after storages.init — check rqlite engine config');
+  }
+  return storages.platformDB;
 }
 
 /**
