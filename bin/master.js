@@ -12,6 +12,13 @@
 //
 // Usage:
 //   node bin/master.js [--config <path>]
+//   node bin/master.js --bootstrap <bundle-file> --bootstrap-passphrase-file <path>
+//                      [--bootstrap-tls-dir <path>] [--bootstrap-config-dir <path>]
+//
+// In --bootstrap mode the master decrypts the bundle, writes
+// `override-config.yml` + TLS files, posts an ack to the issuing core, then
+// falls through into normal startup — picking up the freshly-written config
+// via @pryv/boiler's highest-precedence override-file slot.
 //
 // Config keys:
 //   cluster.apiWorkers      — number of API workers (default: 2)
@@ -22,25 +29,43 @@
 const cluster = require('node:cluster');
 const path = require('node:path');
 
+const BASE_CONFIG_DIR = path.resolve(__dirname, '../config/');
+const DEFAULT_TLS_DIR = '/etc/pryv/tls';
+
 if (cluster.isPrimary) {
   const os = require('node:os');
 
-  // Minimal boiler init — just enough to read config
-  require('@pryv/boiler').init({
-    appName: 'master',
-    baseFilesDir: path.resolve(__dirname, '../'),
-    baseConfigDir: path.resolve(__dirname, '../config/'),
-    extraConfigs: [{
-      plugin: require('../config/plugins/systemStreams')
-    }, {
-      plugin: require('../config/plugins/core-identity')
-    }]
-  });
-
-  const { getConfig, getLogger } = require('@pryv/boiler');
-  const rqliteProcess = require('../storages/engines/rqlite/src/rqliteProcess');
-
   (async () => {
+    // BOOTSTRAP MODE — runs before @pryv/boiler.init so the
+    // override-config.yml it writes is picked up at the highest precedence
+    // by the init below. Workers (cluster.fork()) skip this block entirely.
+    const bootstrapArgs = parseBootstrapArgs(process.argv.slice(2));
+    if (bootstrapArgs.enabled) {
+      try {
+        await runBootstrap(bootstrapArgs);
+      } catch (err) {
+        console.error('[bootstrap] FAILED: ' + err.message);
+        if (process.env.DEBUG) console.error(err.stack);
+        process.exit(1);
+      }
+    }
+
+    // Minimal boiler init — just enough to read config (now including any
+    // override-config.yml the bootstrap step wrote above).
+    require('@pryv/boiler').init({
+      appName: 'master',
+      baseFilesDir: path.resolve(__dirname, '../'),
+      baseConfigDir: BASE_CONFIG_DIR,
+      extraConfigs: [{
+        plugin: require('../config/plugins/systemStreams')
+      }, {
+        plugin: require('../config/plugins/core-identity')
+      }]
+    });
+
+    const { getConfig, getLogger } = require('@pryv/boiler');
+    const rqliteProcess = require('../storages/engines/rqlite/src/rqliteProcess');
+
     const config = await getConfig();
     const logger = getLogger('master');
     const log = (msg) => { logger.info(msg); console.log(`[master] ${msg}`); };
@@ -264,4 +289,38 @@ if (cluster.isPrimary) {
   } else {
     require('../components/api-server/bin/server');
   }
+}
+
+// ---------------------------------------------------------------------------
+// Bootstrap-mode helpers (only invoked from the primary block above)
+// ---------------------------------------------------------------------------
+
+function parseBootstrapArgs (argv) {
+  const out = { enabled: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--bootstrap') { out.enabled = true; out.bundlePath = argv[++i]; } else if (a === '--bootstrap-passphrase-file') { out.passphraseFile = argv[++i]; } else if (a === '--bootstrap-tls-dir') { out.tlsDir = argv[++i]; } else if (a === '--bootstrap-config-dir') { out.configDir = argv[++i]; }
+  }
+  if (out.enabled) {
+    if (!out.bundlePath) throw new Error('--bootstrap requires <bundle-file>');
+    if (!out.passphraseFile) throw new Error('--bootstrap requires --bootstrap-passphrase-file');
+    out.tlsDir = out.tlsDir || DEFAULT_TLS_DIR;
+    out.configDir = out.configDir || BASE_CONFIG_DIR;
+  }
+  return out;
+}
+
+async function runBootstrap (args) {
+  const { consumer } = require('business/src/bootstrap');
+  console.log('[bootstrap] starting --bootstrap from ' + args.bundlePath);
+  const result = await consumer.consume({
+    bundlePath: args.bundlePath,
+    passphraseFile: args.passphraseFile,
+    configDir: args.configDir,
+    tlsDir: args.tlsDir,
+    log: (m) => console.log('[bootstrap] ' + m)
+  });
+  console.log('[bootstrap] joined cluster as ' + result.coreId);
+  console.log('[bootstrap] override-config: ' + result.overridePath);
+  console.log('[bootstrap] continuing into normal startup ...');
 }

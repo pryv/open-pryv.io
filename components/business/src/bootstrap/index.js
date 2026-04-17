@@ -13,6 +13,7 @@ const DnsRegistration = require('./DnsRegistration');
 const cliOps = require('./cliOps');
 const ackHandler = require('./ackHandler');
 const applyBundle = require('./applyBundle');
+const consumer = require('./consumer');
 
 module.exports = {
   ClusterCA,
@@ -22,5 +23,6 @@ module.exports = {
   DnsRegistration,
   cliOps,
   ackHandler,
-  applyBundle
+  applyBundle,
+  consumer
 };
