@@ -173,7 +173,64 @@ const PlatformDB = module.exports.PlatformDB = {
    * Delete a persistent DNS record.
    * @param {string} subdomain
    */
-  async deleteDnsRecord (subdomain) { throw new Error('Not implemented'); }
+  async deleteDnsRecord (subdomain) { throw new Error('Not implemented'); },
+
+  // --- ACME account + TLS certs (public-facing SSL, auto-renewed) --- //
+
+  /**
+   * Persist the ACME account (singleton per cluster). Called once when
+   * the ACME feature is first enabled; reused for every subsequent
+   * issuance/renewal. Overwriting is allowed (e.g. rotating to a fresh
+   * account) and idempotent.
+   *
+   * @param {Object} account
+   * @param {string} account.accountKey - PEM-encoded private key (callers
+   *   should have encrypted this at rest before handing it in)
+   * @param {string} account.accountUrl - URL returned by createAccount
+   * @param {string} account.email
+   */
+  async setAcmeAccount (account) { throw new Error('Not implemented'); },
+
+  /**
+   * @returns {Promise<{accountKey: string, accountUrl: string, email: string}|null>}
+   */
+  async getAcmeAccount () { throw new Error('Not implemented'); },
+
+  /**
+   * Persist a TLS certificate for a hostname. The hostname is the cert's
+   * primary identifier (wildcards use their literal form, e.g.
+   * '*.mc.example.com'). Overwriting is allowed (renewal).
+   *
+   * @param {string} hostname
+   * @param {Object} cert
+   * @param {string} cert.certPem - leaf certificate
+   * @param {string} cert.chainPem - issuer chain (may be empty)
+   * @param {string} cert.keyPem - PEM-encoded private key (callers
+   *   should have encrypted this at rest before handing it in)
+   * @param {number} cert.issuedAt - ms since epoch
+   * @param {number} cert.expiresAt - ms since epoch
+   */
+  async setCertificate (hostname, cert) { throw new Error('Not implemented'); },
+
+  /**
+   * @param {string} hostname
+   * @returns {Promise<{certPem, chainPem, keyPem, issuedAt, expiresAt}|null>}
+   */
+  async getCertificate (hostname) { throw new Error('Not implemented'); },
+
+  /**
+   * Lightweight metadata listing — intended for the renewer loop and for
+   * the admin surface at GET /system/admin/certs. Does NOT return the
+   * cert material (use getCertificate for that).
+   *
+   * @returns {Promise<Array<{hostname: string, issuedAt: number, expiresAt: number}>>}
+   */
+  async listCertificates () { throw new Error('Not implemented'); },
+
+  /**
+   * @param {string} hostname
+   */
+  async deleteCertificate (hostname) { throw new Error('Not implemented'); }
 };
 
 // Limit tampering on existing properties

@@ -291,6 +291,53 @@ class DBrqlite {
     const key = getDnsRecordKey(subdomain);
     await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
   }
+
+  // --- ACME account + TLS certs (auto-renewed public certs) --- //
+
+  async setAcmeAccount (account) {
+    await this.execute(
+      'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
+      [ACME_ACCOUNT_KEY, JSON.stringify(account)]
+    );
+  }
+
+  async getAcmeAccount () {
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [ACME_ACCOUNT_KEY]);
+    return rows.length === 0 ? null : JSON.parse(rows[0].value);
+  }
+
+  async setCertificate (hostname, cert) {
+    const key = getCertificateKey(hostname);
+    await this.execute(
+      'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
+      [key, JSON.stringify(cert)]
+    );
+  }
+
+  async getCertificate (hostname) {
+    const key = getCertificateKey(hostname);
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key]);
+    return rows.length === 0 ? null : JSON.parse(rows[0].value);
+  }
+
+  async listCertificates () {
+    const rows = await this.query(
+      "SELECT key, value FROM keyValue WHERE key LIKE 'tls-cert/%'"
+    );
+    return rows.map(row => {
+      const cert = JSON.parse(row.value);
+      return {
+        hostname: row.key.slice('tls-cert/'.length),
+        issuedAt: cert.issuedAt,
+        expiresAt: cert.expiresAt
+      };
+    });
+  }
+
+  async deleteCertificate (hostname) {
+    const key = getCertificateKey(hostname);
+    await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
+  }
 }
 
 // --- Key helpers (same as SQLite engine) --- //
@@ -321,5 +368,11 @@ function getUserCoreKey (username) {
 function getDnsRecordKey (subdomain) {
   return 'dns-record/' + subdomain;
 }
+
+function getCertificateKey (hostname) {
+  return 'tls-cert/' + hostname;
+}
+
+const ACME_ACCOUNT_KEY = 'tls-acme-account';
 
 module.exports = DBrqlite;

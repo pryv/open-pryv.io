@@ -318,5 +318,107 @@ module.exports = function conformanceTests (getDB) {
         assert.ok(userEmail);
       });
     });
+
+    describe('setAcmeAccount / getAcmeAccount', () => {
+      it('must persist and retrieve a singleton ACME account', async () => {
+        const account = {
+          accountKey: '-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----',
+          accountUrl: 'https://acme-staging-v02.api.letsencrypt.org/acme/acct/123456',
+          email: 'ops-' + cuid() + '@example.com'
+        };
+        await db.setAcmeAccount(account);
+        const stored = await db.getAcmeAccount();
+        assert.deepStrictEqual(stored, account);
+      });
+
+      it('must overwrite an existing ACME account on re-set', async () => {
+        await db.setAcmeAccount({ accountKey: 'k1', accountUrl: 'u1', email: 'a@x.com' });
+        await db.setAcmeAccount({ accountKey: 'k2', accountUrl: 'u2', email: 'b@x.com' });
+        const stored = await db.getAcmeAccount();
+        assert.strictEqual(stored.accountKey, 'k2');
+        assert.strictEqual(stored.email, 'b@x.com');
+      });
+    });
+
+    describe('setCertificate / getCertificate / listCertificates / deleteCertificate', () => {
+      function makeCert (issuedAt, expiresAt) {
+        return {
+          certPem: '-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----',
+          chainPem: '-----BEGIN CERTIFICATE-----\nBBB\n-----END CERTIFICATE-----',
+          keyPem: '-----BEGIN PRIVATE KEY-----\nCCC\n-----END PRIVATE KEY-----',
+          issuedAt,
+          expiresAt
+        };
+      }
+
+      it('must persist and retrieve a certificate by hostname', async () => {
+        const host = 'host-' + cuid() + '.example.com';
+        const cert = makeCert(1000, 2000);
+        await db.setCertificate(host, cert);
+        const stored = await db.getCertificate(host);
+        assert.deepStrictEqual(stored, cert);
+      });
+
+      it('must return null for an unknown hostname', async () => {
+        const result = await db.getCertificate('unknown-' + cuid());
+        assert.strictEqual(result, null);
+      });
+
+      it('must overwrite an existing certificate (renewal)', async () => {
+        const host = 'renew-' + cuid() + '.example.com';
+        await db.setCertificate(host, makeCert(1000, 2000));
+        await db.setCertificate(host, makeCert(3000, 4000));
+        const stored = await db.getCertificate(host);
+        assert.strictEqual(stored.issuedAt, 3000);
+        assert.strictEqual(stored.expiresAt, 4000);
+      });
+
+      it('supports wildcard hostnames as literal keys', async () => {
+        const host = '*.wildcard-' + cuid() + '.example.com';
+        await db.setCertificate(host, makeCert(1000, 2000));
+        const stored = await db.getCertificate(host);
+        assert.ok(stored);
+        assert.strictEqual(stored.issuedAt, 1000);
+      });
+
+      it('listCertificates() returns metadata without PEM bodies', async () => {
+        const host1 = 'list1-' + cuid() + '.example.com';
+        const host2 = 'list2-' + cuid() + '.example.com';
+        await db.setCertificate(host1, makeCert(100, 200));
+        await db.setCertificate(host2, makeCert(300, 400));
+
+        const all = await db.listCertificates();
+        const found1 = all.find(r => r.hostname === host1);
+        const found2 = all.find(r => r.hostname === host2);
+        assert.ok(found1, host1 + ' missing from listCertificates');
+        assert.ok(found2, host2 + ' missing from listCertificates');
+        assert.deepStrictEqual(found1, { hostname: host1, issuedAt: 100, expiresAt: 200 });
+        assert.deepStrictEqual(found2, { hostname: host2, issuedAt: 300, expiresAt: 400 });
+        // No PEM body leaking through
+        assert.strictEqual(found1.certPem, undefined);
+        assert.strictEqual(found1.keyPem, undefined);
+      });
+
+      it('deleteCertificate() removes the record', async () => {
+        const host = 'del-' + cuid() + '.example.com';
+        await db.setCertificate(host, makeCert(1000, 2000));
+        await db.deleteCertificate(host);
+        const stored = await db.getCertificate(host);
+        assert.strictEqual(stored, null);
+      });
+
+      it('cert namespace does not collide with dns-record or user-unique keys', async () => {
+        const host = 'iso-' + cuid() + '.example.com';
+        const sub = '_iso-' + cuid();
+        const email = 'iso-' + cuid() + '@example.com';
+        await db.setCertificate(host, makeCert(1000, 2000));
+        await db.setDnsRecord(sub, { txt: ['x'] });
+        await db.setUserUniqueField('u-' + cuid(), 'email', email);
+
+        assert.ok(await db.getCertificate(host));
+        assert.ok(await db.getDnsRecord(sub));
+        assert.ok(await db.getUsersUniqueField('email', email));
+      });
+    });
   });
 };

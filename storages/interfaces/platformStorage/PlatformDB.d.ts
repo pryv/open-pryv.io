@@ -12,6 +12,26 @@ export interface PlatformEntry {
   value: string;
 }
 
+export interface AcmeAccount {
+  accountKey: string;
+  accountUrl: string;
+  email: string;
+}
+
+export interface TlsCertificate {
+  certPem: string;
+  chainPem: string;
+  keyPem: string;
+  issuedAt: number;
+  expiresAt: number;
+}
+
+export interface TlsCertificateSummary {
+  hostname: string;
+  issuedAt: number;
+  expiresAt: number;
+}
+
 export interface PlatformDB {
   init(): Promise<void>;
   setUserUniqueField(username: string, field: string, value: string): Promise<any>;
@@ -27,6 +47,12 @@ export interface PlatformDB {
   exportAll(): Promise<PlatformEntry[]>;
   importAll(data: PlatformEntry[]): Promise<void>;
   clearAll(): Promise<void>;
+  setAcmeAccount(account: AcmeAccount): Promise<void>;
+  getAcmeAccount(): Promise<AcmeAccount | null>;
+  setCertificate(hostname: string, cert: TlsCertificate): Promise<void>;
+  getCertificate(hostname: string): Promise<TlsCertificate | null>;
+  listCertificates(): Promise<TlsCertificateSummary[]>;
+  deleteCertificate(hostname: string): Promise<void>;
 }
 
 export declare const PlatformDB: PlatformDB;
