@@ -37,6 +37,42 @@
 
 Context: end-to-end persistence of runtime DNS records (PlatformDB interface, rqlite backend, `DnsServer` load-on-start + 30 s refresh + write-through, `POST /reg/records` persistence, existing `[RGRC]` test) was shipped earlier in the 2.0.0-pre line. This change adds the DELETE symmetry and the offline-capable admin CLI — the remaining gap for operating DNS records in production without depending on the HTTP API being healthy.
 
+## Multi-core bootstrap CLI + rqlite mTLS
+
+Single-to-multi-core upgrade no longer requires hand-editing override YAML on the new host or copying platform secrets across by hand. An operator runs one CLI on the existing core, transfers a sealed bundle to the new core, and starts the new core in `--bootstrap` mode. Raft traffic between cores is mutually-authenticated TLS by default.
+
+### rqlite mTLS argv passthrough
+- `storages/engines/rqlite/src/rqliteProcess.js` `buildArgs()` — new `tls: { caFile, certFile, keyFile, verifyClient, verifyServerName }` block translates to rqlited flags `-node-ca-cert`, `-node-cert`, `-node-key`, `-node-verify-client`, `-node-verify-server-name` (rqlited 8.x naming).
+- `tls: null` (default) → zero TLS flags emitted → identical pre-upgrade behaviour. No regression risk for single-core or VPN-protected multi-core.
+- `[RQARGS]` 14 unit tests cover flag formation across single/multi-core, with/without TLS, `verifyClient` bool, `verifyServerName` override.
+- `[RQMTLS]` integration test spins up two `rqlited` processes wired with the same self-signed CA + node certs and asserts the cluster forms + a write replicates within 3 s.
+
+### `components/business/src/bootstrap/` (new, 8 modules)
+- `ClusterCA.js` — `ensure()` / `getCACertPem()` / `issueNodeCert({ coreId, ip, hostname })`. Shells out to `openssl` (system dep) for X.509 signing; Node's built-in `crypto` can generate keys but not sign certs. CA private key never leaves `dir` (default `/etc/pryv/ca`, mode 0600); per-issuance temp dir for CSR + node key. EC P-256 keypairs throughout (10y CA / 1y node). 15 `[CLUSTERCA]` tests.
+- `Bundle.js` — `assemble(input)` produces the canonical bundle object (version 1); `validate(bundle)` rejects unknown versions, missing fields, malformed PEM. Pure (no I/O). Shape: `{ version, issuedAt, cluster: { domain, ackUrl, joinToken, ca }, node: { id, ip, hosting, url, certPem, keyPem }, platformSecrets: { auth: { adminAccessKey, filesReadTokenSecret } }, rqlite: { raftPort, httpPort } }`. 19 `[BUNDLE]` tests.
+- `BundleEncryption.js` — `encrypt/decrypt` using AES-256-GCM keyed off scrypt(passphrase, salt). 16-byte salt, 12-byte nonce, 16-byte tag, base64 + ASCII armor (`-----BEGIN PRYV BOOTSTRAP BUNDLE-----`). Deliberately uses node's built-in `crypto` rather than adding `age-encryption` — the bundle is only ever consumed by `bin/master.js --bootstrap`, never manually inspected, and every dep adds supply-chain surface. `generatePassphrase()` returns 128-bit base64url chunked `AbCd-EfGh-IjKl-MnOp` for operator readability. 22 `[BUNDLEENC]` tests.
+- `TokenStore.js` — file-based one-time join-token lifecycle on the issuing core. Sha256-hashed at rest (`{ "<sha256>": { coreId, issuedAt, expiresAt, consumedAt, consumerIp } }`); raw token returned only at mint time. Atomic write (tmp + rename) at mode 0600. `mint` / `verify` / `consume` / `listActive` / `revokeByCoreId` / `purge`. Deliberately NOT in PlatformDB — the token consumer is the same core that issued it (the ack endpoint), so cross-core replication is not needed and we avoid adding methods to the PlatformDB interface + two-engine conformance. 26 `[TOKENSTORE]` tests.
+- `DnsRegistration.js` — `registerNewCore({ platformDB, coreId, ip, url, hosting })` calls PlatformDB's existing `setCoreInfo` (with `available:false`) + `setDnsRecord(coreId, { a:[ip] })` + read-merge-write to append `ip` to `lsc.{domain}` (the persistent-DNS API is last-writer-wins per subdomain; we want append). `unregisterNewCore` is the symmetric undo, scoped so it only touches state belonging to this `coreId`+`ip`. Two concurrent bootstrap runs could race on `lsc`; the CLI surfaces a warning that adding cores is a single-operator action. 19 `[DNSREG]` tests.
+- `cliOps.js` — orchestrates `newCore` / `listTokens` / `revokeToken` for `bin/bootstrap.js`. Pure: takes `platformDB`, `caDir`, `tokensPath`, `secrets`, `rqlite` ports, output path. Owns the rollback (revoke token + unregister core) on any failure after PlatformDB writes. 7 `[BOOTSTRAPCLI]` tests with a fake PlatformDB and tmp dirs.
+- `applyBundle.js` (consumer side) — decrypts + validates a bundle, writes `/etc/pryv/tls/{ca.crt, node.crt, node.key}` with correct modes (key 0600), generates `override-config.yml` mapping the bundle into `core.{id,url,ip}` / `dns.domain` / `dnsLess.isActive:false` / `auth.{adminAccessKey,filesReadTokenSecret}` / `storages.engines.rqlite.{raftPort,url,tls.{caFile,certFile,keyFile,verifyClient:true}}`. `dns` + `dnsLess` are emitted only when `bundle.cluster.domain` is non-empty (DNSless variant skips both). Override file is mode 0600 (carries admin key). Exposes `sha256Fingerprint(certPem)` matching `openssl x509 -fingerprint -sha256` output. 6 `[APPLYBUNDLE]` tests.
+- `consumer.js` (consumer-side driver) — reads bundle from disk, resolves passphrase (`passphrase` direct arg or `passphraseFile` with newline-stripping), calls `applyBundle`, POSTs ack to `bundle.cluster.ackUrl` with TLS pinned to the bundled CA (`https.request({ ca, rejectUnauthorized: true })`), deletes bundle on 200, throws on non-200 (bundle is kept so the operator can investigate). `httpClient` injectable for tests. 7 `[BOOTSTRAPCONSUMER]` tests.
+- `ackHandler.js` — `makeHandler({ tokenStore, platformDB })` returns a pure `req → { statusCode, body }` function. 200 ok flips `available:true` and returns a cluster snapshot; 400 missing field; 401 token unknown / expired / already-consumed / coreId-mismatch (single status code, reasons differentiated in body but no oracle for guessing); 404 token verifies but no pre-registration row. Token is consumed even on the 404 path so the operator must mint a new one. 9 `[ACKHANDLER]` tests.
+
+### Wiring
+- `bin/bootstrap.js` (new) — argparse + boiler init + `cliOps.newCore` / `listTokens` / `revokeToken`. Pulls `core.url` / `dnsLess.publicUrl` for the ack URL base, `auth.adminAccessKey` + `auth.filesReadTokenSecret` for platform secrets (refuses to ship a bundle if either is still on the `REPLACE ME` placeholder), `dns.domain`, rqlite `raftPort` + http port out of `storages.engines.rqlite.url`.
+- `bin/master.js` — bootstrap mode runs **before** `@pryv/boiler.init` so the `override-config.yml` it writes lands at the highest precedence in boiler's load order (`override-config.yml` → env → argv → `${NODE_ENV}-config.yml` → extras). Workers (`cluster.fork()`) skip the bootstrap block entirely.
+- `components/api-server/src/routes/system.js` — `POST /system/admin/cores/ack` route added. `checkAuth` short-circuits for this single path so the new core can authenticate via the join token instead of the admin key.
+- `config/default-config.yml` — adds `cluster.ca.path` (default `/etc/pryv/ca`) and `cluster.tokens.path` (default `/var/lib/pryv/bootstrap-tokens.json`) under the existing `cluster:` block. Both are PER-CORE — only the issuing core uses them.
+- `components/business/src/bootstrap/index.js` — barrel exporting all 8 modules.
+
+### End-to-end test
+- `components/business/test/unit/bootstrap-e2e.test.js` `[BOOTSTRAPE2E]` (5 tests) — round-trips `cliOps.newCore` → `consumer.consume` → ack route → PlatformDB state with a real `http.createServer` mounting the ack handler and an in-memory PlatformDB shared between issuer and ack endpoint. Cases: happy path (available flips, bundle deleted, token burned), replay (stashed copy fails 401 already-consumed), wrong passphrase (consumer fails before ack POST attempt, token remains active, pre-registration unchanged), expired token (401 expired), revoke-token after issue (401 unknown, pre-registration unwound). Multi-process / real-rqlited e2e (the `reg-2core-seq.test.js` pattern) is deferred — not blocking the v2.0.0-pre publication.
+
+### Test totals
+- Bootstrap unit + e2e suite: **135 cases green** across 9 test files.
+- Phase 1 (rqlite mTLS argv): **15 cases** in `storages/engines/rqlite/test/`.
+- Pre-existing suites unaffected.
+
 ## Test hardening + deploy validation
 
 ### Dockerfile bundling & external rqlite mode

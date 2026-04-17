@@ -344,6 +344,18 @@ records:
 
 Static entries declared in `dns.staticEntries` config are authoritative and cannot be shadowed by PlatformDB entries; attempts to write a matching subdomain are rejected.
 
+## Cluster security
+
+When you go multi-core, the Raft channel between cores carries replicated PlatformDB writes (registrations, DNS records, core-info). It must be authenticated. Open Pryv.io ships with a self-managed cluster CA model and bootstrap CLI that automates the setup — see [`SINGLE-TO-MULTIPLE.md`](SINGLE-TO-MULTIPLE.md) for the operator walkthrough. The security guarantees:
+
+- **mTLS on Raft.** With `storages.engines.rqlite.tls.{caFile,certFile,keyFile,verifyClient}` set, both ends of every Raft connection verify the peer's cert against the cluster CA. Unauthenticated TCP on port 4002 is rejected.
+- **CA-holder model.** The cluster CA's private key (`/etc/pryv/ca/ca.key`, mode 0600) lives on **exactly one** host — the core that runs `bin/bootstrap.js new-core`. Only this host can issue node certs. Back up `/etc/pryv/ca/` off-host: losing the key means you cannot add or rotate cores without standing up a new cluster.
+- **Sealed bundles.** The CLI emits a passphrase-encrypted file (AES-256-GCM, scrypt KDF) carrying identity + platform secrets + node cert/key + CA cert + a one-time join token. The new core consumes it via `bin/master.js --bootstrap <file> --bootstrap-passphrase-file <pass>`.
+- **One-shot join tokens.** Each bundle contains a token that verifies exactly once at the issuing core's `/system/admin/cores/ack` endpoint and is then burned. Default TTL 24h. Replays return HTTP 401. The ack endpoint deliberately bypasses admin-key auth — the new core authenticates via the token, not the admin key.
+- **Bundle/passphrase split.** Transfer the bundle file and the passphrase on different channels (e.g. file via `scp`, passphrase via password manager). Compromise of either alone is not enough to ack.
+
+Single-core deployments do not need any of this — `tls: null` (the default) leaves the Raft setup at plain loopback TCP, which is fine for a single host.
+
 ## Troubleshooting
 
 ### Socket.IO: "Transport unknown" or "xhr poll error"
