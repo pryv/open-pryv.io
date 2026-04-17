@@ -28,6 +28,16 @@ const logger = getLogger('serverRoot');
   // Start the server
   const server = new Server();
   await server.start();
+
+  // Plan 35 Phase 4d — master broadcasts `acme:rotate` after the Let's
+  // Encrypt orchestrator writes a freshly-renewed cert to disk. Hot-swap
+  // the TLS context so new connections use the new cert without
+  // restarting the worker. Ignored when this worker isn't HTTPS.
+  process.on('message', (msg) => {
+    if (msg && msg.type === 'acme:rotate') {
+      server.reloadTls();
+    }
+  });
 })()
   .then(() => logger.info('Startup sequence complete, Server is running. mode: [' + process.env.NODE_ENV + ']'))
   .catch(e => {

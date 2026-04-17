@@ -163,6 +163,18 @@ if (cluster.isPrimary) {
           config,
           platformDB: platform._db || require('../storages').platformDB,
           atRestKey,
+          onRotate: async (certPath, keyPath, hostname) => {
+            // Broadcast to every live worker so their HTTPS servers hot-swap
+            // to the rotated cert (Plan 35 Phase 4d). Workers that aren't
+            // serving HTTPS (hfs, previews, and api-server in http-only mode)
+            // ignore the message.
+            const msg = { type: 'acme:rotate', hostname, certPath, keyPath };
+            for (const id in cluster.workers) {
+              try { cluster.workers[id].send(msg); } catch (err) {
+                log(`[acme] IPC to worker ${id} failed: ${err.message}`);
+              }
+            }
+          },
           log: (m) => log(m.startsWith('[acme]') ? m : '[acme] ' + m)
         });
         acmeOrchestrator.start();

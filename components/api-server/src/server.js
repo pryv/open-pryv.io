@@ -28,6 +28,7 @@ let app;
 class Server {
   logger;
   config;
+  httpsServer;
 
   /**
    * @returns {Promise<void>}
@@ -66,16 +67,12 @@ class Server {
       });
       this.logger.info('SSL Mode using backloop.dev certificates');
     } else if (config.get('http:ssl:keyFile')) { // https with local files
-      const options = {
-        key: fs.readFileSync(config.get('http:ssl:keyFile')),
-        cert: fs.readFileSync(config.get('http:ssl:certFile'))
-      };
-      if (config.get('http:ssl:caFile')) {
-        options.ca = [fs.readFileSync(config.get('http:ssl:caFile'))];
-      }
-      server = https.createServer(options, app.expressApp);
+      server = https.createServer(buildHttpsOptions(config), app.expressApp);
       serverInfos.hostname = 'custom-according-to-your-ssl-cert';
       this.logger.info('SSL Mode using custom certificates');
+      // Keep a reference so reloadTls() can hot-swap the SecureContext
+      // when the Let's Encrypt orchestrator (Plan 35) rotates the cert.
+      this.httpsServer = server;
     } else { // http
       server = http.createServer(app.expressApp);
     }
@@ -240,6 +237,47 @@ class Server {
     }
     return numUsers;
   }
+
+  /**
+   * Hot-swap the TLS context from the currently-configured cert/key
+   * files. Triggered by a `acme:rotate` IPC message from master after
+   * the Let's Encrypt orchestrator (Plan 35) writes a freshly-renewed
+   * cert to disk. No-op when this worker isn't serving HTTPS.
+   *
+   * Uses https.Server.setSecureContext which takes effect for new TLS
+   * handshakes while leaving in-flight connections alone — validated
+   * in Plan 35 Phase 1 Level 3 spike.
+   */
+  reloadTls () {
+    if (this.httpsServer == null) {
+      this.logger.debug('reloadTls: no https server in this worker — ignoring');
+      return { reloaded: false, reason: 'not-https' };
+    }
+    try {
+      const options = buildHttpsOptions(this.config);
+      this.httpsServer.setSecureContext(options);
+      this.logger.info('TLS context reloaded from disk');
+      return { reloaded: true };
+    } catch (err) {
+      this.logger.error('reloadTls failed: ' + err.message);
+      return { reloaded: false, reason: 'error', error: err.message };
+    }
+  }
+}
+
+/**
+ * Read https options off the config's `http.ssl.*` file paths.
+ * Reads fresh each call so reloadTls picks up rotated files.
+ */
+function buildHttpsOptions (config) {
+  const options = {
+    key: fs.readFileSync(config.get('http:ssl:keyFile')),
+    cert: fs.readFileSync(config.get('http:ssl:certFile'))
+  };
+  if (config.get('http:ssl:caFile')) {
+    options.ca = [fs.readFileSync(config.get('http:ssl:caFile'))];
+  }
+  return options;
 }
 
 module.exports = Server;
