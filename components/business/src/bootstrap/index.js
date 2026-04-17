@@ -11,6 +11,7 @@ const BundleEncryption = require('./BundleEncryption');
 const TokenStore = require('./TokenStore');
 const DnsRegistration = require('./DnsRegistration');
 const cliOps = require('./cliOps');
+const ackHandler = require('./ackHandler');
 
 module.exports = {
   ClusterCA,
@@ -18,5 +19,6 @@ module.exports = {
   BundleEncryption,
   TokenStore,
   DnsRegistration,
-  cliOps
+  cliOps,
+  ackHandler
 };

@@ -266,11 +266,18 @@ dns:
 # Plan 27 Phase 2b follow-up should move the hierarchy itself there too.
 hostings: null           # null = auto-generate; or { regions: { ... } }
 
-# === PER-CORE: process tuning ===
+# === PER-CORE: process tuning + bootstrap CLI paths ===
+# `ca` and `tokens` paths are only used by the bootstrap CLI (and the matching
+# ack endpoint on the issuing core) — see bin/bootstrap.js. Single-core and
+# DNSless multi-core deployments can ignore them.
 cluster:
   apiWorkers: 2
   hfsWorkers: 1
   previewsWorker: true
+  ca:
+    path: /etc/pryv/ca                            # cluster CA private key + cert (back this up!)
+  tokens:
+    path: /var/lib/pryv/bootstrap-tokens.json     # one-time join-token store
 
 # === PER-CORE: schema migrations ===
 # Engine-agnostic schema migration runner (see storages/interfaces/migrations/).

@@ -19,6 +19,10 @@ module.exports = function system (expressApp, app) {
   const logger = getLogger('routes:system');
   /**
    * Handle common parameters.
+   *
+   * Bootstrap ack uses a one-time join token instead of the admin key, so it
+   * needs to be excluded from the admin-key gate. Everything else under
+   * /system/* still requires `auth.adminAccessKey`.
    */
   expressApp.all(Paths.System + '/*', setMinimalMethodContext, checkAuth);
   expressApp.post(Paths.System + '/create-user', contentType.json, setMethodId('system.createUser'), createUser);
@@ -42,6 +46,29 @@ module.exports = function system (expressApp, app) {
   // --------------------- admin cores listing ----------------- //
   expressApp.get(Paths.System + '/admin/cores', setMethodId('system.listCores'), function (req, res, next) {
     systemAPI.call(req.context, {}, methodCallback(res, next, 200));
+  });
+  // --------------------- bootstrap ack ----------------- //
+  // POST /system/admin/cores/ack — called by a freshly bootstrapped core.
+  // Auth is the one-time join token in the request body, NOT the admin key
+  // (see bypass in checkAuth below). The handler verifies the token via
+  // TokenStore, flips PlatformDB's `available:true`, returns a cluster snapshot.
+  expressApp.post(Paths.System + '/admin/cores/ack', contentType.json, async (req, res, next) => {
+    try {
+      const TokenStore = require('business/src/bootstrap').TokenStore;
+      const ackHandler = require('business/src/bootstrap').ackHandler;
+      const tokensPath = config.get('cluster:tokens:path');
+      if (!tokensPath) {
+        throw new Error('cluster.tokens.path is not configured');
+      }
+      const tokenStore = new TokenStore({ path: tokensPath });
+      const platformDB = require('storages').platformDB;
+      const handle = ackHandler.makeHandler({ tokenStore, platformDB });
+      const result = await handle({ body: req.body, ip: req.ip });
+      res.status(result.statusCode).json(result.body);
+    } catch (err) {
+      logger.error('cores/ack handler failed: ' + err.message);
+      next(err);
+    }
   });
   // --------------------- user validation (pre-registration) ----------------- //
   expressApp.post(Paths.System + '/users/validate', contentType.json, async (req, res, next) => {
@@ -184,6 +211,11 @@ module.exports = function system (expressApp, app) {
   // Checks if `req` contains valid authorization to access the system routes.
   //
   function checkAuth (req, res, next) {
+    // Bootstrap ack uses one-time join token instead of adminAccessKey.
+    // The handler itself verifies the token; admit the request unconditionally.
+    if (req.method === 'POST' && req.path === Paths.System + '/admin/cores/ack') {
+      return next();
+    }
     const secret = req.headers.authorization;
     if (secret == null || secret !== adminAccessKey) {
       logger.warn('Unauthorized attempt to access system route', {
