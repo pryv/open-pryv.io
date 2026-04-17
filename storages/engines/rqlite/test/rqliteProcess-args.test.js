@@ -153,6 +153,7 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
       assert(args.includes('-node-verify-client'));
       assert.equal(args[args.indexOf('-raft-addr') + 1], '0.0.0.0:4002');
       assert.equal(args[args.indexOf('-raft-adv-addr') + 1], '10.0.0.5:4002');
+      assert.equal(args[args.indexOf('-bootstrap-expect') + 1], '1');
       assert.equal(args[args.length - 1], '/var/pryv/rqlite-data');
     });
   });

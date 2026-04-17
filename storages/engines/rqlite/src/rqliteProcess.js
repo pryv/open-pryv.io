@@ -78,7 +78,12 @@ function buildArgs (opts) {
     const discoName = 'lsc.' + dnsDomain;
     args.push(
       '-disco-mode', 'dns',
-      '-disco-config', JSON.stringify({ name: discoName, port: raftPort })
+      '-disco-config', JSON.stringify({ name: discoName, port: raftPort }),
+      // rqlited requires -bootstrap-expect together with -disco-mode for
+      // voting nodes. 1 lets the first core come up alone; subsequent
+      // cores find it via the DNS record and join. Once the cluster is
+      // formed, -bootstrap-expect is ignored on restarts (raft log wins).
+      '-bootstrap-expect', '1'
     );
   }
 
