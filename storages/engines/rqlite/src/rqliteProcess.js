@@ -56,15 +56,23 @@ function buildArgs (opts) {
 
   const advAddr = (coreIp || '127.0.0.1');
   const httpAddr = `0.0.0.0:${httpPort}`;
-  const raftAddr = advAddr + ':' + raftPort;
+  // Multi-core: advAddr is the core's public IP which is NAT'd on EC2 and
+  // most cloud VMs (the network interface doesn't actually hold that IP).
+  // Bind 0.0.0.0 for both listeners and pass -*-adv-addr so peers still
+  // contact us at the public address. Single-core stays on 127.0.0.1.
+  const isMultiCore = (coreIp != null);
+  const raftBindAddr = isMultiCore ? `0.0.0.0:${raftPort}` : `${advAddr}:${raftPort}`;
 
   const args = [
     '-node-id', coreId,
     '-http-addr', httpAddr,
     '-http-adv-addr', advAddr + ':' + httpPort,
-    '-raft-addr', raftAddr,
-    '-raft-cluster-remove-shutdown' // graceful leave on shutdown
+    '-raft-addr', raftBindAddr
   ];
+  if (isMultiCore) {
+    args.push('-raft-adv-addr', `${advAddr}:${raftPort}`);
+  }
+  args.push('-raft-cluster-remove-shutdown'); // graceful leave on shutdown
 
   if (dnsDomain != null) {
     const discoName = 'lsc.' + dnsDomain;

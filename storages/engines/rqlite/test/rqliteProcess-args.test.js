@@ -37,11 +37,22 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
       ]);
     });
 
-    it('uses coreIp for advertised addresses when provided', () => {
+    it('binds 0.0.0.0 and advertises coreIp separately in multi-core (NAT-aware)', () => {
       const args = buildArgs({ ...baseOpts, coreIp: '10.0.0.5' });
       assert(args.includes('-http-adv-addr'));
       assert.equal(args[args.indexOf('-http-adv-addr') + 1], '10.0.0.5:4001');
-      assert.equal(args[args.indexOf('-raft-addr') + 1], '10.0.0.5:4002');
+      // Raft listens on all interfaces; advertises the public IP to peers.
+      // Binding the public IP directly fails on NAT'd clouds (EC2) where
+      // the network interface only holds the private IP.
+      assert.equal(args[args.indexOf('-raft-addr') + 1], '0.0.0.0:4002');
+      assert(args.includes('-raft-adv-addr'));
+      assert.equal(args[args.indexOf('-raft-adv-addr') + 1], '10.0.0.5:4002');
+    });
+
+    it('single-core (no coreIp) stays on loopback without -raft-adv-addr', () => {
+      const args = buildArgs({ ...baseOpts });
+      assert.equal(args[args.indexOf('-raft-addr') + 1], '127.0.0.1:4002');
+      assert(!args.includes('-raft-adv-addr'));
     });
 
     it('does not add any TLS flag when tls option is null', () => {
@@ -140,7 +151,8 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
       assert(args.includes('-disco-mode'));
       assert(args.includes('-node-ca-cert'));
       assert(args.includes('-node-verify-client'));
-      assert.equal(args[args.indexOf('-raft-addr') + 1], '10.0.0.5:4002');
+      assert.equal(args[args.indexOf('-raft-addr') + 1], '0.0.0.0:4002');
+      assert.equal(args[args.indexOf('-raft-adv-addr') + 1], '10.0.0.5:4002');
       assert.equal(args[args.length - 1], '/var/pryv/rqlite-data');
     });
   });
