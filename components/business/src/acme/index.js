@@ -9,6 +9,7 @@ const AtRestEncryption = require('./AtRestEncryption');
 const AcmeClient = require('./AcmeClient');
 const certUtils = require('./certUtils');
 const { CertRenewer, PlatformDBDnsWriter, acmeChallengeName, AT_REST_PURPOSE } = require('./CertRenewer');
+const { FileMaterializer, runRotateScript } = require('./FileMaterializer');
 
 module.exports = {
   AtRestEncryption,
@@ -17,5 +18,7 @@ module.exports = {
   CertRenewer,
   PlatformDBDnsWriter,
   acmeChallengeName,
-  AT_REST_PURPOSE
+  AT_REST_PURPOSE,
+  FileMaterializer,
+  runRotateScript
 };
