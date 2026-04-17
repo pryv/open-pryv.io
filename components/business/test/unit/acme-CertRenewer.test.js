@@ -200,8 +200,8 @@ describe('[CERTRENEWER] CertRenewer', function () {
       assert.ok(Number.isInteger(result.expiresAt));
 
       // DNS writer got the right challenge name (wildcard stripped)
-      assert.deepEqual(writer.created, [['_acme-challenge.example.test', 'ka-value']]);
-      assert.deepEqual(writer.removed, [['_acme-challenge.example.test', 'ka-value']]);
+      assert.deepEqual(writer.created, [['_acme-challenge', 'ka-value']]);
+      assert.deepEqual(writer.removed, [['_acme-challenge', 'ka-value']]);
 
       // Stored cert has PEMs and the keyPem is encrypted
       const storedCert = db._kv.get('cert/*.example.test');
@@ -228,7 +228,7 @@ describe('[CERTRENEWER] CertRenewer', function () {
       await renewer.renew({
         hostname: '*.example.test', dnsWriter: writer
       });
-      assert.deepEqual(writer.created, ['_acme-challenge.example.test']);
+      assert.deepEqual(writer.created, ['_acme-challenge']);
     });
 
     it('rejects missing hostname / dnsWriter', async () => {
@@ -311,10 +311,12 @@ describe('[CERTRENEWER] PlatformDBDnsWriter', () => {
 });
 
 describe('[CERTRENEWER] acmeChallengeName()', () => {
-  it('strips leading wildcard', () => {
-    assert.equal(acmeChallengeName('*.mc.example.com'), '_acme-challenge.mc.example.com');
-  });
-  it('leaves bare host alone', () => {
-    assert.equal(acmeChallengeName('host.example.com'), '_acme-challenge.host.example.com');
+  it('returns the short-form subdomain key (relative to dns.domain)', () => {
+    // DnsServer matches on the zone-relative prefix, not the FQDN.
+    // All LE DNS-01 challenges for a multi-SAN cert land at the same
+    // _acme-challenge.{zone} record, so a single short key suffices.
+    assert.equal(acmeChallengeName('*.mc.example.com'), '_acme-challenge');
+    assert.equal(acmeChallengeName('mc.example.com'), '_acme-challenge');
+    assert.equal(acmeChallengeName('host.example.com'), '_acme-challenge');
   });
 });

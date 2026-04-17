@@ -208,9 +208,31 @@ class PlatformDBDnsWriter {
   }
 }
 
+/**
+ * Short-form subdomain key for the _acme-challenge TXT record.
+ *
+ * The full record's FQDN is `_acme-challenge.{zone}` — but our
+ * embedded DNS server (components/dns-server/src/DnsServer.js) matches
+ * on the short form relative to `dns.domain`: it extracts
+ * `prefix = qname.slice(0, -(dns.domain.length + 1))` and looks up
+ * `this.#staticEntries[prefix]`. So for a cert covering
+ * `*.example.com + example.com` with `dns.domain: example.com`, the
+ * PlatformDB key is just `_acme-challenge` — any other shape silently
+ * fails to resolve during LE validation.
+ *
+ * This function used to return the FQDN shape; Plan 36 pre-prod
+ * rollout surfaced the mismatch with DnsServer.
+ *
+ * @param {string} identifierValue - LE authz identifier (e.g. `*.example.com`)
+ * @returns {string} always `_acme-challenge`
+ */
+// identifierValue is ignored today — LE's DNS-01 spec says all challenges
+// for a multi-SAN cert land at the same `_acme-challenge.{zone}` TXT
+// record, with multiple values. Argument kept for API stability + future
+// multi-zone extensions.
+// eslint-disable-next-line no-unused-vars
 function acmeChallengeName (identifierValue) {
-  const host = String(identifierValue).replace(/^\*\./, '');
-  return '_acme-challenge.' + host;
+  return '_acme-challenge';
 }
 
 module.exports = {
