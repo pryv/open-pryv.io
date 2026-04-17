@@ -37,6 +37,42 @@
 
 Context: end-to-end persistence of runtime DNS records (PlatformDB interface, rqlite backend, `DnsServer` load-on-start + 30 s refresh + write-through, `POST /reg/records` persistence, existing `[RGRC]` test) was shipped earlier in the 2.0.0-pre line. This change adds the DELETE symmetry and the offline-capable admin CLI — the remaining gap for operating DNS records in production without depending on the HTTP API being healthy.
 
+## Auto-renewed public TLS certificates (Let's Encrypt)
+
+Green-field installs previously needed separate DNS + ACME + reverse-proxy setup before serving a single HTTPS request; multi-core wildcards required a DNS plugin plus manual cert copies across every node. Opt-in `letsEncrypt.*` folds all of that into the core: issuance, renewal, cluster-wide distribution, hot-swap on rotation.
+
+### New module `components/business/src/acme/` (8 files)
+- `AtRestEncryption.js` — HKDF-SHA256 key derivation + AES-256-GCM envelope. Source-agnostic (caller supplies the byte-string + purpose label). 22 `[ATRENC]` tests.
+- `AcmeClient.js` — stateless wrapper over `acme-client@5.4.0`: `createAccount()` + `issueCert()`. Parses leaf-cert validity from the returned PEM so callers get `{certPem, chainPem, keyPem, issuedAt, expiresAt}`. Injectable `acmeLib` for unit tests. 9 `[ACMECLIENT]` tests.
+- `certUtils.js` — `splitCertChain(pem)` (leaf vs. chain), `parseValidity(pem)` (via `node:crypto X509Certificate`), `hostnameToDirName('*.x.com')` → `'wildcard.x.com'`. 8 `[CERTUTILS]` tests.
+- `CertRenewer.js` — glues AcmeClient + AtRestEncryption + PlatformDB. `ensureAccount()` (idempotent; persists encrypted ACME account), `renew({hostname, dnsWriter})` (issues + encrypts + persists + returns metadata), `getCertificate(hostname)` (decrypted). Strips wildcard prefix in challenge record names. 15 `[CERTRENEWER]` tests.
+- `PlatformDBDnsWriter` — default DNS-01 writer for multi-core with embedded DNS. `setDnsRecord` appends to existing TXT values so apex + wildcard challenges coexist; propagation wait default 15 s.
+- `FileMaterializer.js` — per-core polling loop. SHA-256 fingerprint-based change detection; atomic disk writes; `onRotate` fire-and-log semantics. `runRotateScript` spawns an operator-supplied absolute-path script with `PRYV_CERT_*` env vars; SIGKILL-timeouts at 30 s with exitCode 124. 11 `[FILEMAT]` tests.
+- `deriveHostnames.js` — topology → `{commonName, altNames, challenge}` in priority order: `dnsLess.publicUrl` → HTTP-01 single host · `core.url` → HTTP-01 single host · `dns.domain` → DNS-01 wildcard + apex. Throws on missing with actionable error. Treats `REPLACE ME` placeholder as unset. 8 `[DERIVEHOSTS]` tests.
+- `AcmeOrchestrator.js` — intervals and start/stop. Materialize tick (every core, default 60 s) + renew tick (only on the CA-holder core with `letsEncrypt.certRenewer: true`, default 24 h). Both prime on start(). `build({config, platformDB, atRestKey, onRotate})` is the operator-facing factory that `bin/master.js` calls. 10 `[ACMEORCH]` tests.
+
+### PlatformDB primitives
+- `storages/interfaces/platformStorage/PlatformDB.{js,d.ts}` — six new methods: `setAcmeAccount/getAcmeAccount` (singleton) + `setCertificate/getCertificate/listCertificates/deleteCertificate` (per hostname, wildcard keys stored as literals e.g. `tls-cert/*.mc.example.com`).
+- `storages/engines/rqlite/src/DBrqlite.js` — impl. Keys: `tls-acme-account`, `tls-cert/<hostname>`.
+- `components/platform/test/conformance/PlatformDB.test.js` — 9 new cases (`setAcmeAccount` / `getAcmeAccount` singleton + overwrite; `setCertificate` / `getCertificate` round-trip + null + overwrite + wildcard keys; `listCertificates` metadata-only contract; `deleteCertificate`; namespace isolation between tls-cert / dns-record / user-unique).
+
+### Wiring
+- `config/default-config.yml` — new `letsEncrypt:` block (9 keys: `enabled`, `email`, `atRestKey`, `renewBeforeDays`, `staging`, `tlsDir`, `certRenewer`, `onRotateScript`, `directoryUrl`). `atRestKey` is operator-sync responsibility (same shape as `auth.adminAccessKey`).
+- `bin/master.js` — when `letsEncrypt.enabled`, decode `atRestKey` (base64 → 32 bytes), call `buildAcmeOrchestrator()`, start it. Shutdown path (SIGTERM/SIGINT) calls `.stop()`. Misconfig logs but doesn't take down master. `onRotate` callback broadcasts `acme:rotate` cluster IPC to every live worker.
+- `components/api-server/src/server.js` — keeps `this.httpsServer` reference; new `reloadTls()` re-reads `http.ssl.{key,cert,ca}File` from disk and calls `setSecureContext()`. Extracted `buildHttpsOptions()` helper.
+- `components/api-server/bin/server` — `process.on('message', {type:'acme:rotate'})` → `server.reloadTls()`. No-op on non-HTTPS workers (hfs, previews, http-only api).
+- `components/api-server/src/routes/system.js` — new `GET /system/admin/certs` returning `listCertificates()` metadata + `daysUntilExpiry`. admin-key gated by the existing `checkAuth`.
+
+### Integration test
+- `components/business/test/unit/acme-integration.test.js` `[ACMEINT]` — wires real rqlite + mocked acme-client + real FileMaterializer. Three assertions: initial issuance (encrypted in rqlite, decrypted keyPem on disk 0600), no-op on not-yet-due, rotation on forced near-expiry. Raw rqlite row scanned for `BEGIN PRIVATE KEY` marker — guards against plaintext regressions. Skips gracefully when rqlite isn't reachable.
+
+### Real-world validation (outside the CI test suite)
+A 3-level spike against Let's Encrypt STAGING in `_plans/35-letsencrypt-integration-atwork/spike/` proved the end-to-end flow: our dns2 authoritative server published `_acme-challenge.test-dns.datasafe.dev` TXT records through the full `. → .dev → datasafe.dev (Infomaniak) → test-dns (us)` delegation chain. LE issued a real staging wildcard cert (`*.test-dns.datasafe.dev + test-dns.datasafe.dev`). **15 distinct validator IPs across 5+ AWS regions** (Frankfurt, Singapore, Stockholm, Oregon, Ohio) all retrieved TXT + CAA correctly — multi-perspective validation fully exercised. Spike also confirmed `https.Server.setSecureContext()` hot-swaps the cert for new TLS connections without breaking in-flight keep-alive HTTP sessions.
+
+### Test totals
+- 83 acme-* unit tests + 1 integration test, all green.
+- 9 new PlatformDB conformance tests (rqlite: 30 → 39).
+
 ## Multi-core bootstrap CLI + rqlite mTLS
 
 Single-to-multi-core upgrade no longer requires hand-editing override YAML on the new host or copying platform secrets across by hand. An operator runs one CLI on the existing core, transfers a sealed bundle to the new core, and starts the new core in `--bootstrap` mode. Raft traffic between cores is mutually-authenticated TLS by default.

@@ -155,6 +155,39 @@ NODE_ENV=production node bin/master.js --config override.yml
 
 > **HFS in standalone mode**: The HFS high-frequency series endpoints (`/{user}/events/{id}/series`) are served on port 4000. In standalone mode without nginx, clients need to reach port 4000 directly. If your firewall only exposes port 443, you will need nginx (see below) or to configure HFS on the same port (not yet supported).
 
+### Option C: built-in HTTPS with auto-renewed Let's Encrypt certificate
+
+You can skip the manual certbot step entirely. Add the `letsEncrypt` block and leave `http.ssl.certFile` / `keyFile` pointing at the managed paths:
+
+```yaml
+http:
+  ip: 0.0.0.0
+  port: 443
+  ssl:
+    keyFile: var-pryv/tls/your-domain.com/privkey.pem
+    certFile: var-pryv/tls/your-domain.com/fullchain.pem
+dnsLess:
+  isActive: true
+  publicUrl: https://your-domain.com
+letsEncrypt:
+  enabled: true
+  email: ops@your-domain.com
+  atRestKey: '<base64 of 32 random bytes>'   # see below
+  certRenewer: true                          # single-core → this IS the renewer
+```
+
+Generate the `atRestKey` once:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+Paste the resulting string into the YAML (mode 0600 on the override file — it carries admin-level material). In a multi-core deployment every core must have the **same** `atRestKey`; `certRenewer: true` is set on exactly one core (usually the cluster CA holder).
+
+The core derives hostnames from your topology — wildcards for `dns.domain`, single host for `dnsLess.publicUrl` or `core.url` — so there is no separate `hostnames` list to keep in sync. The renewer handles initial issuance, renewal (default 30 days before expiry), and cluster-wide replication via rqlite. Cert files land at `var-pryv/tls/<hostname>/{fullchain.pem,privkey.pem}` (wildcards become `wildcard.<apex>`). Operators with a reverse proxy can point `letsEncrypt.onRotateScript` at a script (`nginx -s reload`, `systemctl reload caddy`, …) — see `SINGLE-TO-MULTIPLE.md` for the multi-core walkthrough and the Cluster security section below.
+
+When `letsEncrypt.enabled: false` (the default), everything in Options A and B works exactly as before.
+
 
 ## Running — behind nginx
 
