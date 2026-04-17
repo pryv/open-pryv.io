@@ -6,7 +6,11 @@
  */
 
 const AtRestEncryption = require('./AtRestEncryption');
+const AcmeClient = require('./AcmeClient');
+const certUtils = require('./certUtils');
 
 module.exports = {
-  AtRestEncryption
+  AtRestEncryption,
+  AcmeClient,
+  certUtils
 };
