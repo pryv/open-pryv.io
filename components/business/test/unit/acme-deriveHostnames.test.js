@@ -40,14 +40,36 @@ describe('[DERIVEHOSTS] deriveHostnames', () => {
     assert.equal(r.challenge, 'dns-01');
   });
 
-  it('core.url wins over dns.domain when both are set (per priority in Plan 35 PLAN.md)', () => {
+  it('core.url wins over dns.domain when dns.active is FALSE (DNSless multi-core)', () => {
     const r = deriveHostnames(cfg({
       'dnsLess:isActive': false,
+      'dns:active': false,
       'core:url': 'https://core1.example.com/',
       'dns:domain': 'mc.example.com'
     }));
     assert.equal(r.commonName, 'core1.example.com');
     assert.equal(r.challenge, 'http-01');
+  });
+
+  it('dns.active: true + dns.domain → wildcard DNS-01 even when core.url is set (auto-derived from core-identity)', () => {
+    const r = deriveHostnames(cfg({
+      'dnsLess:isActive': false,
+      'dns:active': true,
+      'core:url': 'https://core-use1.mc.example.com',    // auto-derived
+      'dns:domain': 'mc.example.com'
+    }));
+    assert.equal(r.commonName, '*.mc.example.com');
+    assert.deepEqual(r.altNames, ['mc.example.com']);
+    assert.equal(r.challenge, 'dns-01');
+  });
+
+  it('dns.domain set without dns.active → still wildcard (external-DNS-plugin slot)', () => {
+    const r = deriveHostnames(cfg({
+      'dnsLess:isActive': false,
+      'dns:domain': 'mc.example.com'
+    }));
+    assert.equal(r.commonName, '*.mc.example.com');
+    assert.equal(r.challenge, 'dns-01');
   });
 
   it('dnsLess wins over core.url and dns.domain', () => {
