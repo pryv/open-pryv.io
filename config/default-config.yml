@@ -279,6 +279,27 @@ cluster:
   tokens:
     path: /var/lib/pryv/bootstrap-tokens.json     # one-time join-token store
 
+# === MIXED ===
+# `enabled` + `email` + `atRestKey` are PLATFORM-WIDE (every core must agree);
+# `certRenewer` + `tlsDir` + `onRotateScript` are PER-CORE.
+# `atRestKey` is operator-sync responsibility — same shape as `auth.adminAccessKey`:
+# must be identical across every core, pasted into each override-config.yml.
+# Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
+#
+# Hostnames + challenge type (http-01 / dns-01) are DERIVED from the topology
+# (dnsLess.publicUrl / core.url / dns.domain) — there is intentionally no
+# `letsEncrypt.hostnames` field so the two can't drift.
+letsEncrypt:
+  enabled: false                                  # feature off by default — existing deployments unchanged
+  email: 'REPLACE ME'                             # ACME account contact (required when enabled)
+  atRestKey: 'REPLACE ME'                         # base64 of 32 random bytes; encrypts cert + account keys at rest in rqlite
+  renewBeforeDays: 30
+  staging: false                                  # use Let's Encrypt staging (testing only)
+  tlsDir: var-pryv/tls                            # per-hostname dirs live under this root
+  certRenewer: false                              # set true on exactly ONE core — typically the cluster CA holder
+  onRotateScript: null                            # optional absolute path; invoked after every successful rotation on this core
+  directoryUrl: null                              # override to point at Pebble or an internal ACME for testing
+
 # === PER-CORE: schema migrations ===
 # Engine-agnostic schema migration runner (see storages/interfaces/migrations/).
 # When true, master.js applies pending migrations against each migration-capable

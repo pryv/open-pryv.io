@@ -140,6 +140,41 @@ if (cluster.isPrimary) {
       log('DNS server started');
     }
 
+    // --- Let's Encrypt orchestrator ---
+    // On every core: poll PlatformDB every minute, write rotated cert to
+    // tlsDir/<host>/ on disk, invoke letsEncrypt.onRotateScript if set.
+    // On the CA-holder (letsEncrypt.certRenewer: true) additionally runs
+    // the daily ACME renewal loop (initial issuance + renew-when-expiring).
+    let acmeOrchestrator = null;
+    if (config.get('letsEncrypt:enabled')) {
+      try {
+        const { getPlatform } = require('../components/platform/src');
+        const platform = await getPlatform();
+        const { buildAcmeOrchestrator } = require('business/src/acme');
+        const atRestKeyB64 = config.get('letsEncrypt:atRestKey');
+        if (!atRestKeyB64 || atRestKeyB64 === 'REPLACE ME') {
+          throw new Error('letsEncrypt.atRestKey is required when letsEncrypt.enabled=true (generate with `node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"`)');
+        }
+        const atRestKey = Buffer.from(atRestKeyB64, 'base64');
+        if (atRestKey.length !== 32) {
+          throw new Error(`letsEncrypt.atRestKey must decode to 32 bytes; got ${atRestKey.length}`);
+        }
+        acmeOrchestrator = buildAcmeOrchestrator({
+          config,
+          platformDB: platform._db || require('../storages').platformDB,
+          atRestKey,
+          log: (m) => log(m.startsWith('[acme]') ? m : '[acme] ' + m)
+        });
+        acmeOrchestrator.start();
+        log('Let\'s Encrypt orchestrator started');
+      } catch (err) {
+        log('Let\'s Encrypt orchestrator FAILED to start: ' + err.message);
+        if (process.env.DEBUG) console.error(err.stack);
+        // Intentionally do NOT exit the master — operators can run with a
+        // misconfigured letsEncrypt block and fix it without restart.
+      }
+    }
+
     // Track worker types for targeted restart
     const workerTypes = new Map(); // worker.id → 'api' | 'hfs' | 'previews'
     let shuttingDown = false;
@@ -246,6 +281,10 @@ if (cluster.isPrimary) {
       clearInterval(keepAlive);
       for (const id in cluster.workers) {
         cluster.workers[id].process.kill('SIGTERM');
+      }
+      // Stop ACME orchestrator (clears intervals)
+      if (acmeOrchestrator) {
+        acmeOrchestrator.stop();
       }
       // Stop DNS server
       if (dnsServer) {

@@ -47,6 +47,28 @@ module.exports = function system (expressApp, app) {
   expressApp.get(Paths.System + '/admin/cores', setMethodId('system.listCores'), function (req, res, next) {
     systemAPI.call(req.context, {}, methodCallback(res, next, 200));
   });
+  // --------------------- admin certs listing ----------------- //
+  // Read-only. Returns the cert metadata PlatformDB has (hostname +
+  // validity dates) — never the cert or key material itself.
+  expressApp.get(Paths.System + '/admin/certs', async (req, res, next) => {
+    try {
+      const platformDB = require('storages').platformDB;
+      const certs = typeof platformDB.listCertificates === 'function'
+        ? await platformDB.listCertificates()
+        : [];
+      res.status(200).json({
+        certs: certs.map(c => ({
+          hostname: c.hostname,
+          issuedAt: c.issuedAt,
+          expiresAt: c.expiresAt,
+          daysUntilExpiry: Math.round((c.expiresAt - Date.now()) / (24 * 3600 * 1000))
+        }))
+      });
+    } catch (err) {
+      logger.error('admin/certs handler failed: ' + err.message);
+      next(err);
+    }
+  });
   // --------------------- bootstrap ack ----------------- //
   // POST /system/admin/cores/ack — called by a freshly bootstrapped core.
   // Auth is the one-time join token in the request body, NOT the admin key
