@@ -406,6 +406,44 @@ class RestoreOrchestrator {
       await this.platformDB.importAll(data);
     }
     this.logger.info(`Platform data restored: ${data.length} records${skipped ? ` (${skipped} unsupported keys skipped)` : ''}`);
+
+    // v1 enterprise register mappings → v2 user-core rows.
+    //
+    // The v1 register's `{username}:server` Redis entries are exported to
+    // `register/servers.jsonl.gz` by `dev-migrate-v1-v2 export-register.js`.
+    // On a v2 multi-core destination each username must have a corresponding
+    // `user-core/<username>` row in PlatformDB so the embedded DNS knows
+    // which core to route `{username}.{domain}` to. Without this the poll /
+    // user-lookup flow returns NXDOMAIN for every restored user.
+    //
+    // Mapping: the v1 server value is a hostname (e.g. "co1.pryv.me") that
+    // no longer exists in v2. We fall back to the single registered core
+    // on the destination — this is the common case for a single-core
+    // restore (e.g. 14 users on me-dns1 → all land on core-use1).
+    // Multi-core destinations that want a specific core mapping can be
+    // supported later via an options.coreMap callback.
+    let serverMappingsCount = 0;
+    try {
+      const cores = typeof this.platformDB.getAllCoreInfos === 'function'
+        ? await this.platformDB.getAllCoreInfos()
+        : [];
+      const availableCores = cores.filter(c => c.available !== false);
+      const defaultCoreId = availableCores.length === 1 ? availableCores[0].id : null;
+      if (defaultCoreId != null) {
+        for await (const mapping of await reader.readServerMappings()) {
+          if (typeof mapping.username !== 'string') continue;
+          await this.platformDB.setUserCore(mapping.username, defaultCoreId);
+          serverMappingsCount++;
+        }
+      }
+    } catch (err) {
+      // readServerMappings is optional (default impl is a no-op) — any
+      // error here should not fail the whole restore.
+      this.logger.warn('Restoring register/ server mappings failed: ' + err.message);
+    }
+    if (serverMappingsCount > 0) {
+      this.logger.info(`Register server mappings restored: ${serverMappingsCount} user-core rows written`);
+    }
   }
 }
 

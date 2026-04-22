@@ -46,5 +46,9 @@ const logger = getLogger('serverRoot');
     } else {
       console.log(e);
     }
+    // Plan 37 Phase D finding: boiler's file logger swallows errors when the
+    // worker dies during startup — also mirror to stderr so the master's
+    // `api worker died (code=1)` message has an actionable cause attached.
+    process.stderr.write('[api-server fatal] ' + (e && e.stack || e) + '\n');
     process.exit(1);
   });

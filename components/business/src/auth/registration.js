@@ -57,12 +57,68 @@ class Registration {
   }
 
   /**
+   * Multi-core cross-core forward.
+   *
+   * When the selected hosting maps to a different core than the landing
+   * core, proxy the POST body to the target core's /users endpoint and
+   * return its response to the client transparently. This keeps
+   * registration atomic on the target (unique-field reservation,
+   * user-core assignment, user creation, welcome mail all happen there)
+   * and avoids the earlier "orphaned user-core + empty PG" failure mode
+   * where non-compliant SDKs ignored the redirect payload.
+   *
+   * Downstream chain steps must no-op when `result.forwarded` is set.
+   */
+  async forwardIfCrossCore (context, params, result, next) {
+    try {
+      if (!this.platform || this.platform.isSingleCore) return next();
+      const selectedCoreId = await this.platform.selectCoreForRegistration(params.hosting);
+      if (selectedCoreId == null || selectedCoreId === this.platform.coreId) {
+        return next();
+      }
+      const targetUrl = this.platform.coreIdToUrl(selectedCoreId);
+      // 30 s timeout: a hung target must not wedge the landing worker.
+      // 30 s matches Node fetch's default connect timeout + leaves headroom
+      // for password-hashing cost on the target.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
+      let response;
+      try {
+        response = await fetch(targetUrl + '/users', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(params),
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const err = new Error(body?.error?.message || ('Cross-core registration forward failed: ' + response.status));
+        err.id = body?.error?.id || 'cross-core-registration-failed';
+        err.httpStatus = response.status;
+        return next(err);
+      }
+      // Strip the target's `meta` block — the local api-server will add
+      // its own meta on the way out. Copy every other field into result.
+      const { meta, ...fields } = body;
+      Object.assign(result, fields);
+      result.forwarded = true;
+      return next();
+    } catch (err) {
+      return next(err);
+    }
+  }
+
+  /**
    * Validate registration on PlatformDB:
    * - Check invitation token
    * - Check reserved usernames
    * - Check username + unique field availability (atomically reserved)
    */
   async validateOnPlatform (context, params, result, next) {
+    if (result.forwarded) return next();
     try {
       const uniqueFields = { username: context.newUser.username };
       for (const [streamIdWithPrefix, streamSettings] of Object.entries(this.accountStreamsSettings)) {
@@ -74,7 +130,8 @@ class Registration {
       const validation = await this.platform.validateRegistration(
         context.newUser.username,
         context.newUser.invitationToken,
-        uniqueFields
+        uniqueFields,
+        params.hosting
       );
       // Multi-core: if registration should happen on another core, return redirect
       if (validation?.redirect) {
@@ -91,8 +148,9 @@ class Registration {
    * Save user to the database, then store indexed fields in PlatformDB
    */
   async createUser (context, params, result, next) {
-    // Multi-core redirect: skip local user creation
-    if (result.redirect) return next();
+    // Multi-core: either legacy redirect flow OR new transparent forward
+    // already returned the target's response — nothing to do locally.
+    if (result.redirect || result.forwarded) return next();
     // if it is testing user, skip registration process
     if (context.newUser.username === 'backloop') {
       result.id = 'dummy-test-user';
@@ -115,7 +173,17 @@ class Registration {
    * Build response for user registration
    */
   async buildResponse (context, params, result, next) {
-    // Multi-core redirect: tell client to re-register on the correct core
+    // Transparent cross-core forward: target's response already in result.
+    // Keep `result.forwarded` set so sendWelcomeMail skips (target core
+    // already triggered the welcome email); strip it in the final
+    // response-shaping step instead (or let it be — the HTTP response
+    // schema's additionalProperties=false would reject it, so we strip
+    // just before returning).
+    if (result.forwarded) {
+      return next();
+    }
+    // Legacy redirect: tell client to re-register on the correct core.
+    // Kept for any v1-era SDK that still expects this shape.
     if (result.redirect) {
       result.core = { url: result.redirect };
       delete result.redirect;
@@ -139,7 +207,21 @@ class Registration {
   sendWelcomeMail (context, params, result, next) {
     // Multi-core redirect: no user created locally, skip mail
     if (result.core && !result.username) return next();
-    const emailSettings = this.servicesSettings.email;
+    // Transparent cross-core forward: target core already sent the mail.
+    // Skip here so the user doesn't get two welcome emails from two
+    // different cores.
+    if (result.forwarded) {
+      delete result.forwarded;
+      return next();
+    }
+    const emailSettings = this.servicesSettings?.email;
+    // No email service configured → skip welcome mail silently.
+    // Phase D: on a fresh bundle-bootstrapped core, `services.email` may
+    // be absent entirely; the previous code threw
+    // "Cannot read properties of undefined (reading 'enabled')" and
+    // failed the whole registration response even though createUser had
+    // already succeeded.
+    if (!emailSettings) return next();
     // Skip this step if welcome mail is deactivated
     const emailActivation = emailSettings.enabled;
     if (emailActivation?.welcome === false) {

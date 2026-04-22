@@ -60,6 +60,11 @@ if (cluster.isPrimary) {
         plugin: require('../config/plugins/systemStreams')
       }, {
         plugin: require('../config/plugins/core-identity')
+      }, {
+        // Fail master startup if required service fields are missing so
+        // operators see the problem immediately rather than through
+        // api-server worker crash loops.
+        plugin: require('../config/plugins/config-validation')
       }]
     });
 
@@ -163,6 +168,7 @@ if (cluster.isPrimary) {
           config,
           platformDB: platform._db || require('../storages').platformDB,
           atRestKey,
+          dnsServer,
           onRotate: async (certPath, keyPath, hostname) => {
             // Broadcast to every live worker so their HTTPS servers hot-swap
             // to the rotated cert (Plan 35 Phase 4d). Workers that aren't
@@ -198,6 +204,13 @@ if (cluster.isPrimary) {
     const numApiWorkers = (configuredApiWorkers != null)
       ? configuredApiWorkers
       : Math.min(os.cpus().length, 4);
+
+    // Propagate CLI argv (e.g. `--config host-config.yml`) to every worker.
+    // Without this, cluster.fork() runs master.js again with just argv[0,1],
+    // workers fall back to NODE_ENV-based config, and deployments relying
+    // on --config silently use the wrong storage engine / ports.
+    // (euc1 api workers were crash-looping on Mongo).
+    cluster.setupPrimary({ args: process.argv.slice(2) });
 
     log(`Forking ${numApiWorkers} API worker(s)`);
     for (let i = 0; i < numApiWorkers; i++) {

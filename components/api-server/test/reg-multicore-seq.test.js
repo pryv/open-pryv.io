@@ -140,19 +140,47 @@ describe('[RGMC] register: multi-core', function () {
   }
 
   // ----------------------------------------------------------------
-  // 1. Registration redirect: user assigned to remote core
+  // 1. Cross-core registration: transparent server-side forward
+  //    changed the behaviour from "return redirect to
+  //    client" to "HTTPS-forward the POST to target, return target's
+  //    response". These tests stub global.fetch to simulate the target
+  //    core without booting a second instance. See reg-2core-seq.test.js
+  //    for the real-two-core e2e counterpart.
   // ----------------------------------------------------------------
-  describe('[MC01] registration redirect', function () {
+  describe('[MC01] registration cross-core forward', function () {
     let request;
     let mc01Snapshot;
+    let realFetch;
+    let forwardCalls;
+    let forwardHandler;
+
+    const TARGET_FORWARD_URL = buildCoreUrl(CORE_B) + '/users';
+
+    function installFetchInterceptor () {
+      realFetch = global.fetch;
+      global.fetch = async function (url, options) {
+        if (url === TARGET_FORWARD_URL) {
+          forwardCalls.push({ url, options });
+          if (!forwardHandler) {
+            throw new Error('no forwardHandler set');
+          }
+          return forwardHandler({ url, options });
+        }
+        return realFetch(url, options);
+      };
+    }
+
+    function restoreFetch () {
+      if (realFetch) global.fetch = realFetch;
+      realFetch = null;
+    }
 
     before(async function () {
-      // Snapshot PlatformDB before creating orphaned entries
       mc01Snapshot = (await getPlatformDB().exportAll()).filter(e => e.username != null);
 
       await setupMultiCore(CORE_A);
       await seedCore(CORE_B, { hosting: 'us-east-1' });
-      // Give core-a some users so core-b is preferred
+      // Give core-a some users so core-b is preferred by selectCoreForRegistration
       await getPlatformDB().setUserCore('existing1', CORE_A);
       await getPlatformDB().setUserCore('existing2', CORE_A);
 
@@ -162,14 +190,18 @@ describe('[RGMC] register: multi-core', function () {
       request = supertest(app.expressApp);
     });
 
+    beforeEach(function () {
+      forwardCalls = [];
+      forwardHandler = null;
+      installFetchInterceptor();
+    });
+
     afterEach(async function () {
-      // Restore PlatformDB — redirect tests create orphaned unique field
-      // reservations (user in PlatformDB but not in repository)
+      restoreFetch();
       await getPlatformDB().clearAll();
       if (mc01Snapshot.length > 0) {
         await getPlatformDB().importAll(mc01Snapshot);
       }
-      // Re-seed cores for next test
       await platform.registerSelf();
       await seedCore(CORE_B, { hosting: 'us-east-1' });
       await getPlatformDB().setUserCore('existing1', CORE_A);
@@ -178,34 +210,61 @@ describe('[RGMC] register: multi-core', function () {
 
     after(restoreSingleCore);
 
-    it('[MC01A] must return redirect when user is assigned to another core', async function () {
+    it('[MC01A] HTTPS-forwards POST to target core and returns target response', async function () {
       const username = 'mc01a' + cuid.slug().toLowerCase();
+      const fakeTargetApiEndpoint = 'https://tok@' + username + '.' + DOMAIN + '/';
+      forwardHandler = async () => ({
+        ok: true,
+        status: 201,
+        json: async () => ({
+          meta: { apiVersion: '2.0.0-pre.2', serverTime: 1.0 },
+          username,
+          apiEndpoint: fakeTargetApiEndpoint
+        })
+      });
+      // hosting=us-east-1 matches BOTH core-a and core-b; selectCoreForRegistration
+      // tiebreaks on load, picking core-b (0 users vs core-a's 2 existing*). So
+      // this exercises the genuine cross-core forward path deterministically.
       const res = await request.post('/users').send({
         appId: 'test-app',
         username,
         email: charlatan.Internet.email(),
         password: 'testpassword',
+        hosting: 'us-east-1',
         insurancenumber: charlatan.Number.number(3)
       });
       assert.strictEqual(res.status, 201,
         'registration should succeed: ' + JSON.stringify(res.body));
-      assert.ok(res.body.core, 'response must contain core object');
-      assert.strictEqual(res.body.core.url, buildCoreUrl(CORE_B),
-        'should redirect to core with fewest users');
-      assert.ok(!res.body.apiEndpoint, 'should not return apiEndpoint for redirect');
+      // Forward happened exactly once, to target core's /users
+      assert.strictEqual(forwardCalls.length, 1);
+      assert.strictEqual(forwardCalls[0].url, buildCoreUrl(CORE_B) + '/users');
+      // Target's response shape is what client sees (no legacy `core.url` redirect)
+      assert.strictEqual(res.body.username, username);
+      assert.strictEqual(res.body.apiEndpoint, fakeTargetApiEndpoint);
+      assert.ok(!res.body.core, 'forward path must not include legacy redirect shape');
     });
 
-    it('[MC01B] must assign user-to-core mapping in PlatformDB', async function () {
+    it('[MC01B] does NOT leak user-core row when forward fails — atomic', async function () {
       const username = 'mc01b' + cuid.slug().toLowerCase();
-      await request.post('/users').send({
+      forwardHandler = async () => { throw new Error('target unreachable'); };
+      const res = await request.post('/users').send({
         appId: 'test-app',
         username,
         email: charlatan.Internet.email(),
         password: 'testpassword',
+        hosting: 'us-east-1',
         insurancenumber: charlatan.Number.number(3)
       });
+      // Forward failed → error response
+      assert.notStrictEqual(res.status, 201);
+      // PlatformDB must not have a stranded user-core mapping. Previous
+      // design (legacy redirect) wrote it during validateRegistration
+      // BEFORE asking the client to retry, so non-compliant SDKs left
+      // orphaned rows. The forward approach owns the PlatformDB write
+      // on the target core, atomically with the user-data insert.
       const coreId = await platform.getUserCore(username);
-      assert.strictEqual(coreId, CORE_B, 'user should be mapped to core-b');
+      assert.strictEqual(coreId, null,
+        'user-core/' + username + ' must not exist when forward fails');
     });
   });
 

@@ -26,14 +26,25 @@ async function publicUrlToService (config) {
       ...(existing.features ? { features: existing.features } : {})
     }));
   } else {
-    // Multi-core: api uses {username}.{domain}, register on this core
+    // Multi-core: api uses {username}.{domain}, and reg/access use the
+    // distribution-reserved subdomains `reg.{domain}` / `access.{domain}`
+    // (the embedded DNS resolves both to all available cores — see
+    // DnsServer.RESERVED_SERVICE_NAMES). This keeps /service/info
+    // symmetric across cores and matches the v1 Pryv.io URL shape.
+    // Falls back to the core's own URL when dns.domain isn't set.
     const coreUrl = config.get('core:url');
     const dnsDomain = config.get('dns:domain');
     if (coreUrl && dnsDomain) {
+      const regUrl = 'https://reg.' + dnsDomain + '/';
+      const accessUrl = 'https://access.' + dnsDomain + '/access/';
+      // register/access URLs don't carry the `/reg/` path prefix —
+      // expressApp.js maps reg.{domain}/<path> → /reg/<path> internally
+      // in multi-core mode, so clients see a clean root-based URL.
+      //
       config.set('service', Object.assign({}, existing, {
         api: 'https://{username}.' + dnsDomain + '/',
-        register: buildUrl(coreUrl, path.join(REG_PATH, '/')),
-        access: buildUrl(coreUrl, path.join(REG_PATH, '/access/')),
+        register: regUrl,
+        access: accessUrl,
         assets: existing.assets || {
           definitions: buildUrl(coreUrl, path.join(WWW_PATH, '/assets/index.json'))
         },

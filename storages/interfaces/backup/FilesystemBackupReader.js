@@ -33,6 +33,26 @@ module.exports.createFilesystemBackupReader = function createFilesystemBackupRea
       return readJsonlFile(filePath, compressed);
     },
 
+    /**
+     * v1 enterprise backups carry a `register/servers.jsonl.gz` produced
+     * by `dev-migrate-v1-v2 export-register.js` — one line per user:
+     * `{"username": "...", "server": "..."}` (server is a v1 hostname,
+     * not a v2 coreId). Present only for enterprise-v1 sources;
+     * open-pryv.io v1.9 exports don't have it.
+     *
+     * RestoreOrchestrator uses these to populate `user-core/*` rows
+     * so the embedded DNS + /reg/:uid/server can find users post-restore.
+     * — fixes the "user-core never written" regression
+     * surfaced when restoring pryv.me onto the v2 cluster.
+     */
+    async readServerMappings () {
+      const registerDir = path.join(inputPath, 'register');
+      const compressed = manifest?.compressed !== false;
+      const filePath = path.join(registerDir, jsonlFileName('servers', compressed));
+      if (!fs.existsSync(filePath)) return emptyIterator();
+      return readJsonlFile(filePath, compressed);
+    },
+
     async openUser (userId) {
       const userDir = path.join(inputPath, 'users', userId);
       return createFilesystemUserBackupReader(userDir, manifest);

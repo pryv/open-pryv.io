@@ -50,11 +50,14 @@ http:
   port: 3000
 
 service:
+  # Required fields — master refuses to start with any of these missing.
   name: My Pryv Instance
+  serial: "2026042001"                         # platform-specific build tag; bump on config change
   eventTypes: https://pryv.github.io/event-types/flat.json
   home: https://your-domain.com
   support: https://your-domain.com
   terms: https://your-domain.com
+  # Optional — SDKs display / fetch these; falls back to sensible defaults.
   assets:
     definitions: https://pryv.github.io/assets-pryv.me/index.json
 

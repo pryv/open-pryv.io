@@ -22,6 +22,18 @@ const { buildA, buildAAAA, buildCNAME, buildMX, buildNS, buildSOA, buildTXT, bui
  */
 const DEFAULT_PLATFORM_REFRESH_INTERVAL_MS = 30000;
 
+/**
+ * Subdomains that are part of the open-pryv.io distribution surface: every
+ * core answers these endpoints directly (`/reg/*`, `/reg/access/*`, `/mfa/*`
+ * are all routes inside master.js since Plan 26). The embedded DNS resolves
+ * them to ALL available cores' IPs so clients can round-robin across the
+ * cluster without the operator having to maintain explicit staticEntries.
+ * Operators keep full control over non-reserved names via
+ * `dns.staticEntries` (e.g. `sw`, `mail`, vanity subdomains).
+ *
+ */
+const RESERVED_SERVICE_NAMES = ['reg', 'access', 'mfa'];
+
 class DnsServer {
   #config;
   #platform;
@@ -240,6 +252,12 @@ class DnsServer {
         this.#answerRoot(response, qname, qtype);
       } else if (prefix === 'lsc') {
         // Cluster discovery: return all core IPs
+        await this.#answerClusterDiscovery(response, qname, qtype);
+      } else if (RESERVED_SERVICE_NAMES.includes(prefix)) {
+        // Distribution-reserved service subdomains (reg/access/mfa): every
+        // core serves these routes, so return all cores' IPs. Takes
+        // precedence over operator-provided staticEntries with the same
+        // name to keep behaviour consistent across deployments.
         await this.#answerClusterDiscovery(response, qname, qtype);
       } else if (this.#staticEntries[prefix]) {
         // Static subdomain (www, sw, reg, _acme-challenge, etc.)

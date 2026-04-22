@@ -34,6 +34,11 @@ module.exports = async function (api) {
     commonFns.getParamsValidation(methodsSchema.register.params),
     enforcePasswordRules,
     registration.prepareUserData.bind(registration),
+    // in multi-core mode, if the selected hosting maps
+    // to a different core, transparently HTTPS-proxy the POST to the
+    // target core and return its response. Atomic on target; clients
+    // don't need to re-POST.
+    registration.forwardIfCrossCore.bind(registration),
     registration.validateOnPlatform.bind(registration),
     registration.createUser.bind(registration),
     registration.buildResponse.bind(registration),

@@ -24,7 +24,13 @@ exports = module.exports = function () {
     terms: string(),
     eventTypes: string(),
     assets: object({}),
-    features: object({})
+    features: object({}),
+    // Platform version — SDKs (lib-js, app-web-auth3) read this to pick
+    // the direct-core `/users` registration endpoint (>=1.6.0). Without
+    // it they fall back to the legacy `/reg/user` path that round-robins
+    // through reg.{domain} and breaks cross-core registration on
+    // multi-core deployments.
+    version: string()
   }, {
     required: ['serial', 'api', 'access', 'register', 'name', 'home', 'support', 'terms', 'eventTypes'],
     additionalProperties: false

@@ -36,6 +36,38 @@ async function expressAppInit (logging) {
   if (!config.get('dnsLess:isActive')) {
     const coreId = config.get('core:id');
     const ignoredSubdomains = coreId && coreId !== 'single' ? [coreId] : [];
+    // Also keep distribution-reserved service subdomains out of the
+    // username-rewriter. Without this, e.g. `access.pryv.me/service/info`
+    // (6 chars, matches username regex) gets rewritten to
+    // `/access/service/info` and falls through to the username router.
+    // reg/access/mfa are the distribution's reserved names
+    // (see DnsServer.RESERVED_SERVICE_NAMES); operator-owned staticEntries
+    // names (sw, mail, etc.) are harvested from config too.
+    ignoredSubdomains.push('reg', 'access', 'mfa');
+    const staticEntries = config.get('dns:staticEntries') || {};
+    for (const name of Object.keys(staticEntries)) {
+      if (!ignoredSubdomains.includes(name)) ignoredSubdomains.push(name);
+    }
+
+    // When Host matches a reserved service subdomain (reg/access/mfa), the
+    // client-facing URL is rootless — e.g. `reg.pryv.me/perki/server` or
+    // `access.pryv.me/access/`. Internally all the handlers live under
+    // `/reg/*`, so prepend `/reg` before route matching. Idempotent for
+    // clients that still send the `/reg/` prefix. Required for v1-style
+    // URL shapes; tests and experimentation in confirm
+    // that without this middleware the flows break (/service/info URLs
+    // strip /reg/ but no route exists at root to serve them).
+    app.use(function regSubdomainPathMap (req, res, next) {
+      if (!req.headers.host) return next();
+      const firstChunk = req.headers.host.split('.')[0].toLowerCase();
+      if (firstChunk === 'reg' || firstChunk === 'access' || firstChunk === 'mfa') {
+        if (!req.url.startsWith('/reg/') && req.url !== '/reg') {
+          req.url = '/reg' + req.url;
+        }
+      }
+      next();
+    });
+
     app.use(middleware.subdomainToPath(ignorePaths, ignoredSubdomains));
   }
   // Parse JSON bodies:

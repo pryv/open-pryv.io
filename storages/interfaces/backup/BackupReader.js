@@ -28,6 +28,20 @@ const BackupReader = module.exports.BackupReader = {
   async readPlatformData () { throw new Error('Not implemented'); },
 
   /**
+   * Read register-level server mappings (v1 enterprise only).
+   * Yields `{username, server}` rows from `register/servers.jsonl[.gz]`.
+   * Default implementation yields nothing — sources without register
+   * data (open-pryv.io v1.9, v2→v2 backups) inherit this no-op.
+   *
+   * @returns {AsyncIterable<{username: string, server: string}>}
+   */
+  async readServerMappings () {
+    /* async generator that yields nothing */
+    async function * empty () {}
+    return empty();
+  },
+
+  /**
    * Open a user context for reading backup data.
    * @param {string} userId
    * @returns {Promise<UserBackupReader>}

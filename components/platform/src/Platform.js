@@ -459,9 +459,13 @@ class Platform {
    * @param {string} username
    * @param {string|undefined} invitationToken
    * @param {Object} uniqueFields - e.g. { username: 'bob', email: 'bob@example.com' }
+   * @param {string} [hosting] - hosting key from the registration payload;
+   *   when set, narrows `selectCoreForRegistration` to that hosting so
+   *   aws-us-east-1 registrations land on the correct core even if
+   *   another hosting has fewer users.
    * @returns {Promise<{redirect?: string}>} redirect URL if registration should happen elsewhere
    */
-  async validateRegistration (username, invitationToken, uniqueFields) {
+  async validateRegistration (username, invitationToken, uniqueFields, hosting) {
     // 1. Check invitation token
     await this.#checkInvitationToken(invitationToken);
 
@@ -500,8 +504,10 @@ class Platform {
       throw errors.itemAlreadyExists('user', conflicts);
     }
 
-    // 5. Assign user to a core
-    const selectedCoreId = await this.selectCoreForRegistration();
+    // 5. Assign user to a core (honour requested hosting so e.g.
+    //    aws-us-east-1 registrations don't leak to aws-eu-central-1
+    //    just because the latter happens to have fewer users).
+    const selectedCoreId = await this.selectCoreForRegistration(hosting);
     if (selectedCoreId != null) {
       await this.#db.setUserCore(username, selectedCoreId);
     }

@@ -218,10 +218,15 @@ describe('[DNS] DNS Server', function () {
       assert.strictEqual(records[0], 'web.example.com');
     });
 
-    it('[DN11] must resolve CNAME for reg subdomain', async () => {
-      const records = await resolver.resolveCname(`reg.${TEST_DOMAIN}`);
-      assert.strictEqual(records.length, 1);
-      assert.strictEqual(records[0], 'register.example.com');
+    it('[DN11] reserved `reg` subdomain auto-resolves to all core IPs (ignoring staticEntries)', async () => {
+    // `reg`, `access`, `mfa` are distribution-reserved
+      // service subdomains. DnsServer shadows any staticEntries for these
+      // names with A records pointing to every available core, so /service/info
+      // lookups stay symmetric across the cluster. Even though the mock config
+      // sets `reg: { cname: 'register.example.com' }`, the reserved-name
+      // override wins.
+      const addresses = await resolver.resolve4(`reg.${TEST_DOMAIN}`);
+      assert.deepStrictEqual(addresses.sort(), ['10.0.0.1', '10.0.0.2'].sort());
     });
 
     it('[DN12] must resolve A record for static A subdomain', async () => {

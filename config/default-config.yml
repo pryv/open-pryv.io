@@ -248,6 +248,16 @@ dns:
   ip6: null              # IPv6 bind address (null = disabled)
   defaultTTL: 300        # TTL in seconds
   staticEntries: {}      # subdomain → { cname: "..." } or { a: [...] } or { txt: [...] }
+  # Notes on staticEntries:
+  #  - `reg`, `access`, `mfa` are reserved by the distribution — every core
+  #    answers those routes directly, so the embedded DNS resolves them to
+  #    all available cores' IPs automatically. You do not need to list them
+  #    here (any entry is ignored in favour of the auto-resolution).
+  #  - Common operator-owned entries to add when present in your deployment:
+  #      sw:   { a: ['<core-ip-1>', '<core-ip-2>'] }    # static web / auth UI
+  #      mail: { a: ['<core-ip-1>', '<core-ip-2>'] }    # outbound mail target
+  #  - Entries here are authoritative — they shadow runtime records set
+  #    by the ACME orchestrator or admin API (see drift warning log).
   records:               # root domain records
     root:
       a: []

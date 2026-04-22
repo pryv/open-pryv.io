@@ -171,12 +171,13 @@ class AcmeOrchestrator {
  * @param {Object} opts.config             - @pryv/boiler config
  * @param {Object} opts.platformDB
  * @param {Buffer} opts.atRestKey
+ * @param {Object} [opts.dnsServer]        - optional; when provided, the DNS-01 TXT writer forces an immediate refreshFromPlatform() after each PlatformDB write so LE validators see the challenge record without waiting for the DnsServer's periodic refresh tick. Without it, LE often times out on "No TXT records found".
  * @param {Function} [opts.onRotate]       - called after each successful on-disk write (see FileMaterializer)
  * @param {Object}   [opts.acmeLib]
  * @param {Function} [opts.log]
  */
 function build (opts = {}) {
-  const { config, platformDB, atRestKey, onRotate, acmeLib, log } = opts;
+  const { config, platformDB, atRestKey, dnsServer, onRotate, acmeLib, log } = opts;
   if (config == null) throw new Error('AcmeOrchestrator.build: config is required');
 
   const hostSpec = deriveHostnames(config);
@@ -221,7 +222,7 @@ function build (opts = {}) {
     log
   });
 
-  const dnsWriter = new PlatformDBDnsWriter({ platformDB });
+  const dnsWriter = new PlatformDBDnsWriter({ platformDB, dnsServer });
 
   return new AcmeOrchestrator({
     hostSpec,

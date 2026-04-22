@@ -92,13 +92,16 @@ module.exports = function (expressApp, app) {
   expressApp.get('/reg/:uid/server', async (req, res, next) => {
     try {
       const username = req.params.uid;
-      const usersRepo = await getUsersRepository();
-      if (!await usersRepo.usernameExists(username)) {
+      // Prefer PlatformDB (rqlite, replicated) over per-core usersLocalIndex —
+      // in multi-core mode, a user's SQLite index only exists on their home
+      // core, so any core that is NOT the user's home would 404 even though
+      // it can legitimately redirect them.
+      const coreUrl = await getCoreUrlForUser(username);
+      if (coreUrl == null) {
         return res.status(404).json({
           error: { id: 'unknown-user', message: 'Unknown user' }
         });
       }
-      const coreUrl = await getCoreUrlForUser(username);
       res.redirect(coreUrl + '/?username=' + username);
     } catch (err) {
       next(err);
@@ -111,13 +114,12 @@ module.exports = function (expressApp, app) {
   expressApp.post('/reg/:uid/server', async (req, res, next) => {
     try {
       const username = req.params.uid;
-      const usersRepo = await getUsersRepository();
-      if (!await usersRepo.usernameExists(username)) {
+      const coreUrl = await getCoreUrlForUser(username);
+      if (coreUrl == null) {
         return res.status(404).json({
           error: { id: 'unknown-user', message: 'Unknown user' }
         });
       }
-      const coreUrl = await getCoreUrlForUser(username);
       const alias = domain ? username + '.' + domain : username;
       res.json({ server: coreUrl, alias });
     } catch (err) {
@@ -297,6 +299,16 @@ module.exports = function (expressApp, app) {
       if (coreId != null) {
         return platform.coreIdToUrl(coreId);
       }
+      // Multi-core + no user-core mapping → unknown user.
+      return null;
+    }
+    // Single-core: verify the user actually exists before claiming to host
+    // them — otherwise `/reg/:uid/server` would return the local URL for
+    // any arbitrary username, shadowing the 404 the route is supposed to
+    // produce for unknown users.
+    const usersRepo = await getUsersRepository();
+    if (!await usersRepo.usernameExists(username)) {
+      return null;
     }
     return platform.coreUrl || app.config.get('dnsLess:publicUrl') || 'http://localhost:3000';
   }

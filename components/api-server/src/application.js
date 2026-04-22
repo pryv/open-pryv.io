@@ -39,7 +39,10 @@ require('@pryv/boiler').init({
       file: path.resolve(__dirname, '../../../config/plugins/default-path.js')
     },
     {
-      plugin: require('../../../config/plugins/config-validation')
+      // pluginAsync (not plugin) so it runs AFTER `serviceInfoUrl` has been
+      // fetched and `service.*` populated — otherwise the required-fields
+      // check fires against an empty `service` scope.
+      pluginAsync: require('../../../config/plugins/config-validation')
     },
     {
       plugin: {

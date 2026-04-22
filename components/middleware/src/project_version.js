@@ -52,7 +52,11 @@ class ProjectVersion {
    * @returns {string}
    */
   readStaticVersion () {
-    const searchPaths = process.mainModule.paths;
+    // `process.mainModule` was deprecated and can be `undefined` in Node 22+
+    // (particularly when the entrypoint is loaded via a wrapper/cluster fork).
+    // Fall back to `require.main` and then to this module's own search paths.
+    const mainModule = process.mainModule || require.main || module;
+    const searchPaths = mainModule.paths || module.paths;
     for (const current of searchPaths) {
       // Otherwise try to locate '.api-version' as a sibling to the path we found.
       const rootPath = path.dirname(current);

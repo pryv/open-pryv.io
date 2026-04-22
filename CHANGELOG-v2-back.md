@@ -1,5 +1,76 @@
 # Changelog - Internal (no API impact)
 
+## Multi-core registration, service-info, and auth-popup fixes
+
+Surfaced during pryv.me v2 rollout. The items below make cross-core registration atomic, expose the SDK-expected shape of `/service/info` + `/reg/access`, and fix several subtle multi-core plumbing bugs that appeared once a real two-core deployment hit a freshly-delegated domain.
+
+### Cross-core registration: transparent HTTPS forward
+
+Previously, a POST `/users` landing on a core whose `core.id` didn't match the user's chosen hosting would call `Platform.validateRegistration`, which **reserved unique fields + wrote `user-core/<username>`** in PlatformDB, then returned `{core: {url: targetCoreUrl}}` for the client to re-POST. Non-compliant SDKs silently swallowed the redirect, stranding orphaned `user-core` rows and empty PG on the target core.
+
+- `components/business/src/auth/registration.js` — new `forwardIfCrossCore` step inserted into the `auth.register` chain between `prepareUserData` and `validateOnPlatform`. Calls `platform.selectCoreForRegistration(hosting)`; if target ≠ self, HTTPS-POSTs the original body to `{targetUrl}/users` (the target's own `forwardIfCrossCore` is idempotent when target == self). Target's response (minus its own `meta` block) is merged into `result.forwarded`. Atomic on the target: unique-field reservation, user-core assignment, user insert, welcome mail all on one core.
+- `validateOnPlatform`, `createUser`, `buildResponse`, `sendWelcomeMail` all short-circuit on `result.forwarded` — no duplicate work, no duplicate mail.
+- `components/platform/src/Platform.js` — `validateRegistration(username, invitationToken, uniqueFields, hosting)` now takes + honours the caller-provided hosting. Previously it always called `selectCoreForRegistration()` without the hosting filter, so with a least-users tiebreak a new aws-us-east-1 registration could leak to aws-eu-central-1 just because the latter had fewer users.
+- `components/api-server/src/methods/auth/register.js` — wires `forwardIfCrossCore` into the `auth.register` method chain.
+
+### `/service/info` multi-core shape
+
+- `components/api-server/src/schema/service-info.js` — added optional `version` field.
+- `components/api-server/src/methods/service.js` — populates `version` from `getAPIVersion()`. `lib-js` + `app-web-auth3` gate on `version >= 1.6.0` to pick the direct-core `/users` registration endpoint. Before this, our `/service/info` had no version → SDKs fell back to the legacy `/reg/user` via reg.{domain} round-robin, which (before the forward fix) compounded the orphaned-user-core bug.
+- `config/plugins/public-url.js` — in multi-core (`dnsLess.isActive: false`) mode, `register: https://reg.{domain}/` and `access: https://access.{domain}/access/` instead of the old `register: https://core-{id}.{domain}/reg/`. The reserved-subdomain URLs are core-symmetric and match the v1 Pryv.io URL shape; `regSubdomainPathMap` middleware (below) handles the `/reg` prefix inside the core.
+- `config/plugins/config-validation.js` — new `REQUIRED_SERVICE_FIELDS = ['name', 'serial', 'home', 'support', 'terms', 'eventTypes']` check. Master fails fast with a clear error instead of starting into an api-server crash-loop when operators forget the `service:` block.
+- `bin/master.js` — added `config-validation` plugin to master's boiler init (previously only in api-server's `application.js`), so the service-required-fields check triggers on master bring-up too.
+
+### Distribution-reserved DNS subdomains
+
+- `components/dns-server/src/DnsServer.js` — new `RESERVED_SERVICE_NAMES = ['reg', 'access', 'mfa']`. The embedded DNS auto-resolves these three subdomains to every available core's IP (via `getAllCoreInfos()`), no `dns.staticEntries` required. Operators still own `sw`, `mail`, etc. via staticEntries; documented in `config/default-config.yml`.
+- `components/api-server/src/expressApp.js` — two multi-core-only middleware additions:
+  1. `subdomainToPath`'s `ignoredSubdomains` list now includes `reg`, `access`, `mfa`, and every key from `dns.staticEntries`. Without this, `access.pryv.me` (6 chars, matches the username regex) was rewritten to `/access/…` and fell into the username router.
+  2. New `regSubdomainPathMap` middleware: when `Host: reg.{domain}` (or `access.` / `mfa.`), prepend `/reg` to `req.url` before route matching. Lets clients use rootless v1-style URLs (`reg.pryv.me/perki/server`, `reg.pryv.me/service/info`) while the internal routing stays under `/reg/*`. Idempotent — skips when the path already starts with `/reg/`.
+- `components/api-server/src/routes/register.js` — when `dnsLess.isActive: false`, also expose `GET /service/info` at the root (alias for `/reg/service/info`). Lets SDKs bootstrap from `https://reg.{domain}/service/info` directly.
+- `components/api-server/src/routes/reg/legacy.js` — `GET` + `POST /reg/:uid/server` now look up the core via `platform.getUserCore()` (PlatformDB, replicated) instead of `usersRepository.usernameExists()` (per-core SQLite index). Without this, round-robin DNS on reserved subdomains caused 50 % 404s because only the user's home core had them in its local index. `getCoreUrlForUser` returns `null` when no mapping exists so the handler 404s cleanly.
+
+### `/reg/access` (auth popup) shape
+
+- `components/api-server/src/routes/reg/access.js` — POST `/reg/access` response now includes:
+  - `authUrl` (primary) — built from `access.defaultAuthUrl` + query params (lang, key, requestingAppId, poll, poll_rate_ms, serviceInfo). SDKs open this URL in the sign-in popup.
+  - `url` (deprecated) — same value, kept for v1 SDK compatibility.
+  - `poll` — **core-affine URL built from `core.url`**, not the cluster-wide `service.register`. The poll state is in-memory per core, so a poll GET must pin to the same core that served the POST; using `service.register` round-robined across cores and caused `unknown-access-key` on half the polls.
+  - `lang`, `returnURL` + `returnUrl` (camelCase lib-js expects), `serviceInfo` (v1-compatible — SDKs re-hydrate from the body).
+- GET `/reg/access/:key` NEED_SIGNIN response now mirrors the same fields (poll, authUrl, url, lang, returnUrl/returnURL, serviceInfo) so `app-web-auth3`'s `context.init() → setServiceInfo(accessState.serviceInfo)` doesn't crash with "Cannot read properties of undefined (reading 'name')" and clients re-hydrating state from the poll body see the poll URL.
+- `state.pollUrl` + `state.authUrl` are stashed on the in-memory access state at POST time so the subsequent GETs echo them verbatim.
+
+### Multi-core plumbing
+
+- `bin/master.js` — `cluster.setupPrimary({ args: process.argv.slice(2) })` before forking workers. `cluster.fork()` by default runs the worker with only `[node, master.js]` — argv after the script name is silently dropped. Deployments that layered `--config host-config.yml` had their workers fall back to `NODE_ENV`-based config and silently use the wrong storage engine / ports.
+- `components/middleware/src/project_version.js` — `process.mainModule || require.main || module` fallback. `process.mainModule` was deprecated and can be `undefined` in Node 22 when the entrypoint is loaded via a wrapper or cluster fork; the old code threw `TypeError: Cannot read properties of undefined (reading 'paths')` which was swallowed by boiler's file logger and surfaced as silent api-server worker crash loops.
+- `components/api-server/bin/server` — catch-block mirrors fatal errors to `process.stderr`. Master's `api worker died (code=1, signal=null)` now always has an actionable cause attached instead of being silent.
+- `components/business/src/acme/CertRenewer.js` + `AcmeOrchestrator.js` + `bin/master.js` — `PlatformDBDnsWriter` accepts an optional `dnsServer` and calls `dnsServer.refreshFromPlatform()` immediately after writing `_acme-challenge.<zone>` TXT to PlatformDB. Previously relied on the DnsServer's 30 s periodic refresh, so LE's DNS-01 validator often failed with "No TXT records found". `AcmeOrchestrator.build()` threads `dnsServer` through; `bin/master.js` passes it. Real LE wildcard issuance on a fresh cluster now succeeds on the first attempt instead of 15–30 min after rqlite caught up.
+- `components/business/src/auth/registration.js::sendWelcomeMail` — guards against missing `services.email` in config (fresh bundle-bootstrapped cores have no default) and against forwarded registrations (target core already sent the mail). Before, a missing `services.email` threw `Cannot read properties of undefined (reading 'enabled')` AFTER `createUser` had already persisted the user, leaking a 500 response to the client even though the registration had technically succeeded.
+
+### v1→v2 restore: `user-core/*` rows from register/servers.jsonl.gz
+
+- `storages/interfaces/backup/FilesystemBackupReader.js` — new `readServerMappings()` method that streams `{username, server}` rows from `register/servers.jsonl[.gz]`. No-op when the register/ subdir is absent (open-pryv.io v1.9 or v2→v2 backups).
+- `storages/interfaces/backup/BackupReader.js` — default `readServerMappings()` on the base interface yields an empty async iterator, so sources without register data (any reader that doesn't override it) inherit a safe default.
+- `components/business/src/backup/RestoreOrchestrator.js` — `_restorePlatform` now also iterates `readServerMappings()`; for each mapping, writes a `user-core/<username>` row to PlatformDB. Maps the v1 server hostname (e.g. "co1.pryv.me") to whichever core is the SOLE available core on the destination — the common case for single-core restore. Multi-core destinations with more than one available core are left as a no-op for now; a future pass can accept a `--core-map` option. Previously v1→v2 restores left every user's DNS resolution broken until the operator manually INSERTed `user-core/*` rows.
+
+### Tests
+
+- `components/api-server/test/reg-multicore-dnsless-false-seq.test.js` (new) — regression suite covering the cross-core forward, `/reg/access` POST+GET shape, `/service/info` required fields + version + reserved subdomains, and the v1→v2 register-mappings restore path. Uses a targeted `global.fetch` interceptor (passes through to real `fetch` except for the inter-core forward URL) so the rqlite HTTP client keeps working during the test.
+- `components/api-server/test/reg-multicore-seq.test.js` `[MC01A/B]` — rewritten from "must return redirect" to "HTTPS-forwards POST to target + atomic on failure" to match the new behaviour; same targeted-fetch interceptor.
+- `components/api-server/test/service-info.test.js` `[FR4K]` — tolerates the new `version` field and the response-envelope `meta` block.
+- `components/dns-server/test/dns-server.test.js` `[DN11]` — asserts reserved subdomain `reg.{domain}` resolves to A records (all core IPs), not CNAME.
+- `components/cache/test/acceptance/cache.test.js` `[FELT]` — `this.retries(3)` on the 15%-cache-gain timing assertion. The thresholded comparison was flaky under scheduler noise on shared dev VMs (5–15 % gain range); retries turn transient noise into eventual success without weakening the signal.
+
+## Validator + service-info method: fixes unearthed by the full test matrix
+
+Surfaced when running the full matrix against the distribution changes above. Changes are small, isolated, and carry no API behaviour impact.
+
+- `config/plugins/config-validation.js` — `checkIncompleteFields` now skips the `REPLACE` sentinel scan on any block where `active === false` or `enabled === false`. Fixes dead-code `if (obj.active && !obj.active) return` (always false). Unblocks default-config placeholders like `letsEncrypt.email: 'REPLACE ME'` / `letsEncrypt.atRestKey: 'REPLACE ME'` (operators only set these when `letsEncrypt.enabled: true`) from tripping startup in vanilla config.
+- `components/api-server/src/application.js` — `config-validation` is now registered as `pluginAsync` (previously `plugin`). Required because `serviceInfo` (scope loaded from `serviceInfoUrl`) is itself async; the validator's required-service-fields check would otherwise fire before `service.*` was populated and always fail-fast with "service fields missing".
+- `components/api-server/src/methods/service.js` — removed the first-call `this.serviceInfo` cache. Service info is now read live from config every request. The cache leaked state between tests sharing a single api-server and would also prevent future runtime `service:` updates (e.g. admin-API edits) from being visible without a restart.
+- `components/api-server/src/routes/reg/legacy.js` — `getCoreUrlForUser` in single-core mode now verifies the user exists (`usersRepository.usernameExists()`) before returning the core URL. Previously any arbitrary username would resolve to the local URL, shadowing the 404 the `/reg/:uid/server` routes are supposed to emit for unknown users.
+
 ## Engine-agnostic schema migration runner
 
 ### New primitive

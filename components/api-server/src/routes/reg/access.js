@@ -36,22 +36,67 @@ module.exports = function (expressApp, app) {
 
     const { key, state } = accessState.create(req.body);
 
-    // Build poll URL from service config
+    // Build poll URL from the LOCAL core's URL — accessState is stored
+    // in-memory per core, so every poll GET must hit the same core that
+    // served the POST. Using the cluster-wide `service.register` URL
+    // (e.g. https://reg.pryv.me/...) would round-robin across cores and
+    // cause `unknown-access-key`. See _claude-memory/project_multicore_auth_pattern.md.
+    //
     const serviceInfo = app.config.get('service') || {};
-    const registerBase = serviceInfo.register || '/reg/';
-    const pollUrl = registerBase + 'access/' + key;
+    const coreUrl = app.config.get('core:url');
+    const pollBase = coreUrl ? coreUrl + '/reg/' : (serviceInfo.register || '/reg/');
+    const pollUrl = pollBase + 'access/' + key;
 
+    // Build the popup auth-UI URL as `authUrl`. SDKs open this in a popup
+    // for the user to sign in. Base URL comes from `access.defaultAuthUrl`
+    // in config — operators deploy app-web-auth3 (or an equivalent auth UI)
+    // at that address and set the config.
+    const defaultAuthUrl = app.config.get('access:defaultAuthUrl');
+    let authUrl = null;
+    if (defaultAuthUrl) {
+      const sep = defaultAuthUrl.indexOf('?') >= 0 ? '&' : '?';
+      const params = [
+        'lang=' + encodeURIComponent(req.body.languageCode || 'en'),
+        'key=' + encodeURIComponent(key),
+        'requestingAppId=' + encodeURIComponent(requestingAppId),
+        'poll=' + encodeURIComponent(pollUrl),
+        'poll_rate_ms=' + state.poll_rate_ms,
+        'serviceInfo=' + encodeURIComponent(serviceInfo.api ? (serviceInfo.register || '') + 'service/info' : '')
+      ];
+      if (state.returnURL) params.push('returnURL=' + encodeURIComponent(state.returnURL));
+      if (state.oauthState) params.push('oauthState=' + encodeURIComponent(state.oauthState));
+      authUrl = defaultAuthUrl + sep + params.join('&');
+    }
+
+    // Stash pollUrl + authUrl on state so GET /reg/access/:key can echo
+    // them back verbatim (lib-js rehydrates state from the poll body).
+    state.pollUrl = pollUrl;
+    state.authUrl = authUrl;
+
+    const lang = req.body.languageCode || 'en';
     res.status(201).json({
       status: state.status,
       code: 201,
       key,
       requestingAppId: state.requestingAppId,
       requestedPermissions: state.requestedPermissions,
+      authUrl,
+      // @deprecated — kept for v1 SDK compatibility; new clients should
+      // read `authUrl` instead. Remove once no in-the-wild SDK reads `url`.
+      url: authUrl,
       poll: pollUrl,
       poll_rate_ms: state.poll_rate_ms,
+      lang,
       returnURL: state.returnURL,
+      // lib-js's NEED_SIGNIN state type declares `returnUrl` (camelCase).
+      // Include both spellings for compatibility with v1 + v2 SDKs.
+      returnUrl: state.returnURL,
       oauthState: state.oauthState,
-      clientData: state.clientData
+      clientData: state.clientData,
+      // v1-compatible: SDKs (lib-js) read service metadata from the
+      // access-request response without round-tripping /service/info.
+      //
+      serviceInfo
     });
   });
 
@@ -66,17 +111,35 @@ module.exports = function (expressApp, app) {
       });
     }
 
+    // Embed service metadata in every poll response — app-web-auth3's
+    // context.init() calls loadAccessState() and then
+    // setServiceInfo(accessState.serviceInfo), which crashes with
+    // "Cannot read properties of undefined (reading 'name')" if the
+    // poll response is missing it.
+    const serviceInfo = app.config.get('service') || {};
+
     const response = {
       status: state.status,
-      code: state.code
+      code: state.code,
+      serviceInfo
     };
 
     if (state.status === 'NEED_SIGNIN') {
+      // Reconstruct poll + authUrl: lib-js's NEED_SIGNIN state type requires
+      // them in every state-shaped payload, and some clients re-hydrate
+      // their state from the poll response directly. The poll URL must be
+      // core-affine (matches the POST-built URL) — store it on state at
+      // creation time so GET and POST agree.
       response.key = state.key;
       response.requestingAppId = state.requestingAppId;
       response.requestedPermissions = state.requestedPermissions;
+      response.poll = state.pollUrl || null;
+      response.authUrl = state.authUrl || null;
+      response.url = state.authUrl || null; // @deprecated — v1 alias
       response.poll_rate_ms = state.poll_rate_ms;
+      response.lang = state.languageCode || 'en';
       response.returnURL = state.returnURL;
+      response.returnUrl = state.returnURL;
       response.oauthState = state.oauthState;
       response.clientData = state.clientData;
     } else if (state.status === 'ACCEPTED') {

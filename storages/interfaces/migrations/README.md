@@ -121,3 +121,8 @@ Multi-core with rqlite: Raft serializes writes, so the first SET wins; re-reads 
 - DDL helpers (write raw SQL, it's clearer)
 - Generating migration files from a CLI (just create the file with the right timestamp)
 - SQLite user-DB migrations (per-user, separate mechanism)
+
+
+# License
+
+[BSD-3-Clause](LICENSE)

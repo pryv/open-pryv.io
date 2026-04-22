@@ -1,5 +1,14 @@
 #!/usr/bin/env node
 
+// NOTE: run `new-core` as the SAME user that runs bin/master.js — not as
+// root. The token store defaults to `/var/lib/pryv/bootstrap-tokens.json`
+// and the CA dir to `/etc/pryv/ca`; if those are created under sudo, the
+// master process fails to consume the token at ack time with an EACCES
+// error that surfaces on the joining core as "HTTP 500 unexpected-error".
+// If the default paths aren't writable by the master user, set
+// `cluster.ca.path` and `cluster.tokens.path` in override-config.yml to
+// locations under its $HOME.
+
 /**
  * @license
  * Copyright (C) Pryv https://pryv.com

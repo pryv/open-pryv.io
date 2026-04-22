@@ -176,10 +176,12 @@ class CertRenewer {
  */
 class PlatformDBDnsWriter {
   #platformDB;
+  #dnsServer;
   #waitMs;
-  constructor ({ platformDB, waitMs = 15000 }) {
+  constructor ({ platformDB, dnsServer = null, waitMs = 15000 }) {
     if (platformDB == null) throw new Error('PlatformDBDnsWriter: platformDB is required');
     this.#platformDB = platformDB;
+    this.#dnsServer = dnsServer;
     this.#waitMs = waitMs;
   }
 
@@ -187,12 +189,21 @@ class PlatformDBDnsWriter {
    * Write a TXT record; append to any existing TXT values for the same
    * name so multiple outstanding challenges can coexist (LE may ask for
    * both the apex and the wildcard in the same order).
+   *
+   * If a `dnsServer` was provided, force a refresh from PlatformDB right
+   * after the write so the record is visible in the in-memory zone before
+   * we notify LE to validate — without it, the record is only visible
+   * after the next periodic refresh (default 30s), often causing LE to
+   * time out on "No TXT records found". Surfaced on
    */
   async create (name, value) {
     const existing = await this.#platformDB.getDnsRecord(name);
     const priorTxt = (existing && Array.isArray(existing.txt)) ? existing.txt : [];
     const merged = priorTxt.includes(value) ? priorTxt : [...priorTxt, value];
     await this.#platformDB.setDnsRecord(name, { ...(existing || {}), txt: merged });
+    if (this.#dnsServer && typeof this.#dnsServer.refreshFromPlatform === 'function') {
+      await this.#dnsServer.refreshFromPlatform();
+    }
     if (this.#waitMs > 0) await new Promise(resolve => setTimeout(resolve, this.#waitMs));
   }
 
@@ -204,6 +215,9 @@ class PlatformDBDnsWriter {
       await this.#platformDB.deleteDnsRecord(name);
     } else {
       await this.#platformDB.setDnsRecord(name, { ...existing, txt });
+    }
+    if (this.#dnsServer && typeof this.#dnsServer.refreshFromPlatform === 'function') {
+      await this.#dnsServer.refreshFromPlatform();
     }
   }
 }
@@ -230,7 +244,7 @@ class PlatformDBDnsWriter {
 // for a multi-SAN cert land at the same `_acme-challenge.{zone}` TXT
 // record, with multiple values. Argument kept for API stability + future
 // multi-zone extensions.
-// eslint-disable-next-line no-unused-vars
+
 function acmeChallengeName (identifierValue) {
   return '_acme-challenge';
 }

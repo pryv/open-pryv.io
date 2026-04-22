@@ -13,9 +13,29 @@
 const { getLogger } = require('@pryv/boiler');
 let logger; // initalized at load();
 
+// Fields that MUST be populated in `service:` before the process can start.
+// Matches the schema in components/api-server/src/schema/service-info.js —
+// `api`, `access`, `register` are auto-populated by the public-url plugin.
+//
+const REQUIRED_SERVICE_FIELDS = ['name', 'serial', 'home', 'support', 'terms', 'eventTypes'];
+
 async function validate (config) {
   // check for incomplete settings
   checkIncompleteFields(config.get(), false, []);
+
+  // Fail fast if any required service-info field is missing. Without this,
+  // the process starts but /service/info responses fail client-side
+  // schema validation (e.g. in lib-js) and the breakage is hard to trace
+  // back to a missing operator config value.
+  const service = config.get('service') || {};
+  const missing = REQUIRED_SERVICE_FIELDS.filter(f => !service[f]);
+  if (missing.length > 0) {
+    failWith(
+      'required service fields missing — /service/info would be invalid. Set them in your override-config.yml under `service:`.',
+      ['service'],
+      { missing, required: REQUIRED_SERVICE_FIELDS }
+    );
+  }
 
   /**
    * Parse all string fields and fail if "REPLACE" is found
@@ -37,7 +57,13 @@ async function validate (config) {
       }
     }
     if (typeof obj === 'object') {
-      if (obj.active && !obj.active) return; // skip non active fields
+      // Skip REPLACE scan on disabled blocks — operators leave `REPLACE ME`
+      // sentinels on fields they don't use (e.g. letsEncrypt.{email,atRestKey}
+      // when letsEncrypt.enabled=false), and these would otherwise fail-fast
+      // the whole startup. Both `active` and `enabled` flags are honoured;
+      // the previous `obj.active && !obj.active` check was dead code.
+      if (obj.active === false) return;
+      if (obj.enabled === false) return;
       if (Array.isArray(obj)) {
         for (let i = 0; i < obj.length; i++) {
           checkIncompleteFields(obj[i], finalPath || parentPath, path, i);
