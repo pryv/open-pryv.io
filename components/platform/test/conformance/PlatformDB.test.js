@@ -420,5 +420,63 @@ module.exports = function conformanceTests (getDB) {
         assert.ok(await db.getUsersUniqueField('email', email));
       });
     });
+
+    describe('setObservabilityValue / getObservabilityValue / getAllObservabilityValues / deleteObservabilityValue', () => {
+      it('must persist and retrieve a value by key', async () => {
+        const key = 'enabled-' + cuid();
+        await db.setObservabilityValue(key, 'true');
+        const stored = await db.getObservabilityValue(key);
+        assert.strictEqual(stored, 'true');
+      });
+
+      it('must return null for an unknown key', async () => {
+        const result = await db.getObservabilityValue('unknown-' + cuid());
+        assert.strictEqual(result, null);
+      });
+
+      it('must overwrite an existing value (rotation)', async () => {
+        const key = 'license-' + cuid();
+        await db.setObservabilityValue(key, 'old-key');
+        await db.setObservabilityValue(key, 'new-key');
+        const stored = await db.getObservabilityValue(key);
+        assert.strictEqual(stored, 'new-key');
+      });
+
+      it('getAllObservabilityValues() returns every row stripped of the prefix', async () => {
+        const suffix = cuid();
+        const k1 = 'bulk1-' + suffix;
+        const k2 = 'bulk2-' + suffix;
+        await db.setObservabilityValue(k1, 'v1');
+        await db.setObservabilityValue(k2, 'v2');
+        const all = await db.getAllObservabilityValues();
+        const f1 = all.find(r => r.key === k1);
+        const f2 = all.find(r => r.key === k2);
+        assert.ok(f1, k1 + ' missing');
+        assert.ok(f2, k2 + ' missing');
+        assert.strictEqual(f1.value, 'v1');
+        assert.strictEqual(f2.value, 'v2');
+      });
+
+      it('deleteObservabilityValue() removes the row', async () => {
+        const key = 'del-' + cuid();
+        await db.setObservabilityValue(key, 'x');
+        await db.deleteObservabilityValue(key);
+        const stored = await db.getObservabilityValue(key);
+        assert.strictEqual(stored, null);
+      });
+
+      it('observability namespace does not collide with dns-record or user-core keys', async () => {
+        const suffix = cuid();
+        const obsKey = 'nocoll-' + suffix;
+        const obsValue = 'obs-value-' + suffix;
+        await db.setObservabilityValue(obsKey, obsValue);
+        await db.setDnsRecord('_nocoll-' + suffix, { txt: ['x'] });
+        await db.setUserCore('nocoll-' + suffix, 'core-a');
+
+        assert.strictEqual(await db.getObservabilityValue(obsKey), obsValue);
+        assert.ok(await db.getDnsRecord('_nocoll-' + suffix));
+        assert.strictEqual(await db.getUserCore('nocoll-' + suffix), 'core-a');
+      });
+    });
   });
 };

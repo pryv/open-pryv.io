@@ -9,6 +9,7 @@ const crypto = require('crypto');
 
 const { getLogger, getConfig } = require('@pryv/boiler');
 const logger = getLogger('platform');
+const AtRestEncryption = require('business/src/acme/AtRestEncryption');
 
 const errors = require('errors').factory;
 const ErrorIds = require('errors/src/ErrorIds');
@@ -644,6 +645,158 @@ class Platform {
     const lower = username.toLowerCase();
     if (/^pryv/.test(lower)) return true;
     return reservedWords.has(lower);
+  }
+
+  // --- Plan 38: observability ----------------------------------------
+
+  /**
+   * Build the effective observability config by merging:
+   *   1. Defaults + local YAML override (under `observability:` in config).
+   *   2. Cluster-wide values from PlatformDB (under `observability/<key>`).
+   *   3. Derived fields: `hostname` from `new URL(core.url).hostname`,
+   *      `appName` fallback to `dns.domain` when unset.
+   *
+   * Secrets (license keys) are at-rest-encrypted via `AtRestEncryption`
+   * with HKDF-derived keys per provider. The source material is
+   * `auth.adminAccessKey` — every cluster has one, and it's already the
+   * operator-sync secret (see CONFIG-SEPARATION.md).
+   *
+   * Resolution rule: local `observability.enabled: false` ALWAYS wins
+   * (emergency off-switch). Otherwise PlatformDB is authoritative.
+   *
+   * @returns {Promise<{
+   *   enabled: boolean,
+   *   provider: string,
+   *   appName: string,
+   *   logLevel: 'error' | 'warn' | 'info' | 'debug',
+   *   hostname: string,
+   *   newrelic: { licenseKey: string }
+   * }>}
+   */
+  async getObservabilityConfig () {
+    const localYaml = this.#config.get('observability') || {};
+    const dbRows = await this.#db.getAllObservabilityValues();
+    const db = {};
+    for (const { key, value } of dbRows) {
+      db[key] = value;
+    }
+
+    // Effective enabled: local-false wins; else use DB; else YAML; else false.
+    let enabled;
+    if (localYaml.enabled === false) {
+      enabled = false;
+    } else if (db.enabled != null) {
+      enabled = parseJsonBoolean(db.enabled);
+    } else {
+      enabled = !!localYaml.enabled;
+    }
+
+    const provider = db.provider != null
+      ? parseJsonString(db.provider)
+      : (localYaml.provider || '');
+
+    const logLevelRaw = db['log-level'] != null
+      ? parseJsonString(db['log-level'])
+      : (localYaml.logLevel || 'error');
+    const logLevel = ['error', 'warn', 'info', 'debug'].includes(logLevelRaw) ? logLevelRaw : 'error';
+
+    // appName: DB > local YAML > derived from dns.domain.
+    let appName = db['app-name'] != null ? parseJsonString(db['app-name']) : (localYaml.appName || '');
+    if (!appName) {
+      const domain = this.#config.get('dns:domain');
+      appName = domain ? 'open-pryv.io (' + domain + ')' : 'open-pryv.io';
+    }
+
+    // Hostname: derive from core.url if it's a URL; else fall back to
+    // dns.domain (prefixed with "single.") or OS hostname as last resort.
+    const hostname = this.#deriveHostname();
+
+    // Decrypt provider secrets on demand — only if they exist AND the
+    // operator hasn't set a local override in YAML.
+    const newrelic = {
+      licenseKey: localYaml.newrelic?.licenseKey ||
+        await this.#decryptObservabilitySecret('newrelic-license-key', db['newrelic-license-key'])
+    };
+
+    return { enabled, provider, appName, logLevel, hostname, newrelic };
+  }
+
+  /**
+   * Write a single observability PlatformDB row. Encrypts known-secret
+   * keys at rest automatically.
+   *
+   * Callers (the `bin/observability.js` CLI) should invalidate the
+   * cluster's in-memory cache after writing — e.g. via the
+   * `/system/admin/observability/invalidate-cache` admin route.
+   *
+   * @param {string} key
+   * @param {any} value — JSON-encodable.
+   */
+  async setObservabilityValue (key, value) {
+    const serialised = SECRET_OBSERVABILITY_KEYS.has(key)
+      ? await this.#encryptObservabilitySecret(key, value)
+      : JSON.stringify(value);
+    await this.#db.setObservabilityValue(key, serialised);
+  }
+
+  async deleteObservabilityValue (key) {
+    await this.#db.deleteObservabilityValue(key);
+  }
+
+  #deriveHostname () {
+    const coreUrl = this.#config.get('core:url');
+    if (coreUrl) {
+      try {
+        const h = new URL(coreUrl).hostname;
+        if (h) return h;
+      } catch { /* fall through */ }
+    }
+    const domain = this.#config.get('dns:domain');
+    if (domain) return 'single.' + domain;
+    return require('os').hostname();
+  }
+
+  #getAtRestKey (purpose) {
+    const adminKey = this.#config.get('auth:adminAccessKey');
+    if (!adminKey) {
+      throw new Error('observability: auth.adminAccessKey is required to derive at-rest key');
+    }
+    return AtRestEncryption.deriveKey(
+      Buffer.from(adminKey, 'utf8'),
+      purpose
+    );
+  }
+
+  async #encryptObservabilitySecret (key, value) {
+    const atRestKey = this.#getAtRestKey('observability-' + key);
+    return AtRestEncryption.encrypt(Buffer.from(String(value), 'utf8'), atRestKey);
+  }
+
+  async #decryptObservabilitySecret (key, stored) {
+    if (!stored) return '';
+    try {
+      const atRestKey = this.#getAtRestKey('observability-' + key);
+      return AtRestEncryption.decrypt(stored, atRestKey).toString('utf8');
+    } catch (err) {
+      logger.warn('observability: failed to decrypt ' + key + ': ' + err.message);
+      return '';
+    }
+  }
+}
+
+const SECRET_OBSERVABILITY_KEYS = new Set(['newrelic-license-key']);
+
+function parseJsonBoolean (raw) {
+  try { return JSON.parse(raw) === true; } catch { return false; }
+}
+
+function parseJsonString (raw) {
+  try {
+    const v = JSON.parse(raw);
+    return typeof v === 'string' ? v : '';
+  } catch {
+    // Tolerate raw strings written without JSON quoting.
+    return typeof raw === 'string' ? raw : '';
   }
 }
 

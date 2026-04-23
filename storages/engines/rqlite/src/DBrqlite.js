@@ -338,6 +338,37 @@ class DBrqlite {
     const key = getCertificateKey(hostname);
     await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
   }
+
+  // --- Plan 38: observability --- //
+
+  async setObservabilityValue (key, value) {
+    const storeKey = getObservabilityKey(key);
+    await this.execute(
+      'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
+      [storeKey, value]
+    );
+  }
+
+  async getObservabilityValue (key) {
+    const storeKey = getObservabilityKey(key);
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [storeKey]);
+    return rows.length === 0 ? null : rows[0].value;
+  }
+
+  async getAllObservabilityValues () {
+    const rows = await this.query(
+      "SELECT key, value FROM keyValue WHERE key LIKE 'observability/%'"
+    );
+    return rows.map(row => ({
+      key: row.key.slice('observability/'.length),
+      value: row.value
+    }));
+  }
+
+  async deleteObservabilityValue (key) {
+    const storeKey = getObservabilityKey(key);
+    await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
+  }
 }
 
 // --- Key helpers (same as SQLite engine) --- //
@@ -374,5 +405,9 @@ function getCertificateKey (hostname) {
 }
 
 const ACME_ACCOUNT_KEY = 'tls-acme-account';
+
+function getObservabilityKey (key) {
+  return 'observability/' + key;
+}
 
 module.exports = DBrqlite;

@@ -72,9 +72,6 @@
     "winston-syslog": "^2.7.0",
     "z-schema": "^5.0.4"
   },
-  "optionalDependencies": {
-    "newrelic": "^12.0.0"
-  },
   "devDependencies": {
     "chai": "^4.3.7",
     "chalk": "^4.1.2",
@@ -95,6 +92,9 @@
     "source-licenser": "^2.0.5",
     "supertest": "^6.3.1",
     "temp": "^0.9.4"
+  },
+  "optionalDependencies": {
+    "newrelic": "^12.0.0"
   },
   "engines": {
     "node": "22.x"

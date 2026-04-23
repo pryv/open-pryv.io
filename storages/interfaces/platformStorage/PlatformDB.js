@@ -230,7 +230,38 @@ const PlatformDB = module.exports.PlatformDB = {
   /**
    * @param {string} hostname
    */
-  async deleteCertificate (hostname) { throw new Error('Not implemented'); }
+  async deleteCertificate (hostname) { throw new Error('Not implemented'); },
+
+  // --- Plan 38: observability ----------------------------------------
+  /**
+   * Write a single observability config row. Stored under the
+   * `observability/<key>` prefix in the underlying keyValue table.
+   * Callers must encrypt secrets at rest before calling (see
+   * `components/business/src/acme/AtRestEncryption.js`).
+   *
+   * @param {string} key — short snake/kebab identifier (e.g. "enabled",
+   *   "provider", "app-name", "log-level", "newrelic-license-key").
+   * @param {string} value — JSON string OR base64-encrypted envelope.
+   */
+  async setObservabilityValue (key, value) { throw new Error('Not implemented'); },
+
+  /**
+   * @param {string} key
+   * @returns {Promise<string|null>} raw value exactly as stored.
+   */
+  async getObservabilityValue (key) { throw new Error('Not implemented'); },
+
+  /**
+   * Bulk read for every observability row — used on cache refresh.
+   *
+   * @returns {Promise<Array<{key: string, value: string}>>}
+   */
+  async getAllObservabilityValues () { throw new Error('Not implemented'); },
+
+  /**
+   * @param {string} key
+   */
+  async deleteObservabilityValue (key) { throw new Error('Not implemented'); }
 };
 
 // Limit tampering on existing properties

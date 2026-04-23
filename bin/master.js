@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 
+// Plan 38 — observability boot MUST come before any other require so
+// APM agents can instrument http/express/pg from the start. No-op in
+// NODE_ENV=test or when PRYV_OBSERVABILITY_PROVIDER is unset.
+require('./_observability-boot');
+
 /**
  * @license
  * Copyright (C) Pryv https://pryv.com
@@ -199,6 +204,36 @@ if (cluster.isPrimary) {
     let apiWorkerId = 0;
     let hfsWorkerId = 0;
 
+    // Plan 38 — observability env vars workers inherit via setupPrimary.
+    // Effective config comes from `Platform.getObservabilityConfig()` which
+    // merges PlatformDB rows + local YAML + derives hostname. Empty object
+    // when disabled or misconfigured — workers then see no provider env and
+    // the boot shim no-ops.
+    let observabilityEnv = {};
+    try {
+      const { getPlatform } = require('../components/platform/src');
+      const platform = await getPlatform();
+      const obs = await platform.getObservabilityConfig();
+      if (obs.enabled && obs.provider === 'newrelic' && obs.newrelic.licenseKey) {
+        observabilityEnv = {
+          PRYV_OBSERVABILITY_PROVIDER: 'newrelic',
+          NEW_RELIC_LICENSE_KEY: obs.newrelic.licenseKey,
+          NEW_RELIC_APP_NAME: obs.appName,
+          NEW_RELIC_PROCESS_HOST_DISPLAY_NAME: obs.hostname,
+          NEW_RELIC_LOG_LEVEL: obs.logLevel,
+          NEW_RELIC_HIGH_SECURITY: 'true',
+          // Let the agent find our config template (high_security + attr filters).
+          NEW_RELIC_HOME: require('path').join(__dirname, '../components/business/src/observability/providers/newrelic')
+        };
+        log(`[observability] provider=newrelic host=${obs.hostname} logLevel=${obs.logLevel}`);
+      } else if (obs.enabled) {
+        log(`[observability] enabled but provider=${obs.provider || 'unset'} — not activating`);
+      }
+    } catch (err) {
+      log('[observability] getObservabilityConfig FAILED: ' + err.message + ' — workers start without APM');
+      if (process.env.DEBUG) console.error(err.stack);
+    }
+
     // --- API workers ---
     const configuredApiWorkers = config.get('cluster:apiWorkers');
     const numApiWorkers = (configuredApiWorkers != null)
@@ -221,7 +256,8 @@ if (cluster.isPrimary) {
       const id = apiWorkerId++;
       const worker = cluster.fork({
         PRYV_WORKER_TYPE: 'api',
-        PRYV_BOILER_SUFFIX: `-w${id}`
+        PRYV_BOILER_SUFFIX: `-w${id}`,
+        ...observabilityEnv
       });
       workerTypes.set(worker.id, 'api');
       log(`API worker w${id} started (pid ${worker.process.pid})`);
@@ -243,7 +279,8 @@ if (cluster.isPrimary) {
       const id = hfsWorkerId++;
       const worker = cluster.fork({
         PRYV_WORKER_TYPE: 'hfs',
-        PRYV_BOILER_SUFFIX: `-hfs${id}`
+        PRYV_BOILER_SUFFIX: `-hfs${id}`,
+        ...observabilityEnv
       });
       workerTypes.set(worker.id, 'hfs');
       log(`HFS worker hfs${id} started (pid ${worker.process.pid})`);
@@ -263,7 +300,8 @@ if (cluster.isPrimary) {
       const id = previewsWorkerId++;
       const worker = cluster.fork({
         PRYV_WORKER_TYPE: 'previews',
-        PRYV_BOILER_SUFFIX: `-prev${id}`
+        PRYV_BOILER_SUFFIX: `-prev${id}`,
+        ...observabilityEnv
       });
       workerTypes.set(worker.id, 'previews');
       log(`Previews worker prev${id} started (pid ${worker.process.pid})`);

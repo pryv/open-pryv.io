@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Plan 38 — observability boot must come before any other require.
+require('../../../bin/_observability-boot');
+
 // @flow
 
 // Starts a HTTP server for high frequency series. Main entry point for the high
