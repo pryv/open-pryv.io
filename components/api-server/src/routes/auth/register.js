@@ -16,10 +16,17 @@ const { setMinimalMethodContext, setMethodId } = require('middleware');
 module.exports = function (expressApp, app) {
   const api = app.api;
   // POST /users: create a new user
-  expressApp.post('/users', setMinimalMethodContext, setMethodId('auth.register'), function (req, res, next) {
+  const registerHandler = function (req, res, next) {
     req.context.host = req.headers.host;
     api.call(req.context, req.body, methodCallback(res, next, 201));
-  });
+  };
+  expressApp.post('/users', setMinimalMethodContext, setMethodId('auth.register'), registerHandler);
+  // Alias at /reg/users for reserved-subdomain clients: in multi-core mode,
+  // `expressApp.js::regSubdomainPathMap` prepends `/reg` to every path when
+  // Host is reg./access./mfa., so `POST reg.{domain}/users` arrives as
+  // `POST /reg/users`. Without this alias it would fall through to the
+  // `/:username/*` router and 404 as "Unknown user 'reg'".
+  expressApp.post(path.join(regPath, '/users'), setMinimalMethodContext, setMethodId('auth.register'), registerHandler);
   expressApp.get(path.join(regPath, '/:email/check_email'), setMinimalMethodContext, setMethodId('auth.emailCheck'), (req, res, next) => {
     api.call(req.context, req.params, methodCallback(res, next, 200));
   });

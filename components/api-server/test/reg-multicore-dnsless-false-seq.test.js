@@ -229,6 +229,27 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       assert.ok(!res.body.core, 'response must not contain legacy `core.url` redirect');
     });
 
+    it('[MC11B] POST /reg/users alias accepts local registration', async function () {
+      // `regSubdomainPathMap` in multi-core mode prepends `/reg` to every
+      // path when Host is reg./access./mfa., so `POST reg.{domain}/users`
+      // arrives at the app as `POST /reg/users`. Must route to the same
+      // `auth.register` handler as `POST /users`.
+      const username = 'regu' + cuid.slug().toLowerCase();
+      const res = await request.post('/reg/users').send({
+        appId: 'test-app',
+        username,
+        email: charlatan.Internet.email(),
+        password: 'testpassword',
+        hosting: 'us-east-1',
+        insurancenumber: charlatan.Number.number(3)
+      });
+      assert.strictEqual(forwardCalls.length, 0,
+        'forward must not happen for local hosting: ' + JSON.stringify(res.body));
+      assert.strictEqual(res.status, 201,
+        '/reg/users should succeed: ' + JSON.stringify(res.body));
+      assert.ok(res.body.apiEndpoint, 'should return apiEndpoint');
+    });
+
     it('[MC12] does NOT forward when hosting maps to self', async function () {
       const username = 'fwd02' + cuid.slug().toLowerCase();
       const res = await request.post('/users').send({
