@@ -25,7 +25,7 @@ require('@pryv/boiler').init({
       file: path.resolve(__dirname, '../../../config/plugins/paths-config.js')
     },
     {
-      plugin: require(path.resolve(__dirname, '../../../config/plugins/systemStreams'))
+      pluginAsync: require(path.resolve(__dirname, '../../../config/plugins/systemStreams'))
     },
     {
       plugin: require(path.resolve(__dirname, '../../../config/plugins/public-url'))

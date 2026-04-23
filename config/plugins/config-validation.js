@@ -55,6 +55,19 @@ async function validate (config) {
         const res = config.getScopeAndValue(queryPath.join(':'));
         failWith('field content should be replaced', path, res);
       }
+      // Unresolved env-var placeholder (`${FOO}`): nothing in the stack expands
+      // these, so the literal string reaches consumers and (for paths) creates
+      // a literal `${FOO}` directory on disk. Fail fast instead.
+      const envMatch = obj.match(/\$\{([A-Z_][A-Z0-9_]*)\}/);
+      if (envMatch) {
+        const queryPath = finalPath || parentPath;
+        const res = config.getScopeAndValue(queryPath.join(':'));
+        failWith(
+          `unresolved env placeholder \${${envMatch[1]}} — export ${envMatch[1]} or replace the literal in config`,
+          path,
+          { ...res, envVar: envMatch[1] }
+        );
+      }
     }
     if (typeof obj === 'object') {
       // Skip REPLACE scan on disabled blocks — operators leave `REPLACE ME`

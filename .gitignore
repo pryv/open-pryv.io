@@ -29,6 +29,9 @@ security-assessment
 /coverage/
 var-pryv*
 *.log
+# Accidental literal dirs when PRYV_LOGSDIR/PRYV_DATADIR aren't exported at NODE_ENV=production
+${PRYV_LOGSDIR}
+${PRYV_DATADIR}
 learn-config
 external-ressources/
 components/api-server/config/override-config.yml

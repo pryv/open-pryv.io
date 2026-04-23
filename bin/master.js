@@ -57,7 +57,7 @@ if (cluster.isPrimary) {
       baseFilesDir: path.resolve(__dirname, '../'),
       baseConfigDir: BASE_CONFIG_DIR,
       extraConfigs: [{
-        plugin: require('../config/plugins/systemStreams')
+        pluginAsync: require('../config/plugins/systemStreams')
       }, {
         plugin: require('../config/plugins/core-identity')
       }, {

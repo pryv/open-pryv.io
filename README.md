@@ -165,3 +165,8 @@ just clean-test-data              # reset test databases
 - [Pryv home](https://pryv.com)
 - [GitHub Discussions](https://github.com/pryv/open-pryv.io/discussions)
 
+
+
+# License
+
+[BSD-3-Clause](LICENSE)

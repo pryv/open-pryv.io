@@ -48,6 +48,24 @@ Previously, a POST `/users` landing on a core whose `core.id` didn't match the u
 - `components/business/src/acme/CertRenewer.js` + `AcmeOrchestrator.js` + `bin/master.js` — `PlatformDBDnsWriter` accepts an optional `dnsServer` and calls `dnsServer.refreshFromPlatform()` immediately after writing `_acme-challenge.<zone>` TXT to PlatformDB. Previously relied on the DnsServer's 30 s periodic refresh, so LE's DNS-01 validator often failed with "No TXT records found". `AcmeOrchestrator.build()` threads `dnsServer` through; `bin/master.js` passes it. Real LE wildcard issuance on a fresh cluster now succeeds on the first attempt instead of 15–30 min after rqlite caught up.
 - `components/business/src/auth/registration.js::sendWelcomeMail` — guards against missing `services.email` in config (fresh bundle-bootstrapped cores have no default) and against forwarded registrations (target core already sent the mail). Before, a missing `services.email` threw `Cannot read properties of undefined (reading 'enabled')` AFTER `createUser` had already persisted the user, leaking a 500 response to the client even though the registration had technically succeeded.
 
+### systemStreams plugin: sync → pluginAsync
+
+Latent bug since the v2 snapshot — only visible on a cluster that runs under `NODE_ENV=production` with a `production-config.yml` that does not re-declare `custom:systemStreams:account`. On the pryv.me cluster this surfaced as welcome-mail failing with `recipient.email = undefined` despite `POST /users` carrying `email` in the body and returning 201.
+
+Root cause: `@pryv/boiler` loads `default-config.yml` AFTER running **synchronous** plugin extras, but BEFORE awaiting `pluginAsync` extras (via `config.initASync()`). The `systemStreams` plugin reads `config.get('custom:systemStreams:account')` and builds `accountMap` + `accountFields`. When registered as `plugin` (sync), it ran against a config that still had no `custom.*` block, so `accountMap` was missing `:system:email`, `User.loadAccountData` never copied `params.email → user.email`, and `registration.js::sendWelcomeMail` saw `undefined`. In dev/test this was hidden because `{development,test}-config.yml` declare `custom.systemStreams.account` in the base scope (loaded before sync plugins).
+
+Fix: 16 occurrences of `{ plugin: require('.../config/plugins/systemStreams') }` changed to `{ pluginAsync: require(...) }`. `pluginAsync.load(config)` is awaited in `initASync()` (boiler `config.js:220`), after `default-config.yml` loads at line 156. All downstream code that reads `config.get('systemStreams')` (notably `accountStreams.init()` via `await getConfig()` in `components/business/src/system-streams/index.js`) already awaits `configInitialized`, so no race.
+
+Files touched: `bin/{master,bootstrap,migrate,backup,dns-records,integrity-check}.js`, `components/api-server/src/application.js`, `components/webhooks/src/application.js`, `components/hfs-server/src/application.js`, `components/previews-server/src/{server,runCacheCleanup}.js`, `components/api-server/test/helpers/core-process.js`, `components/test-helpers/src/api-server-tests-config.js`, `components/test-helpers/scripts/dump-test-data.js`, `components/webhooks/test/test-helpers.js`, `components/hfs-server/test/acceptance/test-helpers.js`.
+
+Test matrix re-verified after the switch — PG 1654/0, Mongo 1676/0. No test asserts a specific `accountFields` order that would have flipped with the new merge behaviour.
+
+### Config validation: fail fast on unresolved `${VAR}` placeholders
+
+`production-config.yml` uses shell-style `${PRYV_LOGSDIR}` / `${PRYV_DATADIR}` placeholders in path values, but nothing in the boiler/nconf stack actually expands them. When the env var was unset at `NODE_ENV=production` (e.g. a stray `bin/server` run during live debugging), Winston's file transport treated the literal string as a path and created a directory named `${PRYV_LOGSDIR}` on disk.
+
+Fix: `config/plugins/config-validation.js::checkIncompleteFields` now matches `\$\{([A-Z_][A-Z0-9_]*)\}` in every string value alongside the existing `REPLACE` sentinel scan. Unresolved placeholders fail startup with a clear error naming the missing env var. Same `active: false` / `enabled: false` block-skip rules apply. `.gitignore` also picks up the literal `${PRYV_LOGSDIR}` / `${PRYV_DATADIR}` names so an accidental stray dir doesn't pollute `git status`.
+
 ### v1→v2 restore: `user-core/*` rows from register/servers.jsonl.gz
 
 - `storages/interfaces/backup/FilesystemBackupReader.js` — new `readServerMappings()` method that streams `{username, server}` rows from `register/servers.jsonl[.gz]`. No-op when the register/ subdir is absent (open-pryv.io v1.9 or v2→v2 backups).

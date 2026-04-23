@@ -44,7 +44,7 @@ require('@pryv/boiler').init({
     scope: 'default-paths',
     file: path.resolve(__dirname, '../config/plugins/paths-config.js')
   }, {
-    plugin: require('../config/plugins/systemStreams')
+    pluginAsync: require('../config/plugins/systemStreams')
   }, {
     plugin: require('../config/plugins/core-identity')
   }]
