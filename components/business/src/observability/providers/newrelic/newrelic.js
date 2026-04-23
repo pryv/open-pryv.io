@@ -6,15 +6,16 @@
  */
 
 /**
- * New Relic agent config template.
+ * New Relic agent config.
  *
- * The `newrelic` package looks for this file on `require('newrelic')`.
- * Every field reads from env so the master process can shape agent
- * behaviour without on-disk config edits.
+ * The `newrelic` package auto-discovers this file via `NEW_RELIC_HOME`
+ * (set by master) on `require('newrelic')`. Every field reads from env
+ * so the master process can shape agent behaviour without on-disk
+ * config edits per deployment.
  *
- * Defaults enforce high_security + error-only logs. Operators raise
- * verbosity through PlatformDB (`observability-log-level`), which
- * master translates into NEW_RELIC_LOG_LEVEL before forking workers.
+ * Defaults: error-only logs, HSM off (must match account-side exactly
+ * or connect returns 409), request-body + auth/cookie/x-* headers
+ * excluded from transaction attributes.
  */
 
 'use strict';
@@ -22,7 +23,11 @@
 exports.config = {
   app_name: [process.env.NEW_RELIC_APP_NAME || 'open-pryv.io'],
   license_key: process.env.NEW_RELIC_LICENSE_KEY,
-  high_security: String(process.env.NEW_RELIC_HIGH_SECURITY || 'true') === 'true',
+  // HSM is account-side, irreversible once enabled. Default OFF so the
+  // agent can connect to any account; operators who opt into account-
+  // side HSM flip NEW_RELIC_HIGH_SECURITY=true in env. The attribute
+  // exclude list below still protects sensitive headers and bodies.
+  high_security: String(process.env.NEW_RELIC_HIGH_SECURITY || 'false') === 'true',
   process_host: {
     display_name: process.env.NEW_RELIC_PROCESS_HOST_DISPLAY_NAME || ''
   },

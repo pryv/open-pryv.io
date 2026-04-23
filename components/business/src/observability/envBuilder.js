@@ -29,7 +29,10 @@ function buildObservabilityEnv (obs) {
     NEW_RELIC_APP_NAME: obs.appName,
     NEW_RELIC_PROCESS_HOST_DISPLAY_NAME: obs.hostname,
     NEW_RELIC_LOG_LEVEL: obs.logLevel,
-    NEW_RELIC_HIGH_SECURITY: 'true',
+    // Account-side HSM is irreversible once enabled; default OFF so the
+    // agent can connect to any account. Operators who have enabled
+    // account-side HSM can flip this via a future observability CLI hook.
+    NEW_RELIC_HIGH_SECURITY: obs.newrelic?.highSecurity === true ? 'true' : 'false',
     NEW_RELIC_HOME: path.resolve(__dirname, 'providers/newrelic')
   };
 }
