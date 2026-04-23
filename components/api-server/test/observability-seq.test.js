@@ -189,8 +189,22 @@ describe('[OBS] observability', function () {
       assert.strictEqual(env.NEW_RELIC_APP_NAME, 'test-cluster-app');
       assert.strictEqual(env.NEW_RELIC_PROCESS_HOST_DISPLAY_NAME, 'core-ob09b.example.com');
       assert.strictEqual(env.NEW_RELIC_LOG_LEVEL, 'warn');
-      assert.strictEqual(env.NEW_RELIC_HIGH_SECURITY, 'true');
+      // HSM defaults to 'false' (must match account-side or connect returns 409).
+      assert.strictEqual(env.NEW_RELIC_HIGH_SECURITY, 'false');
       assert.ok(env.NEW_RELIC_HOME, 'NEW_RELIC_HOME must point at the provider config dir');
+    });
+
+    it('[OB09C] NEW_RELIC_HIGH_SECURITY flips to "true" only when obs.newrelic.highSecurity=true', async function () {
+      const obs = {
+        enabled: true,
+        provider: 'newrelic',
+        appName: 'x',
+        logLevel: 'error',
+        hostname: 'core.x',
+        newrelic: { licenseKey: 'k'.repeat(40), highSecurity: true }
+      };
+      const env = buildObservabilityEnv(obs);
+      assert.strictEqual(env.NEW_RELIC_HIGH_SECURITY, 'true');
     });
   });
 

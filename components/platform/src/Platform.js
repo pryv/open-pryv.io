@@ -51,6 +51,11 @@ class Platform {
     this.initialized = true; // intentionally public — see original code note
     this.#config = await getConfig();
     this.#db = await getPlatformDB();
+    if (!this.#db) {
+      throw new Error('Platform.init: getPlatformDB() returned undefined. ' +
+        'Call `await require("storages").init(config)` before getPlatform(); ' +
+        'storages.platformDB is the singleton this class depends on.');
+    }
 
     // Register this core in PlatformDB so other cores can discover it
     await this.registerSelf();
@@ -276,9 +281,13 @@ class Platform {
    * explicit core URL that other cores resolve via the in-memory cache.
    */
   async registerSelf () {
+    if (!this.#db) {
+      throw new Error('Platform.registerSelf: PlatformDB is not initialised. ' +
+        'Call `await require("storages").init(config)` before getPlatform()/platform.init().');
+    }
     const info = {
       id: this.coreId,
-      url: this.coreUrl || null, // Plan 27 Phase 2: advertise explicit URL
+      url: this.coreUrl || null, // advertise explicit URL for DNSless multi-core
       ip: this.#config.get('core:ip') || null,
       ipv6: this.#config.get('core:ipv6') || null,
       cname: this.#config.get('core:cname') || null,
@@ -399,6 +408,9 @@ class Platform {
    * @param {boolean} available
    */
   async setAvailable (available) {
+    if (!this.#db) {
+      throw new Error('Platform.setAvailable: PlatformDB is not initialised (init() was not awaited).');
+    }
     const info = await this.#db.getCoreInfo(this.coreId);
     if (info != null) {
       info.available = available;

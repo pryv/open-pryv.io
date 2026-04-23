@@ -102,6 +102,12 @@ if (cluster.isPrimary) {
       });
     }
 
+    // Initialise the storages barrel once, unconditionally. Every
+    // downstream step (migrations, DNS server, Let's Encrypt,
+    // observability) gets platform/DB handles via `require('storages')`
+    // and must not be ordering-dependent on any optional block.
+    await require('../storages').init(config);
+
     // Run pending schema migrations before starting services.
     // Each migration-capable engine (see storages/interfaces/migrations/) gets
     // its pending up() calls applied in filename order; version bumps persist
@@ -109,7 +115,6 @@ if (cluster.isPrimary) {
     const autoRunMigrations = config.get('migrations:autoRunOnStart') ?? true;
     if (autoRunMigrations) {
       log('Running pending schema migrations...');
-      await require('../storages').init(config);
       const { createMigrationRunner } = require('../storages/interfaces/migrations');
       const runner = await createMigrationRunner({ logger: getLogger('migrations') });
       const applied = await runner.runAll();
