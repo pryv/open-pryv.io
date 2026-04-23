@@ -12,6 +12,7 @@ const accountStreams = require('business/src/system-streams');
 const { User } = require('business/src/users');
 const { getLogger } = require('@pryv/boiler');
 const { ApiEndpoint } = require('utils');
+const observability = require('business/src/observability');
 
 /**
  * Create (register) a new user
@@ -76,6 +77,9 @@ class Registration {
       if (selectedCoreId == null || selectedCoreId === this.platform.coreId) {
         return next();
       }
+      // Label the transaction in APM so local vs forwarded registrations
+      // are distinguishable in the UI. No-op when no provider is attached.
+      observability.setTransactionName('auth.register.forwarded');
       const targetUrl = this.platform.coreIdToUrl(selectedCoreId);
       // 30 s timeout: a hung target must not wedge the landing worker.
       // 30 s matches Node fetch's default connect timeout + leaves headroom
@@ -107,6 +111,7 @@ class Registration {
       result.forwarded = true;
       return next();
     } catch (err) {
+      observability.recordError(err, { context: 'auth.register.forward' });
       return next(err);
     }
   }
