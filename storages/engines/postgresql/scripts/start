@@ -46,13 +46,13 @@ create_role_and_db_if_needed() {
   done
 
   # Create 'pryv' role if it doesn't exist (matches default-config.yml)
-  if ! "$PG_BIN/psql" -h 127.0.0.1 -p 5432 -tAc "SELECT 1 FROM pg_roles WHERE rolname='pryv'" 2>/dev/null | grep -q 1; then
+  if ! "$PG_BIN/psql" -h 127.0.0.1 -p 5432 -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='pryv'" 2>/dev/null | grep -q 1; then
     echo "Creating role 'pryv'..."
-    "$PG_BIN/psql" -h 127.0.0.1 -p 5432 -c "CREATE ROLE pryv WITH LOGIN CREATEDB;"
+    "$PG_BIN/psql" -h 127.0.0.1 -p 5432 -d postgres -c "CREATE ROLE pryv WITH LOGIN CREATEDB;"
   fi
 
   # Create pryv-node database if it doesn't exist
-  if ! "$PG_BIN/psql" -h 127.0.0.1 -p 5432 -lqt 2>/dev/null | cut -d\| -f1 | grep -qw "pryv-node"; then
+  if ! "$PG_BIN/psql" -h 127.0.0.1 -p 5432 -d postgres -lqt 2>/dev/null | cut -d\| -f1 | grep -qw "pryv-node"; then
     echo "Creating database 'pryv-node'..."
     "$PG_BIN/createdb" -h 127.0.0.1 -p 5432 -U pryv "pryv-node"
   fi

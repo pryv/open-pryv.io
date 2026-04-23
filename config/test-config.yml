@@ -39,6 +39,13 @@ storages:
       name: pryv-node-test
       authUser: ''
       authPassword: ''
+    postgresql:
+      host: 127.0.0.1
+      port: 5432
+      database: pryv-node-test
+      user: pryv
+      password: ''
+      max: 20
     influxdb:
       host: 127.0.0.1
       port: 8086

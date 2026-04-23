@@ -57,25 +57,50 @@ else
 
   mkdir -p "$RQLITE_BIN_DIR"
 
-  TARBALL="rqlite-v${RQLITE_VERSION}-${RQLITE_OS}-${RQLITE_ARCH}.tar.gz"
-  URL="https://github.com/rqlite/rqlite/releases/download/v${RQLITE_VERSION}/${TARBALL}"
+  # macOS: upstream releases do not publish darwin-arm64 tarballs (as of v9.4.5
+  # only linux-* assets ship). Fall back to Homebrew's native arm64 bottle,
+  # which tracks the same upstream version, then symlink binaries in.
+  if [[ "$RQLITE_OS" == "darwin" ]]; then
+    if ! command -v brew >/dev/null 2>&1; then
+      echo "Error: Homebrew is required on macOS to install rqlite (upstream ships no darwin-arm64 tarball)."
+      echo "       Install Homebrew from https://brew.sh and re-run this script."
+      exit 1
+    fi
+    BREW_VERSION=$(brew info --json=v2 rqlite 2>/dev/null | awk -F'"' '/"versions":/{f=1} f && /"stable":/{print $4; exit}')
+    if [[ "$BREW_VERSION" != "$RQLITE_VERSION" ]]; then
+      echo "Warning: Homebrew ships rqlite $BREW_VERSION but this repo pins $RQLITE_VERSION."
+      echo "         Proceeding with the Homebrew version. Bump RQLITE_VERSION in this script if divergence matters."
+    fi
+    if ! brew list --formula rqlite >/dev/null 2>&1; then
+      echo "Installing rqlite via Homebrew..."
+      brew install rqlite
+    fi
+    BREW_PREFIX=$(brew --prefix rqlite)
+    ln -sf "$BREW_PREFIX/bin/rqlited" "$RQLITE_BIN_DIR/rqlited"
+    [[ -x "$BREW_PREFIX/bin/rqlite" ]] && ln -sf "$BREW_PREFIX/bin/rqlite" "$RQLITE_BIN_DIR/rqlite"
+    [[ -x "$BREW_PREFIX/bin/rqbench" ]] && ln -sf "$BREW_PREFIX/bin/rqbench" "$RQLITE_BIN_DIR/rqbench"
+    echo "Installed (via Homebrew): $($RQLITE_BIN_DIR/rqlited -version 2>&1 | head -1)"
+  else
+    TARBALL="rqlite-v${RQLITE_VERSION}-${RQLITE_OS}-${RQLITE_ARCH}.tar.gz"
+    URL="https://github.com/rqlite/rqlite/releases/download/v${RQLITE_VERSION}/${TARBALL}"
 
-  TMP_DIR=$(mktemp -d)
-  trap "rm -rf $TMP_DIR" EXIT
+    TMP_DIR=$(mktemp -d)
+    trap "rm -rf $TMP_DIR" EXIT
 
-  echo "Downloading $URL ..."
-  curl -fsSL -o "$TMP_DIR/$TARBALL" "$URL"
+    echo "Downloading $URL ..."
+    curl -fsSL -o "$TMP_DIR/$TARBALL" "$URL"
 
-  echo "Extracting..."
-  tar xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR" --strip-components 1
+    echo "Extracting..."
+    tar xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR" --strip-components 1
 
-  cp "$TMP_DIR/rqlited" "$RQLITE_BIN_DIR/"
-  # rqlite (CLI) and rqbench are nice-to-have, copy if present
-  [[ -f "$TMP_DIR/rqlite" ]] && cp "$TMP_DIR/rqlite" "$RQLITE_BIN_DIR/" || true
-  [[ -f "$TMP_DIR/rqbench" ]] && cp "$TMP_DIR/rqbench" "$RQLITE_BIN_DIR/" || true
+    cp "$TMP_DIR/rqlited" "$RQLITE_BIN_DIR/"
+    # rqlite (CLI) and rqbench are nice-to-have, copy if present
+    [[ -f "$TMP_DIR/rqlite" ]] && cp "$TMP_DIR/rqlite" "$RQLITE_BIN_DIR/" || true
+    [[ -f "$TMP_DIR/rqbench" ]] && cp "$TMP_DIR/rqbench" "$RQLITE_BIN_DIR/" || true
 
-  chmod +x "$RQLITE_BIN_DIR/rqlited"
-  echo "Installed: $($RQLITE_BIN_DIR/rqlited -version 2>&1 | head -1)"
+    chmod +x "$RQLITE_BIN_DIR/rqlited"
+    echo "Installed: $($RQLITE_BIN_DIR/rqlited -version 2>&1 | head -1)"
+  fi
 fi
 
 echo ""

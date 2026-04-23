@@ -39,17 +39,26 @@ else
   echo ""
 
   # --- Check build dependencies ---
-  MISSING_DEPS=()
-  for lib in libreadline-dev zlib1g-dev; do
-    if ! dpkg -s "$lib" >/dev/null 2>&1; then
-      MISSING_DEPS+=("$lib")
+  if [[ "$(uname)" == "Linux" ]]; then
+    MISSING_DEPS=()
+    for lib in libreadline-dev zlib1g-dev; do
+      if ! dpkg -s "$lib" >/dev/null 2>&1; then
+        MISSING_DEPS+=("$lib")
+      fi
+    done
+    if [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
+      echo "Installing build dependencies: ${MISSING_DEPS[*]}"
+      sudo apt-get update -qq
+      sudo apt-get install -y -qq "${MISSING_DEPS[@]}"
     fi
-  done
+  fi
+  # macOS: readline + zlib ship with Xcode Command Line Tools; nothing to install.
 
-  if [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
-    echo "Installing build dependencies: ${MISSING_DEPS[*]}"
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq "${MISSING_DEPS[@]}"
+  # Portable CPU-count helper (Linux has nproc, macOS has sysctl)
+  if command -v nproc >/dev/null 2>&1; then
+    NCPU=$(nproc)
+  else
+    NCPU=$(sysctl -n hw.ncpu)
   fi
 
   # --- Download source ---
@@ -66,7 +75,17 @@ else
   # --- Compile ---
   cd "$BUILD_DIR/postgresql-${PG_VERSION}"
   echo "Configuring (prefix=$PG_INSTALL_DIR)..."
-  ./configure \
+
+  # macOS 15.0 SDK marks strchrnul() as 15.4-only; PG 16.x uses it in
+  # src/port/snprintf.c without a __builtin_available guard, which breaks
+  # the build under -Werror=unguarded-availability-new. The symbol exists
+  # in all shipping macOS 15.x runtimes — silence the availability check.
+  CONFIGURE_CFLAGS=""
+  if [[ "$(uname)" == "Darwin" ]]; then
+    CONFIGURE_CFLAGS="-Wno-unguarded-availability-new"
+  fi
+
+  CFLAGS="$CONFIGURE_CFLAGS" ./configure \
     --prefix="$PG_INSTALL_DIR" \
     --without-icu \
     --without-ldap \
@@ -75,8 +94,8 @@ else
     --without-systemd \
     --quiet
 
-  echo "Compiling ($(nproc) cores)..."
-  make -j"$(nproc)" --quiet
+  echo "Compiling ($NCPU cores)..."
+  make -j"$NCPU" --quiet
 
   echo "Installing to $PG_INSTALL_DIR ..."
   make install --quiet
