@@ -25,6 +25,7 @@ Pryv.io serves as the backend for applications in health, quantified self, smart
 - **rqlite for PlatformDB** — distributed platform storage for single- and multi-core deployments with Raft consensus.
 - **Multi-core deployments** — HTTP 421 wrong-core routing, DNS-based or DNSless topology, platform-config-snapshot hash comparison for drift detection.
 - **Backup, restore & integrity** — engine-agnostic backup to JSONL+gzip, per-user integrity verification with SHA-256 hashes.
+- **Optional observability (APM)** — pluggable provider façade with New Relic as the first integration. Opt-in, cluster-wide config via PlatformDB (license key AES-256-GCM encrypted at rest), errors-only by default, hostnames matching `/reg/hostings`. Operator guide: [Observability (APM)](https://pryv.github.io/customer-resources/observability/).
 
 For the full v2 change history, see [CHANGELOG-v2.md](./CHANGELOG-v2.md) (API-facing) and [CHANGELOG-v2-back.md](./CHANGELOG-v2-back.md) (internal).
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Plan 38 — observability boot must come before any other require.
+// Observability boot must come before any other require.
 require('../../../bin/_observability-boot');
 
 // Service that receives notifications from api-server and send them to existing Webhooks.

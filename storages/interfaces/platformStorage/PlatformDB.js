@@ -232,7 +232,7 @@ const PlatformDB = module.exports.PlatformDB = {
    */
   async deleteCertificate (hostname) { throw new Error('Not implemented'); },
 
-  // --- Plan 38: observability ----------------------------------------
+  // --- Observability config (optional APM) ---------------------------
   /**
    * Write a single observability config row. Stored under the
    * `observability/<key>` prefix in the underlying keyValue table.

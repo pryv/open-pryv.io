@@ -339,7 +339,7 @@ class DBrqlite {
     await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
   }
 
-  // --- Plan 38: observability --- //
+  // --- Observability config (optional APM) --- //
 
   async setObservabilityValue (key, value) {
     const storeKey = getObservabilityKey(key);

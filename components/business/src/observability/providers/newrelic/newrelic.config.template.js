@@ -6,7 +6,7 @@
  */
 
 /**
- * Plan 38 — New Relic agent config template.
+ * New Relic agent config template.
  *
  * The `newrelic` package looks for this file on `require('newrelic')`.
  * Every field reads from env so the master process can shape agent

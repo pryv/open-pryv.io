@@ -310,7 +310,7 @@ letsEncrypt:
   onRotateScript: null                            # optional absolute path; invoked after every successful rotation on this core
   directoryUrl: null                              # override to point at Pebble or an internal ACME for testing
 
-# === OBSERVABILITY (optional APM — Plan 38) ===
+# === OBSERVABILITY (optional APM) ===
 # Opt-in. When disabled, no provider module is loaded and the façade is a no-op.
 # Secrets live in PlatformDB (cluster-wide, AES-256-GCM encrypted via the same
 # `AtRestEncryption` module letsEncrypt uses). The CLI `bin/observability.js`
@@ -320,10 +320,11 @@ letsEncrypt:
 # override-config.yml, the local value wins over PlatformDB. This lets an
 # operator yank a misbehaving agent without touching cluster state.
 observability:
-  enabled: false                                  # opt-in; local false overrides PlatformDB true
-  provider: ''                                    # 'newrelic' is the only option as of Plan 38
-  appName: ''                                     # cluster-wide label. If empty, derived from dns.domain
-  logLevel: 'error'                               # errors only by default. 'warn' | 'info' | 'debug' raise verbosity
+  # `enabled`, `provider`, `appName`, `logLevel`: default unset — PlatformDB
+  # is authoritative. Operators who need an emergency local kill-switch can
+  # set `observability.enabled: false` in override-config.yml; that always
+  # wins over PlatformDB. Conversely, setting `enabled: true` locally is a
+  # no-op unless `provider` is also set and a license key is configured.
   newrelic:
     licenseKey: ''                                # if set locally, wins over PlatformDB (emergency override)
 

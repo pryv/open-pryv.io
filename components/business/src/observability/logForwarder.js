@@ -6,8 +6,8 @@
  */
 
 /**
- * Plan 38 — mirror boiler logger calls to the active observability
- * provider, gated by a configured log level.
+ * Mirror boiler logger calls to the active observability provider,
+ * gated by a configured log level.
  *
  * Default is `error` — only `logger.error(...)` calls ship to the
  * provider. Raising to `warn` / `info` / `debug` is operator opt-in

@@ -6,12 +6,12 @@
  */
 
 /**
- * Plan 38 — New Relic provider adapter.
+ * New Relic provider adapter.
  *
- * This module wraps `require('newrelic')` behind the façade's method
- * set. It is only required AFTER the agent has booted (the shim at
+ * Wraps `require('newrelic')` behind the façade's method set. Only
+ * required AFTER the agent has booted — the shim at
  * `bin/_observability-boot.js` calls `require('newrelic')` first, then
- * constructs this adapter).
+ * constructs this adapter.
  *
  * The `newrelicAgent` handle is injected rather than `require()`d here
  * so tests can pass a mock without touching the global agent.

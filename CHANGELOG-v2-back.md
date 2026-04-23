@@ -1,5 +1,20 @@
 # Changelog - Internal (no API impact)
 
+## Optional observability — internal shape
+
+- **New module** `components/business/src/observability/` — provider-agnostic façade. `isActive() / setTransactionName / recordError / recordCustomEvent / startBackgroundTransaction`. Every provider call wrapped in try/catch so observability can never break a request.
+- **New module** `components/business/src/observability/logForwarder.js` — wraps a boiler logger to mirror its level methods into `observability.recordError / recordCustomEvent`. Errors always go to the provider's Error inbox regardless of log level; warn/info/debug become `PryvLog` custom events queryable via NRQL.
+- **New module** `components/business/src/observability/providers/newrelic/{boot,adapter,newrelic.config.template}.js` — thin wrapper over the `newrelic` npm package. Agent config is driven entirely by env vars the master process populates, so no on-disk config edits are required per deployment.
+- **New shim** `bin/_observability-boot.js` — must be `require()`d first in every entrypoint. Bypasses in `NODE_ENV=test` or when `PRYV_OBSERVABILITY_PROVIDER` is unset; otherwise dispatches to the provider's boot module so the underlying agent loads before `http` / `express` / `pg` / etc.
+- **PlatformDB surface**: new `setObservabilityValue / getObservabilityValue / getAllObservabilityValues / deleteObservabilityValue`. Keyspace `observability/<key>` in the existing rqlite `keyValue` table — no schema change.
+- **Platform surface**: new `getObservabilityConfig()` merges local YAML override + PlatformDB rows + derived fields (hostname from `new URL(core.url).hostname`, appName fallback). Local `observability.enabled: false` always wins; otherwise PlatformDB is authoritative. Secret rows decrypted on demand via `AtRestEncryption` with HKDF-derived keys (source: `auth.adminAccessKey`, per-key purpose label).
+- **Master wiring**: reads `platform.getObservabilityConfig()` before forking workers, builds a shared `observabilityEnv` object, and spreads it into every `cluster.fork({...})` call (api / hfs / previews). Environment variables include `PRYV_OBSERVABILITY_PROVIDER`, `NEW_RELIC_LICENSE_KEY`, `NEW_RELIC_APP_NAME`, `NEW_RELIC_PROCESS_HOST_DISPLAY_NAME`, `NEW_RELIC_LOG_LEVEL`, `NEW_RELIC_HIGH_SECURITY=true`, `NEW_RELIC_HOME`.
+- **Admin CLI** `bin/observability.js` — `storages` barrel directly, no HTTP. Parses `--help` before boiler init (same pattern as `bin/dns-records.js`).
+
+### Tests
+- `storages/engines/rqlite/test/platformdb-conformance.test.js` — 6 new `[RQPF]` cases under the shared `components/platform/test/conformance/PlatformDB.test.js`: round-trip, overwrite/rotation, bulk read, delete, namespace isolation vs `dns-record/*` and `user-core/*`.
+- `components/api-server/test/observability-seq.test.js` — `[OBS]` suite (9 cases): Platform round-trip with encryption, local `enabled:false` override wins, appName fallback, hostname derivation, façade no-op when no provider, shim `NODE_ENV=test` bypass, shim unset-env no-op, logForwarder errors-only default, logForwarder `warn` level forwards errors + warns.
+
 ## Multi-core registration, service-info, and auth-popup fixes
 
 Surfaced during pryv.me v2 rollout. The items below make cross-core registration atomic, expose the SDK-expected shape of `/service/info` + `/reg/access`, and fix several subtle multi-core plumbing bugs that appeared once a real two-core deployment hit a freshly-delegated domain.

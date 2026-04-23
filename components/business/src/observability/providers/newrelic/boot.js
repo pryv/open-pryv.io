@@ -6,7 +6,7 @@
  */
 
 /**
- * Plan 38 — New Relic provider boot.
+ * New Relic provider boot.
  *
  * Invoked by `bin/_observability-boot.js` as the very first require()
  * in any entrypoint process when `PRYV_OBSERVABILITY_PROVIDER=newrelic`.

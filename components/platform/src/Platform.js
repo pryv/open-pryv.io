@@ -647,7 +647,7 @@ class Platform {
     return reservedWords.has(lower);
   }
 
-  // --- Plan 38: observability ----------------------------------------
+  // --- Observability config (optional APM) ---------------------------
 
   /**
    * Build the effective observability config by merging:
@@ -658,8 +658,8 @@ class Platform {
    *
    * Secrets (license keys) are at-rest-encrypted via `AtRestEncryption`
    * with HKDF-derived keys per provider. The source material is
-   * `auth.adminAccessKey` — every cluster has one, and it's already the
-   * operator-sync secret (see CONFIG-SEPARATION.md).
+   * `auth.adminAccessKey` — every cluster has one, and it's already
+   * the operator-sync secret.
    *
    * Resolution rule: local `observability.enabled: false` ALWAYS wins
    * (emergency off-switch). Otherwise PlatformDB is authoritative.

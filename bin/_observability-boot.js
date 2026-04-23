@@ -6,7 +6,7 @@
  */
 
 /**
- * Plan 38 — provider-agnostic observability boot shim.
+ * Provider-agnostic observability boot shim.
  *
  * CRITICAL: this file must be `require()`d as the very FIRST line of
  * every Node entrypoint (`bin/master.js`, `bin/api-server/server`,

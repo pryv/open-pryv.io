@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-// Plan 38 — observability boot MUST come before any other require so
-// APM agents can instrument http/express/pg from the start. No-op in
-// NODE_ENV=test or when PRYV_OBSERVABILITY_PROVIDER is unset.
+// Observability boot MUST come before any other require so APM agents
+// can instrument http/express/pg from the start. No-op in NODE_ENV=test
+// or when PRYV_OBSERVABILITY_PROVIDER is unset.
 require('./_observability-boot');
 
 /**
@@ -204,7 +204,7 @@ if (cluster.isPrimary) {
     let apiWorkerId = 0;
     let hfsWorkerId = 0;
 
-    // Plan 38 — observability env vars workers inherit via setupPrimary.
+    // Observability env vars workers inherit via setupPrimary.
     // Effective config comes from `Platform.getObservabilityConfig()` which
     // merges PlatformDB rows + local YAML + derives hostname. Empty object
     // when disabled or misconfigured — workers then see no provider env and

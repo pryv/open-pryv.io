@@ -6,7 +6,7 @@
  */
 
 /**
- * Plan 38 — provider-agnostic observability façade.
+ * Provider-agnostic observability façade.
  *
  * Shape:
  *   - `init(providerId)` is called once at process start by the shim at
