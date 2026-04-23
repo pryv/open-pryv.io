@@ -206,28 +206,21 @@ if (cluster.isPrimary) {
 
     // Observability env vars workers inherit via setupPrimary.
     // Effective config comes from `Platform.getObservabilityConfig()` which
-    // merges PlatformDB rows + local YAML + derives hostname. Empty object
-    // when disabled or misconfigured — workers then see no provider env and
-    // the boot shim no-ops.
+    // merges PlatformDB rows + local YAML + derives hostname.
+    // `buildObservabilityEnv` returns an empty object when disabled or
+    // misconfigured — workers then see no provider env and the boot shim
+    // no-ops.
     let observabilityEnv = {};
     try {
       const { getPlatform } = require('../components/platform/src');
       const platform = await getPlatform();
       const obs = await platform.getObservabilityConfig();
-      if (obs.enabled && obs.provider === 'newrelic' && obs.newrelic.licenseKey) {
-        observabilityEnv = {
-          PRYV_OBSERVABILITY_PROVIDER: 'newrelic',
-          NEW_RELIC_LICENSE_KEY: obs.newrelic.licenseKey,
-          NEW_RELIC_APP_NAME: obs.appName,
-          NEW_RELIC_PROCESS_HOST_DISPLAY_NAME: obs.hostname,
-          NEW_RELIC_LOG_LEVEL: obs.logLevel,
-          NEW_RELIC_HIGH_SECURITY: 'true',
-          // Let the agent find our config template (high_security + attr filters).
-          NEW_RELIC_HOME: require('path').join(__dirname, '../components/business/src/observability/providers/newrelic')
-        };
+      const { buildObservabilityEnv } = require('business/src/observability/envBuilder');
+      observabilityEnv = buildObservabilityEnv(obs);
+      if (Object.keys(observabilityEnv).length > 0) {
         log(`[observability] provider=newrelic host=${obs.hostname} logLevel=${obs.logLevel}`);
       } else if (obs.enabled) {
-        log(`[observability] enabled but provider=${obs.provider || 'unset'} — not activating`);
+        log(`[observability] enabled but provider=${obs.provider || 'unset'} or license-key unset — not activating`);
       }
     } catch (err) {
       log('[observability] getObservabilityConfig FAILED: ' + err.message + ' — workers start without APM');

@@ -31,6 +31,7 @@ const { getConfig } = require('@pryv/boiler');
 const { platform } = require('platform');
 const observability = require('business/src/observability');
 const logForwarder = require('business/src/observability/logForwarder');
+const { buildObservabilityEnv } = require('business/src/observability/envBuilder');
 
 function getPlatformDB () {
   return require('storages').platformDB;
@@ -135,6 +136,61 @@ describe('[OBS] observability', function () {
       const parsed = JSON.parse(result.stdout.trim());
       assert.strictEqual(parsed.activated, false);
       assert.match(parsed.reason, /PRYV_OBSERVABILITY_PROVIDER unset/);
+    });
+
+    it('[OB06B] env-set + missing provider module records boot-failure without crashing', function () {
+      // Simulate the master having populated env but the provider boot
+      // file being absent (future-proofing or a mistyped provider id).
+      const result = spawnSync('node', ['-e',
+        'delete process.env.NODE_ENV; ' +
+        'process.env.PRYV_OBSERVABILITY_PROVIDER = "nonexistent-xyz"; ' +
+        'console.log(JSON.stringify(require("' + shimPath + '")));'
+      ], { encoding: 'utf8' });
+      const parsed = JSON.parse(result.stdout.trim());
+      assert.strictEqual(parsed.activated, false);
+      assert.match(parsed.reason, /boot-failure/);
+      // Expected: non-fatal. Process must have exited 0 (shim must never
+      // crash the host process).
+      assert.strictEqual(result.status, 0, 'shim must not crash the host process on boot-failure');
+      assert.match(result.stderr, /failed to activate provider "nonexistent-xyz"/);
+    });
+  });
+
+  describe('[OB-EP] env propagation from Platform.getObservabilityConfig', function () {
+    beforeEach(async function () {
+      const values = await getPlatformDB().getAllObservabilityValues();
+      for (const { key } of values) {
+        await getPlatformDB().deleteObservabilityValue(key);
+      }
+    });
+
+    it('[OB08B] master env object is empty when no provider is enabled', async function () {
+      // Reproduce master's check: the config must be "enabled && provider && licenseKey"
+      // to emit env for cluster.fork(). Anything else yields an empty env.
+      const obs = await platform.getObservabilityConfig();
+      const env = buildObservabilityEnv(obs);
+      assert.deepStrictEqual(env, {}, 'no provider should yield empty env: ' + JSON.stringify(env));
+    });
+
+    it('[OB09B] env has the full shape when enabled + provider + license are set', async function () {
+      const coreUrl = 'https://core-ob09b.example.com';
+      config.injectTestConfig({ core: { url: coreUrl }, dns: { domain: 'example.com' }, observability: {} });
+      await platform.setObservabilityValue('enabled', true);
+      await platform.setObservabilityValue('provider', 'newrelic');
+      await platform.setObservabilityValue('newrelic-license-key', 'test-license-xyz-01234567890123456789');
+      await platform.setObservabilityValue('log-level', 'warn');
+      await platform.setObservabilityValue('app-name', 'test-cluster-app');
+
+      const obs = await platform.getObservabilityConfig();
+      const env = buildObservabilityEnv(obs);
+
+      assert.strictEqual(env.PRYV_OBSERVABILITY_PROVIDER, 'newrelic');
+      assert.strictEqual(env.NEW_RELIC_LICENSE_KEY, 'test-license-xyz-01234567890123456789');
+      assert.strictEqual(env.NEW_RELIC_APP_NAME, 'test-cluster-app');
+      assert.strictEqual(env.NEW_RELIC_PROCESS_HOST_DISPLAY_NAME, 'core-ob09b.example.com');
+      assert.strictEqual(env.NEW_RELIC_LOG_LEVEL, 'warn');
+      assert.strictEqual(env.NEW_RELIC_HIGH_SECURITY, 'true');
+      assert.ok(env.NEW_RELIC_HOME, 'NEW_RELIC_HOME must point at the provider config dir');
     });
   });
 
