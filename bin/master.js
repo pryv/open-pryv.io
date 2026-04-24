@@ -91,7 +91,7 @@ if (cluster.isPrimary) {
     } else {
       await rqliteProcess.start({
         coreId: config.get('core:id') || 'single',
-        binPath: rqliteConfig.binPath || 'var-pryv/rqlite-bin/rqlited',
+        binPath: rqliteConfig.binPath || 'bin-ext/rqlited',
         dataDir: rqliteConfig.dataDir || 'var-pryv/rqlite-data',
         httpPort: parseInt(httpPort),
         raftPort: rqliteConfig.raftPort || 4002,

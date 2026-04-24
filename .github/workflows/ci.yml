@@ -37,7 +37,7 @@ jobs:
           influxd &
           sleep 3
       - name: Run MongoDB test suite
-        run: just clean-test-data && just test all
+        run: just clean-test-data && just test-mongo all
 
   test-postgres:
     runs-on: ubuntu-22.04
@@ -82,7 +82,7 @@ jobs:
           influxd &
           sleep 3
       - name: Run PostgreSQL test suite
-        run: just clean-test-data && just test-pg all
+        run: just clean-test-data && just test all
         env:
           storages__engines__postgresql__host: localhost
           storages__engines__postgresql__port: 5432

@@ -30,7 +30,10 @@ http:
 # `storages.platform.engine` + rqlite settings are BOOTSTRAP — needed before PlatformDB is reachable.
 storages:
   base:
-    engine: mongodb         # baseStorage + dataStore
+    # baseStorage + dataStore. PostgreSQL is the default since Plan 49;
+    # Mongo stays fully supported — set `engine: mongodb` in override-config.yml
+    # (or `STORAGE_ENGINE=mongodb` in the test harness) to pick it explicitly.
+    engine: postgresql
   platform:
     engine: rqlite          # platformStorage
   series:

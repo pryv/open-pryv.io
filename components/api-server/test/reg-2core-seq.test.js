@@ -14,7 +14,7 @@
  *
  * Sequential — manages child processes and rqlite lifecycle.
  *
- * Requires: rqlited binary at var-pryv/rqlite-bin/rqlited
+ * Requires: rqlited binary at bin-ext/rqlited
  */
 
 const assert = require('node:assert');
@@ -27,7 +27,7 @@ const DBrqlite = require('../../../storages/engines/rqlite/src/DBrqlite');
 
 const SERVICE_CORE_ROOT = path.resolve(__dirname, '../../../');
 const CORE_PROCESS = path.resolve(__dirname, 'helpers/core-process.js');
-const RQLITE_BIN = path.resolve(SERVICE_CORE_ROOT, 'var-pryv/rqlite-bin/rqlited');
+const RQLITE_BIN = path.resolve(SERVICE_CORE_ROOT, 'bin-ext/rqlited');
 
 const DOMAIN = 'test-2core.pryv.li';
 const ADMIN_KEY = 'test-2core-admin-key';

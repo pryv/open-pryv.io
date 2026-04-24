@@ -26,18 +26,20 @@ class SchemaMigrationsPG {
   /** @param {import('./DatabasePG')} db */
   constructor (db) {
     this.db = db;
-    this._ensured = false;
   }
 
   async _ensureTable () {
-    if (this._ensured) return;
+    // Idempotent — always re-issue CREATE TABLE IF NOT EXISTS instead of
+    // caching on `this._ensured`. The cache used to cause test crashes when
+    // `afterEach` dropped the table via a fresh SchemaMigrationsPG instance
+    // while a long-lived capability-closure instance still had `_ensured=true`
+    // and skipped the recreate on the next test.
     await this.db.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
-    this._ensured = true;
   }
 
   async getVersion () {
@@ -57,10 +59,9 @@ class SchemaMigrationsPG {
     );
   }
 
-  /** For tests — wipe the table and force re-ensure on next call. */
+  /** For tests — wipe the table. Next getVersion/setVersion call will recreate it. */
   async _resetForTests () {
     await this.db.query('DROP TABLE IF EXISTS schema_migrations');
-    this._ensured = false;
   }
 }
 

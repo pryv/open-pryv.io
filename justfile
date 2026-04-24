@@ -71,19 +71,20 @@ lint-changes *options:
 tag-tests:
     scripts/tag-tests
 
-# Run tests on the given component ('all' for all components) with optional extra parameters
+# Run tests on the given component ('all' for all components) with optional extra parameters.
+# PostgreSQL is the default baseStorage since Plan 49 — use `test-mongo` for Mongo.
 test component *params:
-    NODE_ENV=test COMPONENT={{component}} scripts/components-run \
-        npx mocha -- {{params}}
-
-# Same as `test` but using PostgreSQL storage engine
-test-pg component *params:
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}
 
-# Same as `test-parallel` but using PostgreSQL storage engine
-test-pg-parallel component *params:
-    STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
+# Same as `test` but using MongoDB baseStorage
+test-mongo component *params:
+    STORAGE_ENGINE=mongodb NODE_ENV=test COMPONENT={{component}} scripts/components-run \
+        npx mocha -- {{params}}
+
+# Same as `test-parallel` but using MongoDB baseStorage
+test-mongo-parallel component *params:
+    STORAGE_ENGINE=mongodb NODE_ENV=test MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}
 
 # Same as `test` but using SQLite PoC storage
@@ -97,45 +98,44 @@ test-full-mongo component *params:
         NODE_ENV=test COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}
 
-# Run tests with detailed output
+# Run tests with detailed output (PG default — prefix with `STORAGE_ENGINE=mongodb` for Mongo)
 test-detailed component *params:
-    NODE_ENV=test COMPONENT={{component}} scripts/components-run \
+    STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
         npx mocha -- --reporter=spec {{params}}
 
-# Run tests with detailed output for debugging
+# Run tests with detailed output for debugging (PG default)
 test-debug component *params:
-    NODE_ENV=test COMPONENT={{component}} scripts/components-run \
+    STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
         npx mocha -- --timeout 3600000 --reporter=spec --inspect-brk=40000 {{params}}
 
-# Run tests with parallel file execution (excludes tests that can't parallelize)
+# Run tests with parallel file execution (PG default; excludes tests that can't parallelize)
 # Uses MOCHA_PARALLEL=1 to enable parallel mode in .mocharc.js
 test-parallel component *params:
-    NODE_ENV=test DISABLE_INTEGRITY_CHECK=1 MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
+    STORAGE_ENGINE=postgresql NODE_ENV=test DISABLE_INTEGRITY_CHECK=1 MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}
 
-# Run parallel tests first, then sequential tests
+# Run parallel tests first, then sequential tests (PG default)
 test-fast component *params:
-    NODE_ENV=test DISABLE_INTEGRITY_CHECK=1 MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
+    STORAGE_ENGINE=postgresql NODE_ENV=test DISABLE_INTEGRITY_CHECK=1 MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}} && \
-    NODE_ENV=test MOCHA_NON_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
+    STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_NON_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}
 
-# Run only non-parallel tests (tests excluded from parallel mode)
-# Use after test-parallel to run the remaining tests sequentially
+# Run only non-parallel tests (PG default; use after test-parallel to run the remaining tests sequentially)
 test-non-parallel component *params:
-    NODE_ENV=test MOCHA_NON_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
+    STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_NON_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}
 
-# ⚠️  OBSOLETE?: Run tests for profiling
+# ⚠️  OBSOLETE?: Run tests for profiling (PG default)
 test-profile component *params:
-    NODE_ENV=test COMPONENT={{component}} scripts/components-run \
+    STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
         npx mocha -- --profile=true {{params}} && \
     tick-processor > profiling-output.txt && \
     open profiling-output.txt
 
-# Run tests and generate HTML coverage report for a single component
+# Run tests and generate HTML coverage report for a single component (PG default)
 test-cover component *params:
-    NODE_ENV=test COMPONENT={{component}} nyc \
+    STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} nyc \
         scripts/components-run npx mocha -- {{params}}
 
 # Run all tests across all engines (MongoDB + PG + SQLite) and generate coverage report

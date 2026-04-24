@@ -301,29 +301,40 @@ class Platform {
     // membership is tracked in PLATFORM-WIDE-CONFIG-MIGRATION.md follow-up.
     await this._refreshCoreUrlCache();
 
-    // Plan 27 Phase 2b: log this core's observed values for known platform-wide
-    // config keys so operators can compare across cores and detect drift. A full
-    // PlatformDB-backed `platform_config` table with live drift warnings is
-    // targeted as a Plan 27 follow-up — see
-    // `_plans/27-pre-open-pryv-merge-atwork/CONFIG-SEPARATION.md`.
-    const platformWideSnapshot = {
+    const { snapshot, hash } = this.getPlatformConfigSnapshot();
+    logger.info('[platform-config-snapshot] coreId=' + this.coreId +
+      ' hash=' + hash + ' ' +
+      JSON.stringify(snapshot) +
+      ' — these values MUST be identical across cores in a multi-core deployment. ' +
+      'Compare hashes across core logs to detect drift. See CONFIG-SEPARATION.md.');
+  }
+
+  /**
+   * Build the deterministic snapshot of platform-wide config keys this core
+   * observes. Mirrors the Plan 27 Phase 2b boot log so operators can
+   * cross-reference a CLI read (e.g. `bin/observability.js show`) against the
+   * value each core logs at startup. `auth.adminAccessKey` is surfaced only as
+   * a short SHA-256 prefix — the secret itself never leaves config.
+   *
+   * @returns {{ snapshot: object, hash: string }}
+   */
+  getPlatformConfigSnapshot () {
+    const snapshot = {
       'dns.domain': this.#config.get('dns:domain') || null,
       'integrity.algorithm': this.#config.get('integrity:algorithm') || null,
       'versioning.deletionMode': this.#config.get('versioning:deletionMode') || null,
       'uploads.maxSizeMb': this.#config.get('uploads:maxSizeMb') || null
     };
-    // `auth.adminAccessKey` is a secret and stays YAML-only (bootstrap category).
-    // We log only a SHA-256 hash so operators can compare hashes across cores to
-    // detect drift without the secret ever appearing in logs.
     const adminKey = this.#config.get('auth:adminAccessKey');
-    const adminKeyHash = adminKey
+    snapshot['auth.adminAccessKey.sha256'] = adminKey
       ? crypto.createHash('sha256').update(String(adminKey)).digest('hex').slice(0, 16)
       : null;
-    platformWideSnapshot['auth.adminAccessKey.sha256'] = adminKeyHash;
-    logger.info('[platform-config-snapshot] coreId=' + this.coreId + ' ' +
-      JSON.stringify(platformWideSnapshot) +
-      ' — these values MUST be identical across cores in a multi-core deployment. ' +
-      'Compare hashes across core logs to detect drift. See CONFIG-SEPARATION.md.');
+    const hash = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(snapshot))
+      .digest('hex')
+      .slice(0, 16);
+    return { snapshot, hash };
   }
 
   /**

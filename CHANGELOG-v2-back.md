@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## Docker image layout: rqlited moved to `/app/bin-ext/`
+
+- `Dockerfile` — rqlited binary relocated from `/app/var-pryv/rqlite-bin/rqlited` → `/app/bin-ext/rqlited`. Operators who bind-mount `/app/var-pryv` (intending to persist rqlite data) no longer shadow the baked-in binary. The only persistent path docker operators need is `/app/var-pryv/rqlite-data`, now declared as `VOLUME`.
+- Dev layout aligned: `var-pryv/rqlite-bin/rqlited` → `bin-ext/rqlited` in the setup script, start script, rqlite manifest default, bin/master.js fallback, and two test files that hard-coded the path. `.gitignore` covers the new location.
+- Operators who override `storages.engines.rqlite.binPath` in `override-config.yml` are unaffected either way.
+- `INSTALL.md` — new "Docker / Dokku deployment" section with a "What to persist" checklist, Dokku-specific storage mount commands, and an explicit note about `dokku ps:restart` requiring `dokku proxy:build-config <app>` afterward (nginx upstream caching bug that doesn't refresh on restart). Also documents the `DATABASE_URL`-not-auto-consumed caveat and the UDP/53 docker-options workaround for DNS-active multi-core on Dokku.
+
+## Default baseStorage engine: PostgreSQL
+
+- `config/default-config.yml` — `storages.base.engine` is now `postgresql` (was `mongodb`). Mongo remains fully supported; set `storages.base.engine: mongodb` in `override-config.yml` (or export `STORAGE_ENGINE=mongodb` for tests) to pick it explicitly. Deployments that pin the engine in `override-config.yml` are unaffected.
+- `justfile` — `just test` + `just test-parallel` + all other `test-*` recipes run PG by default. New `just test-mongo` / `just test-mongo-parallel` recipes for the Mongo path. Removed: `test-pg`, `test-pg-parallel` (now redundant).
+- `.github/workflows/ci.yml` — `test-postgres` job runs `just test all`, `test-mongo` job runs `just test-mongo all`.
+
 ## Optional observability — internal shape
 
 - **New module** `components/business/src/observability/` — provider-agnostic façade. `isActive() / setTransactionName / recordError / recordCustomEvent / startBackgroundTransaction`. Every provider call wrapped in try/catch so observability can never break a request.

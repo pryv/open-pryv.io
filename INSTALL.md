@@ -302,6 +302,62 @@ server {
 | `data/previews/` | Generated image previews |
 | `data/rqlite-data/` | Platform DB (rqlite Raft log + SQLite snapshot) |
 
+## Docker / Dokku deployment
+
+### What to persist
+
+The container writes to two distinct roots. Only these need to survive restart:
+
+| Container path | Purpose | Must persist? |
+|---|---|---|
+| `/app/data` | User files, attachments, previews, audit SQLite (`PRYV_DATADIR`) | **YES** |
+| `/app/var-pryv/rqlite-data` | PlatformDB — rqlite Raft log + SQLite snapshot | **YES** |
+| `/app/bin-ext/rqlited` | rqlited binary baked into the image | **NO** — never mount over |
+| `/app/config/override-config.yml` | Operator-owned overrides | YES (or bake into image) |
+
+The Dockerfile declares `VOLUME ["/app/var-pryv/rqlite-data"]` so this is the default persistent path for docker operators. **Do NOT bind-mount `/app/var-pryv` wholesale** — earlier image builds placed the rqlited binary at `/app/var-pryv/rqlite-bin/rqlited`, and a stray broad mount used to shadow it. The binary is now at `/app/bin-ext/rqlited`, outside any data path, so the trap is avoided by default.
+
+### Docker (plain)
+
+```bash
+docker run \
+  -v /host/pryv/data:/app/data \
+  -v /host/pryv/rqlite-data:/app/var-pryv/rqlite-data \
+  -v /host/pryv/override-config.yml:/app/config/override-config.yml:ro \
+  -e NODE_ENV=production \
+  -e PRYV_DATADIR=/app/data \
+  -p 3000:3000 \
+  pryvio/open-pryv.io
+```
+
+### Dokku
+
+```bash
+dokku apps:create open-pryv-io
+
+# Persistent mounts — data + PlatformDB only
+dokku storage:mount open-pryv-io \
+  /var/lib/dokku/data/storage/open-pryv-io/data:/app/data
+dokku storage:mount open-pryv-io \
+  /var/lib/dokku/data/storage/open-pryv-io/rqlite-data:/app/var-pryv/rqlite-data
+dokku storage:mount open-pryv-io \
+  /var/lib/dokku/data/storage/open-pryv-io/config/override-config.yml:/app/config/override-config.yml
+
+dokku config:set open-pryv-io NODE_ENV=production PRYV_DATADIR=/app/data PRYV_LOGSDIR=/app/data/logs
+```
+
+**After `dokku ps:restart`**, always run `dokku proxy:build-config <app>`. Dokku's nginx upstream list does not refresh on container restart; without rebuilding the proxy config, the public URL will 502 even though the container is healthy. An `wget http://127.0.0.1:3000/reg/service/info` inside the container will succeed throughout — the symptom is only visible externally.
+
+**PostgreSQL via `dokku postgres:link`** exports `DATABASE_URL` into the container environment. Open-Pryv.io v2 reads `storages.engines.postgresql.{host,port,database,user,password}` from `override-config.yml` directly — `DATABASE_URL` is **not** auto-consumed today. Populate the concrete keys in your override-config. A future `--from-database-url` convenience is tracked in the roadmap.
+
+**UDP port 53** for DNS-active mode (`dns.active: true` + embedded DNS server) is not supported by `dokku ports:set`. Workaround:
+
+```bash
+dokku docker-options:add <app> deploy,run "-p 53:5353/udp"
+```
+
+For most Dokku deployments the simpler path is **dnsLess mode** — set `dnsLess.isActive: true` + `dnsLess.publicUrl: https://<reg-fqdn>` in `override-config.yml` and let the reverse proxy terminate TLS as usual.
+
 
 ## Upgrades
 

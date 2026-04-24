@@ -2,10 +2,11 @@
 set -e
 
 # Sets up rqlite (rqlited binary) for the platform DB.
-# Mirrors the setup-mongodb pattern: downloads a precompiled binary into var-pryv/.
+# Mirrors the setup-mongodb pattern: downloads a precompiled binary into bin-ext/.
 #
 # Result:
-#   var-pryv/rqlite-bin/rqlited   — the rqlited daemon binary
+#   bin-ext/rqlited               — the rqlited daemon binary (OUTSIDE var-pryv/ since Plan 48
+#                                   so operators can bind-mount /app/var-pryv/... without shadowing)
 #   var-pryv/rqlite-data/         — Raft log + SQLite snapshot directory (created on first start)
 
 RQLITE_VERSION=9.4.5
@@ -41,8 +42,19 @@ fi
 mkdir -p "$VAR_PRYV_FOLDER"
 VAR_PRYV_FOLDER="$(cd "$VAR_PRYV_FOLDER" && pwd)"
 
-RQLITE_BIN_DIR=$VAR_PRYV_FOLDER/rqlite-bin
+REPO_ROOT=$(cd "$SCRIPT_FOLDER/../../../.." && pwd)
+RQLITE_BIN_DIR=$REPO_ROOT/bin-ext
 RQLITE_DATA_DIR=$VAR_PRYV_FOLDER/rqlite-data
+
+# Migrate any previous install from var-pryv/rqlite-bin/ (Plan 48 relocation)
+if [[ -x "$VAR_PRYV_FOLDER/rqlite-bin/rqlited" && ! -x "$RQLITE_BIN_DIR/rqlited" ]]; then
+  echo "Migrating rqlited: $VAR_PRYV_FOLDER/rqlite-bin → $RQLITE_BIN_DIR"
+  mkdir -p "$RQLITE_BIN_DIR"
+  mv "$VAR_PRYV_FOLDER/rqlite-bin/rqlited" "$RQLITE_BIN_DIR/rqlited"
+  [[ -x "$VAR_PRYV_FOLDER/rqlite-bin/rqlite" ]] && mv "$VAR_PRYV_FOLDER/rqlite-bin/rqlite" "$RQLITE_BIN_DIR/rqlite" || true
+  [[ -x "$VAR_PRYV_FOLDER/rqlite-bin/rqbench" ]] && mv "$VAR_PRYV_FOLDER/rqlite-bin/rqbench" "$RQLITE_BIN_DIR/rqbench" || true
+  rmdir "$VAR_PRYV_FOLDER/rqlite-bin" 2>/dev/null || true
+fi
 
 mkdir -p "$RQLITE_DATA_DIR"
 

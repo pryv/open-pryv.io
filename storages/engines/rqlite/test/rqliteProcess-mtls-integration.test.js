@@ -14,7 +14,7 @@
  *
  * Prerequisites (the test skip()s when any are missing):
  *   - `openssl` on PATH  (to generate a self-signed CA + node certs)
- *   - `./var-pryv/rqlite-bin/rqlited` binary
+ *   - `./bin-ext/rqlited` binary
  *
  * The test uses loopback addresses and non-default ports
  * (14xxx range) so it can run on a developer machine without
@@ -29,7 +29,7 @@ const { spawn, execFileSync } = require('node:child_process');
 
 const { buildArgs } = require('../src/rqliteProcess');
 
-const RQLITED_BIN = path.resolve(__dirname, '../../../../var-pryv/rqlite-bin/rqlited');
+const RQLITED_BIN = path.resolve(__dirname, '../../../../bin-ext/rqlited');
 const BOOT_TIMEOUT_MS = 30_000;
 const CLUSTER_FORM_TIMEOUT_MS = 30_000;
 

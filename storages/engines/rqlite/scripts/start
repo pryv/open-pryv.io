@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Starts the local rqlited instance from var-pryv/rqlite-bin.
+# Starts the local rqlited instance.
 # Mirrors the start-mongo / start-postgresql pattern.
 #
 # Modes:
@@ -8,12 +8,16 @@
 #   default           — detached background process, log to var-pryv/logs/rqlited.log
 #
 # Single-node only — multi-core peer discovery is master.js's job at runtime.
+#
+# Binary lives at repo-root/bin-ext/rqlited (moved out of var-pryv/ in Plan 48).
 
 SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
-VAR_PRYV_FOLDER=${VAR_PRYV_FOLDER:-$SCRIPT_FOLDER/../../../../var-pryv}
+REPO_ROOT=${REPO_ROOT:-$SCRIPT_FOLDER/../../../..}
+REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
+VAR_PRYV_FOLDER=${VAR_PRYV_FOLDER:-$REPO_ROOT/var-pryv}
 VAR_PRYV_FOLDER="$(cd "$VAR_PRYV_FOLDER" && pwd)"
 
-RQLITE_BIN=$VAR_PRYV_FOLDER/rqlite-bin/rqlited
+RQLITE_BIN=$REPO_ROOT/bin-ext/rqlited
 RQLITE_DATA=$VAR_PRYV_FOLDER/rqlite-data
 RQLITE_LOGS=$VAR_PRYV_FOLDER/logs
 PIDFILE=$VAR_PRYV_FOLDER/rqlite-data/rqlited.pid

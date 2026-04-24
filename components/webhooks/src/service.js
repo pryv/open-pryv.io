@@ -34,7 +34,7 @@ class WebhooksService {
    */
   async start () {
     this.apiVersion = await getAPIVersion();
-    this.serial = this.settings.get('service:info:serial');
+    this.serial = this.settings.get('service:serial');
     this.logger.info('Loading service with version ' +
             this.apiVersion +
             ' and serial ' +

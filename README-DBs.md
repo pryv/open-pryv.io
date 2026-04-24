@@ -10,7 +10,9 @@ From v1.8.0 a Sqlite version for Event has been provided on top of the [datastor
 
 Since v1.9.2 Pryv.io can be deployed in "full-cloud" setup without relying on the file system. This can be done by configuring all storage modules to use MongoDB. For the attachments and S3 implementation is in development. 
 
-For future v1.9.3 Pryv.io will be also capable in being "full local" with only SQLite databases. 
+For future v1.9.3 Pryv.io will be also capable in being "full local" with only SQLite databases.
+
+In v2 the **default `baseStorage` engine is PostgreSQL** (`storages.base.engine: postgresql` in `config/default-config.yml`). MongoDB remains fully supported — set `storages.base.engine: mongodb` in `override-config.yml`, or run the test harness with `just test-mongo` instead of `just test`.
 
 ## List of storage used in Pryv.io
 

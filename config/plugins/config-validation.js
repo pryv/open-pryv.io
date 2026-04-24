@@ -20,97 +20,92 @@ let logger; // initalized at load();
 const REQUIRED_SERVICE_FIELDS = ['name', 'serial', 'home', 'support', 'terms', 'eventTypes'];
 
 async function validate (config) {
-  // check for incomplete settings
-  checkIncompleteFields(config.get(), false, []);
+  // Collect every validation problem in one pass so the operator sees the
+  // full list in a single boot-and-fail cycle instead of one-per-restart.
+  const problems = [];
 
-  // Fail fast if any required service-info field is missing. Without this,
-  // the process starts but /service/info responses fail client-side
-  // schema validation (e.g. in lib-js) and the breakage is hard to trace
-  // back to a missing operator config value.
+  checkIncompleteFields(config.get(), false, [], null, problems, config);
+
   const service = config.get('service') || {};
   const missing = REQUIRED_SERVICE_FIELDS.filter(f => !service[f]);
   if (missing.length > 0) {
-    failWith(
-      'required service fields missing — /service/info would be invalid. Set them in your override-config.yml under `service:`.',
-      ['service'],
-      { missing, required: REQUIRED_SERVICE_FIELDS }
-    );
+    problems.push({
+      message: 'required service fields missing — /service/info would be invalid. Set them in your override-config.yml under `service:`.',
+      path: ['service'],
+      payload: { missing, required: REQUIRED_SERVICE_FIELDS }
+    });
   }
 
-  /**
-   * Parse all string fields and fail if "REPLACE" is found
-   * stops if an "active: false" field is found in path
-   * @param {*} obj The object to inspect
-   * @param {Array<string>|false} finalPath is !== false the path to access the value (set when passing thru first Array)
-   * @param {Array<string} parentPath path to display in case of error. If in array the index of the array is happened to the path
-   * @param {string} key the key to construct the path
-   */
-  function checkIncompleteFields (obj, finalPath, parentPath, key) {
-    const path = key ? parentPath.concat(key) : parentPath;
-    if (typeof obj === 'undefined' || obj === null) return;
-    if (typeof obj === 'string') {
-      if (obj.includes('REPLACE')) {
-        // get source info
-        const queryPath = finalPath || parentPath;
-        const res = config.getScopeAndValue(queryPath.join(':'));
-        failWith('field content should be replaced', path, res);
-      }
-      // Unresolved env-var placeholder (`${FOO}`): nothing in the stack expands
-      // these, so the literal string reaches consumers and (for paths) creates
-      // a literal `${FOO}` directory on disk. Fail fast instead.
-      const envMatch = obj.match(/\$\{([A-Z_][A-Z0-9_]*)\}/);
-      if (envMatch) {
-        const queryPath = finalPath || parentPath;
-        const res = config.getScopeAndValue(queryPath.join(':'));
-        failWith(
-          `unresolved env placeholder \${${envMatch[1]}} — export ${envMatch[1]} or replace the literal in config`,
-          path,
-          { ...res, envVar: envMatch[1] }
-        );
-      }
+  return problems;
+}
+
+/**
+ * Parse all string fields and record a problem for each "REPLACE" sentinel
+ * or unresolved `${VAR}` env placeholder. Stops recursing on `active:false`
+ * or `enabled:false` blocks.
+ *
+ * @param {*} obj The object to inspect
+ * @param {Array<string>|false} finalPath is !== false the path to access the value (set when passing thru first Array)
+ * @param {Array<string>} parentPath path to display in case of error. If in array the index of the array is happened to the path
+ * @param {string|null} key the key to construct the path
+ * @param {Array<object>} problems accumulator for all problems found
+ * @param {object} config the boiler config store (for `getScopeAndValue`)
+ */
+function checkIncompleteFields (obj, finalPath, parentPath, key, problems, config) {
+  const path = key != null ? parentPath.concat(key) : parentPath;
+  if (typeof obj === 'undefined' || obj === null) return;
+  if (typeof obj === 'string') {
+    if (obj.includes('REPLACE')) {
+      const queryPath = finalPath || parentPath;
+      const res = config.getScopeAndValue(queryPath.join(':'));
+      problems.push({ message: 'field content should be replaced', path, payload: res });
     }
-    if (typeof obj === 'object') {
-      // Skip REPLACE scan on disabled blocks — operators leave `REPLACE ME`
-      // sentinels on fields they don't use (e.g. letsEncrypt.{email,atRestKey}
-      // when letsEncrypt.enabled=false), and these would otherwise fail-fast
-      // the whole startup. Both `active` and `enabled` flags are honoured;
-      // the previous `obj.active && !obj.active` check was dead code.
-      if (obj.active === false) return;
-      if (obj.enabled === false) return;
-      if (Array.isArray(obj)) {
-        for (let i = 0; i < obj.length; i++) {
-          checkIncompleteFields(obj[i], finalPath || parentPath, path, i);
-        }
-      } else {
-        for (const k of Object.keys(obj)) {
-          checkIncompleteFields(obj[k], finalPath, path, k);
-        }
+    // Unresolved env-var placeholder (`${FOO}`): nothing in the stack expands
+    // these, so the literal string reaches consumers and (for paths) creates
+    // a literal `${FOO}` directory on disk. Report it.
+    const envMatch = obj.match(/\$\{([A-Z_][A-Z0-9_]*)\}/);
+    if (envMatch) {
+      const queryPath = finalPath || parentPath;
+      const res = config.getScopeAndValue(queryPath.join(':'));
+      problems.push({
+        message: `unresolved env placeholder \${${envMatch[1]}} — export ${envMatch[1]} or replace the literal in config`,
+        path,
+        payload: { ...res, envVar: envMatch[1] }
+      });
+    }
+  }
+  if (typeof obj === 'object') {
+    // Skip REPLACE scan on disabled blocks — operators leave `REPLACE ME`
+    // sentinels on fields they don't use (e.g. letsEncrypt.{email,atRestKey}
+    // when letsEncrypt.enabled=false), and these would otherwise fail-fast
+    // the whole startup.
+    if (obj.active === false) return;
+    if (obj.enabled === false) return;
+    if (Array.isArray(obj)) {
+      for (let i = 0; i < obj.length; i++) {
+        checkIncompleteFields(obj[i], finalPath || parentPath, path, i, problems, config);
+      }
+    } else {
+      for (const k of Object.keys(obj)) {
+        checkIncompleteFields(obj[k], finalPath, path, k, problems, config);
       }
     }
   }
 }
 
-/**
- * Throw an error with the necessary information
- * @param {string} message
- * @param {Array<string>}
- * @param {*} payload
- */
-function failWith (message, path, payload) {
-  path = path || [];
-  const error = new Error('Configuration is invalid at [' + path.join(':') + '] ' + message);
-  error.payload = payload;
-  throw (error);
+function formatProblem (p) {
+  return 'Configuration is invalid at [' + (p.path || []).join(':') + '] ' + p.message;
 }
 
 module.exports = {
   load: async function (store) {
     logger = getLogger('validate-config');
-    try {
-      await validate(store);
-    } catch (e) {
-      logger.error(e.message, e.payload);
-      process.exit(1);
+    const problems = await validate(store);
+    if (problems.length === 0) return;
+    logger.error(`Configuration is invalid — ${problems.length} problem(s) found:`);
+    for (const p of problems) {
+      logger.error(formatProblem(p), p.payload);
     }
+    process.exit(1);
   }
 };

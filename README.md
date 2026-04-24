@@ -153,9 +153,9 @@ open-pryv.io/
 ## Testing
 
 ```bash
-just test all                     # all components (MongoDB)
+just test all                     # all components (PostgreSQL — default since v2)
 just test api-server              # single component
-just test-pg all                  # PostgreSQL mode
+just test-mongo all               # MongoDB mode
 just test-parallel all            # parallel file execution
 just clean-test-data              # reset test databases
 ```

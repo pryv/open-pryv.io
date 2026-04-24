@@ -28,6 +28,8 @@ security-assessment
 /test-results/
 /coverage/
 var-pryv*
+# rqlited binary location since Plan 48 — staged by `storages/engines/rqlite/scripts/setup` and the Dockerfile.
+/bin-ext/
 *.log
 # Accidental literal dirs when PRYV_LOGSDIR/PRYV_DATADIR aren't exported at NODE_ENV=production
 ${PRYV_LOGSDIR}

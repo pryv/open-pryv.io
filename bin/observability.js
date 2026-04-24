@@ -92,9 +92,37 @@ require('@pryv/boiler').init({
 async function initPlatform () {
   const { getConfig } = require('@pryv/boiler');
   const config = await getConfig();
+  const rqliteUrl = config.get('storages:engines:rqlite:url') || 'http://localhost:4001';
+  await waitForRqlite(rqliteUrl);
   await require('storages').init(config);
   const { getPlatform } = require('platform');
   return await getPlatform();
+}
+
+// Wait until rqlited's HTTP API answers. The CLI is typically run with
+// `dokku enter web` right after a restart, when rqlited is still coming up
+// — without this, the first PlatformDB call surfaces an opaque `fetch failed`.
+async function waitForRqlite (url, timeoutMs = 30000) {
+  const readyzUrl = url.replace(/\/$/, '') + '/readyz';
+  const deadline = Date.now() + timeoutMs;
+  let notified = false;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(readyzUrl);
+      if (res.ok) return;
+    } catch (_) { /* not ready — fall through to retry */ }
+    if (!notified) {
+      console.error(`Waiting for PlatformDB (rqlited) at ${url} …`);
+      notified = true;
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  throw new Error(
+    `PlatformDB (rqlited) not reachable at ${url} after ${timeoutMs}ms.\n` +
+    '  Hint: rqlited runs inside the web.1 container only; `dokku run` spawns\n' +
+    '  a fresh container without it. Use `dokku enter <app> web` and retry\n' +
+    '  once the master log shows "Startup sequence complete".'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +138,14 @@ async function runShow (platform) {
   console.log('logLevel:         ' + obs.logLevel);
   console.log('hostname:         ' + obs.hostname);
   console.log('newrelic licenseKey set: ' + (licenseKeySet ? 'yes' : 'no'));
+  console.log('');
+
+  // Cross-reference against the boot-log [platform-config-snapshot] line.
+  // Same snapshot, same hash — operators compare hashes across cores to
+  // detect platform-wide config drift without inspecting the secret.
+  const { snapshot, hash } = platform.getPlatformConfigSnapshot();
+  console.log('platform-config-snapshot hash: ' + hash);
+  console.log('platform-config-snapshot:      ' + JSON.stringify(snapshot));
   console.log('');
   console.log('Note: license key rotation requires a rolling restart of all cores.');
 }
