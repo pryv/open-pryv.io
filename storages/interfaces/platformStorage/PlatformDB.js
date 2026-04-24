@@ -261,7 +261,46 @@ const PlatformDB = module.exports.PlatformDB = {
   /**
    * @param {string} key
    */
-  async deleteObservabilityValue (key) { throw new Error('Not implemented'); }
+  async deleteObservabilityValue (key) { throw new Error('Not implemented'); },
+
+  // --- Mail templates (in-process mail delivery) ---------------------
+
+  /**
+   * Write a single mail-template source. Stored under the
+   * `mail-template/<type>/<lang>/<part>` prefix in the underlying
+   * keyValue table.
+   *
+   * @param {string} type — e.g. "welcome-email", "reset-password"
+   * @param {string} lang — 2-letter language code (e.g. "en", "fr")
+   * @param {string} part — "html" or "subject" (without the .pug suffix)
+   * @param {string} pug — raw Pug source; compiled on demand at render time
+   */
+  async setMailTemplate (type, lang, part, pug) { throw new Error('Not implemented'); },
+
+  /**
+   * @param {string} type
+   * @param {string} lang
+   * @param {string} part
+   * @returns {Promise<string|null>} raw Pug source, or null if absent.
+   */
+  async getMailTemplate (type, lang, part) { throw new Error('Not implemented'); },
+
+  /**
+   * Bulk read — used on worker cache load + on admin-API invalidation.
+   *
+   * @returns {Promise<Array<{type: string, lang: string, part: string, pug: string}>>}
+   */
+  async getAllMailTemplates () { throw new Error('Not implemented'); },
+
+  /**
+   * Delete a single template row, or all parts for a given {type, lang}
+   * when `part` is omitted.
+   *
+   * @param {string} type
+   * @param {string} lang
+   * @param {string} [part]
+   */
+  async deleteMailTemplate (type, lang, part) { throw new Error('Not implemented'); }
 };
 
 // Limit tampering on existing properties

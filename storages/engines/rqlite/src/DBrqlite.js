@@ -369,6 +369,56 @@ class DBrqlite {
     const storeKey = getObservabilityKey(key);
     await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
   }
+
+  // --- Mail templates (in-process mail delivery) --- //
+
+  async setMailTemplate (type, lang, part, pug) {
+    const storeKey = getMailTemplateKey(type, lang, part);
+    await this.execute(
+      'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
+      [storeKey, pug]
+    );
+  }
+
+  async getMailTemplate (type, lang, part) {
+    const storeKey = getMailTemplateKey(type, lang, part);
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [storeKey]);
+    return rows.length === 0 ? null : rows[0].value;
+  }
+
+  async getAllMailTemplates () {
+    const rows = await this.query(
+      "SELECT key, value FROM keyValue WHERE key LIKE 'mail-template/%'"
+    );
+    return rows.map(row => {
+      // key shape: `mail-template/<type>/<lang>/<part>`
+      const parts = row.key.split('/');
+      // parts[0] = 'mail-template', parts[1..-1] = type segments, parts[-2] = lang, parts[-1] = part
+      // Templates never contain a '/' in any segment (guarded by setMailTemplate callers),
+      // so the canonical 4-segment split is safe.
+      return {
+        type: parts[1],
+        lang: parts[2],
+        part: parts[3],
+        pug: row.value
+      };
+    });
+  }
+
+  async deleteMailTemplate (type, lang, part) {
+    if (part != null) {
+      const storeKey = getMailTemplateKey(type, lang, part);
+      await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
+      return;
+    }
+    // Type-wide delete (both parts + both langs if lang is also null-ish).
+    // Explicit branch per lang so a missing part doesn't accidentally wipe other langs.
+    const prefix = 'mail-template/' + type + '/' + lang + '/';
+    await this.execute(
+      "DELETE FROM keyValue WHERE key LIKE (? || '%')",
+      [prefix]
+    );
+  }
 }
 
 // --- Key helpers (same as SQLite engine) --- //
@@ -408,6 +458,10 @@ const ACME_ACCOUNT_KEY = 'tls-acme-account';
 
 function getObservabilityKey (key) {
   return 'observability/' + key;
+}
+
+function getMailTemplateKey (type, lang, part) {
+  return 'mail-template/' + type + '/' + lang + '/' + part;
 }
 
 module.exports = DBrqlite;

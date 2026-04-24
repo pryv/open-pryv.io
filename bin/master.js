@@ -128,6 +128,25 @@ if (cluster.isPrimary) {
       }
     }
 
+    // --- Mail template seed ---
+    // First-boot bootstrap: when `services.email.method === 'in-process'` and
+    // `templatesRootDir` points at a Pug directory, populate PlatformDB from
+    // disk if empty. Idempotent — subsequent boots are a no-op (the admin
+    // CLI / admin API that ship later own the edit path).
+    if (config.get('services:email:method') === 'in-process') {
+      try {
+        const platformDB = require('../storages').platformDB;
+        const { seedIfEmpty } = require('../components/mail/src/TemplateSeeder');
+        const result = await seedIfEmpty({
+          platformDB,
+          templatesRootDir: config.get('services:email:templatesRootDir') || null
+        });
+        if (result.seeded) log(`Mail templates seeded (${result.count} row(s))`);
+      } catch (e) {
+        log(`Mail template seed skipped: ${e.message}`);
+      }
+    }
+
     // Keep master alive while workers run (tcp_pubsub sockets are unref'd)
     const keepAlive = setInterval(() => {}, 60000);
 

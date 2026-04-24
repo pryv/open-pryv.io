@@ -478,5 +478,79 @@ module.exports = function conformanceTests (getDB) {
         assert.strictEqual(await db.getUserCore('nocoll-' + suffix), 'core-a');
       });
     });
+
+    describe('[MAILTMPL] setMailTemplate / getMailTemplate / getAllMailTemplates / deleteMailTemplate', () => {
+      it('[MT01] must persist and retrieve a {type, lang, part} triple', async () => {
+        const t = 'welcome-' + cuid();
+        await db.setMailTemplate(t, 'en', 'subject', '| Welcome');
+        await db.setMailTemplate(t, 'en', 'html', 'p Hello #{username}.');
+        assert.strictEqual(await db.getMailTemplate(t, 'en', 'subject'), '| Welcome');
+        assert.strictEqual(await db.getMailTemplate(t, 'en', 'html'), 'p Hello #{username}.');
+      });
+
+      it('[MT02] must return null for absent rows', async () => {
+        const t = 'missing-' + cuid();
+        assert.strictEqual(await db.getMailTemplate(t, 'en', 'subject'), null);
+      });
+
+      it('[MT03] must overwrite existing values (edit path)', async () => {
+        const t = 'rewrite-' + cuid();
+        await db.setMailTemplate(t, 'fr', 'html', 'p Bonjour');
+        await db.setMailTemplate(t, 'fr', 'html', 'p Salut');
+        assert.strictEqual(await db.getMailTemplate(t, 'fr', 'html'), 'p Salut');
+      });
+
+      it('[MT04] getAllMailTemplates() returns rows decoded to {type, lang, part, pug}', async () => {
+        const t = 'bulk-' + cuid();
+        await db.setMailTemplate(t, 'en', 'subject', 'S-en');
+        await db.setMailTemplate(t, 'en', 'html', 'H-en');
+        await db.setMailTemplate(t, 'fr', 'subject', 'S-fr');
+
+        const all = await db.getAllMailTemplates();
+        const mine = all.filter(r => r.type === t);
+        assert.strictEqual(mine.length, 3);
+        const byKey = new Map(mine.map(r => [r.lang + '/' + r.part, r.pug]));
+        assert.strictEqual(byKey.get('en/subject'), 'S-en');
+        assert.strictEqual(byKey.get('en/html'), 'H-en');
+        assert.strictEqual(byKey.get('fr/subject'), 'S-fr');
+      });
+
+      it('[MT05] deleteMailTemplate(type, lang, part) removes only that row', async () => {
+        const t = 'del-one-' + cuid();
+        await db.setMailTemplate(t, 'en', 'subject', 'S');
+        await db.setMailTemplate(t, 'en', 'html', 'H');
+        await db.deleteMailTemplate(t, 'en', 'subject');
+        assert.strictEqual(await db.getMailTemplate(t, 'en', 'subject'), null);
+        assert.strictEqual(await db.getMailTemplate(t, 'en', 'html'), 'H');
+      });
+
+      it('[MT06] deleteMailTemplate(type, lang) with no part wipes both html + subject for that lang only', async () => {
+        const t = 'del-lang-' + cuid();
+        await db.setMailTemplate(t, 'en', 'subject', 'S-en');
+        await db.setMailTemplate(t, 'en', 'html', 'H-en');
+        await db.setMailTemplate(t, 'fr', 'subject', 'S-fr');
+        await db.setMailTemplate(t, 'fr', 'html', 'H-fr');
+
+        await db.deleteMailTemplate(t, 'en');
+        assert.strictEqual(await db.getMailTemplate(t, 'en', 'subject'), null);
+        assert.strictEqual(await db.getMailTemplate(t, 'en', 'html'), null);
+        assert.strictEqual(await db.getMailTemplate(t, 'fr', 'subject'), 'S-fr');
+        assert.strictEqual(await db.getMailTemplate(t, 'fr', 'html'), 'H-fr');
+      });
+
+      it('[MT07] mail-template namespace is isolated from dns-record, user-core, observability', async () => {
+        const suffix = cuid();
+        const type = 'iso-' + suffix;
+        await db.setMailTemplate(type, 'en', 'subject', 'mail-value');
+        await db.setDnsRecord('_iso-' + suffix, { txt: ['x'] });
+        await db.setUserCore('iso-' + suffix, 'core-a');
+        await db.setObservabilityValue('iso-' + suffix, 'obs-value');
+
+        assert.strictEqual(await db.getMailTemplate(type, 'en', 'subject'), 'mail-value');
+        assert.ok(await db.getDnsRecord('_iso-' + suffix));
+        assert.strictEqual(await db.getUserCore('iso-' + suffix), 'core-a');
+        assert.strictEqual(await db.getObservabilityValue('iso-' + suffix), 'obs-value');
+      });
+    });
   });
 };
