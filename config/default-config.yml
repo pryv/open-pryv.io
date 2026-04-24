@@ -153,8 +153,11 @@ services:
     enabled:
       welcome: true
       resetPassword: true
-    method: microservice
-    # --- microservice mode ---
+    # 'in-process' is the default since the merged mail component landed in v2.
+    # Deployments that still run the external pryv/service-mail microservice
+    # must pin `method: microservice` in their override-config.yml.
+    method: in-process
+    # --- microservice mode (legacy) ---
     url: http://127.0.0.1:9000/sendmail/     # external service-mail endpoint
     key: ''                                  # shared Authorization header
     # --- shared between modes ---
