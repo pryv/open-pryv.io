@@ -65,21 +65,28 @@ See [INSTALL.md](./INSTALL.md) for detailed instructions.
 
 See [SINGLE-TO-MULTIPLE.md](./SINGLE-TO-MULTIPLE.md) for the full upgrade procedure from single-core to multi-core.
 
-## Email integration (service-mail)
+## Email integration
 
-For email features (welcome emails, password reset), run [service-mail](https://github.com/pryv/service-mail) as a separate service and configure:
+Welcome + password-reset emails ship with two delivery paths — pick one via `services.email.method`:
+
+- **`in-process`** (recommended) — renders Pug templates inside the api-server workers; templates live in PlatformDB (rqlite, cluster-wide). Edit without a deploy via `bin/mail.js` or `POST /system/admin/mail/*`.
+- **`microservice`** — the legacy external [service-mail](https://github.com/pryv/service-mail) process bound to `127.0.0.1:9000` on each core. Default today for back-compat.
 
 ```yaml
 services:
   email:
-    enabled:
-      welcome: true
-      resetPassword: true
-    method: microservice
-    url: http://service-mail-host:9000/sendmail/
+    enabled: { welcome: true, resetPassword: true }
+    method: in-process
+    defaultLang: en
+    from: { name: 'Pryv Lab', address: 'no-reply@example.com' }
+    smtp: { host: smtp.example.com, port: 587, auth: { user: '...', pass: '...' } }
+    # optional — seed on first boot when PlatformDB is empty:
+    templatesRootDir: /opt/open-pryv.io/mail-templates
 ```
 
-For local development convenience:
+Full operator guide: [Email configuration](https://pryv.github.io/customer-resources/emails-setup/).
+
+For local development convenience with the legacy microservice:
 ```bash
 just mail-dev    # clones and starts service-mail locally
 ```
