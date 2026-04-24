@@ -141,6 +141,43 @@ services:
     sessions:
       ttlSeconds: 1800
 
+  # --- Mail delivery (welcome + reset-password) ---
+  # `method` picks the transport:
+  #   - 'microservice' (legacy): POST to an external service-mail over HTTP.
+  #       Back-compat default — existing deployments keep working unchanged.
+  #   - 'in-process': run the `mail` component inside the api-server workers.
+  #       Templates live in PlatformDB (cluster-wide), SMTP creds stay local YAML.
+  # `enabled.*` are independent kill-switches for each message class. When
+  # both are false, mailing is off regardless of `method`.
+  email:
+    enabled:
+      welcome: true
+      resetPassword: true
+    method: microservice
+    # --- microservice mode ---
+    url: http://127.0.0.1:9000/sendmail/     # external service-mail endpoint
+    key: ''                                  # shared Authorization header
+    # --- shared between modes ---
+    welcomeTemplate: welcome-email
+    resetPasswordTemplate: reset-password
+    defaultLang: en
+    # --- in-process mode only ---
+    # Pug source directory to seed into PlatformDB on first boot (when
+    # PlatformDB has no templates yet). After seeding, subsequent edits
+    # flow through the admin CLI / admin API. Leave empty to rely on the
+    # default template set bundled with the mail component.
+    templatesRootDir: ''
+    smtp:
+      host: ''
+      port: 587
+      secure: false
+      auth:
+        user: ''
+        pass: ''
+    from:
+      name: ''
+      address: ''
+
 # === PER-CORE: debug toggle ===
 testNotifications:
   enabled: false
