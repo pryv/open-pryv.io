@@ -1,5 +1,11 @@
 # Changelog - Internal (no API impact)
 
+## AGENTS.md — orientation doc for LLM coding agents
+
+- **NEW** `AGENTS.md` at repo root — fast-orientation guide for LLM coding agents (Claude Code, Cursor, Copilot, etc.) bootstrapping against open-pryv.io v2. Covers the "single-binary codebase" framing, annotated repo map, local-run + test commands, five architectural truths (master.js lifecycle, native TLS, wildcard certs via `deriveHostnames`, pluggable storage engines, cluster CA lifecycle), common pitfalls, config precedence, and a curated block of in-repo + pryv.github.io links.
+- `README.md` — "For LLM coding agents" paragraph at the bottom points at `AGENTS.md`.
+- The draft that preceded this entry had drifted against the tree (non-existent `just dev` / `just test-postgres` recipes, wrong engine-config YAML keys, stale meta-repo framing, outdated `README-DBs.md` warning). All such issues fixed; file length 218 lines, under the 250-line soft cap.
+
 ## In-process mail component (services.email.method = 'in-process')
 
 - **NEW** `components/mail/` workspace package — ports `Sender` / `Template` / `errors` from the standalone service-mail repo; adds `TemplateRepository` against an injected `templateExists` (so the backing store can be tmp-dir, disk or PlatformDB) and a tmp-dir-materialize `emailTemplatesDelivery` adapter around the `email-templates` npm module. Façade `init()` / `isActive()` / `send()` / `refresh()` / `close()` with silent no-op before init so callers don't need to guard.
