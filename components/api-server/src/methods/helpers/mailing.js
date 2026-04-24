@@ -9,7 +9,8 @@ const errors = require('errors').factory;
 
 /**
  * Helper function that modularizes the sending of an email,
- * should it be via Mandrill or via Pryv service-mail
+ * should it be via Mandrill, the Pryv service-mail microservice, or
+ * the in-process `mail` component.
  * @param emailSettings: email settings object
  * @param template: email template (welcome or reset password)
  * @param recipient: email recipient (to)
@@ -19,8 +20,15 @@ const errors = require('errors').factory;
  */
 exports.sendmail = function (emailSettings, template, recipient, subs, lang, callback) {
   const mailingMethod = emailSettings.method;
-  // Sending via Pryv service-mail
   switch (mailingMethod) {
+    case 'in-process':
+      // In-process delivery: renders Pug templates pulled from PlatformDB
+      // and ships via the configured SMTP / sendmail transport. No HTTP
+      // boundary, no shared-key auth. First call in the worker process
+      // lazy-initialises the `mail` component (master seeds templates but
+      // doesn't init the delivery pipeline per-worker).
+      _sendmailInProcess(emailSettings, template, recipient, subs, lang, callback);
+      break;
     case 'microservice':
       {
         const url = new URL(template + '/' + lang, emailSettings.url).toString();
@@ -61,6 +69,55 @@ exports.sendmail = function (emailSettings, template, recipient, subs, lang, cal
   }
   // NOT REACHED
 };
+
+/**
+ * Route a send through the in-process `mail` component. Lazy-inits the
+ * façade on first use per worker. Errors are forwarded via callback, same
+ * contract as the legacy HTTP paths — registration/reset-password callers
+ * already treat mail failures as non-fatal.
+ *
+ * @param {EmailSettings} emailSettings
+ * @param {string} template
+ * @param {Recipient} recipient
+ * @param {Substitutions} subs
+ * @param {string} lang
+ * @param {Callback} callback
+ */
+function _sendmailInProcess (emailSettings, template, recipient, subs, lang, callback) {
+  (async () => {
+    const mail = require('mail');
+    if (!mail.isActive()) {
+      const platformDB = require('storages').platformDB;
+      if (!platformDB || typeof platformDB.getAllMailTemplates !== 'function') {
+        throw errors.unexpectedError('in-process mail: PlatformDB is not initialised — storages.init() must run before any sendmail call.');
+      }
+      if (!emailSettings.smtp || !emailSettings.smtp.host) {
+        throw errors.unexpectedError('in-process mail: services.email.smtp.host is required.');
+      }
+      await mail.init({
+        getAllMailTemplates: platformDB.getAllMailTemplates.bind(platformDB),
+        smtp: emailSettings.smtp,
+        from: emailSettings.from,
+        defaultLang: emailSettings.defaultLang || 'en'
+      });
+    }
+    const result = await mail.send({
+      type: template,
+      lang,
+      recipient,
+      substitutions: subs
+    });
+    return result;
+  })().then(
+    (res) => callback(null, res),
+    (err) => {
+      if (err && err.id === 'unknown-resource') {
+        return callback(errors.unexpectedError('in-process mail: no template found for ' + template + '/' + lang));
+      }
+      return callback(err);
+    }
+  );
+}
 /**
  * @param {string} url
  * @param {MandrillData | MicroserviceData} data
@@ -118,7 +175,7 @@ function parseError (url, err, res) {
  *   resetPasswordTemplate: string;
  * }} EmailSettings
  */
-/** @typedef {'mandrill' | 'microservice'} EmailMethod
+/** @typedef {'mandrill' | 'microservice' | 'in-process'} EmailMethod
  */
 /**
  * @typedef {{

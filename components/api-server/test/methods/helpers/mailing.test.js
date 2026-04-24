@@ -127,4 +127,57 @@ describe('[MAIL] Mailing helper methods', () => {
       });
     });
   });
+
+  describe('[ML05] using in-process', () => {
+    const inProcessTemplate = 'welcome-email';
+    const mail = require('mail');
+    const STUB_TEMPLATES = [
+      { type: inProcessTemplate, lang: 'en', part: 'subject', pug: '| Welcome' },
+      { type: inProcessTemplate, lang: 'en', part: 'html', pug: 'p Welcome, #{name}. Email: #{email}.' }
+    ];
+    const emailSettings = {
+      method: 'in-process',
+      // Pre-initialising the `mail` façade below means sendmail() sees
+      // isActive()=true and skips the lazy storages.platformDB lookup, so
+      // these fields aren't consulted on this path — but they're what a
+      // real operator would set in services.email in override-config.yml.
+      smtp: { jsonTransport: true },
+      from: { name: 'Pryv Test', address: 'test@example.com' },
+      defaultLang: 'en'
+    };
+
+    before(async () => {
+      await mail.init({
+        getAllMailTemplates: async () => STUB_TEMPLATES,
+        smtp: emailSettings.smtp,
+        from: emailSettings.from,
+        defaultLang: emailSettings.defaultLang
+      });
+    });
+
+    after(async () => {
+      await mail.close();
+    });
+
+    it('[MLIP1] send() routes through the mail façade without hitting any HTTP endpoint', (done) => {
+      mailing.sendmail(emailSettings, inProcessTemplate, recipient, substitutions, lang, (err, res) => {
+        if (err) return done(err);
+        assert.ok(res && res.sent === true, 'façade should report sent:true');
+        // jsonTransport returns the envelope in res.result.message as JSON.
+        const envelope = JSON.parse(res.result.message);
+        assert.strictEqual(envelope.subject, 'Welcome');
+        assert.ok(envelope.html.includes('Welcome, ' + recipient.name), 'Pug html should interpolate the recipient name');
+        assert.ok(envelope.html.includes('Email: ' + recipient.email), 'Pug html should interpolate the recipient email');
+        done();
+      });
+    });
+
+    it('[MLIP2] surfaces a clean error when the template is not found', (done) => {
+      mailing.sendmail(emailSettings, 'does-not-exist', recipient, substitutions, lang, (err) => {
+        assert.ok(err, 'expected an error for missing template');
+        assert.match(err.message || String(err), /no template found for does-not-exist\/en/);
+        done();
+      });
+    });
+  });
 });
