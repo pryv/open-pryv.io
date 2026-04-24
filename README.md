@@ -173,6 +173,10 @@ just clean-test-data              # reset test databases
 - [Pryv home](https://pryv.com)
 - [GitHub Discussions](https://github.com/pryv/open-pryv.io/discussions)
 
+## For LLM coding agents
+
+If you are an AI coding assistant (Claude Code, Cursor, Copilot, etc.) bootstrapping against this repo, start with [AGENTS.md](./AGENTS.md) — a fast-orientation guide to the tree, entry points, storage-engine plugin system, and things not to touch without asking.
+
 
 
 # License
