@@ -1,5 +1,21 @@
 # Changelog - Internal (no API impact)
 
+## In-process mail component (services.email.method = 'in-process')
+
+- **NEW** `components/mail/` workspace package — ports `Sender` / `Template` / `errors` from the standalone service-mail repo; adds `TemplateRepository` against an injected `templateExists` (so the backing store can be tmp-dir, disk or PlatformDB) and a tmp-dir-materialize `emailTemplatesDelivery` adapter around the `email-templates` npm module. Façade `init()` / `isActive()` / `send()` / `refresh()` / `close()` with silent no-op before init so callers don't need to guard.
+- **NEW** `components/mail/src/TemplateSeeder.js` — idempotent `seedIfEmpty({platformDB, templatesRootDir})`. Walks `<root>/<type>/<lang>/*.pug` and populates PlatformDB only when zero `mail-template/*` rows already exist.
+- **NEW** master-boot wiring — invokes the seeder after `storages.init()` when `services.email.method === 'in-process'`. Try/catch guard: a malformed `templatesRootDir` never blocks master startup.
+- **NEW** PlatformDB interface methods — `setMailTemplate` / `getMailTemplate` / `getAllMailTemplates` / `deleteMailTemplate(type, lang, part?)`. Keyspace `mail-template/<type>/<lang>/<part>` on the existing rqlite `keyValue` table. `deleteMailTemplate(type, lang)` with no `part` wipes both html + subject scoped to that `<type>/<lang>/` prefix only.
+- **NEW** `components/api-server/src/methods/helpers/mailing.js` — new `'in-process'` case in the `method` switch. First call in a worker lazy-inits the `mail` façade with `storages.platformDB.getAllMailTemplates` + the per-core SMTP config. Callback contract preserved — existing callers (`registration.js::sendWelcomeMail`, `account.js` reset-password flow) don't need any edit.
+- **NEW** admin surface — `bin/mail.js` CLI + `/system/admin/mail/*` routes (see `CHANGELOG-v2.md`). Write routes emit `process.send({type:'mail:template-invalidate'})` so master broadcasts the nudge to every sibling worker (including the originating one is skipped); each worker's `components/mail/src/index.js` subscribes via `process.on('message', …)` in `init()` and calls `refresh()` on receipt.
+- **NEW** master IPC handler — `cluster.on('message', …)` case for `mail:template-invalidate`; broadcasts to all workers except the originator.
+- **DEPS**: `email-templates@^10.0.1`, `nodemailer@^6.9.16`, `pug@^3.0.4` added as production deps on the root `package.json`. No transitive conflicts with the existing stack.
+- **TESTS**:
+  - `[MAILTMPL]` 7 cases on `components/platform/test/conformance/PlatformDB.test.js` — round-trip, null-absent, overwrite, bulk decode, single-part delete, lang-wide delete scoped, namespace isolation from `dns-record/*` / `user-core/*` / `observability/*`.
+  - `[MAILSEND]` / `[MAILTMPL]` / `[MAILREPO]` / `[MAILADAPT]` / `[MAILFCD]` / `[MAILSEED]` — 21 unit tests under `components/mail/test/`.
+  - `[MLIP]` 2 cases on `components/api-server/test/methods/helpers/mailing.test.js` — end-to-end Pug render + nodemailer jsonTransport dispatch via the helper.
+  - `[MAILCLI]` 9 subprocess cases + `[MAILADM]` 9 HTTP cases on `components/api-server/test/`.
+
 ## Docker image layout: rqlited moved to `/app/bin-ext/`
 
 - `Dockerfile` — rqlited binary relocated from `/app/var-pryv/rqlite-bin/rqlited` → `/app/bin-ext/rqlited`. Operators who bind-mount `/app/var-pryv` (intending to persist rqlite data) no longer shadow the baked-in binary. The only persistent path docker operators need is `/app/var-pryv/rqlite-data`, now declared as `VOLUME`.
