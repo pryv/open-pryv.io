@@ -34,6 +34,7 @@ const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('mail');
 
 let state = null;
+let ipcListener = null;
 
 async function init (opts) {
   if (state) {
@@ -53,6 +54,22 @@ async function init (opts) {
   const sender = new Sender(delivery);
 
   state = { delivery, templateRepository, sender };
+
+  // Cluster workers: subscribe to master's `mail:template-invalidate` broadcast
+  // so the local tmp-dir is re-materialised from PlatformDB right after any
+  // admin-API PUT/DELETE on this core. Other cores pick up the same row
+  // change via rqlite replication + their master's periodic refresh.
+  if (typeof process.send === 'function') {
+    ipcListener = (msg) => {
+      if (msg && msg.type === 'mail:template-invalidate') {
+        refresh().catch((err) => {
+          logger.warn('mail:template-invalidate refresh failed: ' + err.message);
+        });
+      }
+    };
+    process.on('message', ipcListener);
+  }
+
   logger.info(`ready (defaultLang=${defaultLang}, tmpDir=${delivery.tmpDir})`);
 }
 
@@ -77,6 +94,10 @@ async function refresh () {
 }
 
 async function close () {
+  if (ipcListener != null) {
+    try { process.off('message', ipcListener); } catch (_) { /* never attached */ }
+    ipcListener = null;
+  }
   if (!state) return;
   await state.delivery.close();
   state = null;

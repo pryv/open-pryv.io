@@ -69,6 +69,107 @@ module.exports = function system (expressApp, app) {
       next(err);
     }
   });
+  // --------------------- admin mail templates ----------------- //
+  // Edit path for in-process mail templates stored in PlatformDB.
+  // Reads use application/json; PUT accepts text/plain (raw Pug) OR
+  // JSON `{ pug }`. Writes push `mail:template-invalidate` over IPC so
+  // every worker on this core refreshes its materialised Pug tmp-dir on
+  // the next request; other cores pick up the change via rqlite
+  // replication + their own master's periodic cache re-read.
+  expressApp.get(Paths.System + '/admin/mail/templates', async (req, res, next) => {
+    try {
+      const platformDB = require('storages').platformDB;
+      const rows = typeof platformDB.getAllMailTemplates === 'function'
+        ? await platformDB.getAllMailTemplates()
+        : [];
+      res.status(200).json({
+        templates: rows.map(r => ({ type: r.type, lang: r.lang, part: r.part, length: r.pug.length }))
+      });
+    } catch (err) {
+      logger.error('admin/mail/templates list failed: ' + err.message);
+      next(err);
+    }
+  });
+  expressApp.get(Paths.System + '/admin/mail/templates/:type/:lang/:part', async (req, res, next) => {
+    try {
+      const { type, lang, part } = req.params;
+      const platformDB = require('storages').platformDB;
+      const pug = await platformDB.getMailTemplate(type, lang, part);
+      if (pug == null) {
+        return next(errors.unknownResource('mail template', `${type}/${lang}/${part}`));
+      }
+      res.status(200).type('text/plain').send(pug);
+    } catch (err) {
+      logger.error('admin/mail/templates get failed: ' + err.message);
+      next(err);
+    }
+  });
+  expressApp.put(Paths.System + '/admin/mail/templates/:type/:lang/:part', contentType.json, async (req, res, next) => {
+    try {
+      const { type, lang, part } = req.params;
+      const pug = req.body && typeof req.body.pug === 'string' ? req.body.pug : null;
+      if (pug == null) return next(errors.invalidRequestStructure('body must be { pug: string }'));
+      const platformDB = require('storages').platformDB;
+      await platformDB.setMailTemplate(type, lang, part, pug);
+      if (typeof process.send === 'function') {
+        try { process.send({ type: 'mail:template-invalidate' }); } catch (e) { /* master not attached */ }
+      }
+      res.status(204).end();
+    } catch (err) {
+      logger.error('admin/mail/templates put failed: ' + err.message);
+      next(err);
+    }
+  });
+  expressApp.delete(Paths.System + '/admin/mail/templates/:type/:lang/:part', async (req, res, next) => {
+    try {
+      const { type, lang, part } = req.params;
+      const platformDB = require('storages').platformDB;
+      await platformDB.deleteMailTemplate(type, lang, part);
+      if (typeof process.send === 'function') {
+        try { process.send({ type: 'mail:template-invalidate' }); } catch (e) { /* master not attached */ }
+      }
+      res.status(204).end();
+    } catch (err) {
+      logger.error('admin/mail/templates delete failed: ' + err.message);
+      next(err);
+    }
+  });
+  expressApp.post(Paths.System + '/admin/mail/send-test', contentType.json, async (req, res, next) => {
+    try {
+      const { type, lang, recipient } = req.body || {};
+      if (!type || !lang || !recipient) {
+        return next(errors.invalidRequestStructure('body must be { type, lang, recipient }'));
+      }
+      const recipientObj = typeof recipient === 'string'
+        ? { name: recipient, email: recipient }
+        : recipient;
+      if (!recipientObj.email) {
+        return next(errors.invalidRequestStructure('recipient.email is required'));
+      }
+      const mail = require('mail');
+      if (!mail.isActive()) {
+        const emailCfg = config.get('services:email') || {};
+        if (!emailCfg.smtp || !emailCfg.smtp.host) {
+          return next(errors.unexpectedError('services.email.smtp.host is required for send-test'));
+        }
+        const platformDB = require('storages').platformDB;
+        await mail.init({
+          getAllMailTemplates: platformDB.getAllMailTemplates.bind(platformDB),
+          smtp: emailCfg.smtp,
+          from: emailCfg.from,
+          defaultLang: emailCfg.defaultLang || 'en'
+        });
+      }
+      const result = await mail.send({ type, lang, recipient: recipientObj, substitutions: { username: recipientObj.name || 'send-test', email: recipientObj.email } });
+      res.status(200).json({ sent: result.sent === true });
+    } catch (err) {
+      if (err && err.id === 'unknown-resource') {
+        return next(errors.unknownResource('mail template'));
+      }
+      logger.error('admin/mail/send-test failed: ' + err.message);
+      next(err);
+    }
+  });
   // --------------------- bootstrap ack ----------------- //
   // POST /system/admin/cores/ack — called by a freshly bootstrapped core.
   // Auth is the one-time join token in the request body, NOT the admin key

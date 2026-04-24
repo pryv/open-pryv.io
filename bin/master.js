@@ -339,6 +339,21 @@ if (cluster.isPrimary) {
       });
     }
 
+    // Broadcast mail-template invalidations to every sibling worker so all
+    // in-process `mail` caches re-materialise from PlatformDB on the next
+    // request. Emitted by the admin-API PUT/DELETE handlers after a
+    // successful write (see components/api-server/src/routes/system.js).
+    cluster.on('message', (worker, msg) => {
+      if (msg && msg.type === 'mail:template-invalidate') {
+        for (const id in cluster.workers) {
+          if (cluster.workers[id] === worker) continue; // already wrote; no self-nudge
+          try { cluster.workers[id].send(msg); } catch (err) {
+            log(`[mail] IPC to worker ${id} failed: ${err.message}`);
+          }
+        }
+      }
+    });
+
     // --- Worker lifecycle ---
     cluster.on('exit', (worker, code, signal) => {
       const type = workerTypes.get(worker.id);
