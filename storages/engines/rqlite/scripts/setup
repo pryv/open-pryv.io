@@ -46,7 +46,7 @@ REPO_ROOT=$(cd "$SCRIPT_FOLDER/../../../.." && pwd)
 RQLITE_BIN_DIR=$REPO_ROOT/bin-ext
 RQLITE_DATA_DIR=$VAR_PRYV_FOLDER/rqlite-data
 
-# Migrate any previous install from var-pryv/rqlite-bin/ (Plan 48 relocation)
+# Migrate any previous install from var-pryv/rqlite-bin/ to bin-ext/
 if [[ -x "$VAR_PRYV_FOLDER/rqlite-bin/rqlited" && ! -x "$RQLITE_BIN_DIR/rqlited" ]]; then
   echo "Migrating rqlited: $VAR_PRYV_FOLDER/rqlite-bin → $RQLITE_BIN_DIR"
   mkdir -p "$RQLITE_BIN_DIR"

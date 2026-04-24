@@ -4,7 +4,7 @@
 
 - **Node.js** 22.x
 - **Database**: PostgreSQL 14+ (recommended) or MongoDB 4.2+
-- **rqlite** — distributed SQLite used for the platform DB. The `rqlited` binary is bundled under `var-pryv/rqlite-bin/` after `just setup-dev-env`. `bin/master.js` spawns and supervises it; no manual install needed in single- or multi-core deployments.
+- **rqlite** — distributed SQLite used for the platform DB. The `rqlited` binary is bundled under `bin-ext/` after `just setup-dev-env` (Docker image: `/app/bin-ext/rqlited`). `bin/master.js` spawns and supervises it; no manual install needed in single- or multi-core deployments.
 - **SQLite** (bundled — used for audit and per-user account/index storage)
 - **InfluxDB** 1.x (optional — for high-frequency series; PostgreSQL can also serve as series engine)
 - **GraphicsMagick** (optional — for image previews): `apt install graphicsmagick`
@@ -89,7 +89,7 @@ storages:
       url: http://localhost:4001
       raftPort: 4002
       dataDir: /path/to/data/rqlite-data
-      binPath: /path/to/rqlited        # default: var-pryv/rqlite-bin/rqlited
+      binPath: /path/to/rqlited        # default: bin-ext/rqlited
 ```
 
 ### Assets
