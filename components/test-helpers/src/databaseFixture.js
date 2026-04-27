@@ -10,7 +10,7 @@ const Charlatan = require('charlatan');
 const generateId = require('cuid');
 const logger = require('@pryv/boiler').getLogger('databaseFixture');
 const timestamp = require('unix-timestamp');
-const _ = require('lodash');
+const { deepMerge } = require('utils');
 const storage = require('storage'); // eslint-disable-line no-unused-vars -- used in JSDoc types
 const Webhook = require('business').webhooks.Webhook;
 const { getUsersRepository, User } = require('business/src/users');
@@ -184,7 +184,7 @@ class FixtureItem {
    * @returns {Attributes}
    */
   attributes (attrs) {
-    return _.merge({
+    return deepMerge({
       id: generateId(),
       created: timestamp.now(),
       createdBy: this.context.user.id,
@@ -277,7 +277,7 @@ class DatabaseFixture {
 
 class FixtureUser extends FixtureItem {
   constructor (context, name, attrs) {
-    super(context, _.merge({
+    super(context, deepMerge({
       id: name,
       username: name,
       storageUsed: 0,
@@ -505,7 +505,7 @@ class FixtureAccess extends FixtureItem {
   async create () {
     const storageItems = this.storage;
     const user = this.context.user;
-    const attributes = _.merge(this.fakeAttributes(), this.attrs);
+    const attributes = deepMerge(this.fakeAttributes(), this.attrs);
     return await bluebird.fromCallback((cb) => storageItems.accesses.insertOne(user, attributes, cb));
   }
 

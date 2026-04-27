@@ -7,6 +7,7 @@
 module.exports = {
   ApiEndpoint: require('./api-endpoint'),
   debug: require('./debug'),
+  deepMerge: require('./deepMerge'),
   encryption: require('./encryption'),
   extension: require('./extension'),
   slugify: require('./slugify'),

@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 const bluebird = require('bluebird');
-const _ = require('lodash');
+const { deepMerge } = require('utils');
 const Webhook = require('./Webhook');
 const { getUsersRepository } = require('business/src/users');
 /**
@@ -129,7 +129,7 @@ module.exports = Repository;
  * @returns {any}
  */
 function initWebhook (user, repository, webhook) {
-  return new Webhook(_.merge({
+  return new Webhook(deepMerge({
     webhooksRepository: repository,
     user
   }, webhook));

@@ -14,7 +14,7 @@
 const cuid = require('cuid');
 const path = require('path');
 const fs = require('fs');
-const _ = require('lodash');
+const { deepMerge } = require('utils');
 const { integrity } = require('business');
 
 // Static data templates
@@ -270,7 +270,7 @@ function createDynData (options = {}) {
 
     // Recreate users
     for (const user of users) {
-      const userObj = new User(_.merge(customProperties, user));
+      const userObj = new User(deepMerge(customProperties, user));
       await usersRepository.insertOne(userObj, false, true);
     }
   }

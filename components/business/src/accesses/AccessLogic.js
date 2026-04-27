@@ -8,7 +8,7 @@
  * Business logic for access objects.
  */
 
-const _ = require('lodash');
+const { deepMerge } = require('utils');
 const accountStreams = require('business/src/system-streams');
 
 const { getConfigUnsafe } = require('@pryv/boiler');
@@ -44,7 +44,7 @@ class AccessLogic {
     this._access = access;
     this._userId = userId;
     this._streamPermissionLevelCache = {};
-    _.merge(this, access);
+    deepMerge(this, access);
 
     if (this.isPersonal()) return;
     if (!this.id) return; // this is an access "in" creation process

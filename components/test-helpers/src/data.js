@@ -17,7 +17,7 @@ const settings = dependencies.settings;
 const storage = dependencies.storage;
 const fs = require('fs');
 const path = require('path');
-const _ = require('lodash');
+const { deepMerge } = require('utils');
 const accountStreams = require('business/src/system-streams');
 const { getUsersRepository, User } = require('business/src/users');
 const { userLocalDirectory } = require('storage');
@@ -40,7 +40,7 @@ exports.resetUsers = async () => {
   const usersRepository = await getUsersRepository();
   await usersRepository.deleteAll();
   for (const user of users) {
-    const userObj = new User(_.merge(customAccountProperties, user)); // might alter storage "dump data" script
+    const userObj = new User(deepMerge(customAccountProperties, user)); // might alter storage "dump data" script
     await usersRepository.insertOne(userObj, false, true);
   }
 };

@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 const fs = require('fs');
-const lodash = require('lodash');
+const { deepMerge } = require('utils');
 const superagent = require('superagent');
 const bluebird = require('bluebird');
 const ZSchemaValidator = require('z-schema');
@@ -219,7 +219,7 @@ class TypeRepository {
     await bluebird.try(() => {
       if (!validator.validateSchema(eventTypesDefinition)) { return invalidError(validator.lastReport); }
       // Overwrite defaultTypes with the merged list of type schemata.
-      defaultTypes = lodash.merge(defaultTypes, eventTypesDefinition);
+      defaultTypes = deepMerge(defaultTypes, eventTypesDefinition);
     });
   }
 }

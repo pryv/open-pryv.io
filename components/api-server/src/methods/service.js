@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const _ = require('lodash');
+const { deepMerge } = require('utils');
 const { getConfig } = require('@pryv/boiler');
 const { getAPIVersion } = require('middleware/src/project_version');
 module.exports = function (api) {
@@ -24,7 +24,7 @@ module.exports = function (api) {
     try {
       serviceInfo.version = await getAPIVersion();
     } catch (err) { /* non-fatal */ }
-    result = _.merge(result, serviceInfo);
+    result = deepMerge(result, serviceInfo);
     return next();
   }
 };

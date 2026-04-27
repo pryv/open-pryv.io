@@ -49,7 +49,6 @@
     "hjson": "^3.1.1",
     "influx": "^5.0.6",
     "jaeger-client": "^3.18.1",
-    "lodash": "^4.17.4",
     "lru-cache": "^7.14.1",
     "mkdirp": "1.0.4",
     "mongodb": "^4.11.0",
@@ -93,7 +92,8 @@
     "socket.io-client": "^4.6.1",
     "source-licenser": "^2.0.5",
     "supertest": "^6.3.1",
-    "temp": "^0.9.4"
+    "temp": "^0.9.4",
+    "lodash": "^4.17.4"
   },
   "optionalDependencies": {
     "newrelic": "^12.0.0"

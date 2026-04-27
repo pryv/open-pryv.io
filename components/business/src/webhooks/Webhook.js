@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 const request = require('superagent');
-const _ = require('lodash');
+const { deepMerge } = require('utils');
 
 function pick (obj, keys) {
   const out = {};
@@ -234,7 +234,7 @@ class Webhook {
    */
   async update (fieldsToUpdate) {
     const fields = Object.keys(fieldsToUpdate);
-    _.merge(this, fieldsToUpdate);
+    deepMerge(this, fieldsToUpdate);
     await makeUpdate(fields, this);
   }
 

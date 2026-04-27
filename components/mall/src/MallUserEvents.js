@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const _ = require('lodash');
+const { deepMerge } = require('utils');
 const assert = require('assert');
 const storeDataUtils = require('./helpers/storeDataUtils');
 const eventsUtils = require('./helpers/eventsUtils');
@@ -395,7 +395,7 @@ class MallUserEvents {
     const mallEvents = this;
     async function * reader () {
       for await (const eventData of streamedMatchingEvents) {
-        const newEventData = _.merge(eventData, update.fieldsToSet);
+        const newEventData = deepMerge(eventData, update.fieldsToSet);
         if (update.addStreams && update.addStreams.length > 0) {
           newEventData.streamIds = [...new Set([...newEventData.streamIds, ...update.addStreams])];
         }

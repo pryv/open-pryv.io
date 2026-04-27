@@ -11,7 +11,7 @@
 module.exports = Sessions;
 
 const generateId = require('cuid');
-const _ = require('lodash');
+const { deepMerge } = require('utils');
 
 const collectionInfo = {
   name: 'sessions',
@@ -33,7 +33,7 @@ const collectionInfo = {
  */
 function Sessions (database, options) {
   this.database = database;
-  this.options = _.merge({
+  this.options = deepMerge({
     maxAge: 1000 * 60 * 60 * 24 * 14 // two weeks
   }, options);
 }

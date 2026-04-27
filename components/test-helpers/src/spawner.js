@@ -12,7 +12,7 @@ const EventEmitter = require('events');
 const path = require('path');
 const msgpack = require('msgpack5')();
 const supertest = require('supertest');
-const _ = require('lodash');
+const { deepMerge } = require('utils');
 const { ConditionVariable, Fuse } = require('./condition_variable');
 const portAllocator = require('./portAllocator');
 // Set DEBUG=spawner to see these messages.
@@ -105,7 +105,7 @@ class SpawnContext {
 
     // Create settings for this new instance.
     customSettings = customSettings || {};
-    const settings = _.merge({
+    const settings = deepMerge({
       http: {
         port, // use this port for http/express
         hfsPort: port,
