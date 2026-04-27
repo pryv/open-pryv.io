@@ -4,7 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const _ = require('lodash');
 const errors = require('errors').factory;
 const { getConfig } = require('@pryv/boiler');
 const getHTTPDigestHeaderForAttachment = require('business').integrity.attachments.getHTTPDigestHeaderForAttachment;
@@ -57,7 +56,7 @@ async function attachmentsAccessMiddleware (req, res, next) {
   }
   // set response content type (we can't rely on the filename)
   const attachment = event.attachments
-    ? _.find(event.attachments, { id: req.params.fileId })
+    ? event.attachments.find(att => att.id === req.params.fileId)
     : null;
   if (!attachment) {
     return next(errors.unknownResource('attachment', req.params.fileId));

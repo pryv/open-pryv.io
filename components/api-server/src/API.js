@@ -9,7 +9,6 @@ const async = require('async');
 const APIError = require('errors').APIError;
 const errors = require('errors').factory;
 const Result = require('./Result');
-const _ = require('lodash');
 const { getConfigUnsafe } = require('@pryv/boiler');
 
 let audit, throwIfMethodIsNotDeclared, isAuditActive;
@@ -120,7 +119,7 @@ class API {
         // Syntax allows strings in the function list, which means that the
         // implementation from that method needs to be copied over.
         //
-        if (!_.isFunction(fn)) {
+        if (typeof fn !== 'function') {
           // If this is not a function, it MUST be a string.
 
           if (typeof fn !== 'string') { throw new Error('AF: backrefs must be in string form.'); }

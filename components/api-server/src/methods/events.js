@@ -212,8 +212,8 @@ module.exports = async function (api) {
     const allAccountStreamIds = Object.keys(accountStreams.accountMap);
     const streamIds = context.newEvent.streamIds || [];
     const oldStreamIds = context.oldEvent ? context.oldEvent.streamIds : [];
-    context.accountStreamIds = _.intersection(allAccountStreamIds, streamIds);
-    context.oldAccountStreamIds = _.intersection(allAccountStreamIds, oldStreamIds);
+    context.accountStreamIds = allAccountStreamIds.filter(id => streamIds.includes(id));
+    context.oldAccountStreamIds = allAccountStreamIds.filter(id => oldStreamIds.includes(id));
     context.doesEventBelongToAccountStream =
       context.accountStreamIds.length > 0 || context.oldAccountStreamIds.length > 0;
     next();
@@ -469,7 +469,7 @@ module.exports = async function (api) {
     if (!canUpdateEvent) { return next(errors.forbidden()); }
     if (hasStreamIdsModification(eventUpdate)) {
       // 2. check that streams we add have contribute access
-      const streamIdsToAdd = _.difference(eventUpdate.streamIds, event.streamIds);
+      const streamIdsToAdd = eventUpdate.streamIds.filter(id => !event.streamIds.includes(id));
       for (const streamIdToAdd of streamIdsToAdd) {
         if (!(await context.access.canUpdateEventsOnStream(streamIdToAdd))) {
           return next(errors.forbidden());
@@ -477,7 +477,7 @@ module.exports = async function (api) {
       }
       // 3. check that streams we remove have contribute access
       // streamsToRemove = event.streamIds - eventUpdate.streamIds
-      const streamIdsToRemove = _.difference(event.streamIds, eventUpdate.streamIds);
+      const streamIdsToRemove = event.streamIds.filter(id => !eventUpdate.streamIds.includes(id));
       for (const streamIdToRemove of streamIdsToRemove) {
         if (!(await context.access.canUpdateEventsOnStream(streamIdToRemove))) {
           return next(errors.forbidden());
@@ -727,9 +727,7 @@ module.exports = async function (api) {
     if (attachments == null) {
       return 0;
     }
-    return _.reduce(attachments, function (evtTotal, att) {
-      return evtTotal + att.size;
-    }, 0);
+    return attachments.reduce((evtTotal, att) => evtTotal + att.size, 0);
   }
 
   api.register(

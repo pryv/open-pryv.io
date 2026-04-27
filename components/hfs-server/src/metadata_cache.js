@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 const async = require('async');
-const _ = require('lodash');
 const bluebird = require('bluebird');
 const LRU = require('lru-cache');
 const logger = require('@pryv/boiler').getLogger('metadata_cache');
@@ -174,7 +173,7 @@ class MetadataLoader {
         if (err != null) { return returnValueCallback(mapErrors(err)); }
         const access = methodContext.access;
         const user = methodContext.user;
-        const event = _.last(results);
+        const event = results.at(-1);
         // Because we called retrieveExpandedAccess above.
         if (access == null) { throw new Error('AF: access != null'); }
         // Because we called retrieveUser above.

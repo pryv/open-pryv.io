@@ -109,7 +109,7 @@ Webhooks.prototype.insertOne = function (userOrUserId, webhook, callback) {
  */
 Webhooks.prototype.insertMany = function (userOrUserId, webhooks, callback) {
   const webhooksToCreate = webhooks.map((w) => {
-    if (w.deleted === undefined) return _.assign({ deleted: null }, w);
+    if (w.deleted === undefined) return Object.assign({ deleted: null }, w);
     return w;
   });
   this.database.insertMany(

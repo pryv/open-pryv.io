@@ -12,7 +12,6 @@ const slugify = require('utils').slugify;
 const string = require('./helpers/string');
 const utils = require('utils');
 const treeUtils = utils.treeUtils;
-const _ = require('lodash');
 const APIError = require('errors/src/APIError');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const logger = getLogger('methods:streams');
@@ -356,7 +355,7 @@ module.exports = async function (api) {
         // case  mergeEventsWithParent = false
         const eventsStream = await mall.events.getStreamedWithParamsByStore(context.user.id, { [storeId]: { streams: [{ any: cleanDescendantIds }] } });
         for await (const event of eventsStream) {
-          const remaningStreamsIds = _.difference(event.streamIds, streamAndDescendantIds);
+          const remaningStreamsIds = event.streamIds.filter(id => !streamAndDescendantIds.includes(id));
           if (remaningStreamsIds.length === 0) { // no more streams deleted event
             await mall.events.delete(context.user.id, event);
             updatedEventsStream.add({ action: 'deleted', id: event.id });

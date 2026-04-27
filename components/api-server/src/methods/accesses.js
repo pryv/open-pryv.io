@@ -469,9 +469,7 @@ module.exports = async function produceAccessesApiMethods (api) {
     }
     return true;
     function findByStreamId (permissions, streamId) {
-      return _.find(permissions, function (perm) {
-        return perm.streamId === streamId;
-      });
+      return permissions.find(perm => perm.streamId === streamId);
     }
   }
 

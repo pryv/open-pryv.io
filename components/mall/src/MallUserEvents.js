@@ -397,10 +397,10 @@ class MallUserEvents {
       for await (const eventData of streamedMatchingEvents) {
         const newEventData = _.merge(eventData, update.fieldsToSet);
         if (update.addStreams && update.addStreams.length > 0) {
-          newEventData.streamIds = _.union(newEventData.streamIds, update.addStreams);
+          newEventData.streamIds = [...new Set([...newEventData.streamIds, ...update.addStreams])];
         }
         if (update.removeStreams && update.removeStreams.length > 0) {
-          newEventData.streamIds = _.difference(newEventData.streamIds, update.removeStreams);
+          newEventData.streamIds = newEventData.streamIds.filter(id => !update.removeStreams.includes(id));
         }
         // eventually remove fields from event
         if (update.fieldsToDelete && update.fieldsToDelete.length > 0) {

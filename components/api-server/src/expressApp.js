@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 const express = require('express');
-const _ = require('lodash');
 const bodyParser = require('body-parser');
 const middleware = require('middleware');
 const Paths = require('./routes/Paths');
@@ -29,10 +28,9 @@ async function expressAppInit (logging) {
   // NOTE Insert this bit in front of 'requestTraceMiddleware' to also see
   //  username in logged paths.
   //
-  const ignorePaths = _.chain(Paths)
-    .filter((e) => _.isString(e))
-    .filter((e) => e.indexOf(Paths.Params.Username) < 0)
-    .value();
+  const ignorePaths = Object.values(Paths)
+    .filter((e) => typeof e === 'string')
+    .filter((e) => e.indexOf(Paths.Params.Username) < 0);
   if (!config.get('dnsLess:isActive')) {
     const coreId = config.get('core:id');
     const ignoredSubdomains = coreId && coreId !== 'single' ? [coreId] : [];

@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 const assert = require('assert');
-const _ = require('lodash');
 const valueTypes = require('./value_types');
 // A complex type like 'position/wgs84' that has several subfields.
 //
@@ -46,7 +45,7 @@ class ComplexType {
   optionalFields () {
     const requiredKeys = this.requiredFields();
     const allKeys = this.fields();
-    return _.reject(allKeys, (el) => requiredKeys.indexOf(el) >= 0);
+    return allKeys.filter((el) => requiredKeys.indexOf(el) < 0);
   }
 
   /**

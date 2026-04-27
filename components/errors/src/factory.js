@@ -7,7 +7,6 @@
 const APIError = require('./APIError');
 const ErrorIds = require('./ErrorIds');
 const ErrorMessages = require('./ErrorMessages');
-const _ = require('lodash');
 
 /**
  * Helper "factory" methods for API errors (see error ids).
@@ -209,7 +208,7 @@ factory.InvalidInvitationToken = () => {
  * @returns {"An " | "A "}
  */
 function functionGetRightArticle (noun) {
-  return _.includes(['a', 'e', 'i', 'o', 'u'], noun[0].toLowerCase())
+  return ['a', 'e', 'i', 'o', 'u'].includes(noun[0].toLowerCase())
     ? 'An '
     : 'A ';
 }

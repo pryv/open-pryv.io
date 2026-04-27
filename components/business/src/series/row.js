@@ -4,7 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const _ = require('lodash');
 const assert = require('assert');
 /** A single row of the data matrix. Stores a reference to the original
  * matrix; this is like a pointer, not like a value. It is used during iteration
@@ -30,8 +29,12 @@ class Row {
    * @return {any} The current row in object (struct) form.
    */
   toStruct () {
-    const obj = _.zipObject(this.columnNames, this.values);
-    return _.pickBy(obj, (val) => val !== null);
+    const result = {};
+    for (let i = 0; i < this.columnNames.length; i++) {
+      const v = this.values[i];
+      if (v !== null) result[this.columnNames[i]] = v;
+    }
+    return result;
   }
 
   /** Returns a single field value.
