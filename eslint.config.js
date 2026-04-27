@@ -16,12 +16,7 @@ module.exports = [
       'build/test/pryv/*',
       'node_modules/**',
       '**/node_modules/**',
-      'external-ressources/**',
-      // Vendored as-is from pryv/pryv-boiler@1.2.4. Will be brought in line
-      // with neostandard {semi:true} in follow-up commits as the module is
-      // trimmed down (drop superagent ConfigRemoteURL path, drop unused
-      // pluginAsync surface, drop airbrake stub).
-      'components/boiler/**'
+      'external-ressources/**'
     ]
   },
   {

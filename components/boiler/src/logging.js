@@ -34,9 +34,7 @@ function generateFormat (options) {
   }
 
   function printf (info) {
-    const {
-      timestamp, level, message, ...args
-    } = info;
+    const { timestamp, level, message } = info;
 
     let items = info[Symbol.for('splat')] || {};
 
@@ -297,7 +295,7 @@ function _inspectAndHide (o) {
 // Hides sensitive values (auth tokens and passwords) in log messages
 function hideSensitiveValues (msg) {
   if (typeof msg !== 'string') return msg;
-  const tokenRegexp = /auth\=c([a-z0-9-]*)/g;
+  const tokenRegexp = /auth=c([a-z0-9-]*)/g;
   const passwordRegexp = /"(password|passwordHash|newPassword)"[:=]"([^"]*)"/g;
   const mask = '(hidden)';
 
