@@ -10,7 +10,6 @@ const url = require('url');
 const childProcessNodeInternal = require('child_process');
 const EventEmitter = require('events');
 const path = require('path');
-const lodash = require('lodash');
 const msgpack = require('msgpack5')();
 const supertest = require('supertest');
 const _ = require('lodash');
@@ -159,7 +158,7 @@ class SpawnContext {
    */
   spawn_multi (n) {
     if (n <= 0) { throw new Error('AF: n expected to be > 0'); }
-    return lodash.times(n, () => this.spawn());
+    return Array.from({ length: n }, () => this.spawn());
   }
 
   // Called by the ProcessProxy when the child it is connected to exits. This

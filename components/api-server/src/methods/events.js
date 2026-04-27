@@ -13,7 +13,6 @@ const commonFns = require('./helpers/commonFunctions');
 const methodsSchema = require('../schema/eventsMethods');
 const eventSchema = require('../schema/event');
 const timestamp = require('unix-timestamp');
-const _ = require('lodash');
 
 const { getMall, storeDataUtils } = require('mall');
 const accountStreams = require('business/src/system-streams');
@@ -554,9 +553,7 @@ module.exports = async function (api) {
     if (isSeriesEvent(context.event || result.event)) {
       const isDelete = !!result.eventDeletion;
       // if event is a deletion 'id' is given by result.eventDeletion
-      const updatedEventId = isDelete
-        ? _.pick(result.eventDeletion, ['id'])
-        : _.pick(result.event, ['id']);
+      const updatedEventId = { id: (isDelete ? result.eventDeletion : result.event).id };
       const subject = isDelete
         ? pubsub.SERIES_DELETE_EVENTID_USERNAME
         : pubsub.SERIES_UPDATE_EVENTID_USERNAME;
@@ -787,9 +784,7 @@ module.exports = async function (api) {
    * Returns the key of the attachment with the given file name.
    */
   function getAttachmentIndex (attachments, fileId) {
-    return _.findIndex(attachments, function (att) {
-      return att.id === fileId;
-    });
+    return attachments.findIndex(att => att.id === fileId);
   }
   /**
    * Sets the file read token for each of the given event's attachments (if any) for the given

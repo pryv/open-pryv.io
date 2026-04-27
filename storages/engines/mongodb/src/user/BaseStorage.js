@@ -4,7 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const _ = require('lodash');
 const bluebird = require('bluebird');
 const converters = require('./../converters');
 const _internals = require('../_internals');
@@ -580,10 +579,10 @@ BaseStorage.prototype.applyUpdateToDB = function (updatedData) {
     data,
     this.converters.updateToDB
   );
-  if (_.isEmpty(dbUpdate.$set)) {
+  if (!dbUpdate.$set || Object.keys(dbUpdate.$set).length === 0) {
     delete dbUpdate.$set;
   }
-  if (_.isEmpty(dbUpdate.$unset)) {
+  if (!dbUpdate.$unset || Object.keys(dbUpdate.$unset).length === 0) {
     delete dbUpdate.$unset;
   }
   return dbUpdate;

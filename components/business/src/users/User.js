@@ -4,9 +4,14 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const _ = require('lodash');
 const cuid = require('cuid');
 const accountStreams = require('business/src/system-streams');
+
+function pick (obj, keys) {
+  const out = {};
+  for (const k of keys) if (k in obj) out[k] = obj[k];
+  return out;
+}
 
 class User {
   // User properties that exists by default (email could not exist with specific config)
@@ -52,7 +57,7 @@ class User {
    * @returns {{}}
    */
   getReadableAccount () {
-    return _.pick(this, this.readableAccountFields.filter((x) => x !== 'dbDocuments' && x !== 'attachedFiles'));
+    return pick(this, this.readableAccountFields.filter((x) => x !== 'dbDocuments' && x !== 'attachedFiles'));
   }
 
   /**
@@ -60,7 +65,7 @@ class User {
    * @returns {{}}
    */
   getFullAccount () {
-    return _.pick(this, this.accountFields.filter((x) => x !== 'dbDocuments' && x !== 'attachedFiles'));
+    return pick(this, this.accountFields.filter((x) => x !== 'dbDocuments' && x !== 'attachedFiles'));
   }
 
   /**
@@ -68,7 +73,7 @@ class User {
    * @returns {{}}
    */
   getLegacyAccount () {
-    return _.pick(this, ['username', 'email', 'language', 'storageUsed']);
+    return pick(this, ['username', 'email', 'language', 'storageUsed']);
   }
 
   /**
@@ -76,7 +81,7 @@ class User {
    * @returns {any}
    */
   getAccountWithId () {
-    const res = _.pick(this, this.accountFields
+    const res = pick(this, this.accountFields
       .concat('id')
       .filter((x) => x !== 'dbDocuments' && x !== 'attachedFiles'));
     res.username = this.username;

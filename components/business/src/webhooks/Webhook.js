@@ -6,6 +6,12 @@
  */
 const request = require('superagent');
 const _ = require('lodash');
+
+function pick (obj, keys) {
+  const out = {};
+  for (const k of keys) if (k in obj) out[k] = obj[k];
+  return out;
+}
 const cuid = require('cuid');
 const timestamp = require('unix-timestamp');
 const { pubsub } = require('messages');
@@ -253,7 +259,7 @@ class Webhook {
    * @returns {{}}
    */
   forStorage () {
-    return _.pick(this, [
+    return pick(this, [
       'id',
       'accessId',
       'url',
@@ -276,7 +282,7 @@ class Webhook {
    * @returns {{}}
    */
   forApi () {
-    return _.pick(this, [
+    return pick(this, [
       'id',
       'accessId',
       'url',
@@ -341,7 +347,7 @@ async function makeUpdate (fields, webhook) {
   if (fields == null) {
     update = webhook.forStorage();
   } else {
-    update = _.pick(webhook.forStorage(), fields);
+    update = pick(webhook.forStorage(), fields);
   }
   await webhook.repository.updateOne(webhook.user, update, webhook.id);
 }

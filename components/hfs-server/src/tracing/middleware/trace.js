@@ -6,7 +6,6 @@
  */
 // Middleware that will perform request tracing via opentacing.
 // Heavily inspired by express-opentracing.
-const lodash = require('lodash');
 const opentracing = require('opentracing');
 const cls = require('../cls');
 /**
@@ -69,6 +68,6 @@ function requestDone (span, res) {
  * @returns {any}
  */
 function factory (ctx) {
-  return lodash.partial(tracingMiddleware, ctx);
+  return (...rest) => tracingMiddleware(ctx, ...rest);
 }
 module.exports = factory;

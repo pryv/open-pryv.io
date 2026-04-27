@@ -5,8 +5,8 @@
  * Refer to LICENSE file
  */
 const async = require('async');
+const { isDeepStrictEqual } = require('node:util');
 const slugify = require('utils').slugify;
-const _ = require('lodash');
 const timestamp = require('unix-timestamp');
 const bluebird = require('bluebird');
 
@@ -464,7 +464,7 @@ module.exports = async function produceAccessesApiMethods (api) {
       }
     }
     // Compare clientData (treat null and undefined as equivalent)
-    if (!_.isEqual(access.clientData ?? null, clientData ?? null)) {
+    if (!isDeepStrictEqual(access.clientData ?? null, clientData ?? null)) {
       return false;
     }
     return true;

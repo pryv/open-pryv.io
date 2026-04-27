@@ -7,8 +7,14 @@
 
 const bluebird = require('bluebird');
 const assert = require('assert');
-const _ = require('lodash');
 const ds = require('@pryv/datastore');
+
+function pick (obj, keys) {
+  const out = {};
+  for (const k of keys) if (k in obj) out[k] = obj[k];
+  return out;
+}
+
 const _internals = require('../_internals');
 const treeUtils = require('../../../../shared/treeUtils');
 
@@ -145,7 +151,7 @@ function cloneStream (stream, childrenDepth) {
     return structuredClone(stream);
   } else {
     const StreamPropsWithoutChildren = STREAM_PROPERTIES.filter((p) => p !== 'children');
-    const copy = _.pick(stream, StreamPropsWithoutChildren);
+    const copy = pick(stream, StreamPropsWithoutChildren);
     if (childrenDepth === 0) {
       copy.childrenHidden = true;
       copy.children = [];

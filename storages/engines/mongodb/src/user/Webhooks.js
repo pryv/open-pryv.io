@@ -7,7 +7,6 @@
 const BaseStorage = require('./BaseStorage');
 const converters = require('./../converters');
 const util = require('util');
-const _ = require('lodash');
 const timestamp = require('unix-timestamp');
 
 module.exports = Webhooks;
@@ -99,7 +98,8 @@ Webhooks.prototype.insertOne = function (userOrUserId, webhook, callback) {
       if (err) {
         return callback(err);
       }
-      callback(null, _.omit(webhookToCreate, 'deleted'));
+      const { deleted: _omit, ...rest } = webhookToCreate;
+      callback(null, rest);
     }
   );
 };

@@ -8,8 +8,6 @@
  * Helpers for defining schemas.
  */
 
-const _ = require('lodash');
-
 const USERNAME_MIN_LENGTH = 5;
 const USERNAME_MAX_LENGTH = 60;
 const USERNAME_REGEXP_STR = '^[a-z0-9]' +
@@ -104,7 +102,7 @@ function getBaseSchema (type, options) {
       result.type.push('null');
     }
     // We omit 'nullable' since we handled this particular option just above
-    const opt = _.omit(options, 'nullable');
+    const { nullable: _omit, ...opt } = options;
     Object.assign(result, opt);
   }
   return result;

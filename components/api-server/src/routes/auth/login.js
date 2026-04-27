@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 const cookieParser = require('cookie-parser');
-const lodash = require('lodash');
 const errors = require('errors').factory;
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
@@ -38,7 +37,7 @@ module.exports = function (expressApp, app) {
       return false;
     }
     for (const key of keys) {
-      if (!lodash.has(obj, key)) { return false; }
+      if (!Object.prototype.hasOwnProperty.call(obj, key)) { return false; }
     }
     return true;
   }
