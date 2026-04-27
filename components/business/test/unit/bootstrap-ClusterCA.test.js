@@ -146,9 +146,13 @@ describe('[CLUSTERCA] ClusterCA', function () {
     it('does not leave temporary files in the CA directory', () => {
       const ca = new ClusterCA({ dir: tmpDir });
       ca.issueNodeCert({ coreId: 'core-b' });
-      // After issuance the CA dir should contain only: ca.key, ca.crt, ca.srl.
-      const entries = fs.readdirSync(tmpDir).sort();
-      assert.deepEqual(entries, ['ca.crt', 'ca.key', 'ca.srl']);
+      // After issuance the CA dir must contain only ca.key + ca.crt; ca.srl
+      // is OpenSSL's serial file and may or may not be present depending on
+      // the OpenSSL version (1.x always emits it; 3.x sometimes does not).
+      // The intent here is to verify no .csr / .key.tmp / .ext leaks.
+      const allowed = new Set(['ca.crt', 'ca.key', 'ca.srl']);
+      const unexpected = fs.readdirSync(tmpDir).filter(e => !allowed.has(e));
+      assert.deepEqual(unexpected, [], `unexpected files in CA dir: ${unexpected.join(', ')}`);
     });
 
     it('throws when coreId is missing', () => {
