@@ -6,35 +6,8 @@ on:
     branches: [master]
 
 jobs:
-  test-mongo:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - uses: extractions/setup-just@v4
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-      - name: Setup dev environment
-        run: just setup-dev-env
-      - name: Install InfluxDB
-        run: |
-          wget -q https://dl.influxdata.com/influxdb/releases/influxdb-1.8.10_linux_amd64.tar.gz
-          tar xzf influxdb-1.8.10_linux_amd64.tar.gz
-          sudo cp influxdb-1.8.10-1/usr/bin/influx* /usr/local/bin/
-      - name: Install dependencies
-        run: npm install --ignore-scripts && npm rebuild
-      - name: Start services
-        run: |
-          ./storages/engines/mongodb/scripts/start
-          ./storages/engines/rqlite/scripts/start &
-          influxd &
-          sleep 3
-      - name: Run MongoDB test suite
-        run: just clean-test-data && just test-mongo all
-
+  # PostgreSQL is the default baseStorage engine. MongoDB is opt-in
+  # (`just test-mongo all`) and validated locally rather than in CI.
   test-postgres:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -98,7 +71,7 @@ jobs:
         run: npx eslint .
 
   docker:
-    needs: [test-mongo, test-postgres, lint]
+    needs: [test-postgres, lint]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-22.04
     steps:

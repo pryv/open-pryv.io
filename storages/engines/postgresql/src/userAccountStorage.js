@@ -22,7 +22,7 @@ module.exports = _internals.createUserAccountStorage({
       'SELECT hash FROM passwords WHERE user_id = $1 ORDER BY time DESC LIMIT 1',
       [userId]
     );
-    return res.rows.length > 0 ? res.rows[0].hash : null;
+    return res.rows.length > 0 ? res.rows[0].hash : undefined;
   },
 
   async addPasswordHash (userId, passwordHash, createdBy, time) {
@@ -39,7 +39,10 @@ module.exports = _internals.createUserAccountStorage({
       'SELECT time FROM passwords WHERE user_id = $1 ORDER BY time DESC LIMIT 1',
       [userId]
     );
-    return res.rows.length > 0 ? res.rows[0].time : 0;
+    if (res.rows.length === 0) {
+      throw new Error(`No password found in database for user id "${userId}"`);
+    }
+    return res.rows[0].time;
   },
 
   async passwordExistsInHistory (userId, password, historyLength) {
