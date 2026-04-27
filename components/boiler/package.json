@@ -27,7 +27,6 @@
     "debug": "^4.3.4",
     "js-yaml": "^4.1.0",
     "nconf": "^0.12.0",
-    "superagent": "^8.0.9",
     "winston": "^3.9.0",
     "winston-daily-rotate-file": "^4.7.1"
   },

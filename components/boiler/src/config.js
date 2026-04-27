@@ -26,8 +26,6 @@ const path = require('path');
 const nconf = require('nconf');
 nconf.formats.yaml = require('./lib/nconf-yaml');
 
-const superagent = require('superagent');
-
 /**
  * Default values for Logger
  */
@@ -330,8 +328,11 @@ const FILE_PROTOCOL = 'file://';
 const FILE_PROTOCOL_LENGTH = FILE_PROTOCOL.length;
 
 async function loadFromUrl (url) {
-  const res = await superagent.get(url);
-  return res.body;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`loadFromUrl: ${url} returned HTTP ${res.status} ${res.statusText}`);
+  }
+  return await res.json();
 }
 
 function loadFromFile (fileUrl, baseFilesDir) {
