@@ -34,7 +34,7 @@ function Accesses (database, integrityAccesses) {
     return accessData;
   }
 
-  _.extend(this.converters, {
+  Object.assign(this.converters, {
     itemDefaults: [
       converters.createIdIfMissing,
       createTokenIfMissing

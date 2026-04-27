@@ -7,7 +7,6 @@
 
 'use strict';
 
-const _ = require('lodash');
 const treeUtils = require('utils/src/treeUtils');
 const validation = require('api-server/src/schema/validation');
 const systemStreamSchema = require('./systemStreamSchema');
@@ -182,7 +181,7 @@ function addParentIdAndChildren (streams) {
  */
 function extendSystemStreamsWithDefaultValues (streams) {
   return treeUtils.cloneAndApply(streams, (s) => {
-    const stream = _.extend({}, DEFAULT_VALUES_FOR_FIELDS, s);
+    const stream = Object.assign({}, DEFAULT_VALUES_FOR_FIELDS, s);
     if (stream.name == null) {
       stream.name = stream.id;
     }
@@ -198,7 +197,7 @@ function extendSystemStreamsWithDefaultValues (streams) {
  * @returns {any[]}
  */
 function ensurePrefixForStreamIds (systemStreams, prefix = PRYV_PREFIX) {
-  return treeUtils.cloneAndApply(systemStreams, (s) => _.extend({}, s, { id: _addPrefixToStreamId(s.id, prefix) }));
+  return treeUtils.cloneAndApply(systemStreams, (s) => Object.assign({}, s, { id: _addPrefixToStreamId(s.id, prefix) }));
   function _addPrefixToStreamId (streamId, prefix) {
     if (streamId.startsWith(prefix)) { return streamId; }
     return prefix + streamId;

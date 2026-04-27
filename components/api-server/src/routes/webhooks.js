@@ -6,7 +6,6 @@
  */
 const methodCallback = require('./methodCallback');
 const Paths = require('./Paths');
-const _ = require('lodash');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 /**
@@ -22,7 +21,7 @@ module.exports = function (expressApp, app) {
     api.call(req.context, req.query, methodCallback(res, next, 200));
   });
   expressApp.get(Paths.Webhooks + '/:id', loadAccessMiddleware, setMethodId('webhooks.getOne'), function (req, res, next) {
-    const params = _.extend({ id: req.params.id }, req.query);
+    const params = Object.assign({ id: req.params.id }, req.query);
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.post(Paths.Webhooks, loadAccessMiddleware, setMethodId('webhooks.create'), function (req, res, next) {
@@ -33,11 +32,11 @@ module.exports = function (expressApp, app) {
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.delete(Paths.Webhooks + '/:id', loadAccessMiddleware, setMethodId('webhooks.delete'), function (req, res, next) {
-    const params = _.extend({ id: req.params.id }, req.query);
+    const params = Object.assign({ id: req.params.id }, req.query);
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.post(Paths.Webhooks + '/:id/test', loadAccessMiddleware, setMethodId('webhooks.test'), function (req, res, next) {
-    const params = _.extend({ id: req.params.id }, req.query);
+    const params = Object.assign({ id: req.params.id }, req.query);
     api.call(req.context, params, methodCallback(res, next, 200));
   });
 };

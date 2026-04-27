@@ -7,7 +7,6 @@
 const BaseStorage = require('./BaseStorage');
 const converters = require('./../converters');
 const util = require('util');
-const _ = require('lodash');
 
 module.exports = Profile;
 /**
@@ -19,7 +18,7 @@ module.exports = Profile;
 function Profile (database) {
   Profile.super_.call(this, database);
 
-  _.extend(this.converters, {
+  Object.assign(this.converters, {
     updateToDB: [converters.getKeyValueSetUpdateFn('data')],
     convertIdToItemId: 'profileId'
   });

@@ -6,7 +6,6 @@
  */
 const methodCallback = require('./methodCallback');
 const Paths = require('./Paths');
-const _ = require('lodash');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 // Profile route handling.
@@ -27,7 +26,7 @@ module.exports = function (expressApp, app) {
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.get(Paths.Profile + '/private', setMethodId('profile.get'), loadAccessMiddleware, function (req, res, next) {
-    api.call(req.context, _.extend(req.query, { id: 'private' }), methodCallback(res, next, 200));
+    api.call(req.context, Object.assign(req.query, { id: 'private' }), methodCallback(res, next, 200));
   });
   expressApp.put(Paths.Profile + '/private', setMethodId('profile.update'), loadAccessMiddleware, function (req, res, next) {
     api.call(req.context, { id: 'private', update: req.body }, methodCallback(res, next, 200));

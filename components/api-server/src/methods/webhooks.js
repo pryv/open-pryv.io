@@ -4,7 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const _ = require('lodash');
 const timestamp = require('unix-timestamp');
 
 const errors = require('errors').factory;
@@ -103,7 +102,7 @@ module.exports = async function produceWebhooksApiMethods (api) {
 
   async function createWebhook (context, params, result, next) {
     context.initTrackingProperties(params);
-    const webhook = new Webhook(_.extend({
+    const webhook = new Webhook(Object.assign({
       user: context.user,
       accessId: context.access.id,
       webhooksRepository,
@@ -126,7 +125,7 @@ module.exports = async function produceWebhooksApiMethods (api) {
   }
 
   async function bootWebhook (context, params, result, next) {
-    pubsub.webhooks.emit(pubsub.WEBHOOKS_CREATE, _.extend({ username: context.user.username }, { webhook: result.webhook }));
+    pubsub.webhooks.emit(pubsub.WEBHOOKS_CREATE, Object.assign({ username: context.user.username }, { webhook: result.webhook }));
     return next();
   }
 
@@ -171,7 +170,7 @@ module.exports = async function produceWebhooksApiMethods (api) {
   }
 
   async function reactivateWebhook (context, params, result, next) {
-    pubsub.webhooks.emit(pubsub.WEBHOOKS_ACTIVATE, _.extend({ username: context.user.username }, { webhook: result.webhook }));
+    pubsub.webhooks.emit(pubsub.WEBHOOKS_ACTIVATE, Object.assign({ username: context.user.username }, { webhook: result.webhook }));
     return next();
   }
 

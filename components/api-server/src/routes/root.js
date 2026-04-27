@@ -4,7 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const _ = require('lodash');
 const middleware = require('middleware');
 const commonMeta = require('../methods/helpers/setCommonMeta');
 const methodCallback = require('./methodCallback');
@@ -73,7 +72,7 @@ function rootIndex (req, res) {
   const result = commonMeta.setCommonMeta({});
 
   if (req.accepts('application/json')) {
-    res.json(_.extend(result, {
+    res.json(Object.assign(result, {
       cheersFrom: 'Pryv API',
       learnMoreAt: devSiteURL
     }));

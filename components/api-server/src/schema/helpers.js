@@ -37,7 +37,7 @@ exports.getTypeURI = function (name, action) {
  * @param {Object} options Extra properties to merge into the returned object definition
  */
 exports.object = function (propertiesDef, options) {
-  return _.extend(getBaseSchema('object', options), { properties: propertiesDef });
+  return Object.assign(getBaseSchema('object', options), { properties: propertiesDef });
 };
 
 /**
@@ -47,7 +47,7 @@ exports.object = function (propertiesDef, options) {
  * @param {Object} options Extra properties to merge into the returned array definition
  */
 exports.array = function (itemsDef, options) {
-  return _.extend(getBaseSchema('array', options), { items: itemsDef });
+  return Object.assign(getBaseSchema('array', options), { items: itemsDef });
 };
 
 /**
@@ -105,7 +105,7 @@ function getBaseSchema (type, options) {
     }
     // We omit 'nullable' since we handled this particular option just above
     const opt = _.omit(options, 'nullable');
-    _.extend(result, opt);
+    Object.assign(result, opt);
   }
   return result;
 }

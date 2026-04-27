@@ -13,7 +13,6 @@ const helpers = require('./helpers');
 const object = helpers.object;
 const array = helpers.array;
 const string = helpers.string;
-const _ = require('lodash');
 
 /**
  * @param {Action} action
@@ -44,18 +43,18 @@ exports = module.exports = function (action) {
   }
 
   const personal = structuredClone(base);
-  _.extend(personal.properties, {
+  Object.assign(personal.properties, {
     type: string({ enum: ['personal'] })
   });
 
   const app = structuredClone(base);
-  _.extend(app.properties, {
+  Object.assign(app.properties, {
     type: string({ enum: ['app'] }),
     deviceName: string()
   });
 
   const shared = structuredClone(base);
-  _.extend(shared.properties, {
+  Object.assign(shared.properties, {
     type: string({ enum: ['shared'] }),
     deviceName: helpers.null()
   });

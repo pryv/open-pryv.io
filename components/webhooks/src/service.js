@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 const bluebird = require('bluebird');
-const _ = require('lodash');
 const { pubsub } = require('messages');
 const Webhook = require('business/src/webhooks/Webhook');
 const WebhooksRepository = require('business/src/webhooks/repository');
@@ -109,7 +108,7 @@ class WebhooksService {
     const username = usernameWebhook.username;
     const usersRepository = await getUsersRepository();
     const userId = await usersRepository.getUserIdForUsername(username);
-    this.addWebhook(username, new Webhook(_.extend({}, usernameWebhook.webhook, {
+    this.addWebhook(username, new Webhook(Object.assign({}, usernameWebhook.webhook, {
       webhooksRepository: this.repository,
       user: { id: userId, username }
     })));

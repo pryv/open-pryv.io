@@ -20,7 +20,7 @@ module.exports = Webhooks;
 function Webhooks (database) {
   Webhooks.super_.call(this, database);
 
-  _.extend(this.converters, {
+  Object.assign(this.converters, {
     itemDefaults: [
       converters.createIdIfMissing
     ],

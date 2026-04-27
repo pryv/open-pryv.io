@@ -8,7 +8,6 @@ const BaseStorage = require('./BaseStorage');
 const converters = require('./../converters');
 const util = require('util');
 const _internals = require('../_internals');
-const _ = require('lodash');
 const treeUtils = require('../../../../shared/treeUtils');
 const timestamp = require('unix-timestamp');
 
@@ -23,7 +22,7 @@ module.exports = Streams;
 function Streams (database) {
   Streams.super_.call(this, database);
 
-  _.extend(this.converters, {
+  Object.assign(this.converters, {
     itemDefaults: [
     ],
     itemToDB: [

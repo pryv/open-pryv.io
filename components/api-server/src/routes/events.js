@@ -9,7 +9,6 @@ const encryption = require('utils').encryption;
 const errors = require('errors').factory;
 const Paths = require('./Paths');
 const tryCoerceStringValues = require('../schema/validation').tryCoerceStringValues;
-const _ = require('lodash');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 const hasFileUpload = require('../middleware/uploads').hasFileUpload;
@@ -22,7 +21,7 @@ module.exports = async function (expressApp, app) {
   const filesReadTokenSecret = config.get('auth:filesReadTokenSecret');
   const loadAccessMiddleware = middleware.loadAccess(storage);
   expressApp.get(Paths.Events + '/', setMethodId('events.get'), loadAccessMiddleware, function (req, res, next) {
-    const params = _.extend({}, req.query);
+    const params = Object.assign({}, req.query);
     tryCoerceStringValues(params, {
       fromTime: 'number',
       toTime: 'number',
@@ -39,7 +38,7 @@ module.exports = async function (expressApp, app) {
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.get(Paths.Events + '/:id', setMethodId('events.getOne'), loadAccessMiddleware, function (req, res, next) {
-    const params = _.extend({ id: req.params.id }, req.query);
+    const params = Object.assign({ id: req.params.id }, req.query);
     tryCoerceStringValues(params, {
       includeHistory: 'boolean'
     });

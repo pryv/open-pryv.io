@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 const timestamp = require('unix-timestamp');
-const _ = require('lodash');
 const { getAPIVersion } = require('middleware/src/project_version');
 // cnan be overriden;
 const { getConfig } = require('@pryv/boiler');
@@ -43,7 +42,7 @@ module.exports.setCommonMeta = function (result) {
   if (serial == null && config != null) {
     serial = config.get('service:serial');
   }
-  _.extend(result.meta, {
+  Object.assign(result.meta, {
     apiVersion: version,
     serverTime: timestamp.now(),
     serial

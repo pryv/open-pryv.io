@@ -6,7 +6,6 @@
  */
 const methodCallback = require('./methodCallback');
 const Paths = require('./Paths');
-const _ = require('lodash');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 const tryCoerceStringValues = require('../schema/validation').tryCoerceStringValues;
@@ -15,7 +14,7 @@ module.exports = function (expressApp, app) {
   const api = app.api;
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);
   expressApp.get(Paths.Accesses, setMethodId('accesses.get'), loadAccessMiddleware, function (req, res, next) {
-    const params = _.extend({}, req.query);
+    const params = Object.assign({}, req.query);
     tryCoerceStringValues(params, {
       includeExpired: 'boolean',
       includeDeletions: 'boolean'
@@ -30,7 +29,7 @@ module.exports = function (expressApp, app) {
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.delete(Paths.Accesses + '/:id', setMethodId('accesses.delete'), loadAccessMiddleware, function (req, res, next) {
-    const params = _.extend({ id: req.params.id }, req.query);
+    const params = Object.assign({ id: req.params.id }, req.query);
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.post(Paths.Accesses + '/check-app', setMethodId('accesses.checkApp'), loadAccessMiddleware, function (req, res, next) {

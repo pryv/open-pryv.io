@@ -498,7 +498,7 @@ module.exports = async function (api) {
       }
     }
     context.oldEvent = structuredClone(event);
-    context.newEvent = _.extend(event, eventUpdate);
+    context.newEvent = Object.assign(event, eventUpdate);
     // clientData key-map handling
     if (eventUpdate.clientData != null) {
       context.newEvent.clientData = structuredClone(context.oldEvent.clientData || {});

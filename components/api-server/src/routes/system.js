@@ -8,7 +8,6 @@ const errors = require('errors').factory;
 const Paths = require('./Paths');
 const methodCallback = require('./methodCallback');
 const contentType = require('middleware').contentType;
-const _ = require('lodash');
 const { getLogger } = require('@pryv/boiler');
 const { setMinimalMethodContext, setMethodId } = require('middleware');
 // System (e.g. registration server) calls route handling.
@@ -27,7 +26,7 @@ module.exports = function system (expressApp, app) {
   expressApp.all(Paths.System + '/*', setMinimalMethodContext, checkAuth);
   expressApp.post(Paths.System + '/create-user', contentType.json, setMethodId('system.createUser'), createUser);
   function createUser (req, res, next) {
-    const params = _.extend({}, req.body);
+    const params = Object.assign({}, req.body);
     systemAPI.call(req.context, params, methodCallback(res, next, 201));
   }
   expressApp.get(Paths.System + '/user-info/:username', setMethodId('system.getUserInfo'), function (req, res, next) {
