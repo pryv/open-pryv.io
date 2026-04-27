@@ -1,6 +1,8 @@
 /**
  * @license
- * [BSD-3-Clause](https://github.com/pryv/pryv-boiler/blob/master/LICENSE)
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
 /**
@@ -65,8 +67,7 @@ function init (options, fullyLoadedCallback) {
     baseConfigDir: options.baseConfigDir,
     baseFilesDir: options.baseFilesDir,
     extras: options.extraConfigs,
-    appName: options.appNameWithoutPostfix,
-    learnDirectory: process.env.CONFIG_LEARN_DIR
+    appName: options.appNameWithoutPostfix
   }, logging);
 
   logger = logging.getLogger('boiler');

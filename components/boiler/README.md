@@ -191,3 +191,8 @@ logs: {
 ## License
 
 [BSD-3-Clause](https://github.com/pryv/pryv-boiler/blob/master/LICENSE)
+
+
+# License
+
+[BSD-3-Clause](LICENSE)

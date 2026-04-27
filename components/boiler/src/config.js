@@ -1,6 +1,8 @@
 /**
  * @license
- * [BSD-3-Clause](https://github.com/pryv/pryv-boiler/blob/master/LICENSE)
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
  */
 
 /**
@@ -58,7 +60,6 @@ class Config {
   logger;
   extraAsync;
   baseConfigDir;
-  learnDirectoryAndFilename;
 
   constructor () {
     this.extraAsync = [];
@@ -69,7 +70,6 @@ class Config {
    * Init Config with Files should be called just once when starting an APP
    * @param {Object} options
    * @param {string} appName
-   * @param {string} [learnDirectory] - (optional) if set, all .get() calls will be tracked in this files in this directory
    * @param {string} [options.baseConfigDir] - (optional) directory to use to look for configs (default, env)
    * @param {string} [options.baseFilesDir] - (optional) directory to use for `file://` relative path
    * @param {Array<ConfigFile|ConfigPlugin|ConfigData|ConfigRemoteURL|ConfigRemoteURLFromKey>} [options.extras] - (optional) and array of extra files or plugins to load (synchronously or async)
@@ -78,7 +78,6 @@ class Config {
    */
   initSync (options, logging) {
     this.appName = options.appName;
-    this.learnDirectoryAndFilename = getLearnFilename(options.appName, options.learnDirectory);
     this.baseFilesDir = options.baseFilesDir || process.cwd();
 
     const logger = this.logger = logging.getLogger('config');
@@ -243,7 +242,6 @@ class Config {
     }
 
     logger.debug('Config fully Loaded');
-    saveConfig(this.learnDirectoryAndFilename, this.store);
     return this;
   }
 
@@ -266,7 +264,6 @@ class Config {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
     const value = this.store.get(key);
     if (typeof value === 'undefined') this.logger.debug('get: [' + key + '] is undefined');
-    learn(this.learnDirectoryAndFilename, key);
     return value;
   }
 
@@ -362,35 +359,6 @@ function isRelativePath (filePath) {
 
 function stripFileProtocol (filePath) {
   return filePath.substring(FILE_PROTOCOL_LENGTH);
-}
-
-// -------- learning mode ------- //
-
-function getLearnFilename (appName, learnDirectory) {
-  if (!learnDirectory) return;
-  let i = 0;
-  let res;
-  do {
-    res = path.join(learnDirectory, appName + i);
-    i++;
-  } while (fs.existsSync(res + '-config.json'));
-  return res;
-}
-
-function learn (learnDirectoryAndFilename, key) {
-  if (learnDirectoryAndFilename) {
-    const caller_line = (new Error()).stack.split('\n')[3]; // get callee name and line
-    const index = caller_line.indexOf('at ');
-    const str = key + ';' + caller_line.slice(index + 3, caller_line.length) + '\n';
-    fs.appendFileSync(learnDirectoryAndFilename + '-calls.csv', str);
-  }
-}
-
-function saveConfig (learnDirectoryAndFilename, store) {
-  if (learnDirectoryAndFilename) {
-    const filename = learnDirectoryAndFilename + '-config.json';
-    fs.writeFileSync(filename, JSON.stringify({ stores: store.stores, config: store.get() }, null, 2));
-  }
 }
 
 /**

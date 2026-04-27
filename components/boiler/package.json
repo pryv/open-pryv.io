@@ -1,7 +1,7 @@
 {
   "name": "@pryv/boiler",
   "version": "1.2.4",
-  "private": false,
+  "private": true,
   "description": "Logging and config boilerplate library for Node.js apps and services at Pryv",
   "keywords": [
     "Pryv",
@@ -17,7 +17,7 @@
     "url": "git+https://github.com/pryv/pryv-boiler.git"
   },
   "license": "BSD-3-Clause",
-  "author": "Pryv S.A <info@pryv.com> (https://pryv.com)",
+  "author": "Pryv <info@pryv.com> (https://pryv.com)",
   "main": "src/index",
   "scripts": {
     "license": "source-licenser -c .licenser.yml .",
