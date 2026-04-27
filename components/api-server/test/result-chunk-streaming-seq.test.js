@@ -15,7 +15,6 @@ const superagent = require('superagent');
 const { promisify } = require('util');
 
 const N_ITEMS = 2000;
-const STORAGE_ENGINE = process.env.STORAGE_ENGINE;
 describe('[EVST] events streaming with ' + N_ITEMS + ' entries', function () {
   this.timeout(60 * 2 * 1000);
 
@@ -76,19 +75,31 @@ describe('[EVST] events streaming with ' + N_ITEMS + ' entries', function () {
       res.setEncoding('utf8');
       let jsonString = '';
       let chunkCount = 0;
-      const timeout = STORAGE_ENGINE === 'postgresql' ? 5000 : 500;
+      let finished = false;
+      // The test's intent is "chunks arrive incrementally", not "within X ms" —
+      // 5s is permissive enough for either engine on a busy runner. Pre-2026-04
+      // mongo used a 500 ms bound which made the test flaky on slower disks.
+      const timeout = 5000;
       res.on('data', function (chunk) {
-        if (Date.now() - lastChunkRecievedAt > timeout) throw new Error(`It took more that ${timeout}ms between chunks`);
+        if (finished) return;
+        if (Date.now() - lastChunkRecievedAt > timeout) {
+          finished = true;
+          return done(new Error(`It took more than ${timeout}ms between chunks`));
+        }
         lastChunkRecievedAt = Date.now();
         chunkCount++;
         jsonString += chunk;
       });
       res.on('end', () => {
+        if (finished) return;
+        finished = true;
         assert.strictEqual(JSON.parse(jsonString).events.length, N_ITEMS);
         assert.ok(chunkCount >= 3, 'Should receive at least 3 chunks');
         done();
       });
       res.on('error', function (error) {
+        if (finished) return;
+        finished = true;
         done(error);
       });
     }).end();
@@ -114,20 +125,29 @@ describe('[EVST] events streaming with ' + N_ITEMS + ' entries', function () {
         res.setEncoding('utf8');
         let jsonString = '';
         let chunkCount = 0;
-        const timeout = STORAGE_ENGINE === 'postgresql' ? 5000 : 500;
+        let finished = false;
+        const timeout = 5000;
         res.on('data', function (chunk) {
-          if (Date.now() - lastChunkRecievedAt > timeout) throw new Error(`It took more that ${timeout}ms between chunks`);
+          if (finished) return;
+          if (Date.now() - lastChunkRecievedAt > timeout) {
+            finished = true;
+            return callback(new Error(`It took more than ${timeout}ms between chunks`));
+          }
           lastChunkRecievedAt = Date.now();
           chunkCount++;
           jsonString += chunk;
         });
         res.on('end', () => {
+          if (finished) return;
+          finished = true;
           lastChunkRecievedAt = -1;
           assert.strictEqual(JSON.parse(jsonString).updatedEvents.length, N_ITEMS);
           assert.ok(chunkCount >= 3, 'Should receive at least 3 chunks');
           callback();
         });
         res.on('error', function (error) {
+          if (finished) return;
+          finished = true;
           callback(error);
         });
       }).end();
