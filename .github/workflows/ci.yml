@@ -66,7 +66,12 @@ jobs:
         with:
           node-version: '24'
       - name: Install dependencies
-        run: npm install --omit=optional --ignore-scripts
+        # Cannot use --omit=optional: ESLint 9's import-x plugin pulls in
+        # `unrs-resolver`, which loads its platform-specific native binding
+        # (e.g. @unrs/resolver-binding-linux-x64-gnu) via npm's optional
+        # dependencies mechanism. Skipping optionals leaves the binding
+        # missing and ESLint exits with "Cannot find native binding".
+        run: npm install --ignore-scripts
       - name: Lint
         run: npx eslint .
 
