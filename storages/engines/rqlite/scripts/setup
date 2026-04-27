@@ -31,8 +31,10 @@ case "$(uname -m)" in
 esac
 
 # working dir fix
-SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
-cd $SCRIPT_FOLDER/
+# Use BASH_SOURCE[0] (not $0) so paths resolve correctly whether this script
+# is executed directly or sourced (`. setup`) from scripts/setup-dev-env.
+SCRIPT_FOLDER=$(cd "$(dirname "${BASH_SOURCE[0]}")"; pwd)
+cd "$SCRIPT_FOLDER/"
 
 # --- Resolve VAR_PRYV_FOLDER ---
 

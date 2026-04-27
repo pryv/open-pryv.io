@@ -9,10 +9,6 @@ jobs:
   test-mongo:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
-    # Temporarily non-blocking: CI has been failing with a test-ordering
-    # regression that does not reproduce locally. Remove once the root
-    # cause is diagnosed + fixed.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
         with:
@@ -42,8 +38,6 @@ jobs:
   test-postgres:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
-    # See test-mongo note above; same reason.
-    continue-on-error: true
     services:
       postgres:
         image: postgres:16

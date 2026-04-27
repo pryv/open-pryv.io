@@ -1,5 +1,11 @@
 # Changelog - Internal (no API impact)
 
+## CI: rqlited install path fixed; test jobs back to fully blocking
+
+- **FIX** `storages/engines/rqlite/scripts/setup` — replaced `$0` with `${BASH_SOURCE[0]}` for `SCRIPT_FOLDER` resolution. The script is sourced (not exec'd) from `scripts/setup-dev-env`, which made `$0` resolve to the parent script's directory. As a result `REPO_ROOT=$SCRIPT_FOLDER/../../../..` landed one parent above the actual repo root, and `bin-ext/rqlited` was installed outside the repo. The start script (which uses its own correct path resolution) then could not find the binary, rqlited never came up, and every test that touches PlatformDB failed with `TypeError: fetch failed → ECONNREFUSED` against `localhost:4001`. This had been masked since 2026-04-14 by `continue-on-error: true` on the test jobs.
+- **FIX** `storages/engines/mongodb/scripts/setup` — same one-line fix for consistency. The latent bug did not manifest for mongo because mongo's setup uses `$VAR_PRYV_FOLDER` (exported correctly by the parent) for path computation rather than `SCRIPT_FOLDER`.
+- `.github/workflows/ci.yml` — removed the `continue-on-error: true` stopgap from `test-mongo` and `test-postgres`; both jobs are fully blocking again. The next push validates the fix.
+
 ## AGENTS.md — orientation doc for LLM coding agents
 
 - **NEW** `AGENTS.md` at repo root — fast-orientation guide for LLM coding agents (Claude Code, Cursor, Copilot, etc.) bootstrapping against open-pryv.io v2. Covers the "single-binary codebase" framing, annotated repo map, local-run + test commands, five architectural truths (master.js lifecycle, native TLS, wildcard certs via `deriveHostnames`, pluggable storage engines, cluster CA lifecycle), common pitfalls, config precedence, and a curated block of in-repo + pryv.github.io links.
