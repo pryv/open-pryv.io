@@ -1,0 +1,38 @@
+{
+  "name": "@pryv/boiler",
+  "version": "1.2.4",
+  "private": false,
+  "description": "Logging and config boilerplate library for Node.js apps and services at Pryv",
+  "keywords": [
+    "Pryv",
+    "Config",
+    "Logging"
+  ],
+  "homepage": "https://github.com/pryv/pryv-boiler#readme",
+  "bugs": {
+    "url": "https://github.com/pryv/pryv-boiler/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pryv/pryv-boiler.git"
+  },
+  "license": "BSD-3-Clause",
+  "author": "Pryv S.A <info@pryv.com> (https://pryv.com)",
+  "main": "src/index",
+  "scripts": {
+    "license": "source-licenser -c .licenser.yml .",
+    "lint": "semistandard"
+  },
+  "dependencies": {
+    "debug": "^4.3.4",
+    "js-yaml": "^4.1.0",
+    "nconf": "^0.12.0",
+    "superagent": "^8.0.9",
+    "winston": "^3.9.0",
+    "winston-daily-rotate-file": "^4.7.1"
+  },
+  "devDependencies": {
+    "semistandard": "^17.0.0",
+    "source-licenser": "^2.0.5"
+  }
+}

@@ -2,7 +2,7 @@
   "name": "open-pryv.io",
   "version": "2.0.0-pre.2",
   "private": true,
-  "description": "Pryv.io v2 open-source core — user data, events, streams, accesses, webhooks",
+  "description": "Pryv.io v2 open-source core \u2014 user data, events, streams, accesses, webhooks",
   "homepage": "https://pryv.com",
   "repository": {
     "type": "git",
@@ -17,7 +17,7 @@
     ]
   },
   "scripts": {
-    "test": "echo 'This project doesn’t use npm scripts – enter `just` for the available development commands\n' && exit 1"
+    "test": "echo 'This project doesn\u2019t use npm scripts \u2013 enter `just` for the available development commands\n' && exit 1"
   },
   "resolutions": {
     "**/bl": "^2.2.1",
@@ -27,7 +27,6 @@
     "**/xmlhttprequest-ssl": "^1.6.2"
   },
   "dependencies": {
-    "@pryv/boiler": "https://github.com/pryv/pryv-boiler.git#semver:^1.2.4",
     "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
     "@pryv/stable-object-representation": "^1.1.4",
     "acme-client": "^5.4.0",

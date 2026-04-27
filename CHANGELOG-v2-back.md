@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## `@pryv/boiler` vendored as an in-tree workspace package
+
+- **NEW** `components/boiler/` workspace package — exact copy of the `@pryv/boiler@1.2.4` source tree (8 files, 4 src/ files + lib/nconf-yaml + README + LICENSE + package.json). Resolves under the existing npm-workspace symlink at `node_modules/@pryv/boiler` so every `require('@pryv/boiler')` call site continues to work unchanged.
+- `package.json` — `@pryv/boiler` removed from runtime `dependencies`; the workspace package now satisfies the import. No longer pulls boiler from the upstream `pryv/pryv-boiler.git#semver:^1.2.4` git URL at install time.
+- `package-lock.json` — boiler's transitive deps (`debug`, `js-yaml`, `nconf`, `superagent`, `winston`, `winston-daily-rotate-file`) now resolve against the in-tree workspace; root-level entries unchanged in production behaviour.
+- Local validation: `just test all` (PG default) → 1742 / 0 (matches pre-vendoring baseline).
+- Why: this is the first slice of a phased removal. With boiler in-tree we can drop the remote-config `superagent` path, the unused `notifyAirbrake`/airbrake stubs, and the `pluginAsync` ordering surface in follow-up commits without coupling those changes to a `package.json` dep change. Each simplification step is a standalone commit with its own test pass.
+
 ## CI back to fully green; PostgreSQL-only test job
 
 - **FIX** `storages/engines/rqlite/scripts/setup` — replaced `$0` with `${BASH_SOURCE[0]}` for `SCRIPT_FOLDER` resolution. The script is sourced (not exec'd) from `scripts/setup-dev-env`, which made `$0` resolve to the parent script's directory. As a result `REPO_ROOT=$SCRIPT_FOLDER/../../../..` landed one parent above the actual repo root, and `bin-ext/rqlited` was installed outside the repo. The start script (which uses its own correct path resolution) then could not find the binary, rqlited never came up, and every test that touches PlatformDB failed with `TypeError: fetch failed → ECONNREFUSED` against `localhost:4001`. Masked since 2026-04-14 by `continue-on-error: true` on the test jobs.
