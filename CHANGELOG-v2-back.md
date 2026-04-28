@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## `cuid` → `@paralleldrive/cuid2` for production ID minting
+
+- **DEP** Added `@paralleldrive/cuid2@^3.3.0` to `dependencies`. Moved `cuid@^2.1.8` from `dependencies` to `devDependencies` — test-helpers still uses `cuid.slug()` (cuid2 has no `.slug()` equivalent) so cuid is kept as a dev-only dep.
+- **CHANGE** 17 production files migrated from `require('cuid')` to `const { createId: cuid } = require('@paralleldrive/cuid2')` (or `createId: generateId` where the local alias was `generateId`). All call sites already use `cuid()` (default 24-char form) — cuid2's `createId()` is a clean drop-in.
+- **CHANGE** `components/api-server/src/schema/event.js` — id-format pattern broadened to accept three alternatives: system-stream id (`:scope:name`), legacy cuid v1/v2 (`^c[a-z0-9-]{24}$`), and cuid2 (`^[a-z][a-z0-9]{23}$`). The legacy pattern stays because existing IDs in databases are still cuid v1/v2 strings; the new pattern is required because cuid2 IDs don't share the `c…` prefix.
+- **NOTE — externally visible format change**: every newly minted event/stream/access/webhook/session/password-reset ID will be **24 lowercase alphanumeric chars without a `c` prefix** (cuid2 format), versus the prior `c[a-z0-9-]{24}` (25 chars total) cuid v1/v2 format. Existing IDs in production databases remain valid (string columns; no migration). Clients that regex-validate IDs against the legacy `^c[…]` pattern will need updating; the relaxed schema regex above accepts both.
+- Local validation: PG `just test all` → 1742 / 0; Mongo `just test-mongo all` → 1735 / 0.
+
 ## `lru-cache` 7.14 → 11.0; `cron` 2.4 → 4.4
 
 - **DEP** `lru-cache` bumped from `^7.14.1` to `^11.0.0`. The default export is now `{ LRUCache }` (renamed in v8). Six call sites updated with the alias trick `const { LRUCache: LRU } = require('lru-cache')` so the existing `new LRU({ … })` constructions stay verbatim. Affected: `components/cache/src/index.js`, `components/hfs-server/src/metadata_cache.js`, `components/hfs-server/src/web/op/store_series_batch.js`, `storages/engines/postgresql/src/AuditStoragePG.js`, `storages/engines/sqlite/src/userAccountStorage.js`, `storages/engines/sqlite/src/userSQLite/Storage.js`. Constructor options (`max`, `ttl`, `dispose(value, key)`) are forward-compatible.

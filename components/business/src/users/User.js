@@ -4,7 +4,7 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const cuid = require('cuid');
+const { createId: cuid } = require('@paralleldrive/cuid2');
 const accountStreams = require('business/src/system-streams');
 
 function pick (obj, keys) {

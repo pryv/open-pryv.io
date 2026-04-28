@@ -16,7 +16,7 @@ const integrity = require('business/src/integrity');
 
 const { Readable } = require('stream');
 
-const cuid = require('cuid');
+const { createId: cuid } = require('@paralleldrive/cuid2');
 
 /**
  * Storage for events.

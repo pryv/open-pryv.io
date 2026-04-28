@@ -27,6 +27,7 @@
     "**/xmlhttprequest-ssl": "^1.6.2"
   },
   "dependencies": {
+    "@paralleldrive/cuid2": "^3.3.0",
     "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
     "@pryv/stable-object-representation": "^1.1.4",
     "acme-client": "^5.4.0",
@@ -36,7 +37,6 @@
     "bluebird": "^3.5.0",
     "cookie-parser": "^1.4.3",
     "cron": "^4.4.0",
-    "cuid": "^2.1.8",
     "email-templates": "^10.0.1",
     "express": "^4.18.2",
     "fs-xattr": "^0.3.0",
@@ -67,6 +67,7 @@
     "chalk": "^4.1.2",
     "charlatan": "^1.1.0",
     "concurrently": "^7.6.0",
+    "cuid": "^2.1.8",
     "date-utils": "latest",
     "fs-extra": "^10.1.0",
     "globals": "^16.0.0",

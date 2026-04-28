@@ -8,7 +8,7 @@
 const storeDataUtils = require('./helpers/storeDataUtils');
 const streamsUtils = require('./helpers/streamsUtils');
 const { treeUtils } = require('utils');
-const cuid = require('cuid');
+const { createId: cuid } = require('@paralleldrive/cuid2');
 const errorFactory = require('errors').factory;
 
 /**

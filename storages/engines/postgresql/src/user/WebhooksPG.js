@@ -6,7 +6,7 @@
  */
 
 const BaseStoragePG = require('./BaseStoragePG');
-const generateId = require('cuid');
+const { createId: generateId } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
 
 /**

@@ -8,7 +8,7 @@
  * Common converter helper functions for storage modules.
  */
 
-const generateId = require('cuid');
+const { createId: generateId } = require('@paralleldrive/cuid2');
 
 exports.createIdIfMissing = function (item) {
   item.id = item.id || generateId();

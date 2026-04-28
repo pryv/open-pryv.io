@@ -8,7 +8,7 @@
 // REF: https://stackabuse.com/using-async-hooks-for-request-context-handling-in-node-js
 
 const asyncHooks = require('async_hooks');
-const cuid = require('cuid');
+const { createId: cuid } = require('@paralleldrive/cuid2');
 const store = new Map();
 
 const asyncHook = asyncHooks.createHook({

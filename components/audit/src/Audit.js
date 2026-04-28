@@ -13,7 +13,7 @@ const { WITHOUT_USER_METHODS_MAP } = require('./ApiMethods');
 const AuditFilter = require('./AuditFilter');
 const { AuditAccessIds } = require('./MethodContextUtils');
 const util = require('util');
-const cuid = require('cuid');
+const { createId: cuid } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
 /**
  * EventEmitter interface is just for tests syncing for now

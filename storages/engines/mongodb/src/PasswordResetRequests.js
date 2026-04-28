@@ -10,7 +10,7 @@
  */
 module.exports = PasswordResetRequests;
 
-const generateId = require('cuid');
+const { createId: generateId } = require('@paralleldrive/cuid2');
 const { deepMerge } = require('utils');
 
 const collectionInfo = {

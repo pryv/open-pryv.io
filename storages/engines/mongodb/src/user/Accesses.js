@@ -7,7 +7,7 @@
 
 const BaseStorage = require('./BaseStorage');
 const converters = require('./../converters');
-const generateId = require('cuid');
+const { createId: generateId } = require('@paralleldrive/cuid2');
 const util = require('util');
 const _internals = require('../_internals');
 const logger = _internals.lazyLogger('storage:accesses');

@@ -1,5 +1,12 @@
 # Changelog - API Changes
 
+## ID minting algorithm — cuid v1/v2 → cuid2
+
+- New event / stream / access / webhook / session / password-reset IDs are now minted with `@paralleldrive/cuid2`. Format is **24 lowercase alphanumeric characters, first char a letter, no prefix** — distinct from the legacy cuid v1/v2 format (`c` prefix + 24 chars, 25 total).
+- Existing IDs in production databases remain valid; this is purely a forward-going change.
+- **Client compatibility**: clients that locally validate IDs against the legacy `^c[a-z0-9-]{24}$` pattern need to relax their regex to accept the new shape too. The recommended permissive pattern is `^([a-z][a-z0-9]{23}|c[a-z0-9-]{24})$`. Server-side schema validation already accepts both.
+- **Why**: the original `cuid` package is deprecated by its author in favour of cuid2; cuid2 has cluster-aware entropy and a stronger collision profile.
+
 ## 2.0.0-pre — Publication as open-pryv.io
 
 ### In-process mail delivery — optional replacement for the external service-mail process

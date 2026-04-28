@@ -6,7 +6,7 @@
  */
 
 const { Readable } = require('stream');
-const cuid = require('cuid');
+const { createId: cuid } = require('@paralleldrive/cuid2');
 const ds = require('@pryv/datastore');
 const errors = ds.errors;
 const DatabasePG = require('../DatabasePG');

@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const cuid = require('cuid');
+const { createId: cuid } = require('@paralleldrive/cuid2');
 
 const DEFAULT_MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days
 

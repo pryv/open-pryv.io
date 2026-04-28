@@ -11,7 +11,7 @@ function pick (obj, keys) {
   for (const k of keys) if (k in obj) out[k] = obj[k];
   return out;
 }
-const cuid = require('cuid');
+const { createId: cuid } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
 const { pubsub } = require('messages');
 
