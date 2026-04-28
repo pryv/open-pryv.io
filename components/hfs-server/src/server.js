@@ -7,7 +7,6 @@
 const http = require('http');
 const express = require('express');
 const util = require('util');
-const bodyParser = require('body-parser');
 const middleware = require('middleware');
 const errorsMiddleware = require('./middleware/errors');
 const tracingMiddlewareFactory = require('./tracing/middleware/trace');
@@ -114,7 +113,7 @@ class Server {
     }
     app.use(middleware.subdomainToPath([]));
     app.use(middleware.requestTrace(express, logger));
-    app.use(bodyParser.json({ limit: config.get('uploads:maxSizeMb') + 'mb' }));
+    app.use(express.json({ limit: config.get('uploads:maxSizeMb') + 'mb' }));
     app.use(middleware.override);
     app.use(await middleware.commonHeaders());
     app.all('/*', getAuth);

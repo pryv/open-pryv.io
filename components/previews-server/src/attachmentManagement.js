@@ -4,9 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const mkdirp = require('mkdirp');
 const path = require('path');
 const fs = require('fs');
+const fsp = require('fs/promises');
 const { getConfigUnsafe } = require('@pryv/boiler');
 
 const previewsDirPath = getConfigUnsafe(true).get('storages:engines:filesystem:previewsDirPath');
@@ -21,7 +21,7 @@ const previewsDirPath = getConfigUnsafe(true).get('storages:engines:filesystem:p
  */
 async function ensurePreviewPath (user, eventId, dimension) {
   const dirPath = path.join(previewsDirPath, user.id, eventId);
-  await mkdirp(dirPath);
+  await fsp.mkdir(dirPath, { recursive: true });
   return path.join(dirPath, getPreviewFileName(dimension));
 }
 

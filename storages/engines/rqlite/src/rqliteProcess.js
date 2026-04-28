@@ -15,7 +15,7 @@
 
 const { spawn } = require('node:child_process');
 const path = require('node:path');
-const mkdirp = require('mkdirp');
+const fs = require('node:fs');
 
 let rqliteChild = null;
 
@@ -116,7 +116,7 @@ async function start (opts) {
   const absDataDir = path.isAbsolute(dataDir) ? dataDir : path.resolve(process.cwd(), dataDir);
   const absBinPath = path.isAbsolute(binPath) ? binPath : path.resolve(process.cwd(), binPath);
 
-  mkdirp.sync(absDataDir);
+  fs.mkdirSync(absDataDir, { recursive: true });
 
   const args = buildArgs({ ...opts, dataDir: absDataDir });
 

@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 const express = require('express');
-const bodyParser = require('body-parser');
 const middleware = require('middleware');
 const Paths = require('./routes/Paths');
 const { getConfig } = require('@pryv/boiler');
@@ -69,12 +68,12 @@ async function expressAppInit (logging) {
     app.use(middleware.subdomainToPath(ignorePaths, ignoredSubdomains));
   }
   // Parse JSON bodies:
-  app.use(bodyParser.json({
+  app.use(express.json({
     limit: config.get('uploads:maxSizeMb') + 'mb'
   }));
   // This object will contain key-value pairs, where the value can be a string
   // or array (when extended is false), or any type (when extended is true).
-  app.use(bodyParser.urlencoded({
+  app.use(express.urlencoded({
     extended: false
   }));
   // Other middleware:

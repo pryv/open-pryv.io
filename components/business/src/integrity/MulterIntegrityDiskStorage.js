@@ -14,7 +14,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const mkdirp = require('mkdirp');
 
 function getFilename (req, file, cb) {
   crypto.randomBytes(16, function (err, raw) {
@@ -34,7 +33,7 @@ function MulterIntegrityDiskStorage (opts) {
   this.getFilename = (opts.filename || getFilename);
 
   if (typeof opts.destination === 'string') {
-    mkdirp.sync(opts.destination);
+    fs.mkdirSync(opts.destination, { recursive: true });
     this.getDestination = function ($0, $1, cb) { cb(null, opts.destination); };
   } else {
     this.getDestination = (opts.destination || getDestination);

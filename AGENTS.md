@@ -145,6 +145,17 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 
 5. **Cluster CA lifecycle.** The first `master.js` boot on a fresh box mints a self-signed cluster CA under `/etc/pryv/ca/`. **Back that directory up immediately** — the private key never leaves the host, and losing it means you can't add or rotate cores. `bin/bootstrap.js new-core --id <name> --ip <ip>` issues a sealed AES-256-GCM-encrypted bundle + one-time join token to onboard additional cores. Bundle and passphrase travel **on different channels**. See `SINGLE-TO-MULTIPLE.md`.
 
+6. **`components/tracing/` is a real production dependency, even when Jaeger is off.** The default `trace.enable: false` only short-circuits the *body* of `Tracing` calls — every request still passes through `tracingMiddleware`, every API method still calls `initRootSpan`, and MongoDB methods are still patched by `dataBaseTracer` at storage init. With Jaeger disabled the tracer collapses into a `DummyTracing` no-op, but the wiring is hot-path code. Production callers:
+   - `components/api-server/src/application.js` — `tracingMiddleware` registered on Express
+   - `components/api-server/src/Result.js` — `DummyTracing` fallback for response objects
+   - `components/api-server/src/socket-io/Manager.js` — `initRootSpan` for socket.io spans
+   - `components/business/src/MethodContext.js` — `DummyTracing` fallback in API method context
+   - `components/middleware/src/setMethodId.js` — `initRootSpan` for `express2` span per API call
+   - `components/middleware/src/setMinimalMethodContext.js` — `DummyTracing` fallback
+   - `components/storage/src/index.js`, `storages/index.js` — `dataBaseTracer.patchMongo` at init when MongoDB is the configured engine
+
+   Plan 38 (Optional NewRelic) added an APM façade that runs in parallel — it does **not** route through `components/tracing/`. If you ever consider deleting or re-architecting the tracing component, all eight call sites above need rewrites in the same patch.
+
 ## Common pitfalls for agents
 
 - **Don't assume MongoDB.** The engine plugin tree lets operators choose; contributions that hard-code MongoDB or SQLite inside business logic will get rejected. Use `pluginLoader.getEngineModule(pluginLoader.getEngineFor('<storageType>'))`.

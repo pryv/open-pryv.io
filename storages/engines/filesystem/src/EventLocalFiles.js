@@ -7,7 +7,6 @@
 
 const cuid = require('cuid');
 const fs = require('fs');
-const mkdirp = require('mkdirp');
 const path = require('path');
 
 const { pipeline } = require('stream/promises');
@@ -51,7 +50,7 @@ EventFiles.prototype.saveAttachmentFromStream = async function (readableStream, 
   fileId = fileId || cuid();
   const filePath = getAttachmentPath(userId, eventId, fileId);
   const dirPath = path.dirname(filePath);
-  await mkdirp(dirPath);
+  await fs.promises.mkdir(dirPath, { recursive: true });
   const writeStream = fs.createWriteStream(filePath);
   await pipeline(readableStream, writeStream);
   return fileId;

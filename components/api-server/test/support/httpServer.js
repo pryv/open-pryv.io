@@ -9,7 +9,6 @@
 
 const EventEmitter = require('events');
 const express = require('express');
-const bodyParser = require('body-parser');
 const PORT = 6123;
 
 /*
@@ -31,7 +30,7 @@ class HttpServer extends EventEmitter {
     super();
     const app = express();
     this.responseStatus = statusCode || 200;
-    app.use(bodyParser.json());
+    app.use(express.json());
     app.all(path, (req, res) => {
       res.status(this.responseStatus).json(responseBody || { ok: '1' });
       if (req.method === 'POST') {

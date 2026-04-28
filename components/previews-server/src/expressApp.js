@@ -6,7 +6,6 @@
  */
 const express = require('express');
 const middleware = require('middleware');
-const bodyParser = require('body-parser');
 /**
  * The Express app definition.
  */
@@ -21,7 +20,7 @@ module.exports = function expressApp (commonHeadersMiddleware, errorsMiddleware,
   app.disable('x-powered-by');
   app.use(middleware.subdomainToPath([]));
   app.use(requestTraceMiddleware);
-  app.use(bodyParser.json());
+  app.use(express.json());
   app.use(commonHeadersMiddleware);
   return {
     expressApp: app,

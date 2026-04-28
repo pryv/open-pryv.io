@@ -12,7 +12,6 @@
 const async = require('async');
 const childProcess = require('child_process');
 const dependencies = require('./dependencies');
-const mkdirp = require('mkdirp');
 const settings = dependencies.settings;
 const storage = dependencies.storage;
 const fs = require('fs');
@@ -293,7 +292,7 @@ exports.restoreFromDump = function (versionNum, mongoFolder, callback) {
             ' ' +
             sourceDBFolder),
     function (done) {
-      mkdirp.sync(settings.storages.engines.filesystem.attachmentsDirPath);
+      fs.mkdirSync(settings.storages.engines.filesystem.attachmentsDirPath, { recursive: true });
       done();
     },
     childProcess.exec.bind(null, 'tar -xzf ' +

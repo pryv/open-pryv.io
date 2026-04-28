@@ -11,7 +11,7 @@
 
 const path = require('path');
 const fs = require('fs/promises');
-const mkdirp = require('mkdirp');
+const fsSync = require('fs');
 
 const { getConfig } = require('@pryv/boiler');
 
@@ -43,7 +43,7 @@ async function init () {
   if (!candidateBasePath || candidateBasePath === 'REPLACE ME') {
     throw new Error('storages:engines:sqlite:path is not configured (still "REPLACE ME"). Load the paths-config plugin or set an explicit path.');
   }
-  mkdirp.sync(candidateBasePath);
+  fsSync.mkdirSync(candidateBasePath, { recursive: true });
   basePath = candidateBasePath;
 }
 
@@ -54,7 +54,7 @@ async function init () {
  */
 async function ensureUserDirectory (userId, extraPath = '') {
   const resultPath = getPathForUser(userId, extraPath);
-  await mkdirp(resultPath); // ensures directory exists
+  await fs.mkdir(resultPath, { recursive: true });
   return resultPath;
 }
 

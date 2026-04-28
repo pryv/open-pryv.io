@@ -1,5 +1,20 @@
 # Changelog - Internal (no API impact)
 
+## Dependency cleanup batch — Plan 52 Phase 4
+
+- **DROP** `hjson` from `package.json`. Zero call sites in the entire repo (production or test).
+- **DROP** `url` from `package.json`. The single `require('url')` site in `components/test-helpers/src/spawner.js` resolves to the Node 24 built-in `url` module (same name) — the npm package was a no-op shadow.
+- **DROP** `mkdirp` from `package.json`. Replaced 8 call sites across 6 production files + 1 test-helper file with `fs.mkdir(path, { recursive: true })` / `fs.mkdirSync(path, { recursive: true })` (Node ≥ 10). Affected: `components/business/src/integrity/MulterIntegrityDiskStorage.js`, `components/previews-server/src/attachmentManagement.js`, `components/storage/src/userLocalDirectory.js`, `storages/engines/filesystem/src/EventLocalFiles.js`, `storages/engines/sqlite/src/usersLocalIndex.js`, `storages/engines/rqlite/src/rqliteProcess.js`, `components/test-helpers/src/data.js`.
+- **DROP** `body-parser` from `package.json`. Replaced 3 production sites + 3 test sites with the express-built-in equivalents (`express.json()` / `express.urlencoded()`) — Express 4.16+ ships them. Affected: `components/api-server/src/expressApp.js`, `components/hfs-server/src/server.js`, `components/previews-server/src/expressApp.js`, plus three local-`HttpServer` test mocks.
+- **MOVE** `awaiting`, `fs-extra`, `backloop.dev`, `msgpack5` from `dependencies` to `devDependencies`:
+  - `awaiting` is required by 3 acceptance test files and zero production files.
+  - `fs-extra` is required by 1 storage test file and zero production files.
+  - `backloop.dev` is loaded only behind the `http:ssl:backloop.dev` config flag in `components/api-server/src/server.js`, a local-dev convenience; production runs use ACME (Plan 35) or operator certs.
+  - `msgpack5` is required by `components/test-helpers/src/{child_process,spawner}.js` only.
+- **AGENTS.md**: added architectural truth #6 documenting that `components/tracing/` remains a real production dependency (8 hot-path call sites) even when Jaeger is disabled, and that `trace.enable: false` only short-circuits the `Tracing` body — wiring is hot-path. Future deletion of `components/tracing/` requires touching all 8 callers in the same patch (filed as `XXX-Backlog/PLAN52-PHASE4-TRACING-RIPOUT.md`).
+- Local validation: PG `just test all` → 1742 / 0; Mongo `just test-mongo all` → matches Plan 52 Phase 3.S.2 baseline.
+- Out of scope (filed for follow-up): drop `async` callback-control-flow lib (`XXX-Backlog/PLAN52-PHASE4-ASYNC-CALLBACK-DROP.md`), drop `bluebird` (recommended to fold into TS+ESM migration), replace `unix-timestamp`'s duration DSL, major bumps for `lru-cache` / `cron` / `slug` / `email-templates` / `nodemailer` (`_plans/XX-deps-major-bumps-later/PLAN.md`), `mongodb` 4→7 (own plan TBD), `z-schema` → `ajv` (own plan TBD), `cuid` → `cuid2` (own plan TBD).
+
 ## `superagent` → native `fetch` complete; `superagent` moved to `devDependencies`
 
 - **CHANGE** `components/api-server/src/methods/helpers/mailing.js` — `_sendmail()` uses native `fetch`. Callback contract preserved (`cb(err, res)`); `parseError()` now also matches `ENOTFOUND`/`ECONNREFUSED` in the unreachable-endpoint branch since native fetch's reject messages differ from superagent's.

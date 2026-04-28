@@ -9,7 +9,6 @@
 
 require('test-helpers/src/api-server-tests-config');
 const express = require('express');
-const bodyParser = require('body-parser');
 const supertest = require('supertest');
 const assert = require('node:assert');
 const { fixturePath, fixtureFile } = require('../test-helper');
@@ -21,7 +20,7 @@ describe('[UPLD] uploads middleware', function () {
     const verifyAssumptions = (req, res) => {
       res.status(200).json({ files: req.files });
     };
-    app.post('/path', bodyParser.json(), uploads.hasFileUpload, verifyAssumptions);
+    app.post('/path', express.json(), uploads.hasFileUpload, verifyAssumptions);
     return app;
   }
   const request = supertest(app());

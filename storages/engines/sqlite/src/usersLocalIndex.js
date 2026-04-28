@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const mkdirp = require('mkdirp');
+const fs = require('fs');
 const SQLite3 = require('better-sqlite3');
 const concurrentSafeWrite = require('./concurrentSafeWrite');
 
@@ -22,7 +22,7 @@ class DBIndex {
 
   async init () {
     const basePath = _internals.config.path;
-    mkdirp.sync(basePath);
+    fs.mkdirSync(basePath, { recursive: true });
 
     this.db = new SQLite3(basePath + '/user-index.db');
     await concurrentSafeWrite.initWALAndConcurrentSafeWriteCapabilities(this.db);

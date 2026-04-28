@@ -6,7 +6,6 @@
  */
 
 const express = require('express');
-const bodyParser = require('body-parser');
 const EventEmitter = require('events');
 const PORT = 6123;
 
@@ -30,7 +29,7 @@ class HttpServer extends EventEmitter {
     this.responseStatus = statusCode || 200;
     this.responseDelay = delay || null;
     const that = this;
-    app.use(bodyParser.json());
+    app.use(express.json());
     app.post(path, (req, res) => {
       this.emit('received');
       if (that.responseDelay == null) {
