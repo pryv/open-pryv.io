@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const Charlatan = require('charlatan');
 const generateId = require('cuid');
 const logger = require('@pryv/boiler').getLogger('databaseFixture');
@@ -67,7 +67,7 @@ class Context {
         'webhooks'
       ];
       for (const collectionName of collectionNames) {
-        await bluebird.fromCallback((cb) => this.db.deleteMany({ name: collectionName }, {}, cb));
+        await fromCallback((cb) => this.db.deleteMany({ name: collectionName }, {}, cb));
       }
     }
     const usersRepository = await getUsersRepository();
@@ -153,7 +153,7 @@ class DependentsList {
    * @returns {Promise<FixtureItem[]>}
    */
   all (fn) {
-    return bluebird.map(this.dependentItems, fn);
+    return Promise.all(this.dependentItems.map(fn));
   }
 }
 
@@ -506,7 +506,7 @@ class FixtureAccess extends FixtureItem {
     const storageItems = this.storage;
     const user = this.context.user;
     const attributes = deepMerge(this.fakeAttributes(), this.attrs);
-    return await bluebird.fromCallback((cb) => storageItems.accesses.insertOne(user, attributes, cb));
+    return await fromCallback((cb) => storageItems.accesses.insertOne(user, attributes, cb));
   }
 
   /**
@@ -515,7 +515,7 @@ class FixtureAccess extends FixtureItem {
   async remove () {
     const storageItems = this.storage;
     const user = this.context.user;
-    await bluebird.fromCallback((cb) => storageItems.accesses.removeOne(user, { id: this.attrs.id }, cb));
+    await fromCallback((cb) => storageItems.accesses.removeOne(user, { id: this.attrs.id }, cb));
   }
 
   /**
@@ -544,7 +544,7 @@ class FixtureWebhook extends FixtureItem {
     const user = this.context.user;
     const attributes = this.attrs;
     const webhook = new Webhook(attributes).forStorage();
-    return await bluebird.fromCallback((cb) => storageItems.webhooks.insertOne(user, webhook, cb));
+    return await fromCallback((cb) => storageItems.webhooks.insertOne(user, webhook, cb));
   }
 
   /**
@@ -553,7 +553,7 @@ class FixtureWebhook extends FixtureItem {
   async remove () {
     const storageItems = this.storage;
     const user = this.context.user;
-    await bluebird.fromCallback((cb) => storageItems.webhooks.delete(user, { id: this.attrs.id }, cb));
+    await fromCallback((cb) => storageItems.webhooks.delete(user, { id: this.attrs.id }, cb));
   }
 
   /**
@@ -583,7 +583,7 @@ class FixtureSession extends FixtureItem {
     const storageItems = this.storage;
     const user = this.context.user;
     const attributes = this.attrs;
-    return await bluebird.fromCallback((cb) => storageItems.sessions.insertOne(user, attributes, cb));
+    return await fromCallback((cb) => storageItems.sessions.insertOne(user, attributes, cb));
   }
 
   /**
@@ -593,7 +593,7 @@ class FixtureSession extends FixtureItem {
     const storageItems = this.storage;
     // Session id is stored in attrs.id or attrs._id
     const sessionId = this.attrs.id || this.attrs._id;
-    await bluebird.fromCallback((cb) => storageItems.sessions.destroy(sessionId, cb));
+    await fromCallback((cb) => storageItems.sessions.destroy(sessionId, cb));
   }
 
   /**

@@ -4,7 +4,7 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const fs = require('fs');
 const path = require('path');
 const { getUsersRepository } = require('business/src/users');
@@ -160,11 +160,11 @@ class Deletion {
         this.storageLayer.webhooks
       ];
       const removals = dbCollections
-        .map((coll) => bluebird.fromCallback((cb) => coll.removeAll(context.user, cb)));
+        .map((coll) => fromCallback((cb) => coll.removeAll(context.user, cb)));
       const usersRepository = await getUsersRepository();
       await usersRepository.deleteOne(context.user.id, context.user.username);
       await Promise.all(removals);
-      await bluebird.fromCallback((cb) => this.storageLayer.sessions.remove({ username: context.user.username }, cb));
+      await fromCallback((cb) => this.storageLayer.sessions.remove({ username: context.user.username }, cb));
     } catch (error) {
       this.logger.error(error, error);
       return next(errors.unexpectedError(error));

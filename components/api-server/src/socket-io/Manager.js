@@ -6,7 +6,7 @@
  */
 const errorHandling = require('errors').errorHandling;
 const commonMeta = require('../methods/helpers/setCommonMeta');
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const { USERNAME_REGEXP_STR } = require('../schema/helpers');
 const { pubsub } = require('messages');
 (async () => {
@@ -320,9 +320,9 @@ class Connection {
     // Accept streamQueries in JSON format for socket.io
     methodContext.acceptStreamsQueryNonStringified = true;
     try {
-      const result = await bluebird.fromCallback((cb) => api.call(methodContext, params, cb));
+      const result = await fromCallback((cb) => api.call(methodContext, params, cb));
       if (result == null) { throw new Error('AF: either err or result must be non-null'); }
-      const obj = await bluebird.fromCallback((cb) => result.toObject(cb));
+      const obj = await fromCallback((cb) => result.toObject(cb));
       // good ending
       methodContext.tracing.finishSpan('socket.io');
       // remove tracing for next call

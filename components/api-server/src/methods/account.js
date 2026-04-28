@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 
 const errors = require('errors').factory;
 const commonFns = require('./helpers/commonFunctions');
@@ -262,7 +262,7 @@ module.exports = async function (api) {
 
   async function destroyPasswordResetToken (context, params, result, next) {
     const id = context.passwordResetRequest._id;
-    await bluebird.fromCallback((cb) => passwordResetRequestsStorage.destroy(id, context.user.username, cb));
+    await fromCallback((cb) => passwordResetRequestsStorage.destroy(id, context.user.username, cb));
     next();
   }
 

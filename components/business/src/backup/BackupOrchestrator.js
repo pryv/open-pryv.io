@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
 const { sanitize } = require('storages/interfaces/backup/sanitize');
 
@@ -182,27 +182,27 @@ class BackupOrchestrator {
     const user = { id: userId };
 
     // Streams
-    const rawStreams = await bluebird.fromCallback(
+    const rawStreams = await fromCallback(
       (cb) => this.storageLayer.streams.exportAll(user, cb)
     );
     const streams = this._filterByTimestamp(rawStreams, snapshotBefore, since);
     await userWriter.writeStreams(streams.map(sanitize));
 
     // Accesses
-    const rawAccesses = await bluebird.fromCallback(
+    const rawAccesses = await fromCallback(
       (cb) => this.storageLayer.accesses.exportAll(user, cb)
     );
     const accesses = this._filterByTimestamp(rawAccesses, snapshotBefore, since);
     await userWriter.writeAccesses(accesses.map(sanitize));
 
     // Profile (no timestamps — always full export)
-    const profile = await bluebird.fromCallback(
+    const profile = await fromCallback(
       (cb) => this.storageLayer.profile.exportAll(user, cb)
     );
     await userWriter.writeProfile(profile.map(sanitize));
 
     // Webhooks
-    const rawWebhooks = await bluebird.fromCallback(
+    const rawWebhooks = await fromCallback(
       (cb) => this.storageLayer.webhooks.exportAll(user, cb)
     );
     const webhooks = this._filterByTimestamp(rawWebhooks, snapshotBefore, since);
@@ -282,7 +282,7 @@ class BackupOrchestrator {
 
     if (storages.database) {
       // MongoDB: query events collection filtered by userId
-      return await bluebird.fromCallback((cb) =>
+      return await fromCallback((cb) =>
         database.find({ name: 'events' }, { userId }, {}, cb)
       );
     }

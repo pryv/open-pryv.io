@@ -4,7 +4,7 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const { deepMerge } = require('utils');
 const Webhook = require('./Webhook');
 const { getUsersRepository } = require('business/src/users');
@@ -25,12 +25,12 @@ class Repository {
     const usersRepository = await getUsersRepository();
     const users = await usersRepository.getAllUsersIdAndName();
     const allWebhooks = new Map();
-    await bluebird.all(users.map(retrieveWebhooks, this));
+    await Promise.all(users.map((u) => retrieveWebhooks.call(this, u)));
     return allWebhooks;
     async function retrieveWebhooks (user) {
       const webhooksQuery = {};
       const webhooksOptions = {};
-      const webhooks = await bluebird.fromCallback((cb) => this.storage.find(user, webhooksQuery, webhooksOptions, cb));
+      const webhooks = await fromCallback((cb) => this.storage.find(user, webhooksQuery, webhooksOptions, cb));
       const userWebhooks = [];
       webhooks.forEach((w) => {
         userWebhooks.push(initWebhook(user, this, w));
@@ -55,7 +55,7 @@ class Repository {
     if (access.isApp()) {
       query.accessId = { $eq: access.id };
     }
-    const webhooks = await bluebird.fromCallback((cb) => this.storage.find(user, query, options, cb));
+    const webhooks = await fromCallback((cb) => this.storage.find(user, query, options, cb));
     const webhookObjects = [];
     webhooks.forEach((w) => {
       const webhook = initWebhook(user, this, w);
@@ -75,7 +75,7 @@ class Repository {
       id: { $eq: webhookId }
     };
     const options = {};
-    const webhook = await bluebird.fromCallback((cb) => this.storage.findOne(user, query, options, cb));
+    const webhook = await fromCallback((cb) => this.storage.findOne(user, query, options, cb));
     if (webhook == null) { return null; }
     return initWebhook(user, this, webhook);
   }
@@ -87,7 +87,7 @@ class Repository {
    * @returns {Promise<void>}
    */
   async insertOne (user, webhook) {
-    await bluebird.fromCallback((cb) => this.storage.insertOne(user, webhook.forStorage(), cb));
+    await fromCallback((cb) => this.storage.insertOne(user, webhook.forStorage(), cb));
   }
 
   /**
@@ -99,7 +99,7 @@ class Repository {
    */
   async updateOne (user, update, webhookId) {
     const query = { id: webhookId };
-    await bluebird.fromCallback((cb) => this.storage.updateOne(user, query, update, cb));
+    await fromCallback((cb) => this.storage.updateOne(user, query, update, cb));
   }
 
   /**
@@ -109,7 +109,7 @@ class Repository {
    * @returns {Promise<void>}
    */
   async deleteOne (user, webhookId) {
-    await bluebird.fromCallback((cb) => this.storage.delete(user, { id: webhookId }, cb));
+    await fromCallback((cb) => this.storage.delete(user, { id: webhookId }, cb));
   }
 
   /**
@@ -118,7 +118,7 @@ class Repository {
    * @returns {Promise<void>}
    */
   async deleteForUser (user) {
-    await bluebird.fromCallback((cb) => this.storage.delete(user, {}, cb));
+    await fromCallback((cb) => this.storage.delete(user, {}, cb));
   }
 }
 module.exports = Repository;

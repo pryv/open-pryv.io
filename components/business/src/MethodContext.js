@@ -4,7 +4,7 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
 const AccessLogic = require('./accesses/AccessLogic');
 const APIError = require('errors').APIError;
@@ -162,7 +162,7 @@ class MethodContext {
    * @returns {Promise<void>}
    */
   async _retrieveAccess (storage, query) {
-    const access = await bluebird.fromCallback((cb) => storage.accesses.findOne(this.user, query, null, cb));
+    const access = await fromCallback((cb) => storage.accesses.findOne(this.user, query, null, cb));
     if (access == null) { throw errors.invalidAccessToken('Cannot find access from token.', 403); }
     this.access = new AccessLogic(this.user.id, access);
     cache.setAccessLogic(this.user.id, this.access);
@@ -231,7 +231,7 @@ class MethodContext {
     if (access.type !== ACCESS_TYPE_PERSONAL) { return; }
     // assert: type === 'personal'
     const token = access.token;
-    const session = await bluebird.fromCallback((cb) => storage.sessions.get(token, cb));
+    const session = await fromCallback((cb) => storage.sessions.get(token, cb));
     if (session == null) { throw errors.invalidAccessToken('Access session has expired.', 403); }
     // Keep the session alive (don't await, see below)
     // TODO Maybe delay/amortize this so that we don't write on every request?

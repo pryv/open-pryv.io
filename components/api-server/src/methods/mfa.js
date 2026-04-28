@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const errors = require('errors').factory;
 const commonFns = require('./helpers/commonFunctions');
 const methodsSchema = require('../schema/mfaMethods');
@@ -50,7 +50,7 @@ module.exports = async function (api) {
    * empty Profile when nothing is stored yet.
    */
   async function loadMFAProfile (user) {
-    const profileSet = await bluebird.fromCallback(cb =>
+    const profileSet = await fromCallback(cb =>
       userProfileStorage.findOne(user, { id: PROFILE_ID }, null, cb));
     if (!profileSet || !profileSet.data || !profileSet.data.mfa) return new Profile();
     const stored = profileSet.data.mfa;
@@ -66,7 +66,7 @@ module.exports = async function (api) {
    * `{ data: { mfa: null } }` becomes `$unset['data.mfa']`.
    */
   async function saveMFAProfile (user, profile) {
-    const existing = await bluebird.fromCallback(cb =>
+    const existing = await fromCallback(cb =>
       userProfileStorage.findOne(user, { id: PROFILE_ID }, null, cb));
     const mfaValue = profile == null
       ? null // null → $unset['data.mfa']
@@ -75,11 +75,11 @@ module.exports = async function (api) {
       // If the private profile doesn't exist yet, create it with the mfa block
       // (or skip when clearing — there's nothing to clear).
       if (profile == null) return;
-      await bluebird.fromCallback(cb =>
+      await fromCallback(cb =>
         userProfileStorage.insertOne(user, { id: PROFILE_ID, data: { mfa: mfaValue } }, cb));
       return;
     }
-    await bluebird.fromCallback(cb =>
+    await fromCallback(cb =>
       userProfileStorage.updateOne(user, { id: PROFILE_ID }, { data: { mfa: mfaValue } }, cb));
   }
 

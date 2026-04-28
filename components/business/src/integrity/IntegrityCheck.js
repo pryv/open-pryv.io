@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 
 /**
  * Per-user and system-wide integrity verification.
@@ -85,7 +85,7 @@ class IntegrityCheck {
 
     let events;
     if (storages.database) {
-      events = await bluebird.fromCallback((cb) =>
+      events = await fromCallback((cb) =>
         database.find({ name: 'events' }, { userId }, {}, cb)
       );
     } else {
@@ -154,7 +154,7 @@ class IntegrityCheck {
 
   async _checkUserAccesses (userId, report) {
     const user = { id: userId };
-    const accesses = await bluebird.fromCallback((cb) =>
+    const accesses = await fromCallback((cb) =>
       this.storageLayer.accesses.exportAll(user, cb)
     );
 

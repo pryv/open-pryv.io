@@ -4,7 +4,7 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const converters = require('./../converters');
 const _internals = require('../_internals');
 const logger = _internals.lazyLogger('storage:base-storage');
@@ -366,7 +366,7 @@ BaseStorage.prototype.dropCollectionFully = function (userOrUserId, callback) {
 BaseStorage.prototype.iterateAll = async function * () {
   // Use collection name only (no useUserId) to scan ALL rows across users
   const collectionInfo = { name: this.getCollectionInfo('_').name };
-  const cursor = await bluebird.fromCallback(cb =>
+  const cursor = await fromCallback(cb =>
     this.database.findCursor(collectionInfo, {}, {}, cb)
   );
   while (await cursor.hasNext()) {

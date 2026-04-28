@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const assert = require('assert');
 const ds = require('@pryv/datastore');
 
@@ -28,7 +28,7 @@ const STREAM_PROPERTIES = [
  * Implements the @pryv/datastore UserStreams interface.
  *
  * Uses the StorageLayer's StreamsPG (callback-based) under the hood,
- * wrapping its calls in Promises via bluebird.fromCallback.
+ * wrapping its calls in Promises via fromCallback.
  */
 module.exports = ds.createUserStreams({
   userStreamsStorage: null,
@@ -73,14 +73,14 @@ module.exports = ds.createUserStreams({
     if (allStreamsForAccount != null) return allStreamsForAccount;
 
     // Get from DB via StorageLayer's StreamsPG (callback-based)
-    allStreamsForAccount = await bluebird.fromCallback((cb) =>
+    allStreamsForAccount = await fromCallback((cb) =>
       this.userStreamsStorage.find({ id: userId }, {}, null, cb));
     _internals.cache.setStreams(userId, 'local', allStreamsForAccount);
     return allStreamsForAccount;
   },
 
   async getDeletions (userId, query, options) {
-    const deletedStreams = await bluebird.fromCallback((cb) =>
+    const deletedStreams = await fromCallback((cb) =>
       this.userStreamsStorage.findDeletions({ id: userId }, query.deletedSince, options, cb));
     return deletedStreams;
   },
@@ -111,36 +111,36 @@ module.exports = ds.createUserStreams({
     const deletedStreams = await this.getDeletions(userId, { deletedSince: Number.MIN_SAFE_INTEGER });
     const deletedStream = deletedStreams.filter(s => s.id === streamData.id);
     if (deletedStream.length > 0) {
-      await bluebird.fromCallback((cb) =>
+      await fromCallback((cb) =>
         this.userStreamsStorage.removeOne({ id: userId }, { id: deletedStream[0].id }, cb));
     }
-    return await bluebird.fromCallback((cb) =>
+    return await fromCallback((cb) =>
       this.userStreamsStorage.insertOne({ id: userId }, streamData, cb));
   },
 
   async update (userId, streamData) {
-    return await bluebird.fromCallback((cb) =>
+    return await fromCallback((cb) =>
       this.userStreamsStorage.updateOne({ id: userId }, { id: streamData.id }, streamData, cb));
   },
 
   async delete (userId, streamId) {
-    return await bluebird.fromCallback((cb) =>
+    return await fromCallback((cb) =>
       this.userStreamsStorage.delete({ id: userId }, { id: streamId }, cb));
   },
 
   async deleteAll (userId) {
-    await bluebird.fromCallback((cb) =>
+    await fromCallback((cb) =>
       this.userStreamsStorage.removeAll({ id: userId }, cb));
     _internals.cache.unsetUserData(userId);
   },
 
   async _deleteUser (userId) {
-    return await bluebird.fromCallback((cb) =>
+    return await fromCallback((cb) =>
       this.userStreamsStorage.removeMany(userId, {}, cb));
   },
 
   async _getStorageInfos (userId) {
-    const count = await bluebird.fromCallback((cb) =>
+    const count = await fromCallback((cb) =>
       this.userStreamsStorage.countAll(userId, cb));
     return { count };
   }

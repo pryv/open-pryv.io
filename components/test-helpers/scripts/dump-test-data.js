@@ -37,7 +37,7 @@ require('@pryv/boiler').init({
 });
 
 const { getConfig } = require('@pryv/boiler');
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 
 // don't add additional layer of ".." as this script is meant to be launched with babel-node as per the package.json script
 // it does require the "ln -s ../components components" symlink in the root node_modules/ of the projet
@@ -54,7 +54,7 @@ if (version == null) {
   await getConfig();
   const testData = require('../src/data');
   try {
-    await bluebird.fromCallback(cb => testData.dumpCurrent(mongoFolder, version, cb));
+    await fromCallback(cb => testData.dumpCurrent(mongoFolder, version, cb));
   } catch (err) {
     console.error(err);
     hasErr = true;

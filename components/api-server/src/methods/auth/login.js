@@ -4,7 +4,7 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const commonFns = require('api-server/src/methods/helpers/commonFunctions');
 const { ApiEndpoint } = require('utils');
 const errors = require('errors').factory;
@@ -184,7 +184,7 @@ module.exports = async function (api) {
     const mfaService = getMFAService(mfaCfg);
     if (mfaService == null) return next(); // MFA disabled server-wide
     try {
-      const profileSet = await bluebird.fromCallback(cb =>
+      const profileSet = await fromCallback(cb =>
         userProfileStorage.findOne(context.user, { id: MFA_PROFILE_ID }, null, cb));
       const storedMfa = profileSet && profileSet.data && profileSet.data.mfa;
       if (!storedMfa || !storedMfa.content || Object.keys(storedMfa.content).length === 0) {

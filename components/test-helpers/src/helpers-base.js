@@ -161,7 +161,6 @@ function init (opts = {}) {
     cuid: require('cuid'),
     charlatan: require('charlatan'),
     sinon: require('sinon'),
-    bluebird: require('bluebird'),
     path: require('path'),
     _: require('lodash')
   };

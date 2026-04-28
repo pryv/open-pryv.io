@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
 const { setTimeout } = require('timers/promises');
 
@@ -198,7 +198,7 @@ class UsersRepository {
    * @returns {Promise<string>}
    */
   async createSessionForUser (username, appId, transactionSession) {
-    return await bluebird.fromCallback((cb) => this.sessionsStorage.generate({ username, appId }, { transactionSession }, cb));
+    return await fromCallback((cb) => this.sessionsStorage.generate({ username, appId }, { transactionSession }, cb));
   }
 
   /**
@@ -217,7 +217,7 @@ class UsersRepository {
       modified: timestamp.now(),
       modifiedBy: UserRepositoryOptions.SYSTEM_USER_ACCESS_ID
     };
-    return await bluebird.fromCallback((cb) => this.accessStorage.insertOne({ id: userId }, accessData, cb, {
+    return await fromCallback((cb) => this.accessStorage.insertOne({ id: userId }, accessData, cb, {
       transactionSession
     }));
   }

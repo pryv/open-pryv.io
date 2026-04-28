@@ -10,6 +10,7 @@ module.exports = {
   deepMerge: require('./deepMerge'),
   encryption: require('./encryption'),
   extension: require('./extension'),
+  fromCallback: require('./fromCallback'),
   slugify: require('./slugify'),
   toString: require('./toString'),
   treeUtils: require('./treeUtils')

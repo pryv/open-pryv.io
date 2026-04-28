@@ -7,7 +7,7 @@
 const { isDeepStrictEqual } = require('node:util');
 const slugify = require('utils').slugify;
 const timestamp = require('unix-timestamp');
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 
 const APIError = require('errors').APIError;
 const errors = require('errors').factory;
@@ -76,7 +76,7 @@ module.exports = async function produceAccessesApiMethods (api) {
       query.createdBy = currentAccess.id;
     }
     try {
-      let accesses = await bluebird.fromCallback((cb) => accessesRepository.find(context.user, query, dbFindOptions, cb));
+      let accesses = await fromCallback((cb) => accessesRepository.find(context.user, query, dbFindOptions, cb));
       if (excludeExpired(params)) {
         accesses = accesses.filter((a) => !isAccessExpired(a));
       }
@@ -106,7 +106,7 @@ module.exports = async function produceAccessesApiMethods (api) {
       query.createdBy = currentAccess.id;
     }
     try {
-      const deletions = await bluebird.fromCallback((cb) => accessesRepository.findDeletions(context.user, query, { projection: { calls: 0 } }, cb));
+      const deletions = await fromCallback((cb) => accessesRepository.findDeletions(context.user, query, { projection: { calls: 0 } }, cb));
       result.accessDeletions = deletions;
       next();
     } catch (err) {
@@ -341,7 +341,7 @@ module.exports = async function produceAccessesApiMethods (api) {
     if (currentAccess == null) { return next(new Error('AF: currentAccess cannot be null.')); }
     let access;
     try {
-      access = await bluebird.fromCallback((cb) => {
+      access = await fromCallback((cb) => {
         accessesRepository.findOne(context.user, { id: params.id }, dbFindOptions, cb);
       });
     } catch (err) {
@@ -366,7 +366,7 @@ module.exports = async function produceAccessesApiMethods (api) {
     }
     let accesses;
     try {
-      accesses = await bluebird.fromCallback((cb) => {
+      accesses = await fromCallback((cb) => {
         accessesRepository.find(context.user, { createdBy: params.id }, dbFindOptions, cb);
       });
     } catch (err) {
@@ -396,7 +396,7 @@ module.exports = async function produceAccessesApiMethods (api) {
       }
     }
     try {
-      await bluebird.fromCallback((cb) => {
+      await fromCallback((cb) => {
         accessesRepository.delete(context.user, { $or: idsToDelete }, cb);
       });
     } catch (err) {

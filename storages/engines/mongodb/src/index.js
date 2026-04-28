@@ -13,7 +13,7 @@
  * code will be physically moved here in a later cleanup phase.
  */
 
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const _internals = require('./_internals');
 
 /**
@@ -80,7 +80,7 @@ function initStorageLayer (storageLayer, connection, options) {
   };
 
   storageLayer.iterateAllEvents = async function * () {
-    const cursor = await bluebird.fromCallback(cb =>
+    const cursor = await fromCallback(cb =>
       connection.findCursor({ name: 'events' }, {}, {}, cb)
     );
     while (await cursor.hasNext()) {
@@ -98,7 +98,7 @@ function initStorageLayer (storageLayer, connection, options) {
   };
 
   storageLayer.clearCollection = async function (collectionName) {
-    await bluebird.fromCallback((cb) => connection.deleteMany({ name: collectionName }, {}, cb));
+    await fromCallback((cb) => connection.deleteMany({ name: collectionName }, {}, cb));
   };
 }
 

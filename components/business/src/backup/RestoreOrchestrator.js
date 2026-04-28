@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams');
 const timestamp = require('unix-timestamp');
 
@@ -182,7 +182,7 @@ class RestoreOrchestrator {
       streams.push(stream);
     }
     if (streams.length > 0) {
-      await bluebird.fromCallback(
+      await fromCallback(
         (cb) => this.storageLayer.streams.importAll(user, streams, cb)
       );
     }
@@ -193,7 +193,7 @@ class RestoreOrchestrator {
       accesses.push(access);
     }
     if (accesses.length > 0) {
-      await bluebird.fromCallback(
+      await fromCallback(
         (cb) => this.storageLayer.accesses.importAll(user, accesses, cb)
       );
     }
@@ -204,7 +204,7 @@ class RestoreOrchestrator {
       profile.push(item);
     }
     if (profile.length > 0) {
-      await bluebird.fromCallback(
+      await fromCallback(
         (cb) => this.storageLayer.profile.importAll(user, profile, cb)
       );
     }
@@ -215,7 +215,7 @@ class RestoreOrchestrator {
       webhooks.push(wh);
     }
     if (webhooks.length > 0) {
-      await bluebird.fromCallback(
+      await fromCallback(
         (cb) => this.storageLayer.webhooks.importAll(user, webhooks, cb)
       );
     }
@@ -300,7 +300,7 @@ class RestoreOrchestrator {
     // If not available, fall back to inserting via the data store module.
     const eventsStore = this.storageLayer.events;
     if (eventsStore && typeof eventsStore.importAll === 'function') {
-      await bluebird.fromCallback(
+      await fromCallback(
         (cb) => eventsStore.importAll(user, events, cb)
       );
     }
@@ -311,7 +311,7 @@ class RestoreOrchestrator {
     const collections = ['streams', 'accesses', 'profile', 'webhooks'];
     for (const coll of collections) {
       if (this.storageLayer[coll] && typeof this.storageLayer[coll].clearAll === 'function') {
-        await bluebird.fromCallback(
+        await fromCallback(
           (cb) => this.storageLayer[coll].clearAll(user, cb)
         );
       }
@@ -319,7 +319,7 @@ class RestoreOrchestrator {
 
     // Clear events
     if (this.storageLayer.events && typeof this.storageLayer.events.clearAll === 'function') {
-      await bluebird.fromCallback(
+      await fromCallback(
         (cb) => this.storageLayer.events.clearAll(user, cb)
       );
     }

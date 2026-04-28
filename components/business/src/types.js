@@ -6,7 +6,7 @@
  */
 const fs = require('fs');
 const { deepMerge } = require('utils');
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const ZSchemaValidator = require('z-schema');
 let defaultTypes = require('./types/event-types.default.json');
 const errors = require('./types/errors');
@@ -44,13 +44,12 @@ class TypeValidator {
    * @param {any} schema
    * @returns {Promise<any>}
    */
-  validateWithSchema (content, schema) {
-    return bluebird.try(() => {
-      const validator = new ZSchemaValidator();
-      return bluebird
-        .fromCallback((cb) => validator.validate(content, schema, cb))
-        .then(() => content);
+  async validateWithSchema (content, schema) {
+    const validator = new ZSchemaValidator();
+    await new Promise((resolve, reject) => {
+      validator.validate(content, schema, (err) => err ? reject(err) : resolve());
     });
+    return content;
   }
 }
 // A repository of types that Pryv knows about. Currently, this is seeded from
@@ -103,8 +102,7 @@ class TypeRepository {
     const content = event.content != null ? event.content : null;
     const schema = defaultTypes.types[event.type];
     if (schema == null) { throw new Error(`Event type validation was used on the unknown type "${event.type}".`); }
-    return bluebird
-      .fromCallback((cb) => this._validator.validate(content, schema, cb))
+    return fromCallback((cb) => this._validator.validate(content, schema, cb))
       .then(() => content);
   }
 
@@ -218,11 +216,9 @@ class TypeRepository {
       unavailableError(err);
     }
     const validator = this._validator;
-    await bluebird.try(() => {
-      if (!validator.validateSchema(eventTypesDefinition)) { return invalidError(validator.lastReport); }
-      // Overwrite defaultTypes with the merged list of type schemata.
-      defaultTypes = deepMerge(defaultTypes, eventTypesDefinition);
-    });
+    if (!validator.validateSchema(eventTypesDefinition)) { return invalidError(validator.lastReport); }
+    // Overwrite defaultTypes with the merged list of type schemata.
+    defaultTypes = deepMerge(defaultTypes, eventTypesDefinition);
   }
 }
 module.exports = {

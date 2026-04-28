@@ -4,7 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const bluebird = require('bluebird');
 const assert = require('assert');
 const valueTypes = require('./value_types');
 // A basic type like 'mass/kg'. In high frequency data, this must be stored
@@ -80,13 +79,11 @@ class BasicType {
    * @param {Content} content
    * @returns {Promise<any>}
    */
-  callValidator (validator, content) {
-    return bluebird.try(() => {
-      // Perform coercion into target type first. Then verify using the
-      // validator. This saves us one roundtrip.
-      const value = this._innerType.coerce(content);
-      return validator.validateWithSchema(value, this._schema);
-    });
+  async callValidator (validator, content) {
+    // Perform coercion into target type first. Then verify using the
+    // validator. This saves us one roundtrip.
+    const value = this._innerType.coerce(content);
+    return validator.validateWithSchema(value, this._schema);
   }
 }
 module.exports = BasicType;

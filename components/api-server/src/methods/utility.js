@@ -7,7 +7,7 @@
 const commonFns = require('./helpers/commonFunctions');
 const errorHandling = require('errors').errorHandling;
 const methodsSchema = require('../schema/generalMethods');
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const { getPasswordRules } = require('business/src/users');
 const updateAccessUsageStats = require('./helpers/updateAccessUsageStats');
@@ -72,7 +72,10 @@ module.exports = async function (api) {
       if (context.accessUsageStats[methodId] == null) { context.accessUsageStats[methodId] = 0; }
       context.accessUsageStats[methodId]++;
     }
-    result.results = await bluebird.mapSeries(calls, executeCall);
+    result.results = [];
+    for (const call of calls) {
+      result.results.push(await executeCall(call));
+    }
     context.disableAccessUsageStats = false; // to allow tracking functions
     next();
     async function executeCall (call) {
@@ -81,9 +84,9 @@ module.exports = async function (api) {
         // update methodId to match the call todo
         context.methodId = call.method;
         // Perform API call
-        const result = await bluebird.fromCallback((cb) => api.call(context, call.params, cb));
+        const result = await fromCallback((cb) => api.call(context, call.params, cb));
         if (isAuditActive) { await audit.validApiCall(context, result); }
-        return await bluebird.fromCallback((cb) => result.toObject(cb));
+        return await fromCallback((cb) => result.toObject(cb));
       } catch (err) {
         // Batchcalls have specific error handling hence the custom request context
         const reqContext = {

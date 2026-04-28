@@ -4,7 +4,7 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const bluebird = require('bluebird');
+const { fromCallback } = require('utils');
 const { LRUCache: LRU } = require('lru-cache');
 const logger = require('@pryv/boiler').getLogger('metadata_cache');
 const storage = require('storage');
@@ -155,7 +155,7 @@ class MetadataLoader {
     };
     const customAuthStep = null;
     const methodContext = new MethodContext(contextSource, userName, accessToken, customAuthStep);
-    return bluebird.fromCallback(async (returnValueCallback) => {
+    return fromCallback(async (returnValueCallback) => {
       try {
         await methodContext.init();
         await methodContext.retrieveExpandedAccess(storage);
