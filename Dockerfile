@@ -43,6 +43,10 @@ RUN apt-get -y --purge autoremove python3 build-essential && \
 
 ENV NODE_ENV=production
 
-EXPOSE 3000
+# 3000: API. 4000: HFS (multi-worker). 3001: previews. 443: native HTTPS
+# (when http.ssl.* set). 80: ACME HTTP-01 (DNS-01 is the default). 53/udp:
+# embedded DNS (when dns.enabled). EXPOSE is informational only — Dokku and
+# similar PaaS use it to know which container ports may be published.
+EXPOSE 80 443 3000 3001 4000 53/udp
 
 CMD ["node", "bin/master.js"]

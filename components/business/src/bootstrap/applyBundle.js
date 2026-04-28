@@ -127,6 +127,9 @@ function writeOverrideConfig (configDir, bundle, tlsPaths) {
   if (bundle.cluster.domain) {
     override.dns = { domain: bundle.cluster.domain };
     override.dnsLess = { isActive: false };
+    // Multi-core via DNS: opt rqlited into peer discovery via lsc.<domain>.
+    // Single-core deploys (no bundle, no override) keep the default `false`.
+    override.cluster = { discoveryEnabled: true };
   }
 
   const header =

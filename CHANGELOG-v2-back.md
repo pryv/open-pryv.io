@@ -1,5 +1,68 @@
 # Changelog - Internal (no API impact)
 
+## Deploy hardening — single-core LE first-boot, embedded DNS, Dockerfile
+
+A bundle of five fixes surfaced by a fresh single-core Dokku deploy with
+`letsEncrypt.enabled: true` + embedded DNS + ACME DNS-01 wildcard.
+
+- **NEW** `components/business/src/acme/selfSignedPlaceholder.js` — when
+  `letsEncrypt.enabled` is on and the configured `http.ssl.keyFile` doesn't
+  exist yet, master writes a 1-day self-signed RSA-2048 cert at the
+  configured paths *before forking workers*. Workers' `https.createServer`
+  ENOENT-races would otherwise restart-loop the cluster until ACME issued
+  the first cert. Real cert hot-swaps via `setSecureContext` when ACME
+  completes (existing `acme:rotate` IPC + `reloadTls()` path). CN + SAN
+  derived from `deriveHostnames()` — same hostname the eventual ACME cert
+  carries. Pure node-forge (already a transitive of acme-client; no new
+  dep).
+- **CHANGE** `storages/engines/rqlite/src/rqliteProcess.js` — `-disco-mode
+  dns` + `-bootstrap-expect 1` flags now gated on a new
+  `cluster.discoveryEnabled: true` opt instead of unconditionally on
+  `dnsDomain != null`. Single-core deploys with `dns.domain` set (so the
+  embedded DNS can serve `<coreId>.<domain>`) no longer have rqlited block
+  for 30 s waiting for `lsc.<domain>` peers via the embedded DNS that only
+  starts *after* rqlited is ready.
+- **CHANGE** `components/business/src/bootstrap/applyBundle.js` — bootstrap
+  bundle now writes `cluster.discoveryEnabled: true` into the joiner's
+  `override-config.yml` when the bundle ships a `cluster.domain` (DNS-based
+  multi-core). DNSless multi-core deliberately leaves the flag unset —
+  peers find each other via explicit `core.url` instead.
+- **CHANGE** `components/dns-server/src/DnsServer.js` — embedded DNS now
+  resolves `<coreId>.<domain>` from PlatformDB. Previously such queries
+  fell into the `#answerUsername` path → NXDOMAIN, leaving the hostname
+  advertised in `hostings.*.availableCore` (and used for inter-core HTTP
+  routing) unreachable unless the operator pre-populated
+  `dns.staticEntries`. New private branch consults
+  `platform.getCoreInfo(prefix)` between `staticEntries` and the username
+  fallback; record-emission tail extracted into `#emitCoreInfoRecords` and
+  shared with `#answerUsername`. Operator overrides via `dns.staticEntries`
+  still win.
+- **CHANGE** `components/platform/src/Platform.js` — `coreIdToUrl()` now
+  returns slash-terminated URLs in all branches (cache hit, derived,
+  dnsLess fallback). Centralized via a small `withTrailingSlash()` helper.
+  Three downstream consumers that did `coreUrl + '/something'` updated to
+  drop the leading slash and avoid double-slash:
+  `business/src/auth/registration.js` cross-core forward POST,
+  `api-server/src/routes/reg/legacy.js` `?username=` redirect,
+  `api-server/src/routes/reg/access.js` `pollBase` (defensive — operator
+  may supply `core:url` with or without slash). Two `register.js` sites
+  that bypass `coreIdToUrl()` (the `coreUrl || ApiEndpoint.build('', null)`
+  fallbacks for the unknown-email and single-core/unconfigured branches)
+  wrapped at the call site.
+- **CHANGE** `Dockerfile` — `EXPOSE` now declares `80 443 3000 3001 4000
+  53/udp` (was just `3000`). Dokku's `dokku ports:add` only publishes ports
+  the Dockerfile exposes, so native HTTPS + embedded DNS deployments needed
+  an explicit `docker-options:add` workaround. EXPOSE is informational
+  only — no port is actually bound until the operator publishes it.
+  `INSTALL.md` Dokku section gained a paragraph about
+  `dokku ports:add http:80:80 https:443:443`.
+- Local validation: PG `business` 354/0 (was 346, +8 new `[SSPL]` for the
+  self-signed placeholder); PG `dns-server` 29/0 (was 26, +3 new `[DN35]`
+  `[DN36]` `[DN37]` for the PlatformDB-resolved `<coreId>.<domain>` branch);
+  rqlite-engine `[RQARGS]` 18/0 (was 15, +3 covering single-core /
+  no-domain / discovery-without-domain); api-server PG full 967/0. Full
+  `just test all` (PG) and `just test-mongo all` matrix at plan close.
+
 ## `z-schema` → `ajv` (with z-schema-shaped error wrapper)
 
 - **DEP** `z-schema` removed from `package.json` `dependencies`. Replaced with `ajv@^8` + `ajv-draft-04` (our schemas use the draft-04 `id:` keyword) + `ajv-formats`.

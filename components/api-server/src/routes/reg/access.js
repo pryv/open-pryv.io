@@ -44,7 +44,12 @@ module.exports = function (expressApp, app) {
     //
     const serviceInfo = app.config.get('service') || {};
     const coreUrl = app.config.get('core:url');
-    const pollBase = coreUrl ? coreUrl + '/reg/' : (serviceInfo.register || '/reg/');
+    // core:url may be operator-supplied with or without trailing slash;
+    // normalize so we don't emit `https://core.x//reg/...`.
+    const coreUrlSlash = coreUrl
+      ? (coreUrl.endsWith('/') ? coreUrl : coreUrl + '/')
+      : null;
+    const pollBase = coreUrlSlash ? coreUrlSlash + 'reg/' : (serviceInfo.register || '/reg/');
     const pollUrl = pollBase + 'access/' + key;
 
     // Build the popup auth-UI URL as `authUrl`. SDKs open this in a popup

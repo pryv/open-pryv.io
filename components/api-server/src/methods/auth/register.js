@@ -13,6 +13,17 @@ const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUti
 const { getConfig } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 const { getPasswordRules, getUsersRepository } = require('business').users;
+
+// Match serviceInfo.{register,api,access} convention (slash-terminated).
+// Naive `host + 'users'` concatenation in clients/tests would otherwise
+// produce `https://single.example.devusers`. coreIdToUrl() normalizes
+// internally; this helper covers the two ApiEndpoint.build() fallback
+// sites below that bypass it.
+function withTrailingSlash (url) {
+  if (url == null || url === '') return url;
+  return url.endsWith('/') ? url : url + '/';
+}
+
 /**
  * Auth API methods implementations.
  *
@@ -116,8 +127,7 @@ module.exports = async function (api) {
       username = await platform.getUsersUniqueField('email', params.email);
       if (username == null) {
         // Unknown email — return self URL (client can attempt registration)
-        const coreUrl = platform.coreUrl || ApiEndpoint.build('', null);
-        result.core = { url: coreUrl };
+        result.core = { url: withTrailingSlash(platform.coreUrl || ApiEndpoint.build('', null)) };
         return next();
       }
     }
@@ -177,7 +187,7 @@ module.exports = async function (api) {
         result.regions = regions;
       } else {
         // Auto-generate minimal hierarchy for single-core / unconfigured
-        const selfUrl = platform.coreUrl || ApiEndpoint.build('', null);
+        const selfUrl = withTrailingSlash(platform.coreUrl || ApiEndpoint.build('', null));
         result.regions = {
           default: {
             name: 'Default',

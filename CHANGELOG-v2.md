@@ -1,5 +1,13 @@
 # Changelog - API Changes
 
+## `/reg/hostings` — `availableCore` URLs are now slash-terminated
+
+- **CHANGE** `GET /reg/hostings` response: every `regions.<region>.zones.<zone>.hostings.<h>.availableCore` now ends with `/`, matching the long-standing `serviceInfo.{register,api,access}` convention. Empty-string for unavailable hostings is unchanged.
+- **CHANGE** `GET /reg/cores` response: `core.url` is also slash-terminated. Same convention.
+- **CHANGE** wrong-core 421 response (`error.coreUrl`) follows the same convention.
+- **Client compatibility**: clients that did `host + 'users'` previously produced `https://single.example.devusers`. Doing `host + 'users'` now produces `https://single.example.dev/users` — the *intended* behaviour. Clients that pre-strip-and-re-add the trailing slash continue to work unchanged.
+- **Why**: a deploy session surfaced the malformed-URL pattern (`https://single.api.datasafe.devusers`) on a fresh single-core; same drift was confirmed on `reg.pryv.me`. Centralized in `Platform.coreIdToUrl()`.
+
 ## ID minting algorithm — cuid v1/v2 → cuid2
 
 - New event / stream / access / webhook / session / password-reset IDs are now minted with `@paralleldrive/cuid2`. Format is **24 lowercase alphanumeric characters, first char a letter, no prefix** — distinct from the legacy cuid v1/v2 format (`c` prefix + 24 chars, 25 total).

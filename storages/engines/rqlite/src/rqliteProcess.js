@@ -28,6 +28,13 @@ let rqliteChild = null;
  * @param {number} opts.httpPort - HTTP API port (default 4001)
  * @param {number} opts.raftPort - Raft consensus port (default 4002)
  * @param {string|null} opts.dnsDomain - dns.domain (null = single-core)
+ * @param {boolean} [opts.discoveryEnabled=false] - opt in to rqlited DNS-based
+ *   peer discovery (`-disco-mode dns`). Multi-core deployments set this to
+ *   true so peer cores find each other via `lsc.<dnsDomain>`. Single-core
+ *   deployments must leave it false even when `dnsDomain` is set, otherwise
+ *   rqlited blocks at boot waiting for a peer that will never appear (the
+ *   embedded DNS that would publish `lsc.<dnsDomain>` only starts after
+ *   rqlited is ready).
  * @param {string|null} opts.coreIp - this core's IP for raft-addr binding
  * @param {Object|null} opts.tls - mTLS material for the Raft channel (null = plain TCP)
  * @param {string} opts.tls.caFile - PEM CA cert used to verify peer certs
@@ -49,6 +56,7 @@ function buildArgs (opts) {
     httpPort = 4001,
     raftPort = 4002,
     dnsDomain = null,
+    discoveryEnabled = false,
     coreIp = null,
     tls = null,
     dataDir
@@ -74,7 +82,7 @@ function buildArgs (opts) {
   }
   args.push('-raft-cluster-remove-shutdown'); // graceful leave on shutdown
 
-  if (dnsDomain != null) {
+  if (dnsDomain != null && discoveryEnabled) {
     const discoName = 'lsc.' + dnsDomain;
     args.push(
       '-disco-mode', 'dns',
@@ -86,6 +94,9 @@ function buildArgs (opts) {
       '-bootstrap-expect', '1'
     );
   }
+  // Single-core (discoveryEnabled=false) deliberately gets neither flag —
+  // rqlited auto-bootstraps a 1-node cluster on first run from an empty
+  // data dir and reuses the raft log on restart.
 
   if (tls != null) {
     const { caFile, certFile, keyFile, verifyClient = true, verifyServerName = null } = tls;

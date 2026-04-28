@@ -96,6 +96,12 @@ if (cluster.isPrimary) {
         httpPort: parseInt(httpPort),
         raftPort: rqliteConfig.raftPort || 4002,
         dnsDomain: config.get('dns:domain') || null,
+        // rqlited DNS-based peer discovery is opt-in. Multi-core deploys
+        // set `cluster.discoveryEnabled: true`; single-core deploys leave
+        // it false even when `dns.domain` is set, otherwise rqlited boots
+        // into a 30 s timeout looking for peers via the embedded DNS that
+        // hasn't started yet (it's started further down in this same file).
+        discoveryEnabled: config.get('cluster:discoveryEnabled') === true,
         coreIp: config.get('core:ip') || null,
         tls: rqliteConfig.tls || null,
         log
@@ -181,6 +187,21 @@ if (cluster.isPrimary) {
     // the daily ACME renewal loop (initial issuance + renew-when-expiring).
     let acmeOrchestrator = null;
     if (config.get('letsEncrypt:enabled')) {
+      // First-boot race: workers do `fs.readFileSync(http.ssl.keyFile)` at
+      // boot. If ACME hasn't issued yet, that ENOENTs and the cluster
+      // restart-loops. Pre-stage a 1-day self-signed cert at the configured
+      // paths so workers can boot HTTPS; the real cert hot-swaps via
+      // setSecureContext when ACME completes.
+      try {
+        const { ensure: ensurePlaceholder } = require('business/src/acme/selfSignedPlaceholder');
+        const placeholder = ensurePlaceholder({ config, log });
+        if (placeholder.written) {
+          log(`[acme] placeholder cert in place at ${placeholder.certFile}`);
+        }
+      } catch (err) {
+        log('[acme] placeholder cert generation FAILED: ' + err.message + ' (workers may crash on first boot until ACME completes)');
+        if (process.env.DEBUG) console.error(err.stack);
+      }
       try {
         const { getPlatform } = require('../components/platform/src');
         const platform = await getPlatform();

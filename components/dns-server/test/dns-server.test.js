@@ -281,6 +281,30 @@ describe('[DNS] DNS Server', function () {
     });
   });
 
+  // --- Per-core resolution ---
+
+  describe('<coreId>.{domain} from PlatformDB', () => {
+    it('[DN35] must resolve coreId to that core\'s A record', async () => {
+      const addresses = await resolver.resolve4(`core1.${TEST_DOMAIN}`);
+      assert.deepStrictEqual(addresses, ['10.0.0.1']);
+    });
+
+    it('[DN36] must resolve coreId via CNAME when core has no IP', async () => {
+      const records = await resolver.resolveCname(`core-cname.${TEST_DOMAIN}`);
+      assert.strictEqual(records.length, 1);
+      assert.strictEqual(records[0], 'core3.external.com');
+    });
+
+    it('[DN37] coreId branch must not shadow operator-provided staticEntries', async () => {
+      // `api` is in staticEntries and not a coreId; the static A record wins.
+      // (Conversely, if an operator declares a static entry whose name
+      // collides with a coreId, the static entry takes precedence — see
+      // dispatch order.)
+      const addresses = await resolver.resolve4(`api.${TEST_DOMAIN}`);
+      assert.deepStrictEqual(addresses, ['5.6.7.8']);
+    });
+  });
+
   // --- Dynamic runtime entry updates ---
 
   describe('updateStaticEntry', () => {

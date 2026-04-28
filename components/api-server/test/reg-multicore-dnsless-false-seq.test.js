@@ -32,7 +32,8 @@ const CORE_A = 'core-a';
 const CORE_B = 'core-b';
 
 function buildCoreUrl (coreId) {
-  return 'https://' + coreId + '.' + DOMAIN;
+  // Slash-terminated to match Platform.coreIdToUrl() convention.
+  return 'https://' + coreId + '.' + DOMAIN + '/';
 }
 
 describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
@@ -141,7 +142,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
     let forwardHandler; // ({url, options}) -> {ok,status,json} | throws
     let fwdSnapshot;
 
-    const TARGET_FORWARD_URL = buildCoreUrl(CORE_B) + '/users';
+    const TARGET_FORWARD_URL = buildCoreUrl(CORE_B) + 'users';
 
     function installFetchInterceptor () {
       realFetch = global.fetch;
@@ -215,7 +216,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       // Forward was called exactly once, to the target core's /users endpoint
       assert.strictEqual(forwardCalls.length, 1, 'forward must happen exactly once');
       const { url: forwardedUrl, options: forwardedOptions } = forwardCalls[0];
-      assert.strictEqual(forwardedUrl, buildCoreUrl(CORE_B) + '/users',
+      assert.strictEqual(forwardedUrl, buildCoreUrl(CORE_B) + 'users',
         'forward target must be target core /users');
       assert.strictEqual(forwardedOptions.method, 'POST');
       const forwardedBody = JSON.parse(forwardedOptions.body);

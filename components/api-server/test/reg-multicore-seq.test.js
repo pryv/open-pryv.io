@@ -33,7 +33,9 @@ const CORE_A = 'core-a';
 const CORE_B = 'core-b';
 
 function buildCoreUrl (coreId) {
-  return 'https://' + coreId + '.' + DOMAIN;
+  // Slash-terminated to match Platform.coreIdToUrl() convention
+  // (matches serviceInfo.{register,api,access}).
+  return 'https://' + coreId + '.' + DOMAIN + '/';
 }
 
 describe('[RGMC] register: multi-core', function () {
@@ -154,7 +156,7 @@ describe('[RGMC] register: multi-core', function () {
     let forwardCalls;
     let forwardHandler;
 
-    const TARGET_FORWARD_URL = buildCoreUrl(CORE_B) + '/users';
+    const TARGET_FORWARD_URL = buildCoreUrl(CORE_B) + 'users';
 
     function installFetchInterceptor () {
       realFetch = global.fetch;
@@ -237,7 +239,7 @@ describe('[RGMC] register: multi-core', function () {
         'registration should succeed: ' + JSON.stringify(res.body));
       // Forward happened exactly once, to target core's /users
       assert.strictEqual(forwardCalls.length, 1);
-      assert.strictEqual(forwardCalls[0].url, buildCoreUrl(CORE_B) + '/users');
+      assert.strictEqual(forwardCalls[0].url, buildCoreUrl(CORE_B) + 'users');
       // Target's response shape is what client sees (no legacy `core.url` redirect)
       assert.strictEqual(res.body.username, username);
       assert.strictEqual(res.body.apiEndpoint, fakeTargetApiEndpoint);
@@ -362,6 +364,9 @@ describe('[RGMC] register: multi-core', function () {
       // us-east-1: core-a (self) + core-b → available
       assert.strictEqual(hostings['us-east-1'].available, true);
       assert.ok(hostings['us-east-1'].availableCore, 'must have availableCore URL');
+      // Slash-terminated (matches serviceInfo.{register,api,access} convention)
+      assert.ok(hostings['us-east-1'].availableCore.endsWith('/'),
+        `availableCore must be slash-terminated, got ${hostings['us-east-1'].availableCore}`);
 
       // us-west-1: no cores → not available
       assert.strictEqual(hostings['us-west-1'].available, false);
@@ -393,7 +398,7 @@ describe('[RGMC] register: multi-core', function () {
         });
       const key = createRes.body.key;
 
-      const redirectUrl = buildCoreUrl(CORE_B) + '/reg/access/' + key;
+      const redirectUrl = buildCoreUrl(CORE_B) + 'reg/access/' + key;
       const redirectRes = await request.post('/reg/access/' + key)
         .send({ status: 'REDIRECTED', redirectUrl });
       assert.strictEqual(redirectRes.status, 301);
@@ -409,7 +414,7 @@ describe('[RGMC] register: multi-core', function () {
         });
       const key = createRes.body.key;
 
-      const redirectUrl = buildCoreUrl(CORE_B) + '/reg/access/newkey123';
+      const redirectUrl = buildCoreUrl(CORE_B) + 'reg/access/newkey123';
       await request.post('/reg/access/' + key)
         .send({ status: 'REDIRECTED', redirectUrl });
 
@@ -577,7 +582,7 @@ describe('[RGMC] register: multi-core', function () {
 
     it('[MC08A] must derive URL from coreId + domain', function () {
       assert.strictEqual(platform.coreIdToUrl(CORE_B),
-        'https://' + CORE_B + '.' + DOMAIN);
+        'https://' + CORE_B + '.' + DOMAIN + '/');
     });
 
     it('[MC08B] must return own URL when no domain (single-core fallback)', function () {
@@ -693,8 +698,10 @@ describe('[RGMC] register: multi-core', function () {
       // Refresh the in-memory cache that backs coreIdToUrl()
       await platform._refreshCoreUrlCache();
 
+      // coreIdToUrl normalizes to slash-terminated form regardless of the
+      // explicit value stored in PlatformDB.
       const url = platform.coreIdToUrl(CORE_B);
-      assert.strictEqual(url, explicitUrl);
+      assert.strictEqual(url, explicitUrl + '/');
     });
 
     it('[MC10B] coreIdToUrl must fall back to derivation when no explicit URL is registered', async function () {
@@ -714,7 +721,7 @@ describe('[RGMC] register: multi-core', function () {
       await platform._refreshCoreUrlCache();
 
       const url = platform.coreIdToUrl(CORE_B);
-      assert.strictEqual(url, 'https://' + CORE_B + '.' + DOMAIN);
+      assert.strictEqual(url, 'https://' + CORE_B + '.' + DOMAIN + '/');
     });
 
     it('[MC10C] wrong-core middleware must surface explicit URL in 421 response', async function () {
@@ -741,7 +748,7 @@ describe('[RGMC] register: multi-core', function () {
 
       const res = await request.get('/' + username + '/events');
       assert.strictEqual(res.status, 421);
-      assert.strictEqual(res.body.error.coreUrl, explicitUrl);
+      assert.strictEqual(res.body.error.coreUrl, explicitUrl + '/');
 
       require('middleware/src/checkUserCore')._resetPlatformCache();
     });

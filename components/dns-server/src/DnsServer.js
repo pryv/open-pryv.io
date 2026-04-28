@@ -260,8 +260,11 @@ class DnsServer {
         // name to keep behaviour consistent across deployments.
         await this.#answerClusterDiscovery(response, qname, qtype);
       } else if (this.#staticEntries[prefix]) {
-        // Static subdomain (www, sw, reg, _acme-challenge, etc.)
+        // Static subdomain (www, sw, reg, _acme-challenge, etc.). Operator
+        // overrides win over PlatformDB-derived core entries below.
         this.#answerStatic(response, qname, qtype, this.#staticEntries[prefix]);
+      } else if (await this.#tryAnswerCoreInfo(response, qname, qtype, prefix)) {
+        // Was a `<coreId>.<domain>` query — answered from PlatformDB.
       } else {
         // Assume it's a username — look up the user's core
         await this.#answerUsername(response, qname, qtype, prefix);
@@ -383,6 +386,30 @@ class DnsServer {
       return;
     }
 
+    this.#emitCoreInfoRecords(response, qname, qtype, coreInfo);
+  }
+
+  /**
+   * Try to answer a `<coreId>.<domain>` query from PlatformDB. Returns true
+   * iff a core is registered under `prefix` (records emitted, response is
+   * "owned" by this branch) and false otherwise (caller falls through to
+   * the username path).
+   *
+   * Without this branch the hostname advertised in `hostings.*.availableCore`
+   * — and used for inter-core HTTP routing in multi-core — is unreachable
+   * via the embedded DNS unless the operator pre-populates `dns.staticEntries`.
+   */
+  async #tryAnswerCoreInfo (response, qname, qtype, prefix) {
+    const coreInfo = await this.#platform.getCoreInfo(prefix);
+    if (coreInfo == null) return false;
+    this.#emitCoreInfoRecords(response, qname, qtype, coreInfo);
+    return true;
+  }
+
+  /**
+   * Emit A / AAAA / CNAME from a coreInfo row.
+   */
+  #emitCoreInfoRecords (response, qname, qtype, coreInfo) {
     const ttl = this.#ttl;
 
     if (coreInfo.ip && (qtype === Packet.TYPE.A || qtype === Packet.TYPE.ANY)) {

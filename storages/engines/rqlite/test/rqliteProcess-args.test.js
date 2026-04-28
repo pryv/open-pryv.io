@@ -63,13 +63,37 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
   });
 
   describe('DNS discovery (multi-core)', () => {
-    it('adds -disco-mode dns and -disco-config lsc.{domain} when dnsDomain is set', () => {
-      const args = buildArgs({ ...baseOpts, dnsDomain: 'mc.example.com' });
+    it('adds -disco-mode dns and -disco-config lsc.{domain} when dnsDomain + discoveryEnabled', () => {
+      const args = buildArgs({ ...baseOpts, dnsDomain: 'mc.example.com', discoveryEnabled: true });
       assert(args.includes('-disco-mode'));
       assert.equal(args[args.indexOf('-disco-mode') + 1], 'dns');
       const discoConfig = JSON.parse(args[args.indexOf('-disco-config') + 1]);
       assert.equal(discoConfig.name, 'lsc.mc.example.com');
       assert.equal(discoConfig.port, 4002);
+      assert.equal(args[args.indexOf('-bootstrap-expect') + 1], '1');
+    });
+
+    it('omits -disco-mode when dnsDomain is set but discoveryEnabled is false (single-core default)', () => {
+      // Reproduces the boot deadlock: single-core has dns.domain set so the
+      // embedded DNS can serve `<coreId>.<domain>`, but rqlited must NOT
+      // wait for peer discovery via `lsc.<domain>` (the embedded DNS only
+      // starts after rqlited is ready in master.js).
+      const args = buildArgs({ ...baseOpts, dnsDomain: 'mc.example.com' });
+      assert(!args.includes('-disco-mode'),
+        `unexpected -disco-mode in single-core argv: ${args.join(' ')}`);
+      assert(!args.includes('-bootstrap-expect'));
+    });
+
+    it('omits -disco-mode when dnsDomain is null (no domain at all)', () => {
+      const args = buildArgs({ ...baseOpts });
+      assert(!args.includes('-disco-mode'));
+      assert(!args.includes('-bootstrap-expect'));
+    });
+
+    it('omits -disco-mode when discoveryEnabled is true but dnsDomain is null', () => {
+      // Defensive: discovery without a domain to discover under is meaningless.
+      const args = buildArgs({ ...baseOpts, discoveryEnabled: true });
+      assert(!args.includes('-disco-mode'));
     });
   });
 
@@ -142,6 +166,7 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
         ...baseOpts,
         coreIp: '10.0.0.5',
         dnsDomain: 'mc.example.com',
+        discoveryEnabled: true,
         tls: {
           caFile: '/tls/ca.crt',
           certFile: '/tls/node.crt',

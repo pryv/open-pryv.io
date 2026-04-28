@@ -358,6 +358,20 @@ dokku docker-options:add <app> deploy,run "-p 53:5353/udp"
 
 For most Dokku deployments the simpler path is **dnsLess mode** — set `dnsLess.isActive: true` + `dnsLess.publicUrl: https://<reg-fqdn>` in `override-config.yml` and let the reverse proxy terminate TLS as usual.
 
+**Native HTTPS (ports 80 / 443)** when running ACME directly inside the
+container (`letsEncrypt.enabled: true`) needs the same publishing dance —
+`dokku ports:add` only exposes ports declared in the Dockerfile's `EXPOSE`.
+Open-Pryv.io declares 80, 443, 3000, 3001, 4000 and 53/udp, so:
+
+```bash
+dokku ports:add <app> http:80:80
+dokku ports:add <app> https:443:443
+```
+
+…will work. If you front the container with Dokku's built-in nginx instead
+(reverse-proxy mode), leave LE off, set `http.ssl.*` to nothing, and let
+Dokku terminate TLS — `letsEncrypt.enabled` is purely opt-in.
+
 
 ## Upgrades
 

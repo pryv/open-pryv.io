@@ -102,7 +102,8 @@ module.exports = function (expressApp, app) {
           error: { id: 'unknown-user', message: 'Unknown user' }
         });
       }
-      res.redirect(coreUrl + '/?username=' + username);
+      // coreUrl is slash-terminated (Platform.coreIdToUrl convention).
+      res.redirect(coreUrl + '?username=' + username);
     } catch (err) {
       next(err);
     }

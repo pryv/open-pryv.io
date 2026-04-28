@@ -88,7 +88,8 @@ class Registration {
       const timer = setTimeout(() => controller.abort(), 30000);
       let response;
       try {
-        response = await fetch(targetUrl + '/users', {
+        // targetUrl is slash-terminated (Platform.coreIdToUrl convention).
+        response = await fetch(targetUrl + 'users', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(params),

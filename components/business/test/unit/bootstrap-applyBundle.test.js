@@ -116,6 +116,7 @@ describe('[APPLYBUNDLE] applyBundle', function () {
     assert.equal(parsed.core.ip, '203.0.113.7');
     assert.equal(parsed.dns.domain, 'mc.example.com');
     assert.equal(parsed.dnsLess.isActive, false);
+    assert.equal(parsed.cluster.discoveryEnabled, true);
     assert.equal(parsed.auth.adminAccessKey, 'admin-key-0123456789abcdef0123');
     assert.equal(parsed.auth.filesReadTokenSecret, 'files-secret-0123456789abcdef0');
     assert.equal(parsed.storages.engines.rqlite.raftPort, 4002);
@@ -152,6 +153,9 @@ describe('[APPLYBUNDLE] applyBundle', function () {
     const parsed = yaml.load(fs.readFileSync(result.overridePath, 'utf8'));
     assert.equal(parsed.dnsLess, undefined);
     assert.equal(parsed.dns, undefined);
+    // DNSless multi-core: peers find each other via explicit core.url, so
+    // rqlited does NOT need DNS-based peer discovery.
+    assert.equal(parsed.cluster, undefined);
     // armored unused — keep referenced so lint doesn't complain
     assert.ok(armored.length > 0);
   });

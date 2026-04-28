@@ -246,15 +246,18 @@ class Platform {
    * @returns {string}
    */
   coreIdToUrl (coreId) {
+    let url;
     if (this.#coreUrlCache.has(coreId)) {
-      return this.#coreUrlCache.get(coreId);
+      url = this.#coreUrlCache.get(coreId);
+    } else {
+      const domain = this.domain;
+      if (domain != null) {
+        url = 'https://' + coreId + '.' + domain;
+      } else {
+        url = this.coreUrl;
+      }
     }
-    const domain = this.domain;
-    if (domain != null) {
-      return 'https://' + coreId + '.' + domain;
-    }
-    // dnsLess fallback: return own URL
-    return this.coreUrl;
+    return withTrailingSlash(url);
   }
 
   /**
@@ -808,6 +811,15 @@ class Platform {
 }
 
 const SECRET_OBSERVABILITY_KEYS = new Set(['newrelic-license-key']);
+
+// Service URLs in this codebase carry a trailing slash by convention
+// (matches serviceInfo.{register,api,access}). Centralizing here so naive
+// `url + 'users'` concatenation in clients/tests can't produce
+// `https://single.example.devusers`.
+function withTrailingSlash (url) {
+  if (url == null || url === '') return url;
+  return url.endsWith('/') ? url : url + '/';
+}
 
 function parseJsonBoolean (raw) {
   try { return JSON.parse(raw) === true; } catch { return false; }
