@@ -11,6 +11,7 @@ module.exports = {
   encryption: require('./encryption'),
   extension: require('./extension'),
   fromCallback: require('./fromCallback'),
+  jsonValidator: require('./jsonValidator'),
   slugify: require('./slugify'),
   toString: require('./toString'),
   treeUtils: require('./treeUtils')

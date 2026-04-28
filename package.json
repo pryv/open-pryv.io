@@ -31,6 +31,9 @@
     "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
     "@pryv/stable-object-representation": "^1.1.4",
     "acme-client": "^5.4.0",
+    "ajv": "^8.20.0",
+    "ajv-draft-04": "^1.0.0",
+    "ajv-formats": "^3.0.1",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^11.8.1",
     "cookie-parser": "^1.4.3",
@@ -55,8 +58,7 @@
     "unix-dgram": "2.0.6",
     "unix-timestamp": "^1.0.3",
     "winston": "^3.8.2",
-    "winston-syslog": "^2.7.0",
-    "z-schema": "^5.0.4"
+    "winston-syslog": "^2.7.0"
   },
   "devDependencies": {
     "async": "^2.6.4",

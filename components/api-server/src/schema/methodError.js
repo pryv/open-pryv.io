@@ -26,7 +26,11 @@ module.exports = {
     subErrors: {
       type: 'array',
       items: {
-        $ref: '#error'
+        // `$ref: '#'` is the root self-reference, equivalent to z-schema's
+        // `$ref: '#error'` (which targets the schema's own `id: 'error'`).
+        // ajv-draft-04 doesn't auto-treat id-strings as in-document anchors;
+        // root self-ref is the portable form.
+        $ref: '#'
       }
     }
   },

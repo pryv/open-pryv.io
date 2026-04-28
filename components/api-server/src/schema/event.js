@@ -51,7 +51,10 @@ exports = module.exports = function (action) {
     // Accept either: a system-stream id (e.g. ":system:foo"),
     // a legacy cuid v1/v2 id (^c + 24 chars, 25 total), or a
     // cuid2 id (24 lowercase alphanumeric, first char a letter).
-    schema.properties.id.pattern = '(?=^\\:[a-z0-9-]+\\:)(^\\:[a-z0-9-]+\\:[a-z0-9A-Z-]{1,256})|(^c[a-z0-9-]{24}$)|(^[a-z][a-z0-9]{23}$)';
+    // The colon is not a regex special character, so it doesn't need escaping.
+    // ajv compiles patterns with the `u` (unicode) flag, which rejects the
+    // `\:` escape z-schema used to tolerate. Plain `:` works in both worlds.
+    schema.properties.id.pattern = '(?=^:[a-z0-9-]+:)(^:[a-z0-9-]+:[a-z0-9A-Z-]{1,256})|(^c[a-z0-9-]{24}$)|(^[a-z][a-z0-9]{23}$)';
     // only allow "files" (raw file data) on create; no further checks as it's
     // created internally
     schema.properties.files = array(object({}));

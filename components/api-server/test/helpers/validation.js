@@ -11,8 +11,8 @@
 const ErrorIds = require('errors').ErrorIds;
 const Action = require('../../src/schema/Action');
 const encryption = require('utils').encryption;
-const Validator = require('z-schema');
-const validator = new Validator();
+const { jsonValidator } = require('utils');
+const validator = jsonValidator();
 const assert = require('node:assert');
 const util = require('util');
 const _ = require('lodash');

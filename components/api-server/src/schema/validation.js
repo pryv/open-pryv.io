@@ -4,9 +4,15 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const Validator = require('z-schema'); const validator = new Validator({
-  breakOnFirstError: false
-});
+
+// Backed by the in-house jsonValidator (ajv-draft-04 under the hood,
+// z-schema-shaped errors on the surface). See
+// components/utils/src/jsonValidator.js. business/src/types.js and the
+// test-side validators still use z-schema directly — those will follow in
+// a subsequent step once this site stabilises in production.
+const createValidator = require('utils').jsonValidator;
+const validator = createValidator({ breakOnFirstError: false });
+
 /**
  * Validates the object against the JSON-schema definition.
  *
@@ -14,18 +20,19 @@ const Validator = require('z-schema'); const validator = new Validator({
  * @param schema
  * @param callback
  */
-exports.validate = validator.validate.bind(validator);
+exports.validate = validator.validate;
 /**
  * Validates the given JSON-schema definition.
  *
  * @param schema
  * @param callback
  */
-exports.validateSchema = validator.validateSchema.bind(validator);
+exports.validateSchema = validator.validateSchema;
 /**
  * To use after using validate synchronuously
  */
-exports.getLastError = validator.getLastError.bind(validator);
+exports.getLastError = validator.getLastError;
+
 // Tries to type-coerce properties of the given `object` according to the
 // settings. Iterates in shallow manner over the keys of `settings`, coercing
 // the values of the same key in `object` to the type indicated by the value
@@ -36,45 +43,16 @@ exports.getLastError = validator.getLastError.bind(validator);
 // Values that are not a string in `object` will not be touched.
 //
 // Allowed types are 'boolean', 'number' and 'array'.
-//
-// Example:
-//
-//   const object = { a: 'true', 'b': '2343', c: 'foobar' };
-//   const types = { a: 'boolean', b: 'number' }
-//   tryCoerceStringValues(object, types)
-//
-//   // object is now
-//   {
-//     a: true,
-//     b: 2343,
-//     c: 'foobar'
-//   }
-//
-/**
- * @param {{
- *     [x: string]: unknown;
- *   }} object
- * @param {{
- *     [x: string]: string;
- *   }} settings
- * @returns {void}
- */
 function tryCoerceStringValues (object, settings) {
   for (const key of Object.keys(settings)) {
     const type = settings[key];
     const value = object[key];
-    // Do not touch null, undefined or things that aren't a string.
     if (value == null) { continue; }
     if (typeof value !== 'string') { continue; }
-    // Obtain new value from coercion.
     object[key] = tryCoerceValue(value, type);
   }
   function tryCoerceValue (value, type) {
-    // Cannot declare these inside the case, because javascript.
     let newNumber;
-    // DEFENSIVE Do not touch null, undefined or things that aren't a string.
-    // Yes, we have done this above, this  time we refine types for the flow
-    // checker.
     if (value == null) { return value; }
     if (typeof value !== 'string') { return value; }
     switch (type) {
@@ -89,9 +67,6 @@ function tryCoerceStringValues (object, settings) {
       case 'array':
         return [value];
     }
-    // assert: type not in ['boolean', 'number', 'array']
-    //  (since we're returning early above)
-    // Unknown type, leave the value as it is.
     return value;
   }
 }

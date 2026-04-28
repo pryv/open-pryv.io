@@ -5,9 +5,7 @@
  * Refer to LICENSE file
  */
 const fs = require('fs');
-const { deepMerge } = require('utils');
-const { fromCallback } = require('utils');
-const ZSchemaValidator = require('z-schema');
+const { deepMerge, fromCallback, jsonValidator } = require('utils');
 let defaultTypes = require('./types/event-types.default.json');
 const errors = require('./types/errors');
 const SeriesRowType = require('./types/series_row_type');
@@ -45,7 +43,7 @@ class TypeValidator {
    * @returns {Promise<any>}
    */
   async validateWithSchema (content, schema) {
-    const validator = new ZSchemaValidator();
+    const validator = jsonValidator();
     await new Promise((resolve, reject) => {
       validator.validate(content, schema, (err) => err ? reject(err) : resolve());
     });
@@ -83,7 +81,7 @@ class TypeValidator {
 class TypeRepository {
   _validator;
   constructor () {
-    this._validator = new ZSchemaValidator();
+    this._validator = jsonValidator();
   }
 
   /**
