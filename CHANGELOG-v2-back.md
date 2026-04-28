@@ -1,5 +1,15 @@
 # Changelog - Internal (no API impact)
 
+## `superagent` → native `fetch` complete; `superagent` moved to `devDependencies`
+
+- **CHANGE** `components/api-server/src/methods/helpers/mailing.js` — `_sendmail()` uses native `fetch`. Callback contract preserved (`cb(err, res)`); `parseError()` now also matches `ENOTFOUND`/`ECONNREFUSED` in the unreachable-endpoint branch since native fetch's reject messages differ from superagent's.
+- **CHANGE** `components/business/src/mfa/Service.js` — `_makeRequest()` uses native `fetch`, JSON-encoding non-string POST bodies and explicitly throwing on `!res.ok` so the existing `try/catch → invalidOperation('mfa-sms-provider-error')` translation still fires. Consumers (`SingleService`, `ChallengeVerifyService`) `await` without reading the response body, so the swap is transparent at call sites.
+- **DEP** `nock` bumped from `^13.2.9` to `^14.0.13` (latest stable). v14's headline feature is native `fetch` interception via `@mswjs/interceptors`, which is what unblocked the two swaps above. Engine constraint `>=18.20.0 <20 || >=20.12.1` is satisfied by Node 24. No test API surface change required — `nock(host).post(...).reply(...)` chain works identically.
+- **FIX** `components/api-server/test/mfa-seq.test.js` — `nock.enableNetConnect('127.0.0.1')` widened to `enableNetConnect(/127\.0\.0\.1|localhost/)`. nock v14 intercepts native `fetch` too, and the rqlite client (`DBrqlite.query`/`execute`) connects to `localhost:4001` — `'127.0.0.1'` and `'localhost'` are not aliased by the allowlist.
+- **DEP** `superagent` moved from `dependencies` to `devDependencies` (still needed by `components/test-helpers/src/{request,parallelTestHelper}.js`). Production runtime no longer pulls `superagent` — and therefore no longer pulls its transitive `formidable@2.1.5`. `npm ls formidable --omit=dev` is now empty; `formidable` survives only via the test surface.
+- Local validation: PG `just test all` → 1742 / 0; Mongo `just test-mongo all` → 1734 / 0 (one pre-existing flake `[AUTH] [AU01] [FMJH]` on concurrent login race, not caused by this slice — re-runs cleanly).
+- Closes Plan 52 Phase 3.S.2 (combined with the previous Phase 3.S.1 commit, all four production `superagent` call sites are now on native `fetch`). Phase 3.F (formidable cleanup) auto-closed: production dep graph is `formidable`-free.
+
 ## `superagent` → native `fetch` for `business/types.js` and `business/webhooks/Webhook.js`
 
 - **CHANGE** `components/business/src/types.js` — `TypeRepository.tryUpdate()` now fetches the remote event-types definition via Node's native `fetch` instead of `superagent`. Throws an explicit `Error("Event types fetch failed: HTTP <status> <statusText>")` on non-2xx so the existing `try/catch → unavailableError(err)` path still triggers. No behavior change at the call sites.

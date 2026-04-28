@@ -80,8 +80,10 @@ describe('[MFAA] MFA acceptance (seq)', function () {
     // Block any unmatched outgoing HTTP so missing nock mocks fail fast
     // instead of hanging on a fake SMS endpoint.
     nock.disableNetConnect();
-    // Allow supertest to talk to the in-memory Express app.
-    nock.enableNetConnect('127.0.0.1');
+    // Allow supertest (Express app) and the local rqlite PlatformDB on :4001.
+    // nock@^14 intercepts native fetch too, so 'localhost' must be explicit
+    // alongside '127.0.0.1' — they are not aliased by the allowlist.
+    nock.enableNetConnect(/127\.0\.0\.1|localhost/);
   });
 
   beforeEach(async function () {

@@ -2,7 +2,7 @@
   "name": "open-pryv.io",
   "version": "2.0.0-pre.2",
   "private": true,
-  "description": "Pryv.io v2 open-source core \u2014 user data, events, streams, accesses, webhooks",
+  "description": "Pryv.io v2 open-source core — user data, events, streams, accesses, webhooks",
   "homepage": "https://pryv.com",
   "repository": {
     "type": "git",
@@ -17,7 +17,7 @@
     ]
   },
   "scripts": {
-    "test": "echo 'This project doesn\u2019t use npm scripts \u2013 enter `just` for the available development commands\n' && exit 1"
+    "test": "echo 'This project doesn’t use npm scripts – enter `just` for the available development commands\n' && exit 1"
   },
   "resolutions": {
     "**/bl": "^2.2.1",
@@ -65,7 +65,6 @@
     "slug": "^5.3.0",
     "socket.io": "^4.6.1",
     "socketio-wildcard": "^2.0.0",
-    "superagent": "^8.0.3",
     "unix-dgram": "2.0.6",
     "unix-timestamp": "^1.0.3",
     "url": "^0.11.0",
@@ -80,20 +79,21 @@
     "concurrently": "^7.6.0",
     "date-utils": "latest",
     "globals": "^16.0.0",
+    "lodash": "^4.17.4",
     "mocha": "^10.1.0",
     "moment": "^2.29.4",
     "mongodb-core": "^3.2.7",
     "neostandard": "^0.12.2",
-    "nock": "^13.2.9",
+    "nock": "^14.0.13",
     "nyc": "^15.1.0",
     "qs": "^6.11.0",
     "should": "^13.2.3",
     "sinon": "^14.0.2",
     "socket.io-client": "^4.6.1",
     "source-licenser": "^2.0.5",
+    "superagent": "^8.0.3",
     "supertest": "^6.3.1",
-    "temp": "^0.9.4",
-    "lodash": "^4.17.4"
+    "temp": "^0.9.4"
   },
   "optionalDependencies": {
     "newrelic": "^12.0.0"

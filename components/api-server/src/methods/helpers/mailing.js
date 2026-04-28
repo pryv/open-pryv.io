@@ -4,7 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const request = require('superagent');
 const errors = require('errors').factory;
 
 /**
@@ -125,32 +124,34 @@ function _sendmailInProcess (emailSettings, template, recipient, subs, lang, cal
  * @returns {void}
  */
 function _sendmail (url, data, cb) {
-  request
-    .post(url)
-    .send(data)
-    .end((err, res) => {
-      if (err != null || (res != null && !res.ok)) {
-        return cb(parseError(url, err, res));
-      }
-      cb(null, res);
-    });
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  }).then(async (res) => {
+    let body = null;
+    try { body = await res.json(); } catch (_) { /* non-JSON response */ }
+    if (!res.ok) return cb(parseError(url, null, { ok: res.ok, status: res.status, body }));
+    cb(null, { ok: res.ok, status: res.status, body });
+  }, (err) => {
+    cb(parseError(url, err, null));
+  });
 }
 /**
  * @returns {any}
  */
 function parseError (url, err, res) {
-  // 1. Mail service failed
+  // 1. Mail service answered with an error payload
   if (res != null && res.body != null && res.body.error != null) {
     const baseMsg = 'Sending email failed, mail-service answered with the following error:\n';
     return errors.unexpectedError(baseMsg + res.body.error);
   }
-  // 2. Superagent failed
-  const errorMsg = err.message;
+  // 2. HTTP-layer failure (fetch reject or non-2xx without error body)
+  const errorMsg = err != null ? err.message : `HTTP ${res?.status ?? 'unknown'}`;
   let baseMsg = `Sending email failed while trying to reach mail-service at: ${url}.\n`;
-  // 2.1 Because of SSL certificates
   if (errorMsg.match(/certificate/i)) {
     baseMsg += 'Trying to do SSL but certificates are invalid: ';
-  } else if (errorMsg.match(/not found/i)) { // 2.2 Because of unreachable url
+  } else if (errorMsg.match(/not found|ENOTFOUND|ECONNREFUSED/i)) {
     baseMsg += 'Endpoint seems unreachable: ';
   }
   return errors.unexpectedError(baseMsg + errorMsg);

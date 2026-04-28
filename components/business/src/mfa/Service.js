@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-const request = require('superagent');
 const { getLogger } = require('@pryv/boiler');
 const errors = require('errors').factory;
 
@@ -56,18 +55,31 @@ class Service {
    * @param {string} url
    * @param {Object} headers
    * @param {string|Object} body
-   * @returns {Promise<superagent.Response>}
+   * @returns {Promise<Response>}
    */
   async _makeRequest (method, url, headers, body) {
     try {
+      const init = { method, headers: { ...headers } };
       if (method === 'POST') {
-        return await request.post(url).set(headers).send(body);
+        if (body != null && typeof body !== 'string') {
+          init.body = JSON.stringify(body);
+          if (init.headers['Content-Type'] == null) {
+            init.headers['Content-Type'] = 'application/json';
+          }
+        } else {
+          init.body = body;
+        }
       }
-      return await request.get(url).set(headers);
+      const res = await fetch(url, init);
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status} ${res.statusText}${errBody ? ` — ${errBody}` : ''}`);
+      }
+      return res;
     } catch (error) {
       this.logger.error(
         `MFA SMS provider request failed: ${method} ${url}`,
-        { error: error.message, body: error.response?.body }
+        { error: error.message }
       );
       throw errors.invalidOperation(
         `MFA SMS provider error: ${error.message}`,
