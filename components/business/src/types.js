@@ -6,7 +6,6 @@
  */
 const fs = require('fs');
 const { deepMerge } = require('utils');
-const superagent = require('superagent');
 const bluebird = require('bluebird');
 const ZSchemaValidator = require('z-schema');
 let defaultTypes = require('./types/event-types.default.json');
@@ -207,10 +206,13 @@ class TypeRepository {
         eventTypesDefinition = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
       } else {
         const USER_AGENT_PREFIX = 'Pryv.io/';
-        const res = await superagent
-          .get(sourceURL)
-          .set('User-Agent', USER_AGENT_PREFIX + apiVersion);
-        eventTypesDefinition = res.body;
+        const res = await fetch(sourceURL, {
+          headers: { 'User-Agent': USER_AGENT_PREFIX + apiVersion }
+        });
+        if (!res.ok) {
+          throw new Error(`Event types fetch failed: HTTP ${res.status} ${res.statusText}`);
+        }
+        eventTypesDefinition = await res.json();
       }
     } catch (err) {
       unavailableError(err);

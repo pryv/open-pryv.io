@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## `superagent` → native `fetch` for `business/types.js` and `business/webhooks/Webhook.js`
+
+- **CHANGE** `components/business/src/types.js` — `TypeRepository.tryUpdate()` now fetches the remote event-types definition via Node's native `fetch` instead of `superagent`. Throws an explicit `Error("Event types fetch failed: HTTP <status> <statusText>")` on non-2xx so the existing `try/catch → unavailableError(err)` path still triggers. No behavior change at the call sites.
+- **CHANGE** `components/business/src/webhooks/Webhook.js` — `makeCall()` uses native `fetch`. To preserve the prior superagent semantics consumed by `runOnce()` and the `webhooks.test` API method, `makeCall()` now explicitly throws on `!res.ok` with `err.response = { status }` attached; native `fetch` does not throw on 4xx/5xx by default. Removed the unused `request = require('superagent')` import.
+- **NOT IN THIS SLICE**: `components/api-server/src/methods/helpers/mailing.js` and `components/business/src/mfa/Service.js` still use `superagent`. Both call sites are exercised by tests that intercept HTTP via `nock@^13.5.6`, which does not intercept Node 24's native `fetch` (Undici dispatcher). Migrating these two requires either upgrading to `nock@^14` (native fetch interceptor) or switching the affected tests to a real local HTTP server. Tracked in the next Phase 3.S.2 slice; out of scope here.
+- `superagent` therefore stays in runtime `dependencies` for now. The two completed swaps still reduce the production runtime's reliance on it.
+- Local validation: PG `just test all` → 1742 / 0; Mongo `just test-mongo all` → 1735 / 0 (both match Phase 3.L baseline).
+
 ## `@pryv/boiler` vendored as an in-tree workspace package
 
 - **NEW** `components/boiler/` workspace package — exact copy of the `@pryv/boiler@1.2.4` source tree (8 files, 4 src/ files + lib/nconf-yaml + README + LICENSE + package.json). Resolves under the existing npm-workspace symlink at `node_modules/@pryv/boiler` so every `require('@pryv/boiler')` call site continues to work unchanged.

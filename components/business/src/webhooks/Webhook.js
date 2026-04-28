@@ -4,7 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-const request = require('superagent');
 const { deepMerge } = require('utils');
 
 function pick (obj, keys) {
@@ -183,15 +182,24 @@ class Webhook {
    * @returns {Promise<any>}
    */
   async makeCall (messages) {
-    const res = await request.post(this.url).send({
-      messages,
-      meta: {
-        apiVersion: this.apiVersion,
-        serverTime: timestamp.now(),
-        serial: this.serial
-      }
+    const res = await fetch(this.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages,
+        meta: {
+          apiVersion: this.apiVersion,
+          serverTime: timestamp.now(),
+          serial: this.serial
+        }
+      })
     });
-    return res;
+    if (!res.ok) {
+      const err = new Error(`HTTP ${res.status}`);
+      err.response = { status: res.status };
+      throw err;
+    }
+    return { status: res.status };
   }
 
   /**
