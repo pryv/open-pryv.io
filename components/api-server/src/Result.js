@@ -9,7 +9,6 @@ const MultiStream = require('multistream');
 const DrainStream = require('./methods/streams/DrainStream');
 const ArraySerializationStream = require('./methods/streams/ArraySerializationStream');
 const SingleObjectSerializationStream = require('./methods/streams/SingleObjectSerializationStream');
-const async = require('async');
 
 const { Transform } = require('stream');
 
@@ -239,21 +238,19 @@ class Result {
     const _private = this._private;
     const streamsArray = _private.streamsArray;
     const resultObj = {};
-    async.forEachOfSeries(streamsArray, (elementDef, i, done) => {
+    let i = 0;
+    function nextElement (err) {
+      if (err) return callback(err);
+      if (i >= streamsArray.length) return callback(null, resultObj);
+      const elementDef = streamsArray[i++];
       const drain = new DrainStream({ limit: _private.arrayLimit, isArray: elementDef.isArray }, (err, list) => {
-        if (err) {
-          return done(err);
-        }
+        if (err) return nextElement(err);
         resultObj[elementDef.name] = list;
-        done();
+        nextElement();
       });
       elementDef.stream.pipe(drain);
-    }, (err) => {
-      if (err) {
-        return callback(err);
-      }
-      callback(null, resultObj);
-    });
+    }
+    nextElement();
   }
 
   /**

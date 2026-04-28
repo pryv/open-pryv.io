@@ -7,7 +7,6 @@
 
 const utils = require('utils');
 const errors = require('errors').factory;
-const async = require('async');
 const fs = require('fs');
 const commonFns = require('./helpers/commonFunctions');
 const methodsSchema = require('../schema/eventsMethods');
@@ -703,22 +702,20 @@ module.exports = async function (api) {
     result.event.attachments = setFileReadToken(context.access, result.event.attachments);
     next();
   }
-  function deleteWithData (context, params, result, next) {
-    async.series([
-      async function deleteEvent () {
-        await mall.events.delete(context.user.id, context.oldEvent);
-        result.eventDeletion = { id: params.id };
-      },
-      async function updateStorage () {
-        const storagedUsed = await usersRepository.getStorageUsedByUserId(context.user.id);
-        // If needed, approximately update account storage size
-        if (!storagedUsed || !storagedUsed.attachedFiles) {
-          return;
-        }
+  async function deleteWithData (context, params, result, next) {
+    try {
+      await mall.events.delete(context.user.id, context.oldEvent);
+      result.eventDeletion = { id: params.id };
+      const storagedUsed = await usersRepository.getStorageUsedByUserId(context.user.id);
+      // If needed, approximately update account storage size
+      if (storagedUsed && storagedUsed.attachedFiles) {
         storagedUsed.attachedFiles -= getTotalAttachmentsSize(context.event.attachments);
         await usersRepository.updateOne(context.user, storagedUsed, 'system');
       }
-    ], next);
+      next();
+    } catch (err) {
+      next(err);
+    }
   }
   function getTotalAttachmentsSize (attachments) {
     if (attachments == null) {

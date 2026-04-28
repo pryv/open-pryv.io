@@ -1,5 +1,12 @@
 # Changelog - Internal (no API impact)
 
+## Drop `async` (callback control-flow lib) from production runtime
+
+- **CHANGE** 9 production files migrated from `async.series` / `forEachSeries` / `forEachOfSeries` / `until` to native `async`/`await` + for-of/while loops. Affected: `components/api-server/src/API.js` (forEachSeries → manual `runNextMethod` chain to preserve tracing+error semantics), `components/api-server/src/Result.js` (forEachOfSeries → `nextElement` chain), `components/api-server/src/methods/accesses.js` (forEachSeries + nested series → IIFE async/await), `components/api-server/src/methods/events.js` (series → linear async/await), `components/api-server/src/methods/profile.js` (series → callback chain), `components/hfs-server/src/metadata_cache.js` (series of mixed sync+promise → linear async/await; deleted unused `toCallback` helper), `components/test-helpers/src/{InstanceManager,DynamicInstanceManager}.js` (until → while loop), `components/test-helpers/src/data.js` (5 series sites → IIFE async/await; introduced tiny `runSeries` helper for `dumpCurrent`/`restoreFromDump` which mix callback-style step lists).
+- **MOVE** `async` from `dependencies` to `devDependencies`. Several `*-seq.test.js` files still use `async.series` / `async.eachSeries`; migrating those is a test-infra refactor we can do alongside the TS+ESM conversion.
+- `npm ls async --omit=dev` shows no direct dep; `async@3.2.6` remains as a transitive of `nconf` (boiler) and `winston` — out of scope here.
+- Local validation: PG `just test all` → 1742 / 0; Mongo `just test-mongo all` → 1735 / 0.
+
 ## `cuid` → `@paralleldrive/cuid2` for production ID minting
 
 - **DEP** Added `@paralleldrive/cuid2@^3.3.0` to `dependencies`. Moved `cuid@^2.1.8` from `dependencies` to `devDependencies` — test-helpers still uses `cuid.slug()` (cuid2 has no `.slug()` equivalent) so cuid is kept as a dev-only dep.

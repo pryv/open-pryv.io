@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 
-const async = require('async');
 const APIError = require('errors').APIError;
 const errors = require('errors').factory;
 const Result = require('./Result');
@@ -221,7 +220,11 @@ class API {
     });
 
     let unanmedCount = 0;
-    async.forEachSeries(methodList, function (currentFn, next) {
+    let i = 0;
+    function runNextMethod (err) {
+      if (err != null) return finalize(err);
+      if (i >= methodList.length) return finalize(null);
+      const currentFn = methodList[i++];
       // -- Tracing by Function
       const fnName = 'fn:' + (currentFn.name || methodId + '.unamed' + unanmedCount++);
       tracing.startSpan(fnName, {}, apiSpanName);
@@ -229,16 +232,15 @@ class API {
         if (err != null) tracing.setError(fnName, err);
         tracing.finishSpan(fnName);
         if (err != null) result.closeTracing(); // close open span for result that was left open
-        next(err);
+        runNextMethod(err);
       };
-      // ---
-
       try {
         currentFn(context, params, result, nextCloseSpan);
       } catch (err) {
         nextCloseSpan(err);
       }
-    }, function (err) {
+    }
+    function finalize (err) {
       if (err != null) {
         tracing.setError(apiSpanName, err);
         tracing.finishSpan(apiSpanName);
@@ -251,7 +253,8 @@ class API {
       }
       tracing.finishSpan(apiSpanName);
       callback(null, result);
-    });
+    }
+    runNextMethod();
   }
 
   // ----------------------------------------------------------- call statistics

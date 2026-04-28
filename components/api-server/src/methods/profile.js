@@ -5,7 +5,6 @@
  * Refer to LICENSE file
  */
 const errors = require('errors').factory;
-const async = require('async');
 const commonFns = require('./helpers/commonFunctions');
 const methodsSchema = require('../schema/profileMethods');
 
@@ -63,27 +62,23 @@ module.exports = async function (api) {
     updateProfile);
 
   function updateProfile (context, params, result, next) {
-    async.series([
-      function checkExisting (stepDone) {
-        userProfileStorage.findOne(context.user, { id: params.id }, null, function (err, profileSet) {
-          if (err) { return stepDone(errors.unexpectedError(err)); }
-
-          if (profileSet) { return stepDone(); }
-
-          // item missing -> create it
-          userProfileStorage.insertOne(context.user, { id: params.id, data: {} }, stepDone);
+    userProfileStorage.findOne(context.user, { id: params.id }, null, function (err, profileSet) {
+      if (err) return next(errors.unexpectedError(err));
+      if (profileSet) return doUpdate();
+      // item missing -> create it
+      userProfileStorage.insertOne(context.user, { id: params.id, data: {} }, function (err) {
+        if (err) return next(err);
+        doUpdate();
+      });
+    });
+    function doUpdate () {
+      userProfileStorage.updateOne(context.user, { id: params.id }, { data: params.update },
+        function (err, updatedProfile) {
+          if (err) return next(errors.unexpectedError(err));
+          result.profile = updatedProfile.data;
+          next();
         });
-      },
-      function update (stepDone) {
-        userProfileStorage.updateOne(context.user, { id: params.id }, { data: params.update },
-          function (err, updatedProfile) {
-            if (err) { return stepDone(errors.unexpectedError(err)); }
-
-            result.profile = updatedProfile.data;
-            stepDone();
-          });
-      }
-    ], next);
+    }
   }
 
   function setAppProfile (context, params, result, next) {

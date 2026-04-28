@@ -10,7 +10,6 @@
  * Enables parallel test execution by allocating unique ports per instance
  */
 
-const async = require('async');
 const EventEmitter = require('events').EventEmitter;
 const fs = require('fs');
 const spawn = require('child_process').spawn;
@@ -204,12 +203,15 @@ function DynamicInstanceManager (config, options = {}) {
       }
     });
 
-    async.until(isReadyOrExited, function (next) { setTimeout(next, 100); }, function () {
+    (async () => {
+      while (!isReadyOrExited()) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
       if (serverExited && exitCode > 0) {
         return callback(new Error('Server failed (code ' + exitCode + ')'));
       }
       callback();
-    });
+    })();
 
     function isReadyOrExited () {
       return serverReady || serverExited;

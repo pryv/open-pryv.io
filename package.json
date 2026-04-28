@@ -31,7 +31,6 @@
     "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
     "@pryv/stable-object-representation": "^1.1.4",
     "acme-client": "^5.4.0",
-    "async": "^2.6.4",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^11.8.1",
     "bluebird": "^3.5.0",
@@ -61,6 +60,7 @@
     "z-schema": "^5.0.4"
   },
   "devDependencies": {
+    "async": "^2.6.4",
     "awaiting": "^3.0.0",
     "backloop.dev": "^2.0.5",
     "chai": "^4.3.7",
