@@ -6,7 +6,6 @@
  */
 const errors = require('errors').factory;
 const business = require('business');
-const opentracing = require('opentracing');
 const cls = require('../tracing/cls');
 /**
  * @param {Context} ctx
@@ -49,10 +48,9 @@ const TAG_ERROR_MESSAGE = 'error.message';
  */
 function storeErrorInTrace (err) {
   try {
-    const Tags = opentracing.Tags;
     const root = cls.getRootSpan();
     if (root == null) { return; }
-    root.setTag(Tags.ERROR, true);
+    root.setTag('error', true);
     if (err.message != null) { root.setTag(TAG_ERROR_MESSAGE, err.message); }
   } catch (err) {
     // IGNORE

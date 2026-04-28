@@ -1,5 +1,26 @@
 # Changelog - Internal (no API impact)
 
+## Tracing as a no-op shim; drop jaeger-client + cls-hooked + opentracing
+
+- **CHANGE** `components/tracing/src/Tracing.js` — collapsed to a single `DummyTracing` no-op class. The exported `Tracing` and `DummyTracing` symbols both now point at the same no-op. The architectural slot is preserved so a future tracer (e.g. an OpenTelemetry adapter) can plug in here without touching consumers.
+- **CHANGE** `components/tracing/src/index.js` — dropped the `isTracingEnabled` / `launchTags` config branches; `initRootSpan` always returns a `DummyTracing` instance. `tracingMiddleware` simplified to `(req, res, next) => { req.tracing ??= new DummyTracing(); next(); }`.
+- **CHANGE** `components/tracing/src/databaseTracer.js` — replaced the Jaeger-driven monkey-patcher with `module.exports = function patch () {};`. Callers in `components/storage/src/index.js` and `storages/index.js` need no edits.
+- **CHANGE** `components/tracing/src/HookedTracer.js` — replaced with a no-op `HookedTracer` class.
+- **CHANGE** `components/hfs-server/src/tracing/cls.js` — replaced with a no-op `Cls` class. `setRootSpan`/`getRootSpan`/`startExpressContext` all return null or pass through.
+- **CHANGE** `components/hfs-server/src/tracing/middleware/trace.js` — passthrough that calls `next()`.
+- **CHANGE** `components/hfs-server/src/application.js` — dropped `opentracing` and `jaeger-client` imports; `produceTracer` removed; replaced with an inline `NoopTracer` / `NoopSpan` minimal stub used by `Context#childSpan`.
+- **CHANGE** `components/hfs-server/src/server.js` — removed the `if (traceEnabled)` block that registered the trace+cls middleware. The `traceEnabled` config flag and the `clsWrapFactory` / `tracingMiddlewareFactory` imports are gone.
+- **CHANGE** `components/hfs-server/src/web/controller.js` — `storeErrorInTrace` no longer reads `opentracing.Tags.ERROR`; it tags the root span (now always null) with the literal string `'error'`. With cls returning null, the function early-returns; behaviour is unchanged from the prior `trace.enable: false` default.
+- **DROP** from `package.json` `dependencies`:
+  - `jaeger-client`
+  - `cls-hooked`
+  - `opentracing`
+  - `shimmer`
+- `npm ls jaeger-client opentracing cls-hooked shimmer --omit=dev` is empty.
+- **AGENTS.md** truth #6 rewritten to describe the slot-shim model and direct future tracer authors to `components/tracing/src/Tracing.js`.
+- New Relic APM (Plan 38) is the active observability path and runs in parallel, not through `components/tracing/`. Operators using New Relic see no change. Operators relying on `trace.enable: true` (none we're aware of) will find the flag is now ignored — Jaeger is gone.
+- Local validation: PG `just test all` → 1742 / 0; Mongo `just test-mongo all` → 1735 / 0.
+
 ## Dependency cleanup batch — Plan 52 Phase 4
 
 - **DROP** `hjson` from `package.json`. Zero call sites in the entire repo (production or test).

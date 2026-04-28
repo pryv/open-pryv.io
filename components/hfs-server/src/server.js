@@ -9,8 +9,6 @@ const express = require('express');
 const util = require('util');
 const middleware = require('middleware');
 const errorsMiddleware = require('./middleware/errors');
-const tracingMiddlewareFactory = require('./tracing/middleware/trace');
-const clsWrapFactory = require('./tracing/middleware/clsWrap');
 const controllerFactory = require('./web/controller');
 const getAuth = require('middleware/src/getAuth');
 const KEY_IP = 'http:ip';
@@ -103,14 +101,8 @@ class Server {
   async setupExpress () {
     const logger = this.logger;
     const config = this.config;
-    const traceEnabled = config.get('trace:enable');
     const app = express();
     app.disable('x-powered-by');
-    if (traceEnabled) {
-      logger.info('Enabling opentracing features.');
-      app.use(clsWrapFactory());
-      app.use(tracingMiddlewareFactory(this.context));
-    }
     app.use(middleware.subdomainToPath([]));
     app.use(middleware.requestTrace(express, logger));
     app.use(express.json({ limit: config.get('uploads:maxSizeMb') + 'mb' }));

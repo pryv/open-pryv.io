@@ -29,8 +29,21 @@ const Context = require('./context');
 const Server = require('./server');
 const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta');
 const accountStreams = require('business/src/system-streams');
-const opentracing = require('opentracing');
-const initTracer = require('jaeger-client').initTracer;
+
+// Tracing shim. See components/tracing/src/Tracing.js for the rationale —
+// New Relic APM (Plan 38) is the active observability path; this layer
+// preserves the architectural slot.
+class NoopSpan {
+  constructor (name) { this.operationName = name; }
+  setTag () {}
+  log () {}
+  finish () {}
+}
+class NoopTracer {
+  startSpan (name) { return new NoopSpan(name); }
+  inject () {}
+}
+
 /**
  * @returns {Promise<any>}
  */
@@ -42,33 +55,12 @@ async function createContext (config) {
     throw new Error('Series storage not available.');
   }
 
-  const tracer = produceTracer(config, getLogger('jaeger'));
+  const tracer = new NoopTracer();
   const typeRepoUpdateUrl = config.get('service:eventTypes');
   const context = new Context(influx, tracer, typeRepoUpdateUrl, config);
   await context.init();
   context.startMetadataUpdater();
   return context;
-}
-// Produce a tracer that allows creating span trees for a subset of all calls.
-//
-/**
- * @returns {any}
- */
-function produceTracer (config, logger) {
-  if (!config.get('trace:enable')) { return new opentracing.Tracer(); }
-  const traceConfig = {
-    serviceName: 'hfs-server',
-    reporter: {
-      logSpans: true
-    },
-    logger,
-    sampler: {
-      type: 'const',
-      param: 1
-    }
-  };
-  const tracer = initTracer(traceConfig);
-  return tracer;
 }
 // The HF application holds references to all subsystems and ties everything
 // together.
