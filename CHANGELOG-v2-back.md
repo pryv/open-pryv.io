@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## `mongodb` driver 4.17 → 7.2 bump
+
+- **DEP** `mongodb` bumped from `^4.11.0` to `^7.2.0`. Three majors of driver: v5 removed callback-style APIs entirely (Promise-only), v6 dropped legacy `findOneAndUpdate` `{ value: doc }` wrapper (returns the doc directly), v7 ships BSON v7 + new connection-string parser + `@mongodb-js/saslprep`.
+- **CHANGE** `storages/engines/mongodb/src/Database.js` — every collection method (`findOne`, `find().toArray()`, `insertOne/Many`, `updateOne/Many`, `findOneAndUpdate`, `deleteOne/Many`, `countDocuments`, `drop`, `listIndexes`, `dropDatabase`) wrapped via two new local helpers `p2c(promise, callback)` / `p2cWithDup(promise, callback)`. The Database class still exposes its callback-shaped public API to consumers (storages/business/api-server) — only the driver-facing internals changed. `findOneAndUpdate` now returns the doc directly: dropped the `r && r.value` indirection. The connection bootstrap no longer issues `db('admin').command({ setFeatureCompatibilityVersion: '6.0' })` — server FCV is an operator concern, not application init (and v7's `confirm: true` requirement breaks against older servers).
+- Connection options (`connectTimeoutMS`, `socketTimeoutMS`, `writeConcern: { j, w }`, `appname`) all forward-compatible.
+- `mongodb-core` was a stale `devDependency` with zero consumers — left in the file for now (separate cleanup if anyone touches it).
+- Local validation: PG `just test all` → 1742 / 0; Mongo `just test-mongo all` → 1735 / 0 (one PG-pool exhaustion flake during the cross-engine run sequence, not a regression — cleared after a `pg_ctl restart -m fast`).
+
 ## Drop `bluebird` from production runtime
 
 - **DROP** `bluebird` from root `package.json` `dependencies`. 26 production files migrated. Pass 1 (8 sites) replaced `bluebird.try` / `bluebird.all` / `bluebird.map` / `bluebird.mapSeries` with native equivalents (`Promise.all`, `Promise.all(arr.map(fn))`, for-of + await). Pass 2 (74 sites) replaced `bluebird.fromCallback((cb) => fn(args, cb))` with a tiny in-tree helper `fromCallback` exposed from `components/utils/`.

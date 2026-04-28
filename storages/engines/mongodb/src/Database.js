@@ -9,6 +9,27 @@ const { setTimeout } = require('timers/promises');
 
 const _internals = require('./_internals');
 
+// mongodb@5+ removed the callback-based driver API; everything is Promise-only.
+// The Database class still exposes a callback shape to the rest of the codebase,
+// so we wrap each driver call. `p2c` is the plain Promise→callback bridge;
+// `p2cWithDup` adds the duplicate-key annotation that several mutation paths
+// rely on (`err.isDuplicate`, `err.isDuplicateIndex`).
+function p2c (promise, callback) {
+  promise.then(
+    (res) => callback(null, res),
+    (err) => callback(err)
+  );
+}
+function p2cWithDup (promise, callback) {
+  promise.then(
+    (res) => callback(null, res),
+    (err) => {
+      Database.handleDuplicateError(err);
+      callback(err);
+    }
+  );
+}
+
 /**
  * @typedef {{
  *   writeConcern: {
@@ -108,7 +129,11 @@ class Database {
     try {
       await this.client.connect();
       this.logger.debug('Connected');
-      await this.client.db('admin').command({ setFeatureCompatibilityVersion: '6.0' }, {});
+      // We previously called `setFeatureCompatibilityVersion: '6.0'` here to
+      // pin the server's feature set. Since MongoDB 7.0 the server requires
+      // `{confirm: true}` on this admin command (and earlier servers reject
+      // that flag with "unknown field"). Server FCV is an operator concern,
+      // not an application boot concern — let the deployment manage it.
       this.db = this.client.db(this.databaseName);
       this.connecting = false;
     } catch (err) {
@@ -219,7 +244,7 @@ class Database {
       return this.count(collectionInfo, {}, callback);
     }
     this.getCollectionSafe(collectionInfo, callback, (collection) => {
-      collection.countDocuments(callback);
+      p2c(collection.countDocuments(), callback);
     });
   }
 
@@ -262,7 +287,7 @@ class Database {
     }
     this.addUserIdIfneed(collectionInfo, query);
     this.getCollectionSafe(collectionInfo, callback, (collection) => {
-      collection.countDocuments(query, callback);
+      p2c(collection.countDocuments(query), callback);
     });
   }
 
@@ -317,7 +342,7 @@ class Database {
   find (collectionInfo, query, options, callback) {
     this.findCursor(collectionInfo, query, options, (err, cursor) => {
       if (err) { return callback(err); }
-      return cursor.toArray(callback);
+      p2c(cursor.toArray(), callback);
     });
   }
 
@@ -351,7 +376,7 @@ class Database {
     }
     this.addUserIdIfneed(collectionInfo, query);
     this.getCollectionSafe(collectionInfo, callback, (collection) => {
-      collection.findOne(query, options || {}, callback);
+      p2c(collection.findOne(query, options || {}), callback);
     });
   }
 
@@ -372,12 +397,7 @@ class Database {
     }
     this.addUserIdIfneed(collectionInfo, item);
     this.getCollectionSafe(collectionInfo, callback, (collection) => {
-      collection.insertOne(item, options, (err, res) => {
-        if (err != null) {
-          Database.handleDuplicateError(err);
-        }
-        callback(err, res);
-      });
+      p2cWithDup(collection.insertOne(item, options), callback);
     });
   }
 
@@ -397,12 +417,7 @@ class Database {
     }
     this.addUserIdIfneed(collectionInfo, items);
     this.getCollectionSafe(collectionInfo, callback, (collection) => {
-      collection.insertMany(items, options, (err, res) => {
-        if (err != null) {
-          Database.handleDuplicateError(err);
-        }
-        callback(err, res);
-      });
+      p2cWithDup(collection.insertMany(items, options), callback);
     });
   }
 
@@ -425,12 +440,7 @@ class Database {
     }
     this.addUserIdIfneed(collectionInfo, query);
     this.getCollectionSafe(collectionInfo, callback, (collection) => {
-      collection.updateOne(query, update, options, (err, res) => {
-        if (err != null) {
-          Database.handleDuplicateError(err);
-        }
-        callback(err, res);
-      });
+      p2cWithDup(collection.updateOne(query, update, options), callback);
     });
   }
 
@@ -452,7 +462,7 @@ class Database {
     }
     this.addUserIdIfneed(collectionInfo, query);
     this.getCollectionSafe(collectionInfo, callback, (collection) => {
-      collection.updateMany(query, update, {}, callback);
+      p2c(collection.updateMany(query, update, {}), callback);
     });
   }
 
@@ -481,13 +491,14 @@ class Database {
     if (collectionInfo.name === 'streams') { tellMeIfStackDoesNotContains(['localUserStreams.js', 'callbackIntegrity'], { for: collectionInfo.name }); }
     this.addUserIdIfneed(collectionInfo, query);
     this.getCollectionSafe(collectionInfo, callback, (collection) => {
-      collection.findOneAndUpdate(query, update, { returnDocument: 'after' }, function (err, r) {
-        if (err != null) {
+      // mongodb v6+ returns the updated doc directly (no `.value` wrapper).
+      collection.findOneAndUpdate(query, update, { returnDocument: 'after' }).then(
+        (r) => callback(null, r),
+        (err) => {
           Database.handleDuplicateError(err);
-          return callback(err);
+          callback(err);
         }
-        callback(null, r && r.value);
-      });
+      );
     });
   }
 
@@ -508,7 +519,7 @@ class Database {
     }
     this.addUserIdIfneed(collectionInfo, query);
     this.getCollectionSafe(collectionInfo, callback, (collection) => {
-      collection.updateOne(query, update, { upsert: true }, callback);
+      p2c(collection.updateOne(query, update, { upsert: true }), callback);
     });
   }
 
@@ -528,7 +539,7 @@ class Database {
     }
     this.addUserIdIfneed(collectionInfo, query);
     this.getCollectionSafe(collectionInfo, callback, (collection) => {
-      collection.deleteOne(query, {}, callback);
+      p2c(collection.deleteOne(query, {}), callback);
     });
   }
 
@@ -548,7 +559,7 @@ class Database {
     }
     this.addUserIdIfneed(collectionInfo, query);
     this.getCollectionSafe(collectionInfo, callback, (collection) => {
-      collection.deleteMany(query, {}, callback);
+      p2c(collection.deleteMany(query, {}), callback);
     });
   }
 
@@ -567,7 +578,7 @@ class Database {
       return this.deleteMany(collectionInfo, {}, callback);
     } else {
       return this.getCollectionSafe(collectionInfo, callback, (collection) => {
-        collection.drop(callback);
+        p2c(collection.drop(), callback);
       });
     }
   }
@@ -587,13 +598,14 @@ class Database {
       delete this.collectionConnectionsCache[collectionInfo.name];
       // Get collection directly without creating indexes
       const collection = this.db.collection(collectionInfo.name);
-      collection.drop((err) => {
-        // Ignore "ns not found" error (collection doesn't exist)
-        if (err && err.codeName !== 'NamespaceNotFound') {
-          return callback(err);
+      collection.drop().then(
+        () => callback(null),
+        (err) => {
+          // Ignore "ns not found" error (collection doesn't exist)
+          if (err && err.codeName !== 'NamespaceNotFound') return callback(err);
+          callback(null);
         }
-        callback(null);
-      });
+      );
     } catch (err) {
       callback(err);
     }
@@ -607,7 +619,7 @@ class Database {
    */
   dropDatabase (callback) {
     this.ensureConnect().then(() => {
-      this.db.dropDatabase(callback);
+      p2c(this.db.dropDatabase(), callback);
     }, callback);
   }
 
@@ -621,7 +633,7 @@ class Database {
    */
   listIndexes (collectionInfo, options, callback) {
     this.getCollectionSafe(collectionInfo, callback, (collection) => {
-      collection.listIndexes(options).toArray(callback);
+      p2c(collection.listIndexes(options).toArray(), callback);
     });
   }
 
