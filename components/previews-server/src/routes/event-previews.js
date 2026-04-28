@@ -184,7 +184,7 @@ module.exports = async function (expressApp, initContextMiddleware, loadAccessMi
       res.status(200).json({ message: 'Clean-up successful.' });
     });
   }
-  const cronJob = new CronJob({
+  const cronJob = CronJob.from({
     cronTime: previewsCacheCleanUpCronTime,
     onTick: function () {
       if (workerRunning) {

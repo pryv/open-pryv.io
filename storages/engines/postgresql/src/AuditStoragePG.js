@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const LRU = require('lru-cache');
+const { LRUCache: LRU } = require('lru-cache');
 const UserAuditDatabasePG = require('./UserAuditDatabasePG');
 const _internals = require('./_internals');
 

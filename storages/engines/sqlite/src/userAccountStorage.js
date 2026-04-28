@@ -14,7 +14,7 @@
 
 const path = require('path');
 const SQLite3 = require('better-sqlite3');
-const LRU = require('lru-cache');
+const { LRUCache: LRU } = require('lru-cache');
 const timestamp = require('unix-timestamp');
 const _internals = require('./_internals');
 const encryption = require('utils').encryption;

@@ -6,7 +6,7 @@
  */
 const async = require('async');
 const bluebird = require('bluebird');
-const LRU = require('lru-cache');
+const { LRUCache: LRU } = require('lru-cache');
 const logger = require('@pryv/boiler').getLogger('metadata_cache');
 const storage = require('storage');
 const MethodContext = require('business').MethodContext;

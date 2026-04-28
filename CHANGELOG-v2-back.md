@@ -1,5 +1,11 @@
 # Changelog - Internal (no API impact)
 
+## `lru-cache` 7.14 → 11.0; `cron` 2.4 → 4.4
+
+- **DEP** `lru-cache` bumped from `^7.14.1` to `^11.0.0`. The default export is now `{ LRUCache }` (renamed in v8). Six call sites updated with the alias trick `const { LRUCache: LRU } = require('lru-cache')` so the existing `new LRU({ … })` constructions stay verbatim. Affected: `components/cache/src/index.js`, `components/hfs-server/src/metadata_cache.js`, `components/hfs-server/src/web/op/store_series_batch.js`, `storages/engines/postgresql/src/AuditStoragePG.js`, `storages/engines/sqlite/src/userAccountStorage.js`, `storages/engines/sqlite/src/userSQLite/Storage.js`. Constructor options (`max`, `ttl`, `dispose(value, key)`) are forward-compatible.
+- **DEP** `cron` bumped from `^2.4.4` to `^4.4.0`. v4 changed the constructor: `new CronJob({ cronTime, onTick })` no longer works (the constructor is positional in v4); use `CronJob.from({ cronTime, onTick })` instead. Single call site updated in `components/previews-server/src/routes/event-previews.js`. Cron pattern format unchanged (6-field with seconds slot still supported).
+- Local validation: PG `just test all` → 1742 / 0; Mongo `just test-mongo all` → 1735 / 0.
+
 ## Tracing as a no-op shim; drop jaeger-client + cls-hooked + opentracing
 
 - **CHANGE** `components/tracing/src/Tracing.js` — collapsed to a single `DummyTracing` no-op class. The exported `Tracing` and `DummyTracing` symbols both now point at the same no-op. The architectural slot is preserved so a future tracer (e.g. an OpenTelemetry adapter) can plug in here without touching consumers.

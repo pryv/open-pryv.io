@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 const { getLogger, getConfigUnsafe } = require('@pryv/boiler');
-const LRU = require('lru-cache');
+const { LRUCache: LRU } = require('lru-cache');
 const _caches = {};
 const MAX_PER_CACHE_SIZE = 2000; // maximum elements for each cache (namespace)
 let synchro = null;

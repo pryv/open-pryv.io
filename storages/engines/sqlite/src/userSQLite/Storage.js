@@ -6,7 +6,7 @@
  */
 const path = require('path');
 const fs = require('fs/promises');
-const LRU = require('lru-cache');
+const { LRUCache: LRU } = require('lru-cache');
 
 const UserDatabase = require('./UserDatabase');
 const migrations = require('./migrations');

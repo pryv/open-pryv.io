@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 const bluebird = require('bluebird');
-const LRU = require('lru-cache');
+const { LRUCache: LRU } = require('lru-cache');
 const errors = require('errors').factory;
 const business = require('business');
 const BatchRequest = business.series.BatchRequest;
