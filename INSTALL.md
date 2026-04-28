@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Node.js** 22.x
+- **Node.js** 24.x (matches `engines.node` in `package.json`)
 - **Database**: PostgreSQL 14+ (recommended) or MongoDB 4.2+
 - **rqlite** — distributed SQLite used for the platform DB. The `rqlited` binary is bundled under `bin-ext/` after `just setup-dev-env` (Docker image: `/app/bin-ext/rqlited`). `bin/master.js` spawns and supervises it; no manual install needed in single- or multi-core deployments.
 - **SQLite** (bundled — used for audit and per-user account/index storage)
@@ -358,6 +358,15 @@ dokku docker-options:add <app> deploy,run "-p 53:5353/udp"
 
 For most Dokku deployments the simpler path is **dnsLess mode** — set `dnsLess.isActive: true` + `dnsLess.publicUrl: https://<reg-fqdn>` in `override-config.yml` and let the reverse proxy terminate TLS as usual.
 
+**Bare-metal embedded DNS (non-Docker)** — when `bin/master.js` runs as a non-root user (typical) and `dns.port: 53`, Linux refuses the bind unless the `node` binary carries `cap_net_bind_service`. Grant it once per host (and **after every Node upgrade — `apt install nodejs` wipes file capabilities**):
+
+```bash
+sudo setcap 'cap_net_bind_service=+ep' "$(which node)"
+sudo getcap "$(which node)"   # expect: cap_net_bind_service=ep
+```
+
+Without the cap, the embedded DNS server hangs silently — `dns2`'s `listen()` promise waits for a `'listening'` event that the failing UDP server never emits, and `master.js` stops mid-init right after `TCP pub/sub broker started`, never forking workers. (Docker images don't need this — `node` runs as PID 1 / root inside the container.)
+
 **Native HTTPS (ports 80 / 443)** when running ACME directly inside the
 container (`letsEncrypt.enabled: true`) needs the same publishing dance —
 `dokku ports:add` only exposes ports declared in the Dockerfile's `EXPOSE`.
@@ -374,6 +383,22 @@ Dokku terminate TLS — `letsEncrypt.enabled` is purely opt-in.
 
 
 ## Upgrades
+
+### Node major bumps (v2 → v2)
+
+When a release ticks the `engines.node` major (e.g. 22.x → 24.x), upgrade
+the runtime on every host **before** restarting the new code. On
+NodeSource-based installs:
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+
+If you're running native HTTPS or the embedded DNS as non-root, also
+re-grant `cap_net_bind_service` on the new binary — `apt install nodejs`
+clears file capabilities (see the embedded-DNS note in the Dokku section
+above for the full failure mode and command).
 
 ### From v1.x
 
