@@ -195,7 +195,7 @@ module.exports = async function (api) {
       await mfaService.challenge(context.user.username, profile, { headers: {}, body: params });
 
       // Stash the already-issued token in a pending session. Only release on mfa.verify.
-      const mfaToken = getMFASessionStore(mfaCfg).create(profile, {
+      const mfaToken = await getMFASessionStore(mfaCfg).create(profile, {
         user: context.user,
         token: result.token,
         apiEndpoint: result.apiEndpoint

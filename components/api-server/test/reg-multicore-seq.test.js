@@ -82,7 +82,7 @@ describe('[RGMC] register: multi-core', function () {
     // Re-register default 'single' core for subsequent tests
     restoreSingleCore();
     await platform.registerSelf();
-    accessState.clear();
+    await accessState.clear();
     // Restore integrity check
     if (savedIntegrityCheck != null) {
       process.env.DISABLE_INTEGRITY_CHECK = savedIntegrityCheck;
@@ -386,8 +386,8 @@ describe('[RGMC] register: multi-core', function () {
       request = supertest(app.expressApp);
     });
 
-    afterEach(() => {
-      accessState.clear();
+    afterEach(async () => {
+      await accessState.clear();
     });
 
     it('[MC04A] must accept REDIRECTED status with redirectUrl', async function () {

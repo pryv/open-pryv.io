@@ -1,5 +1,50 @@
 # Changelog - Internal (no API impact)
 
+## Cluster-mode state fixes — accessState on PlatformDB + `cluster_kv` primitive
+
+A class of bugs where module-scope `new Map()` looks fine in single-process
+tests but breaks under `cluster.fork()` because each worker holds its own
+copy. Surfaced in production as a 50 % auth-poll failure rate
+(`/reg/access/:key` polls round-robin across workers; the second poll lands
+on a worker whose Map is empty).
+
+- **FIX** `components/api-server/src/routes/reg/accessState.js` — replaces
+  the in-memory `new Map()` with PlatformDB-backed storage (rqlite
+  `keyValue` rows under `access-state/<key>`). API turned async; the route
+  in `routes/reg/access.js` is now async with try/catch wrappers. POST
+  splits into `buildState()` → URL decoration (`pollUrl`/`authUrl`) →
+  `persist()` so the URLs computed from per-core routing land in the
+  stored state without an extra round-trip. Cluster-wide AND
+  restart-survivable for free; the lazy expire on `get` matches the
+  existing `tls-cert/*` posture.
+- **NEW** `storages/interfaces/platformStorage/PlatformDB.js` — four new
+  methods on the interface: `setAccessState(key, value, expiresAt)`,
+  `getAccessState(key)`, `deleteAccessState(key)`,
+  `sweepExpiredAccessStates(now?)`. rqlite engine implements them;
+  `[ACCESSSTATE]` 8 conformance cases.
+- **NEW** `components/messages/src/cluster_kv.js` — master-held key/value
+  store + worker IPC primitive for the ephemeral cross-worker state
+  class (single-core scope only; cross-core state goes to PlatformDB).
+  Wire format `kv:get/set/delete/clear` with namespaced replies. Lazy
+  expire on `get` + 60 s sweeper. In-process fallback when `process.send`
+  isn't available (single-process tests, CLI tools). Wired in
+  `bin/master.js` after `tcpPubsub.init()`. 14 unit cases under
+  `[CLUSTERKV]`.
+- **FIX** `components/business/src/mfa/SessionStore.js` +
+  `components/business/src/mfa/index.js` — MFA session store backed on
+  `cluster_kv` instead of a per-instance `Map`. API turned async
+  (`create`/`has`/`get`/`clear`/`clearAll`). Same bug family as the
+  accessState §12: login lands on worker A, verify hits worker B → "MFA
+  session not found". The header comment that said "single-core only"
+  reworded — under `cluster.fork()` "process-wide" is per-worker, not
+  per-core. `[MT5A]` cross-worker case added.
+- **NEW** `components/test-helpers/src/clusterFixture.js` +
+  `components/api-server/test/clusterWorkers/accessStateWorker.js` +
+  `components/api-server/test/access-state-cluster-seq.test.js` —
+  multi-worker test fixture (forks N children via `child_process.fork`,
+  JSON-RPC over IPC, ready handshake on boot). `[XS12A/B/C]` regression
+  cases would fail against the pre-Plan-55 in-memory Map.
+
 ## Post-deps-bump fix-ups — uuid call sites + backloop.dev lazy require
 
 Two follow-ups missed when the deps bump landed; both crashed the production

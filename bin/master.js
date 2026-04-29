@@ -161,6 +161,14 @@ if (cluster.isPrimary) {
     await tcpPubsub.init();
     log('TCP pub/sub broker started');
 
+    // Cluster-wide ephemeral kv (Plan 55 Phase 3) — master-held Map +
+    // request/response IPC with workers. Used for state that must be
+    // shared across workers but doesn't need persistence (single-core
+    // scope; cross-core state belongs in PlatformDB instead).
+    require('../components/messages/src/cluster_kv').masterStart({
+      log: (m) => log('[cluster_kv] ' + m)
+    });
+
     // Start DNS server if configured
     let dnsServer = null;
     if (config.get('dns:active')) {

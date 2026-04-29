@@ -37,7 +37,13 @@ function createMFAService (mfaConfig) {
   throw new Error(`Unknown MFA mode "${mfaConfig.mode}". Expected one of: disabled, challenge-verify, single`);
 }
 
-// Process-wide singletons (single-core only — see Plan 26 SessionState).
+// Per-worker MFA service singleton (stateless once built).
+//
+// SessionStore (Plan 55): the `_sessionStore` reference itself is per-worker
+// but the underlying storage is `cluster_kv` (master-held), so every worker
+// in the cluster sees the same MFA sessions. Different from Plan 26's
+// original "single-core only" framing — under cluster.fork() that meant
+// per-worker, which broke the login → verify flow when polls round-robined.
 let _mfaService = null;
 let _sessionStore = null;
 
@@ -68,10 +74,13 @@ function getMFASessionStore (mfaConfig) {
 }
 
 /**
- * Reset singletons — for tests only.
+ * Reset singletons — for tests only. Async because `clearAll()` now goes
+ * through cluster_kv (master IPC).
  */
-function _resetMFASingletons () {
-  if (_sessionStore) _sessionStore.clearAll();
+async function _resetMFASingletons () {
+  if (_sessionStore) {
+    try { await _sessionStore.clearAll(); } catch (_) { /* may fail outside cluster — ignore */ }
+  }
   _mfaService = null;
   _sessionStore = null;
 }

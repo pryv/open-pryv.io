@@ -552,5 +552,83 @@ module.exports = function conformanceTests (getDB) {
         assert.strictEqual(await db.getObservabilityValue('iso-' + suffix), 'obs-value');
       });
     });
+
+    describe('[ACCESSSTATE] setAccessState / getAccessState / deleteAccessState / sweepExpiredAccessStates', () => {
+      const future = () => Date.now() + 60_000;
+      const past = () => Date.now() - 1_000;
+
+      it('[AS01] set + get round-trips the value with expiresAt', async () => {
+        const key = 'k-' + cuid();
+        const value = { status: 'NEED_SIGNIN', requestingAppId: 'app' };
+        const expiresAt = future();
+        await db.setAccessState(key, value, expiresAt);
+        const got = await db.getAccessState(key);
+        assert.deepStrictEqual(got.value, value);
+        assert.strictEqual(got.expiresAt, expiresAt);
+      });
+
+      it('[AS02] get returns null for an unknown key', async () => {
+        assert.strictEqual(await db.getAccessState('missing-' + cuid()), null);
+      });
+
+      it('[AS03] set replaces an existing value (idempotent upsert)', async () => {
+        const key = 'k-' + cuid();
+        const exp = future();
+        await db.setAccessState(key, { v: 1 }, exp);
+        await db.setAccessState(key, { v: 2 }, exp);
+        const got = await db.getAccessState(key);
+        assert.deepStrictEqual(got.value, { v: 2 });
+      });
+
+      it('[AS04] get on an expired row returns null and deletes the row', async () => {
+        const key = 'k-' + cuid();
+        await db.setAccessState(key, { v: 1 }, past());
+        assert.strictEqual(await db.getAccessState(key), null);
+        // Subsequent get still null — row was eagerly removed.
+        assert.strictEqual(await db.getAccessState(key), null);
+      });
+
+      it('[AS05] delete is idempotent on missing keys', async () => {
+        await db.deleteAccessState('missing-' + cuid()); // must not throw
+      });
+
+      it('[AS06] delete removes the row', async () => {
+        const key = 'k-' + cuid();
+        await db.setAccessState(key, { v: 1 }, future());
+        await db.deleteAccessState(key);
+        assert.strictEqual(await db.getAccessState(key), null);
+      });
+
+      it('[AS07] sweepExpiredAccessStates removes only expired rows and reports count', async () => {
+        const live1 = 'live1-' + cuid();
+        const live2 = 'live2-' + cuid();
+        const dead1 = 'dead1-' + cuid();
+        const dead2 = 'dead2-' + cuid();
+        await db.setAccessState(live1, { v: 1 }, future());
+        await db.setAccessState(live2, { v: 2 }, future());
+        await db.setAccessState(dead1, { v: 3 }, past());
+        await db.setAccessState(dead2, { v: 4 }, past());
+        const { removed } = await db.sweepExpiredAccessStates();
+        assert.ok(removed >= 2, 'at least the two expired rows were removed (got ' + removed + ')');
+        assert.ok((await db.getAccessState(live1)).value.v === 1);
+        assert.ok((await db.getAccessState(live2)).value.v === 2);
+        assert.strictEqual(await db.getAccessState(dead1), null);
+        assert.strictEqual(await db.getAccessState(dead2), null);
+      });
+
+      it('[AS08] access-state namespace is isolated from dns-record / user-core / observability', async () => {
+        const suffix = cuid();
+        const stateKey = 'iso-' + suffix;
+        await db.setAccessState(stateKey, { v: 1 }, future());
+        await db.setDnsRecord('_iso-' + suffix, { txt: ['x'] });
+        await db.setUserCore('iso-' + suffix, 'core-a');
+        await db.setObservabilityValue('iso-' + suffix, 'obs-value');
+
+        assert.deepStrictEqual((await db.getAccessState(stateKey)).value, { v: 1 });
+        assert.ok(await db.getDnsRecord('_iso-' + suffix));
+        assert.strictEqual(await db.getUserCore('iso-' + suffix), 'core-a');
+        assert.strictEqual(await db.getObservabilityValue('iso-' + suffix), 'obs-value');
+      });
+    });
   });
 };

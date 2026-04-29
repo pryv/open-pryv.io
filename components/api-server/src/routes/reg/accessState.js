@@ -6,19 +6,29 @@
  */
 
 /**
- * In-memory access request state store with TTL.
- * Replaces Redis-based storage from service-register.
- * Ephemeral by design — access requests don't survive restarts.
+ * Access-request state store, backed by PlatformDB (rqlite `keyValue`).
+ *
+ * Why PlatformDB and not an in-process Map: under `cluster.fork()` each
+ * worker is a separate Node process. A POST to `/reg/access` lands on
+ * worker A and writes; the polling GETs round-robin across workers, so
+ * worker B's lookup sees nothing and 400s. Backing the store on rqlite
+ * keeps it cluster-wide and worker-symmetric (and survives restart, which
+ * is operator-friendly for mid-flow auth requests).
+ *
+ * Replaces the in-memory `new Map()` from the original v2 implementation
+ * (which itself replaced v1's Redis store; the regression was "Map ≠ shared
+ * across workers"). See workspace plan 55 + GH issue
+ * pryv/open-pryv.io#67 for the production reproducer.
  */
 
 const crypto = require('node:crypto');
 
 const KEY_LENGTH = 16;
 const DEFAULT_TTL_MS = 3600 * 1000; // 1 hour
-const CLEANUP_INTERVAL_MS = 60 * 1000; // sweep every minute
 
-const store = new Map();
-let cleanupTimer = null;
+function getPlatformDB () {
+  return require('storages').platformDB;
+}
 
 /**
  * Generate a random alphanumeric key.
@@ -29,21 +39,21 @@ function generateKey () {
 }
 
 /**
- * Create a new access request.
+ * Build a fresh access-request state in memory. Does NOT persist — callers
+ * decorate the state with `pollUrl` / `authUrl` (computed from
+ * core-affine routing) and then call `persist()` to flush it to PlatformDB
+ * in a single write.
+ *
+ * Splitting create into build + persist avoids a read-modify-write
+ * round-trip we'd otherwise need to add the URLs after the initial save.
+ *
  * @param {Object} params
- * @param {string} params.requestingAppId
- * @param {Array} params.requestedPermissions
- * @param {string} [params.languageCode]
- * @param {string|null} [params.returnURL]
- * @param {string} [params.oauthState]
- * @param {*} [params.clientData]
- * @param {string} [params.deviceName]
- * @param {number} [params.expireAfter] - TTL in ms
- * @returns {{ key: string, state: Object }}
+ * @returns {{ key: string, state: Object, expiresAt: number }}
  */
-function create (params) {
+function buildState (params) {
   const key = generateKey();
   const ttl = params.expireAfter || DEFAULT_TTL_MS;
+  const expiresAt = Date.now() + ttl;
   const state = {
     status: 'NEED_SIGNIN',
     code: 201,
@@ -57,37 +67,61 @@ function create (params) {
     deviceName: params.deviceName || null,
     poll_rate_ms: 1000,
     createdAt: Date.now(),
-    expiresAt: Date.now() + ttl
+    expiresAt
   };
-  store.set(key, state);
-  ensureCleanup();
-  return { key, state };
+  return { key, state, expiresAt };
+}
+
+/**
+ * Persist an in-memory state to PlatformDB. Used both for the initial
+ * write after `buildState()` and to push subsequent mutations of `state`
+ * back to the store.
+ *
+ * @param {string} key
+ * @param {Object} state
+ * @param {number} [expiresAt] - defaults to `state.expiresAt`
+ */
+async function persist (key, state, expiresAt) {
+  const ts = expiresAt ?? state.expiresAt;
+  await getPlatformDB().setAccessState(key, state, ts);
+}
+
+/**
+ * Compatibility shim — older code paths called `create()` and then
+ * mutated the returned `state`. The mutation was lost on PlatformDB-backed
+ * writes; new code should use `buildState()` + `persist()` instead. Kept
+ * for tests and any external caller that doesn't decorate the state.
+ *
+ * @param {Object} params
+ * @returns {Promise<{ key: string, state: Object }>}
+ */
+async function create (params) {
+  const built = buildState(params);
+  await persist(built.key, built.state, built.expiresAt);
+  return { key: built.key, state: built.state };
 }
 
 /**
  * Get an access request state.
  * @param {string} key
- * @returns {Object|null}
+ * @returns {Promise<Object|null>}
  */
-function get (key) {
-  const state = store.get(key);
-  if (!state) return null;
-  if (Date.now() > state.expiresAt) {
-    store.delete(key);
-    return null;
-  }
-  return state;
+async function get (key) {
+  const row = await getPlatformDB().getAccessState(key);
+  return row ? row.value : null;
 }
 
 /**
  * Update an access request state (accept or refuse).
  * @param {string} key
- * @param {Object} update - { status, username, token, apiEndpoint, reasonID, message }
- * @returns {Object|null} updated state, or null if key not found
+ * @param {Object} update
+ * @returns {Promise<Object|null>} the updated state, or null if key not found.
  */
-function update (key, update) {
-  const state = get(key);
-  if (!state) return null;
+async function update (key, update) {
+  const platformDB = getPlatformDB();
+  const row = await platformDB.getAccessState(key);
+  if (!row) return null;
+  const state = row.value;
   Object.assign(state, update);
   if (update.status === 'ACCEPTED') {
     state.code = 200;
@@ -96,40 +130,26 @@ function update (key, update) {
   } else if (update.status === 'REDIRECTED') {
     state.code = 301;
   }
+  await platformDB.setAccessState(key, state, row.expiresAt);
   return state;
 }
 
 /**
  * Delete an access request.
  * @param {string} key
+ * @returns {Promise<void>}
  */
-function remove (key) {
-  store.delete(key);
+async function remove (key) {
+  await getPlatformDB().deleteAccessState(key);
 }
 
 /**
- * Clear all entries (for testing).
+ * Clear all entries (used by tests). Calls the master sweep with `now =
+ * Infinity` so every row is dropped.
+ * @returns {Promise<{removed: number}>}
  */
-function clear () {
-  store.clear();
+async function clear () {
+  return await getPlatformDB().sweepExpiredAccessStates(Number.POSITIVE_INFINITY);
 }
 
-/**
- * Start the TTL cleanup timer if not running.
- */
-function ensureCleanup () {
-  if (cleanupTimer) return;
-  cleanupTimer = setInterval(() => {
-    const now = Date.now();
-    for (const [key, state] of store) {
-      if (now > state.expiresAt) store.delete(key);
-    }
-    if (store.size === 0) {
-      clearInterval(cleanupTimer);
-      cleanupTimer = null;
-    }
-  }, CLEANUP_INTERVAL_MS);
-  cleanupTimer.unref(); // don't keep process alive
-}
-
-module.exports = { create, get, update, remove, clear };
+module.exports = { buildState, persist, create, get, update, remove, clear };

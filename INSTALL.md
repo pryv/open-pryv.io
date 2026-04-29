@@ -330,6 +330,22 @@ docker run \
   pryvio/open-pryv.io
 ```
 
+When running with `letsEncrypt.enabled: true` (master serves HTTPS itself
+instead of being fronted by a reverse proxy), publish 443 (HTTP-01 also
+needs 80, DNS-01 doesn't):
+
+```bash
+docker run \
+  ... \
+  -p 443:443/tcp \
+  -p 80:80/tcp \
+  pryvio/open-pryv.io
+```
+
+The Dockerfile already declares `EXPOSE 80 443 3000 3001 4000 53/udp`; the
+`-p` flags above publish the relevant ones to the host. For DNS-active mode
+add `-p 53:53/udp`.
+
 ### Dokku
 
 ```bash

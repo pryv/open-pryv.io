@@ -88,7 +88,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
 
   beforeEach(async function () {
     nock.cleanAll();
-    _resetMFASingletons();
+    await _resetMFASingletons();
     // Fresh user per test to avoid shared-state bleed.
     username = ('mfa' + cuid.slug()).toLowerCase();
     password = 'mfa-test-pwd-123';
@@ -100,7 +100,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
 
   afterEach(async function () {
     config.injectTestConfig({});
-    _resetMFASingletons();
+    await _resetMFASingletons();
     nock.cleanAll();
   });
 
@@ -132,9 +132,9 @@ describe('[MFAA] MFA acceptance (seq)', function () {
 
   // --------------------------------------------------------------------
   describe('[MA2] when services.mfa.mode is "challenge-verify"', function () {
-    beforeEach(function () {
+    beforeEach(async function () {
       config.injectTestConfig(mfaConfig);
-      _resetMFASingletons();
+      await _resetMFASingletons();
     });
 
     // ----- activate --------------------------------------------------

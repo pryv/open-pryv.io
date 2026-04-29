@@ -16,8 +16,8 @@ describe('[RGAC] Register access authorization', () => {
     await initCore();
   });
 
-  afterEach(() => {
-    accessState.clear();
+  afterEach(async () => {
+    await accessState.clear();
   });
 
   describe('POST /reg/access', () => {

@@ -95,7 +95,7 @@ module.exports = async function (api) {
         // key/value pairs that get templated into the SMS endpoint URL/headers/body.
         const profile = new Profile(Object.assign({}, params), []);
         await maybeMFAService().challenge(context.user.username, profile, { headers: {}, body: params });
-        const token = sessionStore().create(profile, { user: context.user });
+        const token = await sessionStore().create(profile, { user: context.user });
         result.mfaToken = token;
         next();
       } catch (err) {
@@ -112,14 +112,14 @@ module.exports = async function (api) {
     async function confirm (context, params, result, next) {
       if (!requireMFAEnabled(next)) return;
       try {
-        const session = sessionStore().get(params.mfaToken);
+        const session = await sessionStore().get(params.mfaToken);
         if (!session) return next(errors.invalidAccessToken('Invalid or expired MFA session token.'));
         const user = session.context.user;
         const profile = session.profile;
         await maybeMFAService().verify(user.username, profile, { headers: {}, body: params });
         profile.generateRecoveryCodes();
         await saveMFAProfile(user, profile);
-        sessionStore().clear(params.mfaToken);
+        await sessionStore().clear(params.mfaToken);
         result.recoveryCodes = profile.getRecoveryCodes();
         next();
       } catch (err) {
@@ -136,7 +136,7 @@ module.exports = async function (api) {
     async function challenge (context, params, result, next) {
       if (!requireMFAEnabled(next)) return;
       try {
-        const session = sessionStore().get(params.mfaToken);
+        const session = await sessionStore().get(params.mfaToken);
         if (!session) return next(errors.invalidAccessToken('Invalid or expired MFA session token.'));
         const user = session.context.user;
         await maybeMFAService().challenge(user.username, session.profile, { headers: {}, body: params });
@@ -156,7 +156,7 @@ module.exports = async function (api) {
     async function verify (context, params, result, next) {
       if (!requireMFAEnabled(next)) return;
       try {
-        const session = sessionStore().get(params.mfaToken);
+        const session = await sessionStore().get(params.mfaToken);
         if (!session) return next(errors.invalidAccessToken('Invalid or expired MFA session token.'));
         const user = session.context.user;
         await maybeMFAService().verify(user.username, session.profile, { headers: {}, body: params });
@@ -167,7 +167,7 @@ module.exports = async function (api) {
         }
         result.token = session.context.token;
         if (session.context.apiEndpoint) result.apiEndpoint = session.context.apiEndpoint;
-        sessionStore().clear(params.mfaToken);
+        await sessionStore().clear(params.mfaToken);
         next();
       } catch (err) {
         next(err);

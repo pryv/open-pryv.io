@@ -300,7 +300,44 @@ const PlatformDB = module.exports.PlatformDB = {
    * @param {string} lang
    * @param {string} [part]
    */
-  async deleteMailTemplate (type, lang, part) { throw new Error('Not implemented'); }
+  async deleteMailTemplate (type, lang, part) { throw new Error('Not implemented'); },
+
+  // --- Access-request state (cluster-wide ephemeral) -----------------
+  /**
+   * Persist or replace an access-request state. Stored under the
+   * `access-state/<key>` prefix. `expiresAt` is ms-since-epoch wall-clock;
+   * callers compute it (typically `Date.now() + ttlMs`).
+   *
+   * @param {string} key - access-request key (callers generate via crypto.randomBytes).
+   * @param {Object} value - opaque JSON-serialisable state body.
+   * @param {number} expiresAt - ms-since-epoch; lazy expire on `getAccessState`.
+   */
+  async setAccessState (key, value, expiresAt) { throw new Error('Not implemented'); },
+
+  /**
+   * Read an access-request state. Returns `null` for missing keys AND for
+   * keys whose `expiresAt` is in the past (the row is also deleted in
+   * that case so the next caller doesn't pay the read cost).
+   *
+   * @param {string} key
+   * @returns {Promise<{value: Object, expiresAt: number}|null>}
+   */
+  async getAccessState (key) { throw new Error('Not implemented'); },
+
+  /**
+   * @param {string} key
+   */
+  async deleteAccessState (key) { throw new Error('Not implemented'); },
+
+  /**
+   * GC: drop every access-state row whose `expiresAt < now`. Called on a
+   * periodic timer in master so the keyspace stays bounded; lazy-expire
+   * on `getAccessState` keeps correctness even if the sweep is delayed.
+   *
+   * @param {number} [now=Date.now()]
+   * @returns {Promise<{removed: number}>}
+   */
+  async sweepExpiredAccessStates (now) { throw new Error('Not implemented'); }
 };
 
 // Limit tampering on existing properties

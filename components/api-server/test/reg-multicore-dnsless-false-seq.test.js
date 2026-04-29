@@ -92,7 +92,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
     config.set('dns:domain', savedDnsDomain || null);
     config.set('core:isSingleCore', savedIsSingleCore != null ? savedIsSingleCore : true);
     await platform.registerSelf();
-    accessState.clear();
+    await accessState.clear();
     if (savedIntegrityCheck != null) {
       process.env.DISABLE_INTEGRITY_CHECK = savedIntegrityCheck;
     } else {

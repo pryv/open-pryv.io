@@ -419,6 +419,55 @@ class DBrqlite {
       [prefix]
     );
   }
+
+  // --- Access-request state (Plan 55 §12 fix) --- //
+
+  async setAccessState (key, value, expiresAt) {
+    const storeKey = getAccessStateKey(key);
+    await this.execute(
+      'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
+      [storeKey, JSON.stringify({ value, expiresAt })]
+    );
+  }
+
+  async getAccessState (key) {
+    const storeKey = getAccessStateKey(key);
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [storeKey]);
+    if (rows.length === 0) return null;
+    const parsed = JSON.parse(rows[0].value);
+    if (typeof parsed.expiresAt === 'number' && Date.now() > parsed.expiresAt) {
+      // Lazy expire: drop the row so the next call doesn't pay this cost.
+      await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
+      return null;
+    }
+    return parsed;
+  }
+
+  async deleteAccessState (key) {
+    const storeKey = getAccessStateKey(key);
+    await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
+  }
+
+  async sweepExpiredAccessStates (now = Date.now()) {
+    const rows = await this.query(
+      "SELECT key, value FROM keyValue WHERE key LIKE 'access-state/%'"
+    );
+    let removed = 0;
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(row.value);
+        if (typeof parsed.expiresAt === 'number' && now > parsed.expiresAt) {
+          await this.execute('DELETE FROM keyValue WHERE key = ?', [row.key]);
+          removed++;
+        }
+      } catch (_) {
+        // malformed payload — drop it; safer than leaving rot.
+        await this.execute('DELETE FROM keyValue WHERE key = ?', [row.key]);
+        removed++;
+      }
+    }
+    return { removed };
+  }
 }
 
 // --- Key helpers (same as SQLite engine) --- //
@@ -462,6 +511,10 @@ function getObservabilityKey (key) {
 
 function getMailTemplateKey (type, lang, part) {
   return 'mail-template/' + type + '/' + lang + '/' + part;
+}
+
+function getAccessStateKey (key) {
+  return 'access-state/' + key;
 }
 
 module.exports = DBrqlite;
