@@ -1,5 +1,25 @@
 # Changelog - Internal (no API impact)
 
+## Post-deps-bump fix-ups — uuid call sites + backloop.dev lazy require
+
+Two follow-ups missed when the deps bump landed; both crashed the production
+Docker image at boot before any config was read.
+
+- **FIX** `components/business/src/mfa/Profile.js` +
+  `components/business/src/mfa/SessionStore.js` — swap
+  `const { v4: uuidv4 } = require('uuid')` →
+  `const { randomUUID: uuidv4 } = require('node:crypto')`. Same alias, no
+  call-site churn. The `uuid` package was dropped from `package.json` in the
+  earlier deps bump but these two MFA files still required it; first MFA-
+  touching require chain (`api-server/methods/auth/login → mfa`) crashed
+  `MODULE_NOT_FOUND`. RFC-4122 v4 byte-equivalent.
+- **FIX** `components/api-server/src/server.js` — move
+  `require('backloop.dev').httpsOptionsAsync` from top-level into the
+  `if (config.get('http:ssl:backloop.dev'))` block. `npm install --omit=dev`
+  skips `backloop.dev` because workspace promotion marks it `"dev": true`
+  in the lockfile, so the production image has no copy on disk; lazy-require
+  keeps the dev-loop path working while letting prod boot.
+
 ## Deploy hardening — single-core LE first-boot, embedded DNS, Dockerfile
 
 A bundle of five fixes surfaced by a fresh single-core Dokku deploy with
