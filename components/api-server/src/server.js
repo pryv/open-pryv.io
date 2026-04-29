@@ -10,7 +10,6 @@ const { getApplication } = require('api-server/src/application');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
-const recLaOptionsAsync = require('backloop.dev').httpsOptionsAsync;
 const { testMessaging } = require('messages');
 const { pubsub } = require('messages');
 const { getUsersRepository } = require('business/src/users');
@@ -57,6 +56,10 @@ class Server {
       hostname: null
     };
     if (config.get('http:ssl:backloop.dev')) { // SSL is used in openSource version
+      // Lazy require: backloop.dev is a devDependency, not installed in
+      // production images (Dockerfile does `npm install --omit=dev`).
+      // Only load when actually wired into config.
+      const recLaOptionsAsync = require('backloop.dev').httpsOptionsAsync;
       await new Promise((resolve, reject) => {
         recLaOptionsAsync((err, recLaOptions) => {
           if (err) return reject(err);
