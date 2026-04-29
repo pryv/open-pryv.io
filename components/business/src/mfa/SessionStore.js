@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('node:crypto');
 
 /**
  * In-memory MFA session store.
