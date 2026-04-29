@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('node:crypto');
 
 /**
  * MFA profile model: the per-user state stored in the user's private profile
