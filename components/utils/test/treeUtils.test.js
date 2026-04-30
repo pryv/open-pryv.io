@@ -110,6 +110,40 @@ describe('[TRUT] tree utils', function () {
     it('[OVJM] must throw an error if the object in argument is not an array', function () {
       assert.throws(() => { treeUtils.flattenTree(testTree[0]); });
     });
+
+    it('[FL8T] must preserve existing parentId on already-flat input (idempotence)', function () {
+      // Restore-from-backup feeds flattenTree() flat arrays whose items
+      // already carry a parentId. Before the fix, the root recursion
+      // overwrote every parentId with `null` because flattenTree() called
+      // flattenRecursive with parentId=null.
+      const res = treeUtils.flattenTree(testArray);
+      assert.deepStrictEqual(res, testArray);
+      assert.notStrictEqual(res[0], testArray[0], 'should not return the original objects but copies instead');
+    });
+
+    it('[FL8U] must default parentId=null on items without one (root call)', function () {
+      const flat = [{ id: 'a' }, { id: 'b' }];
+      const res = treeUtils.flattenTree(flat);
+      assert.deepStrictEqual(res, [
+        { id: 'a', parentId: null },
+        { id: 'b', parentId: null }
+      ]);
+    });
+
+    it('[FL8V] children-array tree position must override any stale parentId on a child', function () {
+      // Mixed input: tree-shaped (children-bearing) where a child has a
+      // stale parentId. The tree position is authoritative — child's
+      // parentId becomes the parent's id regardless of any stale value.
+      const mixed = [{
+        id: 'root',
+        children: [{ id: 'kid', parentId: 'wrong-stale-id' }]
+      }];
+      const res = treeUtils.flattenTree(mixed);
+      assert.deepStrictEqual(res, [
+        { id: 'root', parentId: null },
+        { id: 'kid', parentId: 'root' }
+      ]);
+    });
   });
 
   describe('[TU03] findInTree()', function () {

@@ -152,7 +152,18 @@ exports.flattenTree = function (array) {
 function flattenRecursive (originalArray, parentId, resultArray) {
   originalArray.forEach(function (item) {
     const clone = structuredClone(item);
-    clone.parentId = parentId;
+    // When recursing into a parent's `children` array, the tree position
+    // is authoritative — overwrite parentId with the parent's id.
+    // At the root call (parentId === null), preserve any pre-existing
+    // parentId on the item, defaulting to null when neither is set.
+    // This makes flattenTree() idempotent on already-flat input
+    // (e.g. backup-restore pushes flat streams with parentId already set;
+    // without this, every parentId was silently nuked).
+    if (parentId !== null) {
+      clone.parentId = parentId;
+    } else if (clone.parentId === undefined) {
+      clone.parentId = null;
+    }
     resultArray.push(clone);
     if (clone.hasOwnProperty('children')) {
       flattenRecursive(clone.children, clone.id, resultArray);
