@@ -1,5 +1,10 @@
 # Changelog - Internal (no API impact)
 
+## Audit syslog transport — error listener prevents worker crash on missing socket
+
+- **FIX** `components/audit/src/syslog/Syslog.js` — the `winston-syslog` transport's underlying `unix-dgram` socket emits `'error'` on the first send when the configured socket path doesn't exist (typical containerized deploy with no `/dev/log`). `winston-transport` extends `stream.Writable`, and `Writable.emit('error', err)` with no listener throws synchronously → worker exits code 7 → cluster master recycles → user-visible: registration row landed in `users_index` but the auth poll on `core-<id>.<domain>/reg/access/<key>` times out with no token issued. Now `transport.on('error', err => logger.warn('audit syslog dropped', err))` so audit emits become best-effort observability instead of a load-bearing path.
+- **CHANGE** `config/default-config.yml` — `audit.syslog.active: false` (operator-facing, in `CHANGELOG-v2.md`). Defense in depth: even if the listener regresses, the gate at `audit/src/syslog/index.js:18` still short-circuits the whole code path.
+
 ## Bootstrap bundle schema — v2 (forward-compat-friendly)
 
 - **CHANGE** `components/business/src/bootstrap/Bundle.js`: `BUNDLE_VERSION`

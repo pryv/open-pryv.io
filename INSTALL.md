@@ -374,6 +374,14 @@ dokku docker-options:add <app> deploy,run "-p 53:5353/udp"
 
 For most Dokku deployments the simpler path is **dnsLess mode** — set `dnsLess.isActive: true` + `dnsLess.publicUrl: https://<reg-fqdn>` in `override-config.yml` and let the reverse proxy terminate TLS as usual.
 
+**TCP port 443 in `proxy:disable` mode** (Option C — `master.js` terminates TLS via `letsEncrypt.*` / `http.ssl.*`). `dokku-nginx` is what normally bridges Dokku's port map to Docker `-p` flags; with the proxy disabled, `dokku ports:add https:443:443` shows the mapping but no host port is published. Add the binding explicitly, same shape as the UDP/53 workaround above:
+
+```bash
+dokku docker-options:add <app> deploy,run "-p 443:443/tcp"
+```
+
+Without this, clients hit `ECONNREFUSED` on 443 even though the container is healthy and `wget https://127.0.0.1:443` inside it succeeds.
+
 **Bare-metal embedded DNS (non-Docker)** — when `bin/master.js` runs as a non-root user (typical) and `dns.port: 53`, Linux refuses the bind unless the `node` binary carries `cap_net_bind_service`. Grant it once per host (and **after every Node upgrade — `apt install nodejs` wipes file capabilities**):
 
 ```bash

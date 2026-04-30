@@ -1,5 +1,10 @@
 # Changelog - API Changes
 
+## `audit.syslog.active` defaults to `false`
+
+- **CHANGE** `config/default-config.yml`: `audit.syslog.active` now defaults to `false`. Operators on bare-metal hosts with a syslog daemon listening on `/dev/log` (rsyslog / journald) who want the host-syslog mirror must set `audit.syslog.active: true` in `override-config.yml`. The per-user audited streams (`audit.storage.*`) are unaffected — the existing audit data path keeps emitting unchanged.
+- **Why**: containerized deploys are now the dominant install shape and typically have no syslog daemon. The previous default crashed api-server workers on the first audited request (`ENOENT` from `sendto(2)` on a missing socket path bubbled to `uncaughtException` because `winston-syslog` emits `'error'` with no listener). The transport now also has a defensive `'error'` listener that downgrades these to a `warn` log line, so accidental misconfiguration no longer crashes workers regardless of this flag.
+
 ## `POST /system/admin/certs/force-renew` — admin route
 
 - **NEW** `POST /system/admin/certs/force-renew` — triggers an immediate ACME renewal of the cluster's TLS cert, bypassing the daily `renewBeforeDays` check. Body `{ "hostname": string? }` (optional — defaults to the configured primary hostname). Response on success: `200 { ok: true, hostname, issuedAt, expiresAt }`. Response on operator-grade failure: `400 { ok: false, error: string }` (e.g. core is not the renewer, ACME upstream rejection, timeout). Auth: `auth.adminAccessKey` via the `Authorization` header (unauth → 404, same contract as every other `/system/*` route).

@@ -99,6 +99,9 @@ audit:
         exclude: []
 
   syslog:
+    # Tests rely on the host syslog daemon; default-config.yml ships
+    # active: false (safe default for containers) so opt back in for the test env.
+    active: true
     formats:
       test: # for 'log/test' event.type
         template: "{userid} {type} createdBy:{createdBy} streamIds:{streamIds} {content.message}"

@@ -391,6 +391,11 @@ audit:
         exclude: []
 
   syslog:
+    # Opt-in: containerized deploys typically have no syslog daemon listening
+    # on /dev/log. Operators on bare-metal hosts with rsyslog/journald who
+    # want the host-syslog mirror set this to `true` in override-config.yml.
+    # The per-user audit storage (audit.storage) is unaffected by this flag.
+    active: false
     options:
       host: localhost
       #port: 514

@@ -44,7 +44,15 @@ class Syslog {
     });
     // uncomment the following line to get syslog output to console
     // syslogger.add(new winston.transports.Console());
-    syslogger.add(new winston.transports.Syslog(options));
+    const syslogTransport = new winston.transports.Syslog(options);
+    // The transport's underlying unix-dgram socket emits 'error' on first send
+    // when the configured socket path (default /dev/log) doesn't exist —
+    // common in containerized deploys with no syslog daemon. Without a
+    // listener, Writable.emit('error', err) throws synchronously, crashing
+    // the api-server worker on the first audited request. Best-effort
+    // observability instead of a load-bearing path.
+    syslogTransport.on('error', (err) => logger.warn('audit syslog dropped', err));
+    syslogger.add(syslogTransport);
 
     this.syslogger = syslogger;
     logger.debug('Initialized');
