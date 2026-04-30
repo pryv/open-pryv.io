@@ -10,11 +10,14 @@
  * Populated by the engine entry point's init() from barrel-provided values.
  * All engine files use require('./_internals') instead of host require() calls.
  */
-const registry = {};
+
+import type {} from 'node:fs';
+
+const registry: Record<string, any> = {};
 
 module.exports = {
-  set (name, value) { registry[name] = value; },
-  get userLocalDirectory () { return registry.userLocalDirectory; },
-  get getLogger () { return registry.getLogger; },
-  get config () { return registry.config; }
+  set (name: string, value: any): void { registry[name] = value; },
+  get userLocalDirectory (): any { return registry.userLocalDirectory; },
+  get getLogger (): (name: string) => any { return registry.getLogger; },
+  get config (): any { return registry.config; }
 };
