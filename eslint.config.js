@@ -16,7 +16,8 @@ module.exports = [
       'build/test/pryv/*',
       'node_modules/**',
       '**/node_modules/**',
-      'external-ressources/**'
+      'external-ressources/**',
+      'dist/**'
     ]
   },
   {

@@ -230,3 +230,17 @@ license:
 # Set version on all 'package.json' (root’s and components’)
 version version:
     npm version --no-git-tag-version --workspaces --include-workspace-root {{version}}
+
+# –––––––––––––----------------------------------------------------------------
+# TypeScript (Plan 57 — incremental migration to TS+ESM, currently CJS-emit)
+# –––––––––––––----------------------------------------------------------------
+
+# Run the TypeScript compiler in check-only mode (no emit)
+typecheck:
+    tsc --noEmit -p tsconfig.json
+
+# Build the TypeScript project to ./dist (CJS). Until Phase 5, runtime keeps
+# loading from source under components/ + storages/, so dist/ is informational.
+build:
+    rm -rf dist
+    tsc -p tsconfig.json --noEmit false

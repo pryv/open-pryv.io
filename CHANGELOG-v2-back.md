@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## TypeScript toolchain — direct dep + emit pipeline (no source changes yet)
+
+- **CHANGE** `package.json` — `typescript ^5.9.3` and `@types/node ^24.0.0` added to `devDependencies`. TypeScript was previously pulled transitively via `neostandard`; now it's pinned directly so the build pipeline doesn't break when neostandard updates.
+- **CHANGE** `tsconfig.json` — reshape from a JSDoc-only checker config to an emit-capable config: `target: es2022`, `module: commonjs`, `outDir: ./dist`, `rootDir: .`, `esModuleInterop: true`, `skipLibCheck: true`. `checkJs` flipped to `false` — the previous `checkJs: true` baseline accumulated 7,200+ silent errors that nobody enforced; quality going forward is gated through new `.ts` conversions instead. `allowJs: true` remains so the codebase keeps building during incremental conversion. Includes broadened to cover `components/`, `storages/`, and `bin/` (was `components/` + `test/` only).
+- **NEW** `justfile` recipes — `just typecheck` (tsc --noEmit) and `just build` (tsc emit to ./dist).
+- **CHANGE** `.gitignore` — `/dist` ignored.
+- **NOTE** Runtime is unchanged. `bin/master.js` still loads from source under `components/` + `storages/`; `dist/` is informational until later phases convert sources to `.ts` and flip the runtime entry. The deployability invariant — every commit on this branch keeps `bin/master.js` runnable from source — is preserved.
+
 ## Audit syslog transport — error listener prevents worker crash on missing socket
 
 - **FIX** `components/audit/src/syslog/Syslog.js` — the `winston-syslog` transport's underlying `unix-dgram` socket emits `'error'` on the first send when the configured socket path doesn't exist (typical containerized deploy with no `/dev/log`). `winston-transport` extends `stream.Writable`, and `Writable.emit('error', err)` with no listener throws synchronously → worker exits code 7 → cluster master recycles → user-visible: registration row landed in `users_index` but the auth poll on `core-<id>.<domain>/reg/access/<key>` times out with no token issued. Now `transport.on('error', err => logger.warn('audit syslog dropped', err))` so audit emits become best-effort observability instead of a load-bearing path.
