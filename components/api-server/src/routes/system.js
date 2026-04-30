@@ -46,6 +46,38 @@ module.exports = function system (expressApp, app) {
   expressApp.get(Paths.System + '/admin/cores', setMethodId('system.listCores'), function (req, res, next) {
     systemAPI.call(req.context, {}, methodCallback(res, next, 200));
   });
+  // --------------------- admin force-renew --------------------- //
+  // POST /system/admin/certs/force-renew — operator-triggered ACME
+  // rollover. The orchestrator lives in the master process; this worker
+  // delegates via cluster IPC and waits for the master's reply.
+  // Use cases: key compromise, manual rotation, debugging. Body:
+  //   { hostname?: string }   // omit to renew the core's primary host
+  // Returns: { ok, hostname, issuedAt, expiresAt }.
+  expressApp.post(Paths.System + '/admin/certs/force-renew', contentType.json, async (req, res, next) => {
+    try {
+      const { forceRenew } = require('./forceRenewIpc');
+      const hostname = req.body?.hostname;
+      if (hostname != null && typeof hostname !== 'string') {
+        return res.status(400).json({ error: 'hostname must be a string when provided' });
+      }
+      const reply = await forceRenew({ hostname });
+      if (!reply.ok) {
+        // 400 covers "not the renewer core", "letsEncrypt not enabled" and
+        // ACME failures. The reply.error string is operator-grade and safe
+        // to surface (no secret material).
+        return res.status(400).json({ ok: false, error: reply.error });
+      }
+      return res.status(200).json({
+        ok: true,
+        hostname: reply.hostname,
+        issuedAt: reply.issuedAt,
+        expiresAt: reply.expiresAt
+      });
+    } catch (err) {
+      logger.error('admin/certs/force-renew failed: ' + err.message);
+      next(err);
+    }
+  });
   // --------------------- admin certs listing ----------------- //
   // Read-only. Returns the cert metadata PlatformDB has (hostname +
   // validity dates) — never the cert or key material itself.

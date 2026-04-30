@@ -1,5 +1,35 @@
 # Changelog - Internal (no API impact)
 
+## Bootstrap bundle schema — v2 (forward-compat-friendly)
+
+- **CHANGE** `components/business/src/bootstrap/Bundle.js`: `BUNDLE_VERSION`
+  bumped `1` → `2`. v2 adds an optional
+  `platformSecrets.letsEncrypt.atRestKey` field carrying the cluster-wide
+  AES-GCM key used by `AtRestEncryption`.
+- **CHANGE** `Bundle.validate()` accepts any version in `1..BUNDLE_VERSION`
+  (was strict equality on the current version). Producers always emit the
+  latest version; consumers reject only forward-compat unknown versions or
+  `version <= 0`. Restores graceful upgrade across mixed-version clusters
+  during the rolling-out window.
+- **CHANGE** `Bundle.assemble()` only emits `platformSecrets.letsEncrypt`
+  when the input supplies an `atRestKey` — keeps v2 bundles minimal when
+  the issuing core has no LE secret to ship. Bundle version stays `2`
+  regardless.
+- **CHANGE** `applyBundle.writeOverrideConfig()`: when the bundle ships
+  `platformSecrets.letsEncrypt.atRestKey`, write it under
+  `letsEncrypt.atRestKey` in the joiner's `override-config.yml`.
+- **CHANGE** `cliOps.newCore()` accepts `secrets.letsEncryptAtRestKey`;
+  forwards to `Bundle.assemble`. `bin/bootstrap.js` reads
+  `config.get('letsEncrypt:atRestKey')` and threads it through (only when
+  it's a real value — `REPLACE ME` placeholder is filtered out by
+  `isUsableSecret`).
+- **TESTS** `[BUNDLE]` +6 cases (omits/carries `letsEncrypt`, accepts v1
+  shape, accepts v2 shape, rejects version 0, rejects malformed
+  `letsEncrypt`); `[APPLYBUNDLE]` +1 case (writes
+  `override.letsEncrypt.atRestKey`); `[BOOTSTRAPE2E]` +1 case (issuer →
+  consumer round-trip of `atRestKey`). `just test business`: 363/0 (was
+  354).
+
 ## Cluster-mode state fixes — accessState on PlatformDB + `cluster_kv` primitive
 
 A class of bugs where module-scope `new Map()` looks fine in single-process

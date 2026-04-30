@@ -114,6 +114,36 @@ class AcmeOrchestrator {
   }
 
   /**
+   * True when this core runs the daily ACME loop. Surfaced for the admin
+   * `force-renew` route's pre-flight check so non-renewer cores can fail
+   * fast with a 400 instead of attempting the IPC round-trip.
+   */
+  get isRenewer () {
+    return this.#isRenewer;
+  }
+
+  /**
+   * Issue a new cert immediately, ignoring the stored cert's expiresAt.
+   * Materializes the result on this core right away (other cores pick it
+   * up via their next materialize tick + the master's existing
+   * `acme:rotate` IPC broadcast).
+   *
+   * Use cases: admin-triggered rotation (key compromise, brand-new cert
+   * testing, debugging). Throws when called on a non-renewer core.
+   *
+   * @param {string} [hostname] - defaults to the core's primary hostname.
+   * @returns {Promise<{renewed: true, hostname: string, issuedAt: number, expiresAt: number}>}
+   */
+  async forceRenew (hostname) {
+    if (!this.#isRenewer) {
+      throw new Error('AcmeOrchestrator.forceRenew: not the certRenewer core');
+    }
+    const target = hostname ?? this.#hostSpec.commonName;
+    this.#log(`forceRenew: ${target} (skipping expiry check)`);
+    return this.#issue(target);
+  }
+
+  /**
    * One materialize tick — poll PlatformDB, write to disk if changed.
    * Exposed for tests and for an admin "force-reload" endpoint (future).
    */
@@ -147,12 +177,17 @@ class AcmeOrchestrator {
     return this.#issue();
   }
 
-  async #issue () {
+  async #issue (hostname) {
+    const target = hostname ?? this.#hostSpec.commonName;
+    const isPrimary = target === this.#hostSpec.commonName;
     const result = await this.#certRenewer.renew({
-      hostname: this.#hostSpec.commonName,
-      altNames: this.#hostSpec.altNames,
+      hostname: target,
+      // altNames + challengePriority only apply when issuing for the
+      // primary hostname this orchestrator was built for. A force-renew
+      // pointing at a different hostname falls back to defaults.
+      altNames: isPrimary ? this.#hostSpec.altNames : [],
       dnsWriter: this.#dnsWriter,
-      challengePriority: [this.#hostSpec.challenge]
+      challengePriority: isPrimary ? [this.#hostSpec.challenge] : undefined
     });
     this.#log(`issued ${result.hostname} (expires ${new Date(result.expiresAt).toISOString()})`);
     // Trigger an immediate materialize so the new cert lands on disk on

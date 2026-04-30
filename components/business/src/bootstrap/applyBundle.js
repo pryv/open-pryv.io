@@ -99,7 +99,8 @@ function writeOverrideConfig (configDir, bundle, tlsPaths) {
     core: pruneNull({
       id: bundle.node.id,
       url: bundle.node.url,
-      ip: bundle.node.ip
+      ip: bundle.node.ip,
+      hosting: bundle.node.hosting
     }),
     auth: {
       adminAccessKey: bundle.platformSecrets.auth.adminAccessKey,
@@ -130,6 +131,13 @@ function writeOverrideConfig (configDir, bundle, tlsPaths) {
     // Multi-core via DNS: opt rqlited into peer discovery via lsc.<domain>.
     // Single-core deploys (no bundle, no override) keep the default `false`.
     override.cluster = { discoveryEnabled: true };
+  }
+
+  // Bundle v2: propagate letsEncrypt.atRestKey when issuer shipped one. Joiner
+  // ends up with the same AES-GCM key as the rest of the cluster, so cert +
+  // ACME account rows in rqlite can be decrypted on either side.
+  if (bundle.platformSecrets?.letsEncrypt?.atRestKey) {
+    override.letsEncrypt = { atRestKey: bundle.platformSecrets.letsEncrypt.atRestKey };
   }
 
   const header =

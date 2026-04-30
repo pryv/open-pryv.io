@@ -318,6 +318,50 @@ describe('[BOOTSTRAPE2E] bootstrap full flow', function () {
     }
   });
 
+  it('v2 bundle round-trips letsEncrypt.atRestKey into consumer override-config', async () => {
+    const ATKEY = 'cm91bmQtdHJpcC1hdC1yZXN0LWtleS1mb3ItYm9vdHN0cmFw';
+    const platformDB = makeFakeDB();
+    const tokensPath = path.join(tmp, 'tokens.json');
+    const tokenStore = new TokenStore({ path: tokensPath });
+    const { server, baseUrl } = await startAckServer({ tokenStore, platformDB });
+
+    try {
+      const outPath = path.join(tmp, 'bundle.age');
+      const issued = await cliOps.newCore({
+        platformDB,
+        caDir: path.join(tmp, 'ca'),
+        tokensPath,
+        dnsDomain: 'mc.example.com',
+        ackUrlBase: baseUrl,
+        secrets: {
+          adminAccessKey: 'admin-key-0123456789abcdef0123',
+          filesReadTokenSecret: 'files-secret-0123456789abcdef0',
+          letsEncryptAtRestKey: ATKEY
+        },
+        rqlite: { raftPort: 4002, httpPort: 4001 },
+        coreId: 'core-b',
+        ip: '203.0.113.7',
+        outPath
+      });
+
+      const configDir = path.join(tmp, 'cfg');
+      await consumer.consume({
+        bundlePath: outPath,
+        passphrase: issued.passphrase,
+        configDir,
+        tlsDir: path.join(tmp, 'tls'),
+        log: () => {}
+      });
+
+      const yaml = require('js-yaml');
+      const overridePath = path.join(configDir, 'override-config.yml');
+      const parsed = yaml.load(fs.readFileSync(overridePath, 'utf8'));
+      assert.deepEqual(parsed.letsEncrypt, { atRestKey: ATKEY });
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
   it('revoke-token after issuing: consume fails at ack with reason=unknown', async () => {
     const platformDB = makeFakeDB();
     const tokensPath = path.join(tmp, 'tokens.json');

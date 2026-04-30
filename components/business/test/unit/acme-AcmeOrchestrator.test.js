@@ -151,6 +151,79 @@ describe('[ACMEORCH] AcmeOrchestrator', function () {
     });
   });
 
+  describe('forceRenew()', () => {
+    const hostSpec = { commonName: '*.ex.com', altNames: ['ex.com'], challenge: 'dns-01' };
+
+    it('throws on a non-renewer core', async () => {
+      const orch = new AcmeOrchestrator({
+        hostSpec,
+        certRenewer: makeFakeRenewer(),
+        fileMaterializer: makeFakeFm(),
+        dnsWriter: dummyDnsWriter,
+        isRenewer: false,
+        log: () => {}
+      });
+      await assert.rejects(orch.forceRenew(), /not the certRenewer core/);
+      assert.equal(orch.isRenewer, false);
+    });
+
+    it('issues even when stored cert is well outside renewBeforeDays', async () => {
+      const renewer = makeFakeRenewer();
+      // Stored cert valid for 60 days — triggerRenewCheck would skip it,
+      // but forceRenew must issue anyway.
+      renewer._setStored({ expiresAt: Date.now() + 60 * 24 * 3600 * 1000 });
+      const fm = makeFakeFm();
+      const orch = new AcmeOrchestrator({
+        hostSpec,
+        certRenewer: renewer,
+        fileMaterializer: fm,
+        dnsWriter: dummyDnsWriter,
+        isRenewer: true,
+        renewBeforeDays: 30,
+        log: () => {}
+      });
+      const result = await orch.forceRenew();
+      assert.equal(result.renewed, true);
+      assert.equal(result.hostname, '*.ex.com');
+      assert.equal(renewer._calls.length, 1);
+      // Materialize was triggered after issue (so the new cert lands on
+      // disk on this core right away).
+      assert.equal(fm._calls.length, 1);
+    });
+
+    it('uses primary hostSpec defaults when hostname omitted', async () => {
+      const renewer = makeFakeRenewer();
+      const orch = new AcmeOrchestrator({
+        hostSpec,
+        certRenewer: renewer,
+        fileMaterializer: makeFakeFm(),
+        dnsWriter: dummyDnsWriter,
+        isRenewer: true,
+        log: () => {}
+      });
+      await orch.forceRenew();
+      assert.equal(renewer._calls[0].hostname, '*.ex.com');
+      assert.deepEqual(renewer._calls[0].altNames, ['ex.com']);
+      assert.deepEqual(renewer._calls[0].challengePriority, ['dns-01']);
+    });
+
+    it('passes through an explicit non-primary hostname (no altNames carry-over)', async () => {
+      const renewer = makeFakeRenewer();
+      const orch = new AcmeOrchestrator({
+        hostSpec,
+        certRenewer: renewer,
+        fileMaterializer: makeFakeFm(),
+        dnsWriter: dummyDnsWriter,
+        isRenewer: true,
+        log: () => {}
+      });
+      await orch.forceRenew('other.example.com');
+      assert.equal(renewer._calls[0].hostname, 'other.example.com');
+      assert.deepEqual(renewer._calls[0].altNames, []);
+      assert.equal(renewer._calls[0].challengePriority, undefined);
+    });
+  });
+
   describe('start() / stop()', () => {
     it('immediately triggers one materialize tick on start', async () => {
       const fm = makeFakeFm();

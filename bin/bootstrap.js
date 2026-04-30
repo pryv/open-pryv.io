@@ -24,6 +24,8 @@
 //                                  [--url <url>] [--hosting <h>]
 //                                  [--out <path>] [--token-ttl <ms>]
 //                                  [--ca-dir <path>] [--tokens-path <path>]
+//   node bin/bootstrap.js init-ca-holder [--ca-dir <path>] [--tls-dir <path>]
+//                                        [--no-write-config]
 //   node bin/bootstrap.js list-tokens [--tokens-path <path>]
 //   node bin/bootstrap.js revoke-token <coreId> [--ip <ip>]
 //                                               [--tokens-path <path>]
@@ -62,6 +64,7 @@ require('@pryv/boiler').init({
 
     switch (args.command) {
       case 'new-core': await runNewCore(args); break;
+      case 'init-ca-holder': await runInitCaHolder(args); break;
       case 'list-tokens': await runListTokens(args); break;
       case 'revoke-token': await runRevokeToken(args); break;
       default:
@@ -83,6 +86,7 @@ require('@pryv/boiler').init({
 
 const DEFAULT_CA_DIR = '/etc/pryv/ca';
 const DEFAULT_TOKENS_PATH = '/var/lib/pryv/bootstrap-tokens.json';
+const DEFAULT_TLS_DIR = '/etc/pryv/tls';
 
 async function runNewCore (args) {
   if (!args.id) throw new Error('new-core: --id is required');
@@ -125,6 +129,58 @@ async function runNewCore (args) {
   if (result.caCreated) {
     console.log('  3. BACK UP ' + ctx.caDir + ' on this host — losing the CA');
     console.log('     private key prevents adding any further cores.');
+  }
+}
+
+async function runInitCaHolder (args) {
+  const { cliOps } = require('business/src/bootstrap');
+  const config = await getConfig();
+
+  const coreId = config.get('core:id');
+  if (!coreId || coreId === 'REPLACE ME') {
+    throw new Error('init-ca-holder: core.id is not set in config; set it before promoting to multi-core.');
+  }
+
+  const caDir = args['ca-dir'] || config.get('cluster:ca:path') || DEFAULT_CA_DIR;
+  const tlsDir = args['tls-dir'] || config.get('http:ssl:tlsDir') || DEFAULT_TLS_DIR;
+  const writeConfig = args['no-write-config'] !== true;
+
+  const dnsDomain = config.get('dns:domain') || null;
+  const hostname = dnsDomain ? `${coreId}.${dnsDomain}` : null;
+  const ip = config.get('core:ip') || null;
+
+  // Override-config path mirrors the @pryv/boiler convention (baseConfigDir
+  // + 'override-config.yml'). When run on the canonical Pryv.io install,
+  // this lands next to the operator's existing override.
+  const overridePath = path.resolve(__dirname, '../config/override-config.yml');
+
+  const result = await cliOps.initCaHolder({
+    caDir,
+    tlsDir,
+    coreId,
+    ip,
+    hostname,
+    writeConfig,
+    overridePath: writeConfig ? overridePath : null
+  });
+
+  console.log('init-ca-holder:');
+  console.log('  core.id        : ' + coreId);
+  console.log('  CA dir         : ' + caDir + (result.caCreated ? '  (created)' : '  (existing)'));
+  console.log('  TLS dir        : ' + tlsDir + (result.tlsCreated ? '  (cert+key issued)' : '  (existing)'));
+  console.log('  ca cert        : ' + result.tlsPaths.caFile);
+  console.log('  node cert      : ' + result.tlsPaths.certFile);
+  console.log('  node key       : ' + result.tlsPaths.keyFile);
+  if (writeConfig) {
+    console.log('  override-config: ' + overridePath +
+      (result.configUpdated ? '  (rqlite.tls.* merged)' : '  (already up-to-date)'));
+  } else {
+    console.log('  override-config: skipped (--no-write-config)');
+  }
+  if (result.caCreated) {
+    console.log('');
+    console.log('BACK UP ' + caDir + ' on this host — losing the CA private');
+    console.log('key prevents adding any further cores.');
   }
 }
 
@@ -221,6 +277,14 @@ function resolveContext (config, args) {
     throw new Error('auth.filesReadTokenSecret is not set (still on placeholder); cannot ship a bundle.');
   }
 
+  // Propagate letsEncrypt.atRestKey when set on the issuing core, so joiners
+  // share the same AES-GCM key used to encrypt cert + ACME account keys at
+  // rest in rqlite. Placeholder ('REPLACE ME') and unset both omit it —
+  // operator can keep syncing by hand if they prefer.
+  const letsEncryptAtRestKey = isUsableSecret(config.get('letsEncrypt:atRestKey'))
+    ? config.get('letsEncrypt:atRestKey')
+    : null;
+
   const raftPort = config.get('storages:engines:rqlite:raftPort') ?? 4002;
   const httpPort = httpPortFromUrl(config.get('storages:engines:rqlite:url')) ?? 4001;
 
@@ -229,7 +293,7 @@ function resolveContext (config, args) {
     tokensPath,
     dnsDomain,
     ackUrlBase,
-    secrets: { adminAccessKey, filesReadTokenSecret },
+    secrets: { adminAccessKey, filesReadTokenSecret, letsEncryptAtRestKey },
     rqlite: { raftPort, httpPort }
   };
 }
@@ -295,20 +359,33 @@ function printUsage (stream = process.stderr) {
                                  [--url <url>] [--hosting <h>]
                                  [--out <path>] [--token-ttl <ms>]
                                  [--ca-dir <path>] [--tokens-path <path>]
+  node bin/bootstrap.js init-ca-holder [--ca-dir <path>] [--tls-dir <path>]
+                                       [--no-write-config]
   node bin/bootstrap.js list-tokens [--tokens-path <path>]
   node bin/bootstrap.js revoke-token <coreId> [--ip <ip>]
                                               [--tokens-path <path>]
 
 Flags:
-  --id            new core's identifier (required for new-core)
-  --ip            new core's public IP   (required for new-core; optional for revoke-token)
-  --url           explicit core.url for the new core (DNSless multi-core)
-  --hosting       hosting region label, surfaced in /reg/hostings
-  --out           bundle output path (default: ./bootstrap-<id>.json.age)
-  --token-ttl     join-token lifetime in ms (default: 24h)
-  --ca-dir        CA directory (default: /etc/pryv/ca or cluster.ca.path)
-  --tokens-path   token-store JSON file (default: /var/lib/pryv/bootstrap-tokens.json
-                   or cluster.tokens.path)
-  -h, --help      print this help
+  --id              new core's identifier (required for new-core)
+  --ip              new core's public IP   (required for new-core; optional for revoke-token)
+  --url             explicit core.url for the new core (DNSless multi-core)
+  --hosting         hosting region label, surfaced in /reg/hostings
+  --out             bundle output path (default: ./bootstrap-<id>.json.age)
+  --token-ttl       join-token lifetime in ms (default: 24h)
+  --ca-dir          CA directory (default: /etc/pryv/ca or cluster.ca.path)
+  --tls-dir         TLS material dir for init-ca-holder (default: /etc/pryv/tls
+                     or http.ssl.tlsDir)
+  --no-write-config init-ca-holder: do not merge rqlite.tls.* into override-config
+  --tokens-path     token-store JSON file (default: /var/lib/pryv/bootstrap-tokens.json
+                     or cluster.tokens.path)
+  -h, --help        print this help
+
+init-ca-holder:
+  Run once on the existing (CA-holder) core before issuing the first
+  bootstrap bundle to a peer. Generates the cluster CA if absent, mints
+  this core's own cluster-CA-signed node cert, writes ca.crt/node.crt/
+  node.key into --tls-dir, and merges storages.engines.rqlite.tls.*
+  (caFile/certFile/keyFile/verifyClient:true) into override-config.yml.
+  Idempotent — safe to re-run.
 `);
 }

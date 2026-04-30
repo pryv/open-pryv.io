@@ -15,11 +15,21 @@
  * (see BundleEncryption.js) and consumed on the new core by
  * `bin/master.js --bootstrap`.
  *
- * The schema is versioned (`version: 1`). Future changes bump the version;
- * consumers reject unknown versions loudly before any secret is touched.
+ * The schema is versioned. Consumers accept any bundle whose version is in
+ * 1..BUNDLE_VERSION (forward-compat is rejected loudly so a downgrade can't
+ * silently strip a field). Producers always emit the latest version.
+ *
+ * v1: original Plan 34 shape.
+ * v2: optional `platformSecrets.letsEncrypt.atRestKey` (Plan 54 Phase B) —
+ *     base64 32-byte symmetric key used by AtRestEncryption to encrypt cert
+ *     + ACME account private keys at rest in rqlite. Issuing core embeds it
+ *     when its own config has `letsEncrypt.atRestKey` set; joiner copies it
+ *     into override-config.yml so cluster-wide AtRestEncryption keys agree.
+ *     Bundle stays v2-shaped even when the field is absent — the field is
+ *     optional, the version is not.
  */
 
-const BUNDLE_VERSION = 1;
+const BUNDLE_VERSION = 2;
 
 const REQUIRED_TOP_LEVEL = ['version', 'issuedAt', 'cluster', 'node', 'platformSecrets', 'rqlite'];
 const REQUIRED_CLUSTER = ['domain', 'ackUrl', 'joinToken', 'ca'];
@@ -48,6 +58,8 @@ const REQUIRED_RQLITE = ['raftPort', 'httpPort'];
  * @param {Object} input.platformSecrets.auth
  * @param {string} input.platformSecrets.auth.adminAccessKey
  * @param {string} input.platformSecrets.auth.filesReadTokenSecret
+ * @param {Object} [input.platformSecrets.letsEncrypt]
+ * @param {string} [input.platformSecrets.letsEncrypt.atRestKey] - base64 32-byte key; omitted when issuing core has no LE atRestKey set
  * @param {Object} [input.rqlite]
  * @param {number} [input.rqlite.raftPort=4002]
  * @param {number} [input.rqlite.httpPort=4001]
@@ -64,6 +76,16 @@ function assemble (input) {
   requireAll(input.platformSecrets.auth, ['adminAccessKey', 'filesReadTokenSecret'], 'platformSecrets.auth');
 
   const rqlite = input.rqlite || {};
+  const platformSecrets = {
+    auth: {
+      adminAccessKey: input.platformSecrets.auth.adminAccessKey,
+      filesReadTokenSecret: input.platformSecrets.auth.filesReadTokenSecret
+    }
+  };
+  const atRestKey = input.platformSecrets.letsEncrypt?.atRestKey;
+  if (atRestKey != null) {
+    platformSecrets.letsEncrypt = { atRestKey };
+  }
   return {
     version: BUNDLE_VERSION,
     issuedAt: new Date().toISOString(),
@@ -81,12 +103,7 @@ function assemble (input) {
       certPem: input.node.certPem,
       keyPem: input.node.keyPem
     },
-    platformSecrets: {
-      auth: {
-        adminAccessKey: input.platformSecrets.auth.adminAccessKey,
-        filesReadTokenSecret: input.platformSecrets.auth.filesReadTokenSecret
-      }
-    },
+    platformSecrets,
     rqlite: {
       raftPort: rqlite.raftPort ?? 4002,
       httpPort: rqlite.httpPort ?? 4001
@@ -107,8 +124,8 @@ function validate (bundle) {
     throw new Error('Bundle.validate: not an object');
   }
   requireAll(bundle, REQUIRED_TOP_LEVEL, 'bundle');
-  if (bundle.version !== BUNDLE_VERSION) {
-    throw new Error(`Bundle.validate: unsupported version ${bundle.version} (this binary understands version ${BUNDLE_VERSION})`);
+  if (!Number.isInteger(bundle.version) || bundle.version < 1 || bundle.version > BUNDLE_VERSION) {
+    throw new Error(`Bundle.validate: unsupported version ${bundle.version} (this binary understands versions 1..${BUNDLE_VERSION})`);
   }
   requireAll(bundle.cluster, REQUIRED_CLUSTER, 'bundle.cluster');
   if (!bundle.cluster.ca || typeof bundle.cluster.ca.certPem !== 'string' || !bundle.cluster.ca.certPem.includes('BEGIN CERTIFICATE')) {
@@ -126,6 +143,14 @@ function validate (bundle) {
   }
   requireAll(bundle.platformSecrets, REQUIRED_PLATFORM_SECRETS, 'bundle.platformSecrets');
   requireAll(bundle.platformSecrets.auth, REQUIRED_AUTH_SECRETS, 'bundle.platformSecrets.auth');
+  if (bundle.platformSecrets.letsEncrypt != null) {
+    if (typeof bundle.platformSecrets.letsEncrypt !== 'object') {
+      throw new Error('Bundle.validate: bundle.platformSecrets.letsEncrypt must be an object');
+    }
+    if (typeof bundle.platformSecrets.letsEncrypt.atRestKey !== 'string' || bundle.platformSecrets.letsEncrypt.atRestKey.length === 0) {
+      throw new Error('Bundle.validate: bundle.platformSecrets.letsEncrypt.atRestKey must be a non-empty string');
+    }
+  }
   requireAll(bundle.rqlite, REQUIRED_RQLITE, 'bundle.rqlite');
   return bundle;
 }

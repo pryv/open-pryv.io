@@ -114,6 +114,7 @@ describe('[APPLYBUNDLE] applyBundle', function () {
     assert.equal(parsed.core.id, 'core-b');
     assert.equal(parsed.core.url, 'https://core-b.mc.example.com');
     assert.equal(parsed.core.ip, '203.0.113.7');
+    assert.equal(parsed.core.hosting, 'us-east-1');
     assert.equal(parsed.dns.domain, 'mc.example.com');
     assert.equal(parsed.dnsLess.isActive, false);
     assert.equal(parsed.cluster.discoveryEnabled, true);
@@ -129,6 +130,52 @@ describe('[APPLYBUNDLE] applyBundle', function () {
     });
     // override file is 0600 (carries adminAccessKey)
     assert.equal(fs.statSync(result.overridePath).mode & 0o777, 0o600);
+    // v1-shaped bundle (no platformSecrets.letsEncrypt) ⇒ no override.letsEncrypt
+    assert.equal(parsed.letsEncrypt, undefined);
+  });
+
+  it('writes letsEncrypt.atRestKey when bundle ships one (v2 bundle)', async () => {
+    const ATKEY = 'YS1jbHVzdGVyLXdpZGUtYXQtcmVzdC1rZXktYi02NA==';
+    const ca = new ClusterCA({ dir: path.join(tmp, 'issuer-ca') });
+    ca.ensure();
+    const { certPem, keyPem } = ca.issueNodeCert({
+      coreId: 'core-b', ip: '203.0.113.7', hostname: 'core-b.mc.example.com'
+    });
+    const bundle = Bundle.assemble({
+      cluster: {
+        domain: 'mc.example.com',
+        ackUrl: 'https://core-a.mc.example.com/system/admin/cores/ack',
+        joinToken: '0123456789abcdef0123456789abcdef',
+        caCertPem: ca.getCACertPem()
+      },
+      node: {
+        id: 'core-b',
+        ip: '203.0.113.7',
+        hosting: 'us-east-1',
+        url: 'https://core-b.mc.example.com',
+        certPem,
+        keyPem
+      },
+      platformSecrets: {
+        auth: {
+          adminAccessKey: 'admin-key-0123456789abcdef0123',
+          filesReadTokenSecret: 'files-secret-0123456789abcdef0'
+        },
+        letsEncrypt: { atRestKey: ATKEY }
+      },
+      rqlite: { raftPort: 4002, httpPort: 4001 }
+    });
+    const armored = BundleEncryption.encrypt(bundle, PASSPHRASE);
+
+    const result = await applyBundleMod.applyBundle({
+      armoredBundle: armored,
+      passphrase: PASSPHRASE,
+      configDir: path.join(tmp, 'config'),
+      tlsDir: path.join(tmp, 'tls')
+    });
+
+    const parsed = yaml.load(fs.readFileSync(result.overridePath, 'utf8'));
+    assert.deepEqual(parsed.letsEncrypt, { atRestKey: ATKEY });
   });
 
   it('omits dnsLess override when bundle has no domain (DNSless multi-core)', async () => {
@@ -156,6 +203,10 @@ describe('[APPLYBUNDLE] applyBundle', function () {
     // DNSless multi-core: peers find each other via explicit core.url, so
     // rqlited does NOT need DNS-based peer discovery.
     assert.equal(parsed.cluster, undefined);
+    // Bundle had no node.hosting → pruneNull dropped it from override.core.
+    assert.equal(parsed.core.hosting, undefined);
+    // No platformSecrets.letsEncrypt in this bundle either.
+    assert.equal(parsed.letsEncrypt, undefined);
     // armored unused — keep referenced so lint doesn't complain
     assert.ok(armored.length > 0);
   });

@@ -1,5 +1,26 @@
 # Changelog - API Changes
 
+## `POST /system/admin/certs/force-renew` — admin route
+
+- **NEW** `POST /system/admin/certs/force-renew` — triggers an immediate ACME renewal of the cluster's TLS cert, bypassing the daily `renewBeforeDays` check. Body `{ "hostname": string? }` (optional — defaults to the configured primary hostname). Response on success: `200 { ok: true, hostname, issuedAt, expiresAt }`. Response on operator-grade failure: `400 { ok: false, error: string }` (e.g. core is not the renewer, ACME upstream rejection, timeout). Auth: `auth.adminAccessKey` via the `Authorization` header (unauth → 404, same contract as every other `/system/*` route).
+- **BEHAVIOUR**: only the core configured with `letsEncrypt.certRenewer: true` runs the renewal; calling the route on a non-renewer core returns `400 { error: "core is not the renewer" }`. Newly-issued cert + account material is replicated to peers via the existing rqlite `tls-cert/<hostname>` keyspace, hot-swapped into the running `https.Server` via `setSecureContext` IPC, and materialized to disk by every core.
+- **TIMEOUT**: master replies within 180 s — long enough to absorb DNS-01 propagation + LE issuance round-trip in normal conditions. A timeout returns `400` with an `error` describing the upstream failure mode.
+- **Why**: previously operators had to wait until the cert hit `renewBeforeDays` or stop+restart the renewer with a clock skew to force an early renewal. Useful for incident response (compromised key, hostname change, missed expiry alarm) and for drilling the renewal path in staging.
+
+## `bin/bootstrap.js init-ca-holder` — new subcommand
+
+- **NEW** `node bin/bootstrap.js init-ca-holder` mints the CA-holder core's own cluster-CA-signed node cert + key and merges `storages.engines.rqlite.tls.{caFile,certFile,keyFile,verifyClient:true}` into `override-config.yml`. Operators promoting a single-core deploy to multi-core run this once on the existing core before issuing the first `new-core` bundle to a peer.
+- **Flags**: `--ca-dir <path>` (default `/etc/pryv/ca` or `cluster.ca.path`), `--tls-dir <path>` (default `/etc/pryv/tls` or `http.ssl.tlsDir`), `--no-write-config` (skip the override-config merge if you want to manage TLS pointers by hand).
+- **Idempotent**: re-running on a host that already has CA + TLS material + matching config exits with `(existing)` notes and no rewrites — safe to script.
+- **Why**: previously the CA-holder core's rqlited served plain TCP while joiners' rqlited tried mTLS with `verifyClient:true`, so cluster formation stalled until the operator hand-minted the holder's cert (the Plan-36 one-off `issue-use1-cert.js` workaround). Now the same code path that joiners use produces the holder's cert.
+
+## Bootstrap bundle now propagates `letsEncrypt.atRestKey`
+
+- **CHANGE** `bin/bootstrap.js new-core` reads `letsEncrypt.atRestKey` from the issuing core's resolved config and embeds it in the encrypted bundle. The joining core's `bin/master.js --bootstrap` writes it into `override-config.yml` automatically — operators no longer need to copy the value into every core's config by hand.
+- **Backwards-compat**: when the issuer hasn't set `letsEncrypt.atRestKey` (or it's still on `REPLACE ME`), the field is omitted and operators continue to sync by hand. Existing clusters bootstrapped before this change keep working unchanged.
+- **Operator caveat**: once `atRestKey` is set on a cluster, every core must agree forever; rotating it would require re-encrypting every cert + ACME-account row in rqlite. Losing it means re-issuing every LE cert.
+- **Why**: removes one operator-sync step + a class of bugs where two cores ended up encrypting cert rows with different keys, blocking cross-core decryption.
+
 ## `/reg/hostings` — `availableCore` URLs are now slash-terminated
 
 - **CHANGE** `GET /reg/hostings` response: every `regions.<region>.zones.<zone>.hostings.<h>.availableCore` now ends with `/`, matching the long-standing `serviceInfo.{register,api,access}` convention. Empty-string for unavailable hostings is unchanged.

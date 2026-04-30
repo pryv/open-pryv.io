@@ -37,13 +37,28 @@ function validInput (overrides = {}) {
 
 describe('[BUNDLE] Bundle assembly & validation', () => {
   describe('assemble()', () => {
-    it('produces a bundle with version 1 and a current issuedAt', () => {
+    it('produces a bundle with the current version and a current issuedAt', () => {
       const before = Date.now();
       const b = Bundle.assemble(validInput());
       const after = Date.now();
-      assert.equal(b.version, 1);
+      assert.equal(b.version, Bundle.BUNDLE_VERSION);
       const issued = Date.parse(b.issuedAt);
       assert(issued >= before && issued <= after, `issuedAt=${b.issuedAt}`);
+    });
+
+    it('omits platformSecrets.letsEncrypt when input has no atRestKey', () => {
+      const b = Bundle.assemble(validInput());
+      assert.equal(b.platformSecrets.letsEncrypt, undefined);
+    });
+
+    it('carries platformSecrets.letsEncrypt.atRestKey when provided', () => {
+      const input = validInput();
+      input.platformSecrets.letsEncrypt = { atRestKey: 'aGVsbG8td29ybGQtMzItYnl0ZS1iYXNlNjQta2V5LXg9' };
+      const b = Bundle.assemble(input);
+      assert.equal(
+        b.platformSecrets.letsEncrypt.atRestKey,
+        'aGVsbG8td29ybGQtMzItYnl0ZS1iYXNlNjQta2V5LXg9'
+      );
     });
 
     it('copies cluster / node / platformSecrets verbatim', () => {
@@ -135,10 +150,43 @@ describe('[BUNDLE] Bundle assembly & validation', () => {
       assert.throws(() => Bundle.validate('hi'), /not an object/);
     });
 
-    it('rejects unknown version', () => {
+    it('rejects forward-compat unknown version', () => {
       const b = Bundle.assemble(validInput());
       b.version = 99;
       assert.throws(() => Bundle.validate(b), /unsupported version 99/);
+    });
+
+    it('rejects version 0', () => {
+      const b = Bundle.assemble(validInput());
+      b.version = 0;
+      assert.throws(() => Bundle.validate(b), /unsupported version 0/);
+    });
+
+    it('accepts a v1-shaped bundle (legacy compat)', () => {
+      const b = Bundle.assemble(validInput());
+      b.version = 1;
+      delete b.platformSecrets.letsEncrypt;
+      assert.equal(Bundle.validate(b), b);
+    });
+
+    it('accepts a v2 bundle carrying platformSecrets.letsEncrypt.atRestKey', () => {
+      const input = validInput();
+      input.platformSecrets.letsEncrypt = { atRestKey: 'YQ==' };
+      const b = Bundle.assemble(input);
+      assert.equal(b.version, 2);
+      assert.equal(Bundle.validate(b), b);
+    });
+
+    it('rejects platformSecrets.letsEncrypt without atRestKey', () => {
+      const b = Bundle.assemble(validInput());
+      b.platformSecrets.letsEncrypt = {};
+      assert.throws(() => Bundle.validate(b), /atRestKey must be a non-empty string/);
+    });
+
+    it('rejects platformSecrets.letsEncrypt.atRestKey of wrong type', () => {
+      const b = Bundle.assemble(validInput());
+      b.platformSecrets.letsEncrypt = { atRestKey: 42 };
+      assert.throws(() => Bundle.validate(b), /atRestKey must be a non-empty string/);
     });
 
     it('rejects missing top-level key', () => {
