@@ -10,6 +10,9 @@
  * @module storages/interfaces/backup
  */
 
+// Type-only import to mark this as a TS module (not a script).
+import type {} from 'node:fs';
+
 const {
   BackupWriter, createBackupWriter, validateBackupWriter,
   UserBackupWriter, createUserBackupWriter, validateUserBackupWriter

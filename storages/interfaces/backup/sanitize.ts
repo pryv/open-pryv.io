@@ -16,19 +16,22 @@
  * This module normalizes all engine outputs so the backup format is
  * engine-agnostic. Each engine's `importAll` is responsible for
  * converting back to its own format.
- *
- * @module storages/interfaces/backup/sanitize
  */
+
+// Type-only import to mark this as a TS module (not a script). Erased at
+// strip-time by Node 24 and not emitted as ESM, so `module.exports` below
+// keeps working as CJS at runtime.
+import type {} from 'node:fs';
 
 /**
  * Fields that are engine-internal and must be stripped from backup output.
  * These are storage-layer artifacts, not part of the application model.
  */
-const INTERNAL_FIELDS = module.exports.INTERNAL_FIELDS = [
-  '_id',       // MongoDB ObjectId
-  '__v',       // MongoDB version key
-  'userId',    // MongoDB user scoping field
-  'user_id'    // PostgreSQL/SQLite user scoping field
+const INTERNAL_FIELDS: string[] = [
+  '_id', // MongoDB ObjectId
+  '__v', // MongoDB version key
+  'userId', // MongoDB user scoping field
+  'user_id' // PostgreSQL/SQLite user scoping field
 ];
 
 /**
@@ -36,7 +39,7 @@ const INTERNAL_FIELDS = module.exports.INTERNAL_FIELDS = [
  * MongoDB uses `streamId` for streams and `profileId` for profile entries,
  * but the engine-agnostic backup format uses `id` for all entity types.
  */
-const ID_RENAMES = { streamId: 'id', profileId: 'id' };
+const ID_RENAMES: Record<string, string> = { streamId: 'id', profileId: 'id' };
 
 /**
  * Strip internal fields and normalize identifiers.
@@ -47,13 +50,10 @@ const ID_RENAMES = { streamId: 'id', profileId: 'id' };
  * 2. If the document has `_id` but no `id` and no engine-specific ID field,
  *    `_id` is promoted to `id` (events, accesses in MongoDB).
  * 3. Internal fields (`_id`, `__v`, `userId`, `user_id`) are stripped.
- *
- * @param {Object} doc - raw document from exportAll()
- * @returns {Object} cleaned document
  */
-module.exports.sanitize = function sanitize (doc) {
+function sanitize (doc: any): any {
   if (doc == null) return doc;
-  const clean = {};
+  const clean: Record<string, any> = {};
 
   // Check if doc has an engine-specific ID field that should become `id`
   const renamedId = Object.keys(ID_RENAMES).find(f => doc[f] != null);
@@ -74,4 +74,6 @@ module.exports.sanitize = function sanitize (doc) {
     clean[key] = doc[key];
   }
   return clean;
-};
+}
+
+module.exports = { sanitize, INTERNAL_FIELDS };

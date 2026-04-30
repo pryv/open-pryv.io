@@ -5,6 +5,9 @@
  * Refer to LICENSE file
  */
 
+import type { Readable } from 'stream';
+import type { BackupWriter, UserBackupWriter, BackupWriteManifestParams } from './BackupWriter';
+
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -13,33 +16,43 @@ const { createBackupWriter, createUserBackupWriter } = require('./BackupWriter')
 
 const DEFAULT_MAX_CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB (output file size)
 
+interface WriterOptions {
+  /** max output file size in bytes (compressed when compression is on) */
+  maxChunkSize?: number;
+  /** gzip JSONL/CSV files */
+  compress?: boolean;
+}
+
+interface ResolvedWriterOptions {
+  maxChunkSize: number;
+  compress: boolean;
+}
+
 /**
- * Create a FilesystemBackupWriter.
- * @param {string} outputPath - root directory for the backup
- * @param {Object} [options]
- * @param {number} [options.maxChunkSize=52428800] - max output file size in bytes (compressed when compression is on)
- * @param {boolean} [options.compress=true] - gzip JSONL/CSV files
- * @returns {BackupWriter}
+ * Create a FilesystemBackupWriter rooted at `outputPath`.
  */
-module.exports.createFilesystemBackupWriter = function createFilesystemBackupWriter (outputPath, options) {
-  const opts = Object.assign({ maxChunkSize: DEFAULT_MAX_CHUNK_SIZE, compress: true }, options);
+function createFilesystemBackupWriter (outputPath: string, options?: WriterOptions): BackupWriter {
+  const opts: ResolvedWriterOptions = Object.assign(
+    { maxChunkSize: DEFAULT_MAX_CHUNK_SIZE, compress: true },
+    options
+  );
   fs.mkdirSync(outputPath, { recursive: true });
 
   return createBackupWriter({
-    async openUser (userId, username) {
+    async openUser (userId: string, username: string): Promise<UserBackupWriter> {
       const userDir = path.join(outputPath, 'users', userId);
       fs.mkdirSync(userDir, { recursive: true });
       return createFilesystemUserBackupWriter(userDir, userId, username, opts);
     },
 
-    async writePlatformData (data) {
+    async writePlatformData (data: AsyncIterable<any> | any[]) {
       const platformDir = path.join(outputPath, 'platform');
       fs.mkdirSync(platformDir, { recursive: true });
       const filePath = path.join(platformDir, jsonlFileName('platform', opts.compress));
       await writeJsonlFile(filePath, data, opts.compress);
     },
 
-    async writeManifest (params) {
+    async writeManifest (params: BackupWriteManifestParams) {
       const manifest = {
         formatVersion: 1,
         coreVersion: params.coreVersion,
@@ -56,38 +69,49 @@ module.exports.createFilesystemBackupWriter = function createFilesystemBackupWri
 
     async close () { /* no-op for filesystem */ }
   });
-};
+}
 
 // ---------------------------------------------------------------------------
 // FilesystemUserBackupWriter
 // ---------------------------------------------------------------------------
 
-function createFilesystemUserBackupWriter (userDir, userId, username, opts) {
-  const stats = { streams: 0, accesses: 0, profile: 0, webhooks: 0, events: 0, audit: 0, series: 0, attachments: 0 };
-  const chunks = {};
+interface UserStats {
+  streams: number;
+  accesses: number;
+  profile: number;
+  webhooks: number;
+  events: number;
+  audit: number;
+  series: number;
+  attachments: number;
+}
+
+function createFilesystemUserBackupWriter (userDir: string, userId: string, username: string, opts: ResolvedWriterOptions): UserBackupWriter {
+  const stats: UserStats = { streams: 0, accesses: 0, profile: 0, webhooks: 0, events: 0, audit: 0, series: 0, attachments: 0 };
+  const chunks: Record<string, string[]> = {};
 
   return createUserBackupWriter({
-    async writeStreams (items) {
+    async writeStreams (items: AsyncIterable<any> | any[]) {
       const filePath = path.join(userDir, jsonlFileName('streams', opts.compress));
       stats.streams = await writeJsonlFile(filePath, items, opts.compress);
     },
 
-    async writeAccesses (items) {
+    async writeAccesses (items: AsyncIterable<any> | any[]) {
       const filePath = path.join(userDir, jsonlFileName('accesses', opts.compress));
       stats.accesses = await writeJsonlFile(filePath, items, opts.compress);
     },
 
-    async writeProfile (items) {
+    async writeProfile (items: AsyncIterable<any> | any[]) {
       const filePath = path.join(userDir, jsonlFileName('profile', opts.compress));
       stats.profile = await writeJsonlFile(filePath, items, opts.compress);
     },
 
-    async writeWebhooks (items) {
+    async writeWebhooks (items: AsyncIterable<any> | any[]) {
       const filePath = path.join(userDir, jsonlFileName('webhooks', opts.compress));
       stats.webhooks = await writeJsonlFile(filePath, items, opts.compress);
     },
 
-    async writeEvents (items) {
+    async writeEvents (items: AsyncIterable<any> | any[]) {
       const eventsDir = path.join(userDir, 'events');
       fs.mkdirSync(eventsDir, { recursive: true });
       const result = await writeChunkedJsonlFiles(eventsDir, 'events', items, opts);
@@ -95,7 +119,7 @@ function createFilesystemUserBackupWriter (userDir, userId, username, opts) {
       chunks.events = result.chunkFiles;
     },
 
-    async writeAudit (items) {
+    async writeAudit (items: AsyncIterable<any> | any[]) {
       const auditDir = path.join(userDir, 'audit');
       fs.mkdirSync(auditDir, { recursive: true });
       const result = await writeChunkedJsonlFiles(auditDir, 'audit', items, opts);
@@ -103,14 +127,14 @@ function createFilesystemUserBackupWriter (userDir, userId, username, opts) {
       chunks.audit = result.chunkFiles;
     },
 
-    async writeSeries (items) {
+    async writeSeries (items: AsyncIterable<any> | any[]) {
       const seriesDir = path.join(userDir, 'series');
       fs.mkdirSync(seriesDir, { recursive: true });
       const filePath = path.join(seriesDir, jsonlFileName('series', opts.compress));
       stats.series = await writeJsonlFile(filePath, items, opts.compress);
     },
 
-    async writeAttachment (eventId, fileId, readStream) {
+    async writeAttachment (eventId: string, fileId: string, readStream: Readable) {
       const attachDir = path.join(userDir, 'attachments');
       fs.mkdirSync(attachDir, { recursive: true });
       const filePath = path.join(attachDir, fileId);
@@ -119,7 +143,7 @@ function createFilesystemUserBackupWriter (userDir, userId, username, opts) {
       stats.attachments++;
     },
 
-    async writeAccountData (data) {
+    async writeAccountData (data: any) {
       const filePath = path.join(userDir, jsonlFileName('account', opts.compress));
       // Account data is a single object, not a collection — write as one JSON line
       await writeJsonlFile(filePath, [data], opts.compress);
@@ -144,20 +168,17 @@ function createFilesystemUserBackupWriter (userDir, userId, username, opts) {
 // JSONL + gzip helpers
 // ---------------------------------------------------------------------------
 
-function jsonlFileName (baseName, compress) {
+function jsonlFileName (baseName: string, compress: boolean): string {
   return compress ? baseName + '.jsonl.gz' : baseName + '.jsonl';
 }
 
 /**
  * Write items to a single JSONL file (optionally gzip-compressed).
- * @param {string} filePath
- * @param {AsyncIterable|Array} items
- * @param {boolean} compress
- * @returns {Promise<number>} count of items written
+ * Returns the count of items written.
  */
-async function writeJsonlFile (filePath, items, compress) {
+async function writeJsonlFile (filePath: string, items: AsyncIterable<any> | any[], compress: boolean): Promise<number> {
   let count = 0;
-  const lines = [];
+  const lines: string[] = [];
   for await (const item of items) {
     lines.push(JSON.stringify(item));
     count++;
@@ -179,17 +200,12 @@ async function writeJsonlFile (filePath, items, compress) {
  * When compression is enabled, the target applies to the compressed (gzip) output size.
  * When compression is off, the target applies to the raw file size.
  * Files may exceed the target by ~10% — this is a soft limit.
- * @param {string} dir - directory for chunk files
- * @param {string} baseName - e.g. 'events', 'audit'
- * @param {AsyncIterable|Array} items
- * @param {Object} opts - { maxChunkSize, compress }
- * @returns {Promise<{totalCount: number, chunkFiles: string[]}>}
  */
-async function writeChunkedJsonlFiles (dir, baseName, items, opts) {
+async function writeChunkedJsonlFiles (dir: string, baseName: string, items: AsyncIterable<any> | any[], opts: ResolvedWriterOptions): Promise<{ totalCount: number, chunkFiles: string[] }> {
   let chunkIndex = 1;
-  let currentLines = [];
+  let currentLines: string[] = [];
   let totalCount = 0;
-  const chunkFiles = [];
+  const chunkFiles: string[] = [];
 
   function flushChunk () {
     if (currentLines.length === 0) return;
@@ -250,3 +266,5 @@ async function writeChunkedJsonlFiles (dir, baseName, items, opts) {
   flushChunk();
   return { totalCount, chunkFiles };
 }
+
+module.exports = { createFilesystemBackupWriter };
