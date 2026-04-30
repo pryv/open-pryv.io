@@ -12,7 +12,20 @@
  * Use {@link validatePasswordResetRequests} to verify class-based instances.
  */
 
-const REQUIRED_METHODS = [
+type Callback<T = any> = (err: Error | null, result?: T) => void;
+
+export interface PasswordResetRequests {
+  get (id: string, username: string, callback: Callback<any>): void;
+  generate (username: string, callback: Callback<string>): void;
+  destroy (id: string, username: string, callback: Callback<any>): void;
+  clearAll (callback: Callback<any>): void;
+
+  // Migration methods
+  exportAll (callback: Callback<any[]>): void;
+  importAll (data: any[], callback: Callback<any>): void;
+}
+
+const REQUIRED_METHODS: string[] = [
   'get',
   'generate',
   'destroy',
@@ -22,18 +35,13 @@ const REQUIRED_METHODS = [
   'importAll'
 ];
 
-/**
- * Validate that a class instance implements all required PasswordResetRequests methods.
- * @param {Object} instance
- * @returns {Object} The instance itself
- */
-module.exports.validatePasswordResetRequests = function validatePasswordResetRequests (instance) {
+function validatePasswordResetRequests (instance: any): PasswordResetRequests {
   for (const method of REQUIRED_METHODS) {
     if (typeof instance[method] !== 'function') {
       throw new Error(`PasswordResetRequests implementation missing method: ${method}`);
     }
   }
   return instance;
-};
+}
 
-module.exports.REQUIRED_METHODS = REQUIRED_METHODS;
+module.exports = { validatePasswordResetRequests, REQUIRED_METHODS };

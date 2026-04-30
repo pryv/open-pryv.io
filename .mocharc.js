@@ -32,7 +32,11 @@ const baseConfig = {
   ui: 'bdd',
   diff: true,
   reporter: 'dot',
-  spec: 'test/**/*.test.js'
+  spec: 'test/**/*.test.js',
+  // Plan 57 .ts loader shim — added to every component's mocha config so
+  // tests can require .ts files via extensionless paths during incremental
+  // TS migration. Erased at Phase 5.
+  require: [require.resolve('./bin/_ts-register')]
 };
 
 /**
@@ -61,7 +65,10 @@ function createConfig (options = {}) {
   };
 
   if (requireModule) {
-    config.require = requireModule;
+    // Append per-component require to the base list (which carries the
+    // Plan 57 .ts loader shim). Both string and array forms are honoured.
+    const extra = Array.isArray(requireModule) ? requireModule : [requireModule];
+    config.require = [...baseConfig.require, ...extra];
   }
 
   if (isNonParallelOnly && nonParallelTests.length > 0) {
