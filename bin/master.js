@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 
+// Plan 57 .ts loader shim — must run before any storages/ or components/
+// require so Node's CJS resolver picks up .ts files during the incremental
+// TS migration. Erased at Phase 5 when runtime flips to ESM.
+require('./_ts-register');
+
 // Observability boot MUST come before any other require so APM agents
 // can instrument http/express/pg from the start. No-op in NODE_ENV=test
 // or when PRYV_OBSERVABILITY_PROVIDER is unset.

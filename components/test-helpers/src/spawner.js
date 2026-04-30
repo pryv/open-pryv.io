@@ -71,6 +71,10 @@ class SpawnContext {
         }
         return arg;
       });
+      // Plan 57 .ts loader shim — pre-load in every forked child so .ts
+      // requires (storages/interfaces/...) resolve. The flag wins over
+      // an entrypoint-level require because it runs before the entry.
+      newArgv.push('--require', path.resolve(__dirname, '../../../bin/_ts-register.js'));
       const newEnv = {
         ...process.env,
         PRYV_BOILER_SUFFIX: '#' + spawnCounter++

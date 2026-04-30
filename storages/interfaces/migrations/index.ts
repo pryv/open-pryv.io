@@ -8,7 +8,7 @@
 /**
  * Barrel for the migrations primitive.
  *
- * - Contracts (TS types) live in `migration.d.ts` and `MigrationRunner.d.ts`.
+ * - Contracts (TS interfaces) live inline in `MigrationRunner.ts` and `migration.d.ts`.
  * - Conventions (filename format, version model, engine responsibilities)
  *   are documented in `README.md`.
  */

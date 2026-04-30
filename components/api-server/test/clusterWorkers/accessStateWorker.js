@@ -5,6 +5,9 @@
  * Refer to LICENSE file
  */
 
+// Plan 57 .ts loader shim — must run before any storages/ require.
+require('../../../../bin/_ts-register');
+
 /**
  * Plan 55 Phase 5 — child worker harness for the access-state cross-worker
  * test. Initialises storages on first request and dispatches accessState

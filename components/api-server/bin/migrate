@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Plan 57 .ts loader shim — must run before any storages/ require.
+require('../../../bin/_ts-register');
+
 // Binary for launching the db migration process.
 
 const { getApplication } = require('api-server/src/application');

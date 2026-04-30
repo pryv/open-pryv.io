@@ -4,6 +4,11 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+
+// Plan 57 .ts loader shim — must run before any storages/ require.
+// This file is the entry point used by test-helpers/spawner.js child_process.fork().
+require('../../../../bin/_ts-register');
+
 const Server = require('../../src/server');
 const { getApplication } = require('api-server/src/application');
 const ChildProcess = require('test-helpers').child_process;
