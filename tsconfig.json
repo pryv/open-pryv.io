@@ -1,14 +1,36 @@
 {
   "compilerOptions": {
-    "lib": ["es2020", "DOM"],
+    "target": "es2022",
+    "module": "commonjs",
     "moduleResolution": "node",
-    "module": "CommonJS",
-    "checkJs": true,
-    "allowJs": true,
+    "lib": ["es2022", "DOM"],
+    "outDir": "./dist",
+    "rootDir": ".",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
     "resolveJsonModule": true,
-    "maxNodeModuleJsDepth": 1,
+    "allowJs": true,
+    "checkJs": false,
     "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "forceConsistentCasingInFileNames": true,
+    "maxNodeModuleJsDepth": 0
   },
-  "include": ["components/**/*.js", "test/**/*.js"],
-  "exclude": ["node_modules"]
+  "include": [
+    "components/**/*.ts",
+    "components/**/*.js",
+    "storages/**/*.ts",
+    "storages/**/*.js",
+    "bin/**/*.ts",
+    "bin/**/*.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/node_modules",
+    "**/*.test.js",
+    "**/*.test.ts",
+    "**/test/**"
+  ]
 }

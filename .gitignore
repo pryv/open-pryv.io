@@ -13,6 +13,8 @@ components/*/node_modules/
 proxy/nginx.conf
 service-core.iml
 /out
+# tsc emit target — produced by `just build`, not used at runtime yet (Plan 57 Phase 0)
+/dist
 .nyc_output/
 .v8-coverage/
 .c8_output/

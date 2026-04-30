@@ -60,6 +60,7 @@
     "winston-syslog": "^2.7.0"
   },
   "devDependencies": {
+    "@types/node": "^24.0.0",
     "async": "^2.6.4",
     "awaiting": "^3.0.0",
     "backloop.dev": "^2.0.5",
@@ -87,7 +88,8 @@
     "source-licenser": "^2.0.5",
     "superagent": "^8.0.3",
     "supertest": "^6.3.1",
-    "temp": "^0.9.4"
+    "temp": "^0.9.4",
+    "typescript": "^5.9.3"
   },
   "optionalDependencies": {
     "newrelic": "^12.0.0"
