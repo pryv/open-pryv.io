@@ -10,7 +10,7 @@ const { EventEmitter } = require('node:events');
 
 const SessionStore = require('../../../src/mfa/SessionStore');
 const Profile = require('../../../src/mfa/Profile');
-const clusterKv = require('messages/src/clusterKv');
+const clusterKv = require('messages/src/cluster_kv');
 
 /**
  * Plan 55 Phase 4 — SessionStore is now backed by clusterKv. Each test

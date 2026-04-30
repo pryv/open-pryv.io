@@ -97,6 +97,7 @@
     "node": "24.x"
   },
   "overrides": {
-    "fast-xml-parser": "^5.5.7"
+    "fast-xml-parser": "^5.5.7",
+    "serialize-javascript": "^7.0.5"
   }
 }

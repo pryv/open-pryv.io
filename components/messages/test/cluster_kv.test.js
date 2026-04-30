@@ -18,7 +18,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 
-const clusterKv = require('messages/src/clusterKv');
+const clusterKv = require('messages/src/cluster_kv');
 
 function makeFakeCluster () {
   // EventEmitter exposes .on/.emit/.removeListener — same surface as
