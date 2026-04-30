@@ -11,10 +11,10 @@
  * Single-node: use SQLite engine. Multi-core: use this engine with rqlite sidecar.
  */
 class DBrqlite {
-  url;
-  closed;
+  url: string;
+  closed: boolean;
 
-  constructor (url) {
+  constructor (url?: string) {
     this.url = url || 'http://localhost:4001';
     this.closed = false;
   }
@@ -33,7 +33,7 @@ class DBrqlite {
    * @param {Array} [params]
    * @returns {Promise<Object>} rqlite result
    */
-  async execute (sql, params) {
+  async execute (sql: string, params?: any[]): Promise<any> {
     const body = params ? [[sql, ...params]] : [[sql]];
     const res = await fetch(this.url + '/db/execute?timings', {
       method: 'POST',
@@ -56,7 +56,7 @@ class DBrqlite {
    * @param {Array} [params]
    * @returns {Promise<Array>} rows as objects
    */
-  async query (sql, params) {
+  async query (sql: string, params?: any[]): Promise<any[]> {
     const body = params ? [[sql, ...params]] : [[sql]];
     const res = await fetch(this.url + '/db/query?timings', {
       method: 'POST',

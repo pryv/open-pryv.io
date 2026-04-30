@@ -5,27 +5,26 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const DBrqlite = require('./DBrqlite');
 const { buildMigrationsCapability } = require('./SchemaMigrations');
 
-let platformDB = null;
-let _getLogger = null;
+let platformDB: any = null;
+let _getLogger: ((name: string) => any) | null = null;
 
 /**
  * Initialize the rqlite engine.
- * @param {Object} config - { url: 'http://localhost:4001' }
- * @param {Function} [getLogger] - logger factory from the storages barrel
  */
-function init (config, getLogger) {
+function init (config: { url?: string }, getLogger?: (name: string) => any): void {
   platformDB = new DBrqlite(config.url);
   if (getLogger) _getLogger = getLogger;
 }
 
 /**
  * Create and return the PlatformDB instance.
- * @returns {DBrqlite}
  */
-function createPlatformDB () {
+function createPlatformDB (): any {
   if (!platformDB) {
     platformDB = new DBrqlite();
   }
@@ -36,7 +35,7 @@ function createPlatformDB () {
  * Build the migrations capability for the engine-agnostic MigrationRunner.
  * Returns null when the engine hasn't been initialized yet.
  */
-function getMigrationsCapability () {
+function getMigrationsCapability (): any | null {
   if (!platformDB) return null;
   return buildMigrationsCapability(platformDB, _getLogger);
 }

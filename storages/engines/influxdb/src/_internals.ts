@@ -10,14 +10,17 @@
  * Populated by the engine entry point's init() from barrel-provided values.
  * All engine files use require('./_internals') instead of host require() calls.
  */
-const registry = {};
+
+import type {} from 'node:fs';
+
+const registry: Record<string, any> = {};
 
 module.exports = {
-  set (name, value) { registry[name] = value; },
+  set (name: string, value: any): void { registry[name] = value; },
   /** Create a logger proxy that defers getLogger() until first use (safe at module scope). */
-  lazyLogger (name) {
-    let _log;
-    const noop = () => {};
+  lazyLogger (name: string): any {
+    let _log: any;
+    const noop = (): void => {};
     return new Proxy({}, {
       get: (_, prop) => {
         if (!_log) {

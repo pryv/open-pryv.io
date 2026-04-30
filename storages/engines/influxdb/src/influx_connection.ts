@@ -4,96 +4,67 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+
 const influx = require('influx');
 const _internals = require('./_internals');
-/** Connection to the influx database. Adds error handling and logging on top
+
+/**
+ * Connection to the influx database. Adds error handling and logging on top
  * of our database driver.
  */
 class InfluxConnection {
-  conn;
+  conn: any;
+  logger: any;
 
-  logger;
-  constructor (connectionSettings) {
+  constructor (connectionSettings: Record<string, any>) {
     this.conn = new influx.InfluxDB(connectionSettings);
     this.logger = _internals.lazyLogger('influx');
   }
 
-  /**
-   * @param {string} name
-   * @returns {Promise<any>}
-   */
-  createDatabase (name) {
+  createDatabase (name: string): Promise<any> {
     this.logger.debug(`Creating database ${name}.`);
     return this.conn.createDatabase(name);
   }
 
-  /**
-   * @param {string} name
-   * @returns {Promise<void>}
-   */
-  dropDatabase (name) {
+  dropDatabase (name: string): Promise<void> {
     this.logger.debug(`Dropping database ${name}.`);
     return this.conn.dropDatabase(name);
   }
 
-  /**
-   * @param {string} name
-   * @param {Array<IPoint>} points
-   * @param {IWriteOptions} options
-   * @returns {Promise<void>}
-   */
-  writeMeasurement (name, points, options) {
+  writeMeasurement (name: string, points: any[], options?: any): Promise<void> {
     this.logger.debug(`Write -> ${name}: ${points.length} points.`);
     return this.conn.writeMeasurement(name, points, options);
   }
 
-  /**
-   * @param {string} name
-   * @param {string} dbName
-   * @returns {Promise<void>}
-   */
-  dropMeasurement (name, dbName) {
+  dropMeasurement (name: string, dbName: string): Promise<void> {
     this.logger.debug(`Drop -> measurement: ${name} on dbName ${dbName}`, this.logger);
     return this.conn.dropMeasurement(name, dbName);
   }
 
-  /**
-   * @param {Array<IPoint>} points
-   * @param {IWriteOptions} options
-   * @returns {Promise<void>}
-   */
-  writePoints (points, options) {
+  writePoints (points: any[], options?: any): Promise<void> {
     this.logger.debug(`Write -> (multiple): ${points.length} points.`);
     return this.conn.writePoints(points, options);
   }
 
-  /**
-   * @param {string} query
-   * @param {IQueryOptions} options
-   * @returns {Promise<any>}
-   */
-  query (query, options) {
+  query (query: string, options?: any): Promise<any> {
     const singleLine = query.replace(/\s+/g, ' ');
     this.logger.debug(`Query: ${singleLine}`);
     return this.conn.query(query, options);
   }
 
   /**
-   * used for tests, Returns an array of database names
-   * @returns {Promise<string[]>}
+   * Used for tests, returns an array of database names.
    */
-  getDatabases () {
+  getDatabases (): Promise<string[]> {
     return this.conn.getDatabaseNames();
   }
 
   /**
    * Export all measurements and their points from the given database.
-   * @param {string} name - Database name
-   * @returns {Promise<{measurements: Array<{measurement: string, points: Object[]}>}>}
    */
-  async exportDatabase (name) {
+  async exportDatabase (name: string): Promise<{ measurements: Array<{ measurement: string, points: any[] }> }> {
     const measurementRows = await this.conn.query('SHOW MEASUREMENTS', { database: name });
-    const measurements = [];
+    const measurements: Array<{ measurement: string, points: any[] }> = [];
     for (const row of measurementRows) {
       const measurementName = row.name;
       const points = await this.conn.query(`SELECT * FROM "${measurementName}"`, { database: name });
@@ -105,17 +76,14 @@ class InfluxConnection {
   /**
    * Import measurements and their points into the given database.
    * Creates the database if it does not exist.
-   * @param {string} name - Database name
-   * @param {{measurements: Array<{measurement: string, points: Object[]}>}} data
-   * @returns {Promise<void>}
    */
-  async importDatabase (name, data) {
+  async importDatabase (name: string, data: { measurements: Array<{ measurement: string, points: any[] }> }): Promise<void> {
     await this.createDatabase(name);
     for (const { measurement, points } of data.measurements) {
       if (points.length === 0) continue;
-      const writePoints = points.map((p) => {
-        const fields = {};
-        const tags = {};
+      const writePoints = points.map((p: Record<string, any>) => {
+        const fields: Record<string, any> = {};
+        const tags: Record<string, string> = {};
         for (const [key, value] of Object.entries(p)) {
           if (key === 'time') continue;
           if (typeof value === 'string') {
@@ -135,4 +103,5 @@ class InfluxConnection {
     }
   }
 }
+
 module.exports = InfluxConnection;

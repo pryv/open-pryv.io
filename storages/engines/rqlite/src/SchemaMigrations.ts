@@ -17,15 +17,18 @@
  * to bump wins and followers observe the new value on their next read.
  */
 
+import type {} from 'node:fs';
+
 const KEY = 'migrations/version';
 
 class SchemaMigrationsRqlite {
-  /** @param {import('./DBrqlite')} db */
-  constructor (db) {
+  db: any;
+
+  constructor (db: any) {
     this.db = db;
   }
 
-  async getVersion () {
+  async getVersion (): Promise<number> {
     const rows = await this.db.query('SELECT value FROM keyValue WHERE key = ?', [KEY]);
     if (rows.length === 0) return 0;
     try {
@@ -36,7 +39,7 @@ class SchemaMigrationsRqlite {
     }
   }
 
-  async setVersion (version) {
+  async setVersion (version: number): Promise<void> {
     if (!Number.isInteger(version) || version < 1) {
       throw new Error(`schema_migrations version must be a positive integer, got ${version}`);
     }
@@ -48,7 +51,7 @@ class SchemaMigrationsRqlite {
   }
 
   /** For tests — drop the tracking row. */
-  async _resetForTests () {
+  async _resetForTests (): Promise<void> {
     await this.db.execute('DELETE FROM keyValue WHERE key = ?', [KEY]);
   }
 }
@@ -57,12 +60,8 @@ const noopLogger = { debug () {}, info () {}, warn () {}, error () {} };
 
 /**
  * Build the capability object the MigrationRunner consumes.
- *
- * @param {import('./DBrqlite')} db - DBrqlite instance (already initialized)
- * @param {Function} [getLogger] - logger factory (name → logger)
- * @returns {import('../../../interfaces/migrations/MigrationRunner').MigrationCapableEngine}
  */
-function buildMigrationsCapability (db, getLogger) {
+function buildMigrationsCapability (db: any, getLogger?: (name: string) => any): any {
   const path = require('path');
   if (!db) throw new Error('rqlite engine: db argument required to build migrations capability');
   const store = new SchemaMigrationsRqlite(db);
@@ -70,7 +69,7 @@ function buildMigrationsCapability (db, getLogger) {
     id: 'rqlite',
     migrationsDir: path.resolve(__dirname, '..', 'migrations'),
     getVersion: () => store.getVersion(),
-    setVersion: (v) => store.setVersion(v),
+    setVersion: (v: number) => store.setVersion(v),
     buildContext: () => ({ db, logger: getLogger ? getLogger('migrations-rqlite') : noopLogger })
   };
 }

@@ -11,15 +11,14 @@
  * Provides the series connection backed by InfluxDB.
  */
 
+import type {} from 'node:fs';
+
 const _internals = require('./_internals');
 
 /**
  * Receive host internals from the barrel.
- * @param {Object} config - Engine-specific configuration from manifest configKey
- * @param {Function} getLogger - Logger factory
- * @param {Object} internals - Map of name → value (remaining host internals)
  */
-function init (config, getLogger, internals) {
+function init (config: Record<string, any>, getLogger: (name: string) => any, internals: Record<string, any>): void {
   _internals.set('config', config);
   _internals.set('getLogger', getLogger);
   for (const [key, value] of Object.entries(internals)) {
@@ -30,10 +29,9 @@ function init (config, getLogger, internals) {
 // -- SeriesStorage ----------------------------------------------------------
 
 /**
- * @param {Object} config - { host, port } from influxdb config section
- * @returns {Object} InfluxConnection instance
+ * @param config — { host, port } from influxdb config section
  */
-function createSeriesConnection (config) {
+function createSeriesConnection (config: { host: string, port: number }): any {
   const InfluxConnection = require('./influx_connection');
   return new InfluxConnection({ host: config.host, port: config.port });
 }
