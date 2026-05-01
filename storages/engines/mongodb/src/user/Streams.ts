@@ -4,6 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+import type {} from 'node:fs';
+
 const BaseStorage = require('./BaseStorage');
 const converters = require('./../converters');
 const util = require('util');
@@ -20,7 +22,7 @@ module.exports = Streams;
  * @constructor
  */
 function Streams (database) {
-  Streams.super_.call(this, database);
+  (Streams as any).super_.call(this, database);
 
   Object.assign(this.converters, {
     itemDefaults: [
@@ -108,12 +110,12 @@ Streams.prototype.importAll = function (userOrUserId, items, callback) {
     }
     return doc;
   });
-  Streams.super_.prototype.importAll.call(this, userOrUserId, mapped, callback);
+  (Streams as any).super_.prototype.importAll.call(this, userOrUserId, mapped, callback);
 };
 
 Streams.prototype.insertOne = function (user, stream, callback) {
   _internals.cache.unsetUserData(user.id);
-  Streams.super_.prototype.insertOne.call(this, user, stream, callback);
+  (Streams as any).super_.prototype.insertOne.call(this, user, stream, callback);
 };
 
 Streams.prototype.updateOne = function (user, query, updatedData, callback) {
@@ -122,7 +124,7 @@ Streams.prototype.updateOne = function (user, query, updatedData, callback) {
   } else { // only stream Structure
     _internals.cache.unsetStreams(user.id, 'local');
   }
-  Streams.super_.prototype.updateOne.call(this, user, query, updatedData, callback);
+  (Streams as any).super_.prototype.updateOne.call(this, user, query, updatedData, callback);
 };
 
 /**

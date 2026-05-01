@@ -8,6 +8,8 @@
  * Contains UserName >> UserId Mapping
  */
 
+import type {} from 'node:fs';
+
 class DBIndex {
   id4nameCollection;
 

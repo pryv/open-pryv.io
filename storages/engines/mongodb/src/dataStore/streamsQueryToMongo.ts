@@ -5,10 +5,10 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 /**
  * Transform stream queries for MongoDB query format.
- * @param {Array.<StreamQuery>} streamQueriesArray - array of streamQuery
- * @returns {mongoQuery} - the necessary components to query streams
  */
 exports.toMongoDBQuery = function toMongoDBQuery (streamQueriesArray) {
   let mongoQuery = null; // no streams

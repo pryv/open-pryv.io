@@ -8,6 +8,8 @@
  * Common converter helper functions for storage modules.
  */
 
+import type {} from 'node:fs';
+
 const { createId: generateId } = require('@paralleldrive/cuid2');
 
 exports.createIdIfMissing = function (item) {

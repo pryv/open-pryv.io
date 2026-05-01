@@ -8,6 +8,8 @@
  * Simple cookie-less user session store.
  * Fetches, generates, touches and destroys sessions.
  */
+import type {} from 'node:fs';
+
 module.exports = Sessions;
 
 const { createId: generateId } = require('@paralleldrive/cuid2');

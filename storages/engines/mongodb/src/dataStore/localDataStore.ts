@@ -8,6 +8,8 @@
 /**
  * Local Data Store.
  */
+import type {} from 'node:fs';
+
 const ds = require('@pryv/datastore');
 const _internals = require('../_internals');
 const userStreams = require('./localUserStreams');
@@ -69,7 +71,7 @@ module.exports = ds.createDataStore({
   }
 });
 
-const eventsIndexes = [
+const eventsIndexes: Array<{ index: any, options: any }> = [
   {
     index: { userId: 1 },
     options: {}
@@ -105,7 +107,7 @@ const eventsIndexes = [
   }
 ];
 
-const streamIndexes = [
+const streamIndexes: Array<{ index: any, options: any }> = [
   {
     index: { userId: 1 },
     options: {}

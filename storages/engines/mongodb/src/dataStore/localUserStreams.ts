@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const { fromCallback } = require('utils');
 const assert = require('assert');
 const ds = require('@pryv/datastore');
@@ -85,7 +87,7 @@ module.exports = ds.createUserStreams({
    * @returns {Promise<any[]>}
    */
   async getDeletions (userId, query, options) {
-    const dbOptions = { sort: { deleted: options?.sortAscending ? 1 : -1 } };
+    const dbOptions: any = { sort: { deleted: options?.sortAscending ? 1 : -1 } };
     if (options?.limit != null) dbOptions.limit = options.limit;
     if (options?.skip != null) dbOptions.skip = options.skip;
     const deletedStreams = await fromCallback((cb) => this.userStreamsStorage.findDeletions({ id: userId }, query.deletedSince, options, cb));
@@ -143,7 +145,7 @@ function cloneStream (stream, childrenDepth) {
     return structuredClone(stream);
   } else {
     const StreamPropsWithoutChildren = STREAM_PROPERTIES.filter((p) => p !== 'children');
-    const copy = pick(stream, StreamPropsWithoutChildren);
+    const copy: any = pick(stream, StreamPropsWithoutChildren);
     if (childrenDepth === 0) {
       copy.childrenHidden = true;
       copy.children = [];

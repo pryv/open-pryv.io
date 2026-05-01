@@ -7,24 +7,17 @@
 
 /**
  * MongoDB storage engine plugin.
- *
- * Provides factories for all MongoDB-backed storage types.
- * Currently delegates to existing component implementations;
- * code will be physically moved here in a later cleanup phase.
  */
+
+import type {} from 'node:fs';
 
 const { fromCallback } = require('utils');
 const _internals = require('./_internals');
 
 /**
  * Receive host internals from the barrel.
- * Populates the engine-local _internals registry so that all engine
- * files can access host capabilities without direct require() calls.
- * @param {Object} config - Engine-specific configuration from manifest configKey
- * @param {Function} getLogger - Logger factory
- * @param {Object} internals - Map of name → value (remaining host internals)
  */
-function init (config, getLogger, internals) {
+function init (config: Record<string, any>, getLogger: (name: string) => any, internals: Record<string, any>): void {
   _internals.set('config', config);
   _internals.set('getLogger', getLogger);
   for (const [key, value] of Object.entries(internals)) {
@@ -34,13 +27,7 @@ function init (config, getLogger, internals) {
 
 // -- BaseStorage --------------------------------------------------------
 
-/**
- * Initialize a StorageLayer with MongoDB backends.
- * @param {Object} storageLayer - StorageLayer instance to populate
- * @param {Object} connection - MongoDB Database instance
- * @param {Object} options - { passwordResetRequestMaxAge, sessionMaxAge }
- */
-function initStorageLayer (storageLayer, connection, options) {
+function initStorageLayer (storageLayer: any, connection: any, options: any): void {
   const PasswordResetRequests = require('./PasswordResetRequests');
   const Sessions = require('./Sessions');
   const Accesses = require('./user/Accesses');
@@ -58,13 +45,11 @@ function initStorageLayer (storageLayer, connection, options) {
   storageLayer.streams = new Streams(connection);
   storageLayer.webhooks = new Webhooks(connection);
 
-  // Events import/clear for backup restore (not used in normal operation —
-  // normal event CRUD goes through the DataStore/Mall layer).
   storageLayer.events = {
-    importAll (userOrUserId, items, callback) {
+    importAll (userOrUserId: any, items: any[], callback: (err: any) => void) {
       const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
       if (!items || items.length === 0) return callback(null);
-      const docs = items.map(item => {
+      const docs = items.map((item: any) => {
         const doc = Object.assign({}, item);
         doc._id = doc.id;
         delete doc.id;
@@ -73,18 +58,18 @@ function initStorageLayer (storageLayer, connection, options) {
       });
       connection.insertMany({ name: 'events' }, docs, callback);
     },
-    clearAll (userOrUserId, callback) {
+    clearAll (userOrUserId: any, callback: (err: any) => void) {
       const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
       connection.deleteMany({ name: 'events' }, { userId }, callback);
     }
   };
 
   storageLayer.iterateAllEvents = async function * () {
-    const cursor = await fromCallback(cb =>
+    const cursor: any = await fromCallback((cb: any) =>
       connection.findCursor({ name: 'events' }, {}, {}, cb)
     );
     while (await cursor.hasNext()) {
-      const doc = await cursor.next();
+      const doc: any = await cursor.next();
       doc.id = doc._id;
       delete doc._id;
       delete doc.userId;
@@ -92,45 +77,33 @@ function initStorageLayer (storageLayer, connection, options) {
     }
   };
 
-  storageLayer.getAllUserIdsFromCollection = async function (collectionName) {
+  storageLayer.getAllUserIdsFromCollection = async function (collectionName: string): Promise<string[]> {
     const collection = await connection.getCollection({ name: collectionName });
     return await collection.distinct('userId', {});
   };
 
-  storageLayer.clearCollection = async function (collectionName) {
-    await fromCallback((cb) => connection.deleteMany({ name: collectionName }, {}, cb));
+  storageLayer.clearCollection = async function (collectionName: string): Promise<void> {
+    await fromCallback((cb: any) => connection.deleteMany({ name: collectionName }, {}, cb));
   };
 }
 
-/**
- * @returns {Object} userAccountStorage module
- */
-function getUserAccountStorage () {
+function getUserAccountStorage (): any {
   return require('./userAccountStorage');
 }
 
-/**
- * @returns {Function} UsersLocalIndex constructor
- */
-function getUsersLocalIndex () {
+function getUsersLocalIndex (): any {
   return require('./usersLocalIndex');
 }
 
 // -- DataStore ----------------------------------------------------------
 
-/**
- * @returns {Object} datastore module for mall
- */
-function getDataStoreModule () {
+function getDataStoreModule (): any {
   return require('./dataStore');
 }
 
 // -- PlatformStorage ----------------------------------------------------
 
-/**
- * @returns {Object} PlatformDB instance (not yet init'd)
- */
-function createPlatformDB () {
+function createPlatformDB (): any {
   const DB = require('./DBmongodb');
   return new DB();
 }

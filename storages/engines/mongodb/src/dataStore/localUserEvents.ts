@@ -4,6 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+import type {} from 'node:fs';
+
 const Readable = require('stream').Readable;
 const ds = require('@pryv/datastore');
 const errors = ds.errors;
@@ -72,7 +74,7 @@ module.exports = ds.createUserEvents({
    */
   async getDeletionsStreamed (userId, query, options) {
     const mongoQuery = { deleted: { $gt: query.deletedSince } };
-    const mongoOptions = { sort: { deleted: options?.sortAscending ? 1 : -1 } };
+    const mongoOptions: any = { sort: { deleted: options?.sortAscending ? 1 : -1 } };
     if (options?.limit != null) mongoOptions.limit = options.limit;
     if (options?.skip != null) mongoOptions.skip = options.skip;
     const cursor = this._getCursor(userId, mongoQuery, mongoOptions);

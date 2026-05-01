@@ -12,6 +12,8 @@
  * - Account fields with history (email, language, phone, etc.)
  */
 
+import type {} from 'node:fs';
+
 const timestamp = require('unix-timestamp');
 const _internals = require('./_internals');
 const encryption = require('utils').encryption;
@@ -215,7 +217,7 @@ async function setAccountField (userId, field, value, createdBy, time = timestam
 }
 
 async function getAccountFieldHistory (userId, field, limit) {
-  const options = { sort: { time: -1 } };
+  const options: any = { sort: { time: -1 } };
   if (limit != null) {
     options.limit = limit;
   }

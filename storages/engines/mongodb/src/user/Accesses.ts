@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const BaseStorage = require('./BaseStorage');
 const converters = require('./../converters');
 const { createId: generateId } = require('@paralleldrive/cuid2');
@@ -23,7 +25,7 @@ module.exports = Accesses;
  * @constructor
  */
 function Accesses (database, integrityAccesses) {
-  Accesses.super_.call(this, database);
+  (Accesses as any).super_.call(this, database);
   this.integrityAccesses = integrityAccesses || { isActive: false, set: () => {} };
 
   const self = this;
@@ -139,7 +141,7 @@ Accesses.prototype.generateToken = function () {
 
 Accesses.prototype.updateOne = function (userOrUserId, query, update, callback) {
   if (update.modified == null || !this.integrityAccesses.isActive) { // update only if "modified" is set .. to avoid all "calls" and "lastused" updated
-    Accesses.super_.prototype.findOneAndUpdate.call(this, userOrUserId, query, update, callback);
+    (Accesses as any).super_.prototype.findOneAndUpdate.call(this, userOrUserId, query, update, callback);
     return;
   }
 
@@ -162,11 +164,11 @@ Accesses.prototype.updateOne = function (userOrUserId, query, update, callback) 
     // only update if there is a mismatch of integrity
     if (integrityCheck !== accessData.integrity) {
       // could be optimized by using "updateOne" instead of findOne and update
-      return Accesses.super_.prototype.findOneAndUpdate.call(that, userOrUserId, { _id: accessData.id }, { integrity: accessData.integrity }, callback);
+      return (Accesses as any).super_.prototype.findOneAndUpdate.call(that, userOrUserId, { _id: accessData.id }, { integrity: accessData.integrity }, callback);
     }
     callback(err, accessData);
   };
-  Accesses.super_.prototype.findOneAndUpdate.call(this, userOrUserId, query, update, cb);
+  (Accesses as any).super_.prototype.findOneAndUpdate.call(this, userOrUserId, query, update, cb);
 };
 
 /**

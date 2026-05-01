@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const Database = require('./Database');
 
 const _internals = require('./_internals');

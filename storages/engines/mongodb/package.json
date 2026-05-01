@@ -6,7 +6,7 @@
   "homepage": "https://pryv.com",
   "license": "BSD-3-Clause",
   "author": "Pryv <info@pryv.com> (https://pryv.com)",
-  "main": "src/index.js",
+  "main": "src/index.ts",
   "dependencies": {
     "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
     "bluebird": "^3.5.0",
