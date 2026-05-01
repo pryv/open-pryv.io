@@ -5,17 +5,15 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const BaseStoragePG = require('./BaseStoragePG');
 
 /**
  * PostgreSQL persistence for profile sets.
- *
- * The MongoDB Profile uses `convertIdToItemId: 'profileId'` — meaning
- * the public `id` field is stored as `profileId` in MongoDB.
- * In PG, the column is just `id` (primary key), so no remapping is needed.
  */
 class ProfilePG extends BaseStoragePG {
-  constructor (db) {
+  constructor (db: any) {
     super(db);
     this.tableName = 'profile';
     this.hasDeletedCol = false;

@@ -20,15 +20,18 @@
  * delete).
  */
 
+import type {} from 'node:fs';
+
 const _internals = require('./_internals');
 
 class SchemaMigrationsPG {
-  /** @param {import('./DatabasePG')} db */
-  constructor (db) {
+  db: any;
+
+  constructor (db: any) {
     this.db = db;
   }
 
-  async _ensureTable () {
+  async _ensureTable (): Promise<void> {
     // Idempotent — always re-issue CREATE TABLE IF NOT EXISTS instead of
     // caching on `this._ensured`. The cache used to cause test crashes when
     // `afterEach` dropped the table via a fresh SchemaMigrationsPG instance
@@ -42,13 +45,13 @@ class SchemaMigrationsPG {
     `);
   }
 
-  async getVersion () {
+  async getVersion (): Promise<number> {
     await this._ensureTable();
     const res = await this.db.query('SELECT MAX(version) AS v FROM schema_migrations');
     return res.rows[0]?.v ?? 0;
   }
 
-  async setVersion (version) {
+  async setVersion (version: number): Promise<void> {
     if (!Number.isInteger(version) || version < 1) {
       throw new Error(`schema_migrations version must be a positive integer, got ${version}`);
     }
@@ -59,19 +62,15 @@ class SchemaMigrationsPG {
     );
   }
 
-  /** For tests — wipe the table. Next getVersion/setVersion call will recreate it. */
-  async _resetForTests () {
+  async _resetForTests (): Promise<void> {
     await this.db.query('DROP TABLE IF EXISTS schema_migrations');
   }
 }
 
 /**
  * Build the capability object the MigrationRunner consumes.
- * Must be called after the engine has been initialized and `databasePG` is
- * registered in `_internals`.
- * @returns {import('../../../interfaces/migrations/MigrationRunner').MigrationCapableEngine}
  */
-function buildMigrationsCapability () {
+function buildMigrationsCapability (): any {
   const path = require('path');
   const db = _internals.databasePG;
   if (!db) throw new Error('PostgreSQL engine: databasePG not registered — cannot build migrations capability');
@@ -81,7 +80,7 @@ function buildMigrationsCapability () {
     id: 'postgresql',
     migrationsDir: path.resolve(__dirname, '..', 'migrations'),
     getVersion: () => store.getVersion(),
-    setVersion: (v) => store.setVersion(v),
+    setVersion: (v: number) => store.setVersion(v),
     buildContext: () => ({ db, logger: getLogger('migrations-postgresql') })
   };
 }

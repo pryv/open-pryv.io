@@ -5,29 +5,28 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const { createId: cuid } = require('@paralleldrive/cuid2');
 
 const DEFAULT_MAX_AGE = 60 * 60 * 1000; // 1 hour
 
 /**
  * PostgreSQL implementation of PasswordResetRequests storage.
- * Callback-based API matching the MongoDB PasswordResetRequests interface.
  */
 class PasswordResetRequestsPG {
-  /** @type {import('./DatabasePG')} */
-  db;
-  options;
+  db: any;
+  options: { maxAge: number };
 
-  constructor (db, options) {
+  constructor (db: any, options?: any) {
     this.db = db;
     this.options = { maxAge: (options && options.maxAge) || DEFAULT_MAX_AGE };
   }
 
   /**
    * Get a password reset request by id and username.
-   * Destroys expired requests on access.
    */
-  get (id, username, callback) {
+  get (id: string, username: string, callback: (err: any, result?: any) => void): void {
     this.db.query(
       'SELECT id, username, expires FROM password_resets WHERE id = $1 AND username = $2',
       [id, username]
@@ -46,9 +45,8 @@ class PasswordResetRequestsPG {
 
   /**
    * Create a new password reset request.
-   * Returns the generated id via callback.
    */
-  generate (username, callback) {
+  generate (username: string, callback: (err: any, id?: string) => void): void {
     const id = cuid();
     const expires = this.getNewExpirationDate();
     this.db.query(
@@ -62,34 +60,34 @@ class PasswordResetRequestsPG {
   /**
    * Delete a password reset request.
    */
-  destroy (id, username, callback) {
+  destroy (id: string, username: string, callback: (err: any, res?: any) => void): void {
     this.db.query(
       'DELETE FROM password_resets WHERE id = $1 AND username = $2',
       [id, username]
     )
-      .then((res) => callback(null, res))
+      .then((res: any) => callback(null, res))
       .catch(callback);
   }
 
   /**
    * Delete all password reset requests.
    */
-  clearAll (callback) {
+  clearAll (callback: (err: any, res?: any) => void): void {
     this.db.query('DELETE FROM password_resets')
-      .then((res) => callback(null, res))
+      .then((res: any) => callback(null, res))
       .catch(callback);
   }
 
-  getNewExpirationDate () {
+  getNewExpirationDate (): Date {
     return new Date(Date.now() + this.options.maxAge);
   }
 
   // -- Migration methods --
 
-  exportAll (callback) {
+  exportAll (callback: (err: any, docs?: any[]) => void): void {
     this.db.query('SELECT id, username, expires FROM password_resets')
-      .then((res) => {
-        const docs = res.rows.map((r) => ({
+      .then((res: any) => {
+        const docs = res.rows.map((r: any) => ({
           _id: r.id,
           username: r.username,
           expires: r.expires
@@ -99,9 +97,9 @@ class PasswordResetRequestsPG {
       .catch(callback);
   }
 
-  importAll (data, callback) {
+  importAll (data: any[], callback: (err: any) => void): void {
     if (!data || data.length === 0) return callback(null);
-    const inserts = data.map((d) =>
+    const inserts = data.map((d: any) =>
       this.db.query(
         'INSERT INTO password_resets (id, username, expires) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING',
         [d._id || d.id, d.username, d.expires]

@@ -5,31 +5,27 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const { createId: cuid } = require('@paralleldrive/cuid2');
 
 const DEFAULT_MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days
 
 /**
  * PostgreSQL implementation of Sessions storage.
- * Callback-based API matching the MongoDB Sessions interface.
  */
 class SessionsPG {
-  /** @type {import('./DatabasePG')} */
-  db;
-  options;
+  db: any;
+  options: { maxAge: number };
 
-  constructor (db, options) {
+  constructor (db: any, options?: any) {
     this.db = db;
     this.options = { maxAge: (options && options.maxAge) || DEFAULT_MAX_AGE };
   }
 
-  /**
-   * Get session data by id.
-   * Destroys expired sessions on access.
-   */
-  get (id, callback) {
+  get (id: string, callback: (err: any, data?: any) => void): void {
     this.db.query('SELECT data, expires FROM sessions WHERE id = $1', [id])
-      .then((res) => {
+      .then((res: any) => {
         if (res.rows.length === 0) return callback(null, null);
         const row = res.rows[0];
         if (new Date() >= new Date(row.expires)) {
@@ -41,13 +37,9 @@ class SessionsPG {
       .catch(callback);
   }
 
-  /**
-   * Find session by matching data fields.
-   * Returns the session id if found and not expired.
-   */
-  getMatching (data, callback) {
+  getMatching (data: any, callback: (err: any, id?: any) => void): void {
     this.db.query('SELECT id, expires FROM sessions WHERE data @> $1', [JSON.stringify(data)])
-      .then((res) => {
+      .then((res: any) => {
         if (res.rows.length === 0) return callback(null, null);
         const row = res.rows[0];
         if (new Date() >= new Date(row.expires)) {
@@ -59,13 +51,9 @@ class SessionsPG {
       .catch(callback);
   }
 
-  /**
-   * Create a new session.
-   * Returns the generated session id via callback.
-   */
-  generate (data, options, callback) {
+  generate (data: any, options: any, callback?: (err: any, id?: string) => void): void {
     if (typeof options === 'function') {
-      callback = options;
+      callback = options as any;
       options = {};
     }
     const id = cuid();
@@ -75,71 +63,55 @@ class SessionsPG {
       'INSERT INTO sessions (id, data, expires) VALUES ($1, $2, $3)',
       [id, JSON.stringify(sessionData), expires]
     )
-      .then(() => callback(null, id))
-      .catch(callback);
+      .then(() => callback!(null, id))
+      .catch(callback!);
   }
 
-  /**
-   * Renew expiration for a session.
-   */
-  touch (id, callback) {
+  touch (id: string, callback: (err: any, res?: any) => void): void {
     const expires = this.getNewExpirationDate();
     this.db.query('UPDATE sessions SET expires = $1 WHERE id = $2', [expires, id])
-      .then((res) => callback(null, res))
+      .then((res: any) => callback(null, res))
       .catch(callback);
   }
 
-  /**
-   * Force-expire a session (for tests).
-   */
-  expireNow (id, callback) {
+  expireNow (id: string, callback: (err: any, res?: any) => void): void {
     this.db.query('UPDATE sessions SET expires = $1 WHERE id = $2', [new Date(), id])
-      .then((res) => callback(null, res))
+      .then((res: any) => callback(null, res))
       .catch(callback);
   }
 
-  /**
-   * Delete a session.
-   */
-  destroy (id, callback) {
+  destroy (id: string, callback: (err: any, res?: any) => void): void {
     this.db.query('DELETE FROM sessions WHERE id = $1', [id])
-      .then((res) => callback(null, res))
+      .then((res: any) => callback(null, res))
       .catch(callback);
   }
 
-  /**
-   * Delete all sessions.
-   */
-  clearAll (callback) {
+  clearAll (callback: (err: any, res?: any) => void): void {
     this.db.query('DELETE FROM sessions')
-      .then((res) => callback(null, res))
+      .then((res: any) => callback(null, res))
       .catch(callback);
   }
 
-  /**
-   * Delete sessions whose data matches the given fields.
-   * @param {{ [field: string]: string }} query — plain key/value to match inside data JSONB
-   */
-  remove (query, callback) {
+  remove (query: Record<string, string>, callback: (err: any, res?: any) => void): void {
     const keys = Object.keys(query);
     if (keys.length === 0) return this.clearAll(callback);
     const conditions = keys.map((k, i) => `data->>'${k}' = $${i + 1}`);
     const values = keys.map((k) => String(query[k]));
     this.db.query(`DELETE FROM sessions WHERE ${conditions.join(' AND ')}`, values)
-      .then((res) => callback(null, res))
+      .then((res: any) => callback(null, res))
       .catch(callback);
   }
 
-  getNewExpirationDate () {
+  getNewExpirationDate (): Date {
     return new Date(Date.now() + this.options.maxAge);
   }
 
   // -- Migration methods --
 
-  exportAll (callback) {
+  exportAll (callback: (err: any, docs?: any[]) => void): void {
     this.db.query('SELECT id, data, expires FROM sessions')
-      .then((res) => {
-        const docs = res.rows.map((r) => ({
+      .then((res: any) => {
+        const docs = res.rows.map((r: any) => ({
           _id: r.id,
           data: r.data,
           expires: r.expires
@@ -149,9 +121,9 @@ class SessionsPG {
       .catch(callback);
   }
 
-  importAll (data, callback) {
+  importAll (data: any[], callback: (err: any) => void): void {
     if (!data || data.length === 0) return callback(null);
-    const inserts = data.map((d) =>
+    const inserts = data.map((d: any) =>
       this.db.query(
         'INSERT INTO sessions (id, data, expires) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING',
         [d._id || d.id, JSON.stringify(d.data), d.expires]

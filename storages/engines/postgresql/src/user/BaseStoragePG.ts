@@ -5,13 +5,14 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const DatabasePG = require('../DatabasePG');
 
 /**
  * Column-name mapping: camelCase JS property → snake_case PG column.
- * Only entries that differ need to be listed.
  */
-const DEFAULT_COLUMN_MAP = {
+const DEFAULT_COLUMN_MAP: Record<string, string> = {
   parentId: 'parent_id',
   clientData: 'client_data',
   singleActivity: 'single_activity',
@@ -68,42 +69,45 @@ const DEFAULT_JSONB_COLUMNS = new Set([
  *   this.hasHeadIdCol   — (optional, default false) whether table has a `head_id` column
  */
 class BaseStoragePG {
-  /** @type {import('../DatabasePG')} */
-  db;
+  db: any;
+  tableName: string | null;
+  columnMap: Record<string, string>;
+  jsonbColumns: Set<string>;
+  idField: string;
+  defaultSort: string | null;
+  hasDeletedCol: boolean;
+  hasHeadIdCol: boolean;
 
-  constructor (db) {
+  constructor (db: any) {
     this.db = db;
     this.tableName = null;
     this.columnMap = {};
     this.jsonbColumns = new Set();
-    this.idField = 'id'; // PG column that maps to the public 'id' field
+    this.idField = 'id';
     this.defaultSort = null;
     this.hasDeletedCol = true;
     this.hasHeadIdCol = false;
   }
 
-  getUserIdFromUserOrUserId (userOrUserId) {
+  getUserIdFromUserOrUserId (userOrUserId: any): string {
     if (typeof userOrUserId === 'string') return userOrUserId;
     return userOrUserId.id;
   }
 
-  getCollectionInfo (userOrUserId) {
+  getCollectionInfo (userOrUserId: any): { name: string | null, useUserId: string } {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     return { name: this.tableName, useUserId: userId };
   }
 
   // ---- Column mapping helpers ----
 
-  /** camelCase property name → snake_case PG column name */
-  toCol (prop) {
+  toCol (prop: string): string {
     if (prop === 'id' || prop === '_id') return this.idField;
     return this.columnMap[prop] || DEFAULT_COLUMN_MAP[prop] || prop;
   }
 
-  /** snake_case PG column → camelCase property name */
-  fromCol (col) {
+  fromCol (col: string): string {
     if (col === this.idField && this.idField !== 'id') return 'id';
-    // Reverse lookup: check subclass map first, then default
     for (const [k, v] of Object.entries(this.columnMap)) {
       if (v === col) return k;
     }
@@ -113,64 +117,50 @@ class BaseStoragePG {
     return col;
   }
 
-  isJsonbCol (snakeCol) {
+  isJsonbCol (snakeCol: string): boolean {
     return DEFAULT_JSONB_COLUMNS.has(snakeCol) || this.jsonbColumns.has(snakeCol);
   }
 
-  /** Convert a JS value to PG parameter value for a given column. */
-  toPGValue (snakeCol, value) {
+  toPGValue (snakeCol: string, value: any): any {
     if (value === undefined) return null;
     if (this.isJsonbCol(snakeCol) && value != null) {
-      // JSONB columns need JSON.stringify for all types (objects, strings, numbers, booleans)
       return JSON.stringify(value);
     }
     return value;
   }
 
-  /**
-   * Convert a PG row to a JS object with camelCase keys.
-   * Strips user_id and null values for non-essential columns.
-   * In MongoDB, unset fields are absent; in PG all columns exist.
-   * We preserve null only for fields that are meaningfully nullable
-   * in the API (deviceName, trashed, parentId, description, endTime).
-   */
-  rowToItem (row) {
+  rowToItem (row: any): any | null {
     if (!row) return null;
-    const item = {};
+    const item: any = {};
     for (const [col, val] of Object.entries(row)) {
       if (col === 'user_id') continue;
       if (val === null && !NULLABLE_COLUMNS.has(col)) continue;
       const prop = this.fromCol(col);
       item[prop] = val;
     }
-    // Strip deleted when null (matching MongoDB behavior)
     if (this.hasDeletedCol && item.deleted == null) {
       delete item.deleted;
     }
     return item;
   }
 
-  rowsToItems (rows) {
+  rowsToItems (rows: any[]): any[] {
     return rows.map((r) => this.rowToItem(r));
   }
 
   // ---- Query building helpers ----
 
-  /**
-   * Build a WHERE clause from a query object.
-   * Returns { text: 'WHERE ...', params: [...], nextIdx: N }
-   */
-  buildWhere (userId, query, startIdx = 1) {
-    const conditions = [`user_id = $${startIdx}`];
-    const params = [userId];
+  buildWhere (userId: string, query: any, startIdx: number = 1): { text: string, params: any[], nextIdx: number } {
+    const conditions: string[] = [`user_id = $${startIdx}`];
+    const params: any[] = [userId];
     let idx = startIdx + 1;
 
-    for (const [prop, val] of Object.entries(query)) {
+    for (const [prop, val] of Object.entries(query) as Array<[string, any]>) {
       if (prop === '$or') {
-        const orParts = [];
+        const orParts: string[] = [];
         for (const clause of val) {
-          const sub = [];
-          for (const [k, v] of Object.entries(clause)) {
+          const sub: string[] = [];
+          for (const [k, v] of Object.entries(clause) as Array<[string, any]>) {
             const col = this.toCol(k);
             if (v === null) {
               sub.push(`${col} IS NULL`);
@@ -232,7 +222,7 @@ class BaseStoragePG {
         }
         if (val.$in !== undefined) {
           const placeholders = val.$in.map(() => `$${idx++}`);
-          conditions.push(`${col} IN (${placeholders.join(', ')})`);
+          conditions.push(`${col} IN (${(placeholders as string[]).join(', ')})`);
           params.push(...val.$in);
         }
         if (val.$type !== undefined) {
@@ -258,8 +248,7 @@ class BaseStoragePG {
     };
   }
 
-  /** Build ORDER BY from options.sort */
-  buildOrderBy (options) {
+  buildOrderBy (options: any): string {
     const sort = options?.sort;
     if (sort && Object.keys(sort).length > 0) {
       const parts = Object.entries(sort).map(([k, v]) => {
@@ -271,8 +260,7 @@ class BaseStoragePG {
     return '';
   }
 
-  /** Build LIMIT / OFFSET from options */
-  buildLimitOffset (options, params, nextIdx) {
+  buildLimitOffset (options: any, params: any[], nextIdx: number): { clause: string, nextIdx: number } {
     let clause = '';
     if (options?.limit) {
       clause += ` LIMIT $${nextIdx}`;
@@ -287,22 +275,14 @@ class BaseStoragePG {
     return { clause, nextIdx };
   }
 
-  /**
-   * Build SELECT columns from options.projection, or '*'.
-   * Returns { select: string, excludeProps: string[] }.
-   * For negative projections, returns SELECT * with a list of props to strip from results.
-   */
-  buildSelect (options) {
+  buildSelect (options: any): { select: string, excludeProps: string[] } {
     if (options?.projection && Object.keys(options.projection).length > 0) {
       const entries = Object.entries(options.projection);
       const isNegative = entries.every(([, v]) => !v);
       if (isNegative) {
-        // Negative projection (e.g., { calls: 0, deleted: 0 }): select all,
-        // then strip excluded props from results (PG has no "SELECT * EXCEPT").
         const excludeProps = entries.map(([k]) => k);
         return { select: '*', excludeProps };
       }
-      // Positive projection: include only listed columns
       const cols = ['user_id'];
       for (const [k, v] of entries) {
         if (v) cols.push(this.toCol(k));
@@ -312,8 +292,7 @@ class BaseStoragePG {
     return { select: '*', excludeProps: [] };
   }
 
-  /** Apply negative projection exclusions to items */
-  applyExclusions (items, excludeProps) {
+  applyExclusions (items: any[], excludeProps: string[]): any[] {
     if (!excludeProps || excludeProps.length === 0) return items;
     for (const item of items) {
       for (const prop of excludeProps) {
@@ -325,19 +304,19 @@ class BaseStoragePG {
 
   // ---- Core CRUD methods (callback-based) ----
 
-  find (userOrUserId, query, options, callback) {
+  find (userOrUserId: any, query: any, options: any, callback: (err: any, items?: any) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (this.hasDeletedCol) query.deleted = null;
     if (this.hasHeadIdCol) query.headId = null;
     this._findInternal(userId, query, options, callback);
   }
 
-  findIncludingDeletionsAndVersions (userOrUserId, query, options, callback) {
+  findIncludingDeletionsAndVersions (userOrUserId: any, query: any, options: any, callback: (err: any, items?: any) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     this._findInternal(userId, query, options, callback);
   }
 
-  _findInternal (userId, query, options, callback) {
+  _findInternal (userId: string, query: any, options: any, callback: (err: any, items?: any) => void): void {
     const { select, excludeProps } = this.buildSelect(options);
     const where = this.buildWhere(userId, query);
     const orderBy = this.buildOrderBy(options);
@@ -345,11 +324,11 @@ class BaseStoragePG {
 
     const sql = `SELECT ${select} FROM ${this.tableName} ${where.text} ${orderBy}${limitOffset}`;
     this.db.query(sql, where.params)
-      .then((res) => callback(null, this.applyExclusions(this.rowsToItems(res.rows), excludeProps)))
+      .then((res: any) => callback(null, this.applyExclusions(this.rowsToItems(res.rows), excludeProps)))
       .catch(callback);
   }
 
-  findOne (userOrUserId, query, options, callback) {
+  findOne (userOrUserId: any, query: any, options: any, callback: (err: any, item?: any) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (this.hasDeletedCol) query.deleted = null;
 
@@ -358,7 +337,7 @@ class BaseStoragePG {
 
     const sql = `SELECT ${select} FROM ${this.tableName} ${where.text} LIMIT 1`;
     this.db.query(sql, where.params)
-      .then((res) => {
+      .then((res: any) => {
         if (res.rows.length === 0) return callback(null, null);
         const item = this.rowToItem(res.rows[0]);
         this.applyExclusions([item], excludeProps);
@@ -367,7 +346,7 @@ class BaseStoragePG {
       .catch(callback);
   }
 
-  findDeletion (userOrUserId, query, options, callback) {
+  findDeletion (userOrUserId: any, query: any, options: any, callback: (err: any, item?: any) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     query.deleted = { $ne: null };
 
@@ -376,7 +355,7 @@ class BaseStoragePG {
 
     const sql = `SELECT ${select} FROM ${this.tableName} ${where.text} LIMIT 1`;
     this.db.query(sql, where.params)
-      .then((res) => {
+      .then((res: any) => {
         if (res.rows.length === 0) return callback(null, null);
         const item = this.rowToItem(res.rows[0]);
         this.applyExclusions([item], excludeProps);
@@ -385,20 +364,20 @@ class BaseStoragePG {
       .catch(callback);
   }
 
-  findDeletions (userOrUserId, deletedSince, options, callback) {
+  findDeletions (userOrUserId: any, deletedSince: number, options: any, callback: (err: any, items?: any) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-    const query = { deleted: { $gt: deletedSince } };
+    const query: any = { deleted: { $gt: deletedSince } };
     if (this.hasHeadIdCol) query.headId = null;
     this._findInternal(userId, query, options, callback);
   }
 
-  insertOne (userOrUserId, item, callback, options) {
+  insertOne (userOrUserId: any, item: any, callback: (err: any, item?: any) => void, _options?: any): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     item = this.applyDefaults(item);
 
-    const cols = ['user_id'];
-    const vals = [userId];
-    const placeholders = ['$1'];
+    const cols: string[] = ['user_id'];
+    const vals: any[] = [userId];
+    const placeholders: string[] = ['$1'];
     let idx = 2;
 
     for (const [prop, val] of Object.entries(item)) {
@@ -415,21 +394,20 @@ class BaseStoragePG {
 
     const sql = `INSERT INTO ${this.tableName} (${cols.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
     this.db.query(sql, vals)
-      .then((res) => callback(null, this.rowToItem(res.rows[0])))
-      .catch((err) => {
+      .then((res: any) => callback(null, this.rowToItem(res.rows[0])))
+      .catch((err: any) => {
         DatabasePG.handleDuplicateError(err);
         callback(err);
       });
   }
 
-  findOneAndUpdate (userOrUserId, query, updatedData, callback) {
+  findOneAndUpdate (userOrUserId: any, query: any, updatedData: any, callback: (err: any, item?: any) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const { setClauses, unsetClauses, incClauses, params, nextIdx } =
       this._buildUpdateClauses(updatedData, 1);
 
     const allClauses = [...setClauses, ...unsetClauses, ...incClauses];
     if (allClauses.length === 0) {
-      // Nothing to update, just find and return
       return this.findOne(userOrUserId, query, null, callback);
     }
 
@@ -439,20 +417,20 @@ class BaseStoragePG {
     const allParams = [...params, ...where.params];
 
     this.db.query(sql, allParams)
-      .then((res) => {
+      .then((res: any) => {
         callback(null, res.rows.length > 0 ? this.rowToItem(res.rows[0]) : null);
       })
-      .catch((err) => {
+      .catch((err: any) => {
         DatabasePG.handleDuplicateError(err);
         callback(err);
       });
   }
 
-  updateOne (userOrUserId, query, updatedData, callback) {
+  updateOne (userOrUserId: any, query: any, updatedData: any, callback: (err: any, item?: any) => void): void {
     this.findOneAndUpdate(userOrUserId, query, updatedData, callback);
   }
 
-  updateMany (userOrUserId, query, updatedData, callback) {
+  updateMany (userOrUserId: any, query: any, updatedData: any, callback: (err: any, res?: any) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const { setClauses, unsetClauses, incClauses, params, nextIdx } =
       this._buildUpdateClauses(updatedData, 1);
@@ -466,20 +444,16 @@ class BaseStoragePG {
     const allParams = [...params, ...where.params];
 
     this.db.query(sql, allParams)
-      .then((res) => callback(null, { modifiedCount: res.rowCount }))
+      .then((res: any) => callback(null, { modifiedCount: res.rowCount }))
       .catch(callback);
   }
 
-  /**
-   * Build SET clauses from a MongoDB-style update object.
-   * Handles plain properties (treated as $set), $set, $unset, $inc.
-   */
-  _buildUpdateClauses (updatedData, startIdx) {
-    const input = Object.assign({}, updatedData);
-    const setClauses = [];
-    const unsetClauses = [];
-    const incClauses = [];
-    const params = [];
+  _buildUpdateClauses (updatedData: any, startIdx: number): { setClauses: string[], unsetClauses: string[], incClauses: string[], params: any[], nextIdx: number } {
+    const input: any = Object.assign({}, updatedData);
+    const setClauses: string[] = [];
+    const unsetClauses: string[] = [];
+    const incClauses: string[] = [];
+    const params: any[] = [];
     let idx = startIdx;
 
     // Extract MongoDB operators
@@ -528,8 +502,7 @@ class BaseStoragePG {
     const dotUnsetKeys = Object.keys($unset).filter((k) => k.includes('.'));
 
     if (dotSetKeys.length > 0 || dotUnsetKeys.length > 0) {
-      // Group by top-level JSONB column
-      const jsonbUpdates = {};
+      const jsonbUpdates: Record<string, Record<string, any>> = {};
       for (const key of dotSetKeys) {
         const [col, ...rest] = key.split('.');
         const snakeCol = this.toCol(col);
@@ -541,14 +514,13 @@ class BaseStoragePG {
         const [col, ...rest] = key.split('.');
         const snakeCol = this.toCol(col);
         if (!jsonbUpdates[snakeCol]) jsonbUpdates[snakeCol] = {};
-        jsonbUpdates[snakeCol][rest.join('.')] = null; // null = delete key
+        jsonbUpdates[snakeCol][rest.join('.')] = null;
         delete $unset[key];
       }
 
-      // For each JSONB column, build a merged update using jsonb concatenation + removal
       for (const [snakeCol, updates] of Object.entries(jsonbUpdates)) {
-        const keysToSet = {};
-        const keysToRemove = [];
+        const keysToSet: Record<string, any> = {};
+        const keysToRemove: string[] = [];
         for (const [k, v] of Object.entries(updates)) {
           if (v === null) {
             keysToRemove.push(k);
@@ -631,37 +603,35 @@ class BaseStoragePG {
     return { setClauses, unsetClauses, incClauses, params, nextIdx: idx };
   }
 
-  /** Soft-delete: set deleted = timestamp. Subclasses may override. */
-  delete (userOrUserId, query, callback) {
+  delete (userOrUserId: any, query: any, callback: (err: any, res?: any) => void): void {
     this.updateMany(userOrUserId, query, { $set: { deleted: require('unix-timestamp').now() } }, callback);
   }
 
-  removeOne (userOrUserId, query, callback) {
+  removeOne (userOrUserId: any, query: any, callback: (err: any, count?: number) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const where = this.buildWhere(userId, query);
 
-    // Add LIMIT 1 via a subquery for safety
     const sql = `DELETE FROM ${this.tableName} WHERE ctid IN (SELECT ctid FROM ${this.tableName} ${where.text} LIMIT 1)`;
     this.db.query(sql, where.params)
-      .then((res) => callback(null, res.rowCount))
+      .then((res: any) => callback(null, res.rowCount))
       .catch(callback);
   }
 
-  removeMany (userOrUserId, query, callback) {
+  removeMany (userOrUserId: any, query: any, callback: (err: any, count?: number) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const where = this.buildWhere(userId, query);
 
     const sql = `DELETE FROM ${this.tableName} ${where.text}`;
     this.db.query(sql, where.params)
-      .then((res) => callback(null, res.rowCount))
+      .then((res: any) => callback(null, res.rowCount))
       .catch(callback);
   }
 
-  removeAll (userOrUserId, callback) {
+  removeAll (userOrUserId: any, callback: (err: any, count?: number) => void): void {
     this.removeMany(userOrUserId, {}, callback);
   }
 
-  count (userOrUserId, query, callback) {
+  count (userOrUserId: any, query: any, callback: (err: any, n?: number) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (this.hasDeletedCol) query.deleted = null;
     if (this.hasHeadIdCol) query.headId = null;
@@ -669,23 +639,19 @@ class BaseStoragePG {
     const where = this.buildWhere(userId, query);
     const sql = `SELECT COUNT(*)::int AS cnt FROM ${this.tableName} ${where.text}`;
     this.db.query(sql, where.params)
-      .then((res) => callback(null, res.rows[0].cnt))
+      .then((res: any) => callback(null, res.rows[0].cnt))
       .catch(callback);
   }
 
-  countAll (userOrUserId, callback) {
+  countAll (userOrUserId: any, callback: (err: any, n?: number) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const sql = `SELECT COUNT(*)::int AS cnt FROM ${this.tableName} WHERE user_id = $1`;
     this.db.query(sql, [userId])
-      .then((res) => callback(null, res.rows[0].cnt))
+      .then((res: any) => callback(null, res.rows[0].cnt))
       .catch(callback);
   }
 
-  /**
-   * Async generator that yields ALL items in the table (no user filter,
-   * no deleted/headId filtering). Used for cross-user scans like integrity checking.
-   */
-  async * iterateAll () {
+  async * iterateAll (): AsyncGenerator<any> {
     const res = await this.db.query(`SELECT * FROM ${this.tableName}`);
     for (const row of res.rows) {
       yield this.rowToItem(row);
@@ -694,21 +660,21 @@ class BaseStoragePG {
 
   // ---- Test helpers ----
 
-  findAll (userOrUserId, options, callback) {
+  findAll (userOrUserId: any, options: any, callback: (err: any, items?: any[]) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     this._findInternal(userId, {}, options, callback);
   }
 
-  insertMany (userOrUserId, items, callback) {
+  insertMany (userOrUserId: any, items: any[], callback: (err: any) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (!items || items.length === 0) return callback(null);
 
-    const doInserts = async () => {
+    const doInserts = async (): Promise<void> => {
       for (const item of items) {
         const prepared = this.applyDefaults(item);
-        const cols = ['user_id'];
-        const vals = [userId];
-        const placeholders = ['$1'];
+        const cols: string[] = ['user_id'];
+        const vals: any[] = [userId];
+        const placeholders: string[] = ['$1'];
         let idx = 2;
 
         for (const [prop, val] of Object.entries(prepared)) {
@@ -727,35 +693,34 @@ class BaseStoragePG {
     doInserts().then(() => callback(null)).catch(callback);
   }
 
-  dropCollection (userOrUserId, callback) {
+  dropCollection (userOrUserId: any, callback: (err: any, count?: number) => void): void {
     this.removeAll(userOrUserId, callback);
   }
 
-  dropCollectionFully (userOrUserId, callback) {
+  dropCollectionFully (userOrUserId: any, callback: (err: any, count?: number) => void): void {
     this.removeAll(userOrUserId, callback);
   }
 
-  listIndexes (userOrUserId, options, callback) {
-    // PG indexes are global; return empty for compatibility
+  listIndexes (_userOrUserId: any, _options: any, callback: (err: any, indexes?: any[]) => void): void {
     callback(null, []);
   }
 
-  findAndUpdateIfNeeded (userOrUserId, query, options, updateIfNeededCallback, callback) {
+  findAndUpdateIfNeeded (userOrUserId: any, query: any, options: any, updateIfNeededCallback: (item: any) => any, callback: (err: any, res?: any) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const where = this.buildWhere(userId, query);
     const orderBy = this.buildOrderBy(options);
 
     const sql = `SELECT * FROM ${this.tableName} ${where.text} ${orderBy}`;
     this.db.query(sql, where.params)
-      .then(async (res) => {
+      .then(async (res: any) => {
         let updatesDone = 0;
         for (const row of res.rows) {
           const item = this.rowToItem(row);
           const updateQuery = updateIfNeededCallback(item);
           if (updateQuery == null) continue;
-          await new Promise((resolve, reject) => {
+          await new Promise<void>((resolve, reject) => {
             this.findOneAndUpdate(userOrUserId, { id: item.id }, updateQuery,
-              (err) => err ? reject(err) : resolve());
+              (err: any) => err ? reject(err) : resolve());
           });
           updatesDone++;
         }
@@ -766,27 +731,26 @@ class BaseStoragePG {
 
   // ---- Migration methods ----
 
-  exportAll (userOrUserId, callback) {
+  exportAll (userOrUserId: any, callback: (err: any, items?: any[]) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const sql = `SELECT * FROM ${this.tableName} WHERE user_id = $1`;
     this.db.query(sql, [userId])
-      .then((res) => callback(null, this.rowsToItems(res.rows)))
+      .then((res: any) => callback(null, this.rowsToItems(res.rows)))
       .catch(callback);
   }
 
-  importAll (userOrUserId, items, callback) {
+  importAll (userOrUserId: any, items: any[], callback: (err: any) => void): void {
     if (!items || items.length === 0) return callback(null);
     this.insertMany(userOrUserId, items, callback);
   }
 
-  clearAll (userOrUserId, callback) {
+  clearAll (userOrUserId: any, callback: (err: any, count?: number) => void): void {
     this.removeAll(userOrUserId, callback);
   }
 
   // ---- Defaults ----
 
-  /** Apply item defaults (e.g., generate ID). Override in subclasses. */
-  applyDefaults (item) {
+  applyDefaults (item: any): any {
     return Object.assign({}, item);
   }
 }

@@ -9,24 +9,26 @@
  * PostgreSQL implementation of UsersLocalIndexDB.
  * Uses the shared `users_index` table.
  */
-class UsersLocalIndexPG {
-  /** @type {import('./DatabasePG')} */
-  db;
 
-  async init () {
+import type {} from 'node:fs';
+
+class UsersLocalIndexPG {
+  db: any;
+
+  async init (): Promise<void> {
     const _internals = require('./_internals');
     this.db = _internals.databasePG;
     await this.db.ensureConnect();
   }
 
-  async addUser (username, userId) {
+  async addUser (username: string, userId: string): Promise<void> {
     await this.db.query(
       'INSERT INTO users_index (username, user_id) VALUES ($1, $2)',
       [username, userId]
     );
   }
 
-  async getIdForName (username) {
+  async getIdForName (username: string): Promise<string | undefined> {
     const res = await this.db.query(
       'SELECT user_id FROM users_index WHERE username = $1',
       [username]
@@ -34,7 +36,7 @@ class UsersLocalIndexPG {
     return res.rows.length > 0 ? res.rows[0].user_id : undefined;
   }
 
-  async getNameForId (userId) {
+  async getNameForId (userId: string): Promise<string | undefined> {
     const res = await this.db.query(
       'SELECT username FROM users_index WHERE user_id = $1',
       [userId]
@@ -42,30 +44,30 @@ class UsersLocalIndexPG {
     return res.rows.length > 0 ? res.rows[0].username : undefined;
   }
 
-  async getAllByUsername () {
+  async getAllByUsername (): Promise<Record<string, string>> {
     const res = await this.db.query('SELECT username, user_id FROM users_index');
-    const result = {};
+    const result: Record<string, string> = {};
     for (const row of res.rows) {
       result[row.username] = row.user_id;
     }
     return result;
   }
 
-  async deleteAll () {
+  async deleteAll (): Promise<void> {
     await this.db.query('DELETE FROM users_index');
   }
 
-  async deleteById (userId) {
+  async deleteById (userId: string): Promise<void> {
     await this.db.query('DELETE FROM users_index WHERE user_id = $1', [userId]);
   }
 
   // -- Migration methods --
 
-  async exportAll () {
+  async exportAll (): Promise<Record<string, string>> {
     return await this.getAllByUsername();
   }
 
-  async importAll (data) {
+  async importAll (data: Record<string, string>): Promise<void> {
     if (!data || Object.keys(data).length === 0) return;
     for (const [username, userId] of Object.entries(data)) {
       await this.db.query(
@@ -75,7 +77,7 @@ class UsersLocalIndexPG {
     }
   }
 
-  async clearAll () {
+  async clearAll (): Promise<void> {
     await this.deleteAll();
   }
 }

@@ -5,31 +5,26 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 /**
  * PostgreSQL transaction wrapper for the DataStore.
- * Wraps a pg PoolClient with BEGIN/COMMIT/ROLLBACK.
  */
 class LocalTransactionPG {
-  /** @type {import('../DatabasePG')} */
-  db;
-  /** @type {import('pg').PoolClient} */
-  client;
+  db: any;
+  client: any;
 
-  constructor (db) {
+  constructor (db: any) {
     this.db = db;
     this.client = null;
   }
 
-  async init () {
+  async init (): Promise<void> {
     this.client = await this.db.getClient();
     await this.client.query('BEGIN');
   }
 
-  /**
-   * Execute a function within this transaction's context.
-   * @param {Function} func
-   */
-  async exec (func) {
+  async exec (func: (tx: LocalTransactionPG) => Promise<void>): Promise<void> {
     try {
       await func(this);
       await this.client.query('COMMIT');
@@ -42,12 +37,7 @@ class LocalTransactionPG {
     }
   }
 
-  /**
-   * Execute a parameterised query within this transaction.
-   * @param {string} text
-   * @param {Array} [params]
-   */
-  async query (text, params) {
+  async query (text: string, params?: any[]): Promise<any> {
     return this.client.query(text, params);
   }
 }

@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const { Readable } = require('stream');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const ds = require('@pryv/datastore');
@@ -14,10 +16,7 @@ const timestamp = require('unix-timestamp');
 const DeletionModesFields = require('../../../../shared/DeletionModesFields');
 const localStoreEventQueries = require('../../../../shared/localStoreEventQueries');
 
-/**
- * Column mapping: camelCase → snake_case for events table.
- */
-const COL_MAP = {
+const COL_MAP: Record<string, string> = {
   headId: 'head_id',
   streamIds: 'stream_ids',
   endTime: 'end_time',
@@ -30,25 +29,21 @@ const JSONB_COLS = new Set([
   'stream_ids', 'tags', 'content', 'client_data', 'attachments'
 ]);
 
-function toCol (prop) {
+function toCol (prop: string): string {
   return COL_MAP[prop] || prop;
 }
 
-function toPGValue (col, val) {
+function toPGValue (col: string, val: any): any {
   if (val === undefined) return null;
-  // JSONB columns need all non-null values serialized (strings, numbers, arrays, objects)
   if (JSONB_COLS.has(col) && val != null) {
     return JSON.stringify(val);
   }
   return val;
 }
 
-/**
- * Convert a PG row to an event object (camelCase, no user_id).
- */
-function rowToEvent (row) {
+function rowToEvent (row: any): any | null {
   if (!row) return null;
-  const event = {};
+  const event: any = {};
   for (const [col, val] of Object.entries(row)) {
     if (col === 'user_id') continue;
     // Reverse map snake_case → camelCase
@@ -87,7 +82,7 @@ module.exports = ds.createUserEvents({
   keepHistory: false,
   setIntegrityOnEvent: null,
 
-  init (db, eventsFileStorage, settings, setIntegrityOnEventFn, systemStreams) {
+  init (this: any, db: any, eventsFileStorage: any, settings: any, setIntegrityOnEventFn: any, systemStreams: any): void {
     this.db = db;
     this.eventsFileStorage = eventsFileStorage;
     this.settings = settings;
@@ -101,7 +96,7 @@ module.exports = ds.createUserEvents({
     this.keepHistory = settings.versioning?.forceKeepHistory || false;
   },
 
-  async getOne (userId, eventId) {
+  async getOne (this: any, userId: string, eventId: string): Promise<any | null> {
     // Return the event regardless of deletion status (matching MongoDB behavior).
     // Only exclude versioned copies (head_id IS NULL = current head).
     const res = await this.db.query(
@@ -111,7 +106,7 @@ module.exports = ds.createUserEvents({
     return res.rows.length > 0 ? rowToEvent(res.rows[0]) : null;
   },
 
-  async get (userId, query, options) {
+  async get (this: any, userId: string, query: any, options: any): Promise<any[]> {
     const localQuery = localStoreEventQueries.localStorePrepareQuery(query);
     const localOptions = localStoreEventQueries.localStorePrepareOptions(options);
     const { sql, params } = buildEventQuery(userId, localQuery, localOptions);
@@ -119,7 +114,7 @@ module.exports = ds.createUserEvents({
     return res.rows.map(rowToEvent);
   },
 
-  async getStreamed (userId, query, options) {
+  async getStreamed (this: any, userId: string, query: any, options: any): Promise<any> {
     const localQuery = localStoreEventQueries.localStorePrepareQuery(query);
     const localOptions = localStoreEventQueries.localStorePrepareOptions(options);
     const { sql, params } = buildEventQuery(userId, localQuery, localOptions);
@@ -127,9 +122,9 @@ module.exports = ds.createUserEvents({
     return readableStreamFromRows(res.rows);
   },
 
-  async getDeletionsStreamed (userId, query, options) {
-    const conditions = ['user_id = $1', 'deleted > $2'];
-    const params = [userId, query.deletedSince];
+  async getDeletionsStreamed (this: any, userId: string, query: any, options: any): Promise<any> {
+    const conditions: string[] = ['user_id = $1', 'deleted > $2'];
+    const params: any[] = [userId, query.deletedSince];
     let idx = 3;
     let sql = `SELECT * FROM events WHERE ${conditions.join(' AND ')}`;
     sql += ` ORDER BY deleted ${options?.sortAscending ? 'ASC' : 'DESC'}`;
@@ -139,12 +134,12 @@ module.exports = ds.createUserEvents({
     return readableStreamFromRows(res.rows);
   },
 
-  async getHistory (userId, eventId) {
+  async getHistory (this: any, userId: string, eventId: string): Promise<any[]> {
     const res = await this.db.query(
       'SELECT * FROM events WHERE user_id = $1 AND head_id = $2 ORDER BY modified ASC',
       [userId, eventId]
     );
-    return res.rows.map((row) => {
+    return res.rows.map((row: any) => {
       const item = rowToEvent(row);
       item.id = item.headId;
       delete item.headId;
@@ -152,12 +147,12 @@ module.exports = ds.createUserEvents({
     });
   },
 
-  async create (userId, event, transaction) {
+  async create (this: any, userId: string, event: any, transaction: any): Promise<any> {
     try {
       const queryFn = transaction ? transaction.query.bind(transaction) : this.db.query.bind(this.db);
-      const cols = ['user_id'];
-      const vals = [userId];
-      const placeholders = ['$1'];
+      const cols: string[] = ['user_id'];
+      const vals: any[] = [userId];
+      const placeholders: string[] = ['$1'];
       let idx = 2;
 
       for (const [prop, val] of Object.entries(event)) {
@@ -181,7 +176,7 @@ module.exports = ds.createUserEvents({
       }
 
       return event;
-    } catch (err) {
+    } catch (err: any) {
       DatabasePG.handleDuplicateError(err);
       if (err.isDuplicateIndex != null && err.isDuplicate) {
         throw errors.itemAlreadyExists('event', { id: event.id }, err);
@@ -190,14 +185,13 @@ module.exports = ds.createUserEvents({
     }
   },
 
-  async update (userId, eventData, transaction) {
+  async update (this: any, userId: string, eventData: any, transaction: any): Promise<boolean> {
     const queryFn = transaction ? transaction.query.bind(transaction) : this.db.query.bind(this.db);
     await this._generateVersionIfNeeded(userId, eventData.id, null, queryFn);
 
     try {
-      // Build a full replacement (like MongoDB replaceOne)
-      const setClauses = [];
-      const params = [userId, eventData.id];
+      const setClauses: string[] = [];
+      const params: any[] = [userId, eventData.id];
       let idx = 3;
 
       for (const [prop, val] of Object.entries(eventData)) {
@@ -219,14 +213,14 @@ module.exports = ds.createUserEvents({
       }
 
       return res.rowCount === 1;
-    } catch (err) {
+    } catch (err: any) {
       throw errors.unexpectedError(err);
     }
   },
 
-  async delete (userId, originalEvent) {
+  async delete (this: any, userId: string, originalEvent: any): Promise<void> {
     await this._generateVersionIfNeeded(userId, originalEvent.id, originalEvent, this.db.query.bind(this.db));
-    const deletedEventContent = structuredClone(originalEvent);
+    const deletedEventContent: any = structuredClone(originalEvent);
     const eventId = deletedEventContent.id;
 
     // Remove attachments if configured
@@ -244,9 +238,8 @@ module.exports = ds.createUserEvents({
       );
     }
     if (this.deletionSettings.mode === 'keep-authors') {
-      // Remove specified fields from history events
       const unsetCols = this.deletionSettings.fields
-        .map((f) => `${toCol(f)} = NULL`)
+        .map((f: string) => `${toCol(f)} = NULL`)
         .join(', ');
       if (unsetCols) {
         await this.db.query(
@@ -258,20 +251,17 @@ module.exports = ds.createUserEvents({
 
     // Prepare deleted event content
     deletedEventContent.deleted = timestamp.now();
-    const fieldsToUnset = new Set(this.deletionSettings.fields);
+    const fieldsToUnset: Set<string> = new Set(this.deletionSettings.fields);
     for (const field of fieldsToUnset) {
       delete deletedEventContent[field];
     }
     this.setIntegrityOnEvent(deletedEventContent);
 
     // Build replacement update: set remaining fields AND null out deleted fields.
-    // MongoDB uses replaceOne (whole-document replacement), so missing fields are
-    // implicitly removed.  PG UPDATE only touches listed columns, so we must
-    // explicitly NULL out the ones that were deleted.
-    const setClauses = [];
-    const params = [userId, eventId];
+    const setClauses: string[] = [];
+    const params: any[] = [userId, eventId];
     let idx = 3;
-    const columnsAlreadySet = new Set();
+    const columnsAlreadySet = new Set<string>();
 
     for (const [prop, val] of Object.entries(deletedEventContent)) {
       if (prop === 'id') continue;
@@ -302,9 +292,9 @@ module.exports = ds.createUserEvents({
     );
   },
 
-  async _generateVersionIfNeeded (userId, eventId, originalEvent, queryFn) {
+  async _generateVersionIfNeeded (this: any, userId: string, eventId: string, originalEvent: any, queryFn: any): Promise<void> {
     if (!this.keepHistory) return;
-    let versionItem;
+    let versionItem: any;
     if (originalEvent != null) {
       versionItem = structuredClone(originalEvent);
     } else {
@@ -319,10 +309,9 @@ module.exports = ds.createUserEvents({
     const versionId = cuid();
     delete versionItem.id;
 
-    // Insert version record
-    const cols = ['user_id', 'id'];
-    const vals = [userId, versionId];
-    const placeholders = ['$1', '$2'];
+    const cols: string[] = ['user_id', 'id'];
+    const vals: any[] = [userId, versionId];
+    const placeholders: string[] = ['$1', '$2'];
     let idx = 3;
 
     for (const [prop, val] of Object.entries(versionItem)) {
@@ -343,7 +332,7 @@ module.exports = ds.createUserEvents({
    * Sync the event_streams junction table for an event.
    * Replaces all entries for the given event.
    */
-  async _syncEventStreams (userId, eventId, streamIds, queryFn) {
+  async _syncEventStreams (this: any, userId: string, eventId: string, streamIds: string[], queryFn: any): Promise<void> {
     // Delete existing entries
     await queryFn(
       'DELETE FROM event_streams WHERE user_id = $1 AND event_id = $2',
@@ -365,13 +354,13 @@ module.exports = ds.createUserEvents({
     }
   },
 
-  async _deleteUser (userId) {
+  async _deleteUser (this: any, userId: string): Promise<void> {
     await this.db.query('DELETE FROM event_streams WHERE user_id = $1', [userId]);
     await this.db.query('DELETE FROM events WHERE user_id = $1', [userId]);
     await this.eventsFileStorage.removeAllForUser(userId);
   },
 
-  async _getStorageInfos (userId) {
+  async _getStorageInfos (this: any, userId: string): Promise<{ count: number }> {
     const res = await this.db.query(
       'SELECT COUNT(*)::int AS cnt FROM events WHERE user_id = $1',
       [userId]
@@ -379,15 +368,12 @@ module.exports = ds.createUserEvents({
     return { count: res.rows[0].cnt };
   },
 
-  async _getFilesStorageInfos (userId) {
+  async _getFilesStorageInfos (this: any, userId: string): Promise<{ sizeKb: number }> {
     const sizeKb = await this.eventsFileStorage.getFileStorageInfos(userId);
     return { sizeKb };
   },
 
-  /**
-   * Local stores only — as long as SystemStreams are embedded.
-   */
-  async removeAllNonAccountEventsForUser (userId) {
+  async removeAllNonAccountEventsForUser (this: any, userId: string): Promise<void> {
     const allAccountStreamIds = this.accountStreamIds;
     if (allAccountStreamIds.length === 0) {
       await this.db.query('DELETE FROM event_streams WHERE user_id = $1', [userId]);
@@ -422,16 +408,9 @@ module.exports.rowToEvent = rowToEvent;
 
 // ---- Query building helpers ----
 
-/**
- * Build a PG query from the intermediate query format produced by localStorePrepareQuery.
- * @param {string} userId
- * @param {Array} localQuery - array of {type, content} items
- * @param {Object} localOptions - {sort, skip, limit}
- * @returns {{ sql: string, params: Array }}
- */
-function buildEventQuery (userId, localQuery, localOptions) {
-  const conditions = ['e.user_id = $1', 'e.deleted IS NULL', 'e.head_id IS NULL'];
-  const params = [userId];
+function buildEventQuery (userId: string, localQuery: any[], localOptions: any): { sql: string, params: any[] } {
+  const conditions: string[] = ['e.user_id = $1', 'e.deleted IS NULL', 'e.head_id IS NULL'];
+  const params: any[] = [userId];
   let idx = 2;
 
   for (const item of localQuery) {
@@ -446,7 +425,7 @@ function buildEventQuery (userId, localQuery, localOptions) {
 
   // Sort
   if (localOptions.sort) {
-    const sortParts = Object.entries(localOptions.sort).map(([k, v]) =>
+    const sortParts = (Object.entries(localOptions.sort) as Array<[string, number]>).map(([k, v]) =>
       `e.${toCol(k)} ${v === 1 ? 'ASC' : 'DESC'}`
     );
     sql += ' ORDER BY ' + sortParts.join(', ');
@@ -467,10 +446,7 @@ function buildEventQuery (userId, localQuery, localOptions) {
   return { sql, params };
 }
 
-/**
- * Convert a single query item to a SQL condition.
- */
-function convertQueryItem (item, idx, params) {
+function convertQueryItem (item: any, idx: number, params: any[]): { condition: string, nextIdx: number } | null {
   switch (item.type) {
     case 'equal': {
       const col = 'e.' + toCol(item.content.field);
@@ -512,8 +488,8 @@ function convertQueryItem (item, idx, params) {
     }
     case 'typesList': {
       if (item.content.length === 0) return null;
-      const typeConditions = [];
-      for (const requestedType of item.content) {
+      const typeConditions: string[] = [];
+      for (const requestedType of item.content as string[]) {
         const wildcardIndex = requestedType.indexOf('/*');
         if (wildcardIndex > 0) {
           // Wildcard: note/* → type LIKE 'note/%'
@@ -538,32 +514,19 @@ function convertQueryItem (item, idx, params) {
   }
 }
 
-/**
- * Convert a streamsQuery (array of expanded stream query items) to SQL.
- * Uses the event_streams junction table via EXISTS subqueries.
- *
- * The stream query format after expansion is an array of items, each with:
- * - any: [streamId, ...] — event must be in at least one of these streams
- * - not: [streamId, ...] — event must not be in any of these streams
- * - and: [{any: [...]}, {not: [...]}] — combined conditions
- *
- * Multiple items in the top array are ORed together (different stream query clauses).
- */
-function convertStreamsQuery (streamQueriesArray, idx, params) {
+function convertStreamsQuery (streamQueriesArray: any[], idx: number, params: any[]): { condition: string, nextIdx: number } | null {
   if (!streamQueriesArray || streamQueriesArray.length === 0) return null;
 
-  const orParts = [];
+  const orParts: string[] = [];
 
   for (const streamQuery of streamQueriesArray) {
     if (streamQuery == null) continue;
 
-    const andParts = [];
+    const andParts: string[] = [];
 
-    // Process each item in the stream query
     for (const item of streamQuery) {
       if (item.any && item.any.length > 0 && !item.any.includes('*')) {
-        // Event must be in at least one of these streams
-        const placeholders = item.any.map((sid) => {
+        const placeholders = item.any.map((sid: string) => {
           params.push(sid);
           return `$${idx++}`;
         });
@@ -572,8 +535,7 @@ function convertStreamsQuery (streamQueriesArray, idx, params) {
         );
       }
       if (item.not && item.not.length > 0) {
-        // Event must NOT be in any of these streams
-        const placeholders = item.not.map((sid) => {
+        const placeholders = item.not.map((sid: string) => {
           params.push(sid);
           return `$${idx++}`;
         });
@@ -597,20 +559,17 @@ function convertStreamsQuery (streamQueriesArray, idx, params) {
   return { condition, nextIdx: idx };
 }
 
-/**
- * Create a Readable stream from an array of PG rows.
- */
-function readableStreamFromRows (rows) {
+function readableStreamFromRows (rows: any[]): any {
   let index = 0;
   const readable = new Readable({
     objectMode: true,
     highWaterMark: 4000,
-    read () {
+    read (this: any) {
       while (index < rows.length) {
         const event = rowToEvent(rows[index++]);
         if (!this.push(event)) return; // back-pressure
       }
-      this.push(null); // end of stream
+      this.push(null);
     }
   });
   return readable;

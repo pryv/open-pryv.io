@@ -5,33 +5,24 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const { Pool } = require('pg');
 const { setTimeout } = require('timers/promises');
 const _internals = require('./_internals');
 
 /**
  * PostgreSQL connection wrapper with pooling.
- * Mirrors the Database.js (MongoDB) API surface where applicable.
  */
 class DatabasePG {
-  /** @type {import('pg').Pool} */
-  pool;
-  /** @type {import('pg').PoolConfig} */
-  poolConfig;
-  /** @type {boolean} */
-  connected;
-  logger;
+  pool: any;
+  poolConfig: any;
+  connected: boolean;
+  logger: any;
+  _connectingPromise: Promise<void> | null;
+  _schemaReady: boolean;
 
-  /**
-   * @param {Object} settings - from config `postgresql`
-   * @param {string} settings.host
-   * @param {number} settings.port
-   * @param {string} settings.database
-   * @param {string} settings.user
-   * @param {string} [settings.password]
-   * @param {number} [settings.max] - pool size (default 20)
-   */
-  constructor (settings) {
+  constructor (settings: any) {
     this.logger = _internals.getLogger('database-pg');
     this.poolConfig = {
       host: settings.host,
@@ -45,17 +36,14 @@ class DatabasePG {
     };
     this.pool = null;
     this.connected = false;
-    /** @type {Promise<void>|null} Serialization guard for connect + schema init */
     this._connectingPromise = null;
     this._schemaReady = false;
   }
 
   /**
    * Ensure the pool is created and a test query succeeds.
-   * Serialized: concurrent callers share the same connection promise.
-   * @returns {Promise<void>}
    */
-  async ensureConnect () {
+  async ensureConnect (): Promise<void> {
     if (this.connected) return;
     // Serialize: if another caller is already connecting, await same promise
     if (this._connectingPromise) return this._connectingPromise;
@@ -68,17 +56,16 @@ class DatabasePG {
   }
 
   /** @private */
-  async _doConnect () {
-    if (this.connected) return; // re-check after acquiring serialization
+  async _doConnect (): Promise<void> {
+    if (this.connected) return;
 
     if (!this.pool) {
       this.pool = new Pool(this.poolConfig);
-      this.pool.on('error', (err) => {
+      this.pool.on('error', (err: any) => {
         this.logger.error('Unexpected PG pool error', err);
       });
     }
 
-    // Verify connectivity
     const client = await this.pool.connect();
     try {
       await client.query('SELECT 1');
@@ -87,16 +74,14 @@ class DatabasePG {
       client.release();
     }
 
-    // Auto-initialize schema on first connection (idempotent, runs once)
     await this._initSchemaOnce();
     this.connected = true;
   }
 
   /**
    * Wait until PG is up. For use at startup.
-   * @returns {Promise<void>}
    */
-  async waitForConnection () {
+  async waitForConnection (): Promise<void> {
     while (!this.connected) {
       try {
         await this.ensureConnect();
@@ -109,11 +94,8 @@ class DatabasePG {
 
   /**
    * Execute a parameterised query.
-   * @param {string} text - SQL with $1, $2, ... placeholders
-   * @param {Array} [params]
-   * @returns {Promise<import('pg').QueryResult>}
    */
-  async query (text, params) {
+  async query (text: string, params?: any[]): Promise<any> {
     await this.ensureConnect();
     this.logger.debug('Query:', text.replace(/\s+/g, ' ').trim());
     return this.pool.query(text, params);
@@ -121,22 +103,16 @@ class DatabasePG {
 
   /**
    * Get a client from the pool for use in transactions.
-   * Caller MUST call client.release() when done.
-   * @returns {Promise<import('pg').PoolClient>}
    */
-  async getClient () {
+  async getClient (): Promise<any> {
     await this.ensureConnect();
     return this.pool.connect();
   }
 
   /**
    * Run a function inside a transaction.
-   * Automatically commits on success, rolls back on error.
-   * @param {(client: import('pg').PoolClient) => Promise<T>} fn
-   * @returns {Promise<T>}
-   * @template T
    */
-  async withTransaction (fn) {
+  async withTransaction<T> (fn: (client: any) => Promise<T>): Promise<T> {
     const client = await this.getClient();
     try {
       await client.query('BEGIN');
@@ -153,20 +129,16 @@ class DatabasePG {
 
   /**
    * Initialize the database schema (create tables if not exist).
-   * Public entry point — ensures connection then runs DDL.
-   * @returns {Promise<void>}
    */
-  async initSchema () {
+  async initSchema (): Promise<void> {
     await this.ensureConnect();
     await this._initSchemaOnce();
   }
 
   /**
-   * Run schema DDL once. Called internally by _doConnect and initSchema.
-   * Safe to call multiple times — only the first invocation runs DDL.
-   * @private
+   * Run schema DDL once. Idempotent.
    */
-  async _initSchemaOnce () {
+  async _initSchemaOnce (): Promise<void> {
     if (this._schemaReady) return;
     await this.pool.query(SCHEMA_SQL);
     this._schemaReady = true;
@@ -174,10 +146,9 @@ class DatabasePG {
   }
 
   /**
-   * Close the pool. After calling this, all other methods produce undefined behaviour.
-   * @returns {Promise<void>}
+   * Close the pool.
    */
-  async close () {
+  async close (): Promise<void> {
     if (this.pool) {
       await this.pool.end();
       this.pool = null;
@@ -189,23 +160,18 @@ class DatabasePG {
 
   /**
    * Check whether a PG error is a unique-constraint violation.
-   * @param {Error} err
-   * @returns {boolean}
    */
-  static isDuplicateError (err) {
-    // PG error code 23505 = unique_violation
+  static isDuplicateError (err: any): boolean {
     return err && err.code === '23505';
   }
 
   /**
-   * Attach duplicate-error helpers to a PG error, mirroring Database.handleDuplicateError.
-   * @param {Error} err
+   * Attach duplicate-error helpers to a PG error.
    */
-  static handleDuplicateError (err) {
+  static handleDuplicateError (err: any): void {
     err.isDuplicate = DatabasePG.isDuplicateError(err);
-    err.isDuplicateIndex = (key) => {
+    err.isDuplicateIndex = (key: string): boolean => {
       if (!err.isDuplicate) return false;
-      // PG lowercases constraint names; compare case-insensitively
       return err.constraint ? err.constraint.toLowerCase().includes(key.toLowerCase()) : false;
     };
   }

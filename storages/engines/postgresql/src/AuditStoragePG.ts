@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const { LRUCache: LRU } = require('lru-cache');
 const UserAuditDatabasePG = require('./UserAuditDatabasePG');
 const _internals = require('./_internals');
@@ -13,21 +15,21 @@ const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
 
 class AuditStoragePG {
-  initialized = false;
-  userDBsCache = null;
-  db = null;
-  logger = null;
+  initialized: boolean = false;
+  userDBsCache: any = null;
+  db: any = null;
+  logger: any = null;
 
-  constructor (db) {
+  constructor (db: any) {
     this.db = db;
     this.logger = _internals.getLogger('audit-storage-pg');
     this.userDBsCache = new LRU({
       max: CACHE_SIZE,
-      dispose: function (db) { db.close(); }
+      dispose: function (db: any) { db.close(); }
     });
   }
 
-  async init () {
+  async init (): Promise<this> {
     if (this.initialized) throw new Error('Database already initialized');
     this.initialized = true;
     await this.db.ensureConnect();
@@ -35,15 +37,15 @@ class AuditStoragePG {
     return this;
   }
 
-  getVersion () {
+  getVersion (): string {
     return VERSION;
   }
 
-  checkInitialized () {
+  checkInitialized (): void {
     if (!this.initialized) throw new Error('Initialize db component before using it');
   }
 
-  async forUser (userId) {
+  async forUser (userId: string): Promise<any> {
     this.checkInitialized();
     let userDb = this.userDBsCache.get(userId);
     if (!userDb) {
@@ -54,16 +56,15 @@ class AuditStoragePG {
     return userDb;
   }
 
-  async deleteUser (userId) {
+  async deleteUser (userId: string): Promise<void> {
     this.logger.info('deleteUser: ' + userId);
     this.userDBsCache.delete(userId);
     await this.db.query('DELETE FROM audit_events WHERE user_id = $1', [userId]);
   }
 
-  close () {
+  close (): void {
     this.checkInitialized();
     this.userDBsCache.clear();
-    // Close the dedicated audit pool
     if (this.db) this.db.close().catch(() => {});
   }
 }

@@ -5,4 +5,6 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 module.exports = require('./localDataStorePG');

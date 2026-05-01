@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const BaseStoragePG = require('./BaseStoragePG');
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const _internals = require('../_internals');
@@ -16,7 +18,9 @@ const logger = _internals.lazyLogger('storage:accesses-pg');
  * PostgreSQL persistence for accesses.
  */
 class AccessesPG extends BaseStoragePG {
-  constructor (db, integrityAccesses) {
+  integrityAccesses: any;
+
+  constructor (db: any, integrityAccesses?: any) {
     super(db);
     this.tableName = 'accesses';
     this.hasDeletedCol = true;
@@ -25,12 +29,7 @@ class AccessesPG extends BaseStoragePG {
     this.integrityAccesses = integrityAccesses || { isActive: false, set: () => {} };
   }
 
-  /**
-   * Override: shared accesses always have deviceName: null (set by API
-   * during creation). PG stores it as NULL in the column but BaseStoragePG
-   * strips null values to match MongoDB behaviour. Re-add it for shared.
-   */
-  rowToItem (row) {
+  rowToItem (row: any): any | null {
     const item = super.rowToItem(row);
     if (item && item.type === 'shared' && !('deviceName' in item)) {
       item.deviceName = null;
@@ -38,45 +37,34 @@ class AccessesPG extends BaseStoragePG {
     return item;
   }
 
-  applyDefaults (item) {
+  applyDefaults (item: any): any {
     const copy = Object.assign({}, item);
     copy.id = copy.id || generateId();
     copy.token = copy.token || generateId();
     if (copy.deleted === undefined) copy.deleted = null;
-    // apiEndpoint is a computed field — not stored in PG
     delete copy.apiEndpoint;
-    // Compute integrity
     if (this.integrityAccesses.isActive) {
       this.integrityAccesses.set(copy);
     }
     return copy;
   }
 
-  /** Exposed for convenience. */
-  generateToken () {
+  generateToken (): string {
     return generateId();
   }
 
-  /**
-   * Override: findDeletions for accesses uses deleted IS NOT NULL
-   * (the MongoDB version uses $type: 'number').
-   */
-  findDeletions (userOrUserId, query, options, callback) {
+  findDeletions (userOrUserId: any, query: any, options: any, callback: (err: any, items?: any) => void): void {
     query = query || {};
     query.deleted = { $ne: null };
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     this._findInternal(userId, query, options, callback);
   }
 
-  /**
-   * Override: soft-delete with integrity reset.
-   */
-  delete (userOrUserId, query, callback) {
+  delete (userOrUserId: any, query: any, callback: (err: any, res?: any) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const now = timestamp.now();
 
-    // Build the update
-    const updateData = {
+    const updateData: any = {
       $set: { deleted: now },
       $unset: { integrity: 1 }
     };
@@ -85,15 +73,14 @@ class AccessesPG extends BaseStoragePG {
       return this.updateMany(userOrUserId, query, updateData, callback);
     }
 
-    // With integrity active: update, then recompute integrity on affected rows
     const integrityBatchCode = Math.random();
     updateData.$set.integrityBatchCode = integrityBatchCode;
 
-    this.updateMany(userOrUserId, query, updateData, (err, res) => {
+    this.updateMany(userOrUserId, query, updateData, (err: any, res: any) => {
       if (err) return callback(err);
       const initialModifiedCount = res.modifiedCount;
 
-      const updateIfNeeded = (access) => {
+      const updateIfNeeded = (access: any): any => {
         delete access.integrityBatchCode;
         const previousIntegrity = access.integrity;
         this.integrityAccesses.set(access, true);
@@ -104,7 +91,7 @@ class AccessesPG extends BaseStoragePG {
         };
       };
 
-      this.findAndUpdateIfNeeded(userOrUserId, { integrityBatchCode }, {}, updateIfNeeded, (err2, res2) => {
+      this.findAndUpdateIfNeeded(userOrUserId, { integrityBatchCode }, {}, updateIfNeeded, (err2: any, res2: any) => {
         if (err2) return callback(err2);
         if (res2.count !== initialModifiedCount) {
           logger.error('Issue when adding integrity to updated accesses for ' +
@@ -115,22 +102,18 @@ class AccessesPG extends BaseStoragePG {
     });
   }
 
-  /**
-   * Override: updateOne with integrity recomputation.
-   */
-  updateOne (userOrUserId, query, update, callback) {
+  updateOne (userOrUserId: any, query: any, update: any, callback: (err: any, item?: any) => void): void {
     if (update.modified == null || !this.integrityAccesses.isActive) {
       return this.findOneAndUpdate(userOrUserId, query, update, callback);
     }
 
-    // Unset integrity unless it's being explicitly set
     if (update.integrity == null && update.$set?.integrity == null) {
       if (!update.$unset) update.$unset = {};
       update.$unset.integrity = 1;
     }
 
     const that = this;
-    this.findOneAndUpdate(userOrUserId, query, update, (err, accessData) => {
+    this.findOneAndUpdate(userOrUserId, query, update, (err: any, accessData: any) => {
       if (err || accessData?.id == null) return callback(err, accessData);
 
       const integrityCheck = accessData.integrity;
@@ -147,10 +130,7 @@ class AccessesPG extends BaseStoragePG {
     });
   }
 
-  /**
-   * Override: insertMany sets deleted=null on items missing it.
-   */
-  insertMany (userOrUserId, accesses, callback) {
+  insertMany (userOrUserId: any, accesses: any[], callback: (err: any) => void): void {
     const accessesToCreate = accesses.map((a) => {
       if (a.deleted === undefined) return Object.assign({ deleted: null }, a);
       return a;

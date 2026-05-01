@@ -9,19 +9,21 @@
  * PostgreSQL implementation of PlatformDB.
  * Uses `platform_unique_fields` and `platform_indexed_fields` tables.
  */
-class DBpostgresql {
-  /** @type {import('storage/src/DatabasePG')} */
-  db;
-  closed;
 
-  async init () {
+import type {} from 'node:fs';
+
+class DBpostgresql {
+  db: any;
+  closed: boolean = false;
+
+  async init (): Promise<void> {
     const _internals = require('./_internals');
     this.db = _internals.databasePG;
     await this.db.ensureConnect();
     this.closed = false;
   }
 
-  async setUserUniqueField (username, field, value) {
+  async setUserUniqueField (username: string, field: string, value: string): Promise<void> {
     // Upsert: if (field, value) exists, update username
     await this.db.query(
       `INSERT INTO platform_unique_fields (field, value, username)
@@ -31,7 +33,7 @@ class DBpostgresql {
     );
   }
 
-  async setUserUniqueFieldIfNotExists (username, field, value) {
+  async setUserUniqueFieldIfNotExists (username: string, field: string, value: string): Promise<boolean> {
     // Atomic: INSERT only if no row exists for (field, value), or if same username
     const result = await this.db.query(
       `INSERT INTO platform_unique_fields (field, value, username)
@@ -49,14 +51,14 @@ class DBpostgresql {
     return existing.rows.length > 0 && existing.rows[0].username === username;
   }
 
-  async deleteUserUniqueField (field, value) {
+  async deleteUserUniqueField (field: string, value: string): Promise<void> {
     await this.db.query(
       'DELETE FROM platform_unique_fields WHERE field = $1 AND value = $2',
       [field, value]
     );
   }
 
-  async setUserIndexedField (username, field, value) {
+  async setUserIndexedField (username: string, field: string, value: string): Promise<void> {
     await this.db.query(
       `INSERT INTO platform_indexed_fields (username, field, value)
        VALUES ($1, $2, $3)
@@ -65,14 +67,14 @@ class DBpostgresql {
     );
   }
 
-  async deleteUserIndexedField (username, field) {
+  async deleteUserIndexedField (username: string, field: string): Promise<void> {
     await this.db.query(
       'DELETE FROM platform_indexed_fields WHERE username = $1 AND field = $2',
       [username, field]
     );
   }
 
-  async getUserIndexedField (username, field) {
+  async getUserIndexedField (username: string, field: string): Promise<string | null> {
     const res = await this.db.query(
       'SELECT value FROM platform_indexed_fields WHERE username = $1 AND field = $2',
       [username, field]
@@ -80,7 +82,7 @@ class DBpostgresql {
     return res.rows.length > 0 ? res.rows[0].value : null;
   }
 
-  async getUsersUniqueField (field, value) {
+  async getUsersUniqueField (field: string, value: string): Promise<string | null> {
     const res = await this.db.query(
       'SELECT username FROM platform_unique_fields WHERE field = $1 AND value = $2',
       [field, value]
@@ -88,16 +90,14 @@ class DBpostgresql {
     return res.rows.length > 0 ? res.rows[0].username : null;
   }
 
-  async getAllWithPrefix (prefix) {
-    // MongoDB implementation ignores the prefix and returns all entries;
-    // field names (language, email, etc.) don't actually have a 'user' prefix.
+  async getAllWithPrefix (_prefix: string): Promise<any[]> {
     const uniqueRes = await this.db.query(
       'SELECT field, value, username FROM platform_unique_fields'
     );
     const indexedRes = await this.db.query(
       'SELECT field, value, username FROM platform_indexed_fields'
     );
-    const result = [];
+    const result: any[] = [];
     for (const row of uniqueRes.rows) {
       result.push({
         isUnique: true,
@@ -117,27 +117,26 @@ class DBpostgresql {
     return result;
   }
 
-  async deleteAll () {
+  async deleteAll (): Promise<void> {
     await this.db.query('DELETE FROM platform_unique_fields');
     await this.db.query('DELETE FROM platform_indexed_fields');
   }
 
-  async close () {
+  async close (): Promise<void> {
     this.closed = true;
-    // Don't close the shared pool — other components may still use it
   }
 
-  isClosed () {
+  isClosed (): boolean {
     return this.closed;
   }
 
   // -- Migration methods --
 
-  async exportAll () {
+  async exportAll (): Promise<any[]> {
     return await this.getAllWithPrefix('');
   }
 
-  async importAll (data) {
+  async importAll (data: any[]): Promise<void> {
     if (!data || data.length === 0) return;
     for (const entry of data) {
       if (entry.isUnique) {
@@ -148,25 +147,25 @@ class DBpostgresql {
     }
   }
 
-  async clearAll () {
+  async clearAll (): Promise<void> {
     await this.deleteAll();
   }
 
   // --- User-to-core mapping --- //
 
-  async setUserCore (username, coreId) {
+  async setUserCore (username: string, coreId: string): Promise<void> {
     await this.setUserIndexedField(username, '_core', coreId);
   }
 
-  async getUserCore (username) {
+  async getUserCore (username: string): Promise<string | null> {
     return await this.getUserIndexedField(username, '_core');
   }
 
-  async getAllUserCores () {
+  async getAllUserCores (): Promise<Array<{ username: string, coreId: string }>> {
     const res = await this.db.query(
       "SELECT username, value FROM platform_indexed_fields WHERE field = '_core'"
     );
-    return res.rows.map(row => ({
+    return res.rows.map((row: any) => ({
       username: row.username,
       coreId: row.value
     }));
@@ -174,21 +173,20 @@ class DBpostgresql {
 
   // --- Core registration --- //
 
-  async setCoreInfo (coreId, info) {
-    // Store as indexed field with reserved username '__cores__'
+  async setCoreInfo (coreId: string, info: any): Promise<void> {
     await this.setUserIndexedField('__cores__', coreId, JSON.stringify(info));
   }
 
-  async getCoreInfo (coreId) {
+  async getCoreInfo (coreId: string): Promise<any | null> {
     const val = await this.getUserIndexedField('__cores__', coreId);
     return val != null ? JSON.parse(val) : null;
   }
 
-  async getAllCoreInfos () {
+  async getAllCoreInfos (): Promise<any[]> {
     const res = await this.db.query(
       "SELECT value FROM platform_indexed_fields WHERE username = '__cores__'"
     );
-    return res.rows.map(row => JSON.parse(row.value));
+    return res.rows.map((row: any) => JSON.parse(row.value));
   }
 }
 
