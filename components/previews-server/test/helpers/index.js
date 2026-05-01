@@ -20,7 +20,7 @@ const path = require('path');
 
 testHelpers.dependencies.settings = getConfigUnsafe(true).get();
 testHelpers.dependencies.instanceManager = new DynamicInstanceManager({
-  serverFilePath: path.resolve(__dirname, '../../src/server.js')
+  serverFilePath: path.resolve(__dirname, '../../src/server.ts')
 });
 
 before(async function () {
