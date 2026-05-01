@@ -8,6 +8,8 @@
 /**
  * Local Data Store.
  */
+import type {} from 'node:fs';
+
 const ds = require('@pryv/datastore');
 const _internals = require('../_internals');
 const userStreams = ds.createUserStreams({});
@@ -16,7 +18,7 @@ const { getStorage } = require('../userSQLite');
 
 module.exports = ds.createDataStore({
 
-  async init (params) {
+  async init (this: any, params: any): Promise<any> {
     this.settings = params.settings;
 
     // init events
@@ -35,12 +37,12 @@ module.exports = ds.createDataStore({
 
   events: userEvents,
 
-  async deleteUser (uid) {
+  async deleteUser (uid: string): Promise<void> {
     // streams not implemented for SQLite — nothing to delete
     await userEvents._deleteUser(uid);
   },
 
-  async getUserStorageInfos (uid) {
+  async getUserStorageInfos (uid: string): Promise<any> {
     const events = await userEvents._getStorageInfos(uid);
     const files = await userEvents._getFilesStorageInfos(uid);
     return { streams: { count: 0 }, events, files };

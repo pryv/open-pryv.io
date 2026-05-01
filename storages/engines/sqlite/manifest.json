@@ -1,6 +1,6 @@
 {
   "storageTypes": ["baseStorage", "dataStore", "auditStorage"],
-  "entrypoint": "src/index.js",
+  "entrypoint": "src/index.ts",
   "requiredInternals": [
     "userLocalDirectory",
     "getEventFiles",

@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const ds = require('@pryv/datastore');
 const errors = ds.errors;
@@ -22,7 +24,7 @@ module.exports = ds.createUserEvents({
   keepHistory: null,
   setIntegrityOnEvent: null,
 
-  init (storage, eventsFileStorage, settings, setIntegrityOnEventFn, systemStreams) {
+  init (this: any, storage: any, eventsFileStorage: any, settings: any, setIntegrityOnEventFn: any, systemStreams: any): void {
     this.storage = storage;
     this.eventsFileStorage = eventsFileStorage;
     this.settings = settings;
@@ -36,56 +38,41 @@ module.exports = ds.createUserEvents({
     this.keepHistory = this.settings.versioning?.forceKeepHistory || false;
   },
 
-  async getOne (userId, eventId) {
+  async getOne (this: any, userId: string, eventId: string): Promise<any> {
     const db = await this.storage.forUser(userId);
     return db.getOneEvent(eventId);
   },
 
-  /**
-   * @returns {Promise<any>}
-   */
-  async get (userId, storeQuery, storeOptions) {
+  async get (this: any, userId: string, storeQuery: any, storeOptions: any): Promise<any> {
     const db = await this.storage.forUser(userId);
     const query = localStoreEventQueries.localStorePrepareQuery(storeQuery);
     const options = localStoreEventQueries.localStorePrepareOptions(storeOptions);
     return db.getEvents({ query, options });
   },
 
-  /**
-   * @returns {Promise<any>}
-   */
-  async getStreamed (userId, storeQuery, storeOptions) {
+  async getStreamed (this: any, userId: string, storeQuery: any, storeOptions: any): Promise<any> {
     const db = await this.storage.forUser(userId);
     const query = localStoreEventQueries.localStorePrepareQuery(storeQuery);
     const options = localStoreEventQueries.localStorePrepareOptions(storeOptions);
     return db.getEventsStreamed({ query, options });
   },
 
-  /**
-   * @returns {Promise<any>}
-   */
-  async getDeletionsStreamed (userId, query, options) {
+  async getDeletionsStreamed (this: any, userId: string, query: any, _options: any): Promise<any> {
     const db = await this.storage.forUser(userId);
     return db.getEventDeletionsStreamed(query.deletedSince);
   },
 
-  /**
-   * @returns {Promise<any>}
-   */
-  async getHistory (userId, eventId) {
+  async getHistory (this: any, userId: string, eventId: string): Promise<any> {
     const db = await this.storage.forUser(userId);
     return db.getEventHistory(eventId);
   },
 
-  /**
-   * @returns {Promise<any>}
-   */
-  async create (userId, event, transaction) {
+  async create (this: any, userId: string, event: any, _transaction: any): Promise<any> {
     const db = await this.storage.forUser(userId);
     try {
       await db.createEvent(event);
       return event;
-    } catch (err) {
+    } catch (err: any) {
       if (err.message === 'UNIQUE constraint failed: events.eventid') {
         throw errors.itemAlreadyExists('event', { id: event.id }, err);
       }
@@ -93,15 +80,12 @@ module.exports = ds.createUserEvents({
     }
   },
 
-  /**
-   * @returns {Promise<any>}
-   */
-  async update (userId, eventData, transaction) {
+  async update (this: any, userId: string, eventData: any, transaction: any): Promise<any> {
     const db = await this.storage.forUser(userId);
     await this._generateVersionIfNeeded(db, eventData.id, null, transaction);
     try {
       return db.updateEvent(eventData.id, eventData);
-    } catch (err) {
+    } catch (err: any) {
       if (err.message === 'UNIQUE constraint failed: events.eventid') {
         throw errors.itemAlreadyExists('event', { id: eventData.id }, err);
       }
@@ -109,13 +93,10 @@ module.exports = ds.createUserEvents({
     }
   },
 
-  /**
-   * @returns {Promise<any>}
-   */
-  async delete (userId, originalEvent, transaction) {
+  async delete (this: any, userId: string, originalEvent: any, transaction: any): Promise<any> {
     const db = await this.storage.forUser(userId);
     await this._generateVersionIfNeeded(db, originalEvent.id, originalEvent, transaction);
-    const deletedEventContent = structuredClone(originalEvent);
+    const deletedEventContent: any = structuredClone(originalEvent);
     const eventId = deletedEventContent.id;
 
     // if attachments are to be deleted
@@ -138,9 +119,9 @@ module.exports = ds.createUserEvents({
     return await db.updateEvent(eventId, deletedEventContent);
   },
 
-  async _generateVersionIfNeeded (db, eventId, originalEvent = null, transaction = null) {
+  async _generateVersionIfNeeded (this: any, db: any, eventId: string, originalEvent: any = null, _transaction: any = null): Promise<void> {
     if (!this.keepHistory) return;
-    let versionItem = null;
+    let versionItem: any = null;
     if (originalEvent != null) {
       versionItem = structuredClone(originalEvent);
     } else {
@@ -151,27 +132,19 @@ module.exports = ds.createUserEvents({
     await db.createEvent(versionItem);
   },
 
-  /**
-   * @param {string} userId
-   * @returns {Promise<void>}
-   */
-  async _deleteUser (userId) {
+  async _deleteUser (this: any, userId: string): Promise<any> {
     const db = await this.storage.forUser(userId);
     await this.eventsFileStorage.removeAllForUser(userId);
     return await db.deleteEvents({ query: [] });
   },
 
-  /**
-   * @param {string} userId
-   * @returns {Promise<any>}
-   */
-  async _getStorageInfos (userId) {
+  async _getStorageInfos (this: any, userId: string): Promise<any> {
     const db = await this.storage.forUser(userId);
     const count = db.countEvents();
     return { count };
   },
 
-  async _getFilesStorageInfos (userId) {
+  async _getFilesStorageInfos (this: any, userId: string): Promise<any> {
     const sizeKb = await this.eventsFileStorage.getFileStorageInfos(userId);
     return { sizeKb };
   },
@@ -179,7 +152,7 @@ module.exports = ds.createUserEvents({
   /**
     * Local stores only - as long as SystemStreams are embedded
     */
-  async removeAllNonAccountEventsForUser (userId) {
+  async removeAllNonAccountEventsForUser (this: any, userId: string): Promise<any> {
     const db = await this.storage.forUser(userId);
     const allAccountStreamIds = this.accountStreamIds;
     const query = [{ type: 'streamsQuery', content: [[{ any: ['*'] }, { not: allAccountStreamIds }]] }];

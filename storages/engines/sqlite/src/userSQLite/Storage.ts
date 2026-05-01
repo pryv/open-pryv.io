@@ -15,13 +15,14 @@ const _internals = require('../_internals');
 const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
 
-class Storage {
-  initialized = false;
-  userDBsCache = null;
-  options = null;
-  id = null;
+class SqliteStorage {
+  initialized: boolean = false;
+  userDBsCache: any = null;
+  options: any = null;
+  id: string;
+  logger: any;
 
-  async init () {
+  async init (): Promise<this> {
     if (this.initialized) {
       throw new Error('Database already initalized');
     }
@@ -32,33 +33,31 @@ class Storage {
     return this;
   }
 
-  constructor (id, options) {
+  constructor (id: string, options?: any) {
     this.id = id;
     this.logger = _internals.getLogger(this.id + ':storage');
     this.options = options || {};
     this.userDBsCache = new LRU({
       max: this.options.max || CACHE_SIZE,
-      dispose: function (db, key) { db.close(); }
+      dispose: function (db: any, _key: any) { db.close(); }
     });
   }
 
-  getVersion () {
+  getVersion (): string {
     return VERSION;
   }
 
   /**
    * @throws if not initalized
    */
-  checkInitialized () {
+  checkInitialized (): void {
     if (!this.initialized) throw new Error('Initialize db component before using it');
   }
 
   /**
    * get the database relative to a specific user
-   * @param {string} userId
-   * @returns {Promise<UserDatabase>}
    */
-  async forUser (userId) {
+  async forUser (userId: string): Promise<any> {
     this.logger.debug('forUser: ' + userId);
     this.checkInitialized();
     return this.userDBsCache.get(userId) || (await open(this, userId, this.logger));
@@ -66,10 +65,8 @@ class Storage {
 
   /**
    * close and delete the database relative to a specific user
-   * @param {string} userId
-   * @returns {Promise<void>}
    */
-  async deleteUser (userId) {
+  async deleteUser (userId: string): Promise<void> {
     this.logger.info('deleteUser: ' + userId);
     const userDb = await this.forUser(userId);
     await userDb.close();
@@ -83,18 +80,18 @@ class Storage {
     }
   }
 
-  close () {
+  close (): void {
     this.checkInitialized();
     this.userDBsCache.clear();
   }
 
-  async dbgetPathForUser (userId) {
+  async dbgetPathForUser (userId: string): Promise<string> {
     const userPath = await _internals.userLocalDirectory.ensureUserDirectory(userId);
     return path.join(userPath, this.id + '-' + this.getVersion() + '.sqlite');
   }
 }
 
-async function open (storage, userId, logger) {
+async function open (storage: SqliteStorage, userId: string, logger: any): Promise<any> {
   logger.debug('open: ' + userId);
   const db = new UserDatabase(logger, { dbPath: await storage.dbgetPathForUser(userId) });
   await db.init();
@@ -102,4 +99,4 @@ async function open (storage, userId, logger) {
   return db;
 }
 
-module.exports = Storage;
+module.exports = SqliteStorage;

@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const { ALL_EVENTS_TAG } = require('./schema/events');
 
 module.exports = {
@@ -12,10 +14,9 @@ module.exports = {
 };
 
 /**
- * Get stream queries for SQLite - to be run on
- * @param {Object[]} streamQuery
+ * Get stream queries for SQLite.
  */
-function toSQLiteQuery (streamQuery) {
+function toSQLiteQuery (streamQuery: any): string | null {
   if (streamQuery == null) return null;
 
   if (streamQuery.length === 1) {
@@ -24,11 +25,11 @@ function toSQLiteQuery (streamQuery) {
     return '(' + streamQuery.map(processAndBlock).join(') OR (') + ')';
   }
 
-  function processAndBlock (andBlock) {
+  function processAndBlock (andBlock: any): string | null {
     if (typeof andBlock === 'string') return '"' + andBlock + '"';
 
-    const anys = [];
-    const nots = [];
+    const anys: string[] = [];
+    const nots: string[] = [];
     for (const andItem of andBlock) {
       if (andItem.any != null && andItem.any.length > 0) {
         if (andItem.any.indexOf('*') > -1) continue; // skip and with '*';
@@ -54,6 +55,6 @@ function toSQLiteQuery (streamQuery) {
   }
 }
 
-function addQuotes (array) {
+function addQuotes (array: string[]): string[] {
   return array.map((x) => '"' + x + '"');
 }

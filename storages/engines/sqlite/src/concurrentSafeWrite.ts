@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const WAIT_LIST_MS = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100];
 const _internals = require('./_internals');
 const logger = _internals.lazyLogger('sqliteConcurentWrites');
@@ -18,7 +20,7 @@ module.exports = {
 /**
  * Init the given DB in WAL and unsafe mode, as we will take care of managing concurrent writes errors.
  */
-async function initWALAndConcurrentSafeWriteCapabilities (db) {
+async function initWALAndConcurrentSafeWriteCapabilities (db: any): Promise<void> {
   await execute(() => {
     db.pragma('journal_mode = WAL');
   });
@@ -34,12 +36,12 @@ async function initWALAndConcurrentSafeWriteCapabilities (db) {
  * Executes the given statement function, retrying `retries` times in case of `SQLITE_BUSY`.
  * This is CPU intensive, but tests have shown this solution to be efficient.
  */
-async function execute (statement, retries = 100) {
+async function execute (statement: () => void, retries = 100): Promise<void> {
   for (let i = 0; i < retries; i++) {
     try {
       statement();
       return;
-    } catch (err) {
+    } catch (err: any) {
       if (err.code !== 'SQLITE_BUSY') {
         throw err;
       }

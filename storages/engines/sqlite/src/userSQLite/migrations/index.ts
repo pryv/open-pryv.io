@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const path = require('path');
 const fs = require('fs');
 
@@ -17,7 +19,7 @@ module.exports = {
   migrateUserDBsIfNeeded
 };
 
-async function migrateUserDBsIfNeeded (storage) {
+async function migrateUserDBsIfNeeded (storage: any): Promise<{ migrated: number, skipped: number } | undefined> {
   const usersBaseDirectory = _internals.userLocalDirectory.getBasePath();
   if (!fs.existsSync(usersBaseDirectory)) {
     fs.mkdirSync(usersBaseDirectory, { recursive: true });
@@ -37,7 +39,7 @@ async function migrateUserDBsIfNeeded (storage) {
 
   return result;
 
-  async function checkUserDir (userId, userDir) {
+  async function checkUserDir (userId: string, userDir: string): Promise<void> {
     // check if a migration from a non upgradeable schema (copy file to file) is needed
     const v0dbPath = path.join(userDir, 'audit.sqlite');
 
@@ -61,7 +63,7 @@ async function migrateUserDBsIfNeeded (storage) {
       logger.info('Migrated ' + resMigrate.count + ' records for ' + userId);
       v1user.close();
       result.migrated++;
-    } catch (err) {
+    } catch (err: any) {
       logger.error('ERROR during Migration V0 to V1: ' + err.message + ' >> For User: ' + userId + '>>> Check Dbs in: ' + userDir);
       logger.error(err);
       await fs.promises.unlink(v1dbPath);
@@ -70,20 +72,15 @@ async function migrateUserDBsIfNeeded (storage) {
   }
 }
 
-/**
- * @param {Function} asyncCallBack(uid, path)
- * @param {string} [userDataPath] -- Optional, user data path
- * @param {any} [logger] -- Optional, logger
- */
-async function foreachUserDirectory (asyncCallBack, userDataPath, logger) {
+async function foreachUserDirectory (asyncCallBack: (uid: string, path: string) => Promise<void>, userDataPath: string, logger: any): Promise<void> {
   await loop(userDataPath, '');
 
-  async function loop (loopPath, tail) {
+  async function loop (loopPath: string, tail: string): Promise<void> {
     if (!fs.existsSync(loopPath)) {
       logger.error('Cannot find dir' + loopPath);
       return;
     }
-    const fileNames = fs.readdirSync(loopPath);
+    const fileNames: string[] = fs.readdirSync(loopPath);
 
     for (const fileName of fileNames) {
       if (tail.length < 3 && fileName.length !== 1) { logger.warn('Skipping no 1 char' + fileName); continue; }

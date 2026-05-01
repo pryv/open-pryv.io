@@ -5,7 +5,9 @@
  * Refer to LICENSE file
  */
 
-const schema = module.exports = {
+import type {} from 'node:fs';
+
+const schema: any = module.exports = {
   dbSchema: {
     eventid: { type: 'TEXT UNIQUE', index: true, coerce: 'txt' },
     headId: { type: 'TEXT DEFAULT NULL', coerce: 'txt' },
@@ -36,12 +38,8 @@ const schema = module.exports = {
 
 const IDS_SEPARATOR = ' ';
 
-/**
- * @param {Object} event
- * @returns {Object}
- */
-function toDB (event) {
-  const dbEvent = {};
+function toDB (event: any): any {
+  const dbEvent: any = {};
   dbEvent.eventid = event.id;
 
   if (event.streamIds == null) {
@@ -74,20 +72,16 @@ function toDB (event) {
   return dbEvent;
 }
 
-function nullIfUndefined (value) {
+function nullIfUndefined (value: any): any {
   return (typeof value !== 'undefined') ? value : null;
 }
 
-function nullOrJSON (value) {
+function nullOrJSON (value: any): string | null {
   if (typeof value === 'undefined' || value === null) return null;
   return JSON.stringify(value);
 }
 
-/**
- * @param {Object} dbEvent
- * @returns {Object}
- */
-function fromDB (dbEvent) {
+function fromDB (dbEvent: any): any {
   if (dbEvent.streamIds != null) {
     dbEvent.streamIds = dbEvent.streamIds.split(IDS_SEPARATOR);
     dbEvent.streamIds.pop(); // pop removes the last element which is set on all events ALL_EVENTS_TAG
@@ -123,7 +117,7 @@ function fromDB (dbEvent) {
   return dbEvent;
 }
 
-function fromDBHistory (event) {
+function fromDBHistory (event: any): any {
   event = fromDB(event);
   event.id = event.headId;
   delete event.headId;
@@ -135,15 +129,13 @@ function fromDBHistory (event) {
  * - Transform booleans to 0/1
  * - Check that numbers are numbers
  * Does not handle "null" values
- * @param {string} column
- * @param {*} value
  */
-function coerceValueForColumn (column, value) {
-  return coerceFns[schema.dbSchema[column].coerce](value);
+function coerceValueForColumn (column: string, value: any): any {
+  return coerceFns[schema.dbSchema[column].coerce as keyof typeof coerceFns](value);
 }
 
 const coerceFns = {
-  txt: (value) => { return "'" + (value + '').replaceAll("'", "\\'") + "'"; },
-  num: (value) => { return (typeof value === 'number') ? value : parseFloat(value); },
-  bool: (value) => { return value ? 1 : 0; }
+  txt: (value: any) => { return "'" + (value + '').replaceAll("'", "\\'") + "'"; },
+  num: (value: any) => { return (typeof value === 'number') ? value : parseFloat(value); },
+  bool: (value: any) => { return value ? 1 : 0; }
 };

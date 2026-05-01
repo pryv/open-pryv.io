@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const SQLite3 = require('better-sqlite3');
 const { Readable } = require('stream');
 
@@ -17,20 +19,19 @@ module.exports = UserDatabase;
 
 const DB_OPTIONS = {};
 
-const tableSchemas = {
+const tableSchemas: Record<string, any> = {
   events: eventsSchema.dbSchema
 };
 
 /**
- * @param {Object} params
- * @param {string} params.dbPath Path to the SQLite database file
+ * Per-user SQLite database wrapper.
  */
-function UserDatabase (logger, params) {
+function UserDatabase (this: any, logger: any, params: { dbPath: string }): void {
   this.logger = logger.getLogger('user-database');
   this.db = new SQLite3(params.dbPath, DB_OPTIONS);
 }
 
-UserDatabase.prototype.init = async function () {
+UserDatabase.prototype.init = async function (): Promise<void> {
   await concurrentSafeWrite.initWALAndConcurrentSafeWriteCapabilities(this.db);
   // here we might want to skip DB initialization if version is not null
 
@@ -75,19 +76,19 @@ UserDatabase.prototype.init = async function () {
   this.eventQueries.deleteById = this.db.prepare('DELETE FROM events WHERE eventid = ?');
 };
 
-function prepareGetAllQuery (db, tableName) {
+function prepareGetAllQuery (db: any, tableName: string): any {
   return db.prepare(`SELECT * FROM ${tableName}`);
 }
 
-function prepareCreateQuery (db, tableName, columnNames) {
+function prepareCreateQuery (db: any, tableName: string, columnNames: string[]): any {
   return db.prepare(`INSERT INTO ${tableName} (${columnNames.join(', ')}) VALUES (@${columnNames.join(', @')})`);
 }
 
-UserDatabase.prototype.close = function () {
+UserDatabase.prototype.close = function (): void {
   this.db.close();
 };
 
-UserDatabase.prototype.getEvents = function (params) {
+UserDatabase.prototype.getEvents = function (params: any): any[] | null {
   params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
   params.query.push({ type: 'equal', content: { field: 'headId', value: null } });
   const queryString = prepareEventsGetQuery(params);
@@ -99,7 +100,7 @@ UserDatabase.prototype.getEvents = function (params) {
   return null;
 };
 
-UserDatabase.prototype.getEventsStreamed = function (params) {
+UserDatabase.prototype.getEventsStreamed = function (params: any): any {
   params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
   params.query.push({ type: 'equal', content: { field: 'headId', value: null } });
   const queryString = prepareEventsGetQuery(params);
@@ -108,18 +109,18 @@ UserDatabase.prototype.getEventsStreamed = function (params) {
   return readableEventsStreamForIterator(query.iterate());
 };
 
-function prepareEventsGetQuery (params) {
+function prepareEventsGetQuery (params: any): string {
   return 'SELECT * FROM events_fts ' + prepareQuery(params);
 }
 
-UserDatabase.prototype.getEventDeletionsStreamed = function (deletedSince) {
+UserDatabase.prototype.getEventDeletionsStreamed = function (deletedSince: number): any {
   this.logger.debug(`GET events deletions since: ${deletedSince}`);
   return readableEventsStreamForIterator(this.eventQueries.getDeletedSince.iterate(deletedSince));
 };
 
 // also see: https://nodejs.org/api/stream.html#stream_stream_readable_from_iterable_options
-function readableEventsStreamForIterator (iterateSource) {
-  const iterateTransform = {
+function readableEventsStreamForIterator (iterateSource: any): any {
+  const iterateTransform: any = {
     next: function () {
       const res = iterateSource.next();
       if (res && res.value) {
@@ -136,27 +137,27 @@ function readableEventsStreamForIterator (iterateSource) {
   return Readable.from(iterateTransform);
 }
 
-UserDatabase.prototype.getAllActions = function () {
+UserDatabase.prototype.getAllActions = function (): any[] {
   return this.eventQueries.getTerms.all('action-%');
 };
 
-UserDatabase.prototype.getAllAccesses = function () {
+UserDatabase.prototype.getAllAccesses = function (): any[] {
   return this.eventQueries.getTerms.all('access-%');
 };
 
-UserDatabase.prototype.getOneEvent = function (eventId) {
+UserDatabase.prototype.getOneEvent = function (eventId: string): any | null {
   this.logger.debug(`GET one event: ${eventId}`);
   const event = this.eventQueries.getById.get(eventId);
   if (event == null) return null;
   return eventsSchema.fromDB(event);
 };
 
-UserDatabase.prototype.countEvents = function () {
+UserDatabase.prototype.countEvents = function (): number {
   const res = this.db.prepare('SELECT count(*) as count FROM events').get();
   return res?.count || 0;
 };
 
-UserDatabase.prototype.createEvent = async function (event) {
+UserDatabase.prototype.createEvent = async function (event: any): Promise<void> {
   const dbEvent = eventsSchema.toDB(event);
   this.logger.debug(`(async) CREATE event: ${JSON.stringify(dbEvent)}`);
   await concurrentSafeWrite.execute(() => {
@@ -168,13 +169,13 @@ UserDatabase.prototype.createEvent = async function (event) {
  * Use only in tests or migration
  * Not safe within a multi-process environement
  */
-UserDatabase.prototype.createEventSync = function (event) {
+UserDatabase.prototype.createEventSync = function (event: any): void {
   const dbEvent = eventsSchema.toDB(event);
   this.logger.debug(`(sync) CREATE event: ${JSON.stringify(dbEvent)}`);
   this.eventQueries.create.run(dbEvent);
 };
 
-UserDatabase.prototype.updateEvent = async function (eventId, eventData) {
+UserDatabase.prototype.updateEvent = async function (eventId: string, eventData: any): Promise<any> {
   const dbEvent = eventsSchema.toDB(eventData);
   if (dbEvent.streamIds == null) { dbEvent.streamIds = eventsSchema.ALL_EVENTS_TAG; }
 
@@ -194,12 +195,12 @@ UserDatabase.prototype.updateEvent = async function (eventId, eventData) {
   return eventsSchema.fromDB(dbEvent);
 };
 
-UserDatabase.prototype.getEventHistory = function (eventId) {
+UserDatabase.prototype.getEventHistory = function (eventId: string): any[] {
   this.logger.debug(`GET event history for: ${eventId}`);
   return this.eventQueries.getHistory.all(eventId).map(eventsSchema.fromDBHistory);
 };
 
-UserDatabase.prototype.minimizeEventHistory = async function (eventId, fieldsToRemove) {
+UserDatabase.prototype.minimizeEventHistory = async function (eventId: string, fieldsToRemove: string[]): Promise<void> {
   const minimizeHistoryStatement = `UPDATE events SET ${fieldsToRemove.map(field => `${field} = ${field === 'streamIds' ? '\'' + eventsSchema.ALL_EVENTS_TAG + '\'' : 'NULL'}`).join(', ')} WHERE headId = ?`;
   this.logger.debug(`(async) Minimize event history: ${minimizeHistoryStatement}`);
   await concurrentSafeWrite.execute(() => {
@@ -207,14 +208,14 @@ UserDatabase.prototype.minimizeEventHistory = async function (eventId, fieldsToR
   });
 };
 
-UserDatabase.prototype.deleteEventHistory = async function (eventId) {
+UserDatabase.prototype.deleteEventHistory = async function (eventId: string): Promise<void> {
   this.logger.debug(`(async) DELETE event history for event id: ${eventId}`);
   await concurrentSafeWrite.execute(() => {
     return this.eventQueries.deleteByHeadId.run(eventId);
   });
 };
 
-UserDatabase.prototype.deleteEvents = async function (params) {
+UserDatabase.prototype.deleteEvents = async function (params: any): Promise<any> {
   const queryString = prepareEventsDeleteQuery(params);
   if (queryString.indexOf('MATCH') > 0) {
     this.logger.debug(`DELETE events one by one as query includes "MATCH": ${queryString}`);
@@ -222,7 +223,7 @@ UserDatabase.prototype.deleteEvents = async function (params) {
     //       so we're getting events that match and deleting them one by one
     const selectEventsToBeDeleted = prepareEventsGetQuery(params);
 
-    for (const event of this.db.prepare(selectEventsToBeDeleted).iterate()) {
+    for (const event of this.db.prepare(selectEventsToBeDeleted).iterate() as Iterable<{ eventid: string }>) {
       this.logger.debug(`  > DELETE event: ${event.eventid}`);
       await concurrentSafeWrite.execute(() => {
         this.eventQueries.deleteById.run(event.eventid);
@@ -231,7 +232,7 @@ UserDatabase.prototype.deleteEvents = async function (params) {
     return null;
   }
   // else
-  let res = null;
+  let res: any = null;
   this.logger.debug(`DELETE events: ${queryString}`);
   await concurrentSafeWrite.execute(() => {
     res = this.db.prepare(queryString).run();
@@ -243,18 +244,15 @@ UserDatabase.prototype.deleteEvents = async function (params) {
 
 /**
  * Export all raw event rows from the database.
- * @returns {Object[]} Array of raw SQLite rows
  */
-UserDatabase.prototype.exportAllEvents = function () {
+UserDatabase.prototype.exportAllEvents = function (): any[] {
   return this.eventQueries.getAll.all();
 };
 
 /**
  * Import raw event rows into the database.
- * @param {Object[]} events - Array of raw SQLite rows (as returned by exportAllEvents)
- * @returns {Promise<void>}
  */
-UserDatabase.prototype.importAllEvents = async function (events) {
+UserDatabase.prototype.importAllEvents = async function (events: any[]): Promise<void> {
   for (const event of events) {
     await concurrentSafeWrite.execute(() => {
       this.eventQueries.create.run(event);
@@ -262,37 +260,37 @@ UserDatabase.prototype.importAllEvents = async function (events) {
   }
 };
 
-function prepareEventsDeleteQuery (params) {
+function prepareEventsDeleteQuery (params: any): string {
   if (params.streams) { throw new Error(`Events DELETE with stream query not supported yet: ${JSON.stringify(params)}`); }
   return 'DELETE FROM events ' + prepareQuery(params, true);
 }
 
-const converters = {
-  equal: (content) => {
+const converters: Record<string, (content: any) => string | null> = {
+  equal: (content: any) => {
     const realField = (content.field === 'id') ? 'eventid' : content.field;
     if (content.value === null) return `${realField} IS NULL`;
     const value = eventsSchema.coerceValueForColumn(realField, content.value);
     return `${realField} = ${value}`;
   },
-  greater: (content) => {
+  greater: (content: any) => {
     const value = eventsSchema.coerceValueForColumn(content.field, content.value);
     return `${content.field} > ${value}`;
   },
-  greaterOrEqual: (content) => {
+  greaterOrEqual: (content: any) => {
     const value = eventsSchema.coerceValueForColumn(content.field, content.value);
     return `${content.field} >= ${value}`;
   },
-  lowerOrEqual: (content) => {
+  lowerOrEqual: (content: any) => {
     const value = eventsSchema.coerceValueForColumn(content.field, content.value);
     return `${content.field} <= ${value}`;
   },
-  greaterOrEqualOrNull: (content) => {
+  greaterOrEqualOrNull: (content: any) => {
     const value = eventsSchema.coerceValueForColumn(content.field, content.value);
     return `(${content.field} >= ${value} OR ${content.field} IS NULL)`;
   },
-  typesList: (list) => {
+  typesList: (list: any) => {
     if (list.length === 0) return null;
-    const lt = list.map((type) => {
+    const lt = list.map((type: string) => {
       const typeCorced = eventsSchema.coerceValueForColumn('type', type);
       // unsupported "*" query for types
       const starPos = typeCorced.indexOf('/*');
@@ -304,15 +302,15 @@ const converters = {
     });
     return '(' + lt.join(' OR ') + ')';
   },
-  streamsQuery: (content) => {
+  streamsQuery: (content: any) => {
     const str = toSQLiteQuery(content);
     if (str === null) return null;
     return 'streamIds MATCH \'' + str + '\'';
   }
 };
 
-function prepareQuery (params = {}, isDelete = false) {
-  const ands = [];
+function prepareQuery (params: any = {}, isDelete = false): string {
+  const ands: string[] = [];
   for (const item of params.query) {
     const newCondition = converters[item.type](item.content);
     if (newCondition != null) {
@@ -327,8 +325,8 @@ function prepareQuery (params = {}, isDelete = false) {
 
   if (!isDelete) {
     if (params.options?.sort) {
-      const sorts = [];
-      for (const [field, order] of Object.entries(params.options.sort)) {
+      const sorts: string[] = [];
+      for (const [field, order] of Object.entries(params.options.sort) as Array<[string, number]>) {
         const orderStr = order > 0 ? 'ASC' : 'DESC';
         sorts.push(`${field} ${orderStr}`);
       }

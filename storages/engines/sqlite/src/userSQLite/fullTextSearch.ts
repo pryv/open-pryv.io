@@ -13,21 +13,19 @@
 // following characters _-:
 // see: https://sqlite.org/fts5.html#tokenizers
 
+import type {} from 'node:fs';
+
 module.exports = {
   setupForTable
 };
 
 /**
- * Add full text search capabilities on a specific table
- * @param {SQLite3} db
- * @param {string} tableName
- * @param {Object} tableData
- * @param {Array} columnsToInclude - names of table to add to FTS
- * @param {string} [id=rowid] - (optional id for the table) ! column must be of "Integer" type an be a primary KEY
+ * Add full text search capabilities on a specific table.
+ * id defaults to 'rowid'; if provided, it must be an Integer primary key.
  */
-function setupForTable (db, tableName, tableData, columnsToInclude, id) {
+function setupForTable (db: any, tableName: string, tableData: Record<string, any>, columnsToInclude: string[], id?: string): void {
   const itemId = id || 'rowid';
-  const columnsTypes = [];
+  const columnsTypes: string[] = [];
   const columnNames = Object.keys(tableData);
 
   // create virtual table

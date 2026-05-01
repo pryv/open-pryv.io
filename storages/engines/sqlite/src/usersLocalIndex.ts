@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import type {} from 'node:fs';
+
 const fs = require('fs');
 const SQLite3 = require('better-sqlite3');
 const concurrentSafeWrite = require('./concurrentSafeWrite');
@@ -12,15 +14,15 @@ const concurrentSafeWrite = require('./concurrentSafeWrite');
 const _internals = require('./_internals');
 
 class DBIndex {
-  db;
-  queryGetIdForName;
-  queryGetNameForId;
-  queryGetAll;
-  queryInsert;
-  queryDeleteAll;
-  queryDeleteById;
+  db: any;
+  queryGetIdForName: any;
+  queryGetNameForId: any;
+  queryGetAll: any;
+  queryInsert: any;
+  queryDeleteAll: any;
+  queryDeleteById: any;
 
-  async init () {
+  async init (): Promise<void> {
     const basePath = _internals.config.path;
     fs.mkdirSync(basePath, { recursive: true });
 
@@ -42,40 +44,40 @@ class DBIndex {
     this.queryDeleteAll = this.db.prepare('DELETE FROM id4name');
   }
 
-  async getIdForName (username) {
+  async getIdForName (username: string): Promise<string | undefined> {
     return this.queryGetIdForName.get(username)?.userId;
   }
 
-  async getNameForId (userId) {
+  async getNameForId (userId: string): Promise<string | undefined> {
     return this.queryGetNameForId.get(userId)?.username;
   }
 
-  async addUser (username, userId) {
-    let result = null;
+  async addUser (username: string, userId: string): Promise<any> {
+    let result: any = null;
     await concurrentSafeWrite.execute(() => {
       result = this.queryInsert.run({ username, userId });
     });
     return result;
   }
 
-  async deleteById (userId) {
+  async deleteById (userId: string): Promise<void> {
     await concurrentSafeWrite.execute(() => {
       return this.queryDeleteById.run({ userId });
     });
   }
 
   /**
-   * @returns {Object} An object whose keys are the usernames and values are the user ids.
+   * @returns An object whose keys are the usernames and values are the user ids.
    */
-  async getAllByUsername () {
-    const users = {};
-    for (const user of this.queryGetAll.iterate()) {
+  async getAllByUsername (): Promise<Record<string, string>> {
+    const users: Record<string, string> = {};
+    for (const user of this.queryGetAll.iterate() as Iterable<{ username: string, userId: string }>) {
       users[user.username] = user.userId;
     }
     return users;
   }
 
-  async deleteAll () {
+  async deleteAll (): Promise<void> {
     concurrentSafeWrite.execute(() => {
       return this.queryDeleteAll.run();
     });
@@ -83,17 +85,17 @@ class DBIndex {
 
   // --- Migration methods --- //
 
-  async exportAll () {
+  async exportAll (): Promise<Record<string, string>> {
     return await this.getAllByUsername();
   }
 
-  async importAll (data) {
+  async importAll (data: Record<string, string>): Promise<void> {
     for (const [username, userId] of Object.entries(data)) {
       await this.addUser(username, userId);
     }
   }
 
-  async clearAll () {
+  async clearAll (): Promise<void> {
     return await this.deleteAll();
   }
 }
