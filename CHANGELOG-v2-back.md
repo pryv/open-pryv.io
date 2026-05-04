@@ -1,5 +1,10 @@
 # Changelog - Internal (no API impact)
 
+## tsconfig: `module/moduleResolution: nodenext` (Plan 57 Phase 5b)
+
+- **CHANGE** `tsconfig.json` — `module: commonjs` → `nodenext`, `moduleResolution: node` → `nodenext`. Under `nodenext`, tsc decides per-file CJS-vs-ESM emit based on the closest enclosing `package.json` `"type"` field. Since no package.json declares `"type": "module"` yet, all files still emit CJS — no runtime change. Validates the toolchain switch in isolation; per-file emit format flips in Phase 5c onwards as packages opt into `"type": "module"`.
+- **NOTE** Build verification: `dist/components/api-server/src/server.js` still has `Object.defineProperty(exports, "__esModule")` + `require()` (CJS shape). PG matrix 1860/0 unchanged.
+
 ## Pre-flight characterization tests for ESM flip (Plan 57 Phase 5a)
 
 - **NEW** `storages/test/barrel-init-order.test.js` — 5 `[BIO]` cases pinning the current CJS barrel contract: pre-init getter access returns `undefined` (does not throw), `pluginLoader` is exposed regardless, `init()` is idempotent, `reset()` returns to pre-init state. ESM with top-level `await` in the barrel would fundamentally change pre-init semantics — without this pin a regression direction (silent vs throw) lands undetected on `feat/ts-esm`.
