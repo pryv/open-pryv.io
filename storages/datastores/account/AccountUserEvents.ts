@@ -4,6 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+import type {} from 'node:fs';
+
 
 const ds = require('@pryv/datastore');
 const { Readable } = require('stream');
@@ -140,7 +142,7 @@ function toFieldName (eventId) {
 /**
  * Convert a stored field to an event object.
  */
-function fieldToEvent (fieldName, value, streamConfig, time, createdBy) {
+function fieldToEvent (fieldName, value, streamConfig, time?, createdBy?) {
   const now = time || timestamp.now();
   return {
     id: fieldName,

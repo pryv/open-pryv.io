@@ -1,5 +1,10 @@
 # Changelog - Internal (no API impact)
 
+## TypeScript conversion — storages/ top-level + shared + datastores (10 files, Plan 57 Phase 5c.1)
+
+- **CHANGE** `.js → .ts` for the 10 production source files in `storages/` that Phases 1–3 left untouched (they were outside the `storages/interfaces/*` and `storages/engines/*` scope): `storages/{index,internals,manifest-schema,pluginLoader}.ts`, `storages/shared/{DeletionModesFields,treeUtils,localStoreEventQueries}.ts`, `storages/datastores/account/{index,AccountUserEvents,AccountUserStreams}.ts`. Added module markers + two minor TS-narrowing fixes: optional positional args on `fieldToEvent (fieldName, value, streamConfig, time?, createdBy?)` and `const engines: Record<string, any> = {}` in pluginLoader.
+- **NOTE** `components/` + `storages/` production source is now **100% TypeScript**. Only `.mocharc.js` test-config files in `storages/engines/*` remain `.js` (intentional — mocha config). Runtime is still source-loaded via `bin/_ts-register.js` shim. Sets up Phase 5c.2 (rewrite source `require()` → `import`).
+
 ## tsconfig: `module/moduleResolution: nodenext` (Plan 57 Phase 5b)
 
 - **CHANGE** `tsconfig.json` — `module: commonjs` → `nodenext`, `moduleResolution: node` → `nodenext`. Under `nodenext`, tsc decides per-file CJS-vs-ESM emit based on the closest enclosing `package.json` `"type"` field. Since no package.json declares `"type": "module"` yet, all files still emit CJS — no runtime change. Validates the toolchain switch in isolation; per-file emit format flips in Phase 5c onwards as packages opt into `"type": "module"`.

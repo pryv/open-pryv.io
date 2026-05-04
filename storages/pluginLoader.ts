@@ -4,6 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+import type {} from 'node:fs';
+
 
 /**
  * Storage plugin loader.
@@ -38,7 +40,7 @@ const REQUIRED_EXPORTS = {
 /**
  * Engine registry: engineName → { manifest, module, dir }
  */
-const engines = {};
+const engines: Record<string, any> = {};
 
 /**
  * Resolved config: storageType → { engine: string, config: object }
