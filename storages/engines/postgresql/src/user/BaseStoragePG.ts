@@ -561,27 +561,42 @@ class BaseStoragePG {
       unsetClauses.push(`${col} = NULL`);
     }
 
-    // $inc
+    // $inc — group dotted-path entries by topKey so multiple JSONB-path
+    // increments on the same column produce ONE nested jsonb_set clause.
+    // Postgres rejects `SET col = …, col = …` ("multiple assignments to same
+    // column"), which is exactly what batched API calls produce when
+    // accessTracking is on (e.g. $inc: { 'calls.events:get': 1, 'calls.accesses:get': 1 }).
+    const dottedByTopKey = {};
+    const bareInc = [];
     for (const [k, v] of Object.entries($inc)) {
       if (k.includes('.')) {
-        // JSONB path increment: 'calls.events:get' → jsonb_set on 'calls' column
         const [topKey, ...rest] = k.split('.');
-        const snakeCol = this.toCol(topKey);
-        const jsonbKey = rest.join('.');
-        // jsonb_set(COALESCE(col, '{}'), '{key}', to_jsonb(COALESCE((col->>key)::numeric, 0) + val))
-        incClauses.push(
-          `${snakeCol} = jsonb_set(COALESCE(${snakeCol}, '{}'::jsonb), ` +
-          `ARRAY[$${idx}]::text[], ` +
-          `to_jsonb(COALESCE((${snakeCol}->>$${idx})::numeric, 0) + $${idx + 1}))`
-        );
+        if (dottedByTopKey[topKey] == null) dottedByTopKey[topKey] = [];
+        dottedByTopKey[topKey].push([rest.join('.'), v]);
+      } else {
+        bareInc.push([k, v]);
+      }
+    }
+    for (const [topKey, entries] of Object.entries(dottedByTopKey)) {
+      const snakeCol = this.toCol(topKey);
+      // Nest jsonb_set: each call wraps the previous expression. Each one reads
+      // (snakeCol->>$key) from the ORIGINAL column (not the partially-built
+      // expression) — preserves Mongo $inc disjoint-paths semantics.
+      let expr = `COALESCE(${snakeCol}, '{}'::jsonb)`;
+      for (const [jsonbKey, v] of entries) {
+        expr =
+          `jsonb_set(${expr}, ARRAY[$${idx}]::text[], ` +
+          `to_jsonb(COALESCE((${snakeCol}->>$${idx})::numeric, 0) + $${idx + 1}))`;
         params.push(jsonbKey, v);
         idx += 2;
-      } else {
-        const col = this.toCol(k);
-        incClauses.push(`${col} = COALESCE(${col}, 0) + $${idx}`);
-        params.push(v);
-        idx++;
       }
+      incClauses.push(`${snakeCol} = ${expr}`);
+    }
+    for (const [k, v] of bareInc) {
+      const col = this.toCol(k);
+      incClauses.push(`${col} = COALESCE(${col}, 0) + $${idx}`);
+      params.push(v);
+      idx++;
     }
 
     // $min
