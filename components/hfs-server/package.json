@@ -7,5 +7,5 @@
   "repository": {},
   "license": "BSD-3-Clause",
   "author": "Pryv <info@pryv.com> (https://pryv.com)",
-  "main": "src/server.js"
+  "main": "src/server.ts"
 }

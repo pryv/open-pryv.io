@@ -22,7 +22,7 @@ const nonParallelTests = [
 ];
 
 module.exports = createConfig({
-  require: 'test-helpers/src/helpers-c.js',
+  require: 'test-helpers/src/helpers-c.ts',
   timeout: 10000,
   slow: 20,
   nonParallelTests

@@ -1,5 +1,11 @@
 # Changelog - Internal (no API impact)
 
+## TypeScript conversion — middleware, audit, hfs-server, test-helpers (74 source files)
+
+- **CHANGE** `.js → .ts` for every source file under `components/middleware/src/` (15), `components/audit/src/` (16), `components/hfs-server/src/` (16), and `components/test-helpers/src/` (26 — 21 top-level + 5 in `data/`). Total: **74 source renames** plus `components/api-server/.mocharc.js` `require: 'test-helpers/src/helpers-c.js' → '…/helpers-c.ts'`. Module markers added (`import type {} from 'node:fs'`) on every renamed file (script-vs-module disambiguation), default-arg objects annotated `: any` on consumers that mutate them, `Promise<void>` typed on void-resolving constructors, optional callback params (`?:`) on tail-call recursive helpers, `super_` accesses on `util.inherits` classes cast `(SubClass as any).super_`, variadic `arguments` rewritten as `...rest: any[]`, and one `errorlogger` → `errorLogger` typo fix on `Server` (lowercase declaration was inconsistent with assignment + use sites).
+- **CHANGE** `package.json` `main` bumped `src/index.js → src/index.ts` (or `src/server.js → src/server.ts` for hfs-server) on each touched component so the workspace symlink resolution + `bin/_ts-register.js` shim resolve `.ts` first.
+- **NOTE** Runtime is still source-loaded via the `bin/_ts-register.js` shim from Phase 1; deployability invariant preserved.
+
 ## TypeScript toolchain — direct dep + emit pipeline (no source changes yet)
 
 - **CHANGE** `package.json` — `typescript ^5.9.3` and `@types/node ^24.0.0` added to `devDependencies`. TypeScript was previously pulled transitively via `neostandard`; now it's pinned directly so the build pipeline doesn't break when neostandard updates.
