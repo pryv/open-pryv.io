@@ -286,6 +286,54 @@ describe('[ROOT] root', function () {
       const exposed = _.find(res.body.accesses, { token: personalAccessToken });
       assert.ok(exposed.calls == null);
     });
+
+    it('[BTRK] trackingFunctions must increment per-method counters when ≥2 distinct methods land in the same batch call (PG: regression for "multiple assignments to same column \\"calls\\"")', async function () {
+      const findOneAsync = promisify((u, query, opts, cb) =>
+        helpers.dependencies.storage.user.accesses.findOne(u, query, opts, cb));
+      // Wait for prior tests' fire-and-forget tracking writes to settle so
+      // baseline doesn't shift mid-test.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const baseline = await findOneAsync(user, { token: personalAccessToken }, null);
+      const baselineEventsGet = baseline.calls?.['events:get'] ?? 0;
+      const baselineAccessesGet = baseline.calls?.['accesses:get'] ?? 0;
+
+      const res = await server.request()
+        .post('/' + username)
+        .set('Authorization', personalAccessToken)
+        .send([
+          { method: 'events.get', params: { limit: 1 } },
+          { method: 'accesses.get', params: {} }
+        ]);
+      assert.strictEqual(res.status, 200);
+      assert.ok(Array.isArray(res.body.results));
+
+      // Fire-and-forget update: trackingFunctions calls next() before persisting.
+      // Re-poll until both counters move (or fail after a short window).
+      // Pre-fix bug: the PG `$inc` dotted-path loop emitted one SET clause per
+      // entry against the same `calls` column, raising
+      // "multiple assignments to same column" — the storage error was caught +
+      // logged, leaving both counters at baseline. Post-fix: counters do move.
+      // We assert that BOTH counters move and by the same amount (the api-server
+      // batch fixture may fire trackingFunctions more than once per request,
+      // so we don't pin to exactly +1; what matters is the SQL didn't crash
+      // and both keys were updated symmetrically).
+      const deadline = Date.now() + 1000;
+      let updated;
+      while (Date.now() < deadline) {
+        updated = await findOneAsync(user, { token: personalAccessToken }, null);
+        if ((updated.calls?.['events:get'] ?? 0) > baselineEventsGet &&
+            (updated.calls?.['accesses:get'] ?? 0) > baselineAccessesGet) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      const eventsDelta = (updated.calls?.['events:get'] ?? 0) - baselineEventsGet;
+      const accessesDelta = (updated.calls?.['accesses:get'] ?? 0) - baselineAccessesGet;
+      assert.ok(eventsDelta > 0,
+        `calls.events:get did not move (delta=${eventsDelta}); pre-fix the multi-key SQL crashed and the counters stayed at baseline`);
+      assert.ok(accessesDelta > 0,
+        `calls.accesses:get did not move (delta=${accessesDelta}); pre-fix the multi-key SQL crashed and the counters stayed at baseline`);
+      assert.strictEqual(eventsDelta, accessesDelta,
+        `both counters must move by the same amount (events:get +${eventsDelta}, accesses:get +${accessesDelta}); divergence would indicate one key was lost in the nested jsonb_set`);
+    });
   });
 
   describe('[RT03] OPTIONS /', function () {
