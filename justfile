@@ -187,7 +187,9 @@ clean-test-data:
         ./var-pryv/postgresql-bin/bin/createdb -h 127.0.0.1 -p 5432 -U pryv pryv-node-test 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg reset)"
     # rqlite PlatformDB key-value table (Plan 25: rqlite is the only platform engine)
     curl -s -X POST -H 'Content-Type: application/json' 'http://localhost:4001/db/execute' -d '[["DELETE FROM keyValue"]]' > /dev/null 2>&1 || echo "rqlite not reachable (skipping rqlite reset)"
-    @echo "Test data cleaned (SQLite DBs + user dirs + MongoDB pryv-node-test + PostgreSQL pryv-node-test + rqlite keyValue)"
+    # Stale customAuthStepFn from a prior aborted permissions-seq test (the [P4OM] invalid-fixture test crashes the api-server bin and leaves the file behind, polluting subsequent matrix runs with [api-server fatal] Not a function (string)). Safe to delete unconditionally — committed file is .gitkeep.
+    rm -f ./custom-extensions/customAuthStepFn.js
+    @echo "Test data cleaned (SQLite DBs + user dirs + MongoDB pryv-node-test + PostgreSQL pryv-node-test + rqlite keyValue + custom-extensions stale fixture)"
 
 # Cleanup users data and MongoDB data in `var-pryv/`
 clean-data:
