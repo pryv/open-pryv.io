@@ -566,8 +566,8 @@ class BaseStoragePG {
     // Postgres rejects `SET col = …, col = …` ("multiple assignments to same
     // column"), which is exactly what batched API calls produce when
     // accessTracking is on (e.g. $inc: { 'calls.events:get': 1, 'calls.accesses:get': 1 }).
-    const dottedByTopKey = {};
-    const bareInc = [];
+    const dottedByTopKey: Record<string, Array<[string, any]>> = {};
+    const bareInc: Array<[string, any]> = [];
     for (const [k, v] of Object.entries($inc)) {
       if (k.includes('.')) {
         const [topKey, ...rest] = k.split('.');
