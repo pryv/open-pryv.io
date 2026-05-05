@@ -42,4 +42,5 @@ class TracedOperations {
     span.finish();
   }
 }
-module.exports = TracedOperations;
+export default TracedOperations;
+export { TracedOperations };

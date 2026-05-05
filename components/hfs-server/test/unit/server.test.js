@@ -7,7 +7,7 @@
 
 const assert = require('node:assert');
 const superagent = require('superagent');
-const Application = require('../../src/application');
+const Application = require('../../src/application').default;
 
 describe('[HFSV] Server', () => {
   const request = superagent;

@@ -4,14 +4,15 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { LRUCache: LRU } = require('lru-cache');
 const errors = require('errors').factory;
 const business = require('business');
 const BatchRequest = business.series.BatchRequest;
 const ApiConstants = require('../api_constants');
-const TracedOperations = require('./traced_operations');
+const TracedOperations = require('./traced_operations').default;
 const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta').setCommonMeta;
 // POST /:user_name/series/batch
 //
@@ -197,6 +198,7 @@ async function groupByNamespace (batchRequest, resolver) {
     batch.append(batchRequestElement);
   }
 }
-module.exports = storeSeriesBatch;
+export default storeSeriesBatch;
+export { storeSeriesBatch };
 
 /** @typedef {Map<string, BatchRequest>} NamespacedBatchRequests */

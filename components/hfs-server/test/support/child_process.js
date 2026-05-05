@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 const bluebird = require('bluebird');
-const Application = require('../../src/application');
+const Application = require('../../src/application').default;
 const { SeriesRowType, TypeRepository } = require('business').types;
 const ChildProcess = require('test-helpers').child_process;
 const { getConfig } = require('@pryv/boiler');

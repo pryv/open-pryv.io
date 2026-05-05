@@ -4,7 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { fromCallback } = require('utils');
 const { LRUCache: LRU } = require('lru-cache');
@@ -295,10 +296,7 @@ async function definePermissions (access, event) {
     return permissions.write === true && permissions.read === true;
   }
 }
-module.exports = {
-  MetadataLoader,
-  MetadataCache
-};
+export { MetadataLoader, MetadataCache };
 
 /**
  * @typedef {{

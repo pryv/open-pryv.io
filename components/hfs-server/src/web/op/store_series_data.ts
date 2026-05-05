@@ -4,13 +4,14 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 //  POST /events/:event_id/series - Store data in a series.
 const errors = require('errors').factory;
 const business = require('business');
 const ApiConstants = require('../api_constants');
-const TracedOperations = require('./traced_operations');
+const TracedOperations = require('./traced_operations').default;
 const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta').setCommonMeta;
 /** POST /events/:event_id/series - Store data in a series.
  * @param {Context} ctx
@@ -88,6 +89,7 @@ function parseData (createRequest, meta, typeRepo) {
     throw err;
   }
 }
-module.exports = storeSeriesData;
+export default storeSeriesData;
+export { storeSeriesData };
 
 /** @typedef {business.series.DataMatrix} DataMatrix */

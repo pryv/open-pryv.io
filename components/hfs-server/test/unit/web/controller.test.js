@@ -8,7 +8,7 @@
 require('test-helpers/src/api-server-tests-config');
 const assert = require('node:assert');
 
-const controllerFactory = require('../../../src/web/controller');
+const controllerFactory = require('../../../src/web/controller').default;
 const controller = controllerFactory({});
 
 const { APIError } = require('errors/src/APIError');

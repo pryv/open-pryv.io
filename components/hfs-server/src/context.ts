@@ -4,12 +4,13 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const business = require('business');
 const { MetadataLoader, MetadataCache } = require('./metadata_cache');
 const { MetadataUpdater, MetadataForgetter } = require('./metadata_updater');
-const cls = require('./tracing/cls');
+const cls = require('./tracing/cls').default;
 const { getLogger } = require('@pryv/boiler');
 const { getMall } = require('mall');
 // Application context object, holding references to all major subsystems. Once
@@ -91,6 +92,7 @@ class Context {
     return span;
   }
 }
-module.exports = Context;
+export default Context;
+export { Context };
 
 /** @typedef {business.series.Repository} Repository */

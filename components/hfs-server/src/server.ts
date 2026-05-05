@@ -4,14 +4,15 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const http = require('http');
 const express = require('express');
 const util = require('util');
 const middleware = require('middleware');
-const errorsMiddleware = require('./middleware/errors');
-const controllerFactory = require('./web/controller');
+const errorsMiddleware = require('./middleware/errors').default;
+const controllerFactory = require('./web/controller').default;
 const getAuth = require('middleware/src/getAuth').default;
 const KEY_IP = 'http:ip';
 const KEY_PORT = 'http:hfsPort';
@@ -141,4 +142,5 @@ function systemStatus (req, res) {
     status: 'ok'
   });
 }
-module.exports = Server;
+export default Server;
+export { Server };

@@ -4,11 +4,12 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
 const business = require('business');
-const cls = require('../tracing/cls');
+const cls = require('../tracing/cls').default;
 /**
  * @param {Context} ctx
  * @param {ControllerMethod} handler
@@ -59,13 +60,13 @@ function storeErrorInTrace (err) {
   }
 }
 // --------------------------------------------------------------------- factory
-module.exports = function (ctx) {
+export default function (ctx) {
   return {
-    storeSeriesData: mount(ctx, require('./op/store_series_data')),
-    querySeriesData: mount(ctx, require('./op/query_series_data')),
-    storeSeriesBatch: mount(ctx, require('./op/store_series_batch'))
+    storeSeriesData: mount(ctx, require('./op/store_series_data').default),
+    querySeriesData: mount(ctx, require('./op/query_series_data').default),
+    storeSeriesBatch: mount(ctx, require('./op/store_series_batch').default)
   };
-};
+}
 
 /**
  * @typedef {(

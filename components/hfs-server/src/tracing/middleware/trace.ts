@@ -19,4 +19,4 @@ function factory (ctx) {
   return (...rest: [any, any, any]) => tracingMiddleware(ctx, ...rest);
 }
 
-module.exports = factory;
+export default factory;

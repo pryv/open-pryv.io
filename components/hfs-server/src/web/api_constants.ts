@@ -6,7 +6,6 @@
  */
 import type {} from 'node:fs';
 
-module.exports = {
-  AUTH_HEADER: 'authorization',
-  FORMAT_FLAT_JSON: 'flatJSON'
-};
+const AUTH_HEADER = 'authorization';
+const FORMAT_FLAT_JSON = 'flatJSON';
+export { AUTH_HEADER, FORMAT_FLAT_JSON };

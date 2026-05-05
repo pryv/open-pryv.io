@@ -4,7 +4,11 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = require('path').dirname(__filename);
 
 const path = require('path');
 const { getConfig, getLogger } = require('@pryv/boiler').init({
@@ -27,8 +31,8 @@ const { getConfig, getLogger } = require('@pryv/boiler').init({
   ]
 });
 // Load configuration file, set up execution context and start the server.
-const Context = require('./context');
-const Server = require('./server');
+const Context = require('./context').default;
+const Server = require('./server').default;
 const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta');
 const accountStreams = require('business/src/system-streams');
 
@@ -105,4 +109,5 @@ class Application {
     await this.start();
   }
 }
-module.exports = Application;
+export default Application;
+export { Application };

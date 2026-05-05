@@ -4,11 +4,12 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 // Express middleware that makes sure we have a continuation local storage
 // context for each express request.
-const cls = require('../cls');
+const cls = require('../cls').default;
 /**
  * @param {express$Request} req
  * @param {express$Response} res
@@ -24,4 +25,4 @@ function clsWrap (req, res, next) {
 function factory () {
   return clsWrap;
 }
-module.exports = factory;
+export default factory;

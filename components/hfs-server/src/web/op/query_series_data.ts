@@ -4,12 +4,13 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { tryCoerceStringValues } = require('api-server').validation;
 const timestamp = require('unix-timestamp');
 const errors = require('errors').factory;
-const SeriesResponse = require('../SeriesResponse');
+const SeriesResponse = require('../SeriesResponse').default;
 const AUTH_HEADER = 'authorization';
 /** GET /events/:event_id/series - Query a series for a data subset.
  *
@@ -91,4 +92,5 @@ async function retrievePoints (seriesRepo, res, query, seriesMeta) {
   const responseObj = new SeriesResponse(data);
   responseObj.answer(res);
 }
-module.exports = querySeriesData;
+export default querySeriesData;
+export { querySeriesData };

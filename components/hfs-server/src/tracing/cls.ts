@@ -17,4 +17,6 @@ class Cls {
   startExpressContext (_req, _res, next) { return next(); }
 }
 
-module.exports = new Cls();
+const cls = new Cls();
+export default cls;
+export { cls };

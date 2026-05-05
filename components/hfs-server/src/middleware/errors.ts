@@ -4,7 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const errorHandling = require('errors').errorHandling;
 const { APIError } = require('errors');
@@ -18,7 +19,7 @@ const { APIError } = require('errors');
  * @return {Function} express middleware function that logs errors and responds
  *    to them properly.
  */
-module.exports = function produceErrorHandlingMiddleware (logger) {
+export default function produceErrorHandlingMiddleware (logger) {
   return function handleError (error, req, res, next) {
     let safeError;
     if (error != null && error instanceof APIError) { safeError = error; } else {
