@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
 
@@ -14,7 +15,7 @@ const ds = require('@pryv/datastore');
  * Faulty data store that always fails.
  * (Implements no data methods, so all calls will throw "not supported" errors.)
  */
-module.exports = ds.createDataStore({
+const faultyDataStore: any = ds.createDataStore({
   async init (keyValueData) {
     this.streams = createUserStreams();
     this.events = createUserEvents();
@@ -25,6 +26,7 @@ module.exports = ds.createDataStore({
 
   async getUserStorageInfos (userId) { return { }; }
 });
+export default faultyDataStore;
 
 function createUserStreams () {
   return ds.createUserStreams({});

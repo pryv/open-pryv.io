@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const storeDataUtils = require('./helpers/storeDataUtils');
 const streamsUtils = require('./helpers/streamsUtils');
@@ -353,4 +354,5 @@ class MallUserStreams {
     return names;
   }
 }
-module.exports = MallUserStreams;
+export default MallUserStreams;
+export { MallUserStreams };

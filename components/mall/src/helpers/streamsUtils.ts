@@ -5,14 +5,13 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { defaults: dataStoreDefaults } = require('@pryv/datastore');
 const { getFullItemId } = require('./storeDataUtils');
-module.exports = {
-  createStoreRootStream,
-  addStoreIdPrefixToStreams
-};
+
+export { createStoreRootStream, addStoreIdPrefixToStreams };
 /**
  * Create a pseudo-stream representing a data store's root.
  * @param {{id: string, name: string}} storeDescription

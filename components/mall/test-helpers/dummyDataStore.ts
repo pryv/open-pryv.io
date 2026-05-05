@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
 const timestamp = require('unix-timestamp');
@@ -18,7 +19,7 @@ let keyValueData;
 /**
  * Dummy data store serving predictable static data.
  */
-module.exports = ds.createDataStore({
+const dummyDataStore: any = ds.createDataStore({
   async init (params) {
     keyValueData = params.storeKeyValueData;
     this.streams = createUserStreams();
@@ -30,6 +31,7 @@ module.exports = ds.createDataStore({
 
   async getUserStorageInfos (userId) { return { }; }
 });
+export default dummyDataStore;
 
 function createUserStreams () {
   return ds.createUserStreams({

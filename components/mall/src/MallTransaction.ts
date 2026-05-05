@@ -39,7 +39,8 @@ class MallTransaction {
   }
 }
 
-module.exports = MallTransaction;
+export default MallTransaction;
+export { MallTransaction };
 
 class StoreTransactionStub {
   async exec (func) { return await func(); }

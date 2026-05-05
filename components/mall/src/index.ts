@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * “Data stores aggregator”.
@@ -15,13 +16,10 @@ import type {} from 'node:fs';
 
 const { setTimeout } = require('timers/promises');
 const { getConfig, getLogger } = require('@pryv/boiler');
-const Mall = require('./Mall');
+const Mall = require('./Mall').default;
+const storeDataUtils = require('./helpers/storeDataUtils');
 
-module.exports = {
-  getMall,
-  // TODO: eventually remove this once all the store id logic is safely contained within the mall
-  storeDataUtils: require('./helpers/storeDataUtils')
-};
+export { getMall, storeDataUtils };
 
 let mall;
 let initializing = false;
@@ -46,7 +44,8 @@ async function getMall () {
   if (customStoresDef) {
     for (const storeDef of customStoresDef) {
       logger.info(`Loading store "${storeDef.name}" with id "${storeDef.id}" from ${storeDef.path}`);
-      const store = require(storeDef.path);
+      const storeMod = require(storeDef.path);
+      const store = storeMod.default ?? storeMod;
       const storeDescription = {
         id: storeDef.id,
         name: storeDef.name,

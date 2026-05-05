@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const errorHandling = require('errors').errorHandling;
 const APIError = require('errors').APIError;
@@ -16,7 +17,7 @@ const { getLogger } = require('@pryv/boiler');
  * Error route handling.
  * TODO: (re)move that once something's been done about api-server's own errors middleware
  */
-module.exports = function (logging) {
+export default function (logging) {
   const logger = getLogger('routes');
 
   return function handleError (error, req, res, next) {

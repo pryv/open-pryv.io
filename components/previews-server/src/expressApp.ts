@@ -5,14 +5,15 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const express = require('express');
 const middleware = require('middleware');
 /**
  * The Express app definition.
  */
-module.exports = function expressApp (commonHeadersMiddleware, errorsMiddleware, requestTraceMiddleware) {
+export default function expressApp (commonHeadersMiddleware, errorsMiddleware, requestTraceMiddleware) {
   const app = express();
   /** Called once routes are defined on app, allows finalizing middleware stack
    * with things like error handling.

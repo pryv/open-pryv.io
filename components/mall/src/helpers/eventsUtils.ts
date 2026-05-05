@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const Transform = require('stream').Transform;
 const storeDataUtils = require('./storeDataUtils');
@@ -249,8 +250,4 @@ class ConvertEventFromStoreStream extends Transform {
     callback();
   };
 }
-module.exports = {
-  convertEventToStore,
-  convertEventFromStore,
-  ConvertEventFromStoreStream
-};
+export { convertEventToStore, convertEventFromStore, ConvertEventFromStoreStream };

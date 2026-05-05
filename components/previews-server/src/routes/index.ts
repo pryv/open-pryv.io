@@ -7,7 +7,7 @@
 
 import type {} from 'node:fs';
 
-module.exports = function index (expressApp) {
+export default function index (expressApp) {
   expressApp.options('*', function (req, res /*, next */) {
     // common headers (e.g. CORS) are handled in related middleware
     res.sendStatus(200);

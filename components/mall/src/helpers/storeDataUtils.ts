@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { APIError, factory: apiErrors } = require('errors');
 const { errors: dataStoreErrors } = require('@pryv/datastore');
@@ -16,15 +17,9 @@ const LOCAL_STORE_ID = 'local';
 const ACCOUNT_STORE_ID = 'account';
 const STORE_ID_MARKER = ':';
 
-const storeDataUtils = module.exports = {
-  LocalStoreId: LOCAL_STORE_ID,
-  AccountStoreId: ACCOUNT_STORE_ID,
-  parseStoreIdAndStoreItemId,
-  getFullItemId,
-  isPassthroughStore,
-  throwAPIError
-};
-Object.freeze(storeDataUtils);
+const LocalStoreId = LOCAL_STORE_ID;
+const AccountStoreId = ACCOUNT_STORE_ID;
+export { LocalStoreId, AccountStoreId, parseStoreIdAndStoreItemId, getFullItemId, isPassthroughStore, throwAPIError };
 
 /**
  * Whether the given store uses "passthrough" IDs — i.e. store-internal IDs

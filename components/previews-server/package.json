@@ -2,6 +2,7 @@
   "name": "previews-server",
   "version": "1.8.1",
   "private": true,
+  "type": "module",
   "description": "Express server supporting client apps with event previews",
   "homepage": "https://pryv.com",
   "license": "BSD-3-Clause",

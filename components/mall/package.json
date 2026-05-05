@@ -2,6 +2,7 @@
   "name": "mall",
   "version": "1.8.1",
   "private": true,
+  "type": "module",
   "description": "Aggregator for 'stores' implementing events and streams storage.",
   "homepage": "https://pryv.com",
   "license": "BSD-3-Clause",

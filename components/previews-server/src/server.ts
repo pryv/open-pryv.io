@@ -5,7 +5,11 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = require('path').dirname(__filename);
 
 const path = require('path');
 const { getConfig, getLogger } = require('@pryv/boiler').init({
@@ -61,15 +65,14 @@ async function start () {
   const storageLayer = await storage.getStorageLayer();
   const initContextMiddleware = middleware.initContext(storageLayer, customAuthStepExt && customAuthStepExt.fn);
   const loadAccessMiddleware = middleware.loadAccess(storageLayer);
-  const { expressApp, routesDefined } = require('./expressApp')(await middleware.commonHeaders(), require('./middleware/errors')(logger), middleware.requestTrace(null, logger));
+  const { expressApp, routesDefined } = require('./expressApp').default(await middleware.commonHeaders(), require('./middleware/errors').default(logger), middleware.requestTrace(null, logger));
   // setup routes
-  require('./routes/index')(expressApp);
-  await require('./routes/event-previews')(expressApp, initContextMiddleware, loadAccessMiddleware, logger);
+  require('./routes/index').default(expressApp);
+  await require('./routes/event-previews').default(expressApp, initContextMiddleware, loadAccessMiddleware, logger);
   // Finalize middleware stack:
   routesDefined();
   // setup HTTP
   const server = http.createServer(expressApp);
-  module.exports = server;
   // Go
   const testNotifier = await testMessaging.getTestNotifier();
   await storageLayer.waitForConnection();

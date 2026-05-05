@@ -5,12 +5,13 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const storeDataUtils = require('./helpers/storeDataUtils');
-const MallUserStreams = require('./MallUserStreams');
-const MallUserEvents = require('./MallUserEvents');
-const MallTransaction = require('./MallTransaction');
+const MallUserStreams = require('./MallUserStreams').default;
+const MallUserEvents = require('./MallUserEvents').default;
+const MallTransaction = require('./MallTransaction').default;
 const { getLogger } = require('@pryv/boiler');
 const eventsUtils = require('./helpers/eventsUtils');
 
@@ -146,7 +147,8 @@ class Mall {
     return new MallTransaction(this);
   }
 }
-module.exports = Mall;
+export default Mall;
+export { Mall };
 
 /**
  * Get store-specific integrity calculation function

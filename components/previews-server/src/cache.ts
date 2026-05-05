@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const fs = require('fs');
 const timestamp = require('unix-timestamp');
@@ -67,7 +68,8 @@ async function getFiles (dir) {
   }));
   return Array.prototype.concat(...files);
 }
-module.exports = Cache;
+export default Cache;
+export { Cache };
 
 /**
  * @typedef {{

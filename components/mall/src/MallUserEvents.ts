@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { deepMerge } = require('utils');
 const assert = require('assert');
@@ -494,4 +495,5 @@ class MallUserEvents {
  * Account events live in the local MongoDB store (account store only provides
  * stream definitions). Remap any account-store params into local-store params.
  */
-module.exports = MallUserEvents;
+export default MallUserEvents;
+export { MallUserEvents };

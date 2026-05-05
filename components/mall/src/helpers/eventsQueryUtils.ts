@@ -6,16 +6,12 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const storeDataUtils = require('./storeDataUtils');
 
-module.exports = {
-  getParamsByStore,
-  getStoreOptionsFromParams,
-  getStoreQueryFromParams,
-  normalizeStreamQuery
-};
+export { getParamsByStore, getStoreOptionsFromParams, getStoreQueryFromParams, normalizeStreamQuery };
 
 /**
  * A generic query for events.get, events.updateMany, events.delete

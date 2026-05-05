@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const path = require('path');
 const fs = require('fs');
@@ -28,7 +29,7 @@ async function ensurePreviewPath (user, eventId, dimension) {
   return path.join(dirPath, getPreviewFileName(dimension));
 }
 
-exports.ensurePreviewPath = ensurePreviewPath;
+export { ensurePreviewPath };
 
 /**
  * @param {Object} user
@@ -39,7 +40,7 @@ exports.ensurePreviewPath = ensurePreviewPath;
 function getPreviewPath (user, eventId, dimension) {
   return path.join(previewsDirPath, user.id, eventId, getPreviewFileName(dimension));
 }
-exports.getPreviewPath = getPreviewPath;
+export { getPreviewPath };
 
 function getPreviewFileName (dimension) {
   return dimension + '.jpg';
@@ -52,4 +53,4 @@ function getPreviewFileName (dimension) {
 function removeAllPreviews () {
   fs.rmSync(previewsDirPath, { recursive: true, force: true });
 }
-exports.removeAllPreviews = removeAllPreviews;
+export { removeAllPreviews };

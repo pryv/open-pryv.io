@@ -5,11 +5,15 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = require('path').dirname(__filename);
 
 const fs = require('fs');
 const path = require('path');
-const Cache = require('../cache');
+const Cache = require('../cache').default;
 const childProcess = require('child_process');
 const CronJob = require('cron').CronJob;
 const errors = require('errors').factory;
@@ -35,7 +39,7 @@ const StandardDimensionsLength = StandardDimensions.length;
  * @param loadAccessMiddleware
  * @param logging
  */
-module.exports = async function (expressApp, initContextMiddleware, loadAccessMiddleware, logging) {
+export default async function (expressApp, initContextMiddleware, loadAccessMiddleware, logging) {
   const mall = await getMall();
   const previewsCacheCleanUpCronTime = (await getConfig()).get('eventFiles:previewsCacheCleanUpCronTime') || '00 00 2 * * *';
   // SERVING PREVIEWS

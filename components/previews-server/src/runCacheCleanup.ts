@@ -5,7 +5,11 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = require('path').dirname(__filename);
 
 /**
  * Standalone script to perform cache cleanup.
@@ -25,7 +29,7 @@ const { getConfigUnsafe, getLogger } = require('@pryv/boiler').init({
   }]
 });
 
-const Cache = require('./cache');
+const Cache = require('./cache').default;
 const errorHandling = require('errors').errorHandling;
 
 const logger = getLogger('previews-cache-worker');
