@@ -5,17 +5,18 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-module.exports = {
-  ApiEndpoint: require('./api-endpoint'),
-  debug: require('./debug'),
-  deepMerge: require('./deepMerge'),
-  encryption: require('./encryption'),
-  extension: require('./extension'),
-  fromCallback: require('./fromCallback'),
-  jsonValidator: require('./jsonValidator'),
-  slugify: require('./slugify'),
-  toString: require('./toString'),
-  treeUtils: require('./treeUtils')
-};
+const ApiEndpoint = require('./api-endpoint');
+const debug = require('./debug');
+const { deepMerge } = require('./deepMerge');
+const encryption = require('./encryption');
+const extension = require('./extension');
+const { fromCallback } = require('./fromCallback');
+const jsonValidator = require('./jsonValidator').default;
+const { slug: slugify } = require('./slugify');
+const { toString } = require('./toString');
+const treeUtils = require('./treeUtils');
+
+export { ApiEndpoint, debug, deepMerge, encryption, extension, fromCallback, jsonValidator, slugify, toString, treeUtils };

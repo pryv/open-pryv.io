@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const util = require('util');
 const winston = require('winston');
@@ -247,11 +248,7 @@ function getLogger (name) {
   return rootLogger.getLogger(name);
 }
 
-module.exports = {
-  getLogger,
-  setGlobalName,
-  initLoggerWithConfig
-};
+export { getLogger, setGlobalName, initLoggerWithConfig };
 
 // ----------------- Hide sensite data -------------------- //
 

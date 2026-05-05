@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * Load configuration in the following order (1st prevails)
@@ -325,7 +326,7 @@ class Config {
   }
 }
 
-module.exports = Config;
+export { Config };
 
 // --- remote and local json ressource loader ---- //
 

@@ -6,9 +6,10 @@
  */
 
 
-import type {} from 'node:fs';
-
 // REF: https://stackabuse.com/using-async-hooks-for-request-context-handling-in-node-js
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const asyncHooks = require('async_hooks');
 const { createId: cuid } = require('@paralleldrive/cuid2');
@@ -39,4 +40,4 @@ const getRequestContext = () => {
   return store.get(asyncHooks.executionAsyncId());
 };
 
-module.exports = { createRequestContext, getRequestContext };
+export { createRequestContext, getRequestContext };

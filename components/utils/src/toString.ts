@@ -5,13 +5,12 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
-
 /**
  * Output usual objects as string, e.g. when logging.
  * TODO: make that a separate lib to use on client side too
  */
-const toString: any = (module.exports = {});
+const toString: any = {};
+export { toString };
 toString.id = function (id) {
   return '"' + id + '"';
 };

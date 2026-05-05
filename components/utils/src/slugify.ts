@@ -5,11 +5,12 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
-
 /**
  * Shallow wrapper around `slug` to ensure consistent usage.
  */
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const slug = require('slug');
 
@@ -17,4 +18,5 @@ slug.defaults.mode = 'rfc3986';
 slug.defaults.modes.rfc3986.lower = false;
 slug.extend({ _: '_' });
 
-module.exports = slug;
+export { slug };
+export default slug;

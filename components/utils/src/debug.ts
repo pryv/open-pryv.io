@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const util = require('util');
 
@@ -25,10 +26,6 @@ function logstack (...args: any[]) {
   log(...args, stack(2, 4));
 }
 
-module.exports = {
-  logstack,
-  log,
-  stack
-};
+export { logstack, log, stack };
 
 (global as any).$$ = logstack;

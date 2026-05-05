@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * JSON-schema validator façade. Backed by `ajv` (v8, draft-04 build) under the
@@ -212,5 +213,9 @@ function createValidator (options: any = {}) {
   };
 }
 
-module.exports = createValidator;
-module.exports.createValidator = createValidator;
+// Default export = the function itself; also export `createValidator` as a
+// named export so consumers using `const { createValidator } = require(...)`
+// keep working under both CJS-via-require(esm) and ESM imports.
+(createValidator as any).createValidator = createValidator;
+export default createValidator;
+export { createValidator };

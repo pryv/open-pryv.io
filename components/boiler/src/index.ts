@@ -6,14 +6,15 @@
  */
 
 
-import type {} from 'node:fs';
-
 /**
  * Pryv Boiler module.
  * @module boiler
  */
 
-const Config = require('./config');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
+const { Config } = require('./config');
 const logging = require('./logging');
 
 /** @type {Config} */
@@ -108,4 +109,9 @@ function getConfigUnsafe (warnOnly) {
   return config;
 }
 
-module.exports = boiler;
+// Named exports so consumers using `const { getConfig, getLogger } =
+// require('@pryv/boiler')` (and the deep `require('@pryv/boiler')` whole-
+// module pattern) both keep working under Node 24 require(esm).
+const { getLogger } = logging;
+export { boiler, getLogger, getConfig, getConfigUnsafe, init };
+export default boiler;

@@ -6,10 +6,9 @@
  */
 
 
-import type {} from 'node:fs';
-
 // No-op shim. Was a Jaeger-driven monkey-patcher of database method callbacks;
 // now a passthrough. Preserved as an export of components/tracing/ so callers
 // in storages/index.js and components/storage/src/index.js need no edits.
 
-module.exports = function patch () {};
+function databaseTracer () {}
+export { databaseTracer };

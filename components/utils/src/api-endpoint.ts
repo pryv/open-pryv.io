@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { getConfigUnsafe } = require('@pryv/boiler');
 
@@ -27,6 +28,4 @@ function build (username, token, apiFormat) {
   return apiEndpoint;
 }
 
-module.exports = {
-  build
-};
+export { build };

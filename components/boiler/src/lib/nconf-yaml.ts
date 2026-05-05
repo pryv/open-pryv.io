@@ -5,14 +5,17 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const yaml = require('js-yaml');
 
-exports.stringify = function (obj, options) {
+function stringify (obj, options) {
   return yaml.dump(obj, options);
-};
+}
 
-exports.parse = function (obj, options) {
+function parse (obj, options) {
   return yaml.load(obj, options);
-};
+}
+
+export { stringify, parse };

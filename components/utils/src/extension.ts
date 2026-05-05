@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const path = require('path');
 const fs = require('fs');
@@ -69,9 +70,6 @@ class ExtensionLoader {
     }
   }
 }
-module.exports = {
-  ExtensionLoader,
-  Extension
-};
+export { ExtensionLoader, Extension };
 
 /** @typedef {() => void} ExtensionFunction */

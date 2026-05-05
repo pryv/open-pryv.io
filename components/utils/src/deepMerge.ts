@@ -6,8 +6,6 @@
  */
 
 
-import type {} from 'node:fs';
-
 /**
  * Recursively merge source objects into target, mutating target in place.
  * Mirrors lodash's `_.merge` semantics for the call patterns used in this
@@ -50,4 +48,4 @@ function isPlainObject (v) {
   return proto === Object.prototype || proto === null;
 }
 
-module.exports = deepMerge;
+export { deepMerge };
