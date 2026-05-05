@@ -4,11 +4,15 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const Audit = require('./Audit');
+const Audit = require('./Audit').default;
 const audit = new Audit();
 
-audit.CONSTANTS = require('./Constants');
+audit.CONSTANTS = require('./Constants').default;
 
-module.exports = audit;
+const CONSTANTS = audit.CONSTANTS;
+
+export default audit;
+export { audit, CONSTANTS };

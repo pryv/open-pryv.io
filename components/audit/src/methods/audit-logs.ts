@@ -4,7 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
 const commonFns = require('api-server/src/methods/helpers/commonFunctions');
@@ -13,13 +14,13 @@ const eventsGetUtils = require('api-server/src/methods/helpers/eventsGetUtils');
 const { getStoreQueryFromParams, getStoreOptionsFromParams } = require('mall/src/helpers/eventsQueryUtils');
 const { localStorePrepareOptions, localStorePrepareQuery } = require('storage/src/localStoreEventQueries');
 
-const audit = require('audit');
+const audit = require('audit').default;
 const auditStorage = audit.storage;
 const { ConvertEventFromStoreStream } = require('mall/src/helpers/eventsUtils');
 /**
  * @param api
  */
-module.exports = function (api) {
+export default function (api) {
   api.register('audit.getLogs',
     eventsGetUtils.coerceStreamsParam,
     commonFns.getParamsValidation(methodsSchema.get.params),

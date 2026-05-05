@@ -4,15 +4,16 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { getSyslog } = require('./syslog');
 const { getConfig, getLogger } = require('@pryv/boiler');
 const logger = getLogger('audit');
-const CONSTANTS = require('./Constants');
+const CONSTANTS = require('./Constants').default;
 const validation = require('./validation');
 const { WITHOUT_USER_METHODS_MAP } = require('./ApiMethods');
-const AuditFilter = require('./AuditFilter');
+const AuditFilter = require('./AuditFilter').default;
 const { AuditAccessIds } = require('./MethodContextUtils');
 const util = require('util');
 const { createId: cuid } = require('@paralleldrive/cuid2');
@@ -145,7 +146,8 @@ class Audit {
     // auditStorage lifecycle is managed by the barrel (storages.reset())
   }
 }
-module.exports = Audit;
+export default Audit;
+export { Audit };
 /**
  * @returns {{ id: any; createdBy: string; modifiedBy: string; streamIds: any[]; time: number; endTime: number; created: number; modified: number; trashed: boolean; content: { source: any; action: any; query: any; }; }}
  */

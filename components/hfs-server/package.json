@@ -2,11 +2,11 @@
   "name": "hfs-server",
   "version": "1.8.1",
   "private": true,
-  "type": "module",
   "description": "High frequency series storage on InfluxDB",
   "homepage": "https://pryv.com",
   "repository": {},
   "license": "BSD-3-Clause",
   "author": "Pryv <info@pryv.com> (https://pryv.com)",
+  "type": "module",
   "main": "src/server.ts"
 }

@@ -122,7 +122,7 @@ class Server {
     await require('./methods/streams')(app.api);
     await require('./methods/events')(app.api);
     if (this.isAuditActive) {
-      require('audit/src/methods/audit-logs')(app.api);
+      require('audit/src/methods/audit-logs').default(app.api);
     }
     this.logger.debug('api methods registered');
   }

@@ -137,7 +137,7 @@ class Application {
     await userLocalDirectory.init();
     await require('storages').init(this.config);
     if (this.isAuditActive) {
-      const audit = require('audit');
+      const audit = require('audit').default;
       await audit.init();
     }
     this.api = new API();
@@ -232,7 +232,7 @@ class Application {
 
     require('./routes/webhooks')(this.expressApp, this);
     if (this.isAuditActive) {
-      require('audit/src/routes/audit.route')(this.expressApp, this);
+      require('audit/src/routes/audit.route').default(this.expressApp, this);
     }
   }
 

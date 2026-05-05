@@ -4,9 +4,10 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const Syslog = require('./Syslog');
+const Syslog = require('./Syslog').default;
 const { getConfig } = require('@pryv/boiler');
 
 let syslog;
@@ -24,6 +25,4 @@ async function getSyslog () {
   return syslog;
 }
 
-module.exports = {
-  getSyslog
-};
+export { getSyslog };

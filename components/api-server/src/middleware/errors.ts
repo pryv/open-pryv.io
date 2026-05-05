@@ -31,7 +31,7 @@ function produceHandleErrorMiddleware (logging) {
   const isAuditActive = config.get('audit:active');
   let audit;
   if (isAuditActive) {
-    audit = require('audit');
+    audit = require('audit').default;
   }
   // NOTE next is not used, since the request is terminated on all errors.
 

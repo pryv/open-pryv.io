@@ -16,4 +16,5 @@ const CONSTANTS = {
 
 Object.freeze(CONSTANTS);
 
-module.exports = CONSTANTS;
+export default CONSTANTS;
+export { CONSTANTS };

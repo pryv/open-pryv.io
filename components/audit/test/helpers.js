@@ -11,7 +11,7 @@
  */
 
 const base = require('test-helpers/src/helpers-base');
-const audit = require('../src/');
+const audit = require('../src/').default;
 const { AuditAccessIds } = require('audit/src/MethodContextUtils');
 
 // Audit-specific test utilities
@@ -49,14 +49,14 @@ base.init({
   },
   afterInitCore: async () => {
     // Load audit-logs method
-    require('audit/src/methods/audit-logs')(global.app.api);
+    require('audit/src/methods/audit-logs').default(global.app.api);
   },
   globals: {
     apiMethods: require('audit/src/ApiMethods'),
     MethodContextUtils: require('audit/src/MethodContextUtils'),
     fakeAuditEvent,
     validation: require('audit/src/validation'),
-    AuditFilter: require('audit/src/AuditFilter'),
+    AuditFilter: require('audit/src/AuditFilter').default,
     addActionStreamIdPrefix,
     addAccessStreamIdPrefix,
     CONSTANTS: audit.CONSTANTS,

@@ -96,16 +96,10 @@ function throwIfMethodIsNotDeclared (methodId) {
   throw new Error('Attempting to add a method not declared in audit, methodId: "' + methodId + '". Please add it to components/audit/src/ApiMethods.js#ALL_METHODS');
 }
 
-module.exports = {
-  AUDITED_METHODS,
-  AUDITED_METHODS_MAP: buildMap(AUDITED_METHODS),
-  ALL_METHODS,
-  ALL_METHODS_MAP: allMethodsMap,
-  WITHOUT_USER_METHODS,
-  WITHOUT_USER_METHODS_MAP: buildMap(WITHOUT_USER_METHODS),
-  WITH_USER_METHODS,
-  throwIfMethodIsNotDeclared
-};
+const AUDITED_METHODS_MAP = buildMap(AUDITED_METHODS);
+const ALL_METHODS_MAP = allMethodsMap;
+const WITHOUT_USER_METHODS_MAP = buildMap(WITHOUT_USER_METHODS);
+export { AUDITED_METHODS, AUDITED_METHODS_MAP, ALL_METHODS, ALL_METHODS_MAP, WITHOUT_USER_METHODS, WITHOUT_USER_METHODS_MAP, WITH_USER_METHODS, throwIfMethodIsNotDeclared };
 
 /**
  * Builds a map with an { i => true } entry for each array element

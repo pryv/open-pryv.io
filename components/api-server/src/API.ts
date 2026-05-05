@@ -67,7 +67,7 @@ class API {
     const config = getConfigUnsafe();
     isAuditActive = config.get('audit:active');
     if (isAuditActive) {
-      audit = require('audit');
+      audit = require('audit').default;
       throwIfMethodIsNotDeclared =
       require('audit/src/ApiMethods').throwIfMethodIsNotDeclared;
     }

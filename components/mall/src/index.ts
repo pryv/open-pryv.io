@@ -71,7 +71,7 @@ async function getMall () {
 
   // audit
   if (config.get('audit:active')) {
-    const auditDataStore = require('audit/src/datastore/auditDataStore');
+    const auditDataStore = require('audit/src/datastore/auditDataStore').default;
     mall.addStore(auditDataStore, { id: '_audit', name: 'Audit', settings: {} });
   }
 

@@ -4,10 +4,11 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
-const audit = require('audit');
+const audit = require('audit').default;
 
 /**
  * Children id: `access-{accessId}`
@@ -35,7 +36,7 @@ Object.freeze(actionsStream);
 const auditStreams = [accessesStream, actionsStream];
 Object.freeze(auditStreams);
 
-module.exports = ds.createUserStreams({
+const auditUserStreams: any = ds.createUserStreams({
   async get (userId, query) {
     if (query.parentId === '*' || query.parentId == null) {
       return auditStreams;
@@ -104,3 +105,5 @@ module.exports = ds.createUserStreams({
     return null;
   }
 });
+export default auditUserStreams;
+export { auditUserStreams };

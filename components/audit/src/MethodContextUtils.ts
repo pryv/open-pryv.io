@@ -28,7 +28,4 @@ const AuditAccessIds = {
 
 Object.freeze(AuditAccessIds);
 
-module.exports = {
-  setAuditAccessId,
-  AuditAccessIds
-};
+export { setAuditAccessId, AuditAccessIds };

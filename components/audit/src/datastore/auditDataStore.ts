@@ -4,16 +4,17 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
-const auditUserEvents = require('./auditUserEvents');
-const auditUserStreams = require('./auditUserStreams');
+const auditUserEvents = require('./auditUserEvents').default;
+const auditUserStreams = require('./auditUserStreams').default;
 
 /**
  * Audit data store.
  */
-module.exports = ds.createDataStore({
+const auditDataStore: any = ds.createDataStore({
   id: '_audit',
   name: 'Audit store',
 
@@ -30,3 +31,5 @@ module.exports = ds.createDataStore({
     return { };
   }
 });
+export default auditDataStore;
+export { auditDataStore };

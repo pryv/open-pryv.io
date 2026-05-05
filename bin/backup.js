@@ -90,7 +90,7 @@ async function initStorage () {
 
   // Init audit if active
   if (config.get('audit:active')) {
-    const audit = require('audit');
+    const audit = require('audit').default;
     await audit.init();
   }
 

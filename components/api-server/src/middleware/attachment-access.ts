@@ -27,7 +27,7 @@ async function middlewareFactory () {
   if (isAuditActive) {
     const throwIfMethodIsNotDeclared = require('audit/src/ApiMethods').throwIfMethodIsNotDeclared;
     throwIfMethodIsNotDeclared('events.getAttachment');
-    audit = require('audit');
+    audit = require('audit').default;
   }
   // -- end Audit
   initialized = true;

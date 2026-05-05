@@ -26,7 +26,7 @@ module.exports = async function (api) {
   const passwordRules = await getPasswordRules();
   let audit;
   if (isAuditActive) {
-    audit = require('audit');
+    audit = require('audit').default;
   }
   api.register('getAccessInfo', commonFns.getParamsValidation(methodsSchema.getAccessInfo.params), getAccessInfoApiFn);
   async function getAccessInfoApiFn (context, params, result, next) {

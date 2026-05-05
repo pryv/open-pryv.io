@@ -4,9 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-'use strict';
 const Action = require('api-server/src/schema/Action');
 const event = require('api-server/src/schema/event');
 const helpers = require('api-server/src/schema/helpers');
@@ -15,7 +15,7 @@ const array = helpers.array;
 const string = helpers.string;
 const number = helpers.number;
 const boolean = helpers.boolean;
-module.exports = {
+const auditMethods = {
   get: {
     params: object({
       streams: {},
@@ -34,3 +34,5 @@ module.exports = {
     })
   }
 };
+export default auditMethods;
+export const get = auditMethods.get;
