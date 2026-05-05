@@ -5,12 +5,13 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
-
 /**
  * Helper for forwarding test notifications via Node.js IPC.
  * IPC-based test notification forwarding via process.send().
  */
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const EventEmitter = require('events');
 const { getConfig, getLogger } = require('@pryv/boiler');
@@ -18,7 +19,7 @@ const { getConfig, getLogger } = require('@pryv/boiler');
 let notifier = null;
 let initializing = false;
 
-exports.getTestNotifier = async function () {
+async function getTestNotifier () {
   // eslint-disable-next-line no-unmodified-loop-condition
   while (initializing) { await new Promise((resolve) => setTimeout(resolve, 50)); }
   if (notifier != null) return notifier;
@@ -42,4 +43,6 @@ exports.getTestNotifier = async function () {
   logger.info('Test notifier ready (IPC-based)');
   initializing = false;
   return notifier;
-};
+}
+
+export { getTestNotifier };

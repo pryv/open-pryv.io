@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -112,4 +113,4 @@ function formatFrom (from) {
   return from.address;
 }
 
-module.exports = { createEmailTemplatesDelivery };
+export { createEmailTemplatesDelivery };

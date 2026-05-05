@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * ToolSet to manipulate User's local directory
@@ -18,14 +19,7 @@ const fsSync = require('fs');
 
 const { getConfig } = require('@pryv/boiler');
 
-module.exports = {
-  init,
-  ensureUserDirectory,
-  getPathForUser,
-  deleteUserDirectory,
-  getBasePath,
-  setBasePathTestOnly
-};
+export { init, ensureUserDirectory, getPathForUser, deleteUserDirectory, getBasePath, setBasePathTestOnly };
 
 let config;
 let basePath;

@@ -35,7 +35,7 @@ class Context {
    * @param {import('storage').Database|import('storage').StorageLayer} dbOrStorageLayer
    */
   constructor (dbOrStorageLayer) {
-    const StorageLayer = require('storage/src/StorageLayer');
+    const { StorageLayer } = require('storage/src/StorageLayer');
     if (dbOrStorageLayer instanceof StorageLayer) {
       this.storageLayer = dbOrStorageLayer;
       this.db = dbOrStorageLayer.connection;

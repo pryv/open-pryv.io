@@ -6,7 +6,6 @@
  */
 
 
-import type {} from 'node:fs';
 
 /**
  * Minimal error-factory preserved from the standalone service-mail repo so
@@ -34,10 +33,8 @@ const ErrorIds = Object.freeze({
   UnknownResource: 'unknown-resource'
 });
 
-module.exports = {
-  MailError,
-  ErrorIds,
-  invalidRequestStructure: (message) => new MailError(ErrorIds.InvalidRequestStructure, message, 400),
-  forbidden: (message) => new MailError(ErrorIds.Forbidden, message, 403),
-  unknownResource: (message) => new MailError(ErrorIds.UnknownResource, message, 404)
-};
+const invalidRequestStructure = (message) => new MailError(ErrorIds.InvalidRequestStructure, message, 400);
+const forbidden = (message) => new MailError(ErrorIds.Forbidden, message, 403);
+const unknownResource = (message) => new MailError(ErrorIds.UnknownResource, message, 404);
+
+export { MailError, ErrorIds, invalidRequestStructure, forbidden, unknownResource };

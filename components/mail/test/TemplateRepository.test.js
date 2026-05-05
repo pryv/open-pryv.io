@@ -9,7 +9,7 @@ const assert = require('node:assert');
 
 require('test-helpers/src/api-server-tests-config');
 
-const TemplateRepository = require('../src/TemplateRepository');
+const { TemplateRepository } = require('../src/TemplateRepository');
 
 function existsFn (availablePaths) {
   const set = new Set(availablePaths);

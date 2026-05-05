@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { getConfig, getLogger } = require('@pryv/boiler');
 const { validateUserStorage } = require('storages/interfaces/baseStorage/UserStorage');
@@ -80,4 +81,4 @@ class StorageLayer {
     return await database.waitForConnection();
   }
 }
-module.exports = StorageLayer;
+export { StorageLayer };

@@ -6,10 +6,11 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const errors = require('./errors');
-const Template = require('./Template');
+const { Template } = require('./Template');
 
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('mail-template-repository');
@@ -47,4 +48,4 @@ class TemplateRepository {
   }
 }
 
-module.exports = TemplateRepository;
+export { TemplateRepository };

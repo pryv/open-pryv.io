@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * In-process mail façade.
@@ -28,8 +29,8 @@ import type {} from 'node:fs';
  * surface ship.
  */
 
-const Sender = require('./Sender');
-const TemplateRepository = require('./TemplateRepository');
+const { Sender } = require('./Sender');
+const { TemplateRepository } = require('./TemplateRepository');
 const { createEmailTemplatesDelivery } = require('./emailTemplatesDelivery');
 const errors = require('./errors');
 
@@ -106,14 +107,9 @@ async function close () {
   state = null;
 }
 
-module.exports = {
-  init,
-  isActive,
-  send,
-  refresh,
-  close,
-  // Exposed for tests + admin-surface consumers.
-  _internal: {
-    get state () { return state; }
-  }
+// Exposed for tests + admin-surface consumers.
+const _internal = {
+  get state () { return state; }
 };
+
+export { init, isActive, send, refresh, close, _internal };

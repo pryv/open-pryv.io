@@ -6,8 +6,6 @@
  */
 
 
-import type {} from 'node:fs';
-
 /**
  * Ported verbatim from the standalone service-mail repo. Wraps an
  * `email-templates` delivery instance (`deliveryService`) and orchestrates
@@ -49,4 +47,4 @@ class SendOperation {
   }
 }
 
-module.exports = Sender;
+export { Sender };

@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * One-shot bootstrap helper: when PlatformDB has no mail templates yet,
@@ -77,4 +78,4 @@ async function listDirs (parent) {
   return entries.filter(e => e.isDirectory()).map(e => e.name);
 }
 
-module.exports = { seedIfEmpty };
+export { seedIfEmpty };

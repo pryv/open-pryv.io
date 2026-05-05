@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const EventEmitter = require('events');
 const { getLogger } = require('@pryv/boiler');
@@ -185,4 +186,5 @@ const pubSubFactory = new PubSubFactory();
 
 Object.assign(pubSubFactory, CONSTANTS);
 
-module.exports = pubSubFactory;
+export default pubSubFactory;
+export { pubSubFactory };

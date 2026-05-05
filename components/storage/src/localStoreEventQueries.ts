@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * Converters to common query logic for localStores
@@ -15,10 +16,7 @@ import type {} from 'node:fs';
 const timestamp = require('unix-timestamp');
 const DELTA_TO_CONSIDER_IS_NOW = 5; // 5 seconds
 
-module.exports = {
-  localStorePrepareOptions,
-  localStorePrepareQuery
-};
+export { localStorePrepareOptions, localStorePrepareQuery };
 
 /**
  * Convert store API options params to local store options

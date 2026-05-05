@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 /**
  * Ported verbatim from the standalone service-mail repo. Represents a
@@ -38,4 +39,4 @@ class Template {
   }
 }
 
-module.exports = Template;
+export { Template };

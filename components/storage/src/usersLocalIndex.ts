@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * Contains UserName >> UserId Mapping
@@ -132,4 +133,6 @@ async function getAllKnownUserIdsFromDB (collectionName) {
   return await storageLayer.getAllUserIdsFromCollection(collectionName);
 }
 
-module.exports = new UsersLocalIndex();
+const usersLocalIndex = new UsersLocalIndex();
+export default usersLocalIndex;
+export { usersLocalIndex };

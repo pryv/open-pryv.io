@@ -9,7 +9,7 @@ const assert = require('node:assert');
 
 require('test-helpers/src/api-server-tests-config');
 
-const Template = require('../src/Template');
+const { Template } = require('../src/Template');
 
 describe('[MAILTMPL] Template', () => {
   it('[MTPL1] exists() returns true only when both subject.pug and html.pug exist', async () => {

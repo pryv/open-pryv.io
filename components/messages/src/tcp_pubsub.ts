@@ -6,11 +6,12 @@
  */
 
 
-import type {} from 'node:fs';
-
 // TCP-based pub/sub broker + client — zero external deps.
 // First process to call init() becomes the broker; others connect as clients.
 // Protocol: newline-delimited JSON over TCP.
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const net = require('node:net');
 const { getConfig, getLogger } = require('@pryv/boiler');
@@ -304,9 +305,4 @@ function setTestDeliverHook (deliverHook) {
   testDeliverHook = deliverHook;
 }
 
-module.exports = {
-  init,
-  deliver,
-  subscribe,
-  setTestDeliverHook
-};
+export { init, deliver, subscribe, setTestDeliverHook };

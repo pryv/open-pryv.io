@@ -9,8 +9,8 @@ const assert = require('node:assert');
 
 require('test-helpers/src/api-server-tests-config');
 
-const Sender = require('../src/Sender');
-const Template = require('../src/Template');
+const { Sender } = require('../src/Sender');
+const { Template } = require('../src/Template');
 
 describe('[MAILSEND] Sender', () => {
   it('[MSND1] delegates renderAndSend to template.executeSend with a SendOperation wrapping recipient + substitutions', async () => {

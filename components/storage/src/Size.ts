@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { getUsersRepository, UserRepositoryOptions, User } = require('business/src/users');
 const { getMall } = require('mall');
@@ -43,4 +44,4 @@ class Size {
     return storageInfo;
   }
 }
-module.exports = Size;
+export { Size };

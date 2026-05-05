@@ -104,7 +104,7 @@ async function init (config) {
     } catch (e) { /* engine may not have _internals.js */ }
   }
 
-  const StorageLayer = require('storage/src/StorageLayer');
+  const { StorageLayer } = require('storage/src/StorageLayer');
   const { dataBaseTracer } = require('tracing');
 
   // 1. Database connection (based on baseStorage engine)
@@ -143,7 +143,7 @@ async function init (config) {
   await userAccountStorage.init();
 
   // 6. UsersLocalIndex (wrapper singleton — caching, logging around raw DB)
-  const usersLocalIndex = require('storage/src/usersLocalIndex');
+  const usersLocalIndex = require('storage/src/usersLocalIndex').default;
   await usersLocalIndex.init();
 
   // 7. PlatformDB

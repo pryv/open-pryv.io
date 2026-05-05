@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * Plan 55 Phase 3 — cluster_kv: master-held key/value store with TTL,
@@ -249,10 +250,4 @@ function _resetInProcessFallbackForTests () {
   _SHARED_FALLBACK.store.clear();
 }
 
-module.exports = {
-  masterStart,
-  masterStop,
-  clientFor,
-  _masterStoreForTests,
-  _resetInProcessFallbackForTests
-};
+export { masterStart, masterStop, clientFor, _masterStoreForTests, _resetInProcessFallbackForTests };

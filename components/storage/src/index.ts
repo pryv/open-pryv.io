@@ -5,29 +5,25 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const StorageLayer = require('./StorageLayer');
+const { StorageLayer } = require('./StorageLayer');
+const { Size } = require('./Size');
+const userLocalDirectory = require('./userLocalDirectory');
 
-module.exports = {
-  Size: require('./Size'),
-  StorageLayer,
-  getStorageLayer,
-  getDatabaseSync,
-  userLocalDirectory: require('./userLocalDirectory'),
-  getUsersLocalIndex,
-  getUserAccountStorage,
-  interfaces: {
-    UserAccountStorage: require('storages/interfaces/baseStorage/UserAccountStorage'),
-    UsersLocalIndexDB: require('storages/interfaces/baseStorage/UsersLocalIndexDB'),
-    EventFiles: require('storages/interfaces/fileStorage/EventFiles'),
-    UserStorage: require('storages/interfaces/baseStorage/UserStorage'),
-    Sessions: require('storages/interfaces/baseStorage/Sessions'),
-    PasswordResetRequests: require('storages/interfaces/baseStorage/PasswordResetRequests'),
-    AuditStorage: require('storages/interfaces/auditStorage/AuditStorage'),
-    UserAuditDatabase: require('storages/interfaces/auditStorage/UserAuditDatabase')
-  }
+const interfaces = {
+  UserAccountStorage: require('storages/interfaces/baseStorage/UserAccountStorage'),
+  UsersLocalIndexDB: require('storages/interfaces/baseStorage/UsersLocalIndexDB'),
+  EventFiles: require('storages/interfaces/fileStorage/EventFiles'),
+  UserStorage: require('storages/interfaces/baseStorage/UserStorage'),
+  Sessions: require('storages/interfaces/baseStorage/Sessions'),
+  PasswordResetRequests: require('storages/interfaces/baseStorage/PasswordResetRequests'),
+  AuditStorage: require('storages/interfaces/auditStorage/AuditStorage'),
+  UserAuditDatabase: require('storages/interfaces/auditStorage/UserAuditDatabase')
 };
+
+export { Size, StorageLayer, getStorageLayer, getDatabaseSync, userLocalDirectory, getUsersLocalIndex, getUserAccountStorage, interfaces };
 
 /**
  * Ensure the storages barrel is initialized (lazy fallback).
