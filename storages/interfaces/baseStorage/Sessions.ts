@@ -52,4 +52,4 @@ function validateSessions (instance: any): Sessions {
   return instance;
 }
 
-module.exports = { validateSessions, REQUIRED_METHODS };
+export { validateSessions, REQUIRED_METHODS };

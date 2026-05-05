@@ -6,13 +6,15 @@
  */
 
 import type { Readable } from 'stream';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const fs = require('fs');
 const path = require('path');
 
 const { pipeline } = require('stream/promises');
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 const ds = require('@pryv/datastore');
 const errors = ds.errors;
 
@@ -152,4 +154,4 @@ function getUserPath (userId: string): string {
   return _internals.userLocalDirectory.getPathForUser(userId, ATTACHMENT_DIRNAME);
 }
 
-module.exports = EventFiles;
+export { EventFiles };

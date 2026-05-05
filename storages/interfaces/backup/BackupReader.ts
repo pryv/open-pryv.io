@@ -120,11 +120,9 @@ function validateUserBackupReader (instance: any): UserBackupReader {
   return instance;
 }
 
-module.exports = {
-  BackupReader,
+export { BackupReader,
   createBackupReader,
   validateBackupReader,
   UserBackupReader,
   createUserBackupReader,
-  validateUserBackupReader
-};
+  validateUserBackupReader };

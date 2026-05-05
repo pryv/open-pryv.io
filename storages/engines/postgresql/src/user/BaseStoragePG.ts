@@ -5,9 +5,10 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const DatabasePG = require('../DatabasePG');
+const { DatabasePG } = require('../DatabasePG');
 
 /**
  * Column-name mapping: camelCase JS property → snake_case PG column.
@@ -770,4 +771,4 @@ class BaseStoragePG {
   }
 }
 
-module.exports = BaseStoragePG;
+export { BaseStoragePG };

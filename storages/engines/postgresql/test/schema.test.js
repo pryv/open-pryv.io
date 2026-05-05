@@ -6,7 +6,7 @@
  */
 
 const helpers = require('../../../test/helpers');
-const DatabasePG = require('../src/DatabasePG');
+const { DatabasePG } = require('../src/DatabasePG');
 
 describe('[PGSC] PostgreSQL schema', function () {
   let db;

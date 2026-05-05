@@ -9,10 +9,11 @@
  * MongoDB storage engine plugin.
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { fromCallback } = require('utils');
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 
 /**
  * Receive host internals from the barrel.
@@ -28,12 +29,12 @@ function init (config: Record<string, any>, getLogger: (name: string) => any, in
 // -- BaseStorage --------------------------------------------------------
 
 function initStorageLayer (storageLayer: any, connection: any, options: any): void {
-  const PasswordResetRequests = require('./PasswordResetRequests');
-  const Sessions = require('./Sessions');
-  const Accesses = require('./user/Accesses');
-  const Profile = require('./user/Profile');
-  const Streams = require('./user/Streams');
-  const Webhooks = require('./user/Webhooks');
+  const { PasswordResetRequests } = require('./PasswordResetRequests');
+  const { Sessions } = require('./Sessions');
+  const { Accesses } = require('./user/Accesses');
+  const { Profile } = require('./user/Profile');
+  const { Streams } = require('./user/Streams');
+  const { Webhooks } = require('./user/Webhooks');
 
   storageLayer.connection = connection;
   storageLayer.passwordResetRequests = new PasswordResetRequests(connection, {
@@ -88,31 +89,29 @@ function initStorageLayer (storageLayer: any, connection: any, options: any): vo
 }
 
 function getUserAccountStorage (): any {
-  return require('./userAccountStorage');
+  return require('./userAccountStorage').userAccountStorage;
 }
 
 function getUsersLocalIndex (): any {
-  return require('./usersLocalIndex');
+  return require('./usersLocalIndex').DBIndex;
 }
 
 // -- DataStore ----------------------------------------------------------
 
 function getDataStoreModule (): any {
-  return require('./dataStore');
+  return require('./dataStore').dataStore;
 }
 
 // -- PlatformStorage ----------------------------------------------------
 
 function createPlatformDB (): any {
-  const DB = require('./DBmongodb');
+  const { DBmongodb: DB } = require('./DBmongodb');
   return new DB();
 }
 
-module.exports = {
-  init,
+export { init,
   initStorageLayer,
   getUserAccountStorage,
   getUsersLocalIndex,
   getDataStoreModule,
-  createPlatformDB
-};
+  createPlatformDB };

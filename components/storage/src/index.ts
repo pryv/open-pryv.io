@@ -67,9 +67,9 @@ function _ensureMongoDatabase () {
     const { getConfigUnsafe, getLogger } = require('@pryv/boiler');
     const { dataBaseTracer } = require('tracing');
     const config = getConfigUnsafe(true);
-    const mongoInternals = require('storages/engines/mongodb/src/_internals');
+    const { _internals: mongoInternals } = require('storages/engines/mongodb/src/_internals');
     if (!mongoInternals.getLogger) mongoInternals.set('getLogger', getLogger);
-    const Database = require('storages/engines/mongodb/src/Database');
+    const { Database } = require('storages/engines/mongodb/src/Database');
     _lazyDatabase = new Database(config.get('storages:engines:mongodb'));
     dataBaseTracer(_lazyDatabase);
   }

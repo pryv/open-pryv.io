@@ -21,8 +21,6 @@
 // Type-only import to mark this as a TS module (not a script). Erased at
 // strip-time by Node 24 and not emitted as ESM, so `module.exports` below
 // keeps working as CJS at runtime.
-import type {} from 'node:fs';
-
 /**
  * Fields that are engine-internal and must be stripped from backup output.
  * These are storage-layer artifacts, not part of the application model.
@@ -76,4 +74,4 @@ function sanitize (doc: any): any {
   return clean;
 }
 
-module.exports = { sanitize, INTERNAL_FIELDS };
+export { sanitize, INTERNAL_FIELDS };

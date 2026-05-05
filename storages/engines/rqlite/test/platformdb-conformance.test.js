@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const DBrqlite = require('../src/DBrqlite');
+const { DBrqlite } = require('../src/DBrqlite');
 const conformanceTests = require('platform/test/conformance/PlatformDB.test');
 
 // rqlite must be running on localhost:4001 for these tests.

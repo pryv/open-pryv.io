@@ -5,13 +5,12 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { ALL_EVENTS_TAG } = require('./schema/events');
 
-module.exports = {
-  toSQLiteQuery
-};
+export { toSQLiteQuery };
 
 /**
  * Get stream queries for SQLite.

@@ -8,16 +8,17 @@
  * Common converter helper functions for storage modules.
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { createId: generateId } = require('@paralleldrive/cuid2');
 
-exports.createIdIfMissing = function (item) {
+function createIdIfMissing (item) {
   item.id = item.id || generateId();
   return item;
-};
+}
 
-exports.getRenamePropertyFn = function (oldName, newName) {
+function getRenamePropertyFn (oldName, newName) {
   return function (item) {
     if (!item || item[oldName] == null) {
       return item;
@@ -28,17 +29,17 @@ exports.getRenamePropertyFn = function (oldName, newName) {
 
     return item;
   };
-};
+}
 
-exports.stateUpdate = function (update) {
+function stateUpdate (update) {
   if (update.$set.trashed != null && !update.$set.trashed) {
     update.$unset.trashed = 1;
     delete update.$set.trashed;
   }
   return update;
-};
+}
 
-exports.getKeyValueSetUpdateFn = function (propertyName) {
+function getKeyValueSetUpdateFn (propertyName) {
   propertyName = propertyName || 'clientData';
   return function (update) {
     const keyValueSet = update.$set[propertyName];
@@ -54,29 +55,29 @@ exports.getKeyValueSetUpdateFn = function (propertyName) {
     }
     return update;
   };
-};
+}
 
-exports.deletionToDB = function (item) {
+function deletionToDB (item) {
   if (item.deleted === undefined) { // undefined => null
     item.deleted = null;
   }
   return item;
-};
+}
 
-exports.deletionFromDB = function (dbItem) {
+function deletionFromDB (dbItem) {
   if (dbItem == null) { return dbItem; }
 
   if (dbItem.deleted == null) { // undefined or null
     delete dbItem.deleted;
   }
   return dbItem;
-};
+}
 
 /**
  * Inside $or clauses, converts "id" to "_id"
  * @param {*} query
  */
-exports.idInOrClause = function (query) {
+function idInOrClause (query) {
   if (query == null || query.$or == null) return query;
   const convertedOrClause = query.$or.map(field => {
     if (field.id != null) {
@@ -86,4 +87,14 @@ exports.idInOrClause = function (query) {
   });
   query.$or = convertedOrClause;
   return query;
+}
+
+export {
+  createIdIfMissing,
+  getRenamePropertyFn,
+  stateUpdate,
+  getKeyValueSetUpdateFn,
+  deletionToDB,
+  deletionFromDB,
+  idInOrClause
 };

@@ -5,9 +5,7 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
-
-const schema: any = module.exports = {
+const schema: any = {
   dbSchema: {
     eventid: { type: 'TEXT UNIQUE', index: true, coerce: 'txt' },
     headId: { type: 'TEXT DEFAULT NULL', coerce: 'txt' },
@@ -139,3 +137,7 @@ const coerceFns = {
   num: (value: any) => { return (typeof value === 'number') ? value : parseFloat(value); },
   bool: (value: any) => { return value ? 1 : 0; }
 };
+
+const dbSchema = schema.dbSchema;
+const ALL_EVENTS_TAG = schema.ALL_EVENTS_TAG;
+export { dbSchema, ALL_EVENTS_TAG, toDB, fromDB, fromDBHistory, coerceValueForColumn };

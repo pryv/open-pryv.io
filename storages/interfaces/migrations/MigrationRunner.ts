@@ -15,7 +15,10 @@
  * Filename format: `YYYYMMDD_HHMMSS_<slug>.js` — see `README.md`.
  */
 
-import type { Migration, MigrationContext } from './migration';
+import type { Migration, MigrationContext } from './migration.js';
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const fs = require('fs');
 const path = require('path');
@@ -174,8 +177,6 @@ async function createMigrationRunner ({ logger }: RunnerOptions = {}): Promise<M
   return new MigrationRunner(capabilities, { logger });
 }
 
-module.exports = {
-  MigrationRunner,
+export { MigrationRunner,
   discoverMigrations,
-  createMigrationRunner
-};
+  createMigrationRunner };

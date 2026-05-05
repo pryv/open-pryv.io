@@ -19,12 +19,13 @@
 // changed most of the fields to be nullable
 // - added headId
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const SQLite3 = require('better-sqlite3');
 const fs = require('fs/promises');
 
-module.exports = async function migrateUserDB (v0dbPath: string, v1userDB: any, _logger: any): Promise<{ count: number }> {
+async function migrateUserDB (v0dbPath: string, v1userDB: any, _logger: any): Promise<{ count: number }> {
   const v0db = new SQLite3(v0dbPath);
   const v0EventsIterator = v0db.prepare('SELECT * FROM events').iterate();
   const res = { count: 0 };
@@ -56,4 +57,6 @@ module.exports = async function migrateUserDB (v0dbPath: string, v1userDB: any, 
   v0db.close();
   await fs.unlink(v0dbPath);
   return res;
-};
+}
+
+export { migrateUserDB };

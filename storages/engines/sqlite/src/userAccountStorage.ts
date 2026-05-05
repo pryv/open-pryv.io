@@ -12,13 +12,14 @@
  * The DB file is located in the root of each user account folder.
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const path = require('path');
 const SQLite3 = require('better-sqlite3');
 const { LRUCache: LRU } = require('lru-cache');
 const timestamp = require('unix-timestamp');
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 const encryption = require('utils').encryption;
 
 const CACHE_SIZE = 100;
@@ -34,7 +35,7 @@ const InitStates = {
 };
 let initState: number = InitStates.NOT_INITIALIZED;
 
-module.exports = _internals.createUserAccountStorage({
+const userAccountStorage = _internals.createUserAccountStorage({
   init,
   addPasswordHash,
   getPasswordHash,
@@ -54,6 +55,8 @@ module.exports = _internals.createUserAccountStorage({
   _importAll,
   _clearAll
 });
+
+export { userAccountStorage };
 
 async function init () {
   while (initState === InitStates.INITIALIZING) {

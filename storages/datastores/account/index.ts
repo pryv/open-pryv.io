@@ -4,8 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
 
 /**
  * Account DataStore adapter.
@@ -23,6 +21,9 @@ import type {} from 'node:fs';
  *   // streamTree is the system streams array from config
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 const ds = require('@pryv/datastore');
 const AccountUserStreams = require('./AccountUserStreams');
 const AccountUserEvents = require('./AccountUserEvents');
@@ -30,7 +31,7 @@ const AccountUserEvents = require('./AccountUserEvents');
 let userAccountStorage = null;
 let fieldStreamMap = null;
 
-module.exports = ds.createDataStore({
+const accountStore = ds.createDataStore({
   async init (params) {
     const { settings } = params;
     if (!settings || !settings.streamTree) {
@@ -72,6 +73,9 @@ module.exports = ds.createDataStore({
     return {};
   }
 });
+
+export { accountStore };
+export default accountStore;
 
 /**
  * Build a map of fieldName → stream config for all leaf streams

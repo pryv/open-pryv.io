@@ -123,11 +123,9 @@ function validateUserBackupWriter (instance: any): UserBackupWriter {
   return instance;
 }
 
-module.exports = {
-  BackupWriter,
+export { BackupWriter,
   createBackupWriter,
   validateBackupWriter,
   UserBackupWriter,
   createUserBackupWriter,
-  validateUserBackupWriter
-};
+  validateUserBackupWriter };

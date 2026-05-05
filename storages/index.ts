@@ -4,8 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
 
 /**
  * Storages barrel — eager init, single entry point for all storage instances.
@@ -13,6 +11,9 @@ import type {} from 'node:fs';
  * Call `init(config)` once at startup (api-server, test setup).
  * After that, access instances via getters: `require('storages').storageLayer`.
  */
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const pluginLoader = require('./pluginLoader');
 const internals = require('./internals');
@@ -97,7 +98,7 @@ async function init (config) {
   // Database/DatabasePG constructors (step 1) can use them before initEngines (step 3).
   for (const engineName of pluginLoader.listEngines()) {
     try {
-      const engineInternals = require(`./engines/${engineName}/src/_internals`);
+      const { _internals: engineInternals } = require(`./engines/${engineName}/src/_internals`);
       engineInternals.set('getLogger', getLogger);
       engineInternals.set('config', getEngineConfig(config, engineName));
     } catch (e) { /* engine may not have _internals.js */ }
@@ -111,11 +112,11 @@ async function init (config) {
   let database = null;
   let databasePG = null;
   if (baseEngine === 'mongodb') {
-    const Database = require('./engines/mongodb/src/Database');
+    const { Database } = require('./engines/mongodb/src/Database');
     database = new Database(config.get('storages:engines:mongodb'));
     dataBaseTracer(database);
   } else if (baseEngine === 'postgresql') {
-    const DatabasePG = require('./engines/postgresql/src/DatabasePG');
+    const { DatabasePG } = require('./engines/postgresql/src/DatabasePG');
     databasePG = new DatabasePG(config.get('storages:engines:postgresql'));
   }
   const connection = database || databasePG || null;
@@ -123,6 +124,7 @@ async function init (config) {
   // Publish early so sub-component inits can find the connections
   _earlyDatabase = database;
   _earlyDatabasePG = databasePG;
+  _refreshExports();
 
   // 2. Register internals
   const storageLayer = new StorageLayer();
@@ -198,6 +200,7 @@ async function init (config) {
     seriesConnection,
     dataStoreModule
   };
+  _refreshExports();
   initializing = false;
 }
 
@@ -212,22 +215,65 @@ function reset () {
   initializing = false;
   _earlyDatabase = null;
   _earlyDatabasePG = null;
+  _refreshExports();
   internals.clearAll();
   pluginLoader.reset();
 }
 
-module.exports = {
+// Live-bound named exports — updated by init() and reset() so consumers
+// reading `require('storages').platformDB` always see the current value.
+// Plain `let` exports satisfy ESM module-namespace getter semantics; under
+// Node 24 require(esm) the CJS consumer's namespace object exposes them
+// via getter functions backed by these bindings.
+// `undefined` matches the original `instances?.X` getter behavior pre-init.
+let database: any = undefined;
+let databasePG: any = undefined;
+let connection: any = undefined;
+let storageLayer: any = undefined;
+let userAccountStorage: any = undefined;
+let usersLocalIndex: any = undefined;
+let platformDB: any = undefined;
+let auditStorage: any = undefined;
+let seriesConnection: any = undefined;
+let dataStoreModule: any = undefined;
+
+function _refreshExports (): void {
+  database = instances?.database ?? _earlyDatabase ?? undefined;
+  databasePG = instances?.databasePG ?? _earlyDatabasePG ?? undefined;
+  connection = instances?.connection;
+  storageLayer = instances?.storageLayer;
+  userAccountStorage = instances?.userAccountStorage;
+  usersLocalIndex = instances?.usersLocalIndex;
+  platformDB = instances?.platformDB;
+  auditStorage = instances?.auditStorage;
+  seriesConnection = instances?.seriesConnection;
+  dataStoreModule = instances?.dataStoreModule;
+}
+
+/**
+ * Test-only override for platformDB.
+ * Used by api-server clusterWorkers/accessStateWorker.js to inject a worker-local
+ * rqlite engine before the barrel finishes init() — replaces the prior
+ * `Object.defineProperty(storages, 'platformDB', { get })` pattern, which no longer
+ * works under ESM because module namespace properties are non-configurable.
+ */
+function _setPlatformDBForTest (db: any): void {
+  platformDB = db;
+}
+
+export {
   init,
   reset,
   pluginLoader,
-  get database () { return instances?.database ?? _earlyDatabase; },
-  get databasePG () { return instances?.databasePG ?? _earlyDatabasePG; },
-  get connection () { return instances?.connection; },
-  get storageLayer () { return instances?.storageLayer; },
-  get userAccountStorage () { return instances?.userAccountStorage; },
-  get usersLocalIndex () { return instances?.usersLocalIndex; },
-  get platformDB () { return instances?.platformDB; },
-  get auditStorage () { return instances?.auditStorage; },
-  get seriesConnection () { return instances?.seriesConnection; },
-  get dataStoreModule () { return instances?.dataStoreModule; }
+  database,
+  databasePG,
+  connection,
+  storageLayer,
+  userAccountStorage,
+  usersLocalIndex,
+  platformDB,
+  auditStorage,
+  seriesConnection,
+  dataStoreModule,
+  _setPlatformDBForTest
 };

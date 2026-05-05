@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { createId: cuid } = require('@paralleldrive/cuid2');
 
@@ -111,4 +112,4 @@ class PasswordResetRequestsPG {
   }
 }
 
-module.exports = PasswordResetRequestsPG;
+export { PasswordResetRequestsPG };

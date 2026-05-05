@@ -4,21 +4,22 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const Readable = require('stream').Readable;
 const ds = require('@pryv/datastore');
 const errors = ds.errors;
 const handleDuplicateError = require('../Database').handleDuplicateError;
 const timestamp = require('unix-timestamp');
-const DeletionModesFields = require('../../../../shared/DeletionModesFields');
-const localStoreEventQueries = require('../../../../shared/localStoreEventQueries');
+const { DeletionModesFields } = require('../../../../shared/DeletionModesFields');
+const { localStoreEventQueries } = require('../../../../shared/localStoreEventQueries');
 const { toMongoDBQuery } = require('./streamsQueryToMongo');
 
 /**
  * Local data store: events implementation.
  */
-module.exports = ds.createUserEvents({
+const userEvents = ds.createUserEvents({
   eventsCollection: null,
   eventsFileStorage: null,
   deletionSettings: {
@@ -213,6 +214,8 @@ module.exports = ds.createUserEvents({
     return res;
   }
 });
+
+export { userEvents };
 
 // --------------- helpers ------------//
 

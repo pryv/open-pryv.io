@@ -104,4 +104,4 @@ function createUserAccountStorage (implementation: Partial<UserAccountStorage>):
   return Object.assign(Object.create(UserAccountStorage), implementation);
 }
 
-module.exports = { UserAccountStorage, createUserAccountStorage };
+export { UserAccountStorage, createUserAccountStorage };

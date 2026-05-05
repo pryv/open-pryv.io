@@ -4,12 +4,13 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const MongoClient = require('mongodb').MongoClient;
 const { setTimeout } = require('timers/promises');
 
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 
 // mongodb@5+ removed the callback-based driver API; everything is Promise-only.
 // The Database class still exposes a callback shape to the rest of the codebase,
@@ -695,8 +696,7 @@ class Database {
   }
 }
 
-module.exports = Database;
-
+export { Database };
 /**
  * @typedef {{
  *   errmsg?: string;

@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const SQLite3 = require('better-sqlite3');
 const { Readable } = require('stream');
@@ -14,8 +15,6 @@ const concurrentSafeWrite = require('../concurrentSafeWrite');
 const eventsSchema = require('./schema/events');
 const fullTextSearch = require('./fullTextSearch');
 const { toSQLiteQuery } = require('./streamQueryUtils');
-
-module.exports = UserDatabase;
 
 const DB_OPTIONS = {};
 
@@ -343,3 +342,5 @@ function prepareQuery (params: any = {}, isDelete = false): string {
   }
   return queryString;
 }
+
+export { UserDatabase };

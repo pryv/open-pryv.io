@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { fromCallback } = require('utils');
 const assert = require('assert');
@@ -17,7 +18,7 @@ function pick (obj, keys) {
   return out;
 }
 
-const _internals = require('../_internals');
+const { _internals } = require('../_internals');
 const treeUtils = require('../../../../shared/treeUtils');
 
 const STREAM_PROPERTIES = [
@@ -28,7 +29,7 @@ const STREAM_PROPERTIES = [
 /**
  * Local data store: streams implementation.
  */
-module.exports = ds.createUserStreams({
+const userStreams = ds.createUserStreams({
   userStreamsStorage: null,
   streamsCollection: null,
 
@@ -134,6 +135,8 @@ module.exports = ds.createUserStreams({
     return { count };
   }
 });
+
+export { userStreams };
 
 /**
  * @param {object} stream

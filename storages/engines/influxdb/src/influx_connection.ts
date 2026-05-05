@@ -5,10 +5,11 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const influx = require('influx');
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 
 /**
  * Connection to the influx database. Adds error handling and logging on top
@@ -106,4 +107,4 @@ class InfluxConnection {
   }
 }
 
-module.exports = InfluxConnection;
+export { InfluxConnection };

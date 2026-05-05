@@ -63,4 +63,4 @@ function validateUsersLocalIndexDB (instance: any): UsersLocalIndexDB {
   return instance;
 }
 
-module.exports = { UsersLocalIndexDB, validateUsersLocalIndexDB };
+export { UsersLocalIndexDB, validateUsersLocalIndexDB };

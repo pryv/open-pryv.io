@@ -13,11 +13,7 @@
 // following characters _-:
 // see: https://sqlite.org/fts5.html#tokenizers
 
-import type {} from 'node:fs';
-
-module.exports = {
-  setupForTable
-};
+export { setupForTable };
 
 /**
  * Add full text search capabilities on a specific table.

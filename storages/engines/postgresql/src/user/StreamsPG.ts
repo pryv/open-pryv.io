@@ -5,10 +5,11 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const BaseStoragePG = require('./BaseStoragePG');
-const _internals = require('../_internals');
+const { BaseStoragePG } = require('./BaseStoragePG');
+const { _internals } = require('../_internals');
 const timestamp = require('unix-timestamp');
 const treeUtils = require('../../../../shared/treeUtils');
 
@@ -131,4 +132,4 @@ class StreamsPG extends BaseStoragePG {
   }
 }
 
-module.exports = StreamsPG;
+export { StreamsPG };

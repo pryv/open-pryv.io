@@ -8,16 +8,16 @@
 /**
  * Engine-local internals registry.
  * Populated by the engine entry point's init() from barrel-provided values.
- * All engine files use require('./_internals') instead of host require() calls.
+ * All engine files import { _internals } from './_internals'.
  */
-
-import type {} from 'node:fs';
 
 const registry: Record<string, any> = {};
 
-module.exports = {
+const _internals = {
   set (name: string, value: any): void { registry[name] = value; },
   get userLocalDirectory (): any { return registry.userLocalDirectory; },
   get getLogger (): (name: string) => any { return registry.getLogger; },
   get config (): any { return registry.config; }
 };
+
+export { _internals };

@@ -4,16 +4,17 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { fromCallback } = require('utils');
 const converters = require('./../converters');
-const _internals = require('../_internals');
+const { _internals } = require('../_internals');
 const logger = _internals.lazyLogger('storage:base-storage');
 
 const BULKWRITE_BATCH_SIZE = 1000;
 
-module.exports = BaseStorage;
+export { BaseStorage };
 /**
  * Base class for storage modules.
  * It handles the application of data converters (if any) and querying options, as well as the

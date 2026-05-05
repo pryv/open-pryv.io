@@ -5,7 +5,10 @@
  * Refer to LICENSE file
  */
 
-import type { BackupReader, UserBackupReader } from './BackupReader';
+import type { BackupReader, UserBackupReader } from './BackupReader.js';
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const fs = require('fs');
 const path = require('path');
@@ -219,4 +222,4 @@ async function * emptyIterator (): AsyncGenerator<any> {
   // yields nothing
 }
 
-module.exports = { createFilesystemBackupReader };
+export { createFilesystemBackupReader };

@@ -30,7 +30,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
-const DBrqlite = require('../../../../storages/engines/rqlite/src/DBrqlite');
+const { DBrqlite } = require('../../../../storages/engines/rqlite/src/DBrqlite');
 const { AcmeOrchestrator } = require('../../src/acme/AcmeOrchestrator');
 const { CertRenewer, PlatformDBDnsWriter } = require('../../src/acme/CertRenewer');
 const { FileMaterializer } = require('../../src/acme/FileMaterializer');

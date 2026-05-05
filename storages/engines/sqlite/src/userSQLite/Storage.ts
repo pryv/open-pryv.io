@@ -4,13 +4,16 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 const path = require('path');
 const fs = require('fs/promises');
 const { LRUCache: LRU } = require('lru-cache');
 
-const UserDatabase = require('./UserDatabase');
+const { UserDatabase } = require('./UserDatabase');
 const migrations = require('./migrations');
-const _internals = require('../_internals');
+const { _internals } = require('../_internals');
 
 const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
@@ -99,4 +102,4 @@ async function open (storage: SqliteStorage, userId: string, logger: any): Promi
   return db;
 }
 
-module.exports = SqliteStorage;
+export { SqliteStorage };

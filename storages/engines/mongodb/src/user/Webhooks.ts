@@ -4,14 +4,15 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const BaseStorage = require('./BaseStorage');
+const { BaseStorage } = require('./BaseStorage');
 const converters = require('./../converters');
 const util = require('util');
 const timestamp = require('unix-timestamp');
 
-module.exports = Webhooks;
+export { Webhooks };
 /**
  * DB persistence for webhooks.
  *

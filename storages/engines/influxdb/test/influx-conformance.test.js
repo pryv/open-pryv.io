@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const InfluxConnection = require('../src/influx_connection');
+const { InfluxConnection } = require('../src/influx_connection');
 const conformanceTests = require('./conformance/InfluxConnection.test');
 
 describe('[ICFM] InfluxConnection conformance', () => {

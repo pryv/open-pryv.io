@@ -5,11 +5,12 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { LRUCache: LRU } = require('lru-cache');
-const UserAuditDatabasePG = require('./UserAuditDatabasePG');
-const _internals = require('./_internals');
+const { UserAuditDatabasePG } = require('./UserAuditDatabasePG');
+const { _internals } = require('./_internals');
 
 const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
@@ -69,4 +70,4 @@ class AuditStoragePG {
   }
 }
 
-module.exports = AuditStoragePG;
+export { AuditStoragePG };

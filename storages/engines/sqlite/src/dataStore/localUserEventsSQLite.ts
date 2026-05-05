@@ -5,19 +5,20 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const ds = require('@pryv/datastore');
 const errors = ds.errors;
 const timestamp = require('unix-timestamp');
-const DeletionModesFields = require('../../../../shared/DeletionModesFields');
-const localStoreEventQueries = require('../../../../shared/localStoreEventQueries');
+const { DeletionModesFields } = require('../../../../shared/DeletionModesFields');
+const { localStoreEventQueries } = require('../../../../shared/localStoreEventQueries');
 
 /**
  * Local data store: events implementation.
  */
-module.exports = ds.createUserEvents({
+const userEvents = ds.createUserEvents({
   storage: null,
   eventsFileStorage: null,
   deletionSettings: null,
@@ -161,3 +162,5 @@ module.exports = ds.createUserEvents({
     return res;
   }
 });
+
+export { userEvents };

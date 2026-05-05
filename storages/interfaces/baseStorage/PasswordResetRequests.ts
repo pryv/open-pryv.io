@@ -44,4 +44,4 @@ function validatePasswordResetRequests (instance: any): PasswordResetRequests {
   return instance;
 }
 
-module.exports = { validatePasswordResetRequests, REQUIRED_METHODS };
+export { validatePasswordResetRequests, REQUIRED_METHODS };

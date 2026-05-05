@@ -10,14 +10,15 @@
  * Uses `platform_unique_fields` and `platform_indexed_fields` tables.
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 class DBpostgresql {
   db: any;
   closed: boolean = false;
 
   async init (): Promise<void> {
-    const _internals = require('./_internals');
+    const { _internals } = require('./_internals');
     this.db = _internals.databasePG;
     await this.db.ensureConnect();
     this.closed = false;
@@ -190,4 +191,4 @@ class DBpostgresql {
   }
 }
 
-module.exports = DBpostgresql;
+export { DBpostgresql };

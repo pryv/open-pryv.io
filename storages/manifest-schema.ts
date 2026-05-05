@@ -4,8 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
 
 /**
  * Validates a storage engine manifest.json against the expected schema.
@@ -72,4 +70,4 @@ function validateManifest (manifest, engineDir) {
   return manifest;
 }
 
-module.exports = { validateManifest, VALID_STORAGE_TYPES };
+export { validateManifest, VALID_STORAGE_TYPES };

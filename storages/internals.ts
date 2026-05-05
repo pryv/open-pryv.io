@@ -4,8 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
 
 /**
  * Host capabilities registry for storage engine plugins.
@@ -79,4 +77,4 @@ function isRegistered (name) {
   return name in registry;
 }
 
-module.exports = { register, resolve, listRegistered, isRegistered, clearAll };
+export { register, resolve, listRegistered, isRegistered, clearAll };

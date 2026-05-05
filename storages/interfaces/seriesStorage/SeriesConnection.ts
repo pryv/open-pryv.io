@@ -39,4 +39,4 @@ function validateSeriesConnection (instance: any): SeriesConnection {
   return instance;
 }
 
-module.exports = { validateSeriesConnection, REQUIRED_METHODS };
+export { validateSeriesConnection, REQUIRED_METHODS };

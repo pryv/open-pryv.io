@@ -260,4 +260,4 @@ function validatePlatformDB (instance: any): PlatformDB {
   return instance;
 }
 
-module.exports = { PlatformDB, validatePlatformDB };
+export { PlatformDB, validatePlatformDB };

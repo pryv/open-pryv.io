@@ -12,10 +12,11 @@
  * - Account fields with history (email, language, phone, etc.)
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const timestamp = require('unix-timestamp');
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 const encryption = require('utils').encryption;
 
 let passwordsCollection = null;
@@ -29,7 +30,7 @@ const InitStates = {
 };
 let initState = InitStates.NOT_INITIALIZED;
 
-module.exports = _internals.createUserAccountStorage({
+const userAccountStorage = _internals.createUserAccountStorage({
   init,
   addPasswordHash,
   getPasswordHash,
@@ -47,6 +48,8 @@ module.exports = _internals.createUserAccountStorage({
   _importAll,
   _clearAll
 });
+
+export { userAccountStorage };
 
 async function init () {
   while (initState === InitStates.INITIALIZING) {

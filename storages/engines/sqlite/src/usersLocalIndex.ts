@@ -5,13 +5,14 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const fs = require('fs');
 const SQLite3 = require('better-sqlite3');
 const concurrentSafeWrite = require('./concurrentSafeWrite');
 
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 
 class DBIndex {
   db: any;
@@ -100,4 +101,4 @@ class DBIndex {
   }
 }
 
-module.exports = DBIndex;
+export { DBIndex };

@@ -10,13 +10,14 @@
  * Uses the shared `users_index` table.
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 class UsersLocalIndexPG {
   db: any;
 
   async init (): Promise<void> {
-    const _internals = require('./_internals');
+    const { _internals } = require('./_internals');
     this.db = _internals.databasePG;
     await this.db.ensureConnect();
   }
@@ -82,4 +83,4 @@ class UsersLocalIndexPG {
   }
 }
 
-module.exports = UsersLocalIndexPG;
+export { UsersLocalIndexPG };

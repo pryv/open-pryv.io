@@ -5,8 +5,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
 
 /**
  * Helper methods for handling tree object structures.
@@ -20,7 +18,7 @@ import type {} from 'node:fs';
  *
  * @param {Boolean} stripParentIds Optional, default: false
  */
-exports.buildTree = function (array, stripParentIds) {
+function buildTree (array, stripParentIds) {
   if (!Array.isArray(array)) {
     throw new Error('Invalid argument: expected an array');
   }
@@ -51,7 +49,7 @@ exports.buildTree = function (array, stripParentIds) {
     }
   });
   return result;
-};
+}
 
 /**
  * @returns {void}
@@ -67,14 +65,14 @@ function verifyFlatItem (item) {
  * @param {any[]} array
  * @returns {any[]}
  */
-exports.flattenTreeWithoutParents = function (array) {
+function flattenTreeWithoutParents (array) {
   if (!Array.isArray(array)) {
     throw new Error('Invalid argument: expected an array');
   }
   const result = [];
   flattenRecursiveWithoutParents(array, null, result);
   return result;
-};
+}
 
 /**
  * @returns {void}
@@ -110,14 +108,14 @@ function flattenRecursiveWithoutParents (originalArray, parentId, resultArray) {
  * }
  * @param {*} object
  */
-exports.flattenSimpleObject = function (object) {
+function flattenSimpleObject (object) {
   if (!(object instanceof Object)) {
     throw new Error('Invalid argument: expected an object');
   }
   const result = [];
   flattenRecursiveSimpleObject(object, result);
   return result;
-};
+}
 
 /**
  * @param {any[]} resultArray
@@ -139,14 +137,14 @@ function flattenRecursiveSimpleObject (originalObject, resultArray) {
  * @param {any[]} array
  * @returns {any[]}
  */
-exports.flattenTree = function (array) {
+function flattenTree (array) {
   if (!Array.isArray(array)) {
     throw new Error('Invalid argument: expected an array');
   }
   const result = [];
   flattenRecursive(array, null, result);
   return result;
-};
+}
 
 /**
  * @returns {void}
@@ -174,16 +172,16 @@ function flattenRecursive (originalArray, parentId, resultArray) {
   });
 }
 
-const findById = (exports.findById = function (array, id) {
+function findById (array, id) {
   return findInTree(array, function (item) {
     return item.id === id;
   });
-});
+}
 
 /**
  * @param {Function} iterator Arguments: ({Object}), return value: {Boolean}
  */
-const findInTree = (exports.findInTree = function (array, iterator) {
+function findInTree (array, iterator) {
   for (let i = 0, n = array.length; i < n; i++) {
     const item = array[i];
     // check if item matches
@@ -200,18 +198,18 @@ const findInTree = (exports.findInTree = function (array, iterator) {
   }
   // not found
   return null;
-});
+}
 
 /**
  * Iterate on Tree, if iterator returns false, do not inspect children
  * @param {Function} iterator Arguments: ({Object}), return value: {Boolean}
  */
-const iterateOnPromise = (exports.iterateOnPromise = async function (array, iterator) {
+async function iterateOnPromise (array, iterator) {
   if (!array) { return; }
   for (const stream of array) {
     if ((await iterator(stream)) && stream.children) { await iterateOnPromise(stream.children, iterator); }
   }
-});
+}
 
 /**
  * @async
@@ -219,7 +217,7 @@ const iterateOnPromise = (exports.iterateOnPromise = async function (array, iter
  *                              (if yes, the tree structure may be modified)
  * @callback {Promise<boolean>} iterator Arguments: ({Object}), return value: {Boolean}
  */
-const filterTreeOnPromise = (exports.filterTreeOnPromise = async function (array, keepOrphans, iterator) {
+async function filterTreeOnPromise (array, keepOrphans, iterator) {
   const filteredArray = [];
   for (let i = 0, n = array.length; i < n; i++) {
     const item = array[i];
@@ -235,7 +233,7 @@ const filterTreeOnPromise = (exports.filterTreeOnPromise = async function (array
     }
   }
   return filteredArray;
-});
+}
 
 /**
  * The result is made from copies of the original items (which are left untouched).
@@ -243,7 +241,7 @@ const filterTreeOnPromise = (exports.filterTreeOnPromise = async function (array
  *                              (if yes, the tree structure may be modified)
  * @param {Function} iterator Arguments: ({Object}), return value: {Boolean}
  */
-const filterTree = (exports.filterTree = function (array, keepOrphans, iterator) {
+function filterTree (array, keepOrphans, iterator) {
   const filteredArray = [];
   for (let i = 0, n = array.length; i < n; i++) {
     const item = array[i];
@@ -258,25 +256,25 @@ const filterTree = (exports.filterTree = function (array, keepOrphans, iterator)
     }
   }
   return filteredArray;
-});
+}
 
-const collect = (exports.collect = function (array, iterator) {
+function collect (array, iterator) {
   if (!Array.isArray(array)) {
     throw new Error('Invalid argument: expected an array');
   }
   const result = [];
   collectRecursive(array, result, iterator);
   return result;
-});
+}
 
-const collectFromRootItem = (exports.collectFromRootItem = function (item, iterator) {
+function collectFromRootItem (item, iterator) {
   if (Array.isArray(item)) {
     throw new Error('Invalid argument: expected a single item');
   }
   const result = [iterator(item)];
   collectRecursive(item.children, result, iterator);
   return result;
-});
+}
 
 /**
  * @returns {void}
@@ -290,17 +288,17 @@ function collectRecursive (originalArray, resultArray, iterator) {
   });
 }
 
-exports.collectPluck = function (array, propertyName) {
+function collectPluck (array, propertyName) {
   return collect(array, function (item) {
     return item[propertyName];
   });
-};
+}
 
-const collectPluckFromRootItem = (exports.collectPluckFromRootItem = function (item, propertyName) {
+function collectPluckFromRootItem (item, propertyName) {
   return collectFromRootItem(item, function (item) {
     return item[propertyName];
   });
-});
+}
 
 /**
  * Returns an array with the given ids plus those of their descendants, excluding unknown ids but
@@ -308,7 +306,7 @@ const collectPluckFromRootItem = (exports.collectPluckFromRootItem = function (i
  *
  * @param {Array} ids
  */
-exports.expandIds = function (array, ids) {
+function expandIds (array, ids) {
   const expandedIds = [];
   ids.forEach(function (id) {
     let currentExpIds;
@@ -325,19 +323,19 @@ exports.expandIds = function (array, ids) {
     expandedIds.push.apply(expandedIds, currentExpIds);
   });
   return expandedIds;
-};
+}
 
 /**
  * Applies "iterator" function to all elements of the array and its children.
  */
-exports.cloneAndApply = function (array, iterator) {
+function cloneAndApply (array, iterator) {
   const result = [];
   array.forEach((item) => {
     const clone = structuredClone(item);
     result.push(applyRecursive(iterator(clone), iterator));
   });
   return result;
-};
+}
 
 /**
  * Mutates the given data.
@@ -358,7 +356,7 @@ function applyRecursive (item, iterator) {
  * @param {Array} properties to display ['id', ..]
  * @param {*} depth  - private
  */
-exports.debug = function debug (streams, properties, depth) {
+function debug (streams, properties, depth) {
   const myddepth = depth ? depth + 1 : 1;
   if (!properties) { properties = []; }
   const base = '-'.padStart(myddepth * 2, ' ');
@@ -372,4 +370,43 @@ exports.debug = function debug (streams, properties, depth) {
       debug(stream.children, properties, myddepth);
     }
   }
+}
+
+const treeUtils = {
+  buildTree,
+  flattenTreeWithoutParents,
+  flattenSimpleObject,
+  flattenTree,
+  findById,
+  findInTree,
+  iterateOnPromise,
+  filterTreeOnPromise,
+  filterTree,
+  collect,
+  collectFromRootItem,
+  collectPluck,
+  collectPluckFromRootItem,
+  expandIds,
+  cloneAndApply,
+  debug
+};
+
+export {
+  treeUtils,
+  buildTree,
+  flattenTreeWithoutParents,
+  flattenSimpleObject,
+  flattenTree,
+  findById,
+  findInTree,
+  iterateOnPromise,
+  filterTreeOnPromise,
+  filterTree,
+  collect,
+  collectFromRootItem,
+  collectPluck,
+  collectPluckFromRootItem,
+  expandIds,
+  cloneAndApply,
+  debug
 };

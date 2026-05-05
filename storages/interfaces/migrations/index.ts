@@ -13,10 +13,11 @@
  *   are documented in `README.md`.
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 const { MigrationRunner, discoverMigrations, createMigrationRunner } = require('./MigrationRunner');
 
-module.exports = {
-  MigrationRunner,
+export { MigrationRunner,
   discoverMigrations,
-  createMigrationRunner
-};
+  createMigrationRunner };

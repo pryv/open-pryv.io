@@ -8,15 +8,16 @@
 /**
  * PostgreSQL Data Store.
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
-const _internals = require('../_internals');
-const userStreams = require('./localUserStreamsPG');
-const userEvents = require('./localUserEventsPG');
-const LocalTransactionPG = require('./LocalTransactionPG');
+const { _internals } = require('../_internals');
+const { userStreams } = require('./localUserStreamsPG');
+const { userEvents } = require('./localUserEventsPG');
+const { LocalTransactionPG } = require('./LocalTransactionPG');
 
-module.exports = ds.createDataStore({
+const dataStore = ds.createDataStore({
 
   async init (this: any, params: any): Promise<any> {
     this.settings = params.settings;
@@ -55,3 +56,5 @@ module.exports = ds.createDataStore({
     return { streams, events, files };
   }
 });
+
+export { dataStore };

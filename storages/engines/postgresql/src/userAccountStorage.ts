@@ -5,15 +5,16 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const timestamp = require('unix-timestamp');
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 const encryption = require('utils').encryption;
 
 let db: any;
 
-module.exports = _internals.createUserAccountStorage({
+const userAccountStorage = _internals.createUserAccountStorage({
   async init (): Promise<void> {
     db = _internals.databasePG;
     await db.ensureConnect();
@@ -234,3 +235,5 @@ class StoreKeyValueData {
     }
   }
 }
+
+export { userAccountStorage };

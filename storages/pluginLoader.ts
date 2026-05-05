@@ -4,8 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
 
 /**
  * Storage plugin loader.
@@ -20,6 +18,13 @@ import type {} from 'node:fs';
  *   const engine = pluginLoader.getEngineModule(pluginLoader.getEngineFor('platformStorage'));
  *   const platformDB = engine.createPlatformDB();
  */
+
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const path = require('path');
 const fs = require('fs');
@@ -231,8 +236,7 @@ function reset () {
   initialized = false;
 }
 
-module.exports = {
-  init,
+export { init,
   discover,
   getEngineFor,
   getEngineModule,
@@ -240,5 +244,4 @@ module.exports = {
   getManifest,
   reset,
   REQUIRED_EXPORTS,
-  VALID_STORAGE_TYPES
-};
+  VALID_STORAGE_TYPES };

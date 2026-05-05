@@ -12,9 +12,10 @@
  * Note: dataStore streams fallback to MongoDB (incomplete).
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 
 /**
  * Receive host internals from the barrel.
@@ -34,31 +35,26 @@ function initStorageLayer (_storageLayer: any, _connection: any, _options: any):
 }
 
 function getUserAccountStorage () {
-  return require('./userAccountStorage');
+  const { userAccountStorage } = require('./userAccountStorage');
+  return userAccountStorage;
 }
 
 function getUsersLocalIndex () {
-  return require('./usersLocalIndex');
+  const { DBIndex } = require('./usersLocalIndex');
+  return DBIndex;
 }
 
 // -- DataStore ----------------------------------------------------------
 
 function getDataStoreModule () {
-  return require('./dataStore');
+  return require('./dataStore').dataStore;
 }
 
 // -- AuditStorage -------------------------------------------------------
 
 function createAuditStorage () {
-  const Storage = require('./userSQLite/Storage');
-  return new Storage('audit');
+  const { SqliteStorage } = require('./userSQLite/Storage');
+  return new SqliteStorage('audit');
 }
 
-module.exports = {
-  init,
-  initStorageLayer,
-  getUserAccountStorage,
-  getUsersLocalIndex,
-  getDataStoreModule,
-  createAuditStorage
-};
+export { init, initStorageLayer, getUserAccountStorage, getUsersLocalIndex, getDataStoreModule, createAuditStorage };

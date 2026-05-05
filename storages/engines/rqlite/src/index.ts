@@ -5,9 +5,10 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const DBrqlite = require('./DBrqlite');
+const { DBrqlite } = require('./DBrqlite');
 const { buildMigrationsCapability } = require('./SchemaMigrations');
 
 let platformDB: any = null;
@@ -40,8 +41,4 @@ function getMigrationsCapability (): any | null {
   return buildMigrationsCapability(platformDB, _getLogger);
 }
 
-module.exports = {
-  init,
-  createPlatformDB,
-  getMigrationsCapability
-};
+export { init, createPlatformDB, getMigrationsCapability };

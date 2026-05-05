@@ -47,11 +47,10 @@ async function ensureInit () {
   const platformDB = rqliteEngine.createPlatformDB();
   await platformDB.init();
 
+  // ESM module namespace properties are non-configurable, so we use the
+  // barrel's exported test-only setter instead of Object.defineProperty.
   const storages = require('storages');
-  Object.defineProperty(storages, 'platformDB', {
-    get: () => platformDB,
-    configurable: true
-  });
+  storages._setPlatformDBForTest(platformDB);
 }
 
 const handlers = {

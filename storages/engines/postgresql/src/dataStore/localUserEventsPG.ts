@@ -5,16 +5,17 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { Readable } = require('stream');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const ds = require('@pryv/datastore');
 const errors = ds.errors;
-const DatabasePG = require('../DatabasePG');
+const { DatabasePG } = require('../DatabasePG');
 const timestamp = require('unix-timestamp');
-const DeletionModesFields = require('../../../../shared/DeletionModesFields');
-const localStoreEventQueries = require('../../../../shared/localStoreEventQueries');
+const { DeletionModesFields } = require('../../../../shared/DeletionModesFields');
+const { localStoreEventQueries } = require('../../../../shared/localStoreEventQueries');
 
 const COL_MAP: Record<string, string> = {
   headId: 'head_id',
@@ -74,7 +75,7 @@ function rowToEvent (row: any): any | null {
  * PostgreSQL data store: events implementation.
  * Implements the @pryv/datastore UserEvents interface.
  */
-module.exports = ds.createUserEvents({
+const userEvents = ds.createUserEvents({
   /** @type {import('../DatabasePG')} */
   db: null,
   eventsFileStorage: null,
@@ -404,7 +405,9 @@ module.exports = ds.createUserEvents({
 });
 
 // Expose rowToEvent for use by StorageLayer.iterateAllEvents
-module.exports.rowToEvent = rowToEvent;
+(userEvents as any).rowToEvent = rowToEvent;
+
+export { userEvents, rowToEvent };
 
 // ---- Query building helpers ----
 

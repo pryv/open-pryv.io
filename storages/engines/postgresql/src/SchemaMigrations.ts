@@ -20,9 +20,14 @@
  * delete).
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 
 class SchemaMigrationsPG {
   db: any;
@@ -85,4 +90,4 @@ function buildMigrationsCapability (): any {
   };
 }
 
-module.exports = { SchemaMigrationsPG, buildMigrationsCapability };
+export { SchemaMigrationsPG, buildMigrationsCapability };

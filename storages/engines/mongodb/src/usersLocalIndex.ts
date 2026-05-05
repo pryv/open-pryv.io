@@ -8,13 +8,14 @@
  * Contains UserName >> UserId Mapping
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 class DBIndex {
   id4nameCollection;
 
   async init () {
-    const _internals = require('./_internals');
+    const { _internals } = require('./_internals');
     const db = _internals.database;
     this.id4nameCollection = await db.getCollection({
       name: 'id4name',
@@ -82,4 +83,4 @@ class DBIndex {
   }
 }
 
-module.exports = DBIndex;
+export { DBIndex };

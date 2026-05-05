@@ -14,11 +14,11 @@ const config = getConfigUnsafe(true);
 const database = storage.getDatabaseSync(true);
 
 // MongoDB-specific classes used as initial placeholders until init() provides engine-agnostic instances
-const PasswordResetRequests = require('storages/engines/mongodb/src/PasswordResetRequests');
-const Sessions = require('storages/engines/mongodb/src/Sessions');
-const Accesses = require('storages/engines/mongodb/src/user/Accesses');
-const Profile = require('storages/engines/mongodb/src/user/Profile');
-const Webhooks = require('storages/engines/mongodb/src/user/Webhooks');
+const { PasswordResetRequests } = require('storages/engines/mongodb/src/PasswordResetRequests');
+const { Sessions } = require('storages/engines/mongodb/src/Sessions');
+const { Accesses } = require('storages/engines/mongodb/src/user/Accesses');
+const { Profile } = require('storages/engines/mongodb/src/user/Profile');
+const { Webhooks } = require('storages/engines/mongodb/src/user/Webhooks');
 
 /**
  * Test process dependencies.

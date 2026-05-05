@@ -63,4 +63,4 @@ function validateEventFiles (instance: any): EventFiles {
   return instance;
 }
 
-module.exports = { EventFiles, createEventFiles, validateEventFiles };
+export { EventFiles, createEventFiles, validateEventFiles };

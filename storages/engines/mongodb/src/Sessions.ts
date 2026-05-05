@@ -8,10 +8,10 @@
  * Simple cookie-less user session store.
  * Fetches, generates, touches and destroys sessions.
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-module.exports = Sessions;
-
+export { Sessions };
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const { deepMerge } = require('utils');
 

@@ -14,6 +14,8 @@
  */
 
 import type { ChildProcess } from 'child_process';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { spawn } = require('node:child_process');
 const path = require('node:path');
@@ -219,4 +221,4 @@ async function waitForExternal (url: string, timeoutMs: number, log: (msg: strin
   log('External rqlited HTTP API ready');
 }
 
-module.exports = { start, stop, isRunning, waitForExternal, buildArgs };
+export { start, stop, isRunning, waitForExternal, buildArgs };

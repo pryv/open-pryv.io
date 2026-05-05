@@ -83,4 +83,4 @@ function validateUserStorage (instance: any): UserStorage {
   return instance;
 }
 
-module.exports = { validateUserStorage, REQUIRED_METHODS };
+export { validateUserStorage, REQUIRED_METHODS };

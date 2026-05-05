@@ -84,4 +84,4 @@ function validateUserAuditDatabase (instance: any): UserAuditDatabase {
   return instance;
 }
 
-module.exports = { validateUserAuditDatabase, REQUIRED_METHODS };
+export { validateUserAuditDatabase, REQUIRED_METHODS };

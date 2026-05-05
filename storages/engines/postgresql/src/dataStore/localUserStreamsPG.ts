@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { fromCallback } = require('utils');
 const assert = require('assert');
@@ -17,7 +18,7 @@ function pick (obj: any, keys: string[]): any {
   return out;
 }
 
-const _internals = require('../_internals');
+const { _internals } = require('../_internals');
 const treeUtils = require('../../../../shared/treeUtils');
 
 const STREAM_PROPERTIES = [
@@ -28,7 +29,7 @@ const STREAM_PROPERTIES = [
 /**
  * PostgreSQL data store: streams implementation.
  */
-module.exports = ds.createUserStreams({
+const userStreams = ds.createUserStreams({
   userStreamsStorage: null,
 
   init (this: any, userStreamsStorage: any): void {
@@ -140,6 +141,8 @@ module.exports = ds.createUserStreams({
     return { count };
   }
 });
+
+export { userStreams };
 
 function cloneStream (stream: any, childrenDepth: number): any {
   if (childrenDepth === -1) {

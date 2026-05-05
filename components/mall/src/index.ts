@@ -67,7 +67,7 @@ async function getMall () {
   };
   mall.addStore(dataStoreModule, { id: 'local', name: 'Local', settings: localSettings });
   // account (system streams backed by baseStorage account fields)
-  const accountStore = require('storages/datastores/account');
+  const { accountStore } = require('storages/datastores/account');
   mall.addStore(accountStore, { id: 'account', name: 'Account', settings: {} });
 
   // audit

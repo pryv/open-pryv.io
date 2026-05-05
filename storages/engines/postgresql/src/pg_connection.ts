@@ -5,9 +5,10 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 
 /**
  * PostgreSQL implementation of the InfluxConnection interface.
@@ -230,4 +231,4 @@ async function batchUpsert (db: any, rows: any[][]): Promise<void> {
   }
 }
 
-module.exports = PGSeriesConnection;
+export { PGSeriesConnection };

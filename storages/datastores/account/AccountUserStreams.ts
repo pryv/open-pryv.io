@@ -4,8 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
 
@@ -136,4 +137,4 @@ function applyQuery (streams, query) {
   return result;
 }
 
-module.exports = { create };
+export { create };

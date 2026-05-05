@@ -5,18 +5,18 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const BaseStorage = require('./BaseStorage');
+const { BaseStorage } = require('./BaseStorage');
 const converters = require('./../converters');
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const util = require('util');
-const _internals = require('../_internals');
+const { _internals } = require('../_internals');
 const logger = _internals.lazyLogger('storage:accesses');
 const timestamp = require('unix-timestamp');
 
-module.exports = Accesses;
-
+export { Accesses };
 /**
  * DB persistence for accesses.
  *

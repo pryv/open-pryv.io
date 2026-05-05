@@ -5,11 +5,12 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const BaseStoragePG = require('./BaseStoragePG');
+const { BaseStoragePG } = require('./BaseStoragePG');
 const { createId: generateId } = require('@paralleldrive/cuid2');
-const _internals = require('../_internals');
+const { _internals } = require('../_internals');
 const timestamp = require('unix-timestamp');
 
 const logger = _internals.lazyLogger('storage:accesses-pg');
@@ -139,4 +140,4 @@ class AccessesPG extends BaseStoragePG {
   }
 }
 
-module.exports = AccessesPG;
+export { AccessesPG };

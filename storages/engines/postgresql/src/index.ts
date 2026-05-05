@@ -11,9 +11,10 @@
  * Provides factories for all PostgreSQL-backed storage types.
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 
 /**
  * Receive host internals from the barrel.
@@ -29,12 +30,12 @@ function init (config: Record<string, any>, getLogger: (name: string) => any, in
 // -- BaseStorage --------------------------------------------------------
 
 function initStorageLayer (storageLayer: any, connection: any, options: any): void {
-  const PasswordResetRequestsPG = require('./PasswordResetRequestsPG');
-  const SessionsPG = require('./SessionsPG');
-  const AccessesPG = require('./user/AccessesPG');
-  const ProfilePG = require('./user/ProfilePG');
-  const StreamsPG = require('./user/StreamsPG');
-  const WebhooksPG = require('./user/WebhooksPG');
+  const { PasswordResetRequestsPG } = require('./PasswordResetRequestsPG');
+  const { SessionsPG } = require('./SessionsPG');
+  const { AccessesPG } = require('./user/AccessesPG');
+  const { ProfilePG } = require('./user/ProfilePG');
+  const { StreamsPG } = require('./user/StreamsPG');
+  const { WebhooksPG } = require('./user/WebhooksPG');
 
   storageLayer.connection = connection;
   storageLayer.passwordResetRequests = new PasswordResetRequestsPG(connection, {
@@ -135,30 +136,30 @@ function initStorageLayer (storageLayer: any, connection: any, options: any): vo
 }
 
 function getUserAccountStorage (): any {
-  return require('./userAccountStorage');
+  return require('./userAccountStorage').userAccountStorage;
 }
 
 function getUsersLocalIndex (): any {
-  return require('./usersLocalIndex');
+  return require('./usersLocalIndex').UsersLocalIndexPG;
 }
 
 // -- DataStore ----------------------------------------------------------
 
 function getDataStoreModule (): any {
-  return require('./dataStore');
+  return require('./dataStore').dataStore;
 }
 
 // -- PlatformStorage ----------------------------------------------------
 
 function createPlatformDB (): any {
-  const DB = require('./DBpostgresql');
+  const { DBpostgresql: DB } = require('./DBpostgresql');
   return new DB();
 }
 
 // -- SeriesStorage (PostgreSQL) -----------------------------------------
 
 async function createSeriesConnection (config: any): Promise<any> {
-  const PGSeriesConnection = require('./pg_connection');
+  const { PGSeriesConnection } = require('./pg_connection');
   // Use provided databasePG (from barrel init) or fall back to storage
   const pgDb = config.databasePG || _internals.databasePG;
   return new PGSeriesConnection(pgDb);
@@ -167,8 +168,8 @@ async function createSeriesConnection (config: any): Promise<any> {
 // -- AuditStorage (PostgreSQL) ------------------------------------------
 
 function createAuditStorage (): any {
-  const AuditStoragePG = require('./AuditStoragePG');
-  const DatabasePG = require('./DatabasePG');
+  const { AuditStoragePG } = require('./AuditStoragePG');
+  const { DatabasePG } = require('./DatabasePG');
   // Dedicated pool for audit: same DB, smaller pool size to avoid
   // contending with event/stream queries on the main pool.
   const pgConfig = _internals.config;
@@ -193,8 +194,7 @@ function getMigrationsCapability (): any | null {
   return buildMigrationsCapability();
 }
 
-module.exports = {
-  init,
+export { init,
   initStorageLayer,
   getUserAccountStorage,
   getUsersLocalIndex,
@@ -202,5 +202,4 @@ module.exports = {
   createPlatformDB,
   createSeriesConnection,
   createAuditStorage,
-  getMigrationsCapability
-};
+  getMigrationsCapability };

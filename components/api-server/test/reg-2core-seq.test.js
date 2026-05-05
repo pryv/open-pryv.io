@@ -23,7 +23,7 @@ const path = require('node:path');
 const dns = require('node:dns');
 const rqliteProcess = require('../../../storages/engines/rqlite/src/rqliteProcess');
 const { createDnsServer } = require('dns-server/src');
-const DBrqlite = require('../../../storages/engines/rqlite/src/DBrqlite');
+const { DBrqlite } = require('../../../storages/engines/rqlite/src/DBrqlite');
 
 const SERVICE_CORE_ROOT = path.resolve(__dirname, '../../../');
 const CORE_PROCESS = path.resolve(__dirname, 'helpers/core-process.js');

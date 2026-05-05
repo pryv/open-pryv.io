@@ -12,11 +12,9 @@
  * instead of host require() calls.
  */
 
-import type {} from 'node:fs';
-
 const registry: Record<string, any> = {};
 
-module.exports = {
+const _internals = {
   set (name: string, value: any): void { registry[name] = value; },
   /** Create a logger proxy that defers getLogger() until first use (safe at module scope). */
   lazyLogger (name: string): any {
@@ -38,3 +36,5 @@ module.exports = {
   get getLogger (): (name: string) => any { return registry.getLogger; },
   get config (): any { return registry.config; }
 };
+
+export { _internals };

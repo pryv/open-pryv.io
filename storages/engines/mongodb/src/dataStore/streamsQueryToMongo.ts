@@ -5,12 +5,10 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
-
 /**
  * Transform stream queries for MongoDB query format.
  */
-exports.toMongoDBQuery = function toMongoDBQuery (streamQueriesArray) {
+export function toMongoDBQuery (streamQueriesArray) {
   let mongoQuery = null; // no streams
   if (streamQueriesArray !== null) {
     if (streamQueriesArray.length === 1) {
@@ -22,7 +20,7 @@ exports.toMongoDBQuery = function toMongoDBQuery (streamQueriesArray) {
   }
   if (mongoQuery === null) { mongoQuery = { streamIds: { $in: [] } }; } // no streams
   return mongoQuery;
-};
+}
 
 /**
  * Convert a streamQuery to a query usable by MongoDB

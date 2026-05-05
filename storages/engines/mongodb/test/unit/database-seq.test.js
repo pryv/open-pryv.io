@@ -6,7 +6,7 @@
  */
 
 const assert = require('node:assert');
-const Database = require('storages/engines/mongodb/src/Database');
+const { Database } = require('storages/engines/mongodb/src/Database');
 const { config } = require('../../../../test/helpers');
 
 describe('[DBSE] Database', () => {

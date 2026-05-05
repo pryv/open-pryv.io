@@ -5,9 +5,10 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const BaseStoragePG = require('./BaseStoragePG');
+const { BaseStoragePG } = require('./BaseStoragePG');
 
 /**
  * PostgreSQL persistence for profile sets.
@@ -21,4 +22,4 @@ class ProfilePG extends BaseStoragePG {
   }
 }
 
-module.exports = ProfilePG;
+export { ProfilePG };

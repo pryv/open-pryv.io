@@ -8,15 +8,16 @@
 /**
  * Local Data Store.
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
-const _internals = require('../_internals');
-const userStreams = require('./localUserStreams');
-const userEvents = require('./localUserEvents');
-const LocalTransaction = require('./LocalTransaction');
+const { _internals } = require('../_internals');
+const { userStreams } = require('./localUserStreams');
+const { userEvents } = require('./localUserEvents');
+const { LocalTransaction } = require('./LocalTransaction');
 
-module.exports = ds.createDataStore({
+const dataStore = ds.createDataStore({
 
   async init (params) {
     this.settings = params.settings;
@@ -70,6 +71,8 @@ module.exports = ds.createDataStore({
     return { streams, events, files };
   }
 });
+
+export { dataStore };
 
 const eventsIndexes: Array<{ index: any, options: any }> = [
   {

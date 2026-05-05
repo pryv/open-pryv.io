@@ -17,7 +17,12 @@
  * to bump wins and followers observe the new value on their next read.
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const KEY = 'migrations/version';
 
@@ -74,4 +79,4 @@ function buildMigrationsCapability (db: any, getLogger?: (name: string) => any):
   };
 }
 
-module.exports = { SchemaMigrationsRqlite, buildMigrationsCapability };
+export { SchemaMigrationsRqlite, buildMigrationsCapability };

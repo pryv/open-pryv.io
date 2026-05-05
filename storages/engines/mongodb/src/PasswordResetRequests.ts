@@ -8,10 +8,10 @@
  * Tiny store for password reset requests.
  * TODO: migrate to SQLite storage.
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-module.exports = PasswordResetRequests;
-
+export { PasswordResetRequests };
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const { deepMerge } = require('utils');
 

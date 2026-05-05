@@ -5,17 +5,15 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const WAIT_LIST_MS = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100];
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 const logger = _internals.lazyLogger('sqliteConcurentWrites');
 const { setTimeout } = require('timers/promises');
 
-module.exports = {
-  execute,
-  initWALAndConcurrentSafeWriteCapabilities
-};
+export { execute, initWALAndConcurrentSafeWriteCapabilities };
 
 /**
  * Init the given DB in WAL and unsafe mode, as we will take care of managing concurrent writes errors.

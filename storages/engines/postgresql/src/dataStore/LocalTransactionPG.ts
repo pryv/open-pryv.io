@@ -5,8 +5,6 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
-
 /**
  * PostgreSQL transaction wrapper for the DataStore.
  */
@@ -42,4 +40,4 @@ class LocalTransactionPG {
   }
 }
 
-module.exports = LocalTransactionPG;
+export { LocalTransactionPG };

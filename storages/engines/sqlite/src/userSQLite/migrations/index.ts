@@ -5,19 +5,18 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const path = require('path');
 const fs = require('fs');
 
-const _internals = require('../../_internals');
-const UserDatabase = require('../UserDatabase');
-const migrate0to1 = require('./1');
+const { _internals } = require('../../_internals');
+const { UserDatabase } = require('../UserDatabase');
+const { migrateUserDB: migrate0to1 } = require('./1');
 const logger = _internals.lazyLogger('sqlite-storage-migration');
 
-module.exports = {
-  migrateUserDBsIfNeeded
-};
+export { migrateUserDBsIfNeeded };
 
 async function migrateUserDBsIfNeeded (storage: any): Promise<{ migrated: number, skipped: number } | undefined> {
   const usersBaseDirectory = _internals.userLocalDirectory.getBasePath();

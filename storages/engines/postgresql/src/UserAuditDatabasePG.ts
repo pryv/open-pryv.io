@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { Readable } = require('stream');
 
@@ -408,4 +409,4 @@ function convertCondition (item: any, idx: number, values: any[]): { condition: 
   }
 }
 
-module.exports = UserAuditDatabasePG;
+export { UserAuditDatabasePG };

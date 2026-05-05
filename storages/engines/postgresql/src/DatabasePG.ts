@@ -5,11 +5,12 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { Pool } = require('pg');
 const { setTimeout } = require('timers/promises');
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 
 /**
  * PostgreSQL connection wrapper with pooling.
@@ -413,4 +414,4 @@ CREATE INDEX IF NOT EXISTS idx_audit_head_id ON audit_events(user_id, head_id) W
 CREATE INDEX IF NOT EXISTS idx_audit_created_by ON audit_events(user_id, created_by);
 `;
 
-module.exports = DatabasePG;
+export { DatabasePG };

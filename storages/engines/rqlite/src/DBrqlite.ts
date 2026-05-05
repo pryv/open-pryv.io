@@ -517,4 +517,4 @@ function getAccessStateKey (key) {
   return 'access-state/' + key;
 }
 
-module.exports = DBrqlite;
+export { DBrqlite };

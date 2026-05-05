@@ -5,11 +5,12 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const Database = require('./Database');
+const { Database } = require('./Database');
 
-const _internals = require('./_internals');
+const { _internals } = require('./_internals');
 const logger = _internals.lazyLogger('platform:db');
 
 class DB {
@@ -177,4 +178,4 @@ class DB {
   }
 }
 
-module.exports = DB;
+export { DB };

@@ -4,13 +4,10 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
 /**
  * For versioning: what fields to keep for each of the possible deletion modes.
  */
-module.exports = {
+const DeletionModesFields: Record<string, string[]> = {
   'keep-everything': [
     'integrity'
   ],
@@ -45,3 +42,5 @@ module.exports = {
     'integrity'
   ]
 };
+
+export { DeletionModesFields };

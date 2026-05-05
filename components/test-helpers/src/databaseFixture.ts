@@ -106,8 +106,8 @@ class UserContext {
     }
     // Legacy raw DB path (MongoDB)
     const db = this.context.db;
-    const MongoAccesses = require('storages/engines/mongodb/src/user/Accesses');
-    const MongoWebhooks = require('storages/engines/mongodb/src/user/Webhooks');
+    const { Accesses: MongoAccesses } = require('storages/engines/mongodb/src/user/Accesses');
+    const { Webhooks: MongoWebhooks } = require('storages/engines/mongodb/src/user/Webhooks');
     return {
       sessions: new Sessions(db),
       accesses: new MongoAccesses(db),

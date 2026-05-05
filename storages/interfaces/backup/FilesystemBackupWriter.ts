@@ -6,7 +6,10 @@
  */
 
 import type { Readable } from 'stream';
-import type { BackupWriter, UserBackupWriter, BackupWriteManifestParams } from './BackupWriter';
+import type { BackupWriter, UserBackupWriter, BackupWriteManifestParams } from './BackupWriter.js';
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const fs = require('fs');
 const path = require('path');
@@ -267,4 +270,4 @@ async function writeChunkedJsonlFiles (dir: string, baseName: string, items: Asy
   return { totalCount, chunkFiles };
 }
 
-module.exports = { createFilesystemBackupWriter };
+export { createFilesystemBackupWriter };

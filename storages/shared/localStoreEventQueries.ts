@@ -4,20 +4,22 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
 /**
  * Converters to common query logic for localStores
  * Might by moved tp @pryv/datastore repo
  */
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const timestamp = require('unix-timestamp');
 const DELTA_TO_CONSIDER_IS_NOW = 5; // 5 seconds
 
-module.exports = {
+const localStoreEventQueries = {
   localStorePrepareOptions,
   localStorePrepareQuery
 };
+
+export { localStoreEventQueries, localStorePrepareOptions, localStorePrepareQuery };
 
 /**
  * Convert store API options params to local store options

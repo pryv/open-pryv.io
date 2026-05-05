@@ -15,7 +15,10 @@
  * work unchanged.
  */
 
-import type { UserAuditDatabase } from './UserAuditDatabase';
+import type { UserAuditDatabase } from './UserAuditDatabase.js';
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 export interface AuditStorage {
   init(): Promise<AuditStorage>;
@@ -44,7 +47,5 @@ function validateAuditStorage (instance: any): AuditStorage {
   return instance;
 }
 
-module.exports = {
-  REQUIRED_METHODS,
-  validateAuditStorage
-};
+export { REQUIRED_METHODS,
+  validateAuditStorage };

@@ -5,6 +5,9 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-module.exports = require('./localDataStoreSQLite');
+const { dataStore } = require('./localDataStoreSQLite');
+
+export { dataStore };

@@ -10,9 +10,10 @@
  * @module storages/interfaces/backup
  */
 
-// Type-only import to mark this as a TS module (not a script).
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
+// Type-only import to mark this as a TS module (not a script).
 const {
   BackupWriter, createBackupWriter, validateBackupWriter,
   UserBackupWriter, createUserBackupWriter, validateUserBackupWriter
@@ -27,8 +28,7 @@ const { sanitize, INTERNAL_FIELDS } = require('./sanitize');
 const { createFilesystemBackupWriter } = require('./FilesystemBackupWriter');
 const { createFilesystemBackupReader } = require('./FilesystemBackupReader');
 
-module.exports = {
-  BackupWriter,
+export { BackupWriter,
   createBackupWriter,
   validateBackupWriter,
   UserBackupWriter,
@@ -46,5 +46,4 @@ module.exports = {
   INTERNAL_FIELDS,
 
   createFilesystemBackupWriter,
-  createFilesystemBackupReader
-};
+  createFilesystemBackupReader };
