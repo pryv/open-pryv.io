@@ -6,15 +6,13 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const platform = require('./Platform');
+const platform = require('./Platform').default;
 
 async function getPlatform () {
   return await platform.init();
 }
 
-module.exports = {
-  platform,
-  getPlatform
-};
+export { platform, getPlatform };

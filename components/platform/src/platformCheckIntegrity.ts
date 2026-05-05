@@ -6,11 +6,12 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const accountStreams = require('business/src/system-streams');
 
-module.exports = async function platformCheckIntegrity (platformWideDB) {
+export default async function platformCheckIntegrity (platformWideDB) {
   const { getUsersRepository } = require('business/src/users/repository'); // to avoid some circular import
 
   // --- platformDB
@@ -90,4 +91,4 @@ module.exports = async function platformCheckIntegrity (platformWideDB) {
     infos,
     errors
   };
-};
+}

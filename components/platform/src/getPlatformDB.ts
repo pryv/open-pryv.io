@@ -6,10 +6,12 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 async function getPlatformDB () {
   return require('storages').platformDB;
 }
 
-module.exports = getPlatformDB;
+export default getPlatformDB;
+export { getPlatformDB };

@@ -6,7 +6,8 @@
  */
 
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const crypto = require('crypto');
 
@@ -20,9 +21,9 @@ const { ErrorMessages } = require('errors/src/ErrorMessages');
 
 const accountStreams = require('business/src/system-streams');
 
-const getPlatformDB = require('./getPlatformDB');
+const getPlatformDB = require('./getPlatformDB').default;
 
-const platformCheckIntegrity = require('./platformCheckIntegrity');
+const platformCheckIntegrity = require('./platformCheckIntegrity').default;
 
 const reservedWords = new Set(require('./reserved-words.json').list);
 
@@ -836,4 +837,6 @@ function parseJsonString (raw) {
   }
 }
 
-module.exports = new Platform();
+const platform = new Platform();
+export default platform;
+export { platform, Platform };
