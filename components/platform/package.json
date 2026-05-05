@@ -2,10 +2,10 @@
   "name": "platform",
   "version": "1.8.1",
   "private": true,
-  "type": "module",
   "description": "This package is part of Pryv.io, a Pryv software",
   "homepage": "https://pryv.com",
   "license": "BSD-3-Clause",
   "author": "Pryv <info@pryv.com> (https://pryv.com)",
+  "type": "module",
   "main": "src/index.ts"
 }
