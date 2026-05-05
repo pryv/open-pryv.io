@@ -5,9 +5,10 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const ErrorIds = require('./ErrorIds');
+const { ErrorIds } = require('./ErrorIds');
 const { USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH } = require('api-server/src/schema/helpers');
 /**
  * Identifier constants for API errors' messages.
@@ -44,4 +45,4 @@ const ErrorMessages = {
   IndexedParameterInvalidFormat: 'Indexed parameters must be numbers or strings if required.'
 };
 Object.freeze(ErrorMessages);
-module.exports = ErrorMessages;
+export { ErrorMessages };

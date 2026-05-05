@@ -5,12 +5,13 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-module.exports = {
-  APIError: require('./APIError'),
-  errorHandling: require('./errorHandling'),
-  ErrorIds: require('./ErrorIds'),
-  ErrorMessages: require('./ErrorMessages'),
-  factory: require('./factory')
-};
+const { APIError } = require('./APIError');
+const { errorHandling } = require('./errorHandling');
+const { ErrorIds } = require('./ErrorIds');
+const { ErrorMessages } = require('./ErrorMessages');
+const { factory } = require('./factory');
+
+export { APIError, errorHandling, ErrorIds, ErrorMessages, factory };

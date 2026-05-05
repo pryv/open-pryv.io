@@ -12,7 +12,7 @@ const supertest = require('supertest');
 const charlatan = require('charlatan');
 
 const ErrorIds = require('errors').ErrorIds;
-const ErrorMessages = require('errors/src/ErrorMessages');
+const { ErrorMessages } = require('errors/src/ErrorMessages');
 const { getApplication } = require('api-server/src/application');
 
 const { pubsub } = require('messages');

@@ -11,8 +11,8 @@ const assert = require('node:assert');
 const controllerFactory = require('../../../src/web/controller');
 const controller = controllerFactory({});
 
-const APIError = require('errors/src/APIError');
-const ErrorIds = require('errors/src/ErrorIds');
+const { APIError } = require('errors/src/APIError');
+const { ErrorIds } = require('errors/src/ErrorIds');
 
 describe('[HFCT] Controller', () => {
   describe('[HC01] storeSeriesData', () => {

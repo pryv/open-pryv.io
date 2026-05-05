@@ -17,7 +17,7 @@ const { databaseFixture } = require('test-helpers');
 const { produceStorageConnection } = require('api-server/test/test-helpers');
 const { pubsub } = require('messages');
 const { USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH } = require('api-server/src/schema/helpers');
-const ErrorIds = require('errors/src/ErrorIds');
+const { ErrorIds } = require('errors/src/ErrorIds');
 const { ApiEndpoint } = require('utils');
 
 describe('[BMM2] registration: DNS-less', () => {

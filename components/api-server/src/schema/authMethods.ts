@@ -9,8 +9,8 @@ import type {} from 'node:fs';
 /**
  * JSON Schema specification of methods data for auth.
  */
-const ErrorIds = require('errors/src/ErrorIds');
-const ErrorMessages = require('errors/src/ErrorMessages');
+const { ErrorIds } = require('errors/src/ErrorIds');
+const { ErrorMessages } = require('errors/src/ErrorMessages');
 const accountStreams = require('business/src/system-streams');
 const helpers = require('./helpers');
 const object = helpers.object;

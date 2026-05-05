@@ -6,8 +6,6 @@
  */
 
 
-import type {} from 'node:fs';
-
 /**
  * The constructor to use for all errors within the API.
  */
@@ -35,8 +33,7 @@ class APIError extends Error {
   }
 }
 
-module.exports = APIError;
-
+export { APIError };
 /**
  * @typedef {{
  *   httpStatus?: number;

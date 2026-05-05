@@ -5,8 +5,6 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
-
 /**
  * Identifier constants for API errors.
  */
@@ -73,4 +71,4 @@ const ErrorIds = {
   NewPasswordFieldIsRequired: 'newPassword-required'
 };
 Object.freeze(ErrorIds);
-module.exports = ErrorIds;
+export { ErrorIds };

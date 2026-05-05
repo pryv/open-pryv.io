@@ -5,16 +5,18 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const APIError = require('./APIError');
-const ErrorIds = require('./ErrorIds');
-const ErrorMessages = require('./ErrorMessages');
+const { APIError } = require('./APIError');
+const { ErrorIds } = require('./ErrorIds');
+const { ErrorMessages } = require('./ErrorMessages');
 
 /**
  * Helper "factory" methods for API errors (see error ids).
  */
-const factory: any = (module.exports = {});
+const factory: any = {};
+export { factory };
 
 factory.unsupportedOperation = (message) => {
   return new APIError(ErrorIds.ApiUnavailable, message, {

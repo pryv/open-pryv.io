@@ -5,14 +5,16 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
-
 /**
  * Helper functions for error handling.
  */
-const APIError = require('./APIError');
-const ErrorIds = require('./ErrorIds');
-const errorHandling: any = (module.exports = {});
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
+const { APIError } = require('./APIError');
+const { ErrorIds } = require('./ErrorIds');
+const errorHandling: any = {};
+export { errorHandling };
 /**
  * Logs the given error.
  *

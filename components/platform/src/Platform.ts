@@ -15,8 +15,8 @@ const logger = getLogger('platform');
 const AtRestEncryption = require('business/src/acme/AtRestEncryption');
 
 const errors = require('errors').factory;
-const ErrorIds = require('errors/src/ErrorIds');
-const ErrorMessages = require('errors/src/ErrorMessages');
+const { ErrorIds } = require('errors/src/ErrorIds');
+const { ErrorMessages } = require('errors/src/ErrorMessages');
 
 const accountStreams = require('business/src/system-streams');
 

@@ -18,9 +18,9 @@ const timestamp = require('unix-timestamp');
 const { getMall, storeDataUtils } = require('mall');
 const accountStreams = require('business/src/system-streams');
 const { getUsersRepository } = require('business/src/users');
-const ErrorIds = require('errors/src/ErrorIds');
-const ErrorMessages = require('errors/src/ErrorMessages');
-const APIError = require('errors/src/APIError');
+const { ErrorIds } = require('errors/src/ErrorIds');
+const { ErrorMessages } = require('errors/src/ErrorMessages');
+const { APIError } = require('errors/src/APIError');
 const assert = require('assert');
 
 const eventsGetUtils = require('./helpers/eventsGetUtils');

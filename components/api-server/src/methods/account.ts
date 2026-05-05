@@ -21,7 +21,7 @@ const { getPlatform } = require('platform');
 
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils');
 
-const ErrorMessages = require('errors/src/ErrorMessages');
+const { ErrorMessages } = require('errors/src/ErrorMessages');
 const ErrorIds = require('errors').ErrorIds;
 const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users');
 const accountStreams = require('business/src/system-streams');
