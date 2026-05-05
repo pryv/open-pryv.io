@@ -4,7 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 // Retrieves the projects version from git and from our deploy process.
 const path = require('path');
@@ -57,8 +58,8 @@ class ProjectVersion {
     // `process.mainModule` was deprecated and can be `undefined` in Node 22+
     // (particularly when the entrypoint is loaded via a wrapper/cluster fork).
     // Fall back to `require.main` and then to this module's own search paths.
-    const mainModule = process.mainModule || require.main || module;
-    const searchPaths = mainModule.paths || module.paths;
+    const mainModule: any = (process as any).mainModule || require.main;
+    const searchPaths: string[] = (mainModule && mainModule.paths) || [];
     for (const current of searchPaths) {
       // Otherwise try to locate '.api-version' as a sibling to the path we found.
       const rootPath = path.dirname(current);
@@ -83,7 +84,4 @@ async function getAPIVersion (forceRefresh = false) {
   }
   return version;
 }
-module.exports = {
-  ProjectVersion,
-  getAPIVersion
-};
+export { ProjectVersion, getAPIVersion };

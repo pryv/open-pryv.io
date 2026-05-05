@@ -4,7 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * Just validates that the request is of one of the specified content types; otherwise returns a
@@ -34,6 +35,8 @@ function checkContentType (...acceptedTypes: any[]) {
   };
 }
 
-exports.json = checkContentType('application/json');
-exports.jsonOrForm = checkContentType('application/json', 'application/x-www-form-urlencoded');
-exports.multipartOrJson = checkContentType('multipart/form-data', 'application/json');
+const json = checkContentType('application/json');
+const jsonOrForm = checkContentType('application/json', 'application/x-www-form-urlencoded');
+const multipartOrJson = checkContentType('multipart/form-data', 'application/json');
+
+export { json, jsonOrForm, multipartOrJson };

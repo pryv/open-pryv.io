@@ -4,13 +4,14 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { initRootSpan } = require('tracing');
 /**
  * Sets the methodId to the Request.context object of the Express stack
  */
-module.exports = function (methodId) {
+export default function (methodId) {
   return function setMethodId (req, res, next) {
     if (req.context == null) {
       const tracing = initRootSpan('express2');

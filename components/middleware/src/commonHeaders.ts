@@ -4,12 +4,13 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { getAPIVersion } = require('middleware/src/project_version');
 // Middleware to handle OPTIONS requests and to add CORS headers to all other
 // requests.
-module.exports = async function () {
+export default async function () {
   const version = await getAPIVersion();
   return function (req, res, next) {
     // allow cross-domain requests (CORS)

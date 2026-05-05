@@ -4,7 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * Plan 27 Phase 2 — wrong-core middleware (DNSless multi-core).
@@ -94,5 +95,6 @@ async function checkUserCore (req, res, next) {
   }
 }
 
-module.exports = checkUserCore;
-module.exports._resetPlatformCache = _resetPlatformCache;
+(checkUserCore as any)._resetPlatformCache = _resetPlatformCache;
+export default checkUserCore;
+export { _resetPlatformCache };

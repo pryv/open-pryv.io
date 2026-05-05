@@ -4,12 +4,12 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-'use strict';
 const morgan = require('morgan');
 const { getLogger } = require('@pryv/boiler');
-module.exports = function (express) {
+export default function (express) {
   const logger = getLogger('request-trace');
   const morganLoggerStreamWrite = (msg) => logger.info(msg);
   return morgan('combined', {

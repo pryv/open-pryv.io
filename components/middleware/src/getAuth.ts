@@ -8,7 +8,7 @@ import type {} from 'node:fs';
 
 // Middleware that verifies the presence of an authorization token
 //
-module.exports = (req, res, next) => {
+export default (req, res, next) => {
   req.headers.authorization = getAuth(req);
   next();
 };

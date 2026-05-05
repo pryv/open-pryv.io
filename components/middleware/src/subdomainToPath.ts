@@ -4,7 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
 const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers');
@@ -19,7 +20,7 @@ const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers');
  * @param {Array} ignoredPaths Paths for which no translation is needed
  * @return {Function}
  */
-module.exports = function (ignoredPaths, ignoredSubdomains) {
+export default function (ignoredPaths, ignoredSubdomains) {
   ignoredSubdomains = ignoredSubdomains || [];
   return function (req, res, next) {
     if (isIgnoredPath(req.url)) {

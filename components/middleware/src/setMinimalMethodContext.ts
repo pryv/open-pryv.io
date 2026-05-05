@@ -4,7 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { DummyTracing } = require('tracing');
 
@@ -57,4 +58,4 @@ function setMinimalMethodContext (req, res, next) {
   req.context = new MinimalMethodContext(req);
   next();
 }
-module.exports = setMinimalMethodContext;
+export default setMinimalMethodContext;

@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const loadAccessMiddleware = require('../../src/loadAccess');
+const loadAccessMiddleware = require('../../src/loadAccess').default;
 const assert = require('node:assert');
 const { promisify } = require('util');
 
