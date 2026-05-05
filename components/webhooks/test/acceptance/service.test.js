@@ -18,7 +18,7 @@ const { databaseFixture } = require('test-helpers');
 require('api-server/test/test-helpers');
 const { produceStorageConnection, context } = require('api-server/test/test-helpers');
 
-const WebhooksApp = require('../../src/application');
+const { Application: WebhooksApp } = require('../../src/application');
 
 const { Webhook, Repository } = require('business').webhooks;
 let repository;

@@ -6,11 +6,12 @@
  */
 
 
-import type {} from 'node:fs';
-
 /**
  * Pure helper functions to build dns2 answer objects.
  */
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const dns2 = require('dns2');
 const { Packet } = dns2;
@@ -59,13 +60,4 @@ function buildCAA (name, flags, tag, value, ttl) {
   return { name, type: Packet.TYPE.CAA, class: Packet.CLASS.IN, ttl, flags, tag, value };
 }
 
-module.exports = {
-  buildA,
-  buildAAAA,
-  buildCNAME,
-  buildMX,
-  buildNS,
-  buildSOA,
-  buildTXT,
-  buildCAA
-};
+export { buildA, buildAAAA, buildCNAME, buildMX, buildNS, buildSOA, buildTXT, buildCAA };

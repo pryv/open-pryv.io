@@ -34,7 +34,7 @@ function registerInternals (config, database, databasePG, storageLayer) {
   internals.register('getEventFiles', require('storage/src/eventFiles/getEventFiles').getEventFiles);
 
   // Cache component
-  internals.register('cache', require('cache'));
+  internals.register('cache', require('cache').default);
 
   // Interface factory
   internals.register('createUserAccountStorage', require('storages/interfaces/baseStorage/UserAccountStorage').createUserAccountStorage);

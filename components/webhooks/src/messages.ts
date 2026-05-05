@@ -6,8 +6,4 @@
  */
 
 
-import type {} from 'node:fs';
-
-module.exports = {
-  BOOT_MESSAGE: 'webhooksServiceBoot'
-};
+export const BOOT_MESSAGE = 'webhooksServiceBoot';

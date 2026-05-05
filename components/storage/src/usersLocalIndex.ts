@@ -12,7 +12,7 @@ import type {} from 'node:fs';
  */
 
 const { getLogger } = require('@pryv/boiler');
-const cache = require('cache');
+const cache = require('cache').default;
 const { validateUsersLocalIndexDB } = require('storages/interfaces/baseStorage/UsersLocalIndexDB');
 const { pluginLoader } = require('storages');
 

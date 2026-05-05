@@ -17,7 +17,7 @@ const { pubsub } = require('messages');
 const { getUsersRepository } = require('business/src/users');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const { getAPIVersion } = require('middleware/src/project_version');
-const WebhooksService = require('webhooks/src/service');
+const { WebhooksService } = require('webhooks/src/service');
 let app;
 
 /**

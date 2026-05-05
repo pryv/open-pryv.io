@@ -23,7 +23,7 @@ const methodsSchema = require('../schema/accessesMethods');
 const string = require('./helpers/string');
 const accountStreams = require('business/src/system-streams');
 
-const cache = require('cache');
+const cache = require('cache').default;
 
 const { getMall, storeDataUtils } = require('mall');
 const { pubsub } = require('messages');

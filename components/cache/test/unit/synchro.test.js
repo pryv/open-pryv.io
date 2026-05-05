@@ -8,7 +8,7 @@
 
 const { setTimeout } = require('timers/promises');
 const net = require('node:net');
-const cache = require('cache');
+const cache = require('cache').default;
 const synchro = require('../../src/synchro');
 const MESSAGES = synchro.MESSAGES;
 const { pubsub } = require('messages');

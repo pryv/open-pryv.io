@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { getLogger, getConfigUnsafe } = require('@pryv/boiler');
 const { LRUCache: LRU } = require('lru-cache');
@@ -282,4 +283,6 @@ function loadConfiguration () {
   }
 }
 loadConfiguration();
-module.exports = cache;
+
+export default cache;
+export { cache };

@@ -5,9 +5,9 @@
  * Refer to LICENSE file
  */
 
-
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { createDnsServer } = require('./DnsServer');
 
-module.exports = { createDnsServer };
+export { createDnsServer };

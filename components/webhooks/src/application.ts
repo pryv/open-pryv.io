@@ -5,7 +5,12 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const path = require('path');
 require('@pryv/boiler').init({
@@ -28,7 +33,7 @@ const accountStreams = require('business/src/system-streams');
 const assert = require('assert');
 const storage = require('storage');
 const services = {
-  WebhooksService: require('./service')
+  WebhooksService: require('./service').WebhooksService
 };
 
 class Application {
@@ -91,4 +96,4 @@ class Application {
     return this.webhooksService.stop();
   }
 }
-module.exports = Application;
+export { Application };

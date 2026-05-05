@@ -5,10 +5,10 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-module.exports = {
-  application: require('./application'),
-  server: require('./service'),
-  Webhook: require('./settings')
-};
+const { Application: application } = require('./application');
+const { WebhooksService: server } = require('./service');
+
+export { application, server };

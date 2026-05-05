@@ -18,7 +18,7 @@ const encryption = require('utils').encryption;
 const errors = require('errors').factory;
 const { getMall } = require('mall');
 const { getPlatform } = require('platform');
-const cache = require('cache');
+const cache = require('cache').default;
 
 module.exports = {
   getUsersRepository

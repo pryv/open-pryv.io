@@ -6,12 +6,13 @@
  */
 
 
-import type {} from 'node:fs';
-
 /**
  * Optional DNS server for resolving {username}.{domain} to core IPs.
  * Uses dns2 for wire protocol handling. Runs in-process in master.js.
  */
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const dns2 = require('dns2');
 const { Packet } = dns2;
@@ -442,4 +443,4 @@ function createDnsServer ({ config, platform, logger, platformRefreshIntervalMs 
   return new DnsServer({ config, platform, logger, platformRefreshIntervalMs });
 }
 
-module.exports = { DnsServer, createDnsServer };
+export { DnsServer, createDnsServer };

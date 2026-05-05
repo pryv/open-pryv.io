@@ -5,14 +5,15 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { pubsub } = require('messages');
 const Webhook = require('business/src/webhooks/Webhook');
 const WebhooksRepository = require('business/src/webhooks/repository');
 const { getUsersRepository } = require('business/src/users');
 const { getAPIVersion } = require('middleware/src/project_version');
-const BOOT_MESSAGE = require('./messages').BOOT_MESSAGE;
+const { BOOT_MESSAGE } = require('./messages');
 
 class WebhooksService {
   webhooks: any;
@@ -220,7 +221,7 @@ class WebhooksService {
     this.webhooks = await this.repository.getAll();
   }
 }
-module.exports = WebhooksService;
+export { WebhooksService };
 
 /**
  * @typedef {{

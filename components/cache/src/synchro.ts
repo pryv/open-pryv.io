@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('cache:synchro');
@@ -106,7 +107,7 @@ function setCache (c) {
     cache.unsetUser(msg.username, false);
   });
 }
-module.exports = {
+export {
   registerListenerForUserId,
   unsetAccessLogic,
   unsetUserData,

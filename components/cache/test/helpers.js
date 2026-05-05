@@ -11,7 +11,7 @@
  */
 
 const base = require('test-helpers/src/helpers-base');
-const cache = require('cache');
+const cache = require('cache').default;
 
 base.init({
   methods: ['events', 'streams', 'service', 'auth/login', 'auth/register', 'accesses'],
