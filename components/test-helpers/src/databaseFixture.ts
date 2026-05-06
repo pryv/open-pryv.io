@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const { fromCallback } = require('utils');
 const Charlatan = require('charlatan');
@@ -19,7 +19,8 @@ const { getUsersRepository, User } = require('business/src/users');
 const integrityFinalCheck = require('test-helpers/src/integrity-final-check');
 const { getMall } = require('mall');
 
-module.exports = databaseFixture;
+export default databaseFixture;
+export { databaseFixture };
 
 class Context {
   /**

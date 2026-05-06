@@ -4,9 +4,11 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
-
-//
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = require('path').dirname(__filename);
 
 const url = require('url');
 const childProcessNodeInternal = require('child_process');
@@ -424,11 +426,7 @@ class Server extends EventEmitter {
     return supertest(newUrl || this.baseUrl);
   }
 }
-module.exports = {
-  SpawnContext,
-  Server,
-  ConditionVariable
-};
+export { SpawnContext, Server, ConditionVariable };
 
 /** @typedef {number} MessageId */
 

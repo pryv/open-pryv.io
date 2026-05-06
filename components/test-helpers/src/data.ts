@@ -4,8 +4,11 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
-
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = require('path').dirname(__filename);
 
 /**
  * Regroups shared test data and related  helper functions.
@@ -26,7 +29,8 @@ function runSeries (fns, cb) {
   next();
 }
 
-const dependencies = require('./dependencies');
+const dependenciesMod = require('./dependencies');
+const dependencies = dependenciesMod.default ?? dependenciesMod;
 const settings = dependencies.settings;
 const storage = dependencies.storage;
 const fs = require('fs');
@@ -43,10 +47,11 @@ const { integrity } = require('business');
 
 // users
 
-const users = (exports.users = require('./data/users'));
+const users = require('./data/users').default;
+export { users };
 const defaultUser = users[0];
 
-exports.resetUsers = async () => {
+export const resetUsers = async () => {
   logger.debug('resetUsers');
   await getConfig(); // lock up to the time config is ready
   await accountStreams.init();
@@ -61,9 +66,10 @@ exports.resetUsers = async () => {
 
 // accesses
 
-const accesses = (exports.accesses = require('./data/accesses'));
+const accesses = require('./data/accesses').default;
+export { accesses };
 
-exports.resetAccesses = function (done, user, personalAccessToken, addToId) {
+export const resetAccesses = function (done, user, personalAccessToken, addToId) {
   const u = user || defaultUser;
   if (personalAccessToken) {
     accesses[0].token = personalAccessToken;
@@ -81,17 +87,19 @@ exports.resetAccesses = function (done, user, personalAccessToken, addToId) {
 
 // profile
 
-const profile = (exports.profile = require('./data/profile'));
+const profile = require('./data/profile').default;
+export { profile };
 
-exports.resetProfile = function (done, user) {
+export const resetProfile = function (done, user) {
   resetMongoDBCollectionFor(storage.user.profile, user || defaultUser, profile, done);
 };
 
 // events
 
-const events = (exports.events = require('./data/events'));
+const events = require('./data/events').default;
+export { events };
 const dynCreateAttachmentIdMap = {}; // contains real ids of created attachment per event:
-exports.dynCreateAttachmentIdMap = dynCreateAttachmentIdMap;
+export { dynCreateAttachmentIdMap };
 
 // add createdAttachmentsId to events
 function addCorrectAttachmentIds (allEvents) {
@@ -104,9 +112,9 @@ function addCorrectAttachmentIds (allEvents) {
   }
   return allEventsCorrected;
 }
-exports.addCorrectAttachmentIds = addCorrectAttachmentIds;
+export { addCorrectAttachmentIds };
 
-exports.resetEvents = function resetEvents (done, user) {
+export const resetEvents = function resetEvents (done, user) {
   // deleteData(storage.user.events, user || defaultUser, events, done);
   user = user || defaultUser;
   const eventsToWrite = events.map((e) => structuredClone(e));
@@ -143,9 +151,10 @@ exports.resetEvents = function resetEvents (done, user) {
 
 // streams
 
-const streams = (exports.streams = require('./data/streams'));
+const streams = require('./data/streams').default;
+export { streams };
 
-exports.resetStreams = function (done, user) {
+export const resetStreams = function (done, user) {
   const myUser = user || defaultUser;
   let mall = null;
   async function addStreams (arrayOfStreams) {
@@ -184,14 +193,15 @@ function resetMongoDBCollectionFor (storage, user, items, done) {
 /**
  * Source attachments directory path (!= server storage path)
  */
-const testsAttachmentsDirPath = (exports.testsAttachmentsDirPath = path.join(__dirname, '/data/attachments/'));
+const testsAttachmentsDirPath = path.join(__dirname, '/data/attachments/');
+export { testsAttachmentsDirPath };
 
 const attachments = {
   document: getAttachmentInfo('document', 'document.pdf', 'application/pdf'),
   image: getAttachmentInfo('image', 'image (space and special chars)é__.png', 'image/png'),
   text: getAttachmentInfo('text', 'text.txt', 'text/plain')
 };
-exports.attachments = attachments;
+export { attachments };
 
 // following https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity
 // compute sri with openssl
@@ -235,7 +245,7 @@ function getAttachmentInfo (id, filename, type) {
  * @param {String} mongoFolder Path to MongoDB base folder
  * @param {Function} callback
  */
-exports.dumpCurrent = function (mongoFolder, version, callback) {
+export const dumpCurrent = function (mongoFolder, version, callback) {
   const mongodump = path.resolve(mongoFolder, 'bin/mongodump');
   const outputFolder = getDumpFolder(version);
   logger.info('Dumping current test data to ' + outputFolder);
@@ -281,7 +291,7 @@ exports.dumpCurrent = function (mongoFolder, version, callback) {
  * @param {String} mongoFolder Path to MongoDB base folder
  * @param callback
  */
-exports.restoreFromDump = function (versionNum, mongoFolder, callback) {
+export const restoreFromDump = function (versionNum, mongoFolder, callback) {
   const mongorestore = path.resolve(mongoFolder, 'bin/mongorestore');
   const sourceFolder = getDumpFolder(versionNum);
   const sourceDBFolder = getDumpDBSubfolder(sourceFolder);
@@ -329,7 +339,7 @@ exports.restoreFromDump = function (versionNum, mongoFolder, callback) {
  * @param {String} version
  * @returns {Object} structure
  */
-exports.getStructure = function (version) {
+export const getStructure = function (version) {
   return require(path.join(__dirname, '/structure/', version));
 };
 

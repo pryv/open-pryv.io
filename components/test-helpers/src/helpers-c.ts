@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * Pattern C test helpers for api-server
@@ -70,4 +70,5 @@ base.init({
 });
 
 // Export mocha hooks — integrity checks disabled when DISABLE_INTEGRITY_CHECK is set
-exports.mochaHooks = base.getMochaHooks(disableIntegrityCheck);
+const mochaHooks = base.getMochaHooks(disableIntegrityCheck);
+export { mochaHooks };

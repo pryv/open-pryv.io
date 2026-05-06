@@ -4,21 +4,12 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * Base test helpers for all components
  * Provides common Pattern C test initialization
- *
- * Usage in component helpers:
- *   const base = require('test-helpers/src/helpers-base');
- *   base.init({
- *     methods: ['events', 'streams', 'accesses'],  // API methods to load
- *     globals: { myModule: require('my-module') }, // Additional globals
- *     beforeInitCore: async () => { ... },         // Hook before initCore
- *     afterInitCore: async () => { ... }           // Hook after initCore
- *   });
  */
 
 require('./api-server-tests-config');
@@ -226,9 +217,4 @@ function getMochaHooks (isParallelMode = false) {
   };
 }
 
-module.exports = {
-  init,
-  initTests,
-  initCore,
-  getMochaHooks
-};
+export { init, initTests, initCore, getMochaHooks };

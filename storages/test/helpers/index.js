@@ -22,8 +22,9 @@ require('test-helpers/src/api-server-tests-config');
 
 const boiler = require('@pryv/boiler');
 
-// Re-export test-helpers
-const helpers = require('test-helpers');
+// Re-export test-helpers (spread because Node 24 require(esm) returns a frozen
+// namespace; we need a mutable object to attach getEngineConfig etc).
+const helpers = { ...require('test-helpers') };
 module.exports = helpers;
 
 // Logger factory — same interface engines receive via init(config, getLogger, internals)

@@ -9,7 +9,10 @@
  * Extends the common test support object with server-specific stuff.
  */
 
-exports = module.exports = require('test-helpers');
+// Spread test-helpers namespace into a mutable object so we can extend it
+// with api-server-local helpers (Node 24 require(esm) returns a frozen namespace
+// that can't be assigned to directly).
+exports = module.exports = { ...require('test-helpers') };
 
 exports.commonTests = require('./commonTests');
 // override

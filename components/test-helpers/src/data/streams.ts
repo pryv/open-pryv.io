@@ -4,11 +4,12 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const timestamp = require('unix-timestamp');
 
-module.exports = [
+const streams = [
   {
     id: 's_0',
     name: 'Root Stream 0',
@@ -188,3 +189,6 @@ module.exports = [
     children: []
   }
 ];
+
+export default streams;
+export { streams };

@@ -6,8 +6,7 @@
  */
 import type {} from "node:fs";
 
-
-module.exports = [
+const users = [
   {
     id: 'u_0',
     username: 'userzero',
@@ -59,3 +58,5 @@ module.exports = [
     language: 'en',
   }, */
 ];
+export default users;
+export { users };

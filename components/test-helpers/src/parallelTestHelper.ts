@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * Helper for writing parallel-safe tests with isolated data
@@ -39,7 +39,7 @@ import type {} from "node:fs";
 
 const cuid = require('cuid');
 const storage = require('storage');
-const databaseFixture = require('./databaseFixture');
+const databaseFixture = require('./databaseFixture').default;
 
 /**
  * Creates an isolated test context for parallel-safe testing
@@ -178,6 +178,4 @@ function createTestContext (options: any = {}) {
   return ctx;
 }
 
-module.exports = {
-  createTestContext
-};
+export { createTestContext };

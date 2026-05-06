@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * Port allocation utility for test servers
@@ -101,9 +101,4 @@ function reset (basePort) {
   nextPort = basePort || (BASE_PORT_MIN + Math.floor(Math.random() * (BASE_PORT_MAX - BASE_PORT_MIN)));
 }
 
-module.exports = {
-  allocatePort,
-  allocatePorts,
-  isPortAvailable,
-  reset
-};
+export { allocatePort, allocatePorts, isPortAvailable, reset };

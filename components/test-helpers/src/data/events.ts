@@ -4,9 +4,11 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const streams = require('./streams');
+const streamsMod = require('./streams');
+const streams = streamsMod.default ?? streamsMod;
 const timestamp = require('unix-timestamp');
 const { integrity } = require('business');
 
@@ -389,7 +391,8 @@ const events = [
   return event;
 });
 
-module.exports = events;
+export default events;
+export { events };
 
 /**
  * Creates a cuid-like id (required event id format).

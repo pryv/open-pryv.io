@@ -4,7 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const storage = require('storage');
 
@@ -23,7 +24,7 @@ const { Webhooks } = require('storages/engines/mongodb/src/user/Webhooks');
 /**
  * Test process dependencies.
  */
-module.exports = {
+const dependencies = {
   settings: config.get(),
   storage: {
     database,
@@ -48,3 +49,9 @@ module.exports = {
     this.storage.passwordResetRequests = storageLayer.passwordResetRequests;
   }
 };
+export default dependencies;
+export { dependencies };
+export const settings = dependencies.settings;
+export const _storage = dependencies.storage;
+export { _storage as storage };
+export const init = dependencies.init.bind(dependencies);

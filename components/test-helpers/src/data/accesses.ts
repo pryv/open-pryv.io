@@ -4,12 +4,14 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-const streams = require('./streams');
+const streamsMod = require('./streams');
+const streams = streamsMod.default ?? streamsMod;
 const timestamp = require('unix-timestamp');
 
-module.exports = [
+const accesses = [
   {
     id: 'a_0',
     token: 'a_0_token',
@@ -168,3 +170,5 @@ module.exports = [
     deleted: timestamp.now('-1m')
   } */
 ];
+export default accesses;
+export { accesses };

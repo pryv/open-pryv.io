@@ -4,8 +4,11 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
-
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = require('path').dirname(__filename);
 
 /**
  * Dynamic test data generator.
@@ -20,11 +23,11 @@ const { deepMerge } = require('utils');
 const { integrity } = require('business');
 
 // Static data templates
-const staticUsers = require('./data/users');
-const staticAccesses = require('./data/accesses');
-const staticStreams = require('./data/streams');
-const staticEvents = require('./data/events');
-const staticProfile = require('./data/profile');
+const staticUsers = require('./data/users').default;
+const staticAccesses = require('./data/accesses').default;
+const staticStreams = require('./data/streams').default;
+const staticEvents = require('./data/events').default;
+const staticProfile = require('./data/profile').default;
 
 /**
  * Creates a new dynamic data instance with unique IDs.
@@ -471,4 +474,5 @@ function createDynData (options: any = {}) {
   };
 }
 
-module.exports = createDynData;
+export default createDynData;
+export { createDynData };

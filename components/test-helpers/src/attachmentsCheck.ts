@@ -4,7 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * Test helper functions for attached files.
@@ -14,10 +15,8 @@ const path = require('path');
 const testData = require('./data');
 const { getMall } = require('mall');
 // Returns an empty string if the tested file attached to the specified event
-// is identical to the original file. (Runs command-line util `cmp`
-// underneath).
-//
-exports.compareTestAndAttachedFiles = async function (user, eventId, fileId, originalFileName) {
+// is identical to the original file.
+export const compareTestAndAttachedFiles = async function (user, eventId, fileId, originalFileName) {
   if (originalFileName == null) {
     originalFileName = fileId;
   }

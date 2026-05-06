@@ -4,11 +4,13 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const superagent = require('superagent');
 const assert = require('node:assert');
-module.exports = request;
+export default request;
+export { request };
 /**
  * Helper for HTTP requests. Returns a SuperAgent request:
  * - that sets the `authorization` header with the given token if any

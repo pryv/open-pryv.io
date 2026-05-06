@@ -112,7 +112,4 @@ class Fuse {
     return this.burnt;
   }
 }
-module.exports = {
-  ConditionVariable,
-  Fuse
-};
+export { ConditionVariable, Fuse };

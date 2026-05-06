@@ -4,7 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from "node:fs";
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const EventEmitter = require('events').EventEmitter;
 const fs = require('fs');
@@ -14,7 +15,8 @@ const util = require('util');
 
 const { getLogger } = require('@pryv/boiler');
 
-module.exports = InstanceManager;
+export default InstanceManager;
+export { InstanceManager };
 
 let spawnCounter = 0;
 

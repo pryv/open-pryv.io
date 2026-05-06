@@ -83,7 +83,7 @@ function addCustomerPrefixToStreamId (id) {
   return CUSTOMER_PREFIX + id;
 }
 
-module.exports = {
+export {
   PRYV_PREFIX,
   CUSTOMER_PREFIX,
   isSystemStreamId,

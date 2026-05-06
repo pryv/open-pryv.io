@@ -12,7 +12,9 @@
 process.env.NODE_ENV = 'test';
 require('test-helpers/src/api-server-tests-config');
 
-const testHelpers = module.exports = require('test-helpers');
+// Spread test-helpers namespace into a mutable object — Node 24 require(esm)
+// returns a frozen namespace.
+const testHelpers = module.exports = { ...require('test-helpers') };
 
 const DynamicInstanceManager = testHelpers.DynamicInstanceManager;
 const { getConfigUnsafe } = require('@pryv/boiler');
