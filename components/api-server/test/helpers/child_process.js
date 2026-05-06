@@ -9,7 +9,7 @@
 // This file is the entry point used by test-helpers/spawner.js child_process.fork().
 require('../../../../bin/_ts-register');
 
-const Server = require('../../src/server');
+const Server = require('../../src/server').default;
 const { getApplication } = require('api-server/src/application');
 const ChildProcess = require('test-helpers').child_process;
 const { getLogger, getConfig } = require('@pryv/boiler');

@@ -4,13 +4,13 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const cookieParser = require('cookie-parser');
 const errors = require('errors').factory;
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
-const methodCallback = require('../methodCallback');
+const methodCallback = require('../methodCallback').default;
 const Paths = require('../Paths');
 const { getConfigUnsafe } = require('@pryv/boiler');
 /**
@@ -18,7 +18,7 @@ const { getConfigUnsafe } = require('@pryv/boiler');
  *
  * @param {Object} api The API object for registering methods
  */
-module.exports = function (expressApp, app) {
+export default function (expressApp, app) {
   const config = getConfigUnsafe();
   const api = app.api;
   const ms14days = 1000 * 60 * 60 * 24 * 14;

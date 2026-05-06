@@ -7,7 +7,7 @@
 
 'use strict';
 
-const DrainStream = require('../../../src/methods/streams/DrainStream');
+const DrainStream = require('../../../src/methods/streams/DrainStream').default;
 const _ = require('lodash');
 const assert = require('node:assert');
 

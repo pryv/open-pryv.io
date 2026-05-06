@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Note: Debug tests with: DEBUG=engine,socket.io* npm test --grep="Socket"
  */
@@ -24,7 +24,7 @@ const socketIO = require('socket.io')({
   ...(cluster.isWorker ? { transports: ['websocket'] } : {})
 });
 const MethodContext = require('business').MethodContext;
-const Manager = require('./Manager');
+const Manager = require('./Manager').default;
 const Paths = require('../routes/Paths');
 const { getLogger } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
@@ -79,4 +79,5 @@ async function setupSocketIO (server, api, customAuthStepFn) {
   // register wildcard to all namespaces
   dynamicNamespace.use(require('socketio-wildcard')());
 }
-module.exports = setupSocketIO;
+export default setupSocketIO;
+export { setupSocketIO };

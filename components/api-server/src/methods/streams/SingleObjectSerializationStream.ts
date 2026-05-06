@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const Transform = require('stream').Transform;
 
 /**
@@ -14,7 +14,7 @@ const Transform = require('stream').Transform;
  * @param objectName {String} array name that will prefix the array
  * @constructor
  */
-module.exports = class SingleObjectSerializationStream extends Transform {
+class SingleObjectSerializationStream extends Transform {
   name;
   constructor (objectName) {
     super({ writableObjectMode: true });
@@ -29,4 +29,6 @@ module.exports = class SingleObjectSerializationStream extends Transform {
   _flush = function (callback) {
     callback();
   };
-};
+}
+export default SingleObjectSerializationStream;
+export { SingleObjectSerializationStream };

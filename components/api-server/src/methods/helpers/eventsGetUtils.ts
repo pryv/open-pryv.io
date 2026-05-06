@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Some method used by events.get are shared with audit.getLogs
  */
@@ -16,24 +16,12 @@ const { getMall, storeDataUtils } = require('mall');
 const { treeUtils } = require('utils');
 const utils = require('utils');
 const { Readable } = require('stream');
-const SetFileReadTokenStream = require('../streams/SetFileReadTokenStream');
+const SetFileReadTokenStream = require('../streams/SetFileReadTokenStream').default;
 const accountStreams = require('business/src/system-streams');
 const integrity = require('business/src/integrity').default;
 let mall;
 
-module.exports = {
-  init,
-  applyDefaultsForRetrieval,
-  coerceStreamsParam,
-  validateStreamsQueriesAndSetStore,
-  transformArrayOfStringsToStreamsQuery,
-  streamQueryCheckPermissionsAndReplaceStars,
-  streamQueryAddForcedAndForbiddenStreams,
-  streamQueryExpandStreams,
-  streamQueryAddHiddenStreams,
-  findEventsFromStore
-};
-
+export { init, applyDefaultsForRetrieval, coerceStreamsParam, validateStreamsQueriesAndSetStore, transformArrayOfStringsToStreamsQuery, streamQueryCheckPermissionsAndReplaceStars, streamQueryAddForcedAndForbiddenStreams, streamQueryExpandStreams, streamQueryAddHiddenStreams, findEventsFromStore };
 /**
  *  # Stream Query Flow
  *  1. coerceStreamParam:

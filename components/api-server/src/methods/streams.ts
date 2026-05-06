@@ -4,12 +4,12 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const commonFns = require('./helpers/commonFunctions');
 const methodsSchema = require('../schema/streamsMethods');
-const streamSchema = require('../schema/stream');
+const streamSchema = require('../schema/stream').default;
 const slugify = require('utils').slugify;
 const string = require('./helpers/string');
 const utils = require('utils');
@@ -29,7 +29,7 @@ const Readable = require('stream').Readable;
  * @param auditSettings
  * @param updatesSettings
  */
-module.exports = async function (api) {
+export default async function (api) {
   const config = await getConfig();
   const updatesSettings = config.get('updates');
   const mall = await getMall();

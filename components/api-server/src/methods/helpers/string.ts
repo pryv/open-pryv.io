@@ -10,9 +10,7 @@ import type {} from 'node:fs';
  * Helper for handling query string parameter values.
  */
 
-const string = module.exports;
-
-string.isReservedId = function (s) {
+function isReservedId (s) {
   switch (s) {
     case 'null':
     case 'undefined':
@@ -21,8 +19,10 @@ string.isReservedId = function (s) {
     default:
       return false;
   }
-};
+}
 
-string.sanitizeFieldKey = function (s) {
+function sanitizeFieldKey (s) {
   return (s[0] === '$' ? '_' + s.substr(1) : s).replace('.', ':');
-};
+}
+
+export { isReservedId, sanitizeFieldKey };

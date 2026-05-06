@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const Transform = require('stream').Transform;
 
 // serialize every n objects
@@ -19,7 +19,7 @@ const MAX_WAIT_MS = 100;
  * @param arrayName {String} array name that will prefix the array
  * @constructor
  */
-module.exports = class ArraySerializationStream extends Transform {
+class ArraySerializationStream extends Transform {
   constructor (arrayName) {
     super({ writableObjectMode: true });
     this.isStart = true;
@@ -55,4 +55,6 @@ module.exports = class ArraySerializationStream extends Transform {
     this.push(',');
     callback();
   };
-};
+}
+export default ArraySerializationStream;
+export { ArraySerializationStream };

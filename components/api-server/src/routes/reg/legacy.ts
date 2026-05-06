@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Legacy service-register routes preserved for backward compatibility.
  * These map onto service-core's PlatformDB and usersRepository.
@@ -14,7 +13,7 @@ import type {} from 'node:fs';
 
 const errors = require('errors').factory;
 
-module.exports = function (expressApp, app) {
+export default function (expressApp, app) {
   const adminAccessKey = app.config.get('auth:adminAccessKey');
   const domain = app.config.get('dns:domain');
 

@@ -4,21 +4,21 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const commonFns = require('./helpers/commonFunctions');
 const errorHandling = require('errors').errorHandling;
 const methodsSchema = require('../schema/generalMethods');
 const { fromCallback } = require('utils');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const { getPasswordRules } = require('business/src/users');
-const updateAccessUsageStats = require('./helpers/updateAccessUsageStats');
+const updateAccessUsageStats = require('./helpers/updateAccessUsageStats').default;
 /**
  * Utility API methods implementations.
  *
  * @param api
  */
-module.exports = async function (api) {
+export default async function (api) {
   const logger = getLogger('methods:batch');
   const config = await getConfig();
   const isAuditActive = config.get('audit:active');

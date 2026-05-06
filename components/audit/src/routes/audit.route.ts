@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const methodCallback = require('api-server/src/routes/methodCallback');
+const methodCallback = require('api-server/src/routes/methodCallback').default;
 const Paths = require('api-server/src/routes/Paths');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');

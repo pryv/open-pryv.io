@@ -10,7 +10,7 @@
 require('test-helpers/src/api-server-tests-config');
 const assert = require('node:assert');
 const express = require('express');
-const authMod = require('api-server/src/routes/auth/login');
+const authMod = require('api-server/src/routes/auth/login').default;
 
 describe('[AUTN] Authentication', function () {
   const settings = {

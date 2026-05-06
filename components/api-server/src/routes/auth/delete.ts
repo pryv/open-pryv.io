@@ -4,17 +4,16 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
-const methodCallback = require('../methodCallback');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const methodCallback = require('../methodCallback').default;
 const middleware = require('middleware');
 
 /**
  * Routes for users
  * @param app
  */
-module.exports = function (expressApp, app) {
+export default function (expressApp, app) {
   const api = app.api;
   const initContextMiddleware = middleware.initContext(app.storageLayer);
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);

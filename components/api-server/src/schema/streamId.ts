@@ -42,8 +42,4 @@ function isStreamIdValidForCreation (streamId) {
   const regexp = new RegExp(STREAMID_AT_CREATION_REGEXP_STR);
   return regexp.test(streamId);
 }
-module.exports = {
-  findForbiddenChar,
-  isStreamIdValidForCreation,
-  STREAMID_AT_CREATION_REGEXP_STR
-};
+export { findForbiddenChar, isStreamIdValidForCreation, STREAMID_AT_CREATION_REGEXP_STR };

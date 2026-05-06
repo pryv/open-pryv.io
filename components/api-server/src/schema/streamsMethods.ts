@@ -4,15 +4,15 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * JSON Schema specification of methods data for event streams.
  */
 
 const Action = require('./Action');
-const stream = require('./stream');
-const itemDeletion = require('./itemDeletion');
+const stream = require('./stream').default;
+const itemDeletion = require('./itemDeletion').default;
 const helpers = require('./helpers');
 const object = helpers.object;
 const array = helpers.array;
@@ -29,8 +29,7 @@ const updatedEvent = helpers.object({
   additionalProperties: false
 });
 
-module.exports = {
-  get: {
+const __ex_get = {
     params: object({
       parentId: string(),
       state: string({ enum: ['default', 'all'] }),
@@ -46,9 +45,9 @@ module.exports = {
       },
       required: ['streams']
     })
-  },
-
-  create: {
+  };
+export { __ex_get as get };
+const __ex_create = {
     params: stream(Action.CREATE),
     result: object({
       stream: stream(Action.READ, true)
@@ -56,9 +55,9 @@ module.exports = {
       required: ['stream'],
       additionalProperties: false
     })
-  },
-
-  update: {
+  };
+export { __ex_create as create };
+const __ex_update = {
     params: object({
       // in path for HTTP requests
       id: string(),
@@ -77,9 +76,9 @@ module.exports = {
       required: ['stream'],
       additionalProperties: false
     })
-  },
-
-  del: {
+  };
+export { __ex_update as update };
+const __ex_del = {
     params: object({
       // in path for HTTP requests
       id: string(),
@@ -100,5 +99,5 @@ module.exports = {
         })
       ]
     }
-  }
-};
+  };
+export { __ex_del as del };

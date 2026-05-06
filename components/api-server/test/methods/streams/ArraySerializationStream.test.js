@@ -8,7 +8,7 @@
 'use strict';
 
 require('test-helpers/src/api-server-tests-config');
-const ArraySerializationStream = require('../../../src/methods/streams/ArraySerializationStream');
+const ArraySerializationStream = require('../../../src/methods/streams/ArraySerializationStream').default;
 const Writable = require('stream').Writable;
 const inherits = require('util').inherits;
 const assert = require('node:assert');

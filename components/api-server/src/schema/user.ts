@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * JSON Schema specification for users.
  */
@@ -16,7 +16,7 @@ const helpers = require('./helpers');
 /**
  * @param {Action} action
  */
-module.exports = function (action) {
+export default function (action) {
   const schema: any = {
     id: helpers.getTypeURI('user', action),
     type: 'object',

@@ -4,7 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /**
  * JSON Schema specification of methods data for MFA (multi-factor authentication).
@@ -16,7 +17,7 @@ const object = helpers.object;
 const string = helpers.string;
 const array = helpers.array;
 
-module.exports = {
+const mfaMethods = {
   // mfa.activate — start the MFA setup flow.
   // Personal access token required. Body is the profile content (e.g. { phone: '+41...' }) —
   // arbitrary key-value pairs that get templated into the SMS endpoint URL/headers/body.
@@ -116,3 +117,10 @@ module.exports = {
     })
   }
 };
+export default mfaMethods;
+export const activate = mfaMethods.activate;
+export const confirm = mfaMethods.confirm;
+export const challenge = mfaMethods.challenge;
+export const verify = mfaMethods.verify;
+export const deactivate = mfaMethods.deactivate;
+export const recover = mfaMethods.recover;

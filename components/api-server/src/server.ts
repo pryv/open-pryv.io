@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 // Always require application first to be sure boiler is initialized
 const { getApplication } = require('api-server/src/application');
 const http = require('http');
@@ -107,20 +106,20 @@ class Server {
    * @returns {Promise<void>}
    */
   async registerApiMethods () {
-    await require('./methods/system')(app.systemAPI, app.api);
-    await require('./methods/utility')(app.api);
-    await require('./methods/auth/login')(app.api);
-    await require('./methods/auth/register')(app.api);
-    await require('./methods/auth/delete')(app.api);
-    await require('./methods/mfa')(app.api);
-    await require('./methods/accesses')(app.api);
-    require('./methods/service')(app.api);
-    await require('./methods/webhooks')(app.api);
-    await require('./methods/trackingFunctions')(app.api);
-    await require('./methods/account')(app.api);
-    await require('./methods/profile')(app.api);
-    await require('./methods/streams')(app.api);
-    await require('./methods/events')(app.api);
+    await require('./methods/system').default(app.systemAPI, app.api);
+    await require('./methods/utility').default(app.api);
+    await require('./methods/auth/login').default(app.api);
+    await require('./methods/auth/register').default(app.api);
+    await require('./methods/auth/delete').default(app.api);
+    await require('./methods/mfa').default(app.api);
+    await require('./methods/accesses').default(app.api);
+    require('./methods/service').default(app.api);
+    await require('./methods/webhooks').default(app.api);
+    await require('./methods/trackingFunctions').default(app.api);
+    await require('./methods/account').default(app.api);
+    await require('./methods/profile').default(app.api);
+    await require('./methods/streams').default(app.api);
+    await require('./methods/events').default(app.api);
     if (this.isAuditActive) {
       require('audit/src/methods/audit-logs').default(app.api);
     }
@@ -134,7 +133,7 @@ class Server {
   async setupSocketIO (server) {
     const api = app.api;
     const customAuthStepFn = app.getCustomAuthFunction('server.js');
-    const socketIOsetup = require('./socket-io');
+    const socketIOsetup = require('./socket-io').default;
     await socketIOsetup(server, api, customAuthStepFn);
     this.logger.debug('socket io setup done');
   }
@@ -286,4 +285,5 @@ function buildHttpsOptions (config) {
   return options;
 }
 
-module.exports = Server;
+export default Server;
+export { Server };

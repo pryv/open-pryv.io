@@ -11,11 +11,13 @@ import type {} from 'node:fs';
  * Error objects are usually found in property `error` of method results.
  */
 
-module.exports = {
-  id: 'error',
-  type: 'object',
-  additionalProperties: false,
-  properties: {
+const __ex_id = 'error';
+export { __ex_id as id };
+const __ex_type = 'object';
+export { __ex_type as type };
+const __ex_additionalProperties = false;
+export { __ex_additionalProperties as additionalProperties };
+const __ex_properties = {
     id: {
       type: 'string'
     },
@@ -35,6 +37,7 @@ module.exports = {
         $ref: '#'
       }
     }
-  },
-  required: ['id', 'message']
-};
+  };
+export { __ex_properties as properties };
+const __ex_required = ['id', 'message'];
+export { __ex_required as required };

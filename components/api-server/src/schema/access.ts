@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * JSON Schema specification for accesses.
  */
@@ -19,7 +19,7 @@ const string = helpers.string;
 /**
  * @param {Action} action
  */
-exports = module.exports = function (action) {
+function accessSchema (action) {
   if (action === Action.STORE) { action = Action.READ; } // read items === stored items
 
   const base: any = object({
@@ -115,13 +115,12 @@ exports = module.exports = function (action) {
   }
 
   return res;
-};
+}
 
-const permissionLevel = exports.permissionLevel = string({ enum: ['read', 'contribute', 'manage', 'create-only', 'none'] });
+const permissionLevel = string({ enum: ['read', 'contribute', 'manage', 'create-only', 'none'] });
+const featureSetting = string({ enum: ['forbidden'] });
 
-const featureSetting = exports.featureSetting = string({ enum: ['forbidden'] });
-
-const permissions = exports.permissions = function (action) {
+function permissions (action) {
   const streamPermission = object({
     streamId: {
       type: ['string', 'null']
@@ -150,4 +149,12 @@ const permissions = exports.permissions = function (action) {
   return array({
     oneOf: [streamPermission, featurePermission]
   });
-};
+}
+
+// Attach as properties of default function for `require('./access').default.permissions(action)` callers
+(accessSchema as any).permissions = permissions;
+(accessSchema as any).permissionLevel = permissionLevel;
+(accessSchema as any).featureSetting = featureSetting;
+
+export default accessSchema;
+export { permissions, permissionLevel, featureSetting };

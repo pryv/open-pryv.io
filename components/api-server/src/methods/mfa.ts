@@ -4,13 +4,12 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const errors = require('errors').factory;
 const commonFns = require('./helpers/commonFunctions');
-const methodsSchema = require('../schema/mfaMethods');
+const methodsSchema = require('../schema/mfaMethods').default;
 const { getStorageLayer } = require('storage');
 const { getConfig } = require('@pryv/boiler');
 const { getMFAService, getMFASessionStore, Profile } = require('business/src/mfa');
@@ -18,7 +17,7 @@ const { getUsersRepository } = require('business/src/users');
 
 const PROFILE_ID = 'private';
 
-module.exports = async function (api) {
+export default async function (api) {
   const storageLayer = await getStorageLayer();
   const userProfileStorage = storageLayer.profile;
   const config = await getConfig();

@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * JSON Schema specification for events.
  */
@@ -21,7 +21,7 @@ const boolean = helpers.boolean;
 /**
  * @param {Action} action
  */
-exports = module.exports = function (action) {
+export default function (action) {
   // read items === stored items
   if (action === Action.STORE) {
     action = Action.READ;
@@ -64,7 +64,7 @@ exports = module.exports = function (action) {
 
   // forbid attachments except on read and update (ignored for the latter)
   if (action === Action.READ) {
-    schema.properties.attachments = exports.attachments;
+    schema.properties.attachments = attachments;
   } else if (action === Action.UPDATE) {
     schema.properties.attachments = { type: 'array' };
     // whitelist for properties that can be updated
@@ -85,7 +85,7 @@ exports = module.exports = function (action) {
   return schema;
 };
 
-exports.attachments = array(object({
+export const attachments = array(object({
   id: string(),
   fileName: string(),
   type: string(),

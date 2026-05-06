@@ -4,13 +4,12 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 const { getConfig } = require('@pryv/boiler');
 const { getAPIVersion } = require('middleware/src/project_version');
-module.exports = function (api) {
+export default function (api) {
   api.register('service.info', getServiceInfo);
   async function getServiceInfo (context, params, result, next) {
     // Read live from config every call so config mutations after boot

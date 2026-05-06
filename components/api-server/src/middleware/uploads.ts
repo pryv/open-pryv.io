@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 'use strict';
 // A middleware that allows checking uploads and that will at the same time
 // allow uploads for the route.
@@ -30,10 +30,7 @@ const uploadMiddlewareFactory = multer({
   }
 });
 // --------------------------------------------------------------------- exports
-module.exports = {
-  filesUploadSupport,
-  hasFileUpload
-};
+export { filesUploadSupport, hasFileUpload };
 /** Declares that a route has file uploads.
  *
  * Enables file uploads on a route. file uploads are checked in their global

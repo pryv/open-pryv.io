@@ -188,7 +188,7 @@ describe('[RGMC] register: multi-core', function () {
 
       const app = getApplication(true);
       await app.initiate();
-      await require('../src/methods/auth/register')(app.api);
+      await require('../src/methods/auth/register').default(app.api);
       request = supertest(app.expressApp);
     });
 
@@ -282,7 +282,7 @@ describe('[RGMC] register: multi-core', function () {
 
       const app = getApplication(true);
       await app.initiate();
-      await require('../src/methods/auth/register')(app.api);
+      await require('../src/methods/auth/register').default(app.api);
       request = supertest(app.expressApp);
 
       // Seed user directly via usersRepository (avoid full HTTP registration)
@@ -348,7 +348,7 @@ describe('[RGMC] register: multi-core', function () {
 
       const app = getApplication(true);
       await app.initiate();
-      await require('../src/methods/auth/register')(app.api);
+      await require('../src/methods/auth/register').default(app.api);
       request = supertest(app.expressApp);
     });
 
@@ -544,7 +544,7 @@ describe('[RGMC] register: multi-core', function () {
       const app = getApplication(true);
       await app.initiate();
       // Register system methods (not done by initiate — done by server.registerApiMethods)
-      await require('../src/methods/system')(app.systemAPI, app.api);
+      await require('../src/methods/system').default(app.systemAPI, app.api);
       request = supertest(app.expressApp);
     });
 

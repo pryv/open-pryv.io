@@ -47,18 +47,18 @@ describe('[PGTD] DELETE /users/:username', () => {
     isAuditActive = config.get('audit:active');
     app = getApplication();
     await app.initiate();
-    await require('api-server/src/methods/auth/delete')(app.api);
+    await require('api-server/src/methods/auth/delete').default(app.api);
     const testMsgs = [];
     const testNotifier = {
       emit: (...args) => testMsgs.push(args)
     };
     // needed even if not used
     pubsub.setTestNotifier(testNotifier);
-    await require('api-server/src/methods/events')(app.api);
-    await require('api-server/src/methods/streams')(app.api);
-    await require('api-server/src/methods/auth/login')(app.api);
-    await require('api-server/src/methods/utility')(app.api);
-    await require('api-server/src/methods/auth/register')(app.api);
+    await require('api-server/src/methods/events').default(app.api);
+    await require('api-server/src/methods/streams').default(app.api);
+    await require('api-server/src/methods/auth/login').default(app.api);
+    await require('api-server/src/methods/utility').default(app.api);
+    await require('api-server/src/methods/auth/register').default(app.api);
     request = supertest(app.expressApp);
     mongoFixtures = databaseFixture(await produceStorageConnection());
     await mongoFixtures.context.cleanEverything();

@@ -4,12 +4,12 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-const methodCallback = require('./methodCallback');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const methodCallback = require('./methodCallback').default;
 const { setMethodId } = require('middleware');
 const { getConfigUnsafe } = require('@pryv/boiler');
-module.exports = function (expressApp, app) {
+export default function (expressApp, app) {
   const api = app.api;
   // dnsLess compatible route
   expressApp.get('/reg/service/info', setMethodId('service.info'), function (req, res, next) {

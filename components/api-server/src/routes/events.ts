@@ -4,9 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-const methodCallback = require('./methodCallback');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const methodCallback = require('./methodCallback').default;
 const encryption = require('utils').encryption;
 const errors = require('errors').factory;
 const Paths = require('./Paths');
@@ -14,9 +14,9 @@ const tryCoerceStringValues = require('../schema/validation').tryCoerceStringVal
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 const hasFileUpload = require('../middleware/uploads').hasFileUpload;
-const attachmentsAccessMiddlewareFactory = require('../middleware/attachment-access');
+const attachmentsAccessMiddlewareFactory = require('../middleware/attachment-access').default;
 // Set up events route handling.
-module.exports = async function (expressApp, app) {
+export default async function (expressApp, app) {
   const api = app.api;
   const config = app.config;
   const storage = app.storageLayer;

@@ -6,9 +6,9 @@
  */
 
 const commonFns = require('../src/methods/helpers/commonFunctions');
-const streamSchema = require('../src/schema/stream');
-const eventsSchema = require('../src/schema/event');
-const accessesSchema = require('../src/schema/access');
+const streamSchema = require('../src/schema/stream').default;
+const eventsSchema = require('../src/schema/event').default;
+const accessesSchema = require('../src/schema/access').default;
 const assert = require('node:assert');
 const async = require('async');
 

@@ -170,7 +170,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
 
       const app = getApplication(true);
       await app.initiate();
-      await require('../src/methods/auth/register')(app.api);
+      await require('../src/methods/auth/register').default(app.api);
       request = supertest(app.expressApp);
     });
 
@@ -458,7 +458,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       // server.js::registerApiMethods which runs in the worker boot path,
       // not in tests). Register service.info here so /reg/service/info
       // doesn't 404 with "invalid-method".
-      require('../src/methods/service')(app.api);
+      require('../src/methods/service').default(app.api);
       request = supertest(app.expressApp);
     });
 

@@ -121,7 +121,9 @@ async function initCore () {
   const methods = options.methods || ['events', 'streams', 'service', 'auth/login', 'auth/register', 'accesses', 'account', 'profile', 'webhooks', 'utility', 'mfa'];
 
   for (const method of methods) {
-    const loaded = require(`api-server/src/methods/${method}`);
+    const mod = require(`api-server/src/methods/${method}`);
+    // Node 24 require(esm) returns a namespace; the registration function lives on .default
+    const loaded = (mod && mod.default) || mod;
     if (typeof loaded === 'function') {
       await loaded(global.app.api);
     }

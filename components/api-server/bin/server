@@ -5,7 +5,7 @@ require('../../../bin/_observability-boot');
 
 // Binary for launching the api-server process.
 
-const Server = require('../src/server');
+const Server = require('../src/server').default;
 const { getApplication } = require('api-server/src/application');
 
 const loadCommonMeta = require('../src/methods/helpers/setCommonMeta').loadSettings;

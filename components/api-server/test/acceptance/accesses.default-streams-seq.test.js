@@ -100,9 +100,9 @@ describe('[AD01] Accesses with account streams', function () {
     };
     pubsub.setTestNotifier(testNotifier);
     pubsub.status.emit(pubsub.SERVER_READY);
-    await require('api-server/src/methods/accesses')(app.api);
+    await require('api-server/src/methods/accesses').default(app.api);
 
-    await require('api-server/src/methods/events')(app.api);
+    await require('api-server/src/methods/events').default(app.api);
     request = supertest(app.expressApp);
   });
 

@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const { getConfig } = require('@pryv/boiler');
 const getHTTPDigestHeaderForAttachment = require('business').integrity.attachments.getHTTPDigestHeaderForAttachment;
@@ -33,7 +33,8 @@ async function middlewareFactory () {
   initialized = true;
   return attachmentsAccessMiddleware;
 }
-module.exports = middlewareFactory;
+export default middlewareFactory;
+export { middlewareFactory };
 // A middleware that checks permissions to access the file attachment, then
 // translates the request's resource path to match the actual physical path for
 // static-serving the file.

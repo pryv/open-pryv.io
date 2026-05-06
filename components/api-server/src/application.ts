@@ -4,8 +4,11 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = require('path').dirname(__filename);
 
 // A central registry for singletons and configuration-type instances; pass this
 // to your code to give it access to app setup.
@@ -60,10 +63,10 @@ require('@pryv/boiler').init({
 });
 
 const storage = require('storage');
-const API = require('./API');
-const expressAppInit = require('./expressApp');
+const API = require('./API').default;
+const expressAppInit = require('./expressApp').default;
 const middleware = require('middleware');
-const errorsMiddlewareMod = require('./middleware/errors');
+const errorsMiddlewareMod = require('./middleware/errors').default;
 
 const { getConfig, getLogger } = require('@pryv/boiler');
 const logger = getLogger('application');
@@ -208,29 +211,29 @@ class Application {
    */
   async initiateRoutes () {
     // Register routes — always available (register functionality is built-in)
-    require('./routes/register')(this.expressApp, this);
-    require('./routes/reg/access')(this.expressApp, this);
-    require('./routes/reg/records')(this.expressApp, this);
-    require('./routes/reg/apps')(this.expressApp, this);
-    require('./routes/reg/legacy')(this.expressApp, this);
+    require('./routes/register').default(this.expressApp, this);
+    require('./routes/reg/access').default(this.expressApp, this);
+    require('./routes/reg/records').default(this.expressApp, this);
+    require('./routes/reg/apps').default(this.expressApp, this);
+    require('./routes/reg/legacy').default(this.expressApp, this);
 
     // system, root, register and delete MUST come first
-    require('./routes/auth/delete')(this.expressApp, this);
-    require('./routes/auth/register')(this.expressApp, this);
+    require('./routes/auth/delete').default(this.expressApp, this);
+    require('./routes/auth/register').default(this.expressApp, this);
 
-    require('./routes/system')(this.expressApp, this);
-    require('./routes/root')(this.expressApp, this);
+    require('./routes/system').default(this.expressApp, this);
+    require('./routes/root').default(this.expressApp, this);
 
-    require('./routes/accesses')(this.expressApp, this);
-    require('./routes/account')(this.expressApp, this);
-    require('./routes/auth/login')(this.expressApp, this);
-    require('./routes/mfa')(this.expressApp, this);
-    await require('./routes/events')(this.expressApp, this);
-    require('./routes/profile')(this.expressApp, this);
-    require('./routes/service')(this.expressApp, this);
-    require('./routes/streams')(this.expressApp, this);
+    require('./routes/accesses').default(this.expressApp, this);
+    require('./routes/account').default(this.expressApp, this);
+    require('./routes/auth/login').default(this.expressApp, this);
+    require('./routes/mfa').default(this.expressApp, this);
+    await require('./routes/events').default(this.expressApp, this);
+    require('./routes/profile').default(this.expressApp, this);
+    require('./routes/service').default(this.expressApp, this);
+    require('./routes/streams').default(this.expressApp, this);
 
-    require('./routes/webhooks')(this.expressApp, this);
+    require('./routes/webhooks').default(this.expressApp, this);
     if (this.isAuditActive) {
       require('audit/src/routes/audit.route').default(this.expressApp, this);
     }
@@ -306,10 +309,7 @@ function getApplication (forceNewApp) {
   return app;
 }
 
-module.exports = {
-  getApplication
-};
-
+export { getApplication };
 /**
  * @typedef {{
  *   ignoreProtectedFields: boolean;

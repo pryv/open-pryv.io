@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const express = require('express');
 const middleware = require('middleware');
 const Paths = require('./routes/Paths');
@@ -84,4 +84,5 @@ async function expressAppInit (logging) {
   app.use(commonHeadersMiddleware);
   return app;
 }
-module.exports = expressAppInit;
+export default expressAppInit;
+export { expressAppInit };

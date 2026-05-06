@@ -4,13 +4,13 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const commonMeta = require('./methods/helpers/setCommonMeta');
 const MultiStream = require('multistream');
-const DrainStream = require('./methods/streams/DrainStream');
-const ArraySerializationStream = require('./methods/streams/ArraySerializationStream');
-const SingleObjectSerializationStream = require('./methods/streams/SingleObjectSerializationStream');
+const DrainStream = require('./methods/streams/DrainStream').default;
+const ArraySerializationStream = require('./methods/streams/ArraySerializationStream').default;
+const SingleObjectSerializationStream = require('./methods/streams/SingleObjectSerializationStream').default;
 
 const { Transform } = require('stream');
 
@@ -309,8 +309,8 @@ class ResultStream extends Transform {
     callback();
   }
 }
-module.exports = Result;
-
+export default Result;
+export { Result };
 class StreamConcatArray {
   streamsToAdd;
 

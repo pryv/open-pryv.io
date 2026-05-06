@@ -77,7 +77,7 @@ describe('[FG5R] Events of system streams', () => {
     pubsub.setTestNotifier(testNotifier);
 
     pubsub.status.emit(pubsub.SERVER_READY);
-    await require('api-server/src/methods/events')(app.api);
+    await require('api-server/src/methods/events').default(app.api);
 
     request = supertest(app.expressApp);
 

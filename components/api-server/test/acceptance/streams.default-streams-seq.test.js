@@ -62,7 +62,7 @@ describe('[SYSS] System streams', function () {
     pubsub.setTestNotifier(testNotifier);
 
     pubsub.status.emit(pubsub.SERVER_READY);
-    require('api-server/src/methods/streams')(app.api);
+    require('api-server/src/methods/streams').default(app.api);
 
     request = supertest(app.expressApp);
   });

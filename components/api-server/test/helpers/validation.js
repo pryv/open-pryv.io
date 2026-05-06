@@ -24,10 +24,10 @@ const { integrity } = require('business');
  * Expose common JSON schemas.
  */
 const schemas = exports.schemas = {
-  access: require('../../src/schema/access'),
-  event: require('../../src/schema/event'),
-  stream: require('../../src/schema/stream'),
-  user: require('../../src/schema/user'),
+  access: require('../../src/schema/access').default,
+  event: require('../../src/schema/event').default,
+  stream: require('../../src/schema/stream').default,
+  user: require('../../src/schema/user').default,
   errorResult: {
     type: 'object',
     additionalProperties: false,

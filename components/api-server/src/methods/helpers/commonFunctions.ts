@@ -4,15 +4,15 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const validation = require('../../schema/validation');
 const { findForbiddenChar, isStreamIdValidForCreation } = require('../../schema/streamId');
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('commonFunctions');
 
-exports.requirePersonalAccess = function requirePersonalAccess (context, params, result, next) {
+export const requirePersonalAccess = function requirePersonalAccess (context, params, result, next) {
   if (!context.access.isPersonal()) {
     return next(errors.forbidden('You cannot access this resource using the given access ' + 'token.'));
   }
@@ -21,7 +21,7 @@ exports.requirePersonalAccess = function requirePersonalAccess (context, params,
 /**
  * Basic check for authorized access based on context.methodId
  */
-exports.basicAccessAuthorizationCheck = function (context, params, result, next) {
+export const basicAccessAuthorizationCheck = function (context, params, result, next) {
   const res = context.access.can(context.methodId);
   if (res === true) { return next(); }
   const message = typeof res === 'boolean'
@@ -39,7 +39,7 @@ exports.basicAccessAuthorizationCheck = function (context, params, result, next)
  * @param {Object} authSettings
  * @return {Function}
  */
-exports.getTrustedAppCheck = function getTrustedAppCheck (authSettings) {
+export const getTrustedAppCheck = function getTrustedAppCheck (authSettings) {
   let trustedApps;
   return function requireTrustedApp (context, params, result, next) {
     if (!isTrustedApp(params.appId, params.origin)) {
@@ -97,7 +97,7 @@ exports.getTrustedAppCheck = function getTrustedAppCheck (authSettings) {
  * @param  {Object} paramsSchema JSON Schema for the parameters
  * @return {void}
  */
-exports.getParamsValidation = function getParamsValidation (paramsSchema) {
+export const getParamsValidation = function getParamsValidation (paramsSchema) {
   return function validateParams (context, params, result, next) {
     validation.validate(params, paramsSchema, function (err) {
       if (err) {
@@ -108,11 +108,11 @@ exports.getParamsValidation = function getParamsValidation (paramsSchema) {
     });
   };
 };
-exports.isValidStreamIdForQuery = function isValidStreamIdForQuery (streamId, parameter, parameterName) {
+export const isValidStreamIdForQuery = function isValidStreamIdForQuery (streamId, parameter, parameterName) {
   const forbiddenChar = findForbiddenChar(streamId);
   if (forbiddenChar != null) { throw new Error(`Error in '${parameterName}' parameter: ${JSON.stringify(parameter)}, forbidden chartacter(s) in streamId '${streamId}'.`); }
 };
-exports.isValidStreamIdForCreation = function isValidStreamIdForCreation (streamId) {
+export const isValidStreamIdForCreation = function isValidStreamIdForCreation (streamId) {
   return isStreamIdValidForCreation(streamId);
 };
 /**
@@ -188,7 +188,7 @@ function _addCustomMessage (error, schema) {
   // if there are no custom messages, just return default z-schema message
   return error;
 }
-exports.catchForbiddenUpdate = function catchForbiddenUpdate (paramsSchema, ignoreProtectedFieldUpdates, logger) {
+export const catchForbiddenUpdate = function catchForbiddenUpdate (paramsSchema, ignoreProtectedFieldUpdates, logger) {
   return function validateParams (context, params, result, next) {
     const allowed = paramsSchema.alterableProperties;
     const forbidden = Object.keys(params.update).filter((key) => !allowed.includes(key));

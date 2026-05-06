@@ -4,18 +4,17 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * JSON Schema specification of methods data for system.
  */
 
 const Action = require('./Action');
 const helpers = require('./helpers');
-const user = require('./user');
+const user = require('./user').default;
 
-module.exports = {
-  createUser: {
+const __ex_createUser = {
     params: user(Action.CREATE),
     result: {
       type: 'object',
@@ -26,8 +25,9 @@ module.exports = {
         }
       }
     }
-  },
-  getUserInfo: {
+  };
+export { __ex_createUser as createUser };
+const __ex_getUserInfo = {
     params: helpers.object({
       username: helpers.string()
     }, {
@@ -48,10 +48,11 @@ module.exports = {
     }, {
       required: ['userInfo']
     })
-  },
-  deactivateMfa: {
+  };
+export { __ex_getUserInfo as getUserInfo };
+const __ex_deactivateMfa = {
     params: helpers.object({
       username: helpers.username
     }, { required: ['username'] })
-  }
-};
+  };
+export { __ex_deactivateMfa as deactivateMfa };

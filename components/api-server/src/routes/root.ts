@@ -4,11 +4,11 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const middleware = require('middleware');
 const commonMeta = require('../methods/helpers/setCommonMeta');
-const methodCallback = require('./methodCallback');
+const methodCallback = require('./methodCallback').default;
 const Paths = require('./Paths');
 const getAuth = require('middleware/src/getAuth').default;
 const { setMethodId } = require('middleware');
@@ -60,8 +60,8 @@ function root (expressApp, app) {
     }
   );
 }
-module.exports = root;
-
+export default root;
+export { root };
 // Renders a greeting message; this route is displayed on the various forms
 // of roots ('/', 'foo.pryv.me/')
 //

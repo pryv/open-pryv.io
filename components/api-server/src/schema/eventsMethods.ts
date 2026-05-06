@@ -4,23 +4,22 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 'use strict';
 /**
  * JSON Schema specification of methods data for events.
  */
 const Action = require('./Action');
-const event = require('./event');
-const itemDeletion = require('./itemDeletion');
+const event = require('./event').default;
+const itemDeletion = require('./itemDeletion').default;
 const helpers = require('./helpers');
 const object = helpers.object;
 const array = helpers.array;
 const string = helpers.string;
 const number = helpers.number;
 const boolean = helpers.boolean;
-module.exports = {
-  get: {
+const __ex_get = {
     params: object({
       streams: {},
       types: array(string({ pattern: '^(series:)?[a-z0-9-]+/(\\*|[a-z0-9-]+)$' }), { nullable: true }),
@@ -41,8 +40,9 @@ module.exports = {
     }, {
       required: ['events']
     })
-  },
-  getOne: {
+  };
+export { __ex_get as get };
+const __ex_getOne = {
     params: object({
       id: string(),
       includeHistory: boolean()
@@ -53,8 +53,9 @@ module.exports = {
     }, {
       required: ['event']
     })
-  },
-  create: {
+  };
+export { __ex_getOne as getOne };
+const __ex_create = {
     params: event(Action.CREATE),
     result: object({
       event: event(Action.READ)
@@ -62,8 +63,9 @@ module.exports = {
       required: ['event'],
       additionalProperties: false
     })
-  },
-  update: {
+  };
+export { __ex_create as create };
+const __ex_update = {
     params: object({
       // in path for HTTP requests
       id: string(),
@@ -79,8 +81,9 @@ module.exports = {
       required: ['event'],
       additionalProperties: false
     })
-  },
-  del: {
+  };
+export { __ex_update as update };
+const __ex_del = {
     params: object({
       // in path for HTTP requests
       id: string()
@@ -100,8 +103,9 @@ module.exports = {
         })
       ]
     }
-  },
-  deleteAttachment: {
+  };
+export { __ex_del as del };
+const __ex_deleteAttachment = {
     params: object({
       // in path for HTTP requests
       id: string(),
@@ -110,5 +114,5 @@ module.exports = {
     }, {
       required: ['id', 'fileId']
     })
-  }
-};
+  };
+export { __ex_deleteAttachment as deleteAttachment };

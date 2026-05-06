@@ -78,20 +78,20 @@ const http = require('node:http');
   await app.initiate();
 
   // Register API methods directly on the Application instance
-  await require('api-server/src/methods/system')(app.systemAPI, app.api);
-  await require('api-server/src/methods/utility')(app.api);
-  await require('api-server/src/methods/auth/login')(app.api);
-  await require('api-server/src/methods/auth/register')(app.api);
-  await require('api-server/src/methods/auth/delete')(app.api);
-  await require('api-server/src/methods/mfa')(app.api);
-  await require('api-server/src/methods/accesses')(app.api);
-  require('api-server/src/methods/service')(app.api);
-  await require('api-server/src/methods/webhooks')(app.api);
-  await require('api-server/src/methods/trackingFunctions')(app.api);
-  await require('api-server/src/methods/account')(app.api);
-  await require('api-server/src/methods/profile')(app.api);
-  await require('api-server/src/methods/streams')(app.api);
-  await require('api-server/src/methods/events')(app.api);
+  await require('api-server/src/methods/system').default(app.systemAPI, app.api);
+  await require('api-server/src/methods/utility').default(app.api);
+  await require('api-server/src/methods/auth/login').default(app.api);
+  await require('api-server/src/methods/auth/register').default(app.api);
+  await require('api-server/src/methods/auth/delete').default(app.api);
+  await require('api-server/src/methods/mfa').default(app.api);
+  await require('api-server/src/methods/accesses').default(app.api);
+  require('api-server/src/methods/service').default(app.api);
+  await require('api-server/src/methods/webhooks').default(app.api);
+  await require('api-server/src/methods/trackingFunctions').default(app.api);
+  await require('api-server/src/methods/account').default(app.api);
+  await require('api-server/src/methods/profile').default(app.api);
+  await require('api-server/src/methods/streams').default(app.api);
+  await require('api-server/src/methods/events').default(app.api);
 
   // Start HTTP server
   const httpServer = http.createServer(app.expressApp);

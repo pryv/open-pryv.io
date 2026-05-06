@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const commonFns = require('api-server/src/methods/helpers/commonFunctions');
 const { ApiEndpoint } = require('utils');
@@ -25,7 +25,7 @@ const MFA_PROFILE_ID = 'private';
  *
  * @param api
  */
-module.exports = async function (api) {
+export default async function (api) {
   const usersRepository = await getUsersRepository();
   const storageLayer = await getStorageLayer();
   const userAccessesStorage = storageLayer.accesses;

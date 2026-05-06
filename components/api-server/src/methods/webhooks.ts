@@ -4,14 +4,14 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const timestamp = require('unix-timestamp');
 
 const errors = require('errors').factory;
 
 const commonFns = require('./helpers/commonFunctions');
-const webhookSchema = require('../schema/webhook');
+const webhookSchema = require('../schema/webhook').default;
 const methodsSchema = require('../schema/webhooksMethods');
 
 const Webhook = require('business').webhooks.Webhook;
@@ -36,7 +36,7 @@ const { getStorageLayer } = require('storage');
  * }} Access
  */
 
-module.exports = async function produceWebhooksApiMethods (api) {
+export default async function produceWebhooksApiMethods (api) {
   const config = await getConfig();
   const wehbooksSettings = config.get('webhooks');
   const storageLayer = await getStorageLayer();

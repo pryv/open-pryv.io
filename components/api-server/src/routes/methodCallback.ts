@@ -15,7 +15,7 @@ import type {} from 'node:fs';
  *                                      and returning a number
  * @returns {Function}
  */
-module.exports = function (res, next, successCode) {
+export default function (res, next, successCode) {
   return function (err, result) {
     if (err != null) {
       return next(err);

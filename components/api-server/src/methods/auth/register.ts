@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const commonFns = require('./../helpers/commonFunctions');
 const errors = require('errors').factory;
 const methodsSchema = require('api-server/src/schema/authMethods');
@@ -31,7 +31,7 @@ function withTrailingSlash (url) {
  *
  * @param api
  */
-module.exports = async function (api) {
+export default async function (api) {
   const config = await getConfig();
   const storageLayer = await getStorageLayer();
   const servicesSettings = config.get('services');

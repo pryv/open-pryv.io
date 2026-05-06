@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { isDeepStrictEqual } = require('node:util');
 const slugify = require('utils').slugify;
 const timestamp = require('unix-timestamp');
@@ -53,7 +53,7 @@ const { integrity } = require('business');
  * }} UpdatesSettingsHolder
  */
 
-module.exports = async function produceAccessesApiMethods (api) {
+export default async function produceAccessesApiMethods (api) {
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };
   const mall = await getMall();
   const storageLayer = await getStorageLayer();

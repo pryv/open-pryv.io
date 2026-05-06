@@ -8,7 +8,7 @@
 
 /* global assert */
 
-const Result = require('../src/Result');
+const Result = require('../src/Result').default;
 const Transform = require('stream').Transform;
 const inherits = require('util').inherits;
 const Source = require('./helpers').SourceStream;

@@ -4,14 +4,14 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const Writable = require('stream').Writable;
 const inherits = require('util').inherits;
 const errors = require('errors').factory;
 
-module.exports = DrainStream;
-
+export default DrainStream;
+export { DrainStream };
 /**
  * Writable stream used to drain items fed to it into an array and returns the said
  * array in the callback or an error if the limit of items is exceeded.

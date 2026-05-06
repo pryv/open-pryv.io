@@ -13,7 +13,7 @@ import type {} from 'node:fs';
  * Config-based: reads from config 'appList'.
  */
 
-module.exports = function (expressApp, app) {
+export default function (expressApp, app) {
   const appsList = app.config.get('appList') || {};
 
   expressApp.get('/apps', (req, res) => {

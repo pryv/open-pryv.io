@@ -43,7 +43,7 @@ describe('[BMM2] registration: DNS-less', () => {
     app = getApplication(true);
     await app.initiate();
 
-    await require('api-server/src/methods/auth/register')(app.api);
+    await require('api-server/src/methods/auth/register').default(app.api);
 
     // get events for a small test of valid token
     // Initialize notifyTests dependency
@@ -52,7 +52,7 @@ describe('[BMM2] registration: DNS-less', () => {
       emit: (...args) => testMsgs.push(args)
     };
     pubsub.setTestNotifier(testNotifier);
-    await require('api-server/src/methods/events')(app.api);
+    await require('api-server/src/methods/events').default(app.api);
 
     request = supertest(app.expressApp);
   });

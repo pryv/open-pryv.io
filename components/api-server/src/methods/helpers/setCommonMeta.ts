@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const timestamp = require('unix-timestamp');
 const { getAPIVersion } = require('middleware/src/project_version');
 // cnan be overriden;
@@ -23,7 +23,7 @@ let config = null;
  *
  * If no parameter is provided, loads the configuration. Otherwise takes the provided loaded settings.
  */
-module.exports.loadSettings = async function () {
+export const loadSettings = async function () {
   config = await getConfig();
   version = await getAPIVersion();
 };
@@ -37,7 +37,7 @@ module.exports.loadSettings = async function () {
  *
  * @param result {Object} Current result. MODIFIED IN PLACE.
  */
-module.exports.setCommonMeta = function (result) {
+export const setCommonMeta = function (result) {
   if (result.meta == null) {
     result.meta = {};
   }

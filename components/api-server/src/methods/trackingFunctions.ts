@@ -4,10 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
-const updateAccessUsageStats = require('./helpers/updateAccessUsageStats');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const updateAccessUsageStats = require('./helpers/updateAccessUsageStats').default;
 const { getConfig } = require('@pryv/boiler');
 
 /**
@@ -15,7 +14,7 @@ const { getConfig } = require('@pryv/boiler');
  *
  * @param api
  */
-module.exports = async function (api) {
+export default async function (api) {
   const config = await getConfig();
   if (!config.get('accessTracking:isActive')) { return; }
   const updateAccessUsage = await updateAccessUsageStats();

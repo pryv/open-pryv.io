@@ -4,15 +4,14 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const utils = require('utils');
 const errors = require('errors').factory;
 const fs = require('fs');
 const commonFns = require('./helpers/commonFunctions');
 const methodsSchema = require('../schema/eventsMethods');
-const eventSchema = require('../schema/event');
+const eventSchema = require('../schema/event').default;
 const timestamp = require('unix-timestamp');
 
 const { getMall, storeDataUtils } = require('mall');
@@ -34,7 +33,7 @@ const { getPlatform } = require('platform');
 
 const { pubsub } = require('messages');
 
-const CleanDeletedEventsStream = require('./streams/CleanDeletedEventsStream');
+const CleanDeletedEventsStream = require('./streams/CleanDeletedEventsStream').default;
 
 const { integrity } = require('business');
 
@@ -46,7 +45,7 @@ const typeRepo = new TypeRepository();
  * Events API methods implementations.
  * @param api
  */
-module.exports = async function (api) {
+export default async function (api) {
   const config = await getConfig();
   const authSettings = config.get('auth');
   const eventTypesUrl = config.get('service:eventTypes');

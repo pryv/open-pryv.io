@@ -91,8 +91,8 @@ describe('[ACCO] Account with system streams', function () {
     };
     pubsub.setTestNotifier(testNotifier);
     pubsub.status.emit(pubsub.SERVER_READY);
-    await require('api-server/src/methods/account')(app.api);
-    await require('api-server/src/methods/events')(app.api);
+    await require('api-server/src/methods/account').default(app.api);
+    await require('api-server/src/methods/events').default(app.api);
     request = supertest(app.expressApp);
     mall = await getMall();
   });

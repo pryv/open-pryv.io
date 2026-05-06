@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Plan 54 Phase D — request/response IPC client used by the admin
  * `force-renew` route. The worker sends `acme:force-renew` to the master
@@ -75,4 +74,4 @@ async function forceRenew ({ hostname, timeoutMs = DEFAULT_TIMEOUT_MS, processHa
   });
 }
 
-module.exports = { forceRenew };
+export { forceRenew };

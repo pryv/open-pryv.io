@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const errorHandling = require('errors').errorHandling;
 const commonMeta = require('../methods/helpers/setCommonMeta');
 const { fromCallback } = require('utils');
@@ -357,8 +357,8 @@ function pubsubMessageToSocket (payload) {
   const key = typeof payload === 'object' ? JSON.stringify(payload) : payload;
   return messageMap[key];
 }
-module.exports = Manager;
-
+export default Manager;
+export { Manager };
 /** @typedef {string} SocketIO$SocketId */
 
 /**

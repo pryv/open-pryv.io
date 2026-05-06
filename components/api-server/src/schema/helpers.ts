@@ -16,9 +16,9 @@ const USERNAME_REGEXP_STR = '^[a-z0-9]' +
                             '[a-z0-9-]{' + (USERNAME_MIN_LENGTH - 2) + ',' + (USERNAME_MAX_LENGTH - 2) + '}' +
                             '[a-z0-9]$';
 
-exports.USERNAME_MIN_LENGTH = USERNAME_MIN_LENGTH;
-exports.USERNAME_MAX_LENGTH = USERNAME_MAX_LENGTH;
-exports.USERNAME_REGEXP_STR = USERNAME_REGEXP_STR;
+export { USERNAME_MIN_LENGTH };
+export { USERNAME_MAX_LENGTH };
+export { USERNAME_REGEXP_STR };
 
 /**
  * Gets the full core type URI for the given type name and action (read, create, etc.)
@@ -26,7 +26,7 @@ exports.USERNAME_REGEXP_STR = USERNAME_REGEXP_STR;
  * @param {String} name
  * @param {String} action
  */
-exports.getTypeURI = function (name, action) {
+export const getTypeURI = function (name, action) {
   return 'pryv.core.' + name + (action ? '-' + action : '');
 };
 
@@ -36,7 +36,7 @@ exports.getTypeURI = function (name, action) {
  * @param {Object} propertiesDef
  * @param {Object} options Extra properties to merge into the returned object definition
  */
-exports.object = function (propertiesDef, options) {
+export const object = function (propertiesDef, options) {
   return Object.assign(getBaseSchema('object', options), { properties: propertiesDef });
 };
 
@@ -46,7 +46,7 @@ exports.object = function (propertiesDef, options) {
  * @param {Object} itemsDef
  * @param {Object} options Extra properties to merge into the returned array definition
  */
-exports.array = function (itemsDef, options) {
+export const array = function (itemsDef, options) {
   return Object.assign(getBaseSchema('array', options), { items: itemsDef });
 };
 
@@ -55,9 +55,10 @@ exports.array = function (itemsDef, options) {
  *
  * @param {Object} options Extra properties to merge into the returned object definition
  */
-exports.string = getBaseSchema.bind(null, 'string');
+export const string = getBaseSchema.bind(null, 'string');
 
-exports.null = getBaseSchema.bind(null, 'null');
+const _nullSchema = getBaseSchema.bind(null, 'null');
+export { _nullSchema as null };
 
 /// NOTE (similarly as in service-register):
 ///   We do very little verification on the outer form of the addresses here
@@ -68,31 +69,31 @@ exports.null = getBaseSchema.bind(null, 'null');
 ///   b) Validating emails is hard _and_ useless:
 ///     https://hackernoon.com/the-100-correct-way-to-validate-email-addresses-7c4818f24643
 ///
-exports.email = getBaseSchema('string', { maxLength: 300 });
+export const email = getBaseSchema('string', { maxLength: 300 });
 
-exports.language = getBaseSchema('string', { maxLength: 5, minLength: 1 });
+export const language = getBaseSchema('string', { maxLength: 5, minLength: 1 });
 
 /**
  * Returns a 'number' schema definition.
  *
  * @param {Object} options Extra properties to merge into the returned object definition
  */
-exports.number = getBaseSchema.bind(null, 'number');
+export const number = getBaseSchema.bind(null, 'number');
 
 /**
  * Returns a 'boolean' schema definition.
  *
  * @param {Object} options Extra properties to merge into the returned object definition
  */
-exports.boolean = getBaseSchema.bind(null, 'boolean');
+export const boolean = getBaseSchema.bind(null, 'boolean');
 
 /**
  * Global username rule
  */
 
-exports.username = getBaseSchema('string', { pattern: USERNAME_REGEXP_STR });
+export const username = getBaseSchema('string', { pattern: USERNAME_REGEXP_STR });
 
-exports.getBaseSchema = getBaseSchema;
+export { getBaseSchema };
 
 function getBaseSchema (type, options) {
   const result = {
@@ -115,7 +116,7 @@ function getBaseSchema (type, options) {
  *
  * @param {Object} schema
  */
-exports.addTrackingProperties = function (schema) {
+export const addTrackingProperties = function (schema) {
   schema.properties.created = { type: 'number' };
   schema.properties.createdBy = { type: 'string' };
   schema.properties.modified = { type: 'number' };

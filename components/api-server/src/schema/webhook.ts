@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * JSON Schema specification for Webhooks.
  */
@@ -20,7 +20,7 @@ const array = helpers.array;
 /**
  * @param {Action} action
  */
-exports = module.exports = function (action) {
+export default function (action) {
   if (action === Action.STORE) { action = Action.READ; } // read items === stored items
 
   const base = object({

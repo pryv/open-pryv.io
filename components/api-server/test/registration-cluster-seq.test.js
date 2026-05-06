@@ -57,7 +57,7 @@ describe('[REGC] registration: cluster', function () {
     });
     app = getApplication();
     await app.initiate();
-    await require('../src/methods/auth/register')(app.api);
+    await require('../src/methods/auth/register').default(app.api);
     request = supertest(app.expressApp);
     usersRepository = await getUsersRepository();
   });

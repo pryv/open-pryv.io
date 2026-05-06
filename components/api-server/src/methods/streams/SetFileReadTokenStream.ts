@@ -4,14 +4,14 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const Transform = require('stream').Transform;
 const inherits = require('util').inherits;
 const utils = require('utils');
 
-module.exports = SetFileReadTokenStream;
-
+export default SetFileReadTokenStream;
+export { SetFileReadTokenStream };
 /**
  * Sets the FileReadToken for each of the given event's attachments (if any) for the given
  * access.

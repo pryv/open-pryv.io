@@ -4,16 +4,16 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const Paths = require('./Paths');
-const methodCallback = require('./methodCallback');
+const methodCallback = require('./methodCallback').default;
 const contentType = require('middleware').contentType;
 const { getLogger } = require('@pryv/boiler');
 const { setMinimalMethodContext, setMethodId } = require('middleware');
 // System (e.g. registration server) calls route handling.
-module.exports = function system (expressApp, app) {
+export default function system (expressApp, app) {
   const systemAPI = app.systemAPI;
   const config = app.config;
   const adminAccessKey = config.get('auth:adminAccessKey');

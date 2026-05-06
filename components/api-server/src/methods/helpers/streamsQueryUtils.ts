@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Utilities for events.get stream queries.
  *
@@ -64,8 +64,7 @@ function transformArrayOfStringsToStreamsQuery (arrayOfQueries) {
     };
   }
 }
-exports.transformArrayOfStringsToStreamsQuery =
-    transformArrayOfStringsToStreamsQuery;
+export { transformArrayOfStringsToStreamsQuery };
 /**
  * @param {Array<StreamQuery>} arrayOfQueries  undefined
  * @throws - Error if query does not respect the schema
@@ -77,7 +76,7 @@ function validateStreamsQueriesAndSetStore (arrayOfQueries) {
   });
   return arrayOfQueries;
 }
-exports.validateStreamsQueriesAndSetStore = validateStreamsQueriesAndSetStore;
+export { validateStreamsQueriesAndSetStore };
 /**
  * throw an error if streamQuery is not of the form {any: all: not: } with at least one of any or all
  * [{any: ['A', 'B', '.email']}, {any: ':_audit:xx'}] => [{any: ['A', 'B', '.email'], storeId: 'local'}, {any: 'xx', storeId: 'audit'}]
@@ -199,8 +198,7 @@ function uniqueStreamIds (arrayOfStreamiIs) {
  * @param {ExpandStream} expandStream
  * @returns
  */
-exports.expandAndTransformStreamQueries =
-    async function expandAndTransformStreamQueries (streamQueries, expandStream) {
+export const expandAndTransformStreamQueries = async function expandAndTransformStreamQueries (streamQueries, expandStream) {
       async function expandSet (streamIds, storeId, excludedIds = []) {
         const expandedSet = new Set(); // use a Set to avoid duplicate entries;
         for (const streamId of streamIds) {

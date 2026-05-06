@@ -4,12 +4,11 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const APIError = require('errors').APIError;
 const errors = require('errors').factory;
-const Result = require('./Result');
+const Result = require('./Result').default;
 const { getConfigUnsafe } = require('@pryv/boiler');
 
 let audit, throwIfMethodIsNotDeclared, isAuditActive;
@@ -270,8 +269,8 @@ class API {
   }
 }
 
-module.exports = API;
-
+export default API;
+export { API };
 /**
  * @param {string} idFilter
  * @param {string} id

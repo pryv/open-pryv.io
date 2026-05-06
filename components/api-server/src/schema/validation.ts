@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 // Backed by the in-house jsonValidator (ajv-draft-04 under the hood,
 // z-schema-shaped errors on the surface). See
 // components/utils/src/jsonValidator.js. business/src/types.js and the
@@ -22,18 +21,18 @@ const validator = createValidator({ breakOnFirstError: false });
  * @param schema
  * @param callback
  */
-exports.validate = validator.validate;
+export const validate = validator.validate;
 /**
  * Validates the given JSON-schema definition.
  *
  * @param schema
  * @param callback
  */
-exports.validateSchema = validator.validateSchema;
+export const validateSchema = validator.validateSchema;
 /**
  * To use after using validate synchronuously
  */
-exports.getLastError = validator.getLastError;
+export const getLastError = validator.getLastError;
 
 // Tries to type-coerce properties of the given `object` according to the
 // settings. Iterates in shallow manner over the keys of `settings`, coercing
@@ -72,4 +71,4 @@ function tryCoerceStringValues (object, settings) {
     return value;
   }
 }
-exports.tryCoerceStringValues = tryCoerceStringValues;
+export { tryCoerceStringValues };

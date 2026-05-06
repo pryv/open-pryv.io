@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * JSON Schema specification of methods data for auth.
  */
@@ -136,8 +136,7 @@ const registrationSchema = {
 };
 // extend registration settings with settings from the accountStreams
 registrationSchema.params = loadCustomValidationSettings(registrationSchema.params);
-module.exports = {
-  login: {
+const __ex_login = {
     params: object({
       username: string(),
       password: string(),
@@ -154,12 +153,15 @@ module.exports = {
       required: ['token'],
       additionalProperties: false
     })
-  },
-  logout: {
+  };
+export { __ex_login as login };
+const __ex_logout = {
     params: object({})
-  },
-  register: registrationSchema,
-  usernameCheck: {
+  };
+export { __ex_logout as logout };
+const __ex_register = registrationSchema;
+export { __ex_register as register };
+const __ex_usernameCheck = {
     params: object({
       username: helpers.username
     }, {
@@ -178,8 +180,9 @@ module.exports = {
       },
       additionalProperties: false
     })
-  },
-  emailCheck: {
+  };
+export { __ex_usernameCheck as usernameCheck };
+const __ex_emailCheck = {
     params: object({
       email: helpers.email
     }, {
@@ -198,8 +201,8 @@ module.exports = {
       },
       additionalProperties: false
     })
-  }
-};
+  };
+export { __ex_emailCheck as emailCheck };
 /**
  * Append validation of custom system streams for registration method
  * @returns {any}

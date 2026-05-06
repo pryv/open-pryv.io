@@ -10,13 +10,9 @@ import type {} from 'node:fs';
  * Lists the possible object actions affecting schema definitions.
  */
 
-const Action = module.exports = {
-  CREATE: 'create',
-  /**
-   * To describe what is actually stored in the DB.
-   */
-  STORE: 'store',
-  READ: 'read',
-  UPDATE: 'update'
-};
-Object.freeze(Action);
+const CREATE = 'create';
+const STORE = 'store';
+const READ = 'read';
+const UPDATE = 'update';
+
+export { CREATE, STORE, READ, UPDATE };

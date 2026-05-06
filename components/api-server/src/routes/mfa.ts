@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * MFA routes. Plan 26: HTTP bindings for the mfa.* API methods.
  *
@@ -30,10 +29,10 @@ import type {} from 'node:fs';
 
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
-const methodCallback = require('./methodCallback');
+const methodCallback = require('./methodCallback').default;
 const Paths = require('./Paths');
 
-module.exports = function (expressApp, app) {
+export default function (expressApp, app) {
   const api = app.api;
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);
 

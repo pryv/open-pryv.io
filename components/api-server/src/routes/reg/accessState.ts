@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Access-request state store, backed by PlatformDB (rqlite `keyValue`).
  *
@@ -154,4 +153,4 @@ async function clear () {
   return await getPlatformDB().sweepExpiredAccessStates(Number.POSITIVE_INFINITY);
 }
 
-module.exports = { buildState, persist, create, get, update, remove, clear };
+export { buildState, persist, create, get, update, remove, clear };

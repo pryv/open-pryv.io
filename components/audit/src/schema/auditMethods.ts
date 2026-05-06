@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const Action = require('api-server/src/schema/Action');
-const event = require('api-server/src/schema/event');
+const event = require('api-server/src/schema/event').default;
 const helpers = require('api-server/src/schema/helpers');
 const object = helpers.object;
 const array = helpers.array;
