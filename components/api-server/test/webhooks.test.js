@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, charlatan */
 
 const { promisify } = require('util');
@@ -13,7 +15,7 @@ const timestamp = require('unix-timestamp');
 const helpers = require('./helpers');
 const validation = helpers.validation;
 const methodsSchema = require('../src/schema/webhooksMethods');
-const HttpServer = require('business/test/acceptance/webhooks/support/httpServer');
+const HttpServer = require('business/test/acceptance/webhooks/support/httpServer').default;
 
 const { ErrorIds } = require('errors/src');
 const dependencies = require('test-helpers').dependencies;

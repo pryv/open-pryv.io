@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-'use strict';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const DrainStream = require('../../../src/methods/streams/DrainStream').default;
 const _ = require('lodash');

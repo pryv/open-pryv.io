@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 // TODO remove this (use a single mocking tool if possible)
 
 const EventEmitter = require('events');
@@ -63,4 +65,4 @@ class HttpServer extends EventEmitter {
     return this.lastReport;
   }
 }
-module.exports = HttpServer;
+export default HttpServer;

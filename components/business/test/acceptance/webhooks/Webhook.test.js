@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const timestamp = require('unix-timestamp');
 const awaiting = require('awaiting');
@@ -12,7 +14,7 @@ const awaiting = require('awaiting');
 const Webhook = require('../../../src/webhooks/Webhook').default;
 const WebhooksRepository = require('business/src/webhooks/repository').default;
 
-const HttpServer = require('./support/httpServer');
+const HttpServer = require('./support/httpServer').default;
 const PORT = 6123;
 
 // const whStorage = require('test-helpers').dependencies.storage.user.webhooks;

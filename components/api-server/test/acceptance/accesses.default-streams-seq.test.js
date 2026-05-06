@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const cuid = require('cuid');
 const path = require('path');
 const { promisify } = require('util');

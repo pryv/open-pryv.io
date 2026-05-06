@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Audit logs tests (Pattern C)
  * Run with: PATTERN_C_AUDIT=1 npx mocha --no-config --require test/helpers-c.js test/acceptance/events-audit.test.js

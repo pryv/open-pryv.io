@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-'use strict';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 // Tests pertaining to storing data in a hf series.
 

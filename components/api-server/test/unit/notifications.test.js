@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 require('./test-helper');
 const assert = require('node:assert');
 const { pubsub } = require('messages');

@@ -5,6 +5,11 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+const require = createRequire(import.meta.url);
+const __dirname = dirname(fileURLToPath(import.meta.url));
 /**
  * Access permissions - sequential tests
  * Only contains AP04 (custom auth step) which requires file I/O + server.restart.

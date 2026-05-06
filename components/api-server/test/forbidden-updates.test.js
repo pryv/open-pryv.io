@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const commonFns = require('../src/methods/helpers/commonFunctions');
 const streamSchema = require('../src/schema/stream').default;
 const eventsSchema = require('../src/schema/event').default;

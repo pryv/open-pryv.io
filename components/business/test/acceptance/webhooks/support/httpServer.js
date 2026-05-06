@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const express = require('express');
 const EventEmitter = require('events');
 const PORT = 6123;
@@ -119,4 +121,4 @@ class HttpServer extends EventEmitter {
     await this.server.close();
   }
 }
-module.exports = HttpServer;
+export default HttpServer;

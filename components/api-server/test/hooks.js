@@ -4,6 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const fs = require('fs');
 const { getConfig } = require('@pryv/boiler');
 const util = require('util');
@@ -18,7 +21,7 @@ async function initIndexPlatform () {
   await platform.init();
 }
 
-exports.mochaHooks = {
+export const mochaHooks = {
   async beforeAll () {
     const config = await getConfig();
 

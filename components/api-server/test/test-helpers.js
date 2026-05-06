@@ -4,6 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 process.env.NODE_ENV = 'test';
 process.on('unhandledRejection', unhandledRejection);
 const { getLogger } = require('@pryv/boiler');
@@ -41,9 +44,5 @@ async function produceSeriesConnection () {
   const storages = require('storages');
   return storages.seriesConnection;
 }
-module.exports = {
-  context,
-  produceStorageConnection: produceConnection,
-  produceConnection,
-  produceSeriesConnection
-};
+const produceStorageConnection = produceConnection;
+export { context, produceConnection, produceStorageConnection, produceSeriesConnection };

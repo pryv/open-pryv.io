@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 // Plan 57 .ts loader shim — must run before any storages/ require.
 require('../../../../bin/_ts-register');
 

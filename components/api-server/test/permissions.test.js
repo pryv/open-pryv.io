@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Access permissions tests (Pattern C)
  * Migrated from permissions-seq.test.js sections AP01, AP02, and YE49

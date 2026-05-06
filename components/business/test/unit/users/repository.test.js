@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const charlatan = require('charlatan');
 require('test-helpers/src/api-server-tests-config');

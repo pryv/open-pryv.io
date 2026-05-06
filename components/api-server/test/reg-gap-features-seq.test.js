@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Tests for gap features: service-register routes merged into service-core.
  * Sequential — some tests modify platform state.

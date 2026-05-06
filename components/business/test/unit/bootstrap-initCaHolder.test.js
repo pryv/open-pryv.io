@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Plan 54 Phase C — `cliOps.initCaHolder()` unit tests.
  *

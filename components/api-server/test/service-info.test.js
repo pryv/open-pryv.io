@@ -5,13 +5,15 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, cuid */
 
 const assert = require('node:assert');
 const helpers = require('./helpers');
 const validation = helpers.validation;
 const methodsSchema = require('../src/schema/service-infoMethods');
-const HttpServer = require('./support/httpServer');
+const HttpServer = require('./support/httpServer').default;
 const { getConfig } = require('@pryv/boiler');
 
 const username = cuid();

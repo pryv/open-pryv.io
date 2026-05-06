@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const async = require('async');
 const _ = require('lodash');
 const charlatan = require('charlatan');

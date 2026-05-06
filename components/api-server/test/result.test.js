@@ -4,7 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-'use strict';
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 /* global assert */
 

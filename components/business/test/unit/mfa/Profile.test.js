@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const assert = require('chai').assert;
 
 const Profile = require('../../../src/mfa/Profile').default;

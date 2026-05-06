@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Tests for helpers.dynData() - dynamic test data generator
  * These tests verify that dynData creates isolated datasets with unique IDs

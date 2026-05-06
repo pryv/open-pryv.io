@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');

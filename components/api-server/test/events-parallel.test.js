@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Events tests - Parallel-ready version using createTestContext
  * Demonstrates how to write parallel-safe tests with isolated data

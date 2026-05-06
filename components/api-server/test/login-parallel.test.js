@@ -5,6 +5,11 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+const require = createRequire(import.meta.url);
+const __dirname = dirname(fileURLToPath(import.meta.url));
 /**
  * Login tests - Parallel-ready version
  * Uses DynamicInstanceManager for dynamic port allocation

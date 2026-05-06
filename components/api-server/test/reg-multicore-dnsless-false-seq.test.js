@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * regression suite — exercises the multi-core / dnsLess=false
  * behaviours surfaced during the pryv.me migration session on 2026-04-20.

@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Events tests (Pattern C)
  * Tests that can run in parallel without shared testData infrastructure

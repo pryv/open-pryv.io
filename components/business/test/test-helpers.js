@@ -4,14 +4,12 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-'use strict';
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 // Helper methods and setup for all unit tests.
 const assert = require('node:assert');
 const superagent = require('superagent');
 const request = require('supertest');
 require('test-helpers/src/api-server-tests-config');
-module.exports = {
-  assert,
-  superagent,
-  request
-};
+export { assert, superagent, request };
