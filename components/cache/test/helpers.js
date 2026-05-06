@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Cache component test helpers
  * Uses base helpers with cache module added to globals
@@ -18,4 +20,4 @@ base.init({
   globals: { cache }
 });
 
-exports.mochaHooks = base.getMochaHooks(false);
+export const mochaHooks = base.getMochaHooks(false);

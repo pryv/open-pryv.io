@@ -4,6 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /* global it, assert, describe, before, beforeEach */
 
 const { setTimeout } = require('timers/promises');
