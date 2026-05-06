@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 // Skip PG engine tests when running in non-PG mode
 const engine = process.env.STORAGE_ENGINE || '';
 if (engine !== 'postgresql') {
@@ -16,9 +18,9 @@ if (engine !== 'postgresql') {
   before(async function () {
     await helpers.dependencies.init();
     // Set up getLogger on _internals so DatabasePG can create loggers
-    const _internals = require('../src/_internals');
+    const { _internals } = require('../src/_internals');
     if (!_internals.getLogger) {
-      _internals.getLogger = helpers.getLogger;
+      _internals.set('getLogger', helpers.getLogger);
     }
   });
 }

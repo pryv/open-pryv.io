@@ -4,10 +4,13 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 require('test-helpers/src/api-server-tests-config');
 const { getConfig } = require('@pryv/boiler');
 
-const syslogWatch = require('./SyslogWatch');
+const syslogWatch = require('./SyslogWatch').default;
 const { getSyslog } = require('audit/src/syslog');
 
 function lookFor (str) {

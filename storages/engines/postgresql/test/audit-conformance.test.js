@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const helpers = require('../../../test/helpers');
 const { DatabasePG } = require('../src/DatabasePG');
@@ -24,9 +26,9 @@ describe('[PGAC] PostgreSQL AuditStorage conformance', function () {
       db = new DatabasePG(helpers.config);
       await db.waitForConnection();
       // Set up getLogger on _internals for AuditStoragePG
-      const _internals = require('../src/_internals');
+      const { _internals } = require('../src/_internals');
       if (!_internals.getLogger) {
-        _internals.getLogger = helpers.getLogger;
+        _internals.set('getLogger', helpers.getLogger);
       }
       const storage = new AuditStoragePG(db);
       await storage.init();

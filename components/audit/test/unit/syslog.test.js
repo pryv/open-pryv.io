@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 /* global assert, cuid, config, initTests, audit, _ */
 const os = require('os');
 
-const SyslogWatch = require('storages/engines/sqlite/test/support/SyslogWatch');
+const SyslogWatch = require('storages/engines/sqlite/test/support/SyslogWatch').default;
 
 describe('[SYSL] Syslog', function () {
   const userId = cuid();

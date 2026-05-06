@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Unit tests for rqliteProcess.buildArgs() — the pure function that builds
  * the argv passed to rqlited. Covers Plan 34 Phase 1 (rqlite TLS flag passthrough)

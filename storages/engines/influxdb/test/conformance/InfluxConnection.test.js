@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * InfluxConnection conformance test suite.
  * Tests: validate, createDatabase, writeMeasurement, query, dropMeasurement,
@@ -14,7 +16,7 @@
  *
  * @param {Function} getConnection - function returning an InfluxConnection instance
  */
-module.exports = function conformanceTests (getConnection) {
+export default function conformanceTests (getConnection) {
   const assert = require('node:assert');
   const { validateSeriesConnection: validateInfluxConnection } = require('storages/interfaces/seriesStorage/SeriesConnection');
 
@@ -104,4 +106,4 @@ module.exports = function conformanceTests (getConnection) {
       assert.ok(!dbs.includes(testDbName), 'database must be removed');
     });
   });
-};
+}

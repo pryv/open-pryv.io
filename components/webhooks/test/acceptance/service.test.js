@@ -24,7 +24,7 @@ const { Application: WebhooksApp } = require('../../src/application');
 
 const { Webhook, Repository } = require('business').webhooks;
 let repository;
-const HttpServer = require('business/test/acceptance/webhooks/support/httpServer');
+const HttpServer = require('business/test/acceptance/webhooks/support/httpServer').default;
 
 const BOOT_MESSAGE = require('../../src/messages').BOOT_MESSAGE;
 

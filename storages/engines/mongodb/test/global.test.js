@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 // Skip Mongo engine tests when running in non-Mongo mode.
 // Mirrors the skip guard in storages/engines/postgresql/test/global.test.js.
 // Since Plan 49 (PG is the default baseStorage), under `just test all`

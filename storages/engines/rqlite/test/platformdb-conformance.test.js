@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { DBrqlite } = require('../src/DBrqlite');
 const conformanceTests = require('platform/test/conformance/PlatformDB.test');
 

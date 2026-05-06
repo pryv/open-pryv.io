@@ -4,6 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Utility to read syslog
  * For now only tested on OSX
@@ -69,4 +72,4 @@ function SyslogWatch (stringToMatch) {
     }
   }
 }
-module.exports = SyslogWatch;
+export default SyslogWatch;

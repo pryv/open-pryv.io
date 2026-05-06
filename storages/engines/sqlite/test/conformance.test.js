@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const cuid = require('cuid');
 const userLocalDirectory = require('../../../test/helpers').userLocalDirectory;
 const { SqliteStorage: Storage } = require('storages/engines/sqlite/src/userSQLite/Storage');

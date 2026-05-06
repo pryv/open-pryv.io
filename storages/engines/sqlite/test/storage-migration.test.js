@@ -5,6 +5,11 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+const require = createRequire(import.meta.url);
+const __dirname = dirname(fileURLToPath(import.meta.url));
 /* global assert */
 
 const setUserBasePathTestOnly = require('../../../test/helpers').userLocalDirectory.setBasePathTestOnly;
@@ -12,7 +17,7 @@ const setUserBasePathTestOnly = require('../../../test/helpers').userLocalDirect
 const path = require('path');
 const { copy, pathExists } = require('fs-extra');
 const cuid = require('cuid');
-const migrate0to1 = require('storages/engines/sqlite/src/userSQLite/migrations/1');
+const migrate0to1 = require('storages/engines/sqlite/src/userSQLite/migrations/1').migrateUserDB;
 const { UserDatabase } = require('storages/engines/sqlite/src/userSQLite/UserDatabase');
 const os = require('os');
 const { getLogger } = require('../../../test/helpers');
