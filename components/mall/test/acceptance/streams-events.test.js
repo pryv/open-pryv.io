@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /* global assert, initTests, initCore, getNewFixture, charlatan, cuid, coreRequest  */
 
 require('test-helpers/src/api-server-tests-config');

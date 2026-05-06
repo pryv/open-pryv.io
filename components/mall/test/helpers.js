@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Mall component test helpers
  * Uses base helpers with minimal API methods needed
@@ -17,4 +19,4 @@ base.init({
   methods: ['events', 'streams', 'accesses']
 });
 
-exports.mochaHooks = base.getMochaHooks(false);
+export const mochaHooks = base.getMochaHooks(false);
