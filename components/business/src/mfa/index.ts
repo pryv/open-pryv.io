@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * MFA business module — ported from service-mfa as part of Plan 26.
  *
@@ -17,12 +16,12 @@ import type {} from 'node:fs';
  * Session storage lives in `./SessionStore` (Plan 26 Phase 3).
  */
 
-const Profile = require('./Profile');
-const Service = require('./Service');
-const ChallengeVerifyService = require('./ChallengeVerifyService');
-const SingleService = require('./SingleService');
-const SessionStore = require('./SessionStore');
-const generateCode = require('./generateCode');
+const Profile = require('./Profile').default;
+const Service = require('./Service').default;
+const ChallengeVerifyService = require('./ChallengeVerifyService').default;
+const SingleService = require('./SingleService').default;
+const SessionStore = require('./SessionStore').default;
+const generateCode = require('./generateCode').default;
 
 /**
  * Build the MFA service implementation matching `mfaConfig.mode`.
@@ -87,15 +86,4 @@ async function _resetMFASingletons () {
   _sessionStore = null;
 }
 
-module.exports = {
-  Profile,
-  Service,
-  ChallengeVerifyService,
-  SingleService,
-  SessionStore,
-  generateCode,
-  createMFAService,
-  getMFAService,
-  getMFASessionStore,
-  _resetMFASingletons
-};
+export { Profile, Service, ChallengeVerifyService, SingleService, SessionStore, generateCode, createMFAService, getMFAService, getMFASessionStore, _resetMFASingletons };

@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Plan 34 Phase 4b — apply a bootstrap bundle on the new core.
  *
@@ -174,8 +173,4 @@ function pemToDer (pem) {
   return Buffer.from(b64, 'base64');
 }
 
-module.exports = {
-  TLS_FILE_NAMES,
-  applyBundle,
-  sha256Fingerprint
-};
+export { TLS_FILE_NAMES, applyBundle, sha256Fingerprint };

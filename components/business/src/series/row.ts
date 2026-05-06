@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const assert = require('assert');
 /** A single row of the data matrix. Stores a reference to the original
  * matrix; this is like a pointer, not like a value. It is used during iteration
@@ -67,4 +67,5 @@ class Row {
     return value;
   }
 }
-module.exports = Row;
+export default Row;
+export { Row };

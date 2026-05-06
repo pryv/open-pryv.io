@@ -9,7 +9,7 @@ require('test-helpers/src/api-server-tests-config');
 const timestamp = require('unix-timestamp');
 const sinon = require('sinon');
 const assert = require('node:assert');
-const MethodContext = require('../../src/MethodContext');
+const MethodContext = require('../../src/MethodContext').default;
 
 const contextSource = {
   name: 'test',

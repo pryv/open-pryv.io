@@ -4,11 +4,10 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
-const Service = require('./Service');
-const generateCode = require('./generateCode');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const Service = require('./Service').default;
+const generateCode = require('./generateCode').default;
 const errors = require('errors').factory;
 
 const CODE_LENGTH = 4;
@@ -83,4 +82,5 @@ class SingleService extends Service {
 }
 
 SingleService.CODE = CODE;
-module.exports = SingleService;
+export default SingleService;
+export { SingleService };

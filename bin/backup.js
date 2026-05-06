@@ -103,7 +103,7 @@ async function initStorage () {
 
 async function runBackup (args) {
   const { createFilesystemBackupWriter } = require('storages/interfaces/backup');
-  const BackupOrchestrator = require('business/src/backup/BackupOrchestrator');
+  const BackupOrchestrator = require('business/src/backup/BackupOrchestrator').default;
 
   const manifestPath = path.join(args.output, 'manifest.json');
   let previousManifest = null;
@@ -154,7 +154,7 @@ async function runBackup (args) {
 
 async function runRestore (args) {
   const { createFilesystemBackupReader } = require('storages/interfaces/backup');
-  const RestoreOrchestrator = require('business/src/backup/RestoreOrchestrator');
+  const RestoreOrchestrator = require('business/src/backup/RestoreOrchestrator').default;
 
   const reader = createFilesystemBackupReader(args.restore);
 
@@ -182,7 +182,7 @@ async function runRestore (args) {
   // Post-restore integrity verification
   if (args.verifyIntegrity && report.restored.length > 0) {
     console.log('\nVerifying integrity of restored data...');
-    const IntegrityCheck = require('business/src/integrity/IntegrityCheck');
+    const IntegrityCheck = require('business/src/integrity/IntegrityCheck').default;
     const checker = new IntegrityCheck();
     await checker.init();
 

@@ -4,10 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
-const Service = require('./Service');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const Service = require('./Service').default;
 
 /**
  * Two-step SMS MFA: separate `challenge` and `verify` HTTP endpoints on the
@@ -57,4 +56,5 @@ class ChallengeVerifyService extends Service {
   }
 }
 
-module.exports = ChallengeVerifyService;
+export default ChallengeVerifyService;
+export { ChallengeVerifyService };

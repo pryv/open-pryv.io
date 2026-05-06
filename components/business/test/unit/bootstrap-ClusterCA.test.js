@@ -19,7 +19,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
-const ClusterCA = require('../../src/bootstrap/ClusterCA');
+const ClusterCA = require('../../src/bootstrap/ClusterCA').default;
 
 describe('[CLUSTERCA] ClusterCA', function () {
   this.timeout(20_000);

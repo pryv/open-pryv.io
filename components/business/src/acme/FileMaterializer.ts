@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Plan 35 Phase 4a — watch PlatformDB for a certificate's rotation,
  * materialize it on local disk, and notify in-process http servers +
@@ -164,7 +163,4 @@ async function runRotateScript ({ scriptPath, hostname, certPath, keyPath, timeo
   };
 }
 
-module.exports = {
-  FileMaterializer,
-  runRotateScript
-};
+export { FileMaterializer, runRotateScript };

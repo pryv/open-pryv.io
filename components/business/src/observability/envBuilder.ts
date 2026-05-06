@@ -4,9 +4,11 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = require('path').dirname(__filename);
 /**
  * Build the `env` object that master injects into every
  * `cluster.fork({...})` call. The underlying APM agent picks these up
@@ -39,4 +41,4 @@ function buildObservabilityEnv (obs) {
   };
 }
 
-module.exports = { buildObservabilityEnv };
+export { buildObservabilityEnv };

@@ -8,8 +8,8 @@
 const assert = require('chai').assert;
 const { EventEmitter } = require('node:events');
 
-const SessionStore = require('../../../src/mfa/SessionStore');
-const Profile = require('../../../src/mfa/Profile');
+const SessionStore = require('../../../src/mfa/SessionStore').default;
+const Profile = require('../../../src/mfa/Profile').default;
 const clusterKv = require('messages/src/cluster_kv');
 
 /**

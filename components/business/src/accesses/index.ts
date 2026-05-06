@@ -4,11 +4,10 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-module.exports = {
-  AccessLogic: require('./AccessLogic')
-};
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const __ex_AccessLogic = require('./AccessLogic').default;
+export { __ex_AccessLogic as AccessLogic };
 
 /**
  * @typedef {{

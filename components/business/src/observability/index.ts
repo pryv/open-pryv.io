@@ -75,12 +75,4 @@ function _reset () {
   activeProvider = null;
 }
 
-module.exports = {
-  init,
-  isActive,
-  setTransactionName,
-  recordError,
-  recordCustomEvent,
-  startBackgroundTransaction,
-  _reset
-};
+export { init, isActive, setTransactionName, recordError, recordCustomEvent, startBackgroundTransaction, _reset };

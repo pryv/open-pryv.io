@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const timestamp = require('unix-timestamp');
 const { getConfig } = require('@pryv/boiler');
 
@@ -18,12 +17,13 @@ let userAccountStorage = null;
 /**
  * Return the password rules singleton, initializing it with the given settings if needed.
  */
-module.exports = async function get () {
+async function get () {
   if (!singleton) {
     singleton = init();
   }
   return singleton;
-};
+}
+export default get;
 
 async function init () {
   const { getUserAccountStorage } = require('storage');

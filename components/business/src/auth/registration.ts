@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { errorHandling } = require('errors');
 const mailing = require('api-server/src/methods/helpers/mailing');
 const { getPlatform } = require('platform');
@@ -253,4 +252,5 @@ class Registration {
     next();
   }
 }
-module.exports = Registration;
+export default Registration;
+export { Registration };

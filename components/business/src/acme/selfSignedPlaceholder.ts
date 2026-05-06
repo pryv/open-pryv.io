@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Pre-fork placeholder cert for the LE first-boot race.
  *
@@ -128,4 +127,4 @@ function ensure ({ config, deriveHostnames: deriveHostnamesFn, log = (_: any) =>
   return { written: true, keyFile, certFile };
 }
 
-module.exports = { generate, ensure };
+export { generate, ensure };

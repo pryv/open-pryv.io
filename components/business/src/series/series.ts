@@ -4,9 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-const DataMatrix = require('./data_matrix');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const DataMatrix = require('./data_matrix').default;
 
 /**
  * Convert a timestamp (seconds) or ISO string to a quoted date string
@@ -127,8 +127,8 @@ class Series {
     return subConditions;
   }
 }
-module.exports = Series;
-
+export default Series;
+export { Series };
 /** @typedef {number} Timestamp */
 
 /**

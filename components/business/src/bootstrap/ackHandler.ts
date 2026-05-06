@@ -105,4 +105,4 @@ function errResponse (statusCode, id, message, extra = {}) {
   };
 }
 
-module.exports = { makeHandler };
+export { makeHandler };

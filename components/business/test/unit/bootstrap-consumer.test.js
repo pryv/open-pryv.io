@@ -19,7 +19,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 
-const ClusterCA = require('../../src/bootstrap/ClusterCA');
+const ClusterCA = require('../../src/bootstrap/ClusterCA').default;
 const Bundle = require('../../src/bootstrap/Bundle');
 const BundleEncryption = require('../../src/bootstrap/BundleEncryption');
 const consumer = require('../../src/bootstrap/consumer');

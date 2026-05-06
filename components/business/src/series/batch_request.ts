@@ -4,9 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-const DataMatrix = require('./data_matrix');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const DataMatrix = require('./data_matrix').default;
 const { error, ParseFailure } = require('./errors');
 // A `BatchRequest` is a collection of batch elements. Each of those in turn
 // will contain a series meta data descriptor and a data matrix to input into
@@ -135,6 +135,5 @@ class ElementParser {
     return new BatchRequestElement(eventId, DataMatrix.parse(obj.data, type));
   }
 }
-module.exports = { BatchRequest, BatchRequestElement, ParseFailure };
-
+export { BatchRequest, BatchRequestElement, ParseFailure };
 /** @typedef {(eventId: string) => Promise<SeriesRowType>} TypeResolveFunction */

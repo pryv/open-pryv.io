@@ -76,4 +76,4 @@ function hostnameFromUrl (url) {
   }
 }
 
-module.exports = { deriveHostnames };
+export { deriveHostnames };

@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Plan 35 Phase 4b — runtime orchestrator for the Let's Encrypt
  * integration. One of these is instantiated by `bin/master.js` when
@@ -272,8 +271,4 @@ function build (opts: any = {}) {
   });
 }
 
-module.exports = {
-  AcmeOrchestrator,
-  build,
-  DAY_MS
-};
+export { AcmeOrchestrator, build, DAY_MS };

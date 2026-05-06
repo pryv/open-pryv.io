@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Plan 35 Phase 2b — at-rest encryption helper for PlatformDB-stored
  * TLS certificate and ACME account private keys.
@@ -150,12 +149,4 @@ function decryptJson (encoded, key) {
   }
 }
 
-module.exports = {
-  ENVELOPE_VERSION,
-  KEY_BYTES,
-  deriveKey,
-  encrypt,
-  decrypt,
-  encryptJson,
-  decryptJson
-};
+export { ENVELOPE_VERSION, KEY_BYTES, deriveKey, encrypt, decrypt, encryptJson, decryptJson };

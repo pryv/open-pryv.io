@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Plan 34 — one-time join-token lifecycle.
  *
@@ -229,4 +228,5 @@ function sha256 (s) {
   return crypto.createHash('sha256').update(s).digest('hex');
 }
 
-module.exports = TokenStore;
+export default TokenStore;
+export { TokenStore };

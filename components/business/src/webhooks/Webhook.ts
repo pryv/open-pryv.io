@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 
 function pick (obj, keys) {
@@ -334,7 +334,8 @@ class Webhook {
     this.logger = logger;
   }
 }
-module.exports = Webhook;
+export default Webhook;
+export { Webhook };
 /**
  * @param {Webhook} webhook
  * @param {string} msg

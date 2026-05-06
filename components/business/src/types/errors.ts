@@ -10,11 +10,10 @@ import type {} from 'node:fs';
  */
 class InputTypeError extends Error {
 }
-module.exports.InputTypeError = InputTypeError;
 /** Error thrown when you try to `TypeRepository#lookup` a type that doesn't
  * exist in Pryv.
  * @extends Error
  */
 class TypeDoesNotExistError extends Error {
 }
-module.exports.TypeDoesNotExistError = TypeDoesNotExistError;
+export { InputTypeError, TypeDoesNotExistError };

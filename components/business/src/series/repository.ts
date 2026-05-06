@@ -4,11 +4,11 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 //
-const Series = require('./series');
-const NamespaceBatch = require('./namespace_batch');
+const Series = require('./series').default;
+const NamespaceBatch = require('./namespace_batch').default;
 /** Repository of all series in this Pryv instance.
  */
 class Repository {
@@ -61,4 +61,5 @@ class Repository {
     return new NamespaceBatch(this.connection, namespace);
   }
 }
-module.exports = Repository;
+export default Repository;
+export { Repository };

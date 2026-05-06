@@ -8,7 +8,7 @@ import type {} from 'node:fs';
 
 const errors = require('errors').factory;
 const commonFns = require('./helpers/commonFunctions');
-const Registration = require('business/src/auth/registration');
+const Registration = require('business/src/auth/registration').default;
 const methodsSchema = require('../schema/systemMethods');
 const string = require('./helpers/string');
 const { fromCallback } = require('utils');

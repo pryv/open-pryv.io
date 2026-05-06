@@ -30,7 +30,7 @@ const { execFileSync } = require('node:child_process');
 const yaml = require('js-yaml');
 
 const cliOps = require('../../src/bootstrap/cliOps');
-const ClusterCA = require('../../src/bootstrap/ClusterCA');
+const ClusterCA = require('../../src/bootstrap/ClusterCA').default;
 
 describe('[INITCAHOLDER] cliOps.initCaHolder', function () {
   this.timeout(20_000);

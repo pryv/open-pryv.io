@@ -67,6 +67,6 @@ class NamespaceBatch {
     }
   }
 }
-module.exports = NamespaceBatch;
-
+export default NamespaceBatch;
+export { NamespaceBatch };
 /** @typedef {(eventId: string) => Promise<string>} MeasurementNameResolver */

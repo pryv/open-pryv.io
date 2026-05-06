@@ -168,8 +168,4 @@ function requireAll (obj, keys, context) {
   }
 }
 
-module.exports = {
-  BUNDLE_VERSION,
-  assemble,
-  validate
-};
+export { BUNDLE_VERSION, assemble, validate };

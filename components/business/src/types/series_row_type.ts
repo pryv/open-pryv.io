@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const logger = require('@pryv/boiler').getLogger('series_row_type');
 const FIELD_DELTATIME = 'deltaTime';
 const FIELD_TIMESTAMP = 'timestamp';
@@ -242,4 +242,5 @@ class SeriesRowType {
     return Promise.reject(new Error('No validation for series row types.'));
   }
 }
-module.exports = SeriesRowType;
+export default SeriesRowType;
+export { SeriesRowType };

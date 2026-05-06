@@ -134,7 +134,7 @@ async function init (config) {
   initEngines(config);
 
   // 4. StorageLayer
-  const integrityAccesses = require('business/src/integrity').accesses;
+  const integrityAccesses = require('business/src/integrity').default.accesses;
   await storageLayer.init(connection, { integrityAccesses });
 
   // 5. UserAccountStorage (uses same engine as baseStorage)

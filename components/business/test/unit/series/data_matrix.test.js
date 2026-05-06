@@ -8,9 +8,9 @@
 // Tests pertaining to storing data in a hf series.
 
 const assert = require('node:assert');
-const DataMatrix = require('../../../src/series/data_matrix');
+const DataMatrix = require('../../../src/series/data_matrix').default;
 const { ParseFailure } = require('../../../src/series/errors');
-const Row = require('../../../src/series/row');
+const Row = require('../../../src/series/row').default;
 const { TypeRepository } = require('../../../src/types');
 
 describe('[DMTX] DataMatrix', function () {

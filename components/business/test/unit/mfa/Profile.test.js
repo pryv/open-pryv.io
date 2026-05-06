@@ -7,7 +7,7 @@
 
 const assert = require('chai').assert;
 
-const Profile = require('../../../src/mfa/Profile');
+const Profile = require('../../../src/mfa/Profile').default;
 
 describe('[MFAP] mfa/Profile', () => {
   it('[MP1A] is inactive when content is empty', () => {

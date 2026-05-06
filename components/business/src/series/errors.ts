@@ -17,9 +17,5 @@ class ParseFailure extends Error {
 function error (msg) {
   return new ParseFailure(msg);
 }
-module.exports = {
-  // error class
-  ParseFailure,
-  // error factories
-  error
-};
+// error class + error factories
+export { ParseFailure, error };

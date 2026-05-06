@@ -4,10 +4,10 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const assert = require('assert');
-const valueTypes = require('./value_types');
+const valueTypes = require('./value_types').default;
 // A complex type like 'position/wgs84' that has several subfields.
 //
 
@@ -110,8 +110,8 @@ class ComplexType {
     return validator.validateWithSchema(content, this._schema);
   }
 }
-module.exports = ComplexType;
-
+export default ComplexType;
+export { ComplexType };
 /**
  * @typedef {{
  *   type: string;

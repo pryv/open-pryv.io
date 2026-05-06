@@ -7,7 +7,7 @@
 
 const assert = require('chai').assert;
 
-const Service = require('../../../src/mfa/Service');
+const Service = require('../../../src/mfa/Service').default;
 
 describe('[MFAS] mfa/Service', () => {
   describe('[MFAR] replaceAll', () => {

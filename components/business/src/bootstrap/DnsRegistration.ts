@@ -143,7 +143,4 @@ function arraysEqual (a, b) {
   return true;
 }
 
-module.exports = {
-  registerNewCore,
-  unregisterNewCore
-};
+export { registerNewCore, unregisterNewCore };

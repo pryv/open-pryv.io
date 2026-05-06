@@ -4,10 +4,10 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const assert = require('assert');
-const valueTypes = require('./value_types');
+const valueTypes = require('./value_types').default;
 // A basic type like 'mass/kg'. In high frequency data, this must be stored
 // using the column name 'value'.
 //
@@ -88,8 +88,8 @@ class BasicType {
     return validator.validateWithSchema(value, this._schema);
   }
 }
-module.exports = BasicType;
-
+export default BasicType;
+export { BasicType };
 /**
  * @typedef {{
  *   type: string;

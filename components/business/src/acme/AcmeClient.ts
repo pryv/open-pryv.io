@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Plan 35 Phase 3 — thin wrapper around `acme-client` for the two
  * operations we actually need: create an ACME account, issue / renew a
@@ -135,9 +134,4 @@ async function issueCert (opts: any = {}) {
   };
 }
 
-module.exports = {
-  DIRECTORY_STAGING,
-  DIRECTORY_PRODUCTION,
-  createAccount,
-  issueCert
-};
+export { DIRECTORY_STAGING, DIRECTORY_PRODUCTION, createAccount, issueCert };

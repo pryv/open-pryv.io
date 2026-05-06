@@ -4,14 +4,13 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
 const { setTimeout } = require('timers/promises');
 
-const User = require('./User');
+const User = require('./User').default;
 const UserRepositoryOptions = require('./UserRepositoryOptions');
 const accountStreams = require('business/src/system-streams');
 const encryption = require('utils').encryption;
@@ -20,10 +19,7 @@ const { getMall } = require('mall');
 const { getPlatform } = require('platform');
 const cache = require('cache').default;
 
-module.exports = {
-  getUsersRepository
-};
-
+export { getUsersRepository };
 /**
  * Repository of the users
  */

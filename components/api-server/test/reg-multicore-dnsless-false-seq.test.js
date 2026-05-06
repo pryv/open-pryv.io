@@ -388,7 +388,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
 
     it('[MC16] assigns user-core to the single available core when restoring v1 register mappings', async function () {
       const { createBackupReader } = require('../../../storages/interfaces/backup/BackupReader');
-      const RestoreOrchestrator = require('business/src/backup/RestoreOrchestrator');
+      const RestoreOrchestrator = require('business/src/backup/RestoreOrchestrator').default;
       // Build an in-memory reader with ONLY readServerMappings populated
       // (platform data empty; no users to restore here — we're testing
       // the register-mappings loop in isolation).

@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const fs = require('fs');
 const path = require('path');
@@ -202,4 +202,5 @@ function findNotAccessibleDir (paths) {
   }
   return notAccessibleDir;
 }
-module.exports = Deletion;
+export default Deletion;
+export { Deletion };

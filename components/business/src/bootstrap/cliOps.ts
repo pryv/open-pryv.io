@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Plan 34 — bootstrap CLI orchestration, decoupled from arg parsing and
  * config loading.
@@ -22,10 +21,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const yaml = require('js-yaml');
 
-const ClusterCA = require('./ClusterCA');
+const ClusterCA = require('./ClusterCA').default;
 const Bundle = require('./Bundle');
 const BundleEncryption = require('./BundleEncryption');
-const TokenStore = require('./TokenStore');
+const TokenStore = require('./TokenStore').default;
 const DnsRegistration = require('./DnsRegistration');
 
 const ACK_PATH = '/system/admin/cores/ack';
@@ -296,11 +295,4 @@ function requireOpts (opts, keys) {
   }
 }
 
-module.exports = {
-  ACK_PATH,
-  TLS_FILE_NAMES,
-  newCore,
-  listTokens,
-  revokeToken,
-  initCaHolder
-};
+export { ACK_PATH, TLS_FILE_NAMES, newCore, listTokens, revokeToken, initCaHolder };

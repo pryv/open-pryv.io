@@ -18,7 +18,7 @@ const { ErrorMessages } = require('errors/src/ErrorMessages');
 const { getApplication } = require('api-server/src/application');
 
 const { pubsub } = require('messages');
-const AccessLogic = require('business/src/accesses/AccessLogic');
+const AccessLogic = require('business/src/accesses/AccessLogic').default;
 const { addPrivatePrefixToStreamId, addCustomerPrefixToStreamId } = require('test-helpers/src/systemStreamFilters');
 
 const { databaseFixture } = require('test-helpers');

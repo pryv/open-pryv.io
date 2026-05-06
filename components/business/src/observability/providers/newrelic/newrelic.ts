@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * New Relic agent config.
  *
@@ -22,7 +21,7 @@ import type {} from 'node:fs';
 
 'use strict';
 
-exports.config = {
+export const config = {
   app_name: [process.env.NEW_RELIC_APP_NAME || 'open-pryv.io'],
   license_key: process.env.NEW_RELIC_LICENSE_KEY,
   // HSM is account-side, irreversible once enabled. Default OFF so the

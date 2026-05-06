@@ -7,7 +7,7 @@
 import type {} from 'node:fs';
 
 
-module.exports = {
-  SYSTEM_USER_ACCESS_ID: 'system',
-  ACCESS_TYPE_PERSONAL: 'personal'
-};
+const __ex_SYSTEM_USER_ACCESS_ID = 'system';
+export { __ex_SYSTEM_USER_ACCESS_ID as SYSTEM_USER_ACCESS_ID };
+const __ex_ACCESS_TYPE_PERSONAL = 'personal';
+export { __ex_ACCESS_TYPE_PERSONAL as ACCESS_TYPE_PERSONAL };

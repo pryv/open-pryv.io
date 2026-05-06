@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Plan 34 Phase 4c — bootstrap-mode driver for `bin/master.js --bootstrap`.
  *
@@ -170,7 +169,5 @@ function defaultHttpClient (url, payload, caCertPem) {
   });
 }
 
-module.exports = {
-  consume,
-  defaultHttpClient // exported so master.js can use it directly
-};
+// defaultHttpClient is exported so master.js can use it directly
+export { consume, defaultHttpClient };

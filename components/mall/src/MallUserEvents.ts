@@ -16,7 +16,7 @@ const eventsUtils = require('./helpers/eventsUtils');
 const eventsQueryUtils = require('./helpers/eventsQueryUtils');
 
 const errorFactory = require('errors').factory;
-const integrity = require('business/src/integrity');
+const integrity = require('business/src/integrity').default;
 
 const { Readable } = require('stream');
 

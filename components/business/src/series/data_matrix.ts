@@ -4,12 +4,12 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const assert = require('assert');
 const { error } = require('./errors');
 // 'series' layer depends on the 'types' layer.
-const Row = require('./row');
+const Row = require('./row').default;
 /** Data in matrix form. Columns have names, rows have numbers, starting at 0.
  */
 class DataMatrix {
@@ -193,8 +193,8 @@ class Parser {
     return val;
   }
 }
-module.exports = DataMatrix;
-
+export default DataMatrix;
+export { DataMatrix };
 /** @typedef {string | number} Element */
 
 /** @typedef {Array<Element>} RawRow */

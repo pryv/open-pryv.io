@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Inspired from multer/storage/DiskStorage
  * Add an integrity field to file upload following the subresource integrity schema
@@ -84,9 +84,9 @@ MulterIntegrityDiskStorage.prototype._removeFile = function _removeFile (req, fi
  * Multer disk storage
  * @module IntegrityMulterIntegrityDiskStorage
  */
-module.exports = function (opts) {
+export default function (opts) {
   return new MulterIntegrityDiskStorage(opts);
-};
+}
 
 // -- CHECKSUM STREAM
 

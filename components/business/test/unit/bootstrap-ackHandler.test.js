@@ -17,7 +17,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const TokenStore = require('../../src/bootstrap/TokenStore');
+const TokenStore = require('../../src/bootstrap/TokenStore').default;
 const ackHandler = require('../../src/bootstrap/ackHandler');
 
 function makeFakeDB (initial = {}) {

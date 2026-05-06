@@ -6,7 +6,7 @@
  */
 import type {} from 'node:fs';
 
-const Deletion = require('business/src/auth/deletion');
+const Deletion = require('business/src/auth/deletion').default;
 const { getStorageLayer } = require('storage');
 const { getLogger, getConfig } = require('@pryv/boiler');
 /**

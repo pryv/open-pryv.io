@@ -18,7 +18,7 @@ const utils = require('utils');
 const { Readable } = require('stream');
 const SetFileReadTokenStream = require('../streams/SetFileReadTokenStream');
 const accountStreams = require('business/src/system-streams');
-const integrity = require('business/src/integrity');
+const integrity = require('business/src/integrity').default;
 let mall;
 
 module.exports = {

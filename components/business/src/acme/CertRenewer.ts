@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Plan 35 Phase 3b — CertRenewer: orchestrates ACME issuance + at-rest
  * encryption + PlatformDB persistence.
@@ -262,9 +261,4 @@ function acmeChallengeName (identifierValue) {
   return '_acme-challenge';
 }
 
-module.exports = {
-  AT_REST_PURPOSE,
-  CertRenewer,
-  PlatformDBDnsWriter,
-  acmeChallengeName
-};
+export { AT_REST_PURPOSE, CertRenewer, PlatformDBDnsWriter, acmeChallengeName };

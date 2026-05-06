@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { getLogger } = require('@pryv/boiler');
 const errors = require('errors').factory;
 
@@ -124,4 +123,5 @@ Service.replaceRecursively = function replaceRecursively (obj, key, value) {
   return obj;
 };
 
-module.exports = Service;
+export default Service;
+export { Service };

@@ -9,8 +9,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { pubsub } = require('messages');
-const Webhook = require('business/src/webhooks/Webhook');
-const WebhooksRepository = require('business/src/webhooks/repository');
+const Webhook = require('business/src/webhooks/Webhook').default;
+const WebhooksRepository = require('business/src/webhooks/repository').default;
 const { getUsersRepository } = require('business/src/users');
 const { getAPIVersion } = require('middleware/src/project_version');
 const { BOOT_MESSAGE } = require('./messages');

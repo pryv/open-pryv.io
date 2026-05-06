@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Account streams — config-derived queries for account streams.
  * All values pre-computed at init (dataset is ~15 streams — no lazy caching needed).
@@ -27,6 +26,15 @@ const ALL = 'all';
 let initialized = false;
 let streamIdWithPrefixToWithout = null;
 let accountStreamIdWithoutPrefixToWith = null;
+
+// Live exports — reassigned by initializeState()
+let allAsTree: any = null;
+let accountChildren: any = null;
+let accountMap: any = null;
+let accountLeavesMap: any = null;
+let hiddenStreamIds: any = null;
+let indexedFieldNames: any = null;
+let uniqueFieldNames: any = null;
 
 // ── Init ──────────────────────────────────────────────────────────
 
@@ -58,19 +66,19 @@ async function reloadForTests (config) {
 // ── Pre-computed data (all set at init) ───────────────────────────
 
 function initializeState (settings) {
-  exports_.allAsTree = settings;
-  exports_.accountChildren = treeUtils.findById(settings, STREAM_ID_ACCOUNT).children;
+  allAsTree = settings;
+  accountChildren = treeUtils.findById(settings, STREAM_ID_ACCOUNT).children;
 
   // Account stream maps (flat)
-  exports_.accountMap = filterMapStreams(exports_.accountChildren, ALL);
-  exports_.accountLeavesMap = buildLeavesMap(exports_.accountChildren);
+  accountMap = filterMapStreams(accountChildren, ALL);
+  accountLeavesMap = buildLeavesMap(accountChildren);
   // ID arrays
-  const accountStreamIds = Object.keys(exports_.accountMap);
-  const readableIds = Object.keys(filterMapStreams(exports_.accountChildren, IS_SHOWN));
+  const accountStreamIds = Object.keys(accountMap);
+  const readableIds = Object.keys(filterMapStreams(accountChildren, IS_SHOWN));
   const readableSet = new Set(readableIds);
-  exports_.hiddenStreamIds = accountStreamIds.filter(k => !readableSet.has(k));
-  exports_.indexedFieldNames = Object.keys(filterMapStreams(exports_.accountChildren, IS_INDEXED)).map(stripPrefix);
-  exports_.uniqueFieldNames = Object.keys(filterMapStreams(exports_.accountChildren, IS_UNIQUE)).map(stripPrefix);
+  hiddenStreamIds = accountStreamIds.filter(k => !readableSet.has(k));
+  indexedFieldNames = Object.keys(filterMapStreams(accountChildren, IS_INDEXED)).map(stripPrefix);
+  uniqueFieldNames = Object.keys(filterMapStreams(accountChildren, IS_UNIQUE)).map(stripPrefix);
 
   // Prefix translation maps
   streamIdWithPrefixToWithout = {};
@@ -79,7 +87,7 @@ function initializeState (settings) {
   for (const prefixed of allStreamIds) {
     const unprefixed = stripPrefix(prefixed);
     streamIdWithPrefixToWithout[prefixed] = unprefixed;
-    if (exports_.accountMap[prefixed] != null) {
+    if (accountMap[prefixed] != null) {
       accountStreamIdWithoutPrefixToWith[unprefixed] = prefixed;
     }
   }
@@ -130,20 +138,20 @@ function stripPrefix (streamId) {
 
 // ── Exports ───────────────────────────────────────────────────────
 
-const exports_ = module.exports = {
+export {
   // Constants
   STREAM_ID_ACCOUNT,
   // Lifecycle
   init,
   reloadForTests,
-  // Data properties (set by initializeState, null before init)
-  allAsTree: null,
-  accountChildren: null,
-  accountMap: null,
-  accountLeavesMap: null,
-  hiddenStreamIds: null,
-  indexedFieldNames: null,
-  uniqueFieldNames: null,
+  // Data properties (live `let` bindings — null before init, populated by initializeState)
+  allAsTree,
+  accountChildren,
+  accountMap,
+  accountLeavesMap,
+  hiddenStreamIds,
+  indexedFieldNames,
+  uniqueFieldNames,
   // Prefix utilities
   toFieldName,
   toStreamId

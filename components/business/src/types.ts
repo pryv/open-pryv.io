@@ -4,15 +4,15 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const fs = require('fs');
 const { deepMerge, fromCallback, jsonValidator } = require('utils');
 let defaultTypes = require('./types/event-types.default.json');
 const errors = require('./types/errors');
-const SeriesRowType = require('./types/series_row_type');
-const BasicType = require('./types/basic_type');
-const ComplexType = require('./types/complex_type');
+const SeriesRowType = require('./types/series_row_type').default;
+const BasicType = require('./types/basic_type').default;
+const ComplexType = require('./types/complex_type').default;
 const SERIES_PREFIX = 'series:';
 // Returns true if the name given refers to a series type. Currently this means
 // that the name starts with SERIES_PREFIX.
@@ -221,9 +221,4 @@ class TypeRepository {
     defaultTypes = deepMerge(defaultTypes, eventTypesDefinition);
   }
 }
-module.exports = {
-  TypeRepository,
-  SeriesRowType,
-  isSeriesType,
-  errors
-};
+export { TypeRepository, SeriesRowType, isSeriesType, errors };

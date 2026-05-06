@@ -4,11 +4,10 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { randomUUID: uuidv4 } = require('node:crypto');
-const Profile = require('./Profile');
+const Profile = require('./Profile').default;
 
 /**
  * MFA session store, backed by `cluster_kv` (master-held in-memory map +
@@ -104,4 +103,5 @@ class SessionStore {
   }
 }
 
-module.exports = SessionStore;
+export default SessionStore;
+export { SessionStore };

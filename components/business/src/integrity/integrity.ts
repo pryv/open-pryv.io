@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
-
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const config = require('@pryv/boiler').getConfigUnsafe(true);
 const logger = require('@pryv/boiler').getLogger('integrity');
 const stableRepresentation = require('@pryv/stable-object-representation');
@@ -52,7 +52,7 @@ function getHTTPDigestHeaderForAttachment (subResourceIntegrity) {
 const attachments = {
   isActive: attachmentsIsActive,
   getHTTPDigestHeaderForAttachment,
-  MulterIntegrityDiskStorage: require('./MulterIntegrityDiskStorage')
+  MulterIntegrityDiskStorage: require('./MulterIntegrityDiskStorage').default
 };
 
 // ----------------- standard db Items -------------- //
@@ -184,4 +184,5 @@ if ((events.isActive || attachments.isActive) && (subResourceCodeToDigestMap[alg
   process.exit(1);
 }
 
-module.exports = integrity;
+export default integrity;
+export { integrity };

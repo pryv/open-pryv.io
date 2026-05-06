@@ -9,7 +9,7 @@ import type {} from 'node:fs';
 const commonFns = require('./../helpers/commonFunctions');
 const errors = require('errors').factory;
 const methodsSchema = require('api-server/src/schema/authMethods');
-const Registration = require('business/src/auth/registration');
+const Registration = require('business/src/auth/registration').default;
 const { getPlatform } = require('platform');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils');
 const { getConfig } = require('@pryv/boiler');
