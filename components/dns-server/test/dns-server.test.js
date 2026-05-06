@@ -5,6 +5,9 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 const assert = require('assert');
 const dns = require('dns');
 const dgram = require('dgram');
