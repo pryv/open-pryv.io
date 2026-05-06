@@ -13,7 +13,7 @@ if (engine !== 'postgresql') {
   before(function () { this.skip(); });
 } else {
   const helpers = require('../../../test/helpers');
-  helpers.config = helpers.getEngineConfig('postgresql', require('../manifest.json'));
+  helpers.state.config = helpers.getEngineConfig('postgresql', require('../manifest.json'));
 
   before(async function () {
     await helpers.dependencies.init();

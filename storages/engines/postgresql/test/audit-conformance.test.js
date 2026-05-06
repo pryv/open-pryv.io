@@ -23,7 +23,7 @@ describe('[PGAC] PostgreSQL AuditStorage conformance', function () {
   conformanceTests(
     async () => {
       await helpers.dependencies.init();
-      db = new DatabasePG(helpers.config);
+      db = new DatabasePG(helpers.state.config);
       await db.waitForConnection();
       // Set up getLogger on _internals for AuditStoragePG
       const { _internals } = require('../src/_internals');

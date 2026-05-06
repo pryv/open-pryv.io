@@ -9,13 +9,13 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const { Database } = require('storages/engines/mongodb/src/Database');
-const { config } = require('../../../../test/helpers');
+const helpers = require('../../../../test/helpers');
 
 describe('[DBSE] Database', () => {
   let connectionSettings;
   let database;
   beforeEach(async () => {
-    connectionSettings = structuredClone(config);
+    connectionSettings = structuredClone(helpers.state.config);
     connectionSettings.name = 'pryv-node-test';
     database = new Database(connectionSettings);
     await database.ensureConnect();

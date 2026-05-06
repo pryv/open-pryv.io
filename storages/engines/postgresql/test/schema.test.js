@@ -16,7 +16,7 @@ describe('[PGSC] PostgreSQL schema', function () {
   before(async function () {
     if (process.env.STORAGE_ENGINE !== 'postgresql') return this.skip();
     await helpers.dependencies.init();
-    db = new DatabasePG(helpers.config);
+    db = new DatabasePG(helpers.state.config);
     await db.waitForConnection();
   });
 

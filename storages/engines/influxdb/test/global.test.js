@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const helpers = require('../../../test/helpers');
-helpers.config = helpers.getEngineConfig('influxdb', require('../manifest.json'));
+helpers.state.config = helpers.getEngineConfig('influxdb', require('../manifest.json'));
 
 before(async function () {
   await helpers.dependencies.init();

@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const helpers = require('../../../test/helpers');
-helpers.config = helpers.getEngineConfig('sqlite', require('../manifest.json'));
+helpers.state.config = helpers.getEngineConfig('sqlite', require('../manifest.json'));
 
 before(async function () {
   await helpers.dependencies.init();

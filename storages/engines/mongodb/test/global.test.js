@@ -17,7 +17,7 @@ if (engine !== 'mongodb') {
   before(function () { this.skip(); });
 } else {
   const helpers = require('../../../test/helpers');
-  helpers.config = helpers.getEngineConfig('mongodb', require('../manifest.json'));
+  helpers.state.config = helpers.getEngineConfig('mongodb', require('../manifest.json'));
 
   before(async function () {
     // Force baseStorage back to mongodb for this engine's tests — the live

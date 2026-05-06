@@ -19,7 +19,7 @@ describe('[PGSR] PostgreSQL series', function () {
   before(async function () {
     if (process.env.STORAGE_ENGINE !== 'postgresql') return this.skip();
     await helpers.dependencies.init();
-    const db = new DatabasePG(helpers.config);
+    const db = new DatabasePG(helpers.state.config);
     await db.waitForConnection();
     conn = new PGSeriesConnection(db);
   });

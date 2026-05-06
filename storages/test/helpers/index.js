@@ -14,24 +14,29 @@
  *
  * Usage in engine global.test.js:
  *   const helpers = require('../../../test/helpers');
- *   helpers.config = helpers.getEngineConfig('mongodb', require('../manifest.json'));
+ *   helpers.state.config = helpers.getEngineConfig('mongodb', require('../manifest.json'));
+ *
+ * Plan 57 5g.4 — converted from CJS spread-mutation pattern to ESM
+ * named exports. The previous shape `module.exports = { ...require('test-helpers') }`
+ * + `module.exports.config = X` doesn't work under ESM (consumer namespace
+ * is read-only). Cross-test mutable state lives on the `state` object;
+ * everything else is a fixed re-export.
  */
 
-// Initialize boiler config for test environment
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 require('test-helpers/src/api-server-tests-config');
 
 const boiler = require('@pryv/boiler');
+const tested = require('test-helpers');
 
-// Re-export test-helpers (spread because Node 24 require(esm) returns a frozen
-// namespace; we need a mutable object to attach getEngineConfig etc).
-const helpers = { ...require('test-helpers') };
-module.exports = helpers;
+// Mutable cross-test state. Engine global.test.js sets state.config in its
+// before() hook; sibling tests in the same engine read state.config later.
+const state = { config: null };
 
 // Logger factory — same interface engines receive via init(config, getLogger, internals)
-module.exports.getLogger = boiler.getLogger;
-
-// Engine config — set by each engine's global.test.js via getEngineConfig()
-module.exports.config = null;
+const getLogger = boiler.getLogger;
 
 /**
  * Build the engine config as a plain key-value object.
@@ -42,7 +47,7 @@ module.exports.config = null;
  * @param {Object} [manifest] - optional manifest for field defaults
  * @returns {Object} plain config object
  */
-module.exports.getEngineConfig = function getEngineConfig (engineName, manifest) {
+function getEngineConfig (engineName, manifest) {
   const fullConfig = boiler.getConfigUnsafe(true);
   const section = fullConfig.get(`storages:engines:${engineName}`) || {};
   const fields = manifest?.configuration?.fields || {};
@@ -61,7 +66,7 @@ module.exports.getEngineConfig = function getEngineConfig (engineName, manifest)
     }
   }
   return result;
-};
+}
 
 /**
  * Resolve the internals for an engine, same way the barrel does.
@@ -70,18 +75,43 @@ module.exports.getEngineConfig = function getEngineConfig (engineName, manifest)
  * @param {Object} manifest - the engine's manifest.json (require'd)
  * @returns {Object} map of internal name → value
  */
-module.exports.getInternals = function getInternals (manifest) {
+function getInternals (manifest) {
   const internals = require('storages/internals');
   const required = manifest.requiredInternals || [];
   return internals.resolve(required, manifest.entrypoint || 'test');
-};
+}
 
 // --- Modules needed by migration tests ---
 // Exposed here so engine tests don't require directly from components/.
 
-module.exports.accountStreams = require('business/src/system-streams');
-module.exports.getMall = require('mall').getMall;
-module.exports.platform = require('platform').platform;
-module.exports.integrityFinalCheck = require('test-helpers/src/integrity-final-check');
-module.exports.getUsersLocalIndex = require('storage').getUsersLocalIndex;
-module.exports.userLocalDirectory = require('storage').userLocalDirectory;
+const accountStreams = require('business/src/system-streams');
+const getMall = require('mall').getMall;
+const platform = require('platform').platform;
+const integrityFinalCheck = require('test-helpers/src/integrity-final-check');
+const getUsersLocalIndex = require('storage').getUsersLocalIndex;
+const userLocalDirectory = require('storage').userLocalDirectory;
+
+// Re-exports from test-helpers (consumers historically reach through helpers.X
+// because the previous CJS spread pattern made every test-helpers field a direct
+// property of the helpers namespace).
+const dependencies = tested.dependencies;
+const databaseFixture = tested.databaseFixture;
+const data = tested.data;
+const dynData = tested.dynData;
+
+export {
+  state,
+  getLogger,
+  getEngineConfig,
+  getInternals,
+  accountStreams,
+  getMall,
+  platform,
+  integrityFinalCheck,
+  getUsersLocalIndex,
+  userLocalDirectory,
+  dependencies,
+  databaseFixture,
+  data,
+  dynData
+};
