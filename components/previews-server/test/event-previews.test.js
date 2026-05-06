@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const helpers = require('./helpers');
 const server = helpers.dependencies.instanceManager;
 const async = require('async');

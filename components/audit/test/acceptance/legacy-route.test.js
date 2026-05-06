@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /* global assert, cuid, initTests, initCore, charlatan, coreRequest, getNewFixture, addActionStreamIdPrefix, addAccessStreamIdPrefix, CONSTANTS */
 
 const timestamp = require('unix-timestamp');

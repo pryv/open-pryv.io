@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Audit component test helpers
  * Uses base helpers with audit-specific utilities
@@ -64,4 +66,4 @@ base.init({
   }
 });
 
-exports.mochaHooks = base.getMochaHooks(false);
+export const mochaHooks = base.getMochaHooks(false);

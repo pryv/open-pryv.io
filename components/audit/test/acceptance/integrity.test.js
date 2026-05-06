@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /* global assert, cuid, initTests, initCore, coreRequest, getNewFixture, charlatan */
 
 const { integrity } = require('business');
