@@ -4,6 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const bluebird = require('bluebird');
 const Application = require('../../src/application').default;
 const { SeriesRowType, TypeRepository } = require('business').types;

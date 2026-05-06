@@ -4,6 +4,12 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+const require = createRequire(import.meta.url);
+const __dirname = dirname(fileURLToPath(import.meta.url));
 process.env.NODE_ENV = 'test';
 const path = require('path');
 require('@pryv/boiler').init({
@@ -48,6 +54,4 @@ async function getWebhooksStorage () {
   return storageLayer.webhooks;
 }
 
-module.exports = {
-  getWebhooksStorage
-};
+export { getWebhooksStorage };

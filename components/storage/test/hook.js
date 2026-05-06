@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 Object.assign(global, {
   assert: require('node:assert'),
   bluebird: require('bluebird'),

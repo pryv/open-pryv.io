@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const loadAccessMiddleware = require('../../src/loadAccess').default;
 const assert = require('node:assert');
 const { promisify } = require('util');

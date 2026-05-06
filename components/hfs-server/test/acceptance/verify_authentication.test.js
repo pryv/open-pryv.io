@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 // Tests that exercise auth checks that have been disabled in other tests.
 
 require('test-helpers/src/api-server-tests-config');

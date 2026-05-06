@@ -5,7 +5,10 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 const require = createRequire(import.meta.url);
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Retrieves the projects version from git and from our deploy process.
 const path = require('path');
@@ -55,20 +58,34 @@ class ProjectVersion {
    * @returns {string}
    */
   readStaticVersion () {
-    // `process.mainModule` was deprecated and can be `undefined` in Node 22+
-    // (particularly when the entrypoint is loaded via a wrapper/cluster fork).
-    // Fall back to `require.main` and then to this module's own search paths.
+    // Sources, in priority order:
+    //   1. `process.mainModule.paths` siblings (CJS entry point)
+    //   2. `require.main.paths` (also CJS-only but distinct from mainModule)
+    //   3. Walk upward from this file's own location (ESM-safe fallback —
+    //      Plan 57 Phase 5f flipped many forked entry points to ESM, where
+    //      both mainModule and require.main are undefined; without this
+    //      fallback project_version returns the git-describe stamp which
+    //      breaks consumers expecting a `1.2.3`-shaped version string).
     const mainModule: any = (process as any).mainModule || require.main;
     const searchPaths: string[] = (mainModule && mainModule.paths) || [];
     for (const current of searchPaths) {
-      // Otherwise try to locate '.api-version' as a sibling to the path we found.
       const rootPath = path.dirname(current);
       const versionFilePath = path.join(rootPath, API_VERSION_FILENAME);
-      // If the version file does not exist, give up.
       if (!fs.existsSync(versionFilePath)) { continue; }
       return fs.readFileSync(versionFilePath).toString();
     }
-    // We've searched everything, let's give up.
+    // ESM fallback — walk upward from the directory containing this source
+    // file looking for an .api-version sibling. Stops at filesystem root.
+    let dir = __dirname;
+    for (let i = 0; i < 16; i++) {
+      const candidate = path.join(dir, API_VERSION_FILENAME);
+      if (fs.existsSync(candidate)) {
+        return fs.readFileSync(candidate).toString();
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
     return null;
   }
 }

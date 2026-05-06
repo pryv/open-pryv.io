@@ -5,6 +5,11 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+const require = createRequire(import.meta.url);
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const path = require('path');
 require('@pryv/boiler').init({
   appName: 'hfs-server-tests',
@@ -37,7 +42,7 @@ async function produceSeriesConnection () {
   const storages = require('storages');
   return storages.seriesConnection;
 }
-exports.produceSeriesConnection = produceSeriesConnection;
+export { produceSeriesConnection };
 /**
  * Extract deltaTime in seconds from a connection.query() time field.
  * InfluxDB returns INanoDate; PG returns delta_time * 1000.
@@ -48,7 +53,7 @@ function getTimeDelta (time) {
   if (typeof time === 'number') return time / 1000;
   return Number(time.getNanoTime()) / 1e9;
 }
-exports.getTimeDelta = getTimeDelta;
+export { getTimeDelta };
 // Returns the StorageLayer instance (engine-agnostic).
 /**
  * @returns {Promise<any>}
@@ -56,8 +61,8 @@ exports.getTimeDelta = getTimeDelta;
 async function produceConnection () {
   return await storage.getStorageLayer();
 }
-exports.produceStorageConnection = produceConnection;
-exports.produceConnection = produceConnection;
+const produceStorageConnection = produceConnection;
+export { produceConnection, produceStorageConnection };
 // --------------------------------------------------------- prespawning servers
 logger.debug('creating new spawn context');
 const spawner = testHelpers.spawner;
@@ -68,4 +73,4 @@ after(() => {
   spawnContext.shutdown();
 });
 
-exports.spawnContext = spawnContext;
+export { spawnContext };

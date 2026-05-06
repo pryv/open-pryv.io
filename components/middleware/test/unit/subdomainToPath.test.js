@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const supertest = require('supertest');
 const express = require('express');
 const assert = require('node:assert');

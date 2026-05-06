@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 const { userLocalDirectory, getUserAccountStorage } = require('storage');
 const conformanceTests = require('storages/interfaces/baseStorage/conformance/UserAccountStorage.test');
 
