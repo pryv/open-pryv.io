@@ -7,16 +7,69 @@
 
 /**
  * Extends the common test support object with server-specific stuff.
+ *
+ * Plan 57 5g.4 — converted from CJS spread-mutation pattern to ESM
+ * named re-exports. The previous shape:
+ *
+ *   exports = module.exports = { ...require('test-helpers') };
+ *   exports.commonTests = require('./commonTests');
+ *   ...
+ *
+ * doesn't work under ESM (consumer namespace is read-only). All the
+ * sub-modules (commonTests, dependencies, validation, SourceStream,
+ * passwordRules) are now ESM and explicitly re-exported here. test-helpers
+ * fields are also explicitly re-exported (only the ones consumers actually
+ * use — anything not on the list can be added when the consumer surfaces).
  */
 
-// Spread test-helpers namespace into a mutable object so we can extend it
-// with api-server-local helpers (Node 24 require(esm) returns a frozen namespace
-// that can't be assigned to directly).
-exports = module.exports = { ...require('test-helpers') };
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
-exports.commonTests = require('./commonTests');
-// override
-exports.dependencies = require('./dependencies');
-exports.validation = require('./validation');
-exports.SourceStream = require('./SourceStream');
-exports.passwordRules = require('./passwordRules');
+const tested = require('test-helpers');
+
+// Sub-modules — names are explicitly re-exported so consumers can do
+// `helpers.X` (legacy spread-style) or `require('./helpers/X')` (direct).
+const commonTests = require('./commonTests');
+const dependencies = require('./dependencies').default;
+const validation = require('./validation');
+const SourceStream = require('./SourceStream').default;
+const passwordRules = require('./passwordRules');
+
+// Re-exports from test-helpers — explicitly named so the helpers namespace
+// continues to expose them as direct properties.
+const data = tested.data;
+const dynData = tested.dynData;
+const request = tested.request;
+const databaseFixture = tested.databaseFixture;
+const InstanceManager = tested.InstanceManager;
+const DynamicInstanceManager = tested.DynamicInstanceManager;
+const instanceTestSetup = tested.instanceTestSetup;
+const spawner = tested.spawner;
+const child_process = tested.child_process; // eslint-disable-line camelcase
+const syncPrimitives = tested.syncPrimitives;
+const portAllocator = tested.portAllocator;
+const parallelTestHelper = tested.parallelTestHelper;
+const systemStreamFilters = tested.systemStreamFilters;
+const attachmentsCheck = tested.attachmentsCheck;
+
+export {
+  commonTests,
+  dependencies,
+  validation,
+  SourceStream,
+  passwordRules,
+  data,
+  dynData,
+  request,
+  databaseFixture,
+  InstanceManager,
+  DynamicInstanceManager,
+  instanceTestSetup,
+  spawner,
+  child_process, // eslint-disable-line camelcase
+  syncPrimitives,
+  portAllocator,
+  parallelTestHelper,
+  systemStreamFilters,
+  attachmentsCheck
+};

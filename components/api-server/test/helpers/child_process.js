@@ -5,6 +5,9 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 // Plan 57 .ts loader shim — must run before any storages/ require.
 // This file is the entry point used by test-helpers/spawner.js child_process.fork().
 require('../../../../bin/_ts-register');

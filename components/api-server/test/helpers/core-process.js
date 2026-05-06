@@ -19,6 +19,12 @@
  * Sends IPC 'ready' message when server is listening.
  */
 
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+const require = createRequire(import.meta.url);
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
 const path = require('node:path');
 
 // Boiler init — must happen before any other require

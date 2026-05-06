@@ -5,8 +5,11 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 const integrityFinalCheck = require('test-helpers/src/integrity-final-check');
-const dependencies = require('./dependencies');
+const dependencies = require('./dependencies').default;
 
 before(async function () {
   await dependencies.init();

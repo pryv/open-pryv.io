@@ -8,6 +8,9 @@
  * Regroups acceptance tests reused in different places.
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 const request = require('superagent');
 
 const validation = require('./validation');
@@ -17,7 +20,7 @@ const ErrorIds = require('errors').ErrorIds;
  * @param {String} serverURL
  * @param {String} path
  */
-exports.checkAccessTokenAuthentication = function (serverURL, path, done) {
+export const checkAccessTokenAuthentication = function (serverURL, path, done) {
   request.get(new URL(path, serverURL).toString()).end(function (err, res) { // eslint-disable-line n/handle-callback-err
     validation.check(res, {
       status: 401,

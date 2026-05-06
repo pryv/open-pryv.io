@@ -8,6 +8,9 @@
  * Helper stuff for validating objects against schemas.
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 const ErrorIds = require('errors').ErrorIds;
 const Action = require('../../src/schema/Action');
 const encryption = require('utils').encryption;
@@ -23,7 +26,7 @@ const { integrity } = require('business');
 /**
  * Expose common JSON schemas.
  */
-const schemas = exports.schemas = {
+export const schemas = {
   access: require('../../src/schema/access').default,
   event: require('../../src/schema/event').default,
   stream: require('../../src/schema/stream').default,
@@ -51,7 +54,7 @@ const schemas = exports.schemas = {
  *    - {Object} body Optional
  * @param {Function} [done] Optional
  */
-exports.check = function (response, expected, done) {
+export const check = function (response, expected, done) {
   assert.ok(response, '"response" must be a valid HTTP response object');
 
   assert.strictEqual(response.statusCode, expected.status);
@@ -127,7 +130,7 @@ function checkAccessIntegrity (access) {
  *    - {Object} data Optional
  * @param {Function} [done] Optional
  */
-exports.checkError = function (response, expected, done) {
+export const checkError = function (response, expected, done) {
   try {
     assert.strictEqual(response.statusCode, expected.status);
     checkJSON(response, schemas.errorResult);
@@ -160,7 +163,7 @@ function checkSchema (data, schema) {
   assert.strictEqual(validator.validate(data, schema), true,
     util.inspect(validator.getLastErrors(), { depth: 5 }));
 }
-exports.checkSchema = checkSchema;
+export { checkSchema };
 
 /**
  * Checks the given item against its 'STORE' schema identified by the given name.
@@ -168,7 +171,7 @@ exports.checkSchema = checkSchema;
  * @param {Object} item
  * @param {String} schemaName
  */
-exports.checkStoredItem = function (item, schemaName) {
+export const checkStoredItem = function (item, schemaName) {
   checkSchema(item, schemas[schemaName](Action.STORE));
 };
 
@@ -181,12 +184,12 @@ function checkMeta (parentObject) {
   assert.match(meta.serverTime + '', /^\d+\.?\d*$/);
   assert.ok(meta.serial);
 }
-exports.checkMeta = checkMeta;
+export { checkMeta };
 
 /**
  * Specific error check for convenience.
  */
-exports.checkErrorInvalidParams = function (res, done) {
+export const checkErrorInvalidParams = function (res, done) {
   assert.strictEqual(res.statusCode, 400);
 
   checkJSON(res, schemas.errorResult);
@@ -203,7 +206,7 @@ exports.checkErrorInvalidParams = function (res, done) {
 /**
  * Specific error check for convenience.
  */
-exports.checkErrorInvalidAccess = function (res, done) {
+export const checkErrorInvalidAccess = function (res, done) {
   assert.strictEqual(res.statusCode, 401);
 
   checkJSON(res, schemas.errorResult);
@@ -215,7 +218,7 @@ exports.checkErrorInvalidAccess = function (res, done) {
 /**
  * Specific error check for convenience.
  */
-exports.checkErrorForbidden = function (res, done) {
+export const checkErrorForbidden = function (res, done) {
   assert.strictEqual(res.statusCode, 403);
   checkJSON(res, schemas.errorResult);
   assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
@@ -226,7 +229,7 @@ exports.checkErrorForbidden = function (res, done) {
 /**
  * Specific error check for convenience.
  */
-exports.checkErrorUnknown = function (res, done) {
+export const checkErrorUnknown = function (res, done) {
   assert.strictEqual(res.statusCode, 404);
 
   checkJSON(res, schemas.errorResult);
@@ -243,7 +246,7 @@ exports.checkErrorUnknown = function (res, done) {
  * Recurses to sub-objects in `children` if defined (warning: removes `children` properties from
  * `actual` and `expected` if not empty).
  */
-exports.checkObjectEquality = checkObjectEquality;
+export { checkObjectEquality };
 function checkObjectEquality (actual, expected, verifiedProps = []) {
   let isApprox = false;
   if (expected.created) {
@@ -319,7 +322,7 @@ function checkApproxTimeEquality (actual, expected, epsilon = 2) {
  * @param response
  * @param {Array} expectedHeaders Each item must have name and value properties.
  */
-exports.checkHeaders = function (response, expectedHeaders) {
+export const checkHeaders = function (response, expectedHeaders) {
   expectedHeaders.forEach(function (expected) {
     const value = response.headers[expected.name.toLowerCase()];
     assert.ok(value);
@@ -339,7 +342,7 @@ exports.checkHeaders = function (response, expectedHeaders) {
  * @param access
  * @param secret
  */
-exports.checkFilesReadToken = function (eventOrEvents, access, secret) {
+export const checkFilesReadToken = function (eventOrEvents, access, secret) {
   if (Array.isArray(eventOrEvents)) {
     eventOrEvents.forEach(checkEvent);
   } else {
@@ -361,7 +364,7 @@ exports.checkFilesReadToken = function (eventOrEvents, access, secret) {
  *
  * @param {Object} event
  */
-exports.sanitizeEvent = function (event) {
+export const sanitizeEvent = function (event) {
   if (!event) { return; }
 
   if (event.attachments) {
@@ -378,10 +381,10 @@ exports.sanitizeEvent = function (event) {
  *
  * @param {Array} events
  */
-exports.sanitizeEvents = function (events) {
+export const sanitizeEvents = function (events) {
   if (!events) { return; }
 
-  events.forEach(exports.sanitizeEvent);
+  events.forEach(sanitizeEvent);
   return events;
 };
 
@@ -391,7 +394,7 @@ exports.sanitizeEvents = function (events) {
  * @param {Array} items
  * @returns {Array}
  */
-exports.removeDeletions = function (items) {
+export const removeDeletions = function (items) {
   return items.filter(function (e) { return !e.deleted; });
 };
 
@@ -401,25 +404,25 @@ exports.removeDeletions = function (items) {
  * @param {Array} items
  * @returns {Array}
  */
-exports.removeDeletionsAndHistory = function (items) {
+export const removeDeletionsAndHistory = function (items) {
   return items.filter(function (e) { return !(e.deleted || e.headId); });
 };
 
-exports.removeAccountStreamsEvents = function (items) {
+export const removeAccountStreamsEvents = function (items) {
   return removeSystemEvents(items);
 };
 
-exports.separateAccountStreamsAndOtherEvents = function (items) {
+export const separateAccountStreamsAndOtherEvents = function (items) {
   const { events, systemEvents } = separateSystemEvents(items);
   return { events, accountStreamsEvents: systemEvents };
 };
 
-exports.removeAccountStreams = function (streams) {
+export const removeAccountStreams = function (streams) {
   return removeSystemStreams(streams);
 };
 
 // TODO: cleanup this mess, we shouldn't have data creation logic in "validation", nor these `require()` mid-file
-exports.addStoreStreams = async function (streams, storesId, atTheEnd) {
+export const addStoreStreams = async function (streams, storesId, atTheEnd) {
   const { getMall } = require('mall');
   const streamsUtils = require('mall/src/helpers/streamsUtils');
 
@@ -452,7 +455,7 @@ exports.addStoreStreams = async function (streams, storesId, atTheEnd) {
 /*
  * Strips off item from tracking properties
  */
-exports.removeTrackingPropertiesForOne = function (item) {
+export const removeTrackingPropertiesForOne = function (item) {
   if (item == null) return;
   delete item.created;
   delete item.createdBy;
@@ -464,8 +467,8 @@ exports.removeTrackingPropertiesForOne = function (item) {
 /**
  * Strips off items from tracking properties
  */
-exports.removeTrackingProperties = function (items) {
-  items.forEach(exports.removeTrackingPropertiesForOne);
+export const removeTrackingProperties = function (items) {
+  items.forEach(removeTrackingPropertiesForOne);
   return items;
 };
 
@@ -475,7 +478,7 @@ exports.removeTrackingProperties = function (items) {
  * - they have "unique" streamId when needed
  * - they have correct type
  */
-exports.validateAccountEvents = function (actualAccountEvents) {
+export const validateAccountEvents = function (actualAccountEvents) {
   // get streams ids from the config that should be retrieved
 
   const expectedAccountStreams = Object.fromEntries(Object.entries(accountStreams.accountMap).filter(([, s]) => s.isShown));
