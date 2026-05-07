@@ -13,8 +13,7 @@
  * pattern: check that all required methods exist on the instance's prototype chain.
  */
 
-type Callback<T = any> = (err: Error | null, result?: T) => void;
-type UserOrId = string | { id: string };
+import type { Callback, UserOrId } from '../_shared/types.ts';
 
 export interface CollectionInfo {
   name: string;

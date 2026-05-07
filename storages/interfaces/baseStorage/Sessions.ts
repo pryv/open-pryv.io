@@ -12,7 +12,7 @@
  * Use {@link validateSessions} to verify class-based instances.
  */
 
-type Callback<T = any> = (err: Error | null, result?: T) => void;
+import type { Callback } from '../_shared/types.ts';
 
 export interface Sessions {
   get (id: string, callback: Callback<any>): void;

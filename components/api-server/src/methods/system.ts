@@ -121,7 +121,7 @@ export default async function (systemAPI, api) {
     setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
     async function listUsers (context, params, result, next) {
       try {
-        const usersMap = await usersIndex.getAllByUsername();
+        const usersMap: Record<string, string> = await usersIndex.getAllByUsername();
         const users = [];
         for (const [username, userId] of Object.entries(usersMap)) {
           const user = await usersRepository.getUserById(userId);
