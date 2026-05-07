@@ -7,56 +7,52 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-// this file uses util.inherits(Cls, Parent) pseudo-inheritance.
-// The (Cls as any).super_ calls below cannot be typed without converting to ES "class Cls extends Parent". Tracked as separate refactor.
-
 const { BaseStorage } = require('./BaseStorage.ts');
 const converters = require('./../converters.ts');
-const util = require('util');
 
-export { Profile };
 /**
  * DB persistence for profile sets.
- *
- * @param database
  */
-function Profile (database) {
-  (Profile as any).super_.call(this, database);
+class Profile extends BaseStorage {
+  defaultOptions: any;
 
-  Object.assign(this.converters, {
-    updateToDB: [converters.getKeyValueSetUpdateFn('data')],
-    convertIdToItemId: 'profileId'
-  });
+  constructor (database) {
+    super(database);
 
-  this.defaultOptions = {
-    sort: {}
-  };
+    Object.assign(this.converters, {
+      updateToDB: [converters.getKeyValueSetUpdateFn('data')],
+      convertIdToItemId: 'profileId'
+    });
+
+    this.defaultOptions = {
+      sort: {}
+    };
+  }
+
+  /** Override importAll: convert canonical backup format `id` → MongoDB `profileId`. */
+  importAll (userOrUserId, items, callback) {
+    const mapped = items.map((item) => {
+      const doc = Object.assign({}, item);
+      if (doc.id != null && doc.profileId == null) {
+        doc.profileId = doc.id;
+        delete doc.id;
+      }
+      return doc;
+    });
+    super.importAll(userOrUserId, mapped, callback);
+  }
+
+  getCollectionInfo (userOrUserId) {
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    return {
+      name: 'profile',
+      indexes: [{
+        index: { profileId: 1 },
+        options: { unique: true }
+      }],
+      useUserId: userId
+    };
+  }
 }
-util.inherits(Profile, BaseStorage);
 
-/**
- * Override importAll: convert canonical backup format `id` → MongoDB `profileId`.
- */
-Profile.prototype.importAll = function (userOrUserId, items, callback) {
-  const mapped = items.map(item => {
-    const doc = Object.assign({}, item);
-    if (doc.id != null && doc.profileId == null) {
-      doc.profileId = doc.id;
-      delete doc.id;
-    }
-    return doc;
-  });
-  (Profile as any).super_.prototype.importAll.call(this, userOrUserId, mapped, callback);
-};
-
-Profile.prototype.getCollectionInfo = function (userOrUserId) {
-  const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-  return {
-    name: 'profile',
-    indexes: [{
-      index: { profileId: 1 },
-      options: { unique: true }
-    }],
-    useUserId: userId
-  };
-};
+export { Profile };

@@ -7,49 +7,11 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-// this file uses util.inherits(Cls, Parent) pseudo-inheritance.
-// The (Cls as any).super_ calls below cannot be typed without converting to ES "class Cls extends Parent". Tracked as separate refactor.
-
 const { BaseStorage } = require('./BaseStorage.ts');
 const converters = require('./../converters.ts');
-const util = require('util');
 const { _internals } = require('../_internals.ts');
 const treeUtils = require('../../../../shared/treeUtils.ts');
 const timestamp = require('unix-timestamp');
-
-export { Streams };
-/**
- * DB persistence for event streams.
- *
- * @param database
- */
-function Streams (database) {
-  (Streams as any).super_.call(this, database);
-
-  Object.assign(this.converters, {
-    itemDefaults: [
-    ],
-    itemToDB: [
-      // converters.deletionToDB,
-    ],
-    itemsToDB: [
-      treeUtils.flattenTree,
-      cleanupDeletions
-    ],
-    updateToDB: [
-      converters.stateUpdate,
-      converters.getKeyValueSetUpdateFn('clientData')
-    ],
-    itemFromDB: [converters.deletionFromDB],
-    itemsFromDB: [treeUtils.buildTree],
-    convertIdToItemId: 'streamId'
-  });
-
-  this.defaultOptions = {
-    sort: { name: 1 }
-  };
-}
-util.inherits(Streams, BaseStorage);
 
 function cleanupDeletions (streams) {
   streams.forEach(function (s) {
@@ -85,70 +47,97 @@ const indexes = [
 ];
 
 /**
- * Implementation.
+ * DB persistence for event streams.
  */
-Streams.prototype.getCollectionInfo = function (userOrUserId) {
-  const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-  return {
-    name: 'streams',
-    indexes,
-    useUserId: userId
-  };
-};
+class Streams extends BaseStorage {
+  defaultOptions: any;
 
-Streams.prototype.countAll = function (user, callback) {
-  this.count(user, {}, callback);
-};
+  constructor (database) {
+    super(database);
 
-/**
- * Override importAll: convert canonical backup format `id` → MongoDB `streamId`.
- */
-Streams.prototype.importAll = function (userOrUserId, items, callback) {
-  const mapped = items.map(item => {
-    const doc = Object.assign({}, item);
-    if (doc.id != null && doc.streamId == null) {
-      doc.streamId = doc.id;
-      delete doc.id;
-    }
-    return doc;
-  });
-  (Streams as any).super_.prototype.importAll.call(this, userOrUserId, mapped, callback);
-};
+    Object.assign(this.converters, {
+      itemDefaults: [],
+      itemToDB: [
+        // converters.deletionToDB,
+      ],
+      itemsToDB: [
+        treeUtils.flattenTree,
+        cleanupDeletions
+      ],
+      updateToDB: [
+        converters.stateUpdate,
+        converters.getKeyValueSetUpdateFn('clientData')
+      ],
+      itemFromDB: [converters.deletionFromDB],
+      itemsFromDB: [treeUtils.buildTree],
+      convertIdToItemId: 'streamId'
+    });
 
-Streams.prototype.insertOne = function (user, stream, callback) {
-  _internals.cache.unsetUserData(user.id);
-  (Streams as any).super_.prototype.insertOne.call(this, user, stream, callback);
-};
-
-Streams.prototype.updateOne = function (user, query, updatedData, callback) {
-  if (typeof updatedData.parentId !== 'undefined') { // clear ALL when a stream is moved
-    _internals.cache.unsetUserData(user.id);
-  } else { // only stream Structure
-    _internals.cache.unsetStreams(user.id, 'local');
+    this.defaultOptions = {
+      sort: { name: 1 }
+    };
   }
-  (Streams as any).super_.prototype.updateOne.call(this, user, query, updatedData, callback);
-};
 
-/**
- * Implementation.
- */
-Streams.prototype.delete = function (userOrUserId, query, callback) {
-  const userId = userOrUserId.id || userOrUserId;
-  _internals.cache.unsetUserData(userId);
-  const update = {
-    $set: { deleted: timestamp.now() },
-    $unset: {
-      name: 1,
-      parentId: 1,
-      clientData: 1,
-      children: 1,
-      trashed: 1,
-      created: 1,
-      createdBy: 1,
-      modified: 1,
-      modifiedBy: 1
+  getCollectionInfo (userOrUserId) {
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    return {
+      name: 'streams',
+      indexes,
+      useUserId: userId
+    };
+  }
+
+  countAll (user, callback) {
+    this.count(user, {}, callback);
+  }
+
+  /** Override importAll: convert canonical backup format `id` → MongoDB `streamId`. */
+  importAll (userOrUserId, items, callback) {
+    const mapped = items.map((item) => {
+      const doc = Object.assign({}, item);
+      if (doc.id != null && doc.streamId == null) {
+        doc.streamId = doc.id;
+        delete doc.id;
+      }
+      return doc;
+    });
+    super.importAll(userOrUserId, mapped, callback);
+  }
+
+  insertOne (user, stream, callback) {
+    _internals.cache.unsetUserData(user.id);
+    super.insertOne(user, stream, callback);
+  }
+
+  updateOne (user, query, updatedData, callback) {
+    if (typeof updatedData.parentId !== 'undefined') { // clear ALL when a stream is moved
+      _internals.cache.unsetUserData(user.id);
+    } else { // only stream Structure
+      _internals.cache.unsetStreams(user.id, 'local');
     }
-  };
-  this.database.updateMany(this.getCollectionInfo(userOrUserId),
-    this.applyQueryToDB(query), update, callback);
-};
+    super.updateOne(user, query, updatedData, callback);
+  }
+
+  delete (userOrUserId, query, callback) {
+    const userId = userOrUserId.id || userOrUserId;
+    _internals.cache.unsetUserData(userId);
+    const update = {
+      $set: { deleted: timestamp.now() },
+      $unset: {
+        name: 1,
+        parentId: 1,
+        clientData: 1,
+        children: 1,
+        trashed: 1,
+        created: 1,
+        createdBy: 1,
+        modified: 1,
+        modifiedBy: 1
+      }
+    };
+    this.database.updateMany(this.getCollectionInfo(userOrUserId),
+      this.applyQueryToDB(query), update, callback);
+  }
+}
+
+export { Streams };

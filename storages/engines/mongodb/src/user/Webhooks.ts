@@ -7,35 +7,9 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-// this file uses util.inherits(Cls, Parent) pseudo-inheritance.
-// The (Cls as any).super_ calls below cannot be typed without converting to ES "class Cls extends Parent". Tracked as separate refactor.
-
 const { BaseStorage } = require('./BaseStorage.ts');
 const converters = require('./../converters.ts');
-const util = require('util');
 const timestamp = require('unix-timestamp');
-
-export { Webhooks };
-/**
- * DB persistence for webhooks.
- *
- * @param database
- */
-function Webhooks (database) {
-  (Webhooks as any).super_.call(this, database);
-
-  Object.assign(this.converters, {
-    itemDefaults: [
-      converters.createIdIfMissing
-    ],
-    itemToDB: [converters.deletionToDB],
-    itemFromDB: [converters.deletionFromDB]
-  });
-
-  this.defaultOptions = {
-  };
-}
-util.inherits(Webhooks, BaseStorage);
 
 const indexes = [
   {
@@ -48,78 +22,87 @@ const indexes = [
 ];
 
 /**
- * Implementation.
+ * DB persistence for webhooks.
  */
-Webhooks.prototype.getCollectionInfo = function (userOrUserId) {
-  const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-  return {
-    name: 'webhooks',
-    indexes,
-    useUserId: userId
-  };
-};
+class Webhooks extends BaseStorage {
+  defaultOptions: any;
 
-/**
- * Implementation.
- */
-Webhooks.prototype.delete = function (userOrUserId, query, callback) {
-  const update = {
-    $set: { deleted: timestamp.now() },
-    $unset: {
-      accessId: 1,
-      url: 1,
-      state: 1,
-      runCount: 1,
-      failCount: 1,
-      lastRun: 1,
-      runs: 1,
-      currentRetries: 1,
-      maxRetries: 1,
-      minIntervalMs: 1,
-      created: 1,
-      createdBy: 1,
-      modified: 1,
-      modifiedBy: 1
-    }
-  };
-  this.database.updateMany(this.getCollectionInfo(userOrUserId),
-    this.applyQueryToDB(query), update, callback);
-};
+  constructor (database) {
+    super(database);
 
-/**
- * Override base method to set deleted:null
- *
- * @param user
- * @param item
- * @param callback
- */
-Webhooks.prototype.insertOne = function (userOrUserId, webhook, callback) {
-  const webhookToCreate = structuredClone(webhook);
-  if (webhookToCreate.deleted === undefined) webhookToCreate.deleted = null;
-  this.database.insertOne(
-    this.getCollectionInfo(userOrUserId),
-    this.applyItemToDB(this.applyItemDefaults(webhookToCreate)),
-    function (err) {
-      if (err) {
-        return callback(err);
+    Object.assign(this.converters, {
+      itemDefaults: [
+        converters.createIdIfMissing
+      ],
+      itemToDB: [converters.deletionToDB],
+      itemFromDB: [converters.deletionFromDB]
+    });
+
+    this.defaultOptions = {};
+  }
+
+  getCollectionInfo (userOrUserId) {
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    return {
+      name: 'webhooks',
+      indexes,
+      useUserId: userId
+    };
+  }
+
+  delete (userOrUserId, query, callback) {
+    const update = {
+      $set: { deleted: timestamp.now() },
+      $unset: {
+        accessId: 1,
+        url: 1,
+        state: 1,
+        runCount: 1,
+        failCount: 1,
+        lastRun: 1,
+        runs: 1,
+        currentRetries: 1,
+        maxRetries: 1,
+        minIntervalMs: 1,
+        created: 1,
+        createdBy: 1,
+        modified: 1,
+        modifiedBy: 1
       }
-      const { deleted: _omit, ...rest } = webhookToCreate;
-      callback(null, rest);
-    }
-  );
-};
+    };
+    this.database.updateMany(this.getCollectionInfo(userOrUserId),
+      this.applyQueryToDB(query), update, callback);
+  }
 
-/**
- * Inserts an array of webhooks; each item must have a valid id and data already. For tests only.
- */
-Webhooks.prototype.insertMany = function (userOrUserId, webhooks, callback) {
-  const webhooksToCreate = webhooks.map((w) => {
-    if (w.deleted === undefined) return Object.assign({ deleted: null }, w);
-    return w;
-  });
-  this.database.insertMany(
-    this.getCollectionInfo(userOrUserId),
-    this.applyItemsToDB(webhooksToCreate),
-    callback
-  );
-};
+  /** Override base method to set deleted:null. */
+  insertOne (userOrUserId, webhook, callback) {
+    const webhookToCreate = structuredClone(webhook);
+    if (webhookToCreate.deleted === undefined) webhookToCreate.deleted = null;
+    this.database.insertOne(
+      this.getCollectionInfo(userOrUserId),
+      this.applyItemToDB(this.applyItemDefaults(webhookToCreate)),
+      function (err) {
+        if (err) {
+          return callback(err);
+        }
+        const { deleted: _omit, ...rest } = webhookToCreate;
+        callback(null, rest);
+      }
+    );
+  }
+
+  /** Inserts an array of webhooks; each item must have a valid id and data already. For tests only. */
+  insertMany (userOrUserId, webhooks, callback) {
+    const webhooksToCreate = webhooks.map((w) => {
+      if (w.deleted === undefined) return Object.assign({ deleted: null }, w);
+      return w;
+    });
+    this.database.insertMany(
+      this.getCollectionInfo(userOrUserId),
+      this.applyItemsToDB(webhooksToCreate),
+      callback
+    );
+  }
+}
+
+export { Webhooks };
