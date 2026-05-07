@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const accessesMod = require('./accesses');
+const accessesMod = require('./accesses.ts');
 const accesses = accessesMod.default ?? accessesMod;
 const profile = [
   {

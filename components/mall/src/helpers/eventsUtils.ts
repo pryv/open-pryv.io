@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const Transform = require('stream').Transform;
-const storeDataUtils = require('./storeDataUtils');
+const storeDataUtils = require('./storeDataUtils.ts');
 const errorFactory = require('errors').factory;
 // ------------  Duration -----------//
 function durationToStoreEndTime (eventData) {

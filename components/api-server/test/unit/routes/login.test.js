@@ -8,10 +8,10 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 const assert = require('node:assert');
 const express = require('express');
-const authMod = require('api-server/src/routes/auth/login').default;
+const authMod = require('api-server/src/routes/auth/login.ts').default;
 
 describe('[AUTN] Authentication', function () {
   const settings = {

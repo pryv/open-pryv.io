@@ -7,14 +7,14 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const errorHandling = require('errors').errorHandling;
-const commonMeta = require('../methods/helpers/setCommonMeta');
+const commonMeta = require('../methods/helpers/setCommonMeta.ts');
 const { fromCallback } = require('utils');
-const { USERNAME_REGEXP_STR } = require('../schema/helpers');
+const { USERNAME_REGEXP_STR } = require('../schema/helpers.ts');
 const { pubsub } = require('messages');
 (async () => {
   await commonMeta.loadSettings();
 })();
-const { getAPIVersion } = require('middleware/src/project_version');
+const { getAPIVersion } = require('middleware/src/project_version.ts');
 const { initRootSpan } = require('tracing');
 // Manages contexts for socket-io. NamespaceContext's are created when the first
 // client connects to a namespace and are then kept forever.

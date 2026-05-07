@@ -32,10 +32,10 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
-const { DBrqlite } = require('../../../../storages/engines/rqlite/src/DBrqlite');
-const { AcmeOrchestrator } = require('../../src/acme/AcmeOrchestrator');
-const { CertRenewer, PlatformDBDnsWriter } = require('../../src/acme/CertRenewer');
-const { FileMaterializer } = require('../../src/acme/FileMaterializer');
+const { DBrqlite } = require('../../../../storages/engines/rqlite/src/DBrqlite.ts');
+const { AcmeOrchestrator } = require('../../src/acme/AcmeOrchestrator.ts');
+const { CertRenewer, PlatformDBDnsWriter } = require('../../src/acme/CertRenewer.ts');
+const { FileMaterializer } = require('../../src/acme/FileMaterializer.ts');
 
 const RQLITE_URL = process.env.RQLITE_URL || 'http://localhost:4001';
 

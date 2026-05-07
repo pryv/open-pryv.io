@@ -26,9 +26,9 @@ const assert = require('node:assert');
 const { fork } = require('node:child_process');
 const path = require('node:path');
 const dns = require('node:dns');
-const rqliteProcess = require('../../../storages/engines/rqlite/src/rqliteProcess');
-const { createDnsServer } = require('dns-server/src');
-const { DBrqlite } = require('../../../storages/engines/rqlite/src/DBrqlite');
+const rqliteProcess = require('../../../storages/engines/rqlite/src/rqliteProcess.ts');
+const { createDnsServer } = require('dns-server/src/index.ts');
+const { DBrqlite } = require('../../../storages/engines/rqlite/src/DBrqlite.ts');
 
 const SERVICE_CORE_ROOT = path.resolve(__dirname, '../../../');
 const CORE_PROCESS = path.resolve(__dirname, 'helpers/core-process.js');
@@ -227,7 +227,7 @@ describe('[RG2C] Two-core integration tests', function () {
     const fs = require('node:fs');
     fs.rmSync('/tmp/rqlite-2core-test', { recursive: true, force: true });
     // Clean up users created by child cores in shared MongoDB + PlatformDB
-    const { getUsersRepository } = require('business/src/users');
+    const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
     await usersRepository.deleteAll();
     // Restore integrity check setting

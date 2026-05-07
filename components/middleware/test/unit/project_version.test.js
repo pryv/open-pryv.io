@@ -14,7 +14,7 @@ const path = require('path');
 const assert = require('node:assert');
 const { execSync } = require('child_process');
 const fs = require('fs');
-const { getAPIVersion } = require('../../src/project_version');
+const { getAPIVersion } = require('../../src/project_version.ts');
 
 const versionFilePath = path.join(__dirname, '../../../../', '.api-version');
 

@@ -10,10 +10,10 @@ const require = createRequire(import.meta.url);
 // Tests pertaining to storing data in a hf series.
 
 const assert = require('node:assert');
-const DataMatrix = require('../../../src/series/data_matrix').default;
-const { ParseFailure } = require('../../../src/series/errors');
-const Row = require('../../../src/series/row').default;
-const { TypeRepository } = require('../../../src/types');
+const DataMatrix = require('../../../src/series/data_matrix.ts').default;
+const { ParseFailure } = require('../../../src/series/errors.ts');
+const Row = require('../../../src/series/row.ts').default;
+const { TypeRepository } = require('../../../src/types.ts');
 
 describe('[DMTX] DataMatrix', function () {
   describe('[DM01] .parse(obj)', () => {

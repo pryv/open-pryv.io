@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
 const audit = require('audit').default;
-const { localStorePrepareOptions, localStorePrepareQuery } = require('storage/src/localStoreEventQueries');
+const { localStorePrepareOptions, localStorePrepareQuery } = require('storage/src/localStoreEventQueries.ts');
 
 const auditUserEvents: any = ds.createUserEvents({
   async getStreamed (userId, storeQuery, storeOptions) {

@@ -6,12 +6,12 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const commonFns = require('./../helpers/commonFunctions');
+const commonFns = require('./../helpers/commonFunctions.ts');
 const errors = require('errors').factory;
-const methodsSchema = require('api-server/src/schema/authMethods');
-const Registration = require('business/src/auth/registration').default;
+const methodsSchema = require('api-server/src/schema/authMethods.ts');
+const Registration = require('business/src/auth/registration.ts').default;
 const { getPlatform } = require('platform');
-const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils');
+const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const { getConfig } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 const { getPasswordRules, getUsersRepository } = require('business').users;

@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { ALL_EVENTS_TAG } = require('./schema/events');
+const { ALL_EVENTS_TAG } = require('./schema/events.ts');
 
 export { toSQLiteQuery };
 

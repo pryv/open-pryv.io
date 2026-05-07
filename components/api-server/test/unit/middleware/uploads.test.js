@@ -8,12 +8,12 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 const express = require('express');
 const supertest = require('supertest');
 const assert = require('node:assert');
 const { fixturePath, fixtureFile } = require('../test-helper');
-const uploads = require('../../../src/middleware/uploads');
+const uploads = require('../../../src/middleware/uploads.ts');
 
 describe('[UPLD] uploads middleware', function () {
   function app () {

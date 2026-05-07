@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const Syslog = require('./Syslog').default;
+const Syslog = require('./Syslog.ts').default;
 const { getConfig } = require('@pryv/boiler');
 
 let syslog;

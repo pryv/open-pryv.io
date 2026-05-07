@@ -32,7 +32,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const { hostnameToDirName } = require('./certUtils');
+const { hostnameToDirName } = require('./certUtils.ts');
 
 class FileMaterializer {
   #certRenewer;

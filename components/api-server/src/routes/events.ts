@@ -6,15 +6,15 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const methodCallback = require('./methodCallback').default;
+const methodCallback = require('./methodCallback.ts').default;
 const encryption = require('utils').encryption;
 const errors = require('errors').factory;
-const Paths = require('./Paths');
-const tryCoerceStringValues = require('../schema/validation').tryCoerceStringValues;
+const Paths = require('./Paths.ts');
+const tryCoerceStringValues = require('../schema/validation.ts').tryCoerceStringValues;
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
-const hasFileUpload = require('../middleware/uploads').hasFileUpload;
-const attachmentsAccessMiddlewareFactory = require('../middleware/attachment-access').default;
+const hasFileUpload = require('../middleware/uploads.ts').hasFileUpload;
+const attachmentsAccessMiddlewareFactory = require('../middleware/attachment-access.ts').default;
 // Set up events route handling.
 export default async function (expressApp, app) {
   const api = app.api;

@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 
 /**
  * Plan 54 Phase D — unit tests for the worker-side IPC client used by
@@ -19,7 +19,7 @@ require('test-helpers/src/api-server-tests-config');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 
-const { forceRenew } = require('api-server/src/routes/forceRenewIpc');
+const { forceRenew } = require('api-server/src/routes/forceRenewIpc.ts');
 
 function makeFakeProcess (replyFn) {
   // EventEmitter gives us .on/.removeListener; we add .send to round-trip

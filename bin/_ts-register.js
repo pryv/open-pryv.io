@@ -23,7 +23,11 @@
  */
 
 // 1. Register .ts in the current process's CJS resolver.
-require.extensions['.ts'] = require.extensions['.js']; // eslint-disable-line n/no-deprecated-api
+//    Plan 57 §7g — line commented out after Path B (~930 explicit `.ts`
+//    extensions added across 370 files). Keeping the file for the
+//    NODE_OPTIONS propagation it still does (item 2 below) — the actual
+//    extension-mutation job is done.
+// require.extensions['.ts'] = require.extensions['.js']; // eslint-disable-line n/no-deprecated-api
 
 // 2. Propagate the loader to every child process spawned from here on.
 //    Idempotent — `--require` is added at most once per process.

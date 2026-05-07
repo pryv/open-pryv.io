@@ -6,8 +6,8 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const Service = require('./Service').default;
-const generateCode = require('./generateCode').default;
+const Service = require('./Service.ts').default;
+const generateCode = require('./generateCode.ts').default;
 const errors = require('errors').factory;
 
 const CODE_LENGTH = 4;

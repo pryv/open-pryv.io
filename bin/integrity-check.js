@@ -50,7 +50,7 @@ require('@pryv/boiler').init({
     await userLocalDirectory.init();
     await require('storages').init(config);
 
-    const IntegrityCheck = require('business/src/integrity/IntegrityCheck').default;
+    const IntegrityCheck = require('business/src/integrity/IntegrityCheck.ts').default;
     const checker = new IntegrityCheck();
     await checker.init();
 

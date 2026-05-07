@@ -17,8 +17,8 @@ const path = require('path');
 const msgpack = require('msgpack5')();
 const supertest = require('supertest');
 const { deepMerge } = require('utils');
-const { ConditionVariable, Fuse } = require('./condition_variable');
-const portAllocator = require('./portAllocator');
+const { ConditionVariable, Fuse } = require('./condition_variable.ts');
+const portAllocator = require('./portAllocator.ts');
 // Set DEBUG=spawner to see these messages.
 const logger = require('@pryv/boiler').getLogger('spawner');
 

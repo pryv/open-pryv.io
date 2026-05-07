@@ -43,7 +43,7 @@ require('@pryv/boiler').init({
 });
 
 const { getConfig } = require('@pryv/boiler');
-const { getApplication } = require('api-server/src/application');
+const { getApplication } = require('api-server/src/application.ts');
 const http = require('node:http');
 
 (async () => {
@@ -84,20 +84,20 @@ const http = require('node:http');
   await app.initiate();
 
   // Register API methods directly on the Application instance
-  await require('api-server/src/methods/system').default(app.systemAPI, app.api);
-  await require('api-server/src/methods/utility').default(app.api);
-  await require('api-server/src/methods/auth/login').default(app.api);
-  await require('api-server/src/methods/auth/register').default(app.api);
-  await require('api-server/src/methods/auth/delete').default(app.api);
-  await require('api-server/src/methods/mfa').default(app.api);
-  await require('api-server/src/methods/accesses').default(app.api);
-  require('api-server/src/methods/service').default(app.api);
-  await require('api-server/src/methods/webhooks').default(app.api);
-  await require('api-server/src/methods/trackingFunctions').default(app.api);
-  await require('api-server/src/methods/account').default(app.api);
-  await require('api-server/src/methods/profile').default(app.api);
-  await require('api-server/src/methods/streams').default(app.api);
-  await require('api-server/src/methods/events').default(app.api);
+  await require('api-server/src/methods/system.ts').default(app.systemAPI, app.api);
+  await require('api-server/src/methods/utility.ts').default(app.api);
+  await require('api-server/src/methods/auth/login.ts').default(app.api);
+  await require('api-server/src/methods/auth/register.ts').default(app.api);
+  await require('api-server/src/methods/auth/delete.ts').default(app.api);
+  await require('api-server/src/methods/mfa.ts').default(app.api);
+  await require('api-server/src/methods/accesses.ts').default(app.api);
+  require('api-server/src/methods/service.ts').default(app.api);
+  await require('api-server/src/methods/webhooks.ts').default(app.api);
+  await require('api-server/src/methods/trackingFunctions.ts').default(app.api);
+  await require('api-server/src/methods/account.ts').default(app.api);
+  await require('api-server/src/methods/profile.ts').default(app.api);
+  await require('api-server/src/methods/streams.ts').default(app.api);
+  await require('api-server/src/methods/events.ts').default(app.api);
 
   // Start HTTP server
   const httpServer = http.createServer(app.expressApp);

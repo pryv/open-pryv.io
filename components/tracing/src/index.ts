@@ -13,9 +13,9 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { DummyTracing } = require('./Tracing');
-const { getHookedTracer } = require('./HookedTracer');
-const { databaseTracer: dataBaseTracer } = require('./databaseTracer');
+const { DummyTracing } = require('./Tracing.ts');
+const { getHookedTracer } = require('./HookedTracer.ts');
+const { databaseTracer: dataBaseTracer } = require('./databaseTracer.ts');
 
 const getHookerTracer = getHookedTracer;
 

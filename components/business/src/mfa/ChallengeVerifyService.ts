@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const Service = require('./Service').default;
+const Service = require('./Service.ts').default;
 
 /**
  * Two-step SMS MFA: separate `challenge` and `verify` HTTP endpoints on the

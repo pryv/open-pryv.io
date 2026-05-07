@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('assert');
-const { sanitize } = require('storages/interfaces/backup/sanitize');
+const { sanitize } = require('storages/interfaces/backup/sanitize.ts');
 
 describe('backup/sanitize', function () {
   it('strips _id, __v, userId, user_id', function () {

@@ -7,8 +7,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
-const validation = require('../../schema/validation');
-const { findForbiddenChar, isStreamIdValidForCreation } = require('../../schema/streamId');
+const validation = require('../../schema/validation.ts');
+const { findForbiddenChar, isStreamIdValidForCreation } = require('../../schema/streamId.ts');
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('commonFunctions');
 

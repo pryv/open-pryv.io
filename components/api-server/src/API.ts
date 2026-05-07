@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const APIError = require('errors').APIError;
 const errors = require('errors').factory;
-const Result = require('./Result').default;
+const Result = require('./Result.ts').default;
 const { getConfigUnsafe } = require('@pryv/boiler');
 
 let audit, throwIfMethodIsNotDeclared, isAuditActive;
@@ -49,7 +49,7 @@ class API {
     if (isAuditActive) {
       audit = require('audit').default;
       throwIfMethodIsNotDeclared =
-      require('audit/src/ApiMethods').throwIfMethodIsNotDeclared;
+      require('audit/src/ApiMethods.ts').throwIfMethodIsNotDeclared;
     }
   }
 

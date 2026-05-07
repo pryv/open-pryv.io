@@ -22,7 +22,7 @@ const attachmentsCheck = helpers.attachmentsCheck;
 const commonTests = helpers.commonTests;
 const validation = helpers.validation;
 const ErrorIds = require('errors').ErrorIds;
-const methodsSchema = require('../src/schema/eventsMethods');
+const methodsSchema = require('../src/schema/eventsMethods.ts');
 const testData = helpers.dynData({ prefix: 'evnt' });
 const addCorrectAttachmentIds = testData.addCorrectAttachmentIds;
 

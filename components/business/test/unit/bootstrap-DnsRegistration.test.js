@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const DnsRegistration = require('../../src/bootstrap/DnsRegistration');
+const DnsRegistration = require('../../src/bootstrap/DnsRegistration.ts');
 
 /**
  * Minimal fake PlatformDB, just the methods DnsRegistration touches.

@@ -13,15 +13,15 @@ const assert = require('node:assert');
 const supertest = require('supertest');
 const charlatan = require('charlatan');
 const ErrorIds = require('errors').ErrorIds;
-const { getApplication } = require('api-server/src/application');
+const { getApplication } = require('api-server/src/application.ts');
 
 const { pubsub } = require('messages');
 const { databaseFixture } = require('test-helpers');
 const validation = require('api-server/test/helpers').validation;
 const { produceStorageConnection } = require('api-server/test/test-helpers');
-const { addPrivatePrefixToStreamId, addCustomerPrefixToStreamId } = require('test-helpers/src/systemStreamFilters');
+const { addPrivatePrefixToStreamId, addCustomerPrefixToStreamId } = require('test-helpers/src/systemStreamFilters.ts');
 const { defaults: dataStoreDefaults } = require('@pryv/datastore');
-const treeUtils = require('utils/src/treeUtils');
+const treeUtils = require('utils/src/treeUtils.ts');
 
 describe('[SYSS] System streams', function () {
   let app;
@@ -65,13 +65,13 @@ describe('[SYSS] System streams', function () {
     pubsub.setTestNotifier(testNotifier);
 
     pubsub.status.emit(pubsub.SERVER_READY);
-    require('api-server/src/methods/streams').default(app.api);
+    require('api-server/src/methods/streams.ts').default(app.api);
 
     request = supertest(app.expressApp);
   });
 
   after(async function () {
-    const { getUsersRepository } = require('business/src/users');
+    const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
     await usersRepository.deleteAll();
     if (savedIntegrityCheck != null) {

@@ -7,11 +7,11 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const methodCallback = require('api-server/src/routes/methodCallback').default;
-const Paths = require('api-server/src/routes/Paths');
+const methodCallback = require('api-server/src/routes/methodCallback.ts').default;
+const Paths = require('api-server/src/routes/Paths.ts');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
-const tryCoerceStringValues = require('api-server/src/schema/validation').tryCoerceStringValues;
+const tryCoerceStringValues = require('api-server/src/schema/validation.ts').tryCoerceStringValues;
 // Event streams route handling.
 export default function (expressApp, app) {
   const api = app.api;

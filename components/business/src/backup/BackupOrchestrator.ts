@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
-const { sanitize } = require('storages/interfaces/backup/sanitize');
+const { sanitize } = require('storages/interfaces/backup/sanitize.ts');
 
 /**
  * Orchestrates full backup using existing storage layer methods.
@@ -55,7 +55,7 @@ class BackupOrchestrator {
 
   async init () {
     const { getStorageLayer, getUsersLocalIndex, getUserAccountStorage } = require('storage');
-    const { getEventFiles } = require('storage/src/eventFiles/getEventFiles');
+    const { getEventFiles } = require('storage/src/eventFiles/getEventFiles.ts');
     const storages = require('storages');
     this.storageLayer = await getStorageLayer();
     this.usersLocalIndex = await getUsersLocalIndex();

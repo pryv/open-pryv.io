@@ -5,10 +5,10 @@ require('../../../bin/_observability-boot');
 
 // Binary for launching the api-server process.
 
-const Server = require('../src/server').default;
-const { getApplication } = require('api-server/src/application');
+const Server = require('../src/server.ts').default;
+const { getApplication } = require('api-server/src/application.ts');
 
-const loadCommonMeta = require('../src/methods/helpers/setCommonMeta').loadSettings;
+const loadCommonMeta = require('../src/methods/helpers/setCommonMeta.ts').loadSettings;
 
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('serverRoot');

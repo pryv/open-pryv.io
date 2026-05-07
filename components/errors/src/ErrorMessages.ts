@@ -8,8 +8,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { ErrorIds } = require('./ErrorIds');
-const { USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH } = require('api-server/src/schema/helpers');
+const { ErrorIds } = require('./ErrorIds.ts');
+const { USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH } = require('api-server/src/schema/helpers.ts');
 /**
  * Identifier constants for API errors' messages.
  */

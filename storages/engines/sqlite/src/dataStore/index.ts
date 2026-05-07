@@ -8,6 +8,6 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { dataStore } = require('./localDataStoreSQLite');
+const { dataStore } = require('./localDataStoreSQLite.ts');
 
 export { dataStore };

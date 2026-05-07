@@ -8,8 +8,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { DBrqlite } = require('./DBrqlite');
-const { buildMigrationsCapability } = require('./SchemaMigrations');
+const { DBrqlite } = require('./DBrqlite.ts');
+const { buildMigrationsCapability } = require('./SchemaMigrations.ts');
 
 let platformDB: any = null;
 let _getLogger: ((name: string) => any) | null = null;

@@ -8,6 +8,6 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { dataStore } = require('./localDataStorePG');
+const { dataStore } = require('./localDataStorePG.ts');
 
 export { dataStore };

@@ -13,7 +13,7 @@
  * JS entrypoint exporting factory functions (createBaseStorage, createDataStore, etc.).
  *
  * Usage:
- *   const pluginLoader = require('storages/pluginLoader');
+ *   const pluginLoader = require('storages/pluginLoader.ts');
  *   await pluginLoader.init(config);
  *   const engine = pluginLoader.getEngineModule(pluginLoader.getEngineFor('platformStorage'));
  *   const platformDB = engine.createPlatformDB();
@@ -28,7 +28,7 @@ const __dirname = dirname(__filename);
 
 const path = require('path');
 const fs = require('fs');
-const { validateManifest, VALID_STORAGE_TYPES } = require('./manifest-schema');
+const { validateManifest, VALID_STORAGE_TYPES } = require('./manifest-schema.ts');
 
 const ENGINES_DIR = path.join(__dirname, 'engines');
 

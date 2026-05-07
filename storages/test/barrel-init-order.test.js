@@ -28,7 +28,7 @@ const require = createRequire(import.meta.url);
  * so we explicitly reset + restore here.
  */
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 
 const assert = require('node:assert');
 

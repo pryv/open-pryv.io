@@ -10,9 +10,9 @@ const timestamp = require('unix-timestamp');
 
 const errors = require('errors').factory;
 
-const commonFns = require('./helpers/commonFunctions');
-const webhookSchema = require('../schema/webhook').default;
-const methodsSchema = require('../schema/webhooksMethods');
+const commonFns = require('./helpers/commonFunctions.ts');
+const webhookSchema = require('../schema/webhook.ts').default;
+const methodsSchema = require('../schema/webhooksMethods.ts');
 
 const Webhook = require('business').webhooks.Webhook;
 const WebhooksRepository = require('business').webhooks.Repository;

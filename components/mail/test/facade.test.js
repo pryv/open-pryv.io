@@ -9,9 +9,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 
-const mail = require('../src/index');
+const mail = require('../src/index.ts');
 
 const STUB_TEMPLATES = [
   { type: 'welcome-email', lang: 'en', part: 'subject', pug: '| Welcome' },

@@ -21,7 +21,7 @@ export default function (expressApp, app) {
   let _usersRepository;
   async function getUsersRepository () {
     if (!_usersRepository) {
-      const { getUsersRepository: getRepo } = require('business/src/users');
+      const { getUsersRepository: getRepo } = require('business/src/users/index.ts');
       _usersRepository = await getRepo();
     }
     return _usersRepository;
@@ -146,7 +146,7 @@ export default function (expressApp, app) {
         });
       }
       const platformDB = getPlatformDB();
-      const systemStreams = require('business/src/system-streams');
+      const systemStreams = require('business/src/system-streams/index.ts');
       const userInfo = { username };
 
       // Collect indexed fields from PlatformDB

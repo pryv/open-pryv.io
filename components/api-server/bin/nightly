@@ -5,10 +5,10 @@ require('../../../bin/_ts-register');
 
 // Binary for nightly tasks setup.
 
-const { getApplication } = require('api-server/src/application');
+const { getApplication } = require('api-server/src/application.ts');
 const { getLogger } = require('@pryv/boiler');
 let logger;
-const { getUsersRepository } = require('business/src/users/repository');
+const { getUsersRepository } = require('business/src/users/repository.ts');
 
 (async () => {
   // Load settings asynchronously because we have to fetch

@@ -5,7 +5,7 @@ require('../../../bin/_observability-boot');
 
 // Service that receives notifications from api-server and send them to existing Webhooks.
 
-const { Application } = require('../src/application');
+const { Application } = require('../src/application.ts');
 
 // Start the app
 startup();

@@ -16,7 +16,7 @@ if (!process.argv[2]) {
   process.exit(1);
 }
 
-const testData = require('../src/data');
+const testData = require('../src/data.ts');
 const mongoFolder = path.resolve(__dirname, '../../../../mongodb');
 testData.restoreFromDump(process.argv[2], mongoFolder, function (err) {
   if (err) {

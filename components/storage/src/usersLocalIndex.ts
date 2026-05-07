@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url);
 
 const { getLogger } = require('@pryv/boiler');
 const cache = require('cache').default;
-const { validateUsersLocalIndexDB } = require('storages/interfaces/baseStorage/UsersLocalIndexDB');
+const { validateUsersLocalIndexDB } = require('storages/interfaces/baseStorage/UsersLocalIndexDB.ts');
 const { pluginLoader } = require('storages');
 
 const logger = getLogger('users:local-index');

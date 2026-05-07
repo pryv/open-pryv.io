@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, _ */
 
 const validation = require('./helpers/validation');
-const methodsSchema = require('../src/schema/profileMethods');
+const methodsSchema = require('../src/schema/profileMethods.ts');
 
 describe('[PRFP] profile (personal)', function () {
   let username;

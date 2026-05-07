@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 require('../test-helper');
 const assert = require('node:assert');
-const { tryCoerceStringValues } = require('../../../src/schema/validation');
+const { tryCoerceStringValues } = require('../../../src/schema/validation.ts');
 
 describe('[CSVL] tryCoerceStringValues', () => {
   it('[DTZ1] should behave as documented in the method', () => {

@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const errors = require('./errors');
+const errors = require('./errors.ts');
 // A value of type 'number'.
 //
 

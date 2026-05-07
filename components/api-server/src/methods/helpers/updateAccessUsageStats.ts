@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const errorHandling = require('errors').errorHandling;
 const errors = require('errors').factory;
-const string = require('./string');
+const string = require('./string.ts');
 const timestamp = require('unix-timestamp');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');

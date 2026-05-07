@@ -259,7 +259,7 @@ function loadConfiguration () {
   isActive = !!config.get('caching:isActive');
   isSynchroActive = true;
   if (isSynchroActive) {
-    synchro = require('./synchro');
+    synchro = require('./synchro.ts');
     synchro.setCache(cache);
   }
 }

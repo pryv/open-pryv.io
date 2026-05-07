@@ -9,8 +9,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const storeDataUtils = require('./helpers/storeDataUtils');
-const streamsUtils = require('./helpers/streamsUtils');
+const storeDataUtils = require('./helpers/storeDataUtils.ts');
+const streamsUtils = require('./helpers/streamsUtils.ts');
 const { treeUtils } = require('utils');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const errorFactory = require('errors').factory;

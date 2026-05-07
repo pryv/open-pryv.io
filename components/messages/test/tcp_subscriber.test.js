@@ -7,13 +7,13 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 require('api-server/test/unit/test-helper');
 const assert = require('node:assert');
 const net = require('node:net');
 const { getConfig } = require('@pryv/boiler');
 
-const tcpPubsub = require('../src/tcp_pubsub');
+const tcpPubsub = require('../src/tcp_pubsub.ts');
 
 describe('[NSUB] TcpSubscriber', () => {
   let port;

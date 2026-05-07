@@ -8,8 +8,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const { deepMerge } = require('utils');
-const Webhook = require('./Webhook').default;
-const { getUsersRepository } = require('business/src/users');
+const Webhook = require('./Webhook.ts').default;
+const { getUsersRepository } = require('business/src/users/index.ts');
 /**
  * Repository of all Webhooks in this Pryv.io instance.
  */

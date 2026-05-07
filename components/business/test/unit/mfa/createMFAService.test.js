@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('chai').assert;
 
-const { createMFAService, ChallengeVerifyService, SingleService } = require('../../../src/mfa');
+const { createMFAService, ChallengeVerifyService, SingleService } = require('../../../src/mfa/index.ts');
 
 const baseConfig = {
   sms: {

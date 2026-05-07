@@ -10,8 +10,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { getConfig } = require('@pryv/boiler');
-const { EventFiles: EventLocalFiles } = require('storages/engines/filesystem/src/EventLocalFiles');
-const { validateEventFiles } = require('storages/interfaces/fileStorage/EventFiles');
+const { EventFiles: EventLocalFiles } = require('storages/engines/filesystem/src/EventLocalFiles.ts');
+const { validateEventFiles } = require('storages/interfaces/fileStorage/EventFiles.ts');
 
 export { getEventFiles };
 

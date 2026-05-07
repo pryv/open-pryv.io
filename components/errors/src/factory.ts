@@ -8,9 +8,9 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { APIError } = require('./APIError');
-const { ErrorIds } = require('./ErrorIds');
-const { ErrorMessages } = require('./ErrorMessages');
+const { APIError } = require('./APIError.ts');
+const { ErrorIds } = require('./ErrorIds.ts');
+const { ErrorMessages } = require('./ErrorMessages.ts');
 
 /**
  * Helper "factory" methods for API errors (see error ids).

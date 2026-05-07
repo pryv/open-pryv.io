@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, assert */
 
-const accessState = require('../src/routes/reg/accessState');
+const accessState = require('../src/routes/reg/accessState.ts');
 
 describe('[RGAC] Register access authorization', () => {
   before(async function () {

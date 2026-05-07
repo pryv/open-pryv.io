@@ -14,12 +14,12 @@ const supertest = require('supertest');
 const charlatan = require('charlatan');
 
 const ErrorIds = require('errors').ErrorIds;
-const { ErrorMessages } = require('errors/src/ErrorMessages');
-const { getApplication } = require('api-server/src/application');
+const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
+const { getApplication } = require('api-server/src/application.ts');
 
 const { pubsub } = require('messages');
-const accountStreams = require('business/src/system-streams');
-const { addPrivatePrefixToStreamId, addCustomerPrefixToStreamId } = require('test-helpers/src/systemStreamFilters');
+const accountStreams = require('business/src/system-streams/index.ts');
+const { addPrivatePrefixToStreamId, addCustomerPrefixToStreamId } = require('test-helpers/src/systemStreamFilters.ts');
 const { databaseFixture } = require('test-helpers');
 const { produceStorageConnection } = require('api-server/test/test-helpers');
 
@@ -79,7 +79,7 @@ describe('[FG5R] Events of system streams', () => {
     pubsub.setTestNotifier(testNotifier);
 
     pubsub.status.emit(pubsub.SERVER_READY);
-    await require('api-server/src/methods/events').default(app.api);
+    await require('api-server/src/methods/events.ts').default(app.api);
 
     request = supertest(app.expressApp);
 
@@ -87,7 +87,7 @@ describe('[FG5R] Events of system streams', () => {
   });
 
   after(async function () {
-    const { getUsersRepository } = require('business/src/users');
+    const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
     await usersRepository.deleteAll();
     if (savedIntegrityCheck != null) {

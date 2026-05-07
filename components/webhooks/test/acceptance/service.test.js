@@ -20,13 +20,13 @@ const { databaseFixture } = require('test-helpers');
 require('api-server/test/test-helpers');
 const { produceStorageConnection, context } = require('api-server/test/test-helpers');
 
-const { Application: WebhooksApp } = require('../../src/application');
+const { Application: WebhooksApp } = require('../../src/application.ts');
 
 const { Webhook, Repository } = require('business').webhooks;
 let repository;
 const HttpServer = require('business/test/acceptance/webhooks/support/httpServer').default;
 
-const BOOT_MESSAGE = require('../../src/messages').BOOT_MESSAGE;
+const BOOT_MESSAGE = require('../../src/messages.ts').BOOT_MESSAGE;
 
 describe('[WH01] webhooks', function () {
   let user, username,

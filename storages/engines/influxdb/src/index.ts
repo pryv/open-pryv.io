@@ -14,7 +14,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 
 /**
  * Receive host internals from the barrel.
@@ -33,7 +33,7 @@ function init (config: Record<string, any>, getLogger: (name: string) => any, in
  * @param config — { host, port } from influxdb config section
  */
 function createSeriesConnection (config: { host: string, port: number }): any {
-  const { InfluxConnection } = require('./influx_connection');
+  const { InfluxConnection } = require('./influx_connection.ts');
   return new InfluxConnection({ host: config.host, port: config.port });
 }
 

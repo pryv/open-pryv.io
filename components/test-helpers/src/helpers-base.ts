@@ -12,12 +12,12 @@ const require = createRequire(import.meta.url);
  * Provides common Pattern C test initialization
  */
 
-require('./api-server-tests-config');
+require('./api-server-tests-config.ts');
 const { getConfig } = require('@pryv/boiler');
 
 const storage = require('storage');
 const supertest = require('supertest');
-const { getApplication } = require('api-server/src/application');
+const { getApplication } = require('api-server/src/application.ts');
 const { databaseFixture } = require('test-helpers');
 const { pubsub } = require('messages');
 const userLocalDirectory = require('storage').userLocalDirectory;
@@ -73,7 +73,7 @@ async function initCore () {
   const storageLayer = await storage.getStorageLayer();
 
   // Reconfigure test dependencies for non-MongoDB engines
-  const dependencies = require('./dependencies');
+  const dependencies = require('./dependencies.ts');
   await dependencies.init();
 
   global.getNewFixture = function () {
@@ -121,7 +121,7 @@ async function initCore () {
   const methods = options.methods || ['events', 'streams', 'service', 'auth/login', 'auth/register', 'accesses', 'account', 'profile', 'webhooks', 'utility', 'mfa'];
 
   for (const method of methods) {
-    const mod = require(`api-server/src/methods/${method}`);
+    const mod = require(`api-server/src/methods/${method}.ts`);
     // Node 24 require(esm) returns a namespace; the registration function lives on .default
     const loaded = (mod && mod.default) || mod;
     if (typeof loaded === 'function') {
@@ -131,7 +131,7 @@ async function initCore () {
 
   // Load audit if config says so
   if (global.config.get('audit:active')) {
-    await require('audit/src/methods/audit-logs').default(global.app.api);
+    await require('audit/src/methods/audit-logs.ts').default(global.app.api);
   }
 
   global.coreRequest = supertest(global.app.expressApp);

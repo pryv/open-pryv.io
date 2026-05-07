@@ -52,7 +52,7 @@ type IntegrityAttachments = {
 const attachments = {
   isActive: attachmentsIsActive,
   getHTTPDigestHeaderForAttachment,
-  MulterIntegrityDiskStorage: require('./MulterIntegrityDiskStorage').default
+  MulterIntegrityDiskStorage: require('./MulterIntegrityDiskStorage.ts').default
 };
 
 // ----------------- standard db Items -------------- //

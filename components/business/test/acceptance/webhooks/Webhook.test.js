@@ -11,8 +11,8 @@ const assert = require('node:assert');
 const timestamp = require('unix-timestamp');
 const awaiting = require('awaiting');
 
-const Webhook = require('../../../src/webhooks/Webhook').default;
-const WebhooksRepository = require('business/src/webhooks/repository').default;
+const Webhook = require('../../../src/webhooks/Webhook.ts').default;
+const WebhooksRepository = require('business/src/webhooks/repository.ts').default;
 
 const HttpServer = require('./support/httpServer').default;
 const PORT = 6123;
@@ -21,7 +21,7 @@ const PORT = 6123;
 const storage = require('test-helpers').dependencies.storage.user.webhooks;
 const userStorage = require('test-helpers').dependencies.storage.user.events;
 
-const { getAPIVersion } = require('middleware/src/project_version');
+const { getAPIVersion } = require('middleware/src/project_version.ts');
 
 describe('[WHBK] Webhook', () => {
   describe('[WB01] send()', () => {

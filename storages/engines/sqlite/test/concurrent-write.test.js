@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const concurrentSafeWrite = require('storages/engines/sqlite/src/concurrentSafeWrite');
+const concurrentSafeWrite = require('storages/engines/sqlite/src/concurrentSafeWrite.ts');
 const assert = require('node:assert');
 
 describe('[UCSQ] userSQLite Storage concurent Writes', () => {

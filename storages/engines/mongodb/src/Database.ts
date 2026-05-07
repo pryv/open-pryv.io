@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const MongoClient = require('mongodb').MongoClient;
 const { setTimeout } = require('timers/promises');
 
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 
 // mongodb@5+ removed the callback-based driver API; everything is Promise-only.
 // The Database class still exposes a callback shape to the rest of the codebase,

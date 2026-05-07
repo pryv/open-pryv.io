@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 
 /* global assert, initTests, initCore, getNewFixture, charlatan, cuid, coreRequest  */
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 
 describe('[KVDB] Per-store key-value DB', () => {
   let user, username, password, access;

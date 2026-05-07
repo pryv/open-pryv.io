@@ -13,17 +13,17 @@ const __dirname = require('path').dirname(__filename);
 
 const fs = require('fs');
 const path = require('path');
-const Cache = require('../cache').default;
+const Cache = require('../cache.ts').default;
 const childProcess = require('child_process');
 const CronJob = require('cron').CronJob;
 const errors = require('errors').factory;
 const sharp = require('sharp');
 const timestamp = require('unix-timestamp');
 const xattr = require('fs-xattr');
-const getAuth = require('middleware/src/getAuth').default;
+const getAuth = require('middleware/src/getAuth.ts').default;
 const { getLogger } = require('@pryv/boiler');
 const { getMall } = require('mall');
-const attachmentManagement = require('../attachmentManagement');
+const attachmentManagement = require('../attachmentManagement.ts');
 const { getConfig } = require('@pryv/boiler');
 
 // constants

@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const __ex_AccessLogic = require('./AccessLogic').default;
+const __ex_AccessLogic = require('./AccessLogic.ts').default;
 export { __ex_AccessLogic as AccessLogic };
 
 type Access = {

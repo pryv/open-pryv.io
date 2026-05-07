@@ -21,11 +21,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const yaml = require('js-yaml');
 
-const ClusterCA = require('./ClusterCA').default;
-const Bundle = require('./Bundle');
-const BundleEncryption = require('./BundleEncryption');
-const TokenStore = require('./TokenStore').default;
-const DnsRegistration = require('./DnsRegistration');
+const ClusterCA = require('./ClusterCA.ts').default;
+const Bundle = require('./Bundle.ts');
+const BundleEncryption = require('./BundleEncryption.ts');
+const TokenStore = require('./TokenStore.ts').default;
+const DnsRegistration = require('./DnsRegistration.ts');
 
 const ACK_PATH = '/system/admin/cores/ack';
 const TLS_FILE_NAMES = { ca: 'ca.crt', cert: 'node.crt', key: 'node.key' };

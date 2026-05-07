@@ -9,11 +9,11 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { pubsub } = require('messages');
-const Webhook = require('business/src/webhooks/Webhook').default;
-const WebhooksRepository = require('business/src/webhooks/repository').default;
-const { getUsersRepository } = require('business/src/users');
-const { getAPIVersion } = require('middleware/src/project_version');
-const { BOOT_MESSAGE } = require('./messages');
+const Webhook = require('business/src/webhooks/Webhook.ts').default;
+const WebhooksRepository = require('business/src/webhooks/repository.ts').default;
+const { getUsersRepository } = require('business/src/users/index.ts');
+const { getAPIVersion } = require('middleware/src/project_version.ts');
+const { BOOT_MESSAGE } = require('./messages.ts');
 
 class WebhooksService {
   webhooks: any;

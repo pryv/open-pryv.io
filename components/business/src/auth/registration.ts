@@ -7,13 +7,13 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { errorHandling } = require('errors');
-const mailing = require('api-server/src/methods/helpers/mailing');
+const mailing = require('api-server/src/methods/helpers/mailing.ts');
 const { getPlatform } = require('platform');
-const accountStreams = require('business/src/system-streams');
-const { User } = require('business/src/users');
+const accountStreams = require('business/src/system-streams/index.ts');
+const { User } = require('business/src/users/index.ts');
 const { getLogger } = require('@pryv/boiler');
 const { ApiEndpoint } = require('utils');
-const observability = require('business/src/observability');
+const observability = require('business/src/observability/index.ts');
 
 /**
  * Create (register) a new user
@@ -163,7 +163,7 @@ class Registration {
       return next();
     }
     try {
-      const { getUsersRepository } = require('business/src/users');
+      const { getUsersRepository } = require('business/src/users/index.ts');
       const usersRepository = await getUsersRepository();
       // insertOne handles PlatformDB storage (unique + indexed fields) internally
       await usersRepository.insertOne(context.newUser, true);

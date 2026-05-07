@@ -80,11 +80,11 @@ custom:
   dataStores:
     - id: dummy
       name: Dummy Store
-      path: ../../mall/test-helpers/dummyDataStore # should be fully qualified path
+      path: ../../mall/test-helpers/dummyDataStore.ts # should be fully qualified path
       settings: null
     - id: faulty
       name: Faulty Store
-      path: ../../mall/test-helpers/faultyDataStore # should be fully qualified path
+      path: ../../mall/test-helpers/faultyDataStore.ts # should be fully qualified path
       settings: null
 trace:
   enable: true

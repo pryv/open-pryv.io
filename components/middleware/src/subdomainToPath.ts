@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
-const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers');
+const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers.ts');
 /**
  * Middleware to translate the subdomain (i.e. username) in requests (if any) into the URL path,
  * e.g. path "/streams" on host ignace.pryv.io becomes "/ignace/streams".

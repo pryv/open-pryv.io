@@ -6,12 +6,12 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const AtRestEncryption = require('./AtRestEncryption');
-const AcmeClient = require('./AcmeClient');
-const certUtils = require('./certUtils');
-const { CertRenewer, PlatformDBDnsWriter, acmeChallengeName, AT_REST_PURPOSE } = require('./CertRenewer');
-const { FileMaterializer, runRotateScript } = require('./FileMaterializer');
-const { deriveHostnames } = require('./deriveHostnames');
-const { AcmeOrchestrator, build: buildAcmeOrchestrator } = require('./AcmeOrchestrator');
+const AtRestEncryption = require('./AtRestEncryption.ts');
+const AcmeClient = require('./AcmeClient.ts');
+const certUtils = require('./certUtils.ts');
+const { CertRenewer, PlatformDBDnsWriter, acmeChallengeName, AT_REST_PURPOSE } = require('./CertRenewer.ts');
+const { FileMaterializer, runRotateScript } = require('./FileMaterializer.ts');
+const { deriveHostnames } = require('./deriveHostnames.ts');
+const { AcmeOrchestrator, build: buildAcmeOrchestrator } = require('./AcmeOrchestrator.ts');
 
 export { AtRestEncryption, AcmeClient, certUtils, CertRenewer, PlatformDBDnsWriter, acmeChallengeName, AT_REST_PURPOSE, FileMaterializer, runRotateScript, deriveHostnames, AcmeOrchestrator, buildAcmeOrchestrator };

@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { SqliteStorage } = require('./Storage');
+const { SqliteStorage } = require('./Storage.ts');
 
 const storages: Record<string, any> = {};
 

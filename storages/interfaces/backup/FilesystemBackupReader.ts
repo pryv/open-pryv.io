@@ -13,7 +13,7 @@ const require = createRequire(import.meta.url);
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
-const { createBackupReader, createUserBackupReader } = require('./BackupReader');
+const { createBackupReader, createUserBackupReader } = require('./BackupReader.ts');
 
 /**
  * Create a FilesystemBackupReader that reads a backup tree rooted at `inputPath`.

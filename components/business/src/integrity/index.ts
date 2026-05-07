@@ -6,5 +6,5 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const __reexport = require('./integrity').default;
+const __reexport = require('./integrity.ts').default;
 export default __reexport;

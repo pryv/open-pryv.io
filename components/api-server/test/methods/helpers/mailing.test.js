@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const nock = require('nock');
-const mailing = require('../../../src/methods/helpers/mailing');
+const mailing = require('../../../src/methods/helpers/mailing.ts');
 
 describe('[MAIL] Mailing helper methods', () => {
   const template = 'welcome';

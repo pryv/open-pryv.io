@@ -17,7 +17,7 @@ const require = createRequire(import.meta.url);
  * - PATTERN_C_AUDIT=1          : Enable audit functionality
  */
 
-const base = require('./helpers-base');
+const base = require('./helpers-base.ts');
 
 // Test mode flags from environment
 const disableIntegrityCheck = process.env.DISABLE_INTEGRITY_CHECK === '1';

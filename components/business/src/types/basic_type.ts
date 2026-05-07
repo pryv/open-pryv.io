@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('assert');
-const valueTypes = require('./value_types').default;
+const valueTypes = require('./value_types.ts').default;
 // A basic type like 'mass/kg'. In high frequency data, this must be stored
 // using the column name 'value'.
 //

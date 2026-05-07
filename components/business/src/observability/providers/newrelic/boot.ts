@@ -28,8 +28,8 @@ const require = createRequire(import.meta.url);
  */
 
 const newrelicAgent = require('newrelic');
-const { createAdapter } = require('./adapter');
-const observability = require('../../index');
+const { createAdapter } = require('./adapter.ts');
+const observability = require('../../index.ts');
 
 const adapter = createAdapter(newrelicAgent);
 observability.init(adapter);

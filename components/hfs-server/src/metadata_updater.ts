@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 // Batches series metadata updates and flushes them to the database periodically.
 
 const { getLogger } = require('@pryv/boiler');
-const { getUsersRepository } = require('business/src/users');
+const { getUsersRepository } = require('business/src/users/index.ts');
 const { getMall } = require('mall');
 const Heap = require('heap');
 

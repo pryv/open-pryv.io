@@ -11,9 +11,9 @@ const path = require('path');
 const fs = require('fs/promises');
 const { LRUCache: LRU } = require('lru-cache');
 
-const { UserDatabase } = require('./UserDatabase');
-const migrations = require('./migrations');
-const { _internals } = require('../_internals');
+const { UserDatabase } = require('./UserDatabase.ts');
+const migrations = require('./migrations/index.ts');
+const { _internals } = require('../_internals.ts');
 
 const CACHE_SIZE = 500;
 const VERSION = '1.0.0';

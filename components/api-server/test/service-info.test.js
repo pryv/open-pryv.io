@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const helpers = require('./helpers');
 const validation = helpers.validation;
-const methodsSchema = require('../src/schema/service-infoMethods');
+const methodsSchema = require('../src/schema/service-infoMethods.ts');
 const HttpServer = require('./support/httpServer').default;
 const { getConfig } = require('@pryv/boiler');
 

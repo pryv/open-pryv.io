@@ -20,7 +20,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Initialize boiler config before anything else
 process.env.NODE_ENV = 'test';
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 
 const assert = require('node:assert');
 const path = require('path');

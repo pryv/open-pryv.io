@@ -8,9 +8,9 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { BaseStoragePG } = require('./BaseStoragePG');
+const { BaseStoragePG } = require('./BaseStoragePG.ts');
 const { createId: generateId } = require('@paralleldrive/cuid2');
-const { _internals } = require('../_internals');
+const { _internals } = require('../_internals.ts');
 const timestamp = require('unix-timestamp');
 
 const logger = _internals.lazyLogger('storage:accesses-pg');

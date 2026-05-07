@@ -8,8 +8,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const helpers = require('../../../test/helpers');
-const { DatabasePG } = require('../src/DatabasePG');
-const { PGSeriesConnection } = require('../src/pg_connection');
+const { DatabasePG } = require('../src/DatabasePG.ts');
+const { PGSeriesConnection } = require('../src/pg_connection.ts');
 
 describe('[PGSR] PostgreSQL series', function () {
   let conn;

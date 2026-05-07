@@ -11,8 +11,8 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { Readable } = require('stream');
-const { createFilesystemBackupWriter } = require('storages/interfaces/backup/FilesystemBackupWriter');
-const { createFilesystemBackupReader } = require('storages/interfaces/backup/FilesystemBackupReader');
+const { createFilesystemBackupWriter } = require('storages/interfaces/backup/FilesystemBackupWriter.ts');
+const { createFilesystemBackupReader } = require('storages/interfaces/backup/FilesystemBackupReader.ts');
 
 const TEST_DIR = path.join('/tmp', 'backup-test-' + process.pid);
 

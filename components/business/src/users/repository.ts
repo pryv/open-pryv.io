@@ -10,9 +10,9 @@ const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
 const { setTimeout } = require('timers/promises');
 
-const User = require('./User').default;
-const UserRepositoryOptions = require('./UserRepositoryOptions');
-const accountStreams = require('business/src/system-streams');
+const User = require('./User.ts').default;
+const UserRepositoryOptions = require('./UserRepositoryOptions.ts');
+const accountStreams = require('business/src/system-streams/index.ts');
 const encryption = require('utils').encryption;
 const errors = require('errors').factory;
 const { getMall } = require('mall');

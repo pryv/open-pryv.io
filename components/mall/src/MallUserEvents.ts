@@ -11,12 +11,12 @@ const require = createRequire(import.meta.url);
 
 const { deepMerge } = require('utils');
 const assert = require('assert');
-const storeDataUtils = require('./helpers/storeDataUtils');
-const eventsUtils = require('./helpers/eventsUtils');
-const eventsQueryUtils = require('./helpers/eventsQueryUtils');
+const storeDataUtils = require('./helpers/storeDataUtils.ts');
+const eventsUtils = require('./helpers/eventsUtils.ts');
+const eventsQueryUtils = require('./helpers/eventsQueryUtils.ts');
 
 const errorFactory = require('errors').factory;
-const integrity = require('business/src/integrity').default;
+const integrity = require('business/src/integrity/index.ts').default;
 
 const { Readable } = require('stream');
 

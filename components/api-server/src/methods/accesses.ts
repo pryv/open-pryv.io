@@ -18,10 +18,10 @@ const ErrorMessages = require('errors').ErrorMessages;
 
 const { ApiEndpoint } = require('utils');
 
-const commonFns = require('./helpers/commonFunctions');
-const methodsSchema = require('../schema/accessesMethods');
-const string = require('./helpers/string');
-const accountStreams = require('business/src/system-streams');
+const commonFns = require('./helpers/commonFunctions.ts');
+const methodsSchema = require('../schema/accessesMethods.ts');
+const string = require('./helpers/string.ts');
+const accountStreams = require('business/src/system-streams/index.ts');
 
 const cache = require('cache').default;
 

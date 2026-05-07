@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
  */
 
 const { deepMerge } = require('utils');
-const accountStreams = require('business/src/system-streams');
+const accountStreams = require('business/src/system-streams/index.ts');
 
 const { getConfigUnsafe } = require('@pryv/boiler');
 const { storeDataUtils, getMall } = require('mall');

@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { splitCertChain, parseValidity, hostnameToDirName } = require('../../src/acme/certUtils');
+const { splitCertChain, parseValidity, hostnameToDirName } = require('../../src/acme/certUtils.ts');
 
 describe('[CERTUTILS] certUtils', () => {
   describe('splitCertChain()', () => {

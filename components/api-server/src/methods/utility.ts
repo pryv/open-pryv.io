@@ -6,13 +6,13 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const commonFns = require('./helpers/commonFunctions');
+const commonFns = require('./helpers/commonFunctions.ts');
 const errorHandling = require('errors').errorHandling;
-const methodsSchema = require('../schema/generalMethods');
+const methodsSchema = require('../schema/generalMethods.ts');
 const { fromCallback } = require('utils');
 const { getLogger, getConfig } = require('@pryv/boiler');
-const { getPasswordRules } = require('business/src/users');
-const updateAccessUsageStats = require('./helpers/updateAccessUsageStats').default;
+const { getPasswordRules } = require('business/src/users/index.ts');
+const updateAccessUsageStats = require('./helpers/updateAccessUsageStats.ts').default;
 /**
  * Utility API methods implementations.
  *

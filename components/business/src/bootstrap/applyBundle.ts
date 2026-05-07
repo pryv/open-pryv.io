@@ -28,8 +28,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const yaml = require('js-yaml');
 
-const Bundle = require('./Bundle');
-const BundleEncryption = require('./BundleEncryption');
+const Bundle = require('./Bundle.ts');
+const BundleEncryption = require('./BundleEncryption.ts');
 
 const TLS_FILE_NAMES = {
   ca: 'ca.crt',

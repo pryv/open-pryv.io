@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 const async = require('async');
 const assert = require('node:assert');
 const request = require('superagent');
@@ -22,11 +22,11 @@ require('./test-helpers');
 const helpers = require('./helpers');
 const ErrorIds = require('errors').ErrorIds;
 const server = helpers.dependencies.instanceManager;
-const methodsSchema = require('../src/schema/systemMethods');
+const methodsSchema = require('../src/schema/systemMethods.ts');
 const validation = helpers.validation;
 const encryption = require('utils').encryption;
 const testData = helpers.dynData({ prefix: 'syst' });
-const { getUsersRepository } = require('business/src/users');
+const { getUsersRepository } = require('business/src/users/index.ts');
 const { databaseFixture } = require('test-helpers');
 const { produceStorageConnection, context } = require('./test-helpers');
 const charlatan = require('charlatan');

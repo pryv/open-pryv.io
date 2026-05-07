@@ -17,16 +17,16 @@ const require = createRequire(import.meta.url);
 const {
   BackupWriter, createBackupWriter, validateBackupWriter,
   UserBackupWriter, createUserBackupWriter, validateUserBackupWriter
-} = require('./BackupWriter');
+} = require('./BackupWriter.ts');
 
 const {
   BackupReader, createBackupReader, validateBackupReader,
   UserBackupReader, createUserBackupReader, validateUserBackupReader
-} = require('./BackupReader');
+} = require('./BackupReader.ts');
 
-const { sanitize, INTERNAL_FIELDS } = require('./sanitize');
-const { createFilesystemBackupWriter } = require('./FilesystemBackupWriter');
-const { createFilesystemBackupReader } = require('./FilesystemBackupReader');
+const { sanitize, INTERNAL_FIELDS } = require('./sanitize.ts');
+const { createFilesystemBackupWriter } = require('./FilesystemBackupWriter.ts');
+const { createFilesystemBackupReader } = require('./FilesystemBackupReader.ts');
 
 export { BackupWriter,
   createBackupWriter,

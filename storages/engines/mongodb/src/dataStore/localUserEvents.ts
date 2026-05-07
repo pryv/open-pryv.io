@@ -10,11 +10,11 @@ const require = createRequire(import.meta.url);
 const Readable = require('stream').Readable;
 const ds = require('@pryv/datastore');
 const errors = ds.errors;
-const handleDuplicateError = require('../Database').handleDuplicateError;
+const handleDuplicateError = require('../Database.ts').handleDuplicateError;
 const timestamp = require('unix-timestamp');
-const { DeletionModesFields } = require('../../../../shared/DeletionModesFields');
-const { localStoreEventQueries } = require('../../../../shared/localStoreEventQueries');
-const { toMongoDBQuery } = require('./streamsQueryToMongo');
+const { DeletionModesFields } = require('../../../../shared/DeletionModesFields.ts');
+const { localStoreEventQueries } = require('../../../../shared/localStoreEventQueries.ts');
+const { toMongoDBQuery } = require('./streamsQueryToMongo.ts');
 
 /**
  * Local data store: events implementation.

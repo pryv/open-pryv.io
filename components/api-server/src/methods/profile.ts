@@ -7,8 +7,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
-const commonFns = require('./helpers/commonFunctions');
-const methodsSchema = require('../schema/profileMethods');
+const commonFns = require('./helpers/commonFunctions.ts');
+const methodsSchema = require('../schema/profileMethods.ts');
 
 const { getStorageLayer } = require('storage');
 

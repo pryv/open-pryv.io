@@ -12,10 +12,10 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
-const { _internals } = require('../_internals');
-const { userStreams } = require('./localUserStreams');
-const { userEvents } = require('./localUserEvents');
-const { LocalTransaction } = require('./LocalTransaction');
+const { _internals } = require('../_internals.ts');
+const { userStreams } = require('./localUserStreams.ts');
+const { userEvents } = require('./localUserEvents.ts');
+const { LocalTransaction } = require('./LocalTransaction.ts');
 
 const dataStore = ds.createDataStore({
 

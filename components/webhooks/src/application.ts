@@ -29,11 +29,11 @@ require('@pryv/boiler').init({
   ]
 });
 const { getConfig, getLogger } = require('@pryv/boiler');
-const accountStreams = require('business/src/system-streams');
+const accountStreams = require('business/src/system-streams/index.ts');
 const assert = require('assert');
 const storage = require('storage');
 const services = {
-  WebhooksService: require('./service').WebhooksService
+  WebhooksService: require('./service.ts').WebhooksService
 };
 
 class Application {

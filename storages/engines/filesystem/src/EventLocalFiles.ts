@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { pipeline } = require('stream/promises');
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 const ds = require('@pryv/datastore');
 const errors = ds.errors;
 

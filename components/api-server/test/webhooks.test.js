@@ -14,10 +14,10 @@ const timestamp = require('unix-timestamp');
 
 const helpers = require('./helpers');
 const validation = helpers.validation;
-const methodsSchema = require('../src/schema/webhooksMethods');
+const methodsSchema = require('../src/schema/webhooksMethods.ts');
 const HttpServer = require('business/test/acceptance/webhooks/support/httpServer').default;
 
-const { ErrorIds } = require('errors/src');
+const { ErrorIds } = require('errors/src/index.ts');
 const dependencies = require('test-helpers').dependencies;
 // Use a getter to access webhooks storage after dependencies.init() runs
 const getWebhooksStorage = () => dependencies.storage.user.webhooks;

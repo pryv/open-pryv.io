@@ -7,8 +7,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
-const Paths = require('./Paths');
-const methodCallback = require('./methodCallback').default;
+const Paths = require('./Paths.ts');
+const methodCallback = require('./methodCallback.ts').default;
 const contentType = require('middleware').contentType;
 const { getLogger } = require('@pryv/boiler');
 const { setMinimalMethodContext, setMethodId } = require('middleware');
@@ -57,7 +57,7 @@ export default function system (expressApp, app) {
   // Returns: { ok, hostname, issuedAt, expiresAt }.
   expressApp.post(Paths.System + '/admin/certs/force-renew', contentType.json, async (req, res, next) => {
     try {
-      const { forceRenew } = require('./forceRenewIpc');
+      const { forceRenew } = require('./forceRenewIpc.ts');
       const hostname = req.body?.hostname;
       if (hostname != null && typeof hostname !== 'string') {
         return res.status(400).json({ error: 'hostname must be a string when provided' });
@@ -210,8 +210,8 @@ export default function system (expressApp, app) {
   // TokenStore, flips PlatformDB's `available:true`, returns a cluster snapshot.
   expressApp.post(Paths.System + '/admin/cores/ack', contentType.json, async (req, res, next) => {
     try {
-      const TokenStore = require('business/src/bootstrap').TokenStore;
-      const ackHandler = require('business/src/bootstrap').ackHandler;
+      const TokenStore = require('business/src/bootstrap/index.ts').TokenStore;
+      const ackHandler = require('business/src/bootstrap/index.ts').ackHandler;
       const tokensPath = config.get('cluster:tokens:path');
       if (!tokensPath) {
         throw new Error('cluster.tokens.path is not configured');
@@ -241,7 +241,7 @@ export default function system (expressApp, app) {
       }
 
       // 2. Check username uniqueness (username is in usersRepository, not PlatformDB)
-      const { getUsersRepository } = require('business/src/users');
+      const { getUsersRepository } = require('business/src/users/index.ts');
       const usersRepository = await getUsersRepository();
       if (await usersRepository.usernameExists(username)) {
         return res.status(400).json({ reservation: false, error: { id: 'item-already-exists', data: { username } } });
@@ -293,7 +293,7 @@ export default function system (expressApp, app) {
       delete fieldsToDelete.username;
 
       // Update indexed/unique fields
-      const systemStreams = require('business/src/system-streams');
+      const systemStreams = require('business/src/system-streams/index.ts');
       for (const [field, value] of Object.entries(fieldsForUpdate)) {
         if (systemStreams.uniqueFieldNames.includes(field)) {
           await platformDB.setUserUniqueField(username, field, value);
@@ -335,7 +335,7 @@ export default function system (expressApp, app) {
       const platformDB = require('storages').platformDB;
 
       // Check user exists via usersRepository (username is in MongoDB/PG, not PlatformDB)
-      const { getUsersRepository } = require('business/src/users');
+      const { getUsersRepository } = require('business/src/users/index.ts');
       const usersRepository = await getUsersRepository();
       if (!await usersRepository.usernameExists(username)) {
         return next(errors.unknownResource());
@@ -343,7 +343,7 @@ export default function system (expressApp, app) {
 
       if (!dryRun) {
         // Delete all platform entries for this user
-        const systemStreams = require('business/src/system-streams');
+        const systemStreams = require('business/src/system-streams/index.ts');
         for (const field of systemStreams.uniqueFieldNames) {
           const value = await platformDB.getUserIndexedField(username, field);
           if (value != null) {

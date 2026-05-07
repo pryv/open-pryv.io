@@ -10,9 +10,9 @@ const require = createRequire(import.meta.url);
  * JSON Schema specification of methods data for user information.
  */
 
-const Action = require('./Action');
-const helpers = require('./helpers');
-const user = require('./user').default(Action.READ);
+const Action = require('./Action.ts');
+const helpers = require('./helpers.ts');
+const user = require('./user.ts').default(Action.READ);
 
 const accountDetails = helpers.object({
   username: user.properties.username,

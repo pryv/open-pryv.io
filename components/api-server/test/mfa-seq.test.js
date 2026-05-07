@@ -30,7 +30,7 @@ const require = createRequire(import.meta.url);
 
 const nock = require('nock');
 const { getConfig } = require('@pryv/boiler');
-const { _resetMFASingletons } = require('business/src/mfa');
+const { _resetMFASingletons } = require('business/src/mfa/index.ts');
 
 const SMS_HOST = 'http://sms-mock.local';
 

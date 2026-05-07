@@ -12,9 +12,9 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 
-const { seedIfEmpty } = require('../src/TemplateSeeder');
+const { seedIfEmpty } = require('../src/TemplateSeeder.ts');
 
 function fakePlatformDB () {
   const rows = new Map();

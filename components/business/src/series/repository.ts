@@ -7,8 +7,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 //
-const Series = require('./series').default;
-const NamespaceBatch = require('./namespace_batch').default;
+const Series = require('./series.ts').default;
+const NamespaceBatch = require('./namespace_batch.ts').default;
 /** Repository of all series in this Pryv instance.
  */
 class Repository {

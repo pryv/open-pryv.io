@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const bluebird = require('bluebird');
-const Application = require('../../src/application').default;
+const Application = require('../../src/application.ts').default;
 const { SeriesRowType, TypeRepository } = require('business').types;
 const ChildProcess = require('test-helpers').child_process;
 const { getConfig } = require('@pryv/boiler');

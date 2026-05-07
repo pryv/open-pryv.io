@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
  * Uses base helpers with cache module added to globals
  */
 
-const base = require('test-helpers/src/helpers-base');
+const base = require('test-helpers/src/helpers-base.ts');
 const cache = require('cache').default;
 
 base.init({

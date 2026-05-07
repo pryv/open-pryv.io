@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const express = require('express');
 const middleware = require('middleware');
-const Paths = require('./routes/Paths');
+const Paths = require('./routes/Paths.ts');
 const { getConfig } = require('@pryv/boiler');
 // ------------------------------------------------------------ express app init
 // Creates and returns an express application with a standard set of middleware.

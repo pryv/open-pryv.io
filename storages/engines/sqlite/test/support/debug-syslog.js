@@ -7,11 +7,11 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 const { getConfig } = require('@pryv/boiler');
 
 const syslogWatch = require('./SyslogWatch').default;
-const { getSyslog } = require('audit/src/syslog');
+const { getSyslog } = require('audit/src/syslog/index.ts');
 
 function lookFor (str) {
   syslogWatch(str)(

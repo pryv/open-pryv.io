@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const updateAccessUsageStats = require('./helpers/updateAccessUsageStats').default;
+const updateAccessUsageStats = require('./helpers/updateAccessUsageStats.ts').default;
 const { getConfig } = require('@pryv/boiler');
 
 /**

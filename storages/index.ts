@@ -15,8 +15,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const pluginLoader = require('./pluginLoader');
-const internals = require('./internals');
+const pluginLoader = require('./pluginLoader.ts');
+const internals = require('./internals.ts');
 const { getConfig, getLogger } = require('@pryv/boiler');
 
 /**
@@ -30,14 +30,14 @@ function registerInternals (config, database, databasePG, storageLayer) {
   internals.register('storageLayer', storageLayer);
 
   // Static modules from storage
-  internals.register('userLocalDirectory', require('storage/src/userLocalDirectory'));
-  internals.register('getEventFiles', require('storage/src/eventFiles/getEventFiles').getEventFiles);
+  internals.register('userLocalDirectory', require('storage/src/userLocalDirectory.ts'));
+  internals.register('getEventFiles', require('storage/src/eventFiles/getEventFiles.ts').getEventFiles);
 
   // Cache component
   internals.register('cache', require('cache').default);
 
   // Interface factory
-  internals.register('createUserAccountStorage', require('storages/interfaces/baseStorage/UserAccountStorage').createUserAccountStorage);
+  internals.register('createUserAccountStorage', require('storages/interfaces/baseStorage/UserAccountStorage.ts').createUserAccountStorage);
 
   // Note: getLogger, databaseConfig, userFilesPath, eventFilesConfig removed —
   // engines now receive these via init(config, getLogger, internals).
@@ -98,13 +98,13 @@ async function init (config) {
   // Database/DatabasePG constructors (step 1) can use them before initEngines (step 3).
   for (const engineName of pluginLoader.listEngines()) {
     try {
-      const { _internals: engineInternals } = require(`./engines/${engineName}/src/_internals`);
+      const { _internals: engineInternals } = require(`./engines/${engineName}/src/_internals.ts`);
       engineInternals.set('getLogger', getLogger);
       engineInternals.set('config', getEngineConfig(config, engineName));
     } catch (e) { /* engine may not have _internals.js */ }
   }
 
-  const { StorageLayer } = require('storage/src/StorageLayer');
+  const { StorageLayer } = require('storage/src/StorageLayer.ts');
   const { dataBaseTracer } = require('tracing');
 
   // 1. Database connection (based on baseStorage engine)
@@ -112,11 +112,11 @@ async function init (config) {
   let database = null;
   let databasePG = null;
   if (baseEngine === 'mongodb') {
-    const { Database } = require('./engines/mongodb/src/Database');
+    const { Database } = require('./engines/mongodb/src/Database.ts');
     database = new Database(config.get('storages:engines:mongodb'));
     dataBaseTracer(database);
   } else if (baseEngine === 'postgresql') {
-    const { DatabasePG } = require('./engines/postgresql/src/DatabasePG');
+    const { DatabasePG } = require('./engines/postgresql/src/DatabasePG.ts');
     databasePG = new DatabasePG(config.get('storages:engines:postgresql'));
   }
   const connection = database || databasePG || null;
@@ -134,7 +134,7 @@ async function init (config) {
   initEngines(config);
 
   // 4. StorageLayer
-  const integrityAccesses = require('business/src/integrity').default.accesses;
+  const integrityAccesses = require('business/src/integrity/index.ts').default.accesses;
   await storageLayer.init(connection, { integrityAccesses });
 
   // 5. UserAccountStorage (uses same engine as baseStorage)
@@ -143,11 +143,11 @@ async function init (config) {
   await userAccountStorage.init();
 
   // 6. UsersLocalIndex (wrapper singleton — caching, logging around raw DB)
-  const usersLocalIndex = require('storage/src/usersLocalIndex').default;
+  const usersLocalIndex = require('storage/src/usersLocalIndex.ts').default;
   await usersLocalIndex.init();
 
   // 7. PlatformDB
-  const { validatePlatformDB } = require('storages/interfaces/platformStorage/PlatformDB');
+  const { validatePlatformDB } = require('storages/interfaces/platformStorage/PlatformDB.ts');
   const platEngine = pluginLoader.getEngineFor('platformStorage');
   const platModule = pluginLoader.getEngineModule(platEngine);
   const platformDB = platModule.createPlatformDB();
@@ -158,7 +158,7 @@ async function init (config) {
   let auditStorage = null;
   const auditEngine = pluginLoader.getEngineFor('auditStorage');
   if (auditEngine) {
-    const { validateAuditStorage } = require('storages/interfaces/auditStorage/AuditStorage');
+    const { validateAuditStorage } = require('storages/interfaces/auditStorage/AuditStorage.ts');
     const auditModule = pluginLoader.getEngineModule(auditEngine);
     auditStorage = auditModule.createAuditStorage();
     await auditStorage.init();
@@ -172,7 +172,7 @@ async function init (config) {
     let seriesModule;
     try { seriesModule = pluginLoader.getEngineModule(seriesEngine); } catch (e) { /* engine not installed */ }
     if (seriesModule?.createSeriesConnection) {
-      const { validateSeriesConnection } = require('storages/interfaces/seriesStorage/SeriesConnection');
+      const { validateSeriesConnection } = require('storages/interfaces/seriesStorage/SeriesConnection.ts');
       // Pass engine config from manifest + PG connection for postgresql series engine
       const seriesConfig = getEngineConfig(config, seriesEngine);
       seriesConnection = await seriesModule.createSeriesConnection({

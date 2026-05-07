@@ -5,7 +5,7 @@ require('../../../bin/_ts-register');
 
 // Binary for launching the db migration process.
 
-const { getApplication } = require('api-server/src/application');
+const { getApplication } = require('api-server/src/application.ts');
 const { getLogger, getConfig } = require('@pryv/boiler');
 let logger;
 

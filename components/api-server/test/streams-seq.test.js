@@ -18,7 +18,7 @@ const server = helpers.dependencies.instanceManager;
 const commonTests = helpers.commonTests;
 const validation = helpers.validation;
 const ErrorIds = require('errors').ErrorIds;
-const methodsSchema = require('../src/schema/streamsMethods');
+const methodsSchema = require('../src/schema/streamsMethods.ts');
 
 const testData = helpers.dynData({ prefix: 'strm' });
 const treeUtils = require('utils').treeUtils;

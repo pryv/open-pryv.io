@@ -44,7 +44,7 @@ describe('[RGLG] Legacy register routes + invitations', () => {
   });
 
   after(async function () {
-    const { getUsersRepository } = require('business/src/users');
+    const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
     await usersRepository.deleteAll();
     if (savedIntegrityCheck != null) {

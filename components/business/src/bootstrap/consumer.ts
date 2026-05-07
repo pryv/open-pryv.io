@@ -31,7 +31,7 @@ const https = require('node:https');
 const http = require('node:http');
 const { URL } = require('node:url');
 
-const applyBundleMod = require('./applyBundle');
+const applyBundleMod = require('./applyBundle.ts');
 
 /**
  * @param opts

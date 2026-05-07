@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const supertest = require('supertest');
 const express = require('express');
 const assert = require('node:assert');
-const subdomainToPath = require('middleware/src/subdomainToPath').default([]);
+const subdomainToPath = require('middleware/src/subdomainToPath.ts').default([]);
 
 describe('[SDTP] subdomainToPath middleware', function () {
   describe('[SD01] using a minimal application', function () {

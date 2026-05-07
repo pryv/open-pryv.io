@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const DataMatrix = require('./data_matrix').default;
+const DataMatrix = require('./data_matrix.ts').default;
 
 /**
  * Convert a timestamp (seconds) or ISO string to a quoted date string

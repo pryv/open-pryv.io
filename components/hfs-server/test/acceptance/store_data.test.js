@@ -21,7 +21,7 @@ const apiServerContext = require('api-server/test/test-helpers').context;
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('store_data.test');
 const { getMall } = require('mall');
-const { getUsersRepository } = require('business/src/users');
+const { getUsersRepository } = require('business/src/users/index.ts');
 describe('[SDHF] Storing data in a HF series', function () {
   let database, pryv;
   let mall;

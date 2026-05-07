@@ -23,10 +23,10 @@ const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const yaml = require('js-yaml');
 
-const ClusterCA = require('../../src/bootstrap/ClusterCA').default;
-const Bundle = require('../../src/bootstrap/Bundle');
-const BundleEncryption = require('../../src/bootstrap/BundleEncryption');
-const applyBundleMod = require('../../src/bootstrap/applyBundle');
+const ClusterCA = require('../../src/bootstrap/ClusterCA.ts').default;
+const Bundle = require('../../src/bootstrap/Bundle.ts');
+const BundleEncryption = require('../../src/bootstrap/BundleEncryption.ts');
+const applyBundleMod = require('../../src/bootstrap/applyBundle.ts');
 
 const PASSPHRASE = 'test-pass-1234';
 

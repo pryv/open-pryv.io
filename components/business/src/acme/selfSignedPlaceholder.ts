@@ -112,7 +112,7 @@ function ensure ({ config, deriveHostnames: deriveHostnamesFn, log = (_: any) =>
     return { written: false, reason: 'cert-files-already-exist' };
   }
 
-  const derive = deriveHostnamesFn || require('./deriveHostnames').deriveHostnames;
+  const derive = deriveHostnamesFn || require('./deriveHostnames.ts').deriveHostnames;
   const { commonName, altNames } = derive(config);
 
   const { keyPem, certPem } = generate({ commonName, altNames });

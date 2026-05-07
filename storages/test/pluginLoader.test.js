@@ -8,8 +8,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
-const { validateManifest } = require('../manifest-schema');
-const internals = require('../internals');
+const { validateManifest } = require('../manifest-schema.ts');
+const internals = require('../internals.ts');
 
 // These tests are pure unit tests — no DB connections needed.
 describe('[PLUG] Plugin Loader infrastructure', () => {
@@ -85,7 +85,7 @@ describe('[PLUG] Plugin Loader infrastructure', () => {
 
   describe('pluginLoader', () => {
     // We test the loader with a fixture engine at test/fixtures/test-engine/
-    const pluginLoader = require('../pluginLoader');
+    const pluginLoader = require('../pluginLoader.ts');
 
     afterEach(() => {
       pluginLoader.reset();

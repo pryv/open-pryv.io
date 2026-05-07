@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { _internals } = require('../_internals');
+const { _internals } = require('../_internals.ts');
 const defaultOptions = {
   readPreference: 'primary',
   readConcern: { level: 'local' },

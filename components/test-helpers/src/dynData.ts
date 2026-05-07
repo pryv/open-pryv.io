@@ -23,11 +23,11 @@ const { deepMerge } = require('utils');
 const { integrity } = require('business');
 
 // Static data templates
-const staticUsers = require('./data/users').default;
-const staticAccesses = require('./data/accesses').default;
-const staticStreams = require('./data/streams').default;
-const staticEvents = require('./data/events').default;
-const staticProfile = require('./data/profile').default;
+const staticUsers = require('./data/users.ts').default;
+const staticAccesses = require('./data/accesses.ts').default;
+const staticStreams = require('./data/streams.ts').default;
+const staticEvents = require('./data/events.ts').default;
+const staticProfile = require('./data/profile.ts').default;
 
 /**
  * Creates a new dynamic data instance with unique IDs.
@@ -231,7 +231,7 @@ function createDynData (options: any = {}) {
 
   async function ensureDependencies () {
     if (!dependencies) {
-      dependencies = require('./dependencies');
+      dependencies = require('./dependencies.ts');
     }
     if (!mall) {
       const { getMall } = require('mall');
@@ -244,8 +244,8 @@ function createDynData (options: any = {}) {
    */
   async function resetUsers () {
     await ensureDependencies();
-    const { getUsersRepository, User } = require('business/src/users');
-    const accountStreams = require('business/src/system-streams');
+    const { getUsersRepository, User } = require('business/src/users/index.ts');
+    const accountStreams = require('business/src/system-streams/index.ts');
     const { getConfig, getConfigUnsafe } = require('@pryv/boiler');
 
     await getConfig();
@@ -426,7 +426,7 @@ function createDynData (options: any = {}) {
    */
   async function cleanup () {
     await ensureDependencies();
-    const { getUsersRepository } = require('business/src/users');
+    const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
 
     // Delete users (cascades to other data)

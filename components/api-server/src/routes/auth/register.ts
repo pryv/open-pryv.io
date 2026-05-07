@@ -7,8 +7,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const path = require('path');
-const methodCallback = require('../methodCallback').default;
-const regPath = require('../Paths').Register;
+const methodCallback = require('../methodCallback.ts').default;
+const regPath = require('../Paths.ts').Register;
 const errors = require('errors').factory;
 const { setMinimalMethodContext, setMethodId } = require('middleware');
 /**

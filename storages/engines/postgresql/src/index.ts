@@ -14,7 +14,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 
 /**
  * Receive host internals from the barrel.
@@ -30,12 +30,12 @@ function init (config: Record<string, any>, getLogger: (name: string) => any, in
 // -- BaseStorage --------------------------------------------------------
 
 function initStorageLayer (storageLayer: any, connection: any, options: any): void {
-  const { PasswordResetRequestsPG } = require('./PasswordResetRequestsPG');
-  const { SessionsPG } = require('./SessionsPG');
-  const { AccessesPG } = require('./user/AccessesPG');
-  const { ProfilePG } = require('./user/ProfilePG');
-  const { StreamsPG } = require('./user/StreamsPG');
-  const { WebhooksPG } = require('./user/WebhooksPG');
+  const { PasswordResetRequestsPG } = require('./PasswordResetRequestsPG.ts');
+  const { SessionsPG } = require('./SessionsPG.ts');
+  const { AccessesPG } = require('./user/AccessesPG.ts');
+  const { ProfilePG } = require('./user/ProfilePG.ts');
+  const { StreamsPG } = require('./user/StreamsPG.ts');
+  const { WebhooksPG } = require('./user/WebhooksPG.ts');
 
   storageLayer.connection = connection;
   storageLayer.passwordResetRequests = new PasswordResetRequestsPG(connection, {
@@ -118,7 +118,7 @@ function initStorageLayer (storageLayer: any, connection: any, options: any): vo
   };
 
   storageLayer.iterateAllEvents = async function * () {
-    const { rowToEvent } = require('./dataStore/localUserEventsPG');
+    const { rowToEvent } = require('./dataStore/localUserEventsPG.ts');
     const res = await connection.query('SELECT * FROM events');
     for (const row of res.rows) {
       yield rowToEvent(row);
@@ -136,30 +136,30 @@ function initStorageLayer (storageLayer: any, connection: any, options: any): vo
 }
 
 function getUserAccountStorage (): any {
-  return require('./userAccountStorage').userAccountStorage;
+  return require('./userAccountStorage.ts').userAccountStorage;
 }
 
 function getUsersLocalIndex (): any {
-  return require('./usersLocalIndex').UsersLocalIndexPG;
+  return require('./usersLocalIndex.ts').UsersLocalIndexPG;
 }
 
 // -- DataStore ----------------------------------------------------------
 
 function getDataStoreModule (): any {
-  return require('./dataStore').dataStore;
+  return require('./dataStore/index.ts').dataStore;
 }
 
 // -- PlatformStorage ----------------------------------------------------
 
 function createPlatformDB (): any {
-  const { DBpostgresql: DB } = require('./DBpostgresql');
+  const { DBpostgresql: DB } = require('./DBpostgresql.ts');
   return new DB();
 }
 
 // -- SeriesStorage (PostgreSQL) -----------------------------------------
 
 async function createSeriesConnection (config: any): Promise<any> {
-  const { PGSeriesConnection } = require('./pg_connection');
+  const { PGSeriesConnection } = require('./pg_connection.ts');
   // Use provided databasePG (from barrel init) or fall back to storage
   const pgDb = config.databasePG || _internals.databasePG;
   return new PGSeriesConnection(pgDb);
@@ -168,8 +168,8 @@ async function createSeriesConnection (config: any): Promise<any> {
 // -- AuditStorage (PostgreSQL) ------------------------------------------
 
 function createAuditStorage (): any {
-  const { AuditStoragePG } = require('./AuditStoragePG');
-  const { DatabasePG } = require('./DatabasePG');
+  const { AuditStoragePG } = require('./AuditStoragePG.ts');
+  const { DatabasePG } = require('./DatabasePG.ts');
   // Dedicated pool for audit: same DB, smaller pool size to avoid
   // contending with event/stream queries on the main pool.
   const pgConfig = _internals.config;
@@ -190,7 +190,7 @@ function createAuditStorage (): any {
  */
 function getMigrationsCapability (): any | null {
   if (!_internals.databasePG) return null;
-  const { buildMigrationsCapability } = require('./SchemaMigrations');
+  const { buildMigrationsCapability } = require('./SchemaMigrations.ts');
   return buildMigrationsCapability();
 }
 

@@ -20,7 +20,7 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 
-const clusterKv = require('messages/src/cluster_kv');
+const clusterKv = require('messages/src/cluster_kv.ts');
 
 function makeFakeCluster () {
   // EventEmitter exposes .on/.emit/.removeListener — same surface as

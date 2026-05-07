@@ -27,7 +27,7 @@ const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 
 class SchemaMigrationsPG {
   db: any;

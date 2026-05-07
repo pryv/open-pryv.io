@@ -8,19 +8,19 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { StorageLayer } = require('./StorageLayer');
-const { Size } = require('./Size');
-const userLocalDirectory = require('./userLocalDirectory');
+const { StorageLayer } = require('./StorageLayer.ts');
+const { Size } = require('./Size.ts');
+const userLocalDirectory = require('./userLocalDirectory.ts');
 
 const interfaces = {
-  UserAccountStorage: require('storages/interfaces/baseStorage/UserAccountStorage'),
-  UsersLocalIndexDB: require('storages/interfaces/baseStorage/UsersLocalIndexDB'),
-  EventFiles: require('storages/interfaces/fileStorage/EventFiles'),
-  UserStorage: require('storages/interfaces/baseStorage/UserStorage'),
-  Sessions: require('storages/interfaces/baseStorage/Sessions'),
-  PasswordResetRequests: require('storages/interfaces/baseStorage/PasswordResetRequests'),
-  AuditStorage: require('storages/interfaces/auditStorage/AuditStorage'),
-  UserAuditDatabase: require('storages/interfaces/auditStorage/UserAuditDatabase')
+  UserAccountStorage: require('storages/interfaces/baseStorage/UserAccountStorage.ts'),
+  UsersLocalIndexDB: require('storages/interfaces/baseStorage/UsersLocalIndexDB.ts'),
+  EventFiles: require('storages/interfaces/fileStorage/EventFiles.ts'),
+  UserStorage: require('storages/interfaces/baseStorage/UserStorage.ts'),
+  Sessions: require('storages/interfaces/baseStorage/Sessions.ts'),
+  PasswordResetRequests: require('storages/interfaces/baseStorage/PasswordResetRequests.ts'),
+  AuditStorage: require('storages/interfaces/auditStorage/AuditStorage.ts'),
+  UserAuditDatabase: require('storages/interfaces/auditStorage/UserAuditDatabase.ts')
 };
 
 export { Size, StorageLayer, getStorageLayer, getDatabaseSync, userLocalDirectory, getUsersLocalIndex, getUserAccountStorage, interfaces };
@@ -54,9 +54,9 @@ function _ensureMongoDatabase () {
     const { getConfigUnsafe, getLogger } = require('@pryv/boiler');
     const { dataBaseTracer } = require('tracing');
     const config = getConfigUnsafe(true);
-    const { _internals: mongoInternals } = require('storages/engines/mongodb/src/_internals');
+    const { _internals: mongoInternals } = require('storages/engines/mongodb/src/_internals.ts');
     if (!mongoInternals.getLogger) mongoInternals.set('getLogger', getLogger);
-    const { Database } = require('storages/engines/mongodb/src/Database');
+    const { Database } = require('storages/engines/mongodb/src/Database.ts');
     _lazyDatabase = new Database(config.get('storages:engines:mongodb'));
     dataBaseTracer(_lazyDatabase);
   }

@@ -20,7 +20,7 @@ const require = createRequire(import.meta.url);
  * Relic stores as a queryable custom event.
  */
 
-const observability = require('./index');
+const observability = require('./index.ts');
 
 const LEVEL_ORDER = { error: 0, warn: 1, info: 2, debug: 3 };
 

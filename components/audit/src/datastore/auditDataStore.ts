@@ -8,8 +8,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
-const auditUserEvents = require('./auditUserEvents').default;
-const auditUserStreams = require('./auditUserStreams').default;
+const auditUserEvents = require('./auditUserEvents.ts').default;
+const auditUserStreams = require('./auditUserStreams.ts').default;
 
 /**
  * Audit data store.

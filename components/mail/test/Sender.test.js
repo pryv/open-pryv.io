@@ -9,10 +9,10 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 
-const { Sender } = require('../src/Sender');
-const { Template } = require('../src/Template');
+const { Sender } = require('../src/Sender.ts');
+const { Template } = require('../src/Template.ts');
 
 describe('[MAILSEND] Sender', () => {
   it('[MSND1] delegates renderAndSend to template.executeSend with a SendOperation wrapping recipient + substitutions', async () => {

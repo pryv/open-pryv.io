@@ -20,7 +20,7 @@ const require = createRequire(import.meta.url);
 try {
   // UserStorage is a .ts file under storages/interfaces/baseStorage/.
   // It exports `{ validateUserStorage, REQUIRED_METHODS }` (Phase 1 pattern).
-  const UserStorage = require('storages/interfaces/baseStorage/UserStorage');
+  const UserStorage = require('storages/interfaces/baseStorage/UserStorage.ts');
   process.send({
     ok: true,
     tsModuleType: typeof UserStorage,

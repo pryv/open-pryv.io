@@ -11,10 +11,10 @@ const require = createRequire(import.meta.url);
 const SQLite3 = require('better-sqlite3');
 const { Readable } = require('stream');
 
-const concurrentSafeWrite = require('../concurrentSafeWrite');
-const eventsSchema = require('./schema/events');
-const fullTextSearch = require('./fullTextSearch');
-const { toSQLiteQuery } = require('./streamQueryUtils');
+const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
+const eventsSchema = require('./schema/events.ts');
+const fullTextSearch = require('./fullTextSearch.ts');
+const { toSQLiteQuery } = require('./streamQueryUtils.ts');
 
 const DB_OPTIONS = {};
 

@@ -8,7 +8,7 @@
 /**
  * Engine-local internals registry.
  * Populated by the engine entry point's init() from barrel-provided values.
- * All engine files use require('./_internals') instead of host require() calls.
+ * All engine files use require('./_internals.ts') instead of host require() calls.
  */
 
 const registry: Record<string, any> = {};

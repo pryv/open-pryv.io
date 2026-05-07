@@ -9,9 +9,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
-const eventsQueryUtils = require('mall/src/helpers/eventsQueryUtils');
-const streamsQueryUtils = require('../src/methods/helpers/streamsQueryUtils');
-const { toMongoDBQuery } = require('storages/engines/mongodb/src/dataStore/streamsQueryToMongo');
+const eventsQueryUtils = require('mall/src/helpers/eventsQueryUtils.ts');
+const streamsQueryUtils = require('../src/methods/helpers/streamsQueryUtils.ts');
+const { toMongoDBQuery } = require('storages/engines/mongodb/src/dataStore/streamsQueryToMongo.ts');
 const { storeDataUtils } = require('mall');
 
 /**

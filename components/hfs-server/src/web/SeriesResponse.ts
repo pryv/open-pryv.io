@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta').setCommonMeta;
+const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts').setCommonMeta;
 /** Represents a response in series format.
  *
  * This class is used to represent a series response. It serializes to JSON.

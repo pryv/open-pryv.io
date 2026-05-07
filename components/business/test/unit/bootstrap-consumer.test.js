@@ -21,10 +21,10 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 
-const ClusterCA = require('../../src/bootstrap/ClusterCA').default;
-const Bundle = require('../../src/bootstrap/Bundle');
-const BundleEncryption = require('../../src/bootstrap/BundleEncryption');
-const consumer = require('../../src/bootstrap/consumer');
+const ClusterCA = require('../../src/bootstrap/ClusterCA.ts').default;
+const Bundle = require('../../src/bootstrap/Bundle.ts');
+const BundleEncryption = require('../../src/bootstrap/BundleEncryption.ts');
+const consumer = require('../../src/bootstrap/consumer.ts');
 
 const PASSPHRASE = 'pass-9876';
 

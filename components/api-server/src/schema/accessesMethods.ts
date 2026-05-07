@@ -10,11 +10,11 @@ const require = createRequire(import.meta.url);
  * JSON Schema specification of methods data for accesses.
  */
 
-const Action = require('./Action');
-const access = require('./access').default;
-const error = require('./methodError');
-const helpers = require('./helpers');
-const itemDeletion = require('./itemDeletion').default;
+const Action = require('./Action.ts');
+const access = require('./access.ts').default;
+const error = require('./methodError.ts');
+const helpers = require('./helpers.ts');
+const itemDeletion = require('./itemDeletion.ts').default;
 const object = helpers.object;
 const string = helpers.string;
 const boolean = helpers.boolean;

@@ -6,8 +6,8 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const Paths = require('./Paths');
-const methodCallback = require('./methodCallback').default;
+const Paths = require('./Paths.ts');
+const methodCallback = require('./methodCallback.ts').default;
 const { setMethodId } = require('middleware');
 /**
  * Set up events route handling.

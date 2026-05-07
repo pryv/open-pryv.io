@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const helpers = require('../../../test/helpers');
-const { DatabasePG } = require('../src/DatabasePG');
+const { DatabasePG } = require('../src/DatabasePG.ts');
 
 describe('[PGSC] PostgreSQL schema', function () {
   let db;

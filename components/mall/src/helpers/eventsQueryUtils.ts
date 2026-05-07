@@ -9,7 +9,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const storeDataUtils = require('./storeDataUtils');
+const storeDataUtils = require('./storeDataUtils.ts');
 
 export { getParamsByStore, getStoreOptionsFromParams, getStoreQueryFromParams, normalizeStreamQuery };
 

@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { BaseStoragePG } = require('./BaseStoragePG');
+const { BaseStoragePG } = require('./BaseStoragePG.ts');
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
 
@@ -77,7 +77,7 @@ class WebhooksPG extends BaseStoragePG {
         callback(null, result);
       })
       .catch((err: any) => {
-        const { DatabasePG } = require('../DatabasePG');
+        const { DatabasePG } = require('../DatabasePG.ts');
         DatabasePG.handleDuplicateError(err);
         callback(err);
       });

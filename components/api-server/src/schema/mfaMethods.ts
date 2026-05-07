@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
  * Plan 26: merged from service-mfa.
  */
 
-const helpers = require('./helpers');
+const helpers = require('./helpers.ts');
 const object = helpers.object;
 const string = helpers.string;
 const array = helpers.array;

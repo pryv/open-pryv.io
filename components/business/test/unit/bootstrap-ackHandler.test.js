@@ -19,8 +19,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const TokenStore = require('../../src/bootstrap/TokenStore').default;
-const ackHandler = require('../../src/bootstrap/ackHandler');
+const TokenStore = require('../../src/bootstrap/TokenStore.ts').default;
+const ackHandler = require('../../src/bootstrap/ackHandler.ts');
 
 function makeFakeDB (initial = {}) {
   const cores = new Map(Object.entries(initial.cores || {}));

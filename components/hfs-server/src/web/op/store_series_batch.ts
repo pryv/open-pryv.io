@@ -11,9 +11,9 @@ const { LRUCache: LRU } = require('lru-cache');
 const errors = require('errors').factory;
 const business = require('business');
 const BatchRequest = business.series.BatchRequest;
-const ApiConstants = require('../api_constants');
-const TracedOperations = require('./traced_operations').default;
-const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta').setCommonMeta;
+const ApiConstants = require('../api_constants.ts');
+const TracedOperations = require('./traced_operations.ts').default;
+const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts').setCommonMeta;
 // POST /:user_name/series/batch
 //
 /**

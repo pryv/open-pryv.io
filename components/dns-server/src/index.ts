@@ -8,6 +8,6 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { createDnsServer } = require('./DnsServer');
+const { createDnsServer } = require('./DnsServer.ts');
 
 export { createDnsServer };

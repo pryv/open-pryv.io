@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
  * JSON Schema specification of methods data for profile settings.
  */
 
-const helpers = require('./helpers');
+const helpers = require('./helpers.ts');
 const object = helpers.object;
 const string = helpers.string;
 

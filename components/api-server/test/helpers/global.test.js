@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const integrityFinalCheck = require('test-helpers/src/integrity-final-check');
+const integrityFinalCheck = require('test-helpers/src/integrity-final-check.ts');
 const dependencies = require('./dependencies').default;
 
 before(async function () {

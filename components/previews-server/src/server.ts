@@ -37,7 +37,7 @@ const middleware = require('middleware');
 const storage = require('storage');
 const utils = require('utils');
 const { testMessaging } = require('messages');
-const accountStreams = require('business/src/system-streams');
+const accountStreams = require('business/src/system-streams/index.ts');
 const ExtensionLoader = utils.extension.ExtensionLoader;
 function loadCustomAuthStepFn (customExtensions) {
   const defaultFolder = customExtensions.defaultFolder;
@@ -59,10 +59,10 @@ async function start () {
   const storageLayer = await storage.getStorageLayer();
   const initContextMiddleware = middleware.initContext(storageLayer, customAuthStepExt && customAuthStepExt.fn);
   const loadAccessMiddleware = middleware.loadAccess(storageLayer);
-  const { expressApp, routesDefined } = require('./expressApp').default(await middleware.commonHeaders(), require('./middleware/errors').default(logger), middleware.requestTrace(null, logger));
+  const { expressApp, routesDefined } = require('./expressApp.ts').default(await middleware.commonHeaders(), require('./middleware/errors.ts').default(logger), middleware.requestTrace(null, logger));
   // setup routes
-  require('./routes/index').default(expressApp);
-  await require('./routes/event-previews').default(expressApp, initContextMiddleware, loadAccessMiddleware, logger);
+  require('./routes/index.ts').default(expressApp);
+  await require('./routes/event-previews.ts').default(expressApp, initContextMiddleware, loadAccessMiddleware, logger);
   // Finalize middleware stack:
   routesDefined();
   // setup HTTP

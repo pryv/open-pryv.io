@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('chai').assert;
 
-const generateCode = require('../../../src/mfa/generateCode').default;
+const generateCode = require('../../../src/mfa/generateCode.ts').default;
 
 describe('[MFAG] mfa/generateCode', () => {
   it('[MFG1] returns a code of the requested length when smaller than the random source', async () => {

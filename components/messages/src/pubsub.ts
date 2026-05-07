@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const EventEmitter = require('events');
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('messages:pubsub');
-const CONSTANTS = require('./constants');
+const CONSTANTS = require('./constants.ts');
 
 // Generic implementation of pub / sub messaging
 
@@ -99,7 +99,7 @@ class PubSub extends EventEmitter {
 let transport = null;
 function initTransport () {
   if (transport != null) return;
-  transport = require('./tcp_pubsub');
+  transport = require('./tcp_pubsub.ts');
   logger.debug('initTransport');
 }
 

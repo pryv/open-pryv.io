@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 
-const { toSQLiteQuery } = require('storages/engines/sqlite/src/userSQLite/streamQueryUtils');
+const { toSQLiteQuery } = require('storages/engines/sqlite/src/userSQLite/streamQueryUtils.ts');
 
 describe('[USQL] userSQLite toSqliteQuery()', function () {
   it('[YS6Y] must convert to SQLite including expansion', async function () {

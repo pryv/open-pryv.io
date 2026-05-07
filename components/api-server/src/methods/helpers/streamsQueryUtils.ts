@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url);
  */
 const util = require('util');
 const { storeDataUtils } = require('mall');
-const { findForbiddenChar } = require('../../schema/streamId');
+const { findForbiddenChar } = require('../../schema/streamId.ts');
 /**
  * @typedef {Object} StreamQueryScoped
  * @property {Array.<StreamQuery>} streamQuery - An array of streamQueries

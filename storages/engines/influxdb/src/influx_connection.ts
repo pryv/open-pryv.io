@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const influx = require('influx');
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 
 /**
  * Connection to the influx database. Adds error handling and logging on top

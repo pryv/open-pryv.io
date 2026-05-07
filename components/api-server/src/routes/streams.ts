@@ -6,9 +6,9 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const methodCallback = require('./methodCallback').default;
-const Paths = require('./Paths');
-const tryCoerceStringValues = require('../schema/validation').tryCoerceStringValues;
+const methodCallback = require('./methodCallback.ts').default;
+const Paths = require('./Paths.ts');
+const tryCoerceStringValues = require('../schema/validation.ts').tryCoerceStringValues;
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 // Event streams route handling.

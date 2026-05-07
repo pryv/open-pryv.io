@@ -28,9 +28,9 @@ const require = createRequire(import.meta.url);
  * else. CertRenewer + FileMaterializer + deriveHostnames do the work.
  */
 
-const { CertRenewer, PlatformDBDnsWriter } = require('./CertRenewer');
-const { FileMaterializer, runRotateScript } = require('./FileMaterializer');
-const { deriveHostnames } = require('./deriveHostnames');
+const { CertRenewer, PlatformDBDnsWriter } = require('./CertRenewer.ts');
+const { FileMaterializer, runRotateScript } = require('./FileMaterializer.ts');
+const { deriveHostnames } = require('./deriveHostnames.ts');
 
 const DAY_MS = 24 * 3600 * 1000;
 const DEFAULT_RENEW_INTERVAL_MS = DAY_MS;

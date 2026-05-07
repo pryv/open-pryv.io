@@ -24,8 +24,8 @@ const socketIO = require('socket.io')({
   ...(cluster.isWorker ? { transports: ['websocket'] } : {})
 });
 const MethodContext = require('business').MethodContext;
-const Manager = require('./Manager').default;
-const Paths = require('../routes/Paths');
+const Manager = require('./Manager.ts').default;
+const Paths = require('../routes/Paths.ts');
 const { getLogger } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 // Initializes the SocketIO subsystem.

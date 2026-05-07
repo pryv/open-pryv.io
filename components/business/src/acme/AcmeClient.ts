@@ -25,7 +25,7 @@ const require = createRequire(import.meta.url);
  * re-factored as two clean functions.
  */
 
-const { splitCertChain, parseValidity } = require('./certUtils');
+const { splitCertChain, parseValidity } = require('./certUtils.ts');
 
 const DIRECTORY_STAGING = 'https://acme-staging-v02.api.letsencrypt.org/directory';
 const DIRECTORY_PRODUCTION = 'https://acme-v02.api.letsencrypt.org/directory';

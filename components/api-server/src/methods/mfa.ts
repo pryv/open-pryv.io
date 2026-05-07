@@ -8,12 +8,12 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const errors = require('errors').factory;
-const commonFns = require('./helpers/commonFunctions');
-const methodsSchema = require('../schema/mfaMethods').default;
+const commonFns = require('./helpers/commonFunctions.ts');
+const methodsSchema = require('../schema/mfaMethods.ts').default;
 const { getStorageLayer } = require('storage');
 const { getConfig } = require('@pryv/boiler');
-const { getMFAService, getMFASessionStore, Profile } = require('business/src/mfa');
-const { getUsersRepository } = require('business/src/users');
+const { getMFAService, getMFASessionStore, Profile } = require('business/src/mfa/index.ts');
+const { getUsersRepository } = require('business/src/users/index.ts');
 
 const PROFILE_ID = 'private';
 

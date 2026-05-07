@@ -15,8 +15,8 @@ const timestamp = require('unix-timestamp');
 const { deepMerge } = require('utils');
 const storage = require('storage'); // eslint-disable-line no-unused-vars -- used in JSDoc types
 const Webhook = require('business').webhooks.Webhook;
-const { getUsersRepository, User } = require('business/src/users');
-const integrityFinalCheck = require('test-helpers/src/integrity-final-check');
+const { getUsersRepository, User } = require('business/src/users/index.ts');
+const integrityFinalCheck = require('test-helpers/src/integrity-final-check.ts');
 const { getMall } = require('mall');
 
 export default databaseFixture;
@@ -30,7 +30,7 @@ class Context {
    * @param dbOrStorageLayer
    */
   constructor (dbOrStorageLayer) {
-    const { StorageLayer } = require('storage/src/StorageLayer');
+    const { StorageLayer } = require('storage/src/StorageLayer.ts');
     if (dbOrStorageLayer instanceof StorageLayer) {
       this.storageLayer = dbOrStorageLayer;
       this.db = dbOrStorageLayer.connection;
@@ -94,8 +94,8 @@ class UserContext {
     }
     // Legacy raw DB path (MongoDB)
     const db = this.context.db;
-    const { Accesses: MongoAccesses } = require('storages/engines/mongodb/src/user/Accesses');
-    const { Webhooks: MongoWebhooks } = require('storages/engines/mongodb/src/user/Webhooks');
+    const { Accesses: MongoAccesses } = require('storages/engines/mongodb/src/user/Accesses.ts');
+    const { Webhooks: MongoWebhooks } = require('storages/engines/mongodb/src/user/Webhooks.ts');
     return {
       sessions: new Sessions(db),
       accesses: new MongoAccesses(db),

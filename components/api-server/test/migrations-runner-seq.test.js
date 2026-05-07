@@ -32,7 +32,7 @@ describe('[MIGRUN] MigrationRunner', () => {
     this.timeout(30000);
     await initTests();
     await initCore();
-    ({ createMigrationRunner, MigrationRunner } = require('storages/interfaces/migrations'));
+    ({ createMigrationRunner, MigrationRunner } = require('storages/interfaces/migrations/index.ts'));
 
     // Build the baseline capability set from the live storages barrel so we
     // can later swap migrationsDir paths into disposable temp dirs and
@@ -68,11 +68,11 @@ describe('[MIGRUN] MigrationRunner', () => {
   async function resetCapability (cap) {
     const storages = require('storages');
     if (cap.id === 'postgresql') {
-      const { SchemaMigrationsPG } = require('storages/engines/postgresql/src/SchemaMigrations');
+      const { SchemaMigrationsPG } = require('storages/engines/postgresql/src/SchemaMigrations.ts');
       const store = new SchemaMigrationsPG(storages.databasePG);
       await store._resetForTests();
     } else if (cap.id === 'rqlite') {
-      const { SchemaMigrationsRqlite } = require('storages/engines/rqlite/src/SchemaMigrations');
+      const { SchemaMigrationsRqlite } = require('storages/engines/rqlite/src/SchemaMigrations.ts');
       const store = new SchemaMigrationsRqlite(storages.platformDB);
       await store._resetForTests();
     }

@@ -10,9 +10,9 @@ const require = createRequire(import.meta.url);
  * JSON Schema specification of general methods data.
  */
 
-const Action = require('./Action');
-const access = require('./access').default;
-const helpers = require('./helpers');
+const Action = require('./Action.ts');
+const access = require('./access.ts').default;
+const helpers = require('./helpers.ts');
 const object = helpers.object;
 const string = helpers.string;
 const array = helpers.array;

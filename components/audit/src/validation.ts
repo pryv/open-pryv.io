@@ -7,10 +7,10 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const helpers = require('api-server/src/schema/helpers');
-const validator = require('api-server/src/schema/validation');
+const helpers = require('api-server/src/schema/helpers.ts');
+const validator = require('api-server/src/schema/validation.ts');
 
-const { ALL_METHODS, ALL_METHODS_MAP } = require('./ApiMethods');
+const { ALL_METHODS, ALL_METHODS_MAP } = require('./ApiMethods.ts');
 
 /**
  * Utilities to validate Messages

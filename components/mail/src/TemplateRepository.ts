@@ -9,8 +9,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const errors = require('./errors');
-const { Template } = require('./Template');
+const errors = require('./errors.ts');
+const { Template } = require('./Template.ts');
 
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('mail-template-repository');

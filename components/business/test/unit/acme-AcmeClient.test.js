@@ -21,7 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const AcmeClient = require('../../src/acme/AcmeClient');
+const AcmeClient = require('../../src/acme/AcmeClient.ts');
 
 /** Make a CA-signed leaf PEM so parseValidity inside issueCert has real dates. */
 function realCertBundle (cn) {

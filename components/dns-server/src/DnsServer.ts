@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
 
 const dns2 = require('dns2');
 const { Packet } = dns2;
-const { buildA, buildAAAA, buildCNAME, buildMX, buildNS, buildSOA, buildTXT, buildCAA } = require('./records');
+const { buildA, buildAAAA, buildCNAME, buildMX, buildNS, buildSOA, buildTXT, buildCAA } = require('./records.ts');
 
 /**
  * Default interval for refreshing runtime DNS records from PlatformDB.

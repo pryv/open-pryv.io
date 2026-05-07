@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 const { getConfig } = require('@pryv/boiler');
-const { getAPIVersion } = require('middleware/src/project_version');
+const { getAPIVersion } = require('middleware/src/project_version.ts');
 export default function (api) {
   api.register('service.info', getServiceInfo);
   async function getServiceInfo (context, params, result, next) {

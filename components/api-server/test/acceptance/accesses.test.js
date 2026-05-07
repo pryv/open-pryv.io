@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const { promisify } = require('util');
 const lodash = require('lodash');
 const timestamp = require('unix-timestamp');
-const { ErrorIds } = require('errors/src');
+const { ErrorIds } = require('errors/src/index.ts');
 const helpers = require('../helpers');
 
 describe('[AC01] accesses', () => {

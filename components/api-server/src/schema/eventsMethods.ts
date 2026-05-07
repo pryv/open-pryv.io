@@ -10,10 +10,10 @@ const require = createRequire(import.meta.url);
 /**
  * JSON Schema specification of methods data for events.
  */
-const Action = require('./Action');
-const event = require('./event').default;
-const itemDeletion = require('./itemDeletion').default;
-const helpers = require('./helpers');
+const Action = require('./Action.ts');
+const event = require('./event.ts').default;
+const itemDeletion = require('./itemDeletion.ts').default;
+const helpers = require('./helpers.ts');
 const object = helpers.object;
 const array = helpers.array;
 const string = helpers.string;

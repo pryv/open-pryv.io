@@ -22,9 +22,9 @@ const require = createRequire(import.meta.url);
  * exposes the primitive operations; the caller decides when to run them.
  */
 
-const AtRestEncryption = require('./AtRestEncryption');
-const AcmeClient = require('./AcmeClient');
-const observability = require('../observability');
+const AtRestEncryption = require('./AtRestEncryption.ts');
+const AcmeClient = require('./AcmeClient.ts');
+const observability = require('../observability/index.ts');
 
 const AT_REST_PURPOSE = 'pryv-at-rest-tls-v1';
 

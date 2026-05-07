@@ -31,10 +31,10 @@ const { getConfig, getLogger } = require('@pryv/boiler').init({
   ]
 });
 // Load configuration file, set up execution context and start the server.
-const Context = require('./context').default;
-const Server = require('./server').default;
-const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta');
-const accountStreams = require('business/src/system-streams');
+const Context = require('./context.ts').default;
+const Server = require('./server.ts').default;
+const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts');
+const accountStreams = require('business/src/system-streams/index.ts');
 
 // Tracing shim. See components/tracing/src/Tracing.js for the rationale —
 // New Relic APM (Plan 38) is the active observability path; this layer

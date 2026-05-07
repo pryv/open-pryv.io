@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const { buildArgs } = require('../src/rqliteProcess');
+const { buildArgs } = require('../src/rqliteProcess.ts');
 
 describe('[RQARGS] rqliteProcess.buildArgs', () => {
   const baseOpts = {

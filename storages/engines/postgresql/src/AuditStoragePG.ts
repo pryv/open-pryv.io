@@ -9,8 +9,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { LRUCache: LRU } = require('lru-cache');
-const { UserAuditDatabasePG } = require('./UserAuditDatabasePG');
-const { _internals } = require('./_internals');
+const { UserAuditDatabasePG } = require('./UserAuditDatabasePG.ts');
+const { _internals } = require('./_internals.ts');
 
 const CACHE_SIZE = 500;
 const VERSION = '1.0.0';

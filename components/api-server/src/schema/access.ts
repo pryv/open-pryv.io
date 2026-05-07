@@ -10,8 +10,8 @@ const require = createRequire(import.meta.url);
  * JSON Schema specification for accesses.
  */
 
-const Action = require('./Action');
-const helpers = require('./helpers');
+const Action = require('./Action.ts');
+const helpers = require('./helpers.ts');
 const object = helpers.object;
 const array = helpers.array;
 const string = helpers.string;
@@ -153,8 +153,8 @@ function permissions (action) {
 
 // Callable schema with helper functions attached as properties.
 // Consumers can either call the default export directly or reach for the
-// helpers via either `require('./access').permissions(action)` or
-// `require('./access').default.permissions(action)`.
+// helpers via either `require('./access.ts').permissions(action)` or
+// `require('./access.ts').default.permissions(action)`.
 type AccessSchema = typeof accessSchema & {
   permissions: typeof permissions,
   permissionLevel: typeof permissionLevel,

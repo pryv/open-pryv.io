@@ -10,9 +10,9 @@ const require = createRequire(import.meta.url);
 const assert = require('chai').assert;
 const { EventEmitter } = require('node:events');
 
-const SessionStore = require('../../../src/mfa/SessionStore').default;
-const Profile = require('../../../src/mfa/Profile').default;
-const clusterKv = require('messages/src/cluster_kv');
+const SessionStore = require('../../../src/mfa/SessionStore.ts').default;
+const Profile = require('../../../src/mfa/Profile.ts').default;
+const clusterKv = require('messages/src/cluster_kv.ts');
 
 /**
  * Plan 55 Phase 4 — SessionStore is now backed by clusterKv. Each test

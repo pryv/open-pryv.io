@@ -13,7 +13,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { fromCallback } = require('utils');
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 
 /**
  * Receive host internals from the barrel.
@@ -29,12 +29,12 @@ function init (config: Record<string, any>, getLogger: (name: string) => any, in
 // -- BaseStorage --------------------------------------------------------
 
 function initStorageLayer (storageLayer: any, connection: any, options: any): void {
-  const { PasswordResetRequests } = require('./PasswordResetRequests');
-  const { Sessions } = require('./Sessions');
-  const { Accesses } = require('./user/Accesses');
-  const { Profile } = require('./user/Profile');
-  const { Streams } = require('./user/Streams');
-  const { Webhooks } = require('./user/Webhooks');
+  const { PasswordResetRequests } = require('./PasswordResetRequests.ts');
+  const { Sessions } = require('./Sessions.ts');
+  const { Accesses } = require('./user/Accesses.ts');
+  const { Profile } = require('./user/Profile.ts');
+  const { Streams } = require('./user/Streams.ts');
+  const { Webhooks } = require('./user/Webhooks.ts');
 
   storageLayer.connection = connection;
   storageLayer.passwordResetRequests = new PasswordResetRequests(connection, {
@@ -89,23 +89,23 @@ function initStorageLayer (storageLayer: any, connection: any, options: any): vo
 }
 
 function getUserAccountStorage (): any {
-  return require('./userAccountStorage').userAccountStorage;
+  return require('./userAccountStorage.ts').userAccountStorage;
 }
 
 function getUsersLocalIndex (): any {
-  return require('./usersLocalIndex').DBIndex;
+  return require('./usersLocalIndex.ts').DBIndex;
 }
 
 // -- DataStore ----------------------------------------------------------
 
 function getDataStoreModule (): any {
-  return require('./dataStore').dataStore;
+  return require('./dataStore/index.ts').dataStore;
 }
 
 // -- PlatformStorage ----------------------------------------------------
 
 function createPlatformDB (): any {
-  const { DBmongodb: DB } = require('./DBmongodb');
+  const { DBmongodb: DB } = require('./DBmongodb.ts');
   return new DB();
 }
 

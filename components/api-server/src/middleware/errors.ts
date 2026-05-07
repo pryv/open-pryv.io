@@ -10,7 +10,7 @@ const errors = require('errors');
 const errorsFactory = errors.factory;
 const APIError = errors.APIError;
 const errorHandling = errors.errorHandling;
-const commonMeta = require('../methods/helpers/setCommonMeta');
+const commonMeta = require('../methods/helpers/setCommonMeta.ts');
 const { getConfigUnsafe } = require('@pryv/boiler');
 
 export default produceHandleErrorMiddleware;

@@ -24,10 +24,10 @@ require('../../../../bin/_ts-register');
  *   __shutdown           → exit cleanly
  */
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 
 const { getConfig } = require('@pryv/boiler');
-const accessState = require('api-server/src/routes/reg/accessState');
+const accessState = require('api-server/src/routes/reg/accessState.ts');
 
 let initialized = false;
 
@@ -43,7 +43,7 @@ async function ensureInit () {
   initialized = true;
   const config = await getConfig();
 
-  const rqliteEngine = require('storages/engines/rqlite/src');
+  const rqliteEngine = require('storages/engines/rqlite/src/index.ts');
   const engineCfg = config.get('storages:engines:rqlite') || { url: 'http://localhost:4001' };
   rqliteEngine.init(engineCfg);
   const platformDB = rqliteEngine.createPlatformDB();

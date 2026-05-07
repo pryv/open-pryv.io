@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { defaults: dataStoreDefaults } = require('@pryv/datastore');
-const { getFullItemId } = require('./storeDataUtils');
+const { getFullItemId } = require('./storeDataUtils.ts');
 
 export { createStoreRootStream, addStoreIdPrefixToStreams };
 /**

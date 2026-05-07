@@ -16,12 +16,12 @@ const require = createRequire(import.meta.url);
  * Session storage lives in `./SessionStore` (Plan 26 Phase 3).
  */
 
-const Profile = require('./Profile').default;
-const Service = require('./Service').default;
-const ChallengeVerifyService = require('./ChallengeVerifyService').default;
-const SingleService = require('./SingleService').default;
-const SessionStore = require('./SessionStore').default;
-const generateCode = require('./generateCode').default;
+const Profile = require('./Profile.ts').default;
+const Service = require('./Service.ts').default;
+const ChallengeVerifyService = require('./ChallengeVerifyService.ts').default;
+const SingleService = require('./SingleService.ts').default;
+const SessionStore = require('./SessionStore.ts').default;
+const generateCode = require('./generateCode.ts').default;
 
 /**
  * Build the MFA service implementation matching `mfaConfig.mode`.

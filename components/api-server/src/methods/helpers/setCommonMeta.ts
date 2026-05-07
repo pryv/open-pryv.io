@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const timestamp = require('unix-timestamp');
-const { getAPIVersion } = require('middleware/src/project_version');
+const { getAPIVersion } = require('middleware/src/project_version.ts');
 // cnan be overriden;
 const { getConfig } = require('@pryv/boiler');
 // NOTE There's really no good way to wait for an asynchronous process in a

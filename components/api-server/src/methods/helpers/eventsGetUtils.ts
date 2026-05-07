@@ -9,16 +9,16 @@ const require = createRequire(import.meta.url);
 /**
  * Some method used by events.get are shared with audit.getLogs
  */
-const streamsQueryUtils = require('./streamsQueryUtils');
+const streamsQueryUtils = require('./streamsQueryUtils.ts');
 const timestamp = require('unix-timestamp');
 const errors = require('errors').factory;
 const { getMall, storeDataUtils } = require('mall');
 const { treeUtils } = require('utils');
 const utils = require('utils');
 const { Readable } = require('stream');
-const SetFileReadTokenStream = require('../streams/SetFileReadTokenStream').default;
-const accountStreams = require('business/src/system-streams');
-const integrity = require('business/src/integrity').default;
+const SetFileReadTokenStream = require('../streams/SetFileReadTokenStream.ts').default;
+const accountStreams = require('business/src/system-streams/index.ts');
+const integrity = require('business/src/integrity/index.ts').default;
 let mall;
 
 export { init, applyDefaultsForRetrieval, coerceStreamsParam, validateStreamsQueriesAndSetStore, transformArrayOfStringsToStreamsQuery, streamQueryCheckPermissionsAndReplaceStars, streamQueryAddForcedAndForbiddenStreams, streamQueryExpandStreams, streamQueryAddHiddenStreams, findEventsFromStore };

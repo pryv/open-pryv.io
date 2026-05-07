@@ -25,9 +25,9 @@ const cuid = require('cuid');
 const charlatan = require('charlatan');
 
 const { getConfig } = require('@pryv/boiler');
-const { getApplication } = require('api-server/src/application');
+const { getApplication } = require('api-server/src/application.ts');
 const { platform } = require('platform');
-const accessState = require('../src/routes/reg/accessState');
+const accessState = require('../src/routes/reg/accessState.ts');
 
 const DOMAIN = 'test-plan37.pryv.li';
 const CORE_A = 'core-a';
@@ -79,7 +79,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
   });
 
   after(async function () {
-    const { getUsersRepository } = require('business/src/users');
+    const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
     await usersRepository.deleteAll();
     await getPlatformDB().clearAll();
@@ -172,7 +172,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
 
       const app = getApplication(true);
       await app.initiate();
-      await require('../src/methods/auth/register').default(app.api);
+      await require('../src/methods/auth/register.ts').default(app.api);
       request = supertest(app.expressApp);
     });
 
@@ -389,8 +389,8 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
     });
 
     it('[MC16] assigns user-core to the single available core when restoring v1 register mappings', async function () {
-      const { createBackupReader } = require('../../../storages/interfaces/backup/BackupReader');
-      const RestoreOrchestrator = require('business/src/backup/RestoreOrchestrator').default;
+      const { createBackupReader } = require('../../../storages/interfaces/backup/BackupReader.ts');
+      const RestoreOrchestrator = require('business/src/backup/RestoreOrchestrator.ts').default;
       // Build an in-memory reader with ONLY readServerMappings populated
       // (platform data empty; no users to restore here — we're testing
       // the register-mappings loop in isolation).
@@ -460,7 +460,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       // server.js::registerApiMethods which runs in the worker boot path,
       // not in tests). Register service.info here so /reg/service/info
       // doesn't 404 with "invalid-method".
-      require('../src/methods/service').default(app.api);
+      require('../src/methods/service.ts').default(app.api);
       request = supertest(app.expressApp);
     });
 

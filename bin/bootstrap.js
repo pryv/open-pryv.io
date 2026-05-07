@@ -92,7 +92,7 @@ async function runNewCore (args) {
   if (!args.id) throw new Error('new-core: --id is required');
   if (!args.ip) throw new Error('new-core: --ip is required');
 
-  const { cliOps } = require('business/src/bootstrap');
+  const { cliOps } = require('business/src/bootstrap/index.ts');
   const config = await getConfig();
   const ctx = resolveContext(config, args);
   const platformDB = await initPlatformDB(config);
@@ -133,7 +133,7 @@ async function runNewCore (args) {
 }
 
 async function runInitCaHolder (args) {
-  const { cliOps } = require('business/src/bootstrap');
+  const { cliOps } = require('business/src/bootstrap/index.ts');
   const config = await getConfig();
 
   const coreId = config.get('core:id');
@@ -185,7 +185,7 @@ async function runInitCaHolder (args) {
 }
 
 async function runListTokens (args) {
-  const { cliOps } = require('business/src/bootstrap');
+  const { cliOps } = require('business/src/bootstrap/index.ts');
   const config = await getConfig();
   const tokensPath = args['tokens-path'] || config.get('cluster:tokens:path') || DEFAULT_TOKENS_PATH;
 
@@ -206,7 +206,7 @@ async function runListTokens (args) {
 
 async function runRevokeToken (args) {
   if (!args.coreId) throw new Error('revoke-token: <coreId> is required');
-  const { cliOps } = require('business/src/bootstrap');
+  const { cliOps } = require('business/src/bootstrap/index.ts');
   const config = await getConfig();
   const tokensPath = args['tokens-path'] || config.get('cluster:tokens:path') || DEFAULT_TOKENS_PATH;
 

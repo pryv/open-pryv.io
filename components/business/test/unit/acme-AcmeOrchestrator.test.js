@@ -17,7 +17,7 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert/strict');
 
-const { AcmeOrchestrator } = require('../../src/acme/AcmeOrchestrator');
+const { AcmeOrchestrator } = require('../../src/acme/AcmeOrchestrator.ts');
 
 function makeFakeRenewer () {
   const calls = [];

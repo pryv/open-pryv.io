@@ -7,10 +7,10 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const Audit = require('./Audit').default;
+const Audit = require('./Audit.ts').default;
 const audit = new Audit();
 
-audit.CONSTANTS = require('./Constants').default;
+audit.CONSTANTS = require('./Constants.ts').default;
 
 const CONSTANTS = audit.CONSTANTS;
 

@@ -8,10 +8,10 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { BaseStoragePG } = require('./BaseStoragePG');
-const { _internals } = require('../_internals');
+const { BaseStoragePG } = require('./BaseStoragePG.ts');
+const { _internals } = require('../_internals.ts');
 const timestamp = require('unix-timestamp');
-const treeUtils = require('../../../../shared/treeUtils');
+const treeUtils = require('../../../../shared/treeUtils.ts');
 
 /**
  * PostgreSQL persistence for streams.

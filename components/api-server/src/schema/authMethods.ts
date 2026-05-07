@@ -9,10 +9,10 @@ const require = createRequire(import.meta.url);
 /**
  * JSON Schema specification of methods data for auth.
  */
-const { ErrorIds } = require('errors/src/ErrorIds');
-const { ErrorMessages } = require('errors/src/ErrorMessages');
-const accountStreams = require('business/src/system-streams');
-const helpers = require('./helpers');
+const { ErrorIds } = require('errors/src/ErrorIds.ts');
+const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
+const accountStreams = require('business/src/system-streams/index.ts');
+const helpers = require('./helpers.ts');
 const object = helpers.object;
 const string = helpers.string;
 const registrationSchema = {

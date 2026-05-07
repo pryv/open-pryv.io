@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const BackupOrchestrator = require('./BackupOrchestrator').default;
-const RestoreOrchestrator = require('./RestoreOrchestrator').default;
+const BackupOrchestrator = require('./BackupOrchestrator.ts').default;
+const RestoreOrchestrator = require('./RestoreOrchestrator.ts').default;
 
 export { BackupOrchestrator, RestoreOrchestrator };

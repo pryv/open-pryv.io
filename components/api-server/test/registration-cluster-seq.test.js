@@ -15,10 +15,10 @@ const supertest = require('supertest');
 
 const helpers = require('./helpers');
 const { getConfig } = require('@pryv/boiler');
-const { getApplication } = require('api-server/src/application');
-const { ErrorIds } = require('errors/src/ErrorIds');
-const { ErrorMessages } = require('errors/src/ErrorMessages');
-const { getUsersRepository, User } = require('business/src/users');
+const { getApplication } = require('api-server/src/application.ts');
+const { ErrorIds } = require('errors/src/ErrorIds.ts');
+const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
+const { getUsersRepository, User } = require('business/src/users/index.ts');
 const { getUserAccountStorage } = require('storage');
 const { databaseFixture } = require('test-helpers');
 const { produceStorageConnection } = require('./test-helpers');
@@ -59,7 +59,7 @@ describe('[REGC] registration: cluster', function () {
     });
     app = getApplication();
     await app.initiate();
-    await require('../src/methods/auth/register').default(app.api);
+    await require('../src/methods/auth/register.ts').default(app.api);
     request = supertest(app.expressApp);
     usersRepository = await getUsersRepository();
   });

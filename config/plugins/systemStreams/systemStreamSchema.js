@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-const helpers = require('api-server/src/schema/helpers');
+const helpers = require('api-server/src/schema/helpers.ts');
 const string = helpers.string;
 const boolean = helpers.boolean;
 const array = helpers.array;

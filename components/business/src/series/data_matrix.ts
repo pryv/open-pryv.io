@@ -7,9 +7,9 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('assert');
-const { error } = require('./errors');
+const { error } = require('./errors.ts');
 // 'series' layer depends on the 'types' layer.
-const Row = require('./row').default;
+const Row = require('./row.ts').default;
 /** Data in matrix form. Columns have names, rows have numbers, starting at 0.
  */
 class DataMatrix {

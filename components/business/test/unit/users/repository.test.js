@@ -9,10 +9,10 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const charlatan = require('charlatan');
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 const { databaseFixture } = require('test-helpers');
 const { produceStorageConnection } = require('api-server/test/test-helpers');
-const { getUsersRepository, User } = require('business/src/users');
+const { getUsersRepository, User } = require('business/src/users/index.ts');
 const { ErrorIds } = require('errors');
 
 describe('[USRP] Users repository', () => {

@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
-const { Database } = require('storages/engines/mongodb/src/Database');
+const { Database } = require('storages/engines/mongodb/src/Database.ts');
 const helpers = require('../../../../test/helpers');
 
 describe('[DBSE] Database', () => {

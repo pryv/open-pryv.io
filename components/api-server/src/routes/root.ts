@@ -7,10 +7,10 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const middleware = require('middleware');
-const commonMeta = require('../methods/helpers/setCommonMeta');
-const methodCallback = require('./methodCallback').default;
-const Paths = require('./Paths');
-const getAuth = require('middleware/src/getAuth').default;
+const commonMeta = require('../methods/helpers/setCommonMeta.ts');
+const methodCallback = require('./methodCallback.ts').default;
+const Paths = require('./Paths.ts');
+const getAuth = require('middleware/src/getAuth.ts').default;
 const { setMethodId } = require('middleware');
 
 (async () => {

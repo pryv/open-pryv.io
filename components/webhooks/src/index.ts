@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { Application: application } = require('./application');
-const { WebhooksService: server } = require('./service');
+const { Application: application } = require('./application.ts');
+const { WebhooksService: server } = require('./service.ts');
 
 export { application, server };

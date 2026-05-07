@@ -21,9 +21,9 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 
-const cliOps = require('../../src/bootstrap/cliOps');
-const Bundle = require('../../src/bootstrap/Bundle');
-const BundleEncryption = require('../../src/bootstrap/BundleEncryption');
+const cliOps = require('../../src/bootstrap/cliOps.ts');
+const Bundle = require('../../src/bootstrap/Bundle.ts');
+const BundleEncryption = require('../../src/bootstrap/BundleEncryption.ts');
 
 function makeFakeDB () {
   const coreInfos = new Map();

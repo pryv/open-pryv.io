@@ -9,10 +9,10 @@ const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const fs = require('fs');
 const path = require('path');
-const { getUsersRepository } = require('business/src/users');
+const { getUsersRepository } = require('business/src/users/index.ts');
 const errors = require('errors').factory;
 const { getLogger } = require('@pryv/boiler');
-const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils');
+const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const setAdminAuditAccessId = setAuditAccessId(AuditAccessIds.ADMIN_TOKEN);
 
 /**

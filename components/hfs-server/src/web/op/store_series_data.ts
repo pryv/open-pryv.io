@@ -10,9 +10,9 @@ const require = createRequire(import.meta.url);
 //  POST /events/:event_id/series - Store data in a series.
 const errors = require('errors').factory;
 const business = require('business');
-const ApiConstants = require('../api_constants');
-const TracedOperations = require('./traced_operations').default;
-const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta').setCommonMeta;
+const ApiConstants = require('../api_constants.ts');
+const TracedOperations = require('./traced_operations.ts').default;
+const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts').setCommonMeta;
 /** POST /events/:event_id/series - Store data in a series.
  * @param {Context} ctx
  * @param {express$Request} req

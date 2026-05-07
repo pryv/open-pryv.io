@@ -8,10 +8,10 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { APIError } = require('./APIError');
-const { errorHandling } = require('./errorHandling');
-const { ErrorIds } = require('./ErrorIds');
-const { ErrorMessages } = require('./ErrorMessages');
-const { factory } = require('./factory');
+const { APIError } = require('./APIError.ts');
+const { errorHandling } = require('./errorHandling.ts');
+const { ErrorIds } = require('./ErrorIds.ts');
+const { ErrorMessages } = require('./ErrorMessages.ts');
+const { factory } = require('./factory.ts');
 
 export { APIError, errorHandling, ErrorIds, ErrorMessages, factory };

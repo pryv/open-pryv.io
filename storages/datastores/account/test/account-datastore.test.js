@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const cuid = require('cuid');
-const accountStore = require('../index');
+const accountStore = require('../index.ts');
 
 // Mock system stream tree (mimics what systemStreams config produces)
 const mockStreamTree = [
@@ -90,7 +90,7 @@ describe('[ACDS] Account DataStore adapter', () => {
       logger: { debug () {}, info () {}, warn () {}, error () {} }
     });
     // Inject mock storage via the events module (use cloned tree since init mutates)
-    const AccountUserEvents = require('../AccountUserEvents');
+    const AccountUserEvents = require('../AccountUserEvents.ts');
     accountStore.events = AccountUserEvents.create(
       buildFieldStreamMap(structuredClone(mockStreamTree)),
       async () => mockStorage

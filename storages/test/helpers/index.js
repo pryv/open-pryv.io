@@ -26,7 +26,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 
 const boiler = require('@pryv/boiler');
 const tested = require('test-helpers');
@@ -76,7 +76,7 @@ function getEngineConfig (engineName, manifest) {
  * @returns {Object} map of internal name → value
  */
 function getInternals (manifest) {
-  const internals = require('storages/internals');
+  const internals = require('storages/internals.ts');
   const required = manifest.requiredInternals || [];
   return internals.resolve(required, manifest.entrypoint || 'test');
 }
@@ -84,10 +84,10 @@ function getInternals (manifest) {
 // --- Modules needed by migration tests ---
 // Exposed here so engine tests don't require directly from components/.
 
-const accountStreams = require('business/src/system-streams');
+const accountStreams = require('business/src/system-streams/index.ts');
 const getMall = require('mall').getMall;
 const platform = require('platform').platform;
-const integrityFinalCheck = require('test-helpers/src/integrity-final-check');
+const integrityFinalCheck = require('test-helpers/src/integrity-final-check.ts');
 const getUsersLocalIndex = require('storage').getUsersLocalIndex;
 const userLocalDirectory = require('storage').userLocalDirectory;
 

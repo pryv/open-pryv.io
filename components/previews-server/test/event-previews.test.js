@@ -19,7 +19,7 @@ const timestamp = require('unix-timestamp');
 const xattr = require('fs-xattr');
 const superagent = require('superagent');
 const { getMall } = require('mall');
-const attachmentManagement = require('../src/attachmentManagement');
+const attachmentManagement = require('../src/attachmentManagement.ts');
 
 describe('[EP01] event previews', function () {
   const user = structuredClone(testData.users[0]);

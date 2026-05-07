@@ -7,13 +7,13 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const validation = require('./validation');
+const validation = require('./validation.ts');
 
 const {
   ALL_METHODS,
   AUDITED_METHODS,
   WITH_USER_METHODS
-} = require('./ApiMethods');
+} = require('./ApiMethods.ts');
 
 class AuditFilter {
   /**

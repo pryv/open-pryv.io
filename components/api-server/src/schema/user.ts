@@ -10,8 +10,8 @@ const require = createRequire(import.meta.url);
  * JSON Schema specification for users.
  */
 
-const Action = require('./Action');
-const helpers = require('./helpers');
+const Action = require('./Action.ts');
+const helpers = require('./helpers.ts');
 
 /**
  * @param action

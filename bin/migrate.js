@@ -52,7 +52,7 @@ require('@pryv/boiler').init({
     const { getConfig, getLogger } = require('@pryv/boiler');
     const config = await getConfig();
     await require('storages').init(config);
-    const { createMigrationRunner } = require('storages/interfaces/migrations');
+    const { createMigrationRunner } = require('storages/interfaces/migrations/index.ts');
     const runner = await createMigrationRunner({ logger: getLogger('migrate') });
 
     switch (args.command) {

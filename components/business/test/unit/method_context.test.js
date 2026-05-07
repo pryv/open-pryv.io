@@ -7,11 +7,11 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 const timestamp = require('unix-timestamp');
 const sinon = require('sinon');
 const assert = require('node:assert');
-const MethodContext = require('../../src/MethodContext').default;
+const MethodContext = require('../../src/MethodContext.ts').default;
 
 const contextSource = {
   name: 'test',

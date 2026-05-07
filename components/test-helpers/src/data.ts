@@ -29,15 +29,15 @@ function runSeries (fns, cb) {
   next();
 }
 
-const dependenciesMod = require('./dependencies');
+const dependenciesMod = require('./dependencies.ts');
 const dependencies = dependenciesMod.default ?? dependenciesMod;
 const settings = dependencies.settings;
 const storage = dependencies.storage;
 const fs = require('fs');
 const path = require('path');
 const { deepMerge } = require('utils');
-const accountStreams = require('business/src/system-streams');
-const { getUsersRepository, User } = require('business/src/users');
+const accountStreams = require('business/src/system-streams/index.ts');
+const { getUsersRepository, User } = require('business/src/users/index.ts');
 const { userLocalDirectory } = require('storage');
 const charlatan = require('charlatan');
 const { getConfigUnsafe, getConfig, getLogger } = require('@pryv/boiler');
@@ -47,7 +47,7 @@ const { integrity } = require('business');
 
 // users
 
-const users = require('./data/users').default;
+const users = require('./data/users.ts').default;
 export { users };
 const defaultUser = users[0];
 
@@ -66,7 +66,7 @@ export const resetUsers = async () => {
 
 // accesses
 
-const accesses = require('./data/accesses').default;
+const accesses = require('./data/accesses.ts').default;
 export { accesses };
 
 export const resetAccesses = function (done, user, personalAccessToken, addToId) {
@@ -87,7 +87,7 @@ export const resetAccesses = function (done, user, personalAccessToken, addToId)
 
 // profile
 
-const profile = require('./data/profile').default;
+const profile = require('./data/profile.ts').default;
 export { profile };
 
 export const resetProfile = function (done, user) {
@@ -96,7 +96,7 @@ export const resetProfile = function (done, user) {
 
 // events
 
-const events = require('./data/events').default;
+const events = require('./data/events.ts').default;
 export { events };
 const dynCreateAttachmentIdMap = {}; // contains real ids of created attachment per event:
 export { dynCreateAttachmentIdMap };
@@ -151,7 +151,7 @@ export const resetEvents = function resetEvents (done, user) {
 
 // streams
 
-const streams = require('./data/streams').default;
+const streams = require('./data/streams.ts').default;
 export { streams };
 
 export const resetStreams = function (done, user) {

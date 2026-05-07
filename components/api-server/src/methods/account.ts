@@ -9,21 +9,21 @@ const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 
 const errors = require('errors').factory;
-const commonFns = require('./helpers/commonFunctions');
-const mailing = require('./helpers/mailing');
-const methodsSchema = require('../schema/accountMethods');
+const commonFns = require('./helpers/commonFunctions.ts');
+const mailing = require('./helpers/mailing.ts');
+const methodsSchema = require('../schema/accountMethods.ts');
 
 const { getConfig } = require('@pryv/boiler');
 const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
 const { getPlatform } = require('platform');
 
-const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils');
+const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 
-const { ErrorMessages } = require('errors/src/ErrorMessages');
+const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
 const ErrorIds = require('errors').ErrorIds;
-const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users');
-const accountStreams = require('business/src/system-streams');
+const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users/index.ts');
+const accountStreams = require('business/src/system-streams/index.ts');
 
 /**
  * @param api

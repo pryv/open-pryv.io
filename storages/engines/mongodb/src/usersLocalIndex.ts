@@ -15,7 +15,7 @@ class DBIndex {
   id4nameCollection;
 
   async init () {
-    const { _internals } = require('./_internals');
+    const { _internals } = require('./_internals.ts');
     const db = _internals.database;
     this.id4nameCollection = await db.getCollection({
       name: 'id4name',

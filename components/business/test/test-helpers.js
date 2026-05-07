@@ -11,5 +11,5 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const superagent = require('superagent');
 const request = require('supertest');
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 export { assert, superagent, request };

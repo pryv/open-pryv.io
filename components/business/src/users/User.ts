@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { createId: cuid } = require('@paralleldrive/cuid2');
-const accountStreams = require('business/src/system-streams');
+const accountStreams = require('business/src/system-streams/index.ts');
 
 function pick (obj, keys) {
   const out = {};

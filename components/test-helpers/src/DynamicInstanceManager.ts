@@ -22,7 +22,7 @@ const temp = require('temp');
 const util = require('util');
 
 const { getLogger } = require('@pryv/boiler');
-const portAllocator = require('./portAllocator');
+const portAllocator = require('./portAllocator.ts');
 
 export default DynamicInstanceManager;
 export { DynamicInstanceManager };

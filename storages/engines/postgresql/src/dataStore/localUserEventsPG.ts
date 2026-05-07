@@ -12,10 +12,10 @@ const { Readable } = require('stream');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const ds = require('@pryv/datastore');
 const errors = ds.errors;
-const { DatabasePG } = require('../DatabasePG');
+const { DatabasePG } = require('../DatabasePG.ts');
 const timestamp = require('unix-timestamp');
-const { DeletionModesFields } = require('../../../../shared/DeletionModesFields');
-const { localStoreEventQueries } = require('../../../../shared/localStoreEventQueries');
+const { DeletionModesFields } = require('../../../../shared/DeletionModesFields.ts');
+const { localStoreEventQueries } = require('../../../../shared/localStoreEventQueries.ts');
 
 const COL_MAP: Record<string, string> = {
   headId: 'head_id',

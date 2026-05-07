@@ -7,16 +7,16 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 // Always require application first to be sure boiler is initialized
-const { getApplication } = require('api-server/src/application');
+const { getApplication } = require('api-server/src/application.ts');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const { testMessaging } = require('messages');
 const { pubsub } = require('messages');
-const { getUsersRepository } = require('business/src/users');
+const { getUsersRepository } = require('business/src/users/index.ts');
 const { getLogger, getConfig } = require('@pryv/boiler');
-const { getAPIVersion } = require('middleware/src/project_version');
-const { WebhooksService } = require('webhooks/src/service');
+const { getAPIVersion } = require('middleware/src/project_version.ts');
+const { WebhooksService } = require('webhooks/src/service.ts');
 let app;
 
 /**
@@ -99,22 +99,22 @@ class Server {
    * Requires and registers all API methods.
    */
   async registerApiMethods () {
-    await require('./methods/system').default(app.systemAPI, app.api);
-    await require('./methods/utility').default(app.api);
-    await require('./methods/auth/login').default(app.api);
-    await require('./methods/auth/register').default(app.api);
-    await require('./methods/auth/delete').default(app.api);
-    await require('./methods/mfa').default(app.api);
-    await require('./methods/accesses').default(app.api);
-    require('./methods/service').default(app.api);
-    await require('./methods/webhooks').default(app.api);
-    await require('./methods/trackingFunctions').default(app.api);
-    await require('./methods/account').default(app.api);
-    await require('./methods/profile').default(app.api);
-    await require('./methods/streams').default(app.api);
-    await require('./methods/events').default(app.api);
+    await require('./methods/system.ts').default(app.systemAPI, app.api);
+    await require('./methods/utility.ts').default(app.api);
+    await require('./methods/auth/login.ts').default(app.api);
+    await require('./methods/auth/register.ts').default(app.api);
+    await require('./methods/auth/delete.ts').default(app.api);
+    await require('./methods/mfa.ts').default(app.api);
+    await require('./methods/accesses.ts').default(app.api);
+    require('./methods/service.ts').default(app.api);
+    await require('./methods/webhooks.ts').default(app.api);
+    await require('./methods/trackingFunctions.ts').default(app.api);
+    await require('./methods/account.ts').default(app.api);
+    await require('./methods/profile.ts').default(app.api);
+    await require('./methods/streams.ts').default(app.api);
+    await require('./methods/events.ts').default(app.api);
     if (this.isAuditActive) {
-      require('audit/src/methods/audit-logs').default(app.api);
+      require('audit/src/methods/audit-logs.ts').default(app.api);
     }
     this.logger.debug('api methods registered');
   }
@@ -125,7 +125,7 @@ class Server {
   async setupSocketIO (server) {
     const api = app.api;
     const customAuthStepFn = app.getCustomAuthFunction('server.js');
-    const socketIOsetup = require('./socket-io').default;
+    const socketIOsetup = require('./socket-io/index.ts').default;
     await socketIOsetup(server, api, customAuthStepFn);
     this.logger.debug('socket io setup done');
   }

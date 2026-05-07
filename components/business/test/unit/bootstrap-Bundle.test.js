@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const Bundle = require('../../src/bootstrap/Bundle');
+const Bundle = require('../../src/bootstrap/Bundle.ts');
 
 function validInput (overrides = {}) {
   const base = {

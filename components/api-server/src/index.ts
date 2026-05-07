@@ -7,5 +7,5 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 // Interface of api-server when used as a module for other parts.
-const validation = require('./schema/validation');
+const validation = require('./schema/validation.ts');
 export { validation };

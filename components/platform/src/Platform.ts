@@ -13,17 +13,17 @@ const crypto = require('crypto');
 
 const { getLogger, getConfig } = require('@pryv/boiler');
 const logger = getLogger('platform');
-const AtRestEncryption = require('business/src/acme/AtRestEncryption');
+const AtRestEncryption = require('business/src/acme/AtRestEncryption.ts');
 
 const errors = require('errors').factory;
-const { ErrorIds } = require('errors/src/ErrorIds');
-const { ErrorMessages } = require('errors/src/ErrorMessages');
+const { ErrorIds } = require('errors/src/ErrorIds.ts');
+const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
 
-const accountStreams = require('business/src/system-streams');
+const accountStreams = require('business/src/system-streams/index.ts');
 
-const getPlatformDB = require('./getPlatformDB').default;
+const getPlatformDB = require('./getPlatformDB.ts').default;
 
-const platformCheckIntegrity = require('./platformCheckIntegrity').default;
+const platformCheckIntegrity = require('./platformCheckIntegrity.ts').default;
 
 const reservedWords = new Set(require('./reserved-words.json').list);
 
@@ -480,7 +480,7 @@ class Platform {
     }
 
     // 3. Check username existence (lazy require to avoid circular dependency)
-    const { getUsersRepository } = require('business/src/users');
+    const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
     if (await usersRepository.usernameExists(username)) {
       // Gather other eventual uniqueness conflicts for a complete error

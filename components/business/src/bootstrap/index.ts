@@ -6,14 +6,14 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const ClusterCA = require('./ClusterCA').default;
-const Bundle = require('./Bundle');
-const BundleEncryption = require('./BundleEncryption');
-const TokenStore = require('./TokenStore').default;
-const DnsRegistration = require('./DnsRegistration');
-const cliOps = require('./cliOps');
-const ackHandler = require('./ackHandler');
-const applyBundle = require('./applyBundle');
-const consumer = require('./consumer');
+const ClusterCA = require('./ClusterCA.ts').default;
+const Bundle = require('./Bundle.ts');
+const BundleEncryption = require('./BundleEncryption.ts');
+const TokenStore = require('./TokenStore.ts').default;
+const DnsRegistration = require('./DnsRegistration.ts');
+const cliOps = require('./cliOps.ts');
+const ackHandler = require('./ackHandler.ts');
+const applyBundle = require('./applyBundle.ts');
+const consumer = require('./consumer.ts');
 
 export { ClusterCA, Bundle, BundleEncryption, TokenStore, DnsRegistration, cliOps, ackHandler, applyBundle, consumer };

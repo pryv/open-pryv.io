@@ -16,7 +16,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 
 /**
  * Receive host internals from the barrel.
@@ -32,7 +32,7 @@ function init (config: Record<string, any>, getLogger: (name: string) => any, in
 // -- FileStorage --------------------------------------------------------
 
 async function createFileStorage (_config: any, _engineInternals: any): Promise<any> {
-  const { EventFiles } = require('./EventLocalFiles');
+  const { EventFiles } = require('./EventLocalFiles.ts');
   return new EventFiles();
 }
 

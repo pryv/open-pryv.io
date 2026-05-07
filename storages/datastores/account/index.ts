@@ -16,7 +16,7 @@
  * Events map to account fields in userAccountStorage.
  *
  * Usage:
- *   const accountStore = require('storages/datastores/account');
+ *   const accountStore = require('storages/datastores/account/index.ts');
  *   mall.addStore(accountStore, { id: 'account', name: 'Account', settings: { streamTree } });
  *   // streamTree is the system streams array from config
  */
@@ -25,8 +25,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
-const AccountUserStreams = require('./AccountUserStreams');
-const AccountUserEvents = require('./AccountUserEvents');
+const AccountUserStreams = require('./AccountUserStreams.ts');
+const AccountUserEvents = require('./AccountUserEvents.ts');
 
 let userAccountStorage = null;
 let fieldStreamMap = null;

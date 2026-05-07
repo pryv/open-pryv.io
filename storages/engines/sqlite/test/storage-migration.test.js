@@ -17,11 +17,11 @@ const setUserBasePathTestOnly = require('../../../test/helpers').userLocalDirect
 const path = require('path');
 const { copy, pathExists } = require('fs-extra');
 const cuid = require('cuid');
-const migrate0to1 = require('storages/engines/sqlite/src/userSQLite/migrations/1').migrateUserDB;
-const { UserDatabase } = require('storages/engines/sqlite/src/userSQLite/UserDatabase');
+const migrate0to1 = require('storages/engines/sqlite/src/userSQLite/migrations/1.ts').migrateUserDB;
+const { UserDatabase } = require('storages/engines/sqlite/src/userSQLite/UserDatabase.ts');
 const os = require('os');
 const { getLogger } = require('../../../test/helpers');
-const { SqliteStorage: Storage } = require('storages/engines/sqlite/src/userSQLite/Storage');
+const { SqliteStorage: Storage } = require('storages/engines/sqlite/src/userSQLite/Storage.ts');
 
 describe('[SQLM] SQLite user-centric storage migration', () => {
   let logger;

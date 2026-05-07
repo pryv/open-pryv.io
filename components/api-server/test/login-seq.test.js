@@ -21,7 +21,7 @@ const server = helpers.dependencies.instanceManager;
 const validation = helpers.validation;
 const ErrorIds = require('errors').ErrorIds;
 const testData = helpers.dynData({ prefix: 'login' });
-const { UserRepositoryOptions } = require('business/src/users');
+const { UserRepositoryOptions } = require('business/src/users/index.ts');
 const { getUserAccountStorage } = require('storage');
 const encryption = require('utils').encryption;
 

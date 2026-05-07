@@ -14,7 +14,7 @@ require('winston-syslog').Syslog; // Exposes `winston.transports.Syslog` (ugly, 
 const { getConfig, getLogger } = require('@pryv/boiler');
 const logger = getLogger('audit:syslog');
 
-const templates = require('./templating');
+const templates = require('./templating.ts');
 
 /**
  * Supported messages are:

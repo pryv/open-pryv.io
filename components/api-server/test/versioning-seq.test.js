@@ -16,10 +16,10 @@ const assert = require('node:assert');
 const helpers = require('./helpers');
 const server = helpers.dependencies.instanceManager;
 const validation = helpers.validation;
-const eventsMethodsSchema = require('../src/schema/eventsMethods');
-const streamsMethodsSchema = require('../src/schema/streamsMethods');
+const eventsMethodsSchema = require('../src/schema/eventsMethods.ts');
+const streamsMethodsSchema = require('../src/schema/streamsMethods.ts');
 const testData = helpers.dynData({ prefix: 'vers' });
-const { addCustomerPrefixToStreamId } = require('test-helpers/src/systemStreamFilters');
+const { addCustomerPrefixToStreamId } = require('test-helpers/src/systemStreamFilters.ts');
 const { integrity } = require('business');
 const { getMall } = require('mall');
 

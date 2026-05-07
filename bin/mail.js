@@ -191,7 +191,7 @@ async function runSendTest (platformDB, args) {
   const from = config.get('services:email:from');
   if (!smtp || !smtp.host) throw new Error('send-test: services.email.smtp.host is required in config');
 
-  const mail = require('../components/mail/src');
+  const mail = require('../components/mail/src/index.ts');
   await mail.init({
     getAllMailTemplates: platformDB.getAllMailTemplates.bind(platformDB),
     smtp,

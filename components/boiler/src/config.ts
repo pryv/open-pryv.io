@@ -28,7 +28,7 @@ const fs = require('fs');
 const path = require('path');
 
 const nconf = require('nconf');
-nconf.formats.yaml = require('./lib/nconf-yaml');
+nconf.formats.yaml = require('./lib/nconf-yaml.ts');
 
 /**
  * Default values for Logger

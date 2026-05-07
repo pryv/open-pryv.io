@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const loadAccessMiddleware = require('../../src/loadAccess').default;
+const loadAccessMiddleware = require('../../src/loadAccess.ts').default;
 const assert = require('node:assert');
 const { promisify } = require('util');
 

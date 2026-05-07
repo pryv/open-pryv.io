@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
-const accountStreams = require('../system-streams');
+const accountStreams = require('../system-streams/index.ts');
 const timestamp = require('unix-timestamp');
 
 /**
@@ -37,7 +37,7 @@ class RestoreOrchestrator {
 
   async init () {
     const { getStorageLayer, getUsersLocalIndex, getUserAccountStorage } = require('storage');
-    const { getEventFiles } = require('storage/src/eventFiles/getEventFiles');
+    const { getEventFiles } = require('storage/src/eventFiles/getEventFiles.ts');
     const storages = require('storages');
     this.storageLayer = await getStorageLayer();
     this.usersLocalIndex = await getUsersLocalIndex();

@@ -52,7 +52,7 @@ if (version == null) {
 (async () => {
   let hasErr = false;
   await getConfig();
-  const testData = require('../src/data');
+  const testData = require('../src/data.ts');
   try {
     await fromCallback(cb => testData.dumpCurrent(mongoFolder, version, cb));
   } catch (err) {

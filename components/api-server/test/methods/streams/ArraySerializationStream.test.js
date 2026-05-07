@@ -8,8 +8,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-require('test-helpers/src/api-server-tests-config');
-const ArraySerializationStream = require('../../../src/methods/streams/ArraySerializationStream').default;
+require('test-helpers/src/api-server-tests-config.ts');
+const ArraySerializationStream = require('../../../src/methods/streams/ArraySerializationStream.ts').default;
 const Writable = require('stream').Writable;
 const inherits = require('util').inherits;
 const assert = require('node:assert');

@@ -12,30 +12,30 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const ErrorIds = require('errors').ErrorIds;
-const Action = require('../../src/schema/Action');
+const Action = require('../../src/schema/Action.ts');
 const encryption = require('utils').encryption;
 const { jsonValidator } = require('utils');
 const validator = jsonValidator();
 const assert = require('node:assert');
 const util = require('util');
 const _ = require('lodash');
-const accountStreams = require('business/src/system-streams');
-const { removeSystemEvents, removeSystemStreams, separateSystemEvents } = require('test-helpers/src/systemStreamFilters');
+const accountStreams = require('business/src/system-streams/index.ts');
+const { removeSystemEvents, removeSystemStreams, separateSystemEvents } = require('test-helpers/src/systemStreamFilters.ts');
 const { integrity } = require('business');
 
 /**
  * Expose common JSON schemas.
  */
 export const schemas = {
-  access: require('../../src/schema/access').default,
-  event: require('../../src/schema/event').default,
-  stream: require('../../src/schema/stream').default,
-  user: require('../../src/schema/user').default,
+  access: require('../../src/schema/access.ts').default,
+  event: require('../../src/schema/event.ts').default,
+  stream: require('../../src/schema/stream.ts').default,
+  user: require('../../src/schema/user.ts').default,
   errorResult: {
     type: 'object',
     additionalProperties: false,
     properties: {
-      error: require('../../src/schema/methodError'),
+      error: require('../../src/schema/methodError.ts'),
       meta: { type: 'object' }
     },
     required: ['error', 'meta']
@@ -424,7 +424,7 @@ export const removeAccountStreams = function (streams) {
 // TODO: cleanup this mess, we shouldn't have data creation logic in "validation", nor these `require()` mid-file
 export const addStoreStreams = async function (streams, storesId, atTheEnd) {
   const { getMall } = require('mall');
-  const streamsUtils = require('mall/src/helpers/streamsUtils');
+  const streamsUtils = require('mall/src/helpers/streamsUtils.ts');
 
   // -- ADD stores
   const mall = await getMall();
@@ -444,7 +444,7 @@ export const addStoreStreams = async function (streams, storesId, atTheEnd) {
   return streams;
 
   function isShown (storeId) {
-    const storeDataUtils = require('mall/src/helpers/storeDataUtils');
+    const storeDataUtils = require('mall/src/helpers/storeDataUtils.ts');
     // Passthrough stores (local, account) don't have pseudo-root streams
     if (storeDataUtils.isPassthroughStore(storeId)) return false;
     if (storesId == null) return true;

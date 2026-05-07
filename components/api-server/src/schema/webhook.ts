@@ -10,8 +10,8 @@ const require = createRequire(import.meta.url);
  * JSON Schema specification for Webhooks.
  */
 
-const Action = require('./Action');
-const helpers = require('./helpers');
+const Action = require('./Action.ts');
+const helpers = require('./helpers.ts');
 const object = helpers.object;
 const string = helpers.string;
 const number = helpers.number;

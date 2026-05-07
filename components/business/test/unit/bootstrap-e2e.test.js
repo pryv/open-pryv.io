@@ -30,10 +30,10 @@ const os = require('node:os');
 const http = require('node:http');
 const { execFileSync } = require('node:child_process');
 
-const TokenStore = require('../../src/bootstrap/TokenStore').default;
-const cliOps = require('../../src/bootstrap/cliOps');
-const consumer = require('../../src/bootstrap/consumer');
-const ackHandler = require('../../src/bootstrap/ackHandler');
+const TokenStore = require('../../src/bootstrap/TokenStore.ts').default;
+const cliOps = require('../../src/bootstrap/cliOps.ts');
+const consumer = require('../../src/bootstrap/consumer.ts');
+const ackHandler = require('../../src/bootstrap/ackHandler.ts');
 
 function makeFakeDB () {
   const cores = new Map();

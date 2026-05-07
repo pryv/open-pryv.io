@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { BaseStoragePG } = require('./BaseStoragePG');
+const { BaseStoragePG } = require('./BaseStoragePG.ts');
 
 /**
  * PostgreSQL persistence for profile sets.

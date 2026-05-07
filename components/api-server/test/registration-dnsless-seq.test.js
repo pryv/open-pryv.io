@@ -13,14 +13,14 @@ const charlatan = require('charlatan');
 const { promisify } = require('util');
 const cuid = require('cuid');
 
-const { getApplication } = require('api-server/src/application');
+const { getApplication } = require('api-server/src/application.ts');
 const { getConfig } = require('@pryv/boiler');
-const { getUsersRepository, User } = require('business/src/users');
+const { getUsersRepository, User } = require('business/src/users/index.ts');
 const { databaseFixture } = require('test-helpers');
 const { produceStorageConnection } = require('api-server/test/test-helpers');
 const { pubsub } = require('messages');
-const { USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH } = require('api-server/src/schema/helpers');
-const { ErrorIds } = require('errors/src/ErrorIds');
+const { USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH } = require('api-server/src/schema/helpers.ts');
+const { ErrorIds } = require('errors/src/ErrorIds.ts');
 const { ApiEndpoint } = require('utils');
 
 describe('[BMM2] registration: DNS-less', () => {
@@ -46,7 +46,7 @@ describe('[BMM2] registration: DNS-less', () => {
     app = getApplication(true);
     await app.initiate();
 
-    await require('api-server/src/methods/auth/register').default(app.api);
+    await require('api-server/src/methods/auth/register.ts').default(app.api);
 
     // get events for a small test of valid token
     // Initialize notifyTests dependency
@@ -55,7 +55,7 @@ describe('[BMM2] registration: DNS-less', () => {
       emit: (...args) => testMsgs.push(args)
     };
     pubsub.setTestNotifier(testNotifier);
-    await require('api-server/src/methods/events').default(app.api);
+    await require('api-server/src/methods/events.ts').default(app.api);
 
     request = supertest(app.expressApp);
   });

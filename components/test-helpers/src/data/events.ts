@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const streamsMod = require('./streams');
+const streamsMod = require('./streams.ts');
 const streams = streamsMod.default ?? streamsMod;
 const timestamp = require('unix-timestamp');
 const { integrity } = require('business');

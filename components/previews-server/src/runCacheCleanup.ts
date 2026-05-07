@@ -29,7 +29,7 @@ const { getConfigUnsafe, getLogger } = require('@pryv/boiler').init({
   }]
 });
 
-const Cache = require('./cache').default;
+const Cache = require('./cache.ts').default;
 const errorHandling = require('errors').errorHandling;
 
 const logger = getLogger('previews-cache-worker');

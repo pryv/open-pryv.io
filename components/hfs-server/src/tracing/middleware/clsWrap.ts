@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 
 // Express middleware that makes sure we have a continuation local storage
 // context for each express request.
-const cls = require('../cls').default;
+const cls = require('../cls.ts').default;
 /**
  * @param req
  * @param res

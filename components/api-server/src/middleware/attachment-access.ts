@@ -22,7 +22,7 @@ async function middlewareFactory () {
   // -- Audit
   isAuditActive = config.get('audit:active');
   if (isAuditActive) {
-    const throwIfMethodIsNotDeclared = require('audit/src/ApiMethods').throwIfMethodIsNotDeclared;
+    const throwIfMethodIsNotDeclared = require('audit/src/ApiMethods.ts').throwIfMethodIsNotDeclared;
     throwIfMethodIsNotDeclared('events.getAttachment');
     audit = require('audit').default;
   }

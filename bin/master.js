@@ -79,7 +79,7 @@ if (cluster.isPrimary) {
     });
 
     const { getConfig, getLogger } = require('@pryv/boiler');
-    const rqliteProcess = require('../storages/engines/rqlite/src/rqliteProcess');
+    const rqliteProcess = require('../storages/engines/rqlite/src/rqliteProcess.ts');
 
     const config = await getConfig();
     const logger = getLogger('master');
@@ -117,7 +117,7 @@ if (cluster.isPrimary) {
     // downstream step (migrations, DNS server, Let's Encrypt,
     // observability) gets platform/DB handles via `require('storages')`
     // and must not be ordering-dependent on any optional block.
-    await require('../storages').init(config);
+    await require('../storages/index.ts').init(config);
 
     // Run pending schema migrations before starting services.
     // Each migration-capable engine (see storages/interfaces/migrations/) gets
@@ -126,7 +126,7 @@ if (cluster.isPrimary) {
     const autoRunMigrations = config.get('migrations:autoRunOnStart') ?? true;
     if (autoRunMigrations) {
       log('Running pending schema migrations...');
-      const { createMigrationRunner } = require('../storages/interfaces/migrations');
+      const { createMigrationRunner } = require('../storages/interfaces/migrations/index.ts');
       const runner = await createMigrationRunner({ logger: getLogger('migrations') });
       const applied = await runner.runAll();
       if (applied.length === 0) {
@@ -146,8 +146,8 @@ if (cluster.isPrimary) {
     // CLI / admin API that ship later own the edit path).
     if (config.get('services:email:method') === 'in-process') {
       try {
-        const platformDB = require('../storages').platformDB;
-        const { seedIfEmpty } = require('../components/mail/src/TemplateSeeder');
+        const platformDB = require('../storages/index.ts').platformDB;
+        const { seedIfEmpty } = require('../components/mail/src/TemplateSeeder.ts');
         const result = await seedIfEmpty({
           platformDB,
           templatesRootDir: config.get('services:email:templatesRootDir') || null
@@ -162,7 +162,7 @@ if (cluster.isPrimary) {
     const keepAlive = setInterval(() => {}, 60000);
 
     // Start TCP pub/sub broker in master (workers connect as clients)
-    const tcpPubsub = require('../components/messages/src/tcp_pubsub');
+    const tcpPubsub = require('../components/messages/src/tcp_pubsub.ts');
     await tcpPubsub.init();
     log('TCP pub/sub broker started');
 
@@ -170,15 +170,15 @@ if (cluster.isPrimary) {
     // request/response IPC with workers. Used for state that must be
     // shared across workers but doesn't need persistence (single-core
     // scope; cross-core state belongs in PlatformDB instead).
-    require('../components/messages/src/cluster_kv').masterStart({
+    require('../components/messages/src/cluster_kv.ts').masterStart({
       log: (m) => log('[cluster_kv] ' + m)
     });
 
     // Start DNS server if configured
     let dnsServer = null;
     if (config.get('dns:active')) {
-      const { createDnsServer } = require('../components/dns-server/src');
-      const { getPlatform } = require('../components/platform/src');
+      const { createDnsServer } = require('../components/dns-server/src/index.ts');
+      const { getPlatform } = require('../components/platform/src/index.ts');
       const platform = await getPlatform();
       dnsServer = createDnsServer({
         config,
@@ -206,7 +206,7 @@ if (cluster.isPrimary) {
       // paths so workers can boot HTTPS; the real cert hot-swaps via
       // setSecureContext when ACME completes.
       try {
-        const { ensure: ensurePlaceholder } = require('business/src/acme/selfSignedPlaceholder');
+        const { ensure: ensurePlaceholder } = require('business/src/acme/selfSignedPlaceholder.ts');
         const placeholder = ensurePlaceholder({ config, log });
         if (placeholder.written) {
           log(`[acme] placeholder cert in place at ${placeholder.certFile}`);
@@ -216,9 +216,9 @@ if (cluster.isPrimary) {
         if (process.env.DEBUG) console.error(err.stack);
       }
       try {
-        const { getPlatform } = require('../components/platform/src');
+        const { getPlatform } = require('../components/platform/src/index.ts');
         const platform = await getPlatform();
-        const { buildAcmeOrchestrator } = require('business/src/acme');
+        const { buildAcmeOrchestrator } = require('business/src/acme/index.ts');
         const atRestKeyB64 = config.get('letsEncrypt:atRestKey');
         if (!atRestKeyB64 || atRestKeyB64 === 'REPLACE ME') {
           throw new Error('letsEncrypt.atRestKey is required when letsEncrypt.enabled=true (generate with `node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"`)');
@@ -229,7 +229,7 @@ if (cluster.isPrimary) {
         }
         acmeOrchestrator = buildAcmeOrchestrator({
           config,
-          platformDB: platform._db || require('../storages').platformDB,
+          platformDB: platform._db || require('../storages/index.ts').platformDB,
           atRestKey,
           dnsServer,
           onRotate: async (certPath, keyPath, hostname) => {
@@ -270,10 +270,10 @@ if (cluster.isPrimary) {
     // no-ops.
     let observabilityEnv = {};
     try {
-      const { getPlatform } = require('../components/platform/src');
+      const { getPlatform } = require('../components/platform/src/index.ts');
       const platform = await getPlatform();
       const obs = await platform.getObservabilityConfig();
-      const { buildObservabilityEnv } = require('business/src/observability/envBuilder');
+      const { buildObservabilityEnv } = require('business/src/observability/envBuilder.ts');
       observabilityEnv = buildObservabilityEnv(obs);
       if (Object.keys(observabilityEnv).length > 0) {
         log(`[observability] provider=newrelic host=${obs.hostname} logLevel=${obs.logLevel}`);
@@ -510,7 +510,7 @@ function parseBootstrapArgs (argv) {
 }
 
 async function runBootstrap (args) {
-  const { consumer } = require('business/src/bootstrap');
+  const { consumer } = require('business/src/bootstrap/index.ts');
   console.log('[bootstrap] starting --bootstrap from ' + args.bundlePath);
   const result = await consumer.consume({
     bundlePath: args.bundlePath,

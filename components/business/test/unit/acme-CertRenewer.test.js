@@ -23,8 +23,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const AtRestEncryption = require('../../src/acme/AtRestEncryption');
-const { CertRenewer, PlatformDBDnsWriter, acmeChallengeName } = require('../../src/acme/CertRenewer');
+const AtRestEncryption = require('../../src/acme/AtRestEncryption.ts');
+const { CertRenewer, PlatformDBDnsWriter, acmeChallengeName } = require('../../src/acme/CertRenewer.ts');
 
 function makeFakePlatformDB () {
   const kv = new Map(); // key → value (mirrors rqlite's keyValue table in-memory)

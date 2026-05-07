@@ -14,8 +14,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { Config } = require('./config');
-const logging = require('./logging');
+const { Config } = require('./config.ts');
+const logging = require('./logging.ts');
 
 /** @type {Config} */
 const config = new Config();

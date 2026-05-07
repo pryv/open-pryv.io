@@ -8,10 +8,10 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const testMessaging = require('./test_messaging');
-const pubsub = require('./pubsub').default;
+const testMessaging = require('./test_messaging.ts');
+const pubsub = require('./pubsub.ts').default;
 
-const constants = require('./constants');
+const constants = require('./constants.ts');
 
 export { testMessaging, pubsub };
 export const SERVER_READY = constants.SERVER_READY;

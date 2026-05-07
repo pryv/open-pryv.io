@@ -9,8 +9,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const helpers = require('../../../test/helpers');
-const { DatabasePG } = require('../src/DatabasePG');
-const { AuditStoragePG } = require('../src/AuditStoragePG');
+const { DatabasePG } = require('../src/DatabasePG.ts');
+const { AuditStoragePG } = require('../src/AuditStoragePG.ts');
 const conformanceTests = require('storages/interfaces/auditStorage/conformance/AuditStorage.test');
 
 describe('[PGAC] PostgreSQL AuditStorage conformance', function () {
@@ -26,7 +26,7 @@ describe('[PGAC] PostgreSQL AuditStorage conformance', function () {
       db = new DatabasePG(helpers.state.config);
       await db.waitForConnection();
       // Set up getLogger on _internals for AuditStoragePG
-      const { _internals } = require('../src/_internals');
+      const { _internals } = require('../src/_internals.ts');
       if (!_internals.getLogger) {
         _internals.set('getLogger', helpers.getLogger);
       }

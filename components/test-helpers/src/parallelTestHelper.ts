@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
  * Helper for writing parallel-safe tests with isolated data
  *
  * Usage:
- *   const { createTestContext } = require('test-helpers/src/parallelTestHelper');
+ *   const { createTestContext } = require('test-helpers/src/parallelTestHelper.ts');
  *
  *   describe('My tests', function () {
  *     const ctx = createTestContext();
@@ -39,7 +39,7 @@ const require = createRequire(import.meta.url);
 
 const cuid = require('cuid');
 const storage = require('storage');
-const databaseFixture = require('./databaseFixture').default;
+const databaseFixture = require('./databaseFixture.ts').default;
 
 /**
  * Creates an isolated test context for parallel-safe testing
@@ -87,7 +87,7 @@ function createTestContext (options: any = {}) {
 
       // If server options provided, start a dynamic server (Pattern A)
       if (serverOptions) {
-        const DynamicInstanceManager = require('./DynamicInstanceManager');
+        const DynamicInstanceManager = require('./DynamicInstanceManager.ts');
         const { getConfig } = require('@pryv/boiler');
 
         const config = await getConfig();

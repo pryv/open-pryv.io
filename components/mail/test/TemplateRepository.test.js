@@ -9,9 +9,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 
-const { TemplateRepository } = require('../src/TemplateRepository');
+const { TemplateRepository } = require('../src/TemplateRepository.ts');
 
 function existsFn (availablePaths) {
   const set = new Set(availablePaths);

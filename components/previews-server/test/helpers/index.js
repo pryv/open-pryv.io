@@ -24,7 +24,7 @@ const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 process.env.NODE_ENV = 'test';
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 
 const tested = require('test-helpers');
 const { getConfigUnsafe } = require('@pryv/boiler');

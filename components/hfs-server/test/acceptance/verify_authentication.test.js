@@ -9,18 +9,18 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 // Tests that exercise auth checks that have been disabled in other tests.
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 const assert = require('node:assert');
 const storage = require('storage');
 const { databaseFixture } = require('test-helpers');
-const { MetadataLoader, MetadataCache } = require('../../src/metadata_cache');
+const { MetadataLoader, MetadataCache } = require('../../src/metadata_cache.ts');
 const { getConfig, getLogger } = require('@pryv/boiler');
 const { getMall } = require('mall');
 
 describe('[METL] Metadata Loader', function () {
   let storageLayer, pryv, mall;
   before(async function () {
-    await require('business/src/system-streams').init();
+    await require('business/src/system-streams/index.ts').init();
     storageLayer = await storage.getStorageLayer();
     pryv = databaseFixture(storageLayer);
     mall = await getMall();

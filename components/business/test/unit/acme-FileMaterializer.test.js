@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { FileMaterializer, runRotateScript } = require('../../src/acme/FileMaterializer');
+const { FileMaterializer, runRotateScript } = require('../../src/acme/FileMaterializer.ts');
 
 /** Stubby CertRenewer returning a scripted sequence of getCertificate results. */
 function makeFakeRenewer (sequence) {

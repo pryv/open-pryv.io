@@ -9,7 +9,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { getUsersRepository, UserRepositoryOptions, User } = require('business/src/users');
+const { getUsersRepository, UserRepositoryOptions, User } = require('business/src/users/index.ts');
 const { getMall } = require('mall');
 
 class Size {

@@ -9,7 +9,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const platform = require('./Platform').default;
+const platform = require('./Platform.ts').default;
 
 async function getPlatform () {
   return await platform.init();

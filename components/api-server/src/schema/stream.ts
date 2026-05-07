@@ -10,8 +10,8 @@ const require = createRequire(import.meta.url);
  * JSON Schema specification for event streams.
  */
 
-const Action = require('./Action');
-const helpers = require('./helpers');
+const Action = require('./Action.ts');
+const helpers = require('./helpers.ts');
 const object = helpers.object;
 const array = helpers.array;
 const string = helpers.string;

@@ -7,16 +7,16 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
-const commonFns = require('api-server/src/methods/helpers/commonFunctions');
+const commonFns = require('api-server/src/methods/helpers/commonFunctions.ts');
 const { ApiEndpoint } = require('utils');
 const errors = require('errors').factory;
-const methodsSchema = require('api-server/src/schema/authMethods');
-const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users');
+const methodsSchema = require('api-server/src/schema/authMethods.ts');
+const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users/index.ts');
 const { getStorageLayer } = require('storage');
 const { getConfig } = require('@pryv/boiler');
-const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils');
+const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const timestamp = require('unix-timestamp');
-const { getMFAService, getMFASessionStore, Profile: MFAProfile } = require('business/src/mfa');
+const { getMFAService, getMFASessionStore, Profile: MFAProfile } = require('business/src/mfa/index.ts');
 
 const MFA_PROFILE_ID = 'private';
 

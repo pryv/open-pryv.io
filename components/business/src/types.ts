@@ -9,10 +9,10 @@ const require = createRequire(import.meta.url);
 const fs = require('fs');
 const { deepMerge, fromCallback, jsonValidator } = require('utils');
 let defaultTypes = require('./types/event-types.default.json');
-const errors = require('./types/errors');
-const SeriesRowType = require('./types/series_row_type').default;
-const BasicType = require('./types/basic_type').default;
-const ComplexType = require('./types/complex_type').default;
+const errors = require('./types/errors.ts');
+const SeriesRowType = require('./types/series_row_type.ts').default;
+const BasicType = require('./types/basic_type.ts').default;
+const ComplexType = require('./types/complex_type.ts').default;
 const SERIES_PREFIX = 'series:';
 // Returns true if the name given refers to a series type. Currently this means
 // that the name starts with SERIES_PREFIX.

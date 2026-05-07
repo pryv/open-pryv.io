@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 
 const { Pool } = require('pg');
 const { setTimeout } = require('timers/promises');
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 
 /**
  * PostgreSQL connection wrapper with pooling.

@@ -6,8 +6,8 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const DataMatrix = require('./data_matrix').default;
-const { error, ParseFailure } = require('./errors');
+const DataMatrix = require('./data_matrix.ts').default;
+const { error, ParseFailure } = require('./errors.ts');
 // A `BatchRequest` is a collection of batch elements. Each of those in turn
 // will contain a series meta data descriptor and a data matrix to input into
 // that series.

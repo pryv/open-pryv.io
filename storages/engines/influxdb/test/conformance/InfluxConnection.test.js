@@ -18,7 +18,7 @@ const require = createRequire(import.meta.url);
  */
 export default function conformanceTests (getConnection) {
   const assert = require('node:assert');
-  const { validateSeriesConnection: validateInfluxConnection } = require('storages/interfaces/seriesStorage/SeriesConnection');
+  const { validateSeriesConnection: validateInfluxConnection } = require('storages/interfaces/seriesStorage/SeriesConnection.ts');
 
   const testDbName = 'pryv_test_conformance_influx';
 

@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const AtRestEncryption = require('../../src/acme/AtRestEncryption');
+const AtRestEncryption = require('../../src/acme/AtRestEncryption.ts');
 
 describe('[ATRENC] AtRestEncryption', () => {
   describe('deriveKey()', () => {

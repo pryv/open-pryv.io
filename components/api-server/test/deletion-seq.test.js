@@ -13,19 +13,19 @@ const path = require('path');
 const assert = require('node:assert');
 const supertest = require('supertest');
 const charlatan = require('charlatan');
-const { getApplication } = require('api-server/src/application');
-const SeriesRepository = require('business/src/series/repository').default;
-const DataMatrix = require('business/src/series/data_matrix').default;
+const { getApplication } = require('api-server/src/application.ts');
+const SeriesRepository = require('business/src/series/repository.ts').default;
+const DataMatrix = require('business/src/series/data_matrix.ts').default;
 const { getConfig } = require('@pryv/boiler');
-const { getUsersRepository } = require('business/src/users');
+const { getUsersRepository } = require('business/src/users/index.ts');
 const { databaseFixture } = require('test-helpers');
 const { produceStorageConnection, produceSeriesConnection } = require('api-server/test/test-helpers');
-const { removeSystemStreams } = require('test-helpers/src/systemStreamFilters');
+const { removeSystemStreams } = require('test-helpers/src/systemStreamFilters.ts');
 const { pubsub } = require('messages');
 const { promisify } = require('util');
 const { getMall } = require('mall');
 const cache = require('cache').default;
-const { MESSAGES } = require('cache/src/synchro');
+const { MESSAGES } = require('cache/src/synchro.ts');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 
@@ -49,18 +49,18 @@ describe('[PGTD] DELETE /users/:username', () => {
     isAuditActive = config.get('audit:active');
     app = getApplication();
     await app.initiate();
-    await require('api-server/src/methods/auth/delete').default(app.api);
+    await require('api-server/src/methods/auth/delete.ts').default(app.api);
     const testMsgs = [];
     const testNotifier = {
       emit: (...args) => testMsgs.push(args)
     };
     // needed even if not used
     pubsub.setTestNotifier(testNotifier);
-    await require('api-server/src/methods/events').default(app.api);
-    await require('api-server/src/methods/streams').default(app.api);
-    await require('api-server/src/methods/auth/login').default(app.api);
-    await require('api-server/src/methods/utility').default(app.api);
-    await require('api-server/src/methods/auth/register').default(app.api);
+    await require('api-server/src/methods/events.ts').default(app.api);
+    await require('api-server/src/methods/streams.ts').default(app.api);
+    await require('api-server/src/methods/auth/login.ts').default(app.api);
+    await require('api-server/src/methods/utility.ts').default(app.api);
+    await require('api-server/src/methods/auth/register.ts').default(app.api);
     request = supertest(app.expressApp);
     mongoFixtures = databaseFixture(await produceStorageConnection());
     await mongoFixtures.context.cleanEverything();

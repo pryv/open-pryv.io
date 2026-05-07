@@ -8,15 +8,15 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
-const commonFns = require('api-server/src/methods/helpers/commonFunctions');
-const methodsSchema = require('../schema/auditMethods');
-const eventsGetUtils = require('api-server/src/methods/helpers/eventsGetUtils');
-const { getStoreQueryFromParams, getStoreOptionsFromParams } = require('mall/src/helpers/eventsQueryUtils');
-const { localStorePrepareOptions, localStorePrepareQuery } = require('storage/src/localStoreEventQueries');
+const commonFns = require('api-server/src/methods/helpers/commonFunctions.ts');
+const methodsSchema = require('../schema/auditMethods.ts');
+const eventsGetUtils = require('api-server/src/methods/helpers/eventsGetUtils.ts');
+const { getStoreQueryFromParams, getStoreOptionsFromParams } = require('mall/src/helpers/eventsQueryUtils.ts');
+const { localStorePrepareOptions, localStorePrepareQuery } = require('storage/src/localStoreEventQueries.ts');
 
 const audit = require('audit').default;
 const auditStorage = audit.storage;
-const { ConvertEventFromStoreStream } = require('mall/src/helpers/eventsUtils');
+const { ConvertEventFromStoreStream } = require('mall/src/helpers/eventsUtils.ts');
 /**
  * @param api
  */

@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const superagent = require('superagent');
-const Application = require('../../src/application').default;
+const Application = require('../../src/application.ts').default;
 
 describe('[HFSV] Server', () => {
   const request = superagent;

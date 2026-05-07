@@ -9,9 +9,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 
-const { Template } = require('../src/Template');
+const { Template } = require('../src/Template.ts');
 
 describe('[MAILTMPL] Template', () => {
   it('[MTPL1] exists() returns true only when both subject.pug and html.pug exist', async () => {

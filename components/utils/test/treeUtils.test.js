@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const treeUtils = require('../src/treeUtils');
+const treeUtils = require('../src/treeUtils.ts');
 const assert = require('node:assert');
 
 describe('[TRUT] tree utils', function () {

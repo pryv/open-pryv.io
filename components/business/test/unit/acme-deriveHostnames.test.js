@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
-const { deriveHostnames } = require('../../src/acme/deriveHostnames');
+const { deriveHostnames } = require('../../src/acme/deriveHostnames.ts');
 
 function cfg (values) {
   return { get: (k) => values[k] };

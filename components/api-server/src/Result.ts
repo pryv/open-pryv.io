@@ -6,11 +6,11 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const commonMeta = require('./methods/helpers/setCommonMeta');
+const commonMeta = require('./methods/helpers/setCommonMeta.ts');
 const MultiStream = require('multistream');
-const DrainStream = require('./methods/streams/DrainStream').default;
-const ArraySerializationStream = require('./methods/streams/ArraySerializationStream').default;
-const SingleObjectSerializationStream = require('./methods/streams/SingleObjectSerializationStream').default;
+const DrainStream = require('./methods/streams/DrainStream.ts').default;
+const ArraySerializationStream = require('./methods/streams/ArraySerializationStream.ts').default;
+const SingleObjectSerializationStream = require('./methods/streams/SingleObjectSerializationStream.ts').default;
 
 const { Transform } = require('stream');
 

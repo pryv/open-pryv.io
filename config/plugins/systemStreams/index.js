@@ -7,8 +7,8 @@
 
 'use strict';
 
-const treeUtils = require('utils/src/treeUtils');
-const validation = require('api-server/src/schema/validation');
+const treeUtils = require('utils/src/treeUtils.ts');
+const validation = require('api-server/src/schema/validation.ts');
 const systemStreamSchema = require('./systemStreamSchema');
 
 const { defaults: dataStoreDefaults } = require('@pryv/datastore');

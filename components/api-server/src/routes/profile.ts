@@ -6,8 +6,8 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const methodCallback = require('./methodCallback').default;
-const Paths = require('./Paths');
+const methodCallback = require('./methodCallback.ts').default;
+const Paths = require('./Paths.ts');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 // Profile route handling.

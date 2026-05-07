@@ -6,11 +6,11 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const __ex_getUsersRepository = require('./repository').getUsersRepository;
+const __ex_getUsersRepository = require('./repository.ts').getUsersRepository;
 export { __ex_getUsersRepository as getUsersRepository };
-const __ex_UserRepositoryOptions = require('./UserRepositoryOptions');
+const __ex_UserRepositoryOptions = require('./UserRepositoryOptions.ts');
 export { __ex_UserRepositoryOptions as UserRepositoryOptions };
-const __ex_User = require('./User').default;
+const __ex_User = require('./User.ts').default;
 export { __ex_User as User };
-const __ex_getPasswordRules = require('./passwordRules').default;
+const __ex_getPasswordRules = require('./passwordRules.ts').default;
 export { __ex_getPasswordRules as getPasswordRules };

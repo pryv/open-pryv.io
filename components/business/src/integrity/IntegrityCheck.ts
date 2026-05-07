@@ -26,7 +26,7 @@ class IntegrityCheck {
   async init () {
     const { getStorageLayer } = require('storage');
     this.storageLayer = await getStorageLayer();
-    this.integrity = require('business/src/integrity').default;
+    this.integrity = require('business/src/integrity/index.ts').default;
     const { getLogger } = require('@pryv/boiler');
     this.logger = getLogger('integrity-check');
     return this;

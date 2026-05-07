@@ -29,8 +29,8 @@ const require = createRequire(import.meta.url);
 
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
-const methodCallback = require('./methodCallback').default;
-const Paths = require('./Paths');
+const methodCallback = require('./methodCallback.ts').default;
+const Paths = require('./Paths.ts');
 
 export default function (expressApp, app) {
   const api = app.api;

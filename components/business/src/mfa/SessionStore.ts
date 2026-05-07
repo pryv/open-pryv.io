@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { randomUUID: uuidv4 } = require('node:crypto');
-const Profile = require('./Profile').default;
+const Profile = require('./Profile.ts').default;
 
 /**
  * MFA session store, backed by `cluster_kv` (master-held in-memory map +
@@ -37,7 +37,7 @@ class SessionStore {
 
   constructor (ttlSeconds = 1800, opts: any = {}) {
     this.ttlMilliseconds = ttlSeconds * 1000;
-    const clusterKv = require('messages/src/cluster_kv');
+    const clusterKv = require('messages/src/cluster_kv.ts');
     this.kv = opts.kvClient || clusterKv.clientFor();
     this.namespace = opts.namespace || 'mfa-session/';
   }

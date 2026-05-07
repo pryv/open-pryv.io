@@ -9,10 +9,10 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const accountStreams = require('business/src/system-streams');
+const accountStreams = require('business/src/system-streams/index.ts');
 
 export default async function platformCheckIntegrity (platformWideDB) {
-  const { getUsersRepository } = require('business/src/users/repository'); // to avoid some circular import
+  const { getUsersRepository } = require('business/src/users/repository.ts'); // to avoid some circular import
 
   // --- platformDB
   const allEntries = await platformWideDB.getAllWithPrefix('user');

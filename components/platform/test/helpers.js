@@ -13,7 +13,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const base = require('test-helpers/src/helpers-base');
+const base = require('test-helpers/src/helpers-base.ts');
 
 base.init({
   methods: [] // Platform tests don't need API methods

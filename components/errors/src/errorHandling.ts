@@ -11,8 +11,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { APIError } = require('./APIError');
-const { ErrorIds } = require('./ErrorIds');
+const { APIError } = require('./APIError.ts');
+const { ErrorIds } = require('./ErrorIds.ts');
 const errorHandling: any = {};
 export { errorHandling };
 /**

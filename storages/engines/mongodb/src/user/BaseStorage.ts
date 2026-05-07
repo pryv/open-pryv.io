@@ -8,8 +8,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { fromCallback } = require('utils');
-const converters = require('./../converters');
-const { _internals } = require('../_internals');
+const converters = require('./../converters.ts');
+const { _internals } = require('../_internals.ts');
 const logger = _internals.lazyLogger('storage:base-storage');
 
 const BULKWRITE_BATCH_SIZE = 1000;

@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /* global assert, initTests, initCore, getNewFixture, charlatan, cuid, coreRequest  */
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 const { getConfig } = require('@pryv/boiler');
 
 describe('[MSTE] Stores Streams & Events', function () {

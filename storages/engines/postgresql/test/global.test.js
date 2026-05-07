@@ -18,7 +18,7 @@ if (engine !== 'postgresql') {
   before(async function () {
     await helpers.dependencies.init();
     // Set up getLogger on _internals so DatabasePG can create loggers
-    const { _internals } = require('../src/_internals');
+    const { _internals } = require('../src/_internals.ts');
     if (!_internals.getLogger) {
       _internals.set('getLogger', helpers.getLogger);
     }

@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 
 /**
  * PostgreSQL implementation of the InfluxConnection interface.

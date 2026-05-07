@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const serviceInfo = require('./service-info').default;
+const serviceInfo = require('./service-info.ts').default;
 
 const __ex_get = {
     params: null,

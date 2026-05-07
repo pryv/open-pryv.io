@@ -7,14 +7,14 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { getSyslog } = require('./syslog');
+const { getSyslog } = require('./syslog/index.ts');
 const { getConfig, getLogger } = require('@pryv/boiler');
 const logger = getLogger('audit');
-const CONSTANTS = require('./Constants').default;
-const validation = require('./validation');
-const { WITHOUT_USER_METHODS_MAP } = require('./ApiMethods');
-const AuditFilter = require('./AuditFilter').default;
-const { AuditAccessIds } = require('./MethodContextUtils');
+const CONSTANTS = require('./Constants.ts').default;
+const validation = require('./validation.ts');
+const { WITHOUT_USER_METHODS_MAP } = require('./ApiMethods.ts');
+const AuditFilter = require('./AuditFilter.ts').default;
+const { AuditAccessIds } = require('./MethodContextUtils.ts');
 const util = require('util');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');

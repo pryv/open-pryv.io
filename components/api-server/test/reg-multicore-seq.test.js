@@ -26,9 +26,9 @@ const cuid = require('cuid');
 const charlatan = require('charlatan');
 
 const { getConfig } = require('@pryv/boiler');
-const { getApplication } = require('api-server/src/application');
+const { getApplication } = require('api-server/src/application.ts');
 const { platform } = require('platform');
-const accessState = require('../src/routes/reg/accessState');
+const accessState = require('../src/routes/reg/accessState.ts');
 
 const DOMAIN = 'test-multicore.pryv.li';
 const CORE_A = 'core-a';
@@ -73,7 +73,7 @@ describe('[RGMC] register: multi-core', function () {
 
   after(async function () {
     // Clean up users created during multi-core tests
-    const { getUsersRepository } = require('business/src/users');
+    const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
     await usersRepository.deleteAll();
     // Restore PlatformDB to pre-test state (user entries only, no core entries)
@@ -190,7 +190,7 @@ describe('[RGMC] register: multi-core', function () {
 
       const app = getApplication(true);
       await app.initiate();
-      await require('../src/methods/auth/register').default(app.api);
+      await require('../src/methods/auth/register.ts').default(app.api);
       request = supertest(app.expressApp);
     });
 
@@ -284,11 +284,11 @@ describe('[RGMC] register: multi-core', function () {
 
       const app = getApplication(true);
       await app.initiate();
-      await require('../src/methods/auth/register').default(app.api);
+      await require('../src/methods/auth/register.ts').default(app.api);
       request = supertest(app.expressApp);
 
       // Seed user directly via usersRepository (avoid full HTTP registration)
-      const { getUsersRepository, User } = require('business/src/users');
+      const { getUsersRepository, User } = require('business/src/users/index.ts');
       const usersRepository = await getUsersRepository();
       testUser = 'mc02u' + cuid.slug().toLowerCase();
       const user = new User({
@@ -350,7 +350,7 @@ describe('[RGMC] register: multi-core', function () {
 
       const app = getApplication(true);
       await app.initiate();
-      await require('../src/methods/auth/register').default(app.api);
+      await require('../src/methods/auth/register.ts').default(app.api);
       request = supertest(app.expressApp);
     });
 
@@ -546,7 +546,7 @@ describe('[RGMC] register: multi-core', function () {
       const app = getApplication(true);
       await app.initiate();
       // Register system methods (not done by initiate — done by server.registerApiMethods)
-      await require('../src/methods/system').default(app.systemAPI, app.api);
+      await require('../src/methods/system.ts').default(app.systemAPI, app.api);
       request = supertest(app.expressApp);
     });
 
@@ -609,13 +609,13 @@ describe('[RGMC] register: multi-core', function () {
       request = supertest(app.expressApp);
       // Reset the lazy platform cache so the middleware uses the freshly
       // re-initialized singleton (multi-core mode).
-      require('middleware/src/checkUserCore')._resetPlatformCache();
+      require('middleware/src/checkUserCore.ts')._resetPlatformCache();
     });
 
     after(async function () {
       restoreSingleCore();
       // Restore the cached platform reference for subsequent test files.
-      require('middleware/src/checkUserCore')._resetPlatformCache();
+      require('middleware/src/checkUserCore.ts')._resetPlatformCache();
     });
 
     it('[MC09A] must return 421 wrong-core when user is hosted on a different core', async function () {
@@ -661,7 +661,7 @@ describe('[RGMC] register: multi-core', function () {
       const app = getApplication(true);
       await app.initiate();
       const scRequest = supertest(app.expressApp);
-      require('middleware/src/checkUserCore')._resetPlatformCache();
+      require('middleware/src/checkUserCore.ts')._resetPlatformCache();
       // Even if PlatformDB has the user mapped to CORE_B, single-core mode
       // must NOT return 421 — there is only one core.
       const username = 'mc09e-' + cuid.slug();
@@ -671,7 +671,7 @@ describe('[RGMC] register: multi-core', function () {
       // Restore multi-core for the rest of this describe block (after hook).
       await setupMultiCore(CORE_A);
       await seedCore(CORE_B, { hosting: 'us-east-1' });
-      require('middleware/src/checkUserCore')._resetPlatformCache();
+      require('middleware/src/checkUserCore.ts')._resetPlatformCache();
     });
   });
 
@@ -743,7 +743,7 @@ describe('[RGMC] register: multi-core', function () {
       const app = getApplication(true);
       await app.initiate();
       const request = supertest(app.expressApp);
-      require('middleware/src/checkUserCore')._resetPlatformCache();
+      require('middleware/src/checkUserCore.ts')._resetPlatformCache();
 
       const username = 'mc10c-' + cuid.slug();
       await getPlatformDB().setUserCore(username, CORE_B);
@@ -752,7 +752,7 @@ describe('[RGMC] register: multi-core', function () {
       assert.strictEqual(res.status, 421);
       assert.strictEqual(res.body.error.coreUrl, explicitUrl + '/');
 
-      require('middleware/src/checkUserCore')._resetPlatformCache();
+      require('middleware/src/checkUserCore.ts')._resetPlatformCache();
     });
   });
 });

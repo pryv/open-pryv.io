@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const helpers = require('./helpers');
+const helpers = require('./helpers.ts');
 
 /**
  * JSON Schema specification for item deletions.

@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const { pipeline } = require('stream/promises');
-const { createBackupWriter, createUserBackupWriter } = require('./BackupWriter');
+const { createBackupWriter, createUserBackupWriter } = require('./BackupWriter.ts');
 
 const DEFAULT_MAX_CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB (output file size)
 

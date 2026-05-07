@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('chai').assert;
 
-const Profile = require('../../../src/mfa/Profile').default;
+const Profile = require('../../../src/mfa/Profile.ts').default;
 
 describe('[MFAP] mfa/Profile', () => {
   it('[MP1A] is inactive when content is empty', () => {

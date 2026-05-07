@@ -18,7 +18,7 @@ const superagent = require('superagent'); // for basic auth
 require('./test-helpers');
 const helpers = require('./helpers');
 const ErrorIds = require('errors').ErrorIds;
-const methodsSchema = require('../src/schema/generalMethods');
+const methodsSchema = require('../src/schema/generalMethods.ts');
 const validation = helpers.validation;
 
 const { databaseFixture } = require('test-helpers');

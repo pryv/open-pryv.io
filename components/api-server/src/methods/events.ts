@@ -9,22 +9,22 @@ const require = createRequire(import.meta.url);
 const utils = require('utils');
 const errors = require('errors').factory;
 const fs = require('fs');
-const commonFns = require('./helpers/commonFunctions');
-const methodsSchema = require('../schema/eventsMethods');
-const eventSchema = require('../schema/event').default;
+const commonFns = require('./helpers/commonFunctions.ts');
+const methodsSchema = require('../schema/eventsMethods.ts');
+const eventSchema = require('../schema/event.ts').default;
 const timestamp = require('unix-timestamp');
 
 const { getMall, storeDataUtils } = require('mall');
-const accountStreams = require('business/src/system-streams');
-const { getUsersRepository } = require('business/src/users');
-const { ErrorIds } = require('errors/src/ErrorIds');
-const { ErrorMessages } = require('errors/src/ErrorMessages');
-const { APIError } = require('errors/src/APIError');
+const accountStreams = require('business/src/system-streams/index.ts');
+const { getUsersRepository } = require('business/src/users/index.ts');
+const { ErrorIds } = require('errors/src/ErrorIds.ts');
+const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
+const { APIError } = require('errors/src/APIError.ts');
 const assert = require('assert');
 
-const eventsGetUtils = require('./helpers/eventsGetUtils');
+const eventsGetUtils = require('./helpers/eventsGetUtils.ts');
 
-const { getAPIVersion } = require('middleware/src/project_version');
+const { getAPIVersion } = require('middleware/src/project_version.ts');
 
 const { TypeRepository, isSeriesType } = require('business').types;
 
@@ -33,7 +33,7 @@ const { getPlatform } = require('platform');
 
 const { pubsub } = require('messages');
 
-const CleanDeletedEventsStream = require('./streams/CleanDeletedEventsStream').default;
+const CleanDeletedEventsStream = require('./streams/CleanDeletedEventsStream.ts').default;
 
 const { integrity } = require('business');
 

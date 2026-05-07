@@ -34,9 +34,9 @@ const cuid = require('cuid');
 
 const { getConfig } = require('@pryv/boiler');
 const { platform } = require('platform');
-const observability = require('business/src/observability');
-const logForwarder = require('business/src/observability/logForwarder');
-const { buildObservabilityEnv } = require('business/src/observability/envBuilder');
+const observability = require('business/src/observability/index.ts');
+const logForwarder = require('business/src/observability/logForwarder.ts');
+const { buildObservabilityEnv } = require('business/src/observability/envBuilder.ts');
 
 function getPlatformDB () {
   return require('storages').platformDB;

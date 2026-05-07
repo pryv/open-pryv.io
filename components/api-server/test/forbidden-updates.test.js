@@ -7,10 +7,10 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const commonFns = require('../src/methods/helpers/commonFunctions');
-const streamSchema = require('../src/schema/stream').default;
-const eventsSchema = require('../src/schema/event').default;
-const accessesSchema = require('../src/schema/access').default;
+const commonFns = require('../src/methods/helpers/commonFunctions.ts');
+const streamSchema = require('../src/schema/stream.ts').default;
+const eventsSchema = require('../src/schema/event.ts').default;
+const accessesSchema = require('../src/schema/access.ts').default;
 const assert = require('node:assert');
 const async = require('async');
 

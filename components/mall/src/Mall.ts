@@ -8,12 +8,12 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const storeDataUtils = require('./helpers/storeDataUtils');
-const MallUserStreams = require('./MallUserStreams').default;
-const MallUserEvents = require('./MallUserEvents').default;
-const MallTransaction = require('./MallTransaction').default;
+const storeDataUtils = require('./helpers/storeDataUtils.ts');
+const MallUserStreams = require('./MallUserStreams.ts').default;
+const MallUserEvents = require('./MallUserEvents.ts').default;
+const MallTransaction = require('./MallTransaction.ts').default;
 const { getLogger } = require('@pryv/boiler');
-const eventsUtils = require('./helpers/eventsUtils');
+const eventsUtils = require('./helpers/eventsUtils.ts');
 
 /**
  * Storage for streams and events.
@@ -64,7 +64,7 @@ class Mall {
     const { integrity } = require('business');
 
     // Pre-compute system streams data so engines don't need the serializer
-    const accountStreams = require('business/src/system-streams');
+    const accountStreams = require('business/src/system-streams/index.ts');
     await accountStreams.init();
     const systemStreams = {
       accountStreamIds: Object.keys(accountStreams.accountMap)

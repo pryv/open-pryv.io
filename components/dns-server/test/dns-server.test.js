@@ -13,7 +13,7 @@ const dns = require('dns');
 const dgram = require('dgram');
 const dns2 = require('dns2');
 const { Packet } = dns2;
-const { createDnsServer } = require('../src');
+const { createDnsServer } = require('../src/index.ts');
 
 const TEST_DOMAIN = 'test.pryv.me';
 const TEST_TTL = 60;

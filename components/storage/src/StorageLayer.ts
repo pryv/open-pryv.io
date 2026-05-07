@@ -10,9 +10,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { getConfig, getLogger } = require('@pryv/boiler');
-const { validateUserStorage } = require('storages/interfaces/baseStorage/UserStorage');
-const { validateSessions } = require('storages/interfaces/baseStorage/Sessions');
-const { validatePasswordResetRequests } = require('storages/interfaces/baseStorage/PasswordResetRequests');
+const { validateUserStorage } = require('storages/interfaces/baseStorage/UserStorage.ts');
+const { validateSessions } = require('storages/interfaces/baseStorage/Sessions.ts');
+const { validatePasswordResetRequests } = require('storages/interfaces/baseStorage/PasswordResetRequests.ts');
 const { pluginLoader } = require('storages');
 
 /**

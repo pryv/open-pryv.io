@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const timestamp = require('unix-timestamp');
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 const encryption = require('utils').encryption;
 
 let db: any;

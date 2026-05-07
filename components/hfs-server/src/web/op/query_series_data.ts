@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const { tryCoerceStringValues } = require('api-server').validation;
 const timestamp = require('unix-timestamp');
 const errors = require('errors').factory;
-const SeriesResponse = require('../SeriesResponse').default;
+const SeriesResponse = require('../SeriesResponse.ts').default;
 const AUTH_HEADER = 'authorization';
 /** GET /events/:event_id/series - Query a series for a data subset.
  *

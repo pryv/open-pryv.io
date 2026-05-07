@@ -8,7 +8,7 @@
 /**
  * Engine-local internals registry.
  * Populated by the engine entry point's init() from barrel-provided values.
- * All engine files import { _internals } from './_internals'.
+ * All engine files import { _internals } from './_internals.ts'.
  */
 
 const registry: Record<string, any> = {};

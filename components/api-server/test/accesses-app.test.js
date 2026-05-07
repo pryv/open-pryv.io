@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 
 const timestamp = require('unix-timestamp');
 const { ErrorIds } = require('errors');
-const methodsSchema = require('../src/schema/accessesMethods');
+const methodsSchema = require('../src/schema/accessesMethods.ts');
 const { ApiEndpoint } = require('utils');
 const { getConfig } = require('@pryv/boiler');
 const { integrity } = require('business');

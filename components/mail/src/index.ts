@@ -29,10 +29,10 @@ const require = createRequire(import.meta.url);
  * surface ship.
  */
 
-const { Sender } = require('./Sender');
-const { TemplateRepository } = require('./TemplateRepository');
-const { createEmailTemplatesDelivery } = require('./emailTemplatesDelivery');
-const errors = require('./errors');
+const { Sender } = require('./Sender.ts');
+const { TemplateRepository } = require('./TemplateRepository.ts');
+const { createEmailTemplatesDelivery } = require('./emailTemplatesDelivery.ts');
+const errors = require('./errors.ts');
 
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('mail');

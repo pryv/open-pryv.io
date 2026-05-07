@@ -16,7 +16,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const TokenStore = require('../../src/bootstrap/TokenStore').default;
+const TokenStore = require('../../src/bootstrap/TokenStore.ts').default;
 
 describe('[TOKENSTORE] TokenStore', () => {
   let tmpDir;

@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const DrainStream = require('../../../src/methods/streams/DrainStream').default;
+const DrainStream = require('../../../src/methods/streams/DrainStream.ts').default;
 const _ = require('lodash');
 const assert = require('node:assert');
 

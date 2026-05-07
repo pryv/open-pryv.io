@@ -24,8 +24,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const path = require('node:path');
 const assert = require('node:assert/strict');
 
-const accessState = require('../src/routes/reg/accessState');
-const { spawnWorkers } = require('test-helpers/src/clusterFixture');
+const accessState = require('../src/routes/reg/accessState.ts');
+const { spawnWorkers } = require('test-helpers/src/clusterFixture.ts');
 
 const WORKER_SCRIPT = path.join(__dirname, 'clusterWorkers', 'accessStateWorker.js');
 

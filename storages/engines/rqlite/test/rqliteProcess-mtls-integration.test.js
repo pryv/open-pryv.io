@@ -32,7 +32,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { spawn, execFileSync } = require('node:child_process');
 
-const { buildArgs } = require('../src/rqliteProcess');
+const { buildArgs } = require('../src/rqliteProcess.ts');
 
 const RQLITED_BIN = path.resolve(__dirname, '../../../../bin-ext/rqlited');
 const BOOT_TIMEOUT_MS = 30_000;

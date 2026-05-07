@@ -10,8 +10,8 @@ const require = createRequire(import.meta.url);
 // PLAN57-AUDIT-ANY: this file uses util.inherits(Cls, Parent) pseudo-inheritance.
 // The (Cls as any).super_ calls below cannot be typed without converting to ES "class Cls extends Parent". Tracked as separate refactor.
 
-const { BaseStorage } = require('./BaseStorage');
-const converters = require('./../converters');
+const { BaseStorage } = require('./BaseStorage.ts');
+const converters = require('./../converters.ts');
 const util = require('util');
 const timestamp = require('unix-timestamp');
 

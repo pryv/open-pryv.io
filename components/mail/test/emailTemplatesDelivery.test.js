@@ -12,9 +12,9 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 
-const { createEmailTemplatesDelivery } = require('../src/emailTemplatesDelivery');
+const { createEmailTemplatesDelivery } = require('../src/emailTemplatesDelivery.ts');
 
 const STUB_TEMPLATES = [
   { type: 'welcome-email', lang: 'en', part: 'subject', pug: '| Welcome' },

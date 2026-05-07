@@ -16,8 +16,8 @@ const require = createRequire(import.meta.url);
 
 const { setTimeout } = require('timers/promises');
 const { getConfig, getLogger } = require('@pryv/boiler');
-const Mall = require('./Mall').default;
-const storeDataUtils = require('./helpers/storeDataUtils');
+const Mall = require('./Mall.ts').default;
+const storeDataUtils = require('./helpers/storeDataUtils.ts');
 
 export { getMall, storeDataUtils };
 
@@ -63,12 +63,12 @@ async function getMall () {
   };
   mall.addStore(dataStoreModule, { id: 'local', name: 'Local', settings: localSettings });
   // account (system streams backed by baseStorage account fields)
-  const { accountStore } = require('storages/datastores/account');
+  const { accountStore } = require('storages/datastores/account/index.ts');
   mall.addStore(accountStore, { id: 'account', name: 'Account', settings: {} });
 
   // audit
   if (config.get('audit:active')) {
-    const auditDataStore = require('audit/src/datastore/auditDataStore').default;
+    const auditDataStore = require('audit/src/datastore/auditDataStore.ts').default;
     mall.addStore(auditDataStore, { id: '_audit', name: 'Audit', settings: {} });
   }
 

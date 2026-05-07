@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
  * Uses base helpers with minimal API methods needed
  */
 
-const base = require('test-helpers/src/helpers-base');
+const base = require('test-helpers/src/helpers-base.ts');
 
 base.init({
   // Only load methods needed for mall tests

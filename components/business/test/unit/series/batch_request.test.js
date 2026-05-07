@@ -8,8 +8,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
-const { BatchRequest, BatchRequestElement } = require('../../../src/series/batch_request');
-const { TypeRepository } = require('../../../src/types');
+const { BatchRequest, BatchRequestElement } = require('../../../src/series/batch_request.ts');
+const { TypeRepository } = require('../../../src/types.ts');
 
 describe('[BRQS] BatchRequest', () => {
   describe('[BR01] .parse', () => {

@@ -16,12 +16,12 @@ const supertest = require('supertest');
 const charlatan = require('charlatan');
 
 const ErrorIds = require('errors').ErrorIds;
-const { ErrorMessages } = require('errors/src/ErrorMessages');
-const { getApplication } = require('api-server/src/application');
+const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
+const { getApplication } = require('api-server/src/application.ts');
 
 const { pubsub } = require('messages');
-const AccessLogic = require('business/src/accesses/AccessLogic').default;
-const { addPrivatePrefixToStreamId, addCustomerPrefixToStreamId } = require('test-helpers/src/systemStreamFilters');
+const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
+const { addPrivatePrefixToStreamId, addCustomerPrefixToStreamId } = require('test-helpers/src/systemStreamFilters.ts');
 
 const { databaseFixture } = require('test-helpers');
 const { produceStorageConnection } = require('api-server/test/test-helpers');
@@ -102,14 +102,14 @@ describe('[AD01] Accesses with account streams', function () {
     };
     pubsub.setTestNotifier(testNotifier);
     pubsub.status.emit(pubsub.SERVER_READY);
-    await require('api-server/src/methods/accesses').default(app.api);
+    await require('api-server/src/methods/accesses.ts').default(app.api);
 
-    await require('api-server/src/methods/events').default(app.api);
+    await require('api-server/src/methods/events.ts').default(app.api);
     request = supertest(app.expressApp);
   });
 
   after(async function () {
-    const { getUsersRepository } = require('business/src/users');
+    const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
     await usersRepository.deleteAll();
     if (savedIntegrityCheck != null) {

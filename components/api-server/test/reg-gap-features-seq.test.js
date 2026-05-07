@@ -28,7 +28,7 @@ describe('[RGGF] Register gap features', () => {
   });
 
   after(async function () {
-    const { getUsersRepository } = require('business/src/users');
+    const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
     await usersRepository.deleteAll();
     if (savedIntegrityCheck != null) {

@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
 const business = require('business');
-const cls = require('../tracing/cls').default;
+const cls = require('../tracing/cls.ts').default;
 /**
  * @param ctx
  * @param handler
@@ -59,9 +59,9 @@ function storeErrorInTrace (err) {
 // --------------------------------------------------------------------- factory
 export default function (ctx) {
   return {
-    storeSeriesData: mount(ctx, require('./op/store_series_data').default),
-    querySeriesData: mount(ctx, require('./op/query_series_data').default),
-    storeSeriesBatch: mount(ctx, require('./op/store_series_batch').default)
+    storeSeriesData: mount(ctx, require('./op/store_series_data.ts').default),
+    querySeriesData: mount(ctx, require('./op/query_series_data.ts').default),
+    storeSeriesBatch: mount(ctx, require('./op/store_series_batch.ts').default)
   };
 }
 

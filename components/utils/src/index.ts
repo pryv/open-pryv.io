@@ -8,15 +8,15 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const ApiEndpoint = require('./api-endpoint');
-const debug = require('./debug');
-const { deepMerge } = require('./deepMerge');
-const encryption = require('./encryption');
-const extension = require('./extension');
-const { fromCallback } = require('./fromCallback');
-const jsonValidator = require('./jsonValidator').default;
-const { slug: slugify } = require('./slugify');
-const { toString } = require('./toString');
-const treeUtils = require('./treeUtils');
+const ApiEndpoint = require('./api-endpoint.ts');
+const debug = require('./debug.ts');
+const { deepMerge } = require('./deepMerge.ts');
+const encryption = require('./encryption.ts');
+const extension = require('./extension.ts');
+const { fromCallback } = require('./fromCallback.ts');
+const jsonValidator = require('./jsonValidator.ts').default;
+const { slug: slugify } = require('./slugify.ts');
+const { toString } = require('./toString.ts');
+const treeUtils = require('./treeUtils.ts');
 
 export { ApiEndpoint, debug, deepMerge, encryption, extension, fromCallback, jsonValidator, slugify, toString, treeUtils };

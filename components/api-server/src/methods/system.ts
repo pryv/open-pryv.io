@@ -7,16 +7,16 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
-const commonFns = require('./helpers/commonFunctions');
-const Registration = require('business/src/auth/registration').default;
-const methodsSchema = require('../schema/systemMethods');
-const string = require('./helpers/string');
+const commonFns = require('./helpers/commonFunctions.ts');
+const Registration = require('business/src/auth/registration.ts').default;
+const methodsSchema = require('../schema/systemMethods.ts');
+const string = require('./helpers/string.ts');
 const { fromCallback } = require('utils');
 const { getStorageLayer, getUsersLocalIndex } = require('storage');
 const { getConfig, getLogger } = require('@pryv/boiler');
-const { getUsersRepository } = require('business/src/users');
+const { getUsersRepository } = require('business/src/users/index.ts');
 
-const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils');
+const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 
 const { platform } = require('platform');
 

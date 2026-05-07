@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
  */
 const fs = require('fs');
 const path = require('path');
-const testData = require('./data');
+const testData = require('./data.ts');
 const { getMall } = require('mall');
 // Returns an empty string if the tested file attached to the specified event
 // is identical to the original file.

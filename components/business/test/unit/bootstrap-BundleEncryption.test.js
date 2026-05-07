@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const BundleEncryption = require('../../src/bootstrap/BundleEncryption');
+const BundleEncryption = require('../../src/bootstrap/BundleEncryption.ts');
 
 const SAMPLE_BUNDLE = {
   version: 1,

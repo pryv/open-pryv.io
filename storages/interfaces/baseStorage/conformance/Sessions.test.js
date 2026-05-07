@@ -14,7 +14,7 @@
  */
 module.exports = function conformanceTests (getSessions, cleanupFn) {
   const assert = require('node:assert');
-  const { validateSessions } = require('../Sessions');
+  const { validateSessions } = require('../Sessions.ts');
 
   describe('Sessions conformance', () => {
     let sessions;

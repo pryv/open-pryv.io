@@ -18,8 +18,8 @@ function pick (obj, keys) {
   return out;
 }
 
-const { _internals } = require('../_internals');
-const treeUtils = require('../../../../shared/treeUtils');
+const { _internals } = require('../_internals.ts');
+const treeUtils = require('../../../../shared/treeUtils.ts');
 
 const STREAM_PROPERTIES = [
   'id', 'name', 'parentId', 'clientData', 'children',

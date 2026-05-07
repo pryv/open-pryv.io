@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const methodCallback = require('./methodCallback').default;
+const methodCallback = require('./methodCallback.ts').default;
 const { setMethodId } = require('middleware');
 const { getConfigUnsafe } = require('@pryv/boiler');
 export default function (expressApp, app) {

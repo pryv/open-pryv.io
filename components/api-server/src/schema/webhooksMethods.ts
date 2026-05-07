@@ -10,10 +10,10 @@ const require = createRequire(import.meta.url);
  * JSON Schema specification of methods data for Webhooks.
  */
 
-const Action = require('./Action');
-const webhook = require('./webhook').default;
-const helpers = require('./helpers');
-const itemDeletion = require('./itemDeletion').default;
+const Action = require('./Action.ts');
+const webhook = require('./webhook.ts').default;
+const helpers = require('./helpers.ts');
+const itemDeletion = require('./itemDeletion.ts').default;
 const object = helpers.object;
 const string = helpers.string;
 

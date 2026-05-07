@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
  * POST /reg/access/:key  — update state (ACCEPTED/REFUSED)
  */
 
-const accessState = require('./accessState');
+const accessState = require('./accessState.ts');
 
 export default function (expressApp, app) {
   /**

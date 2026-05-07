@@ -54,7 +54,7 @@ require('@pryv/boiler').init({
         load: async () => {
           // this is not a plugin, but a way to ensure some component are initialized after config
           // @sgoumaz - should we promote this pattern for all singletons that need to be initialized ?
-          const accountStreams = require('business/src/system-streams');
+          const accountStreams = require('business/src/system-streams/index.ts');
           await accountStreams.init();
         }
       }
@@ -63,10 +63,10 @@ require('@pryv/boiler').init({
 });
 
 const storage = require('storage');
-const API = require('./API').default;
-const expressAppInit = require('./expressApp').default;
+const API = require('./API.ts').default;
+const expressAppInit = require('./expressApp.ts').default;
 const middleware = require('middleware');
-const errorsMiddlewareMod = require('./middleware/errors').default;
+const errorsMiddlewareMod = require('./middleware/errors.ts').default;
 
 const { getConfig, getLogger } = require('@pryv/boiler');
 const logger = getLogger('application');
@@ -74,7 +74,7 @@ const userLocalDirectory = require('storage').userLocalDirectory;
 
 const { ExtensionLoader } = require('utils').extension;
 
-const { getAPIVersion } = require('middleware/src/project_version');
+const { getAPIVersion } = require('middleware/src/project_version.ts');
 const { tracingMiddleware } = require('tracing');
 
 logger.debug('Loading app');
@@ -198,31 +198,31 @@ class Application {
 
   async initiateRoutes () {
     // Register routes — always available (register functionality is built-in)
-    require('./routes/register').default(this.expressApp, this);
-    require('./routes/reg/access').default(this.expressApp, this);
-    require('./routes/reg/records').default(this.expressApp, this);
-    require('./routes/reg/apps').default(this.expressApp, this);
-    require('./routes/reg/legacy').default(this.expressApp, this);
+    require('./routes/register.ts').default(this.expressApp, this);
+    require('./routes/reg/access.ts').default(this.expressApp, this);
+    require('./routes/reg/records.ts').default(this.expressApp, this);
+    require('./routes/reg/apps.ts').default(this.expressApp, this);
+    require('./routes/reg/legacy.ts').default(this.expressApp, this);
 
     // system, root, register and delete MUST come first
-    require('./routes/auth/delete').default(this.expressApp, this);
-    require('./routes/auth/register').default(this.expressApp, this);
+    require('./routes/auth/delete.ts').default(this.expressApp, this);
+    require('./routes/auth/register.ts').default(this.expressApp, this);
 
-    require('./routes/system').default(this.expressApp, this);
-    require('./routes/root').default(this.expressApp, this);
+    require('./routes/system.ts').default(this.expressApp, this);
+    require('./routes/root.ts').default(this.expressApp, this);
 
-    require('./routes/accesses').default(this.expressApp, this);
-    require('./routes/account').default(this.expressApp, this);
-    require('./routes/auth/login').default(this.expressApp, this);
-    require('./routes/mfa').default(this.expressApp, this);
-    await require('./routes/events').default(this.expressApp, this);
-    require('./routes/profile').default(this.expressApp, this);
-    require('./routes/service').default(this.expressApp, this);
-    require('./routes/streams').default(this.expressApp, this);
+    require('./routes/accesses.ts').default(this.expressApp, this);
+    require('./routes/account.ts').default(this.expressApp, this);
+    require('./routes/auth/login.ts').default(this.expressApp, this);
+    require('./routes/mfa.ts').default(this.expressApp, this);
+    await require('./routes/events.ts').default(this.expressApp, this);
+    require('./routes/profile.ts').default(this.expressApp, this);
+    require('./routes/service.ts').default(this.expressApp, this);
+    require('./routes/streams.ts').default(this.expressApp, this);
 
-    require('./routes/webhooks').default(this.expressApp, this);
+    require('./routes/webhooks.ts').default(this.expressApp, this);
     if (this.isAuditActive) {
-      require('audit/src/routes/audit.route').default(this.expressApp, this);
+      require('audit/src/routes/audit.route.ts').default(this.expressApp, this);
     }
   }
 

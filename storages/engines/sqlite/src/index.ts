@@ -15,7 +15,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 
 /**
  * Receive host internals from the barrel.
@@ -35,25 +35,25 @@ function initStorageLayer (_storageLayer: any, _connection: any, _options: any):
 }
 
 function getUserAccountStorage () {
-  const { userAccountStorage } = require('./userAccountStorage');
+  const { userAccountStorage } = require('./userAccountStorage.ts');
   return userAccountStorage;
 }
 
 function getUsersLocalIndex () {
-  const { DBIndex } = require('./usersLocalIndex');
+  const { DBIndex } = require('./usersLocalIndex.ts');
   return DBIndex;
 }
 
 // -- DataStore ----------------------------------------------------------
 
 function getDataStoreModule () {
-  return require('./dataStore').dataStore;
+  return require('./dataStore/index.ts').dataStore;
 }
 
 // -- AuditStorage -------------------------------------------------------
 
 function createAuditStorage () {
-  const { SqliteStorage } = require('./userSQLite/Storage');
+  const { SqliteStorage } = require('./userSQLite/Storage.ts');
   return new SqliteStorage('audit');
 }
 

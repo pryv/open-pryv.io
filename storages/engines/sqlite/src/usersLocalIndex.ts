@@ -10,9 +10,9 @@ const require = createRequire(import.meta.url);
 
 const fs = require('fs');
 const SQLite3 = require('better-sqlite3');
-const concurrentSafeWrite = require('./concurrentSafeWrite');
+const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 
 class DBIndex {
   db: any;

@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { InfluxConnection } = require('../src/influx_connection');
+const { InfluxConnection } = require('../src/influx_connection.ts');
 const conformanceTests = require('./conformance/InfluxConnection.test').default;
 
 describe('[ICFM] InfluxConnection conformance', () => {

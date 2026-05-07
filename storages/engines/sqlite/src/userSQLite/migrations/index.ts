@@ -11,9 +11,9 @@ const require = createRequire(import.meta.url);
 const path = require('path');
 const fs = require('fs');
 
-const { _internals } = require('../../_internals');
-const { UserDatabase } = require('../UserDatabase');
-const { migrateUserDB: migrate0to1 } = require('./1');
+const { _internals } = require('../../_internals.ts');
+const { UserDatabase } = require('../UserDatabase.ts');
+const { migrateUserDB: migrate0to1 } = require('./1.ts');
 const logger = _internals.lazyLogger('sqlite-storage-migration');
 
 export { migrateUserDBsIfNeeded };

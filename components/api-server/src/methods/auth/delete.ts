@@ -6,7 +6,7 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const Deletion = require('business/src/auth/deletion').default;
+const Deletion = require('business/src/auth/deletion.ts').default;
 const { getStorageLayer } = require('storage');
 const { getLogger, getConfig } = require('@pryv/boiler');
 /**

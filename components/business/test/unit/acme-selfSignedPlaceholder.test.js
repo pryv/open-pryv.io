@@ -13,7 +13,7 @@ const path = require('node:path');
 const os = require('node:os');
 const forge = require('node-forge');
 
-const { generate, ensure } = require('../../src/acme/selfSignedPlaceholder');
+const { generate, ensure } = require('../../src/acme/selfSignedPlaceholder.ts');
 
 function makeConfig (overrides = {}) {
   const store = {

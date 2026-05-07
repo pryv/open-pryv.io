@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 
 const ErrorIds = require('errors').ErrorIds;
 const validation = require('./helpers/validation');
-const methodsSchema = require('../src/schema/profileMethods');
+const methodsSchema = require('../src/schema/profileMethods.ts');
 
 describe('[PRFA] profile (app)', function () {
   let username;

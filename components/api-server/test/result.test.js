@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 
 /* global assert */
 
-const Result = require('../src/Result').default;
+const Result = require('../src/Result.ts').default;
 const Transform = require('stream').Transform;
 const inherits = require('util').inherits;
 const Source = require('./helpers').SourceStream;

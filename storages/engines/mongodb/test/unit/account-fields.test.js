@@ -15,7 +15,7 @@ describe('[ACFM] Account fields (MongoDB)', () => {
   const userId = cuid();
 
   before(async () => {
-    const engine = require('storages/engines/mongodb/src/index');
+    const engine = require('storages/engines/mongodb/src/index.ts');
     const helpers = require('../../../../test/helpers');
     const manifest = require('../../manifest.json');
     const config = helpers.getEngineConfig('mongodb', manifest);

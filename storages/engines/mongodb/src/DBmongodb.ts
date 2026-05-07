@@ -8,9 +8,9 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { Database } = require('./Database');
+const { Database } = require('./Database.ts');
 
-const { _internals } = require('./_internals');
+const { _internals } = require('./_internals.ts');
 const logger = _internals.lazyLogger('platform:db');
 
 class DB {

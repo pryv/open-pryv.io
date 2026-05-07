@@ -12,9 +12,9 @@ const require = createRequire(import.meta.url);
  * Uses base helpers with audit-specific utilities
  */
 
-const base = require('test-helpers/src/helpers-base');
-const audit = require('../src/').default;
-const { AuditAccessIds } = require('audit/src/MethodContextUtils');
+const base = require('test-helpers/src/helpers-base.ts');
+const audit = require('../src//index.ts').default;
+const { AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 
 // Audit-specific test utilities
 function fakeAuditEvent (methodId) {
@@ -51,14 +51,14 @@ base.init({
   },
   afterInitCore: async () => {
     // Load audit-logs method
-    require('audit/src/methods/audit-logs').default(global.app.api);
+    require('audit/src/methods/audit-logs.ts').default(global.app.api);
   },
   globals: {
-    apiMethods: require('audit/src/ApiMethods'),
-    MethodContextUtils: require('audit/src/MethodContextUtils'),
+    apiMethods: require('audit/src/ApiMethods.ts'),
+    MethodContextUtils: require('audit/src/MethodContextUtils.ts'),
     fakeAuditEvent,
-    validation: require('audit/src/validation'),
-    AuditFilter: require('audit/src/AuditFilter').default,
+    validation: require('audit/src/validation.ts'),
+    AuditFilter: require('audit/src/AuditFilter.ts').default,
     addActionStreamIdPrefix,
     addAccessStreamIdPrefix,
     CONSTANTS: audit.CONSTANTS,

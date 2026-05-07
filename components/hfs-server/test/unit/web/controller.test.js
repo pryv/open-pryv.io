@@ -7,14 +7,14 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 const assert = require('node:assert');
 
-const controllerFactory = require('../../../src/web/controller').default;
+const controllerFactory = require('../../../src/web/controller.ts').default;
 const controller = controllerFactory({});
 
-const { APIError } = require('errors/src/APIError');
-const { ErrorIds } = require('errors/src/ErrorIds');
+const { APIError } = require('errors/src/APIError.ts');
+const { ErrorIds } = require('errors/src/ErrorIds.ts');
 
 describe('[HFCT] Controller', () => {
   describe('[HC01] storeSeriesData', () => {

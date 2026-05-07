@@ -13,10 +13,10 @@ const charlatan = require('charlatan');
 const supertest = require('supertest');
 
 const { ErrorIds } = require('errors');
-const { getApplication } = require('api-server/src/application');
+const { getApplication } = require('api-server/src/application.ts');
 
 const { pubsub } = require('messages');
-const { addPrivatePrefixToStreamId, addCustomerPrefixToStreamId } = require('test-helpers/src/systemStreamFilters');
+const { addPrivatePrefixToStreamId, addCustomerPrefixToStreamId } = require('test-helpers/src/systemStreamFilters.ts');
 
 const { getUserAccountStorage } = require('storage');
 
@@ -93,14 +93,14 @@ describe('[ACCO] Account with system streams', function () {
     };
     pubsub.setTestNotifier(testNotifier);
     pubsub.status.emit(pubsub.SERVER_READY);
-    await require('api-server/src/methods/account').default(app.api);
-    await require('api-server/src/methods/events').default(app.api);
+    await require('api-server/src/methods/account.ts').default(app.api);
+    await require('api-server/src/methods/events.ts').default(app.api);
     request = supertest(app.expressApp);
     mall = await getMall();
   });
 
   after(async function () {
-    const { getUsersRepository } = require('business/src/users');
+    const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
     await usersRepository.deleteAll();
     if (savedIntegrityCheck != null) {

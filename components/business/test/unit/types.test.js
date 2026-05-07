@@ -9,9 +9,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 // Unit test for type repository
 
-require('test-helpers/src/api-server-tests-config');
+require('test-helpers/src/api-server-tests-config.ts');
 const assert = require('node:assert');
-const { TypeRepository } = require('../../src/types');
+const { TypeRepository } = require('../../src/types.ts');
 
 describe('[TYPR] business.types.TypeRepository', function () {
   let repository;

@@ -14,7 +14,7 @@
  */
 module.exports = function conformanceTests (getStore, cleanupFn) {
   const assert = require('node:assert');
-  const { validatePasswordResetRequests } = require('../PasswordResetRequests');
+  const { validatePasswordResetRequests } = require('../PasswordResetRequests.ts');
 
   describe('PasswordResetRequests conformance', () => {
     let store;

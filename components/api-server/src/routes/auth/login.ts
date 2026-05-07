@@ -10,8 +10,8 @@ const cookieParser = require('cookie-parser');
 const errors = require('errors').factory;
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
-const methodCallback = require('../methodCallback').default;
-const Paths = require('../Paths');
+const methodCallback = require('../methodCallback.ts').default;
+const Paths = require('../Paths.ts');
 const { getConfigUnsafe } = require('@pryv/boiler');
 /**
  * Auth routes.

@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 
 const { ErrorIds } = require('errors');
 const validation = require('./helpers/validation');
-const methodsSchema = require('../src/schema/accessesMethods');
+const methodsSchema = require('../src/schema/accessesMethods.ts');
 const { getMall } = require('mall');
 const storage = require('storage');
 

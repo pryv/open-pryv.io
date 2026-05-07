@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const ds = require('@pryv/datastore');
 const timestamp = require('unix-timestamp');
 const { Readable } = require('stream');
-const { localStorePrepareQuery } = require('storage/src/localStoreEventQueries');
+const { localStorePrepareQuery } = require('storage/src/localStoreEventQueries.ts');
 
 let keyValueData;
 

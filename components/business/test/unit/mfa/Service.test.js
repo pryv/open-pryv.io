@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('chai').assert;
 
-const Service = require('../../../src/mfa/Service').default;
+const Service = require('../../../src/mfa/Service.ts').default;
 
 describe('[MFAS] mfa/Service', () => {
   describe('[MFAR] replaceAll', () => {
