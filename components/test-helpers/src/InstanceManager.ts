@@ -7,19 +7,13 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-// PLAN57-AUDIT-ANY: this file uses util.inherits(Cls, Parent) pseudo-inheritance.
-// The (Cls as any).super_ calls below cannot be typed without converting to ES "class Cls extends Parent". Tracked as separate refactor.
-
-const EventEmitter = require('events').EventEmitter;
+const { EventEmitter } = require('events');
 const fs = require('fs');
-const spawn = require('child_process').spawn;
+const { spawn } = require('child_process');
 const temp = require('temp');
 const util = require('util');
 
 const { getLogger } = require('@pryv/boiler');
-
-export default InstanceManager;
-export { InstanceManager };
 
 let spawnCounter = 0;
 
@@ -34,26 +28,33 @@ let spawnCounter = 0;
  * Usage: just call `server.ensureStarted(settings, callback)` before running tests.
  *
  * @param {Object} settings Must contain `serverFilePath` and `logging`
- * @constructor
  */
-function InstanceManager (settings) {
-  (InstanceManager as any).super_.call(this);
+class InstanceManager extends EventEmitter {
+  url?: string;
+  private settings: any;
+  private serverSettings: any = null;
+  private tempConfigPath: string;
+  private serverProcess: any = null;
+  private serverReady: boolean = false;
+  private logger: any;
+  ensureStartedAsync: (settings: any) => Promise<void>;
+  restartAsync: () => Promise<void>;
 
-  let serverSettings = null;
-  const tempConfigPath = temp.path({ suffix: '.json' });
-  let serverProcess = null;
-  let serverReady = false;
-  const logger = getLogger('instance-manager');
-  const self = this;
+  constructor (settings) {
+    super();
+    this.settings = settings;
+    this.tempConfigPath = temp.path({ suffix: '.json' });
+    this.logger = getLogger('instance-manager');
+    this.ensureStartedAsync = util.promisify(this.ensureStarted).bind(this);
+    this.restartAsync = util.promisify(this.restart).bind(this);
+    process.on('exit', () => this.stop());
+  }
 
   /**
    * Makes sure the instance is started with the given config settings, restarting it if needed;
    * does nothing if the instance is already running with the same settings.
-   *
-   * @param {Object} settings
-   * @param {Function} callback
    */
-  this.ensureStarted = function (settings, callback) {
+  ensureStarted (settings, callback) {
     // force console settings to off is needed
     if (typeof settings.logs === 'undefined') settings.logs = {};
     if (typeof settings.logs.console === 'undefined') settings.logs.console = {};
@@ -65,35 +66,28 @@ function InstanceManager (settings) {
       settings.logs.console.active = false;
     }
 
-    logger.debug('ensure started', settings.http);
-    if (util.isDeepStrictEqual(settings, serverSettings)) {
-      if (isRunning()) {
-        // nothing to do
+    this.logger.debug('ensure started', settings.http);
+    if (util.isDeepStrictEqual(settings, this.serverSettings)) {
+      if (this.isRunning()) {
         return callback();
       }
     } else {
-      if (isRunning()) {
+      if (this.isRunning()) {
         try {
           this.stop();
         } catch (err) {
           return callback(err);
         }
       }
-      serverSettings = settings;
+      this.serverSettings = settings;
       this.setup();
     }
     this.start(callback);
-  };
+  }
 
-  this.ensureStartedAsync = util.promisify(this.ensureStarted).bind(this);
-
-  /**
-   * Just restarts the instance, leaving settings as they are.
-   *
-   * @param {Function} callback
-   */
-  this.restart = function (callback) {
-    if (isRunning()) {
+  /** Just restarts the instance, leaving settings as they are. */
+  restart (callback) {
+    if (this.isRunning()) {
       try {
         this.stop();
       } catch (err) {
@@ -101,32 +95,24 @@ function InstanceManager (settings) {
       }
     }
     this.start(callback);
-  };
+  }
 
-  this.restartAsync = util.promisify(this.restart).bind(this);
+  /** @api private */
+  setup () {
+    this.url = 'http://' + this.serverSettings.http.ip + ':' + this.serverSettings.http.port;
+  }
 
-  /**
-   * @api private
-   */
-  this.setup = function () {
-    this.url = 'http://' + serverSettings.http.ip + ':' + serverSettings.http.port;
-  };
-
-  /**
-   * @api private
-   */
-  this.start = function (callback) {
-    if (isRunning()) {
+  /** @api private */
+  start (callback) {
+    if (this.isRunning()) {
       throw new Error('Server is already running; stop it first.');
     }
 
-    // write config to temp path
-    fs.writeFileSync(tempConfigPath, JSON.stringify(serverSettings, null, 2));
-    const args = ['--config=' + tempConfigPath];
-    args.unshift(settings.serverFilePath);
+    fs.writeFileSync(this.tempConfigPath, JSON.stringify(this.serverSettings, null, 2));
+    const args = ['--config=' + this.tempConfigPath];
+    args.unshift(this.settings.serverFilePath);
 
     // setup debug if needed (assumes current process debug port is 5858 i.e. default)
-
     if (process.execArgv.indexOf('--debug') !== -1) {
       args.unshift('--debug=5859');
     }
@@ -134,69 +120,61 @@ function InstanceManager (settings) {
       args.unshift('--debug-brk=5859');
     }
 
-    // set profiling if needed
-
-    if (serverSettings.profile) {
+    if (this.serverSettings.profile) {
       args.unshift('--prof');
     }
 
-    // start proc
-    logger.debug('Starting server instance... with config ' + tempConfigPath);
+    this.logger.debug('Starting server instance... with config ' + this.tempConfigPath);
     const options = {
       stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
       env: { ...process.env, PRYV_BOILER_SUFFIX: '-' + spawnCounter++ }
     };
-    serverProcess = spawn(process.argv[0], args, options);
+    this.serverProcess = spawn(process.argv[0], args, options);
     let serverExited = false;
-    let exitCode = null;
-    serverProcess.on('exit', function (code/*, signal */) {
-      logger.debug('Server instance exited with code ' + code);
+    let exitCode: number | null = null;
+    this.serverProcess.on('exit', (code) => {
+      this.logger.debug('Server instance exited with code ' + code);
       serverExited = true;
       exitCode = code;
     });
-    serverProcess.on('message', function (msg) {
+    this.serverProcess.on('message', (msg) => {
       if (msg && msg.type === 'test-notification') {
-        if (msg.event === 'test-server-ready') serverReady = true;
-        self.emit(msg.event, msg.data);
+        if (msg.event === 'test-server-ready') this.serverReady = true;
+        this.emit(msg.event, msg.data);
       }
     });
 
+    const isReadyOrExited = () => this.serverReady || serverExited;
     (async () => {
       while (!isReadyOrExited()) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      if (serverExited && exitCode > 0) {
+      if (serverExited && exitCode != null && exitCode > 0) {
         return callback(new Error('Server failed (code ' + exitCode + ')'));
       }
       callback();
     })();
-
-    function isReadyOrExited () {
-      return serverReady || serverExited;
-    }
-  };
-
-  this.crashed = function () {
-    return serverProcess && serverProcess.exitCode > 0;
-  };
-
-  /**
-   * @api private
-   */
-  this.stop = function () {
-    if (!isRunning()) { return; }
-    logger.debug('Killing server instance... ');
-    if (!serverProcess.kill()) {
-      logger.warn('Failed to kill the server instance (it may have exited already).');
-    }
-    serverProcess = null;
-    serverReady = false;
-  };
-
-  function isRunning () {
-    return !!serverProcess;
   }
 
-  process.on('exit', this.stop);
+  crashed () {
+    return this.serverProcess && this.serverProcess.exitCode > 0;
+  }
+
+  /** @api private */
+  stop () {
+    if (!this.isRunning()) return;
+    this.logger.debug('Killing server instance... ');
+    if (!this.serverProcess.kill()) {
+      this.logger.warn('Failed to kill the server instance (it may have exited already).');
+    }
+    this.serverProcess = null;
+    this.serverReady = false;
+  }
+
+  private isRunning () {
+    return !!this.serverProcess;
+  }
 }
-util.inherits(InstanceManager, EventEmitter);
+
+export default InstanceManager;
+export { InstanceManager };

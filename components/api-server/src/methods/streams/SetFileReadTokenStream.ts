@@ -6,12 +6,9 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const Transform = require('stream').Transform;
-const inherits = require('util').inherits;
+const { Transform } = require('stream');
 const utils = require('utils');
 
-export default SetFileReadTokenStream;
-export { SetFileReadTokenStream };
 /**
  * Sets the FileReadToken for each of the given event's attachments (if any) for the given
  * access.
@@ -19,28 +16,31 @@ export { SetFileReadTokenStream };
  * @param params
  *        params.access {Object} Access with which the API call was made
  *        params.filesReadTokenSecret {String} available in authSettings
- * @constructor
  */
-function SetFileReadTokenStream (params) {
-  Transform.call(this, { objectMode: true });
+class SetFileReadTokenStream extends Transform {
+  access: any;
+  filesReadTokenSecret: string;
 
-  this.access = params.access;
-  this.filesReadTokenSecret = params.filesReadTokenSecret;
-}
+  constructor (params) {
+    super({ objectMode: true });
+    this.access = params.access;
+    this.filesReadTokenSecret = params.filesReadTokenSecret;
+  }
 
-inherits(SetFileReadTokenStream, Transform);
-
-SetFileReadTokenStream.prototype._transform = function (event, encoding, callback) {
-  if (!event.attachments) {
-    this.push(event);
-  } else {
-    event.attachments.forEach(function (att) {
-      att.readToken = utils.encryption
-        .fileReadToken(
+  _transform (event, encoding, callback) {
+    if (!event.attachments) {
+      this.push(event);
+    } else {
+      event.attachments.forEach((att) => {
+        att.readToken = utils.encryption.fileReadToken(
           att.id, this.access.id, this.access.token,
           this.filesReadTokenSecret);
-    }.bind(this));
-    this.push(event);
+      });
+      this.push(event);
+    }
+    callback();
   }
-  callback();
-};
+}
+
+export default SetFileReadTokenStream;
+export { SetFileReadTokenStream };
