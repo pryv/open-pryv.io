@@ -163,7 +163,7 @@ async function initLoggerWithConfig (config) {
 /**
  * Dump objects with file and line
  */
-function inspect () {
+function inspect (...args: any[]): string {
   let line = '';
   try {
     throw new Error();
@@ -171,8 +171,8 @@ function inspect () {
     line = e.stack.split(' at ')[2].trim();
   }
   let res = '\n * dump at: ' + line;
-  for (let i = 0; i < arguments.length; i++) {
-    res += '\n' + i + ' ' + util.inspect(arguments[i], true, 10, true) + '\n';
+  for (let i = 0; i < args.length; i++) {
+    res += '\n' + i + ' ' + util.inspect(args[i], true, 10, true) + '\n';
   }
   return res;
 }
@@ -230,7 +230,7 @@ class Logger {
     return new Logger(name, this);
   }
 
-  inspect (...args: any[]) { (inspect as any)(...args); }
+  inspect (...args: any[]): string { return inspect(...args); }
 }
 
 /**

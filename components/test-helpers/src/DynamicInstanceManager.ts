@@ -7,6 +7,9 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
+// PLAN57-AUDIT-ANY: this file uses util.inherits(Cls, Parent) pseudo-inheritance.
+// The (Cls as any).super_ calls below cannot be typed without converting to ES "class Cls extends Parent". Tracked as separate refactor.
+
 /**
  * DynamicInstanceManager - Instance manager with dynamic port allocation
  * Enables parallel test execution by allocating unique ports per instance

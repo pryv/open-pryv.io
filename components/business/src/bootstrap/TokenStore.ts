@@ -143,8 +143,9 @@ class TokenStore {
    * @returns {Array<{ coreId: string, issuedAt: number, expiresAt: number }>}
    */
   listActive ({ now = Date.now() } = {}) {
-    const store = this._load();
-    return (Object.values(store.tokens) as any[])
+    type Entry = { coreId: string, issuedAt: number, expiresAt: number, consumedAt: number | null };
+    const store: { tokens: Record<string, Entry> } = this._load();
+    return Object.values(store.tokens)
       .filter(e => e.consumedAt == null && e.expiresAt > now)
       .map(({ coreId, issuedAt, expiresAt }) => ({ coreId, issuedAt, expiresAt }));
   }

@@ -66,6 +66,8 @@ class ProjectVersion {
     //      both mainModule and require.main are undefined; without this
     //      fallback project_version returns the git-describe stamp which
     //      breaks consumers expecting a `1.2.3`-shaped version string).
+    // PLAN57-AUDIT-ANY: process.mainModule was deprecated and removed from @types/node;
+    // the fallback chain is intentional for legacy CJS contexts.
     const mainModule: any = (process as any).mainModule || require.main;
     const searchPaths: string[] = (mainModule && mainModule.paths) || [];
     for (const current of searchPaths) {

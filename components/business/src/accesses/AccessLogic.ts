@@ -40,7 +40,7 @@ class AccessLogic {
   _access: any; // Access right from the DB
   _userId: any;
   _streamPermissionLevelCache: any;
-  _streamByStorePermissionsMap: any;
+  _streamByStorePermissionsMap: Record<string, Record<string, { streamId: string, level: string | null }>>;
   _streamByStoreForced: any;
   featurePermissionsMap: any;
   // mirrored from `access` via deepMerge() in constructor:
@@ -170,7 +170,7 @@ class AccessLogic {
     if (this._streamByStorePermissionsMap != null) {
       for (const storeId of Object.keys(this._streamByStorePermissionsMap)) {
         const storePermissions = this._streamByStorePermissionsMap[storeId];
-        for (const perm of Object.values(storePermissions) as any[]) {
+        for (const perm of Object.values(storePermissions)) {
           if ((perm.streamId != null) && isHigherOrEqualLevel(perm.level, 'read')) {
             res.push({ streamId: perm.streamId, storeId });
           }
@@ -192,7 +192,7 @@ class AccessLogic {
     const perms = this._streamByStorePermissionsMap[storeId];
     if (perms == null) return res;
 
-    for (const perm of Object.values(perms) as any[]) {
+    for (const perm of Object.values(perms)) {
       if (perm.level == null || perm.level === 'none') {
         res.push(storeDataUtils.parseStoreIdAndStoreItemId(perm.streamId)[1]);
       }
@@ -212,7 +212,7 @@ class AccessLogic {
     if (localPerms == null) return [];
     const res = [];
 
-    for (const perm of Object.values(localPerms) as any[]) {
+    for (const perm of Object.values(localPerms)) {
       if (perm.level === 'create-only' || perm.level == null || perm.level === 'none') {
         res.push(storeDataUtils.parseStoreIdAndStoreItemId(perm.streamId)[1]);
       }

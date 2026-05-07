@@ -53,7 +53,7 @@ MulterIntegrityDiskStorage.prototype._handleFile = function _handleFile (req, fi
 
       const finalPath = path.join(destination, filename);
       const outStream = fs.createWriteStream(finalPath);
-      const integrityStream = new (IntegrityStream as any)('sha256');
+      const integrityStream = new IntegrityStream('sha256');
 
       file.stream.pipe(integrityStream).pipe(outStream);
       outStream.on('error', cb);
@@ -97,7 +97,7 @@ class IntegrityStream extends PassThrough {
   digest;
   hashOptionsAlgorythm;
 
-  constructor (hashOptionsAlgorythm, hashOptions) {
+  constructor (hashOptionsAlgorythm, hashOptions?) {
     super();
     this.hashOptionsAlgorythm = hashOptionsAlgorythm;
     this.checksum = crypto.createHash(hashOptionsAlgorythm, hashOptions);

@@ -17,7 +17,8 @@ class ChildProcess {
     this.launcher = launcher;
 
     // This bit is useful to trace down promise rejections that aren't caught.
-    //
+    // PLAN57-AUDIT-ANY: unhandledRejection's `reason` is genuinely `unknown` per
+    // Node's contract; the cast accepts whatever the rejection carried.
     process.on('unhandledRejection', (reason, promise) => this.unhandledRejection(reason as any, promise));
     // Receives messages from the parent (spawner.js) and dispatches them to the
     // handler functions below.

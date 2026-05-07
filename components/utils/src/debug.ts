@@ -28,4 +28,5 @@ function logstack (...args: any[]) {
 
 export { logstack, log, stack };
 
+// PLAN57-AUDIT-ANY: dev-time global $$ shortcut. Intentional escape hatch for ad-hoc debugging.
 (global as any).$$ = logstack;

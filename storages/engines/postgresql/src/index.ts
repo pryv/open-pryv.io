@@ -71,7 +71,7 @@ function initStorageLayer (storageLayer: any, connection: any, options: any): vo
       };
 
       (async () => {
-        for (const event of items as any[]) {
+        for (const event of items) {
           const cols: string[] = ['user_id'];
           const vals: any[] = [userId];
           const placeholders: string[] = ['$1'];

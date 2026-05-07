@@ -174,10 +174,13 @@ export default async function (api) {
 
       if (configHostings != null && configHostings.regions != null) {
         // Use configured hierarchy, enrich with availability from PlatformDB
-        const regions = JSON.parse(JSON.stringify(configHostings.regions));
-        for (const region of Object.values(regions) as any[]) {
-          for (const zone of Object.values(region.zones || {}) as any[]) {
-            for (const [hKey, hosting] of Object.entries(zone.hostings || {}) as Array<[string, any]>) {
+        type Hosting = { available?: boolean, availableCore?: string };
+        type Zone = { hostings?: Record<string, Hosting> };
+        type Region = { zones?: Record<string, Zone> };
+        const regions: Record<string, Region> = JSON.parse(JSON.stringify(configHostings.regions));
+        for (const region of Object.values(regions)) {
+          for (const zone of Object.values(region.zones || {})) {
+            for (const [hKey, hosting] of Object.entries(zone.hostings || {})) {
               const cores = hostingCores[hKey] || [];
               hosting.available = cores.length > 0;
               hosting.availableCore = cores.length > 0

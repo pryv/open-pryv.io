@@ -118,9 +118,8 @@ class Audit {
     }
     if (!isValid) {
       throw new Error('Invalid audit eventForUser call : ' + isValid, {
-        userId,
-        event
-      } as any);
+        cause: { userId, event }
+      });
     }
     const isAudited = this.filter.isAudited(methodId);
     if (this.syslog && isAudited.syslog) {

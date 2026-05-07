@@ -54,7 +54,7 @@ class SessionsPG {
 
   generate (data: any, options: any, callback?: (err: any, id?: string) => void): void {
     if (typeof options === 'function') {
-      callback = options as any;
+      callback = options;
       options = {};
     }
     const id = cuid();

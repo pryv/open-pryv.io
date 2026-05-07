@@ -363,11 +363,11 @@ export default async function produceAccessesApiMethods (api) {
     const accessToDelete = params.accessToDelete;
     const accessesRepository = storageLayer.accesses;
     // deleting a personal access does not delete the accesses it created.
-    // PLAN57-FIXUP: pre-existing bug since 685034dd (2023-10-13) — operator
-    // precedence makes `(!type) === 'personal'` always false, so this branch
-    // is dead and findRelatedAccesses() runs for every access type. Preserving
-    // observed prod behavior; tracked in
-    // _plans/XXX-Backlog/ACCESSES-FIND-RELATED-PRECEDENCE-BUG.md.
+    // PLAN57-FIXUP / PLAN57-AUDIT-ANY: pre-existing bug since 685034dd (2023-10-13)
+    // — operator precedence makes `(!type) === 'personal'` always false, so this
+    // branch is dead and findRelatedAccesses() runs for every access type. The
+    // `as any` cast is a defensive marker preserving observed prod behavior;
+    // tracked in _plans/XXX-Backlog/ACCESSES-FIND-RELATED-PRECEDENCE-BUG.md.
     if (((!accessToDelete.type) as any) === 'personal') {
       return next();
     }

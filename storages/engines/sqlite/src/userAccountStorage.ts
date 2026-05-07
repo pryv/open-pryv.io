@@ -104,8 +104,8 @@ async function getCurrentPasswordTime (userId: string): Promise<number> {
 async function passwordExistsInHistory (userId: string, password: string, historyLength: number): Promise<boolean> {
   const db = await getUserDB(userId);
   const getLastN = db.prepare('SELECT hash, time FROM passwords ORDER BY time DESC LIMIT ?');
-  for (const entry of getLastN.iterate(historyLength)) {
-    if (await encryption.compare(password, (entry as any).hash)) {
+  for (const entry of getLastN.iterate(historyLength) as Iterable<{ hash: string, time: number }>) {
+    if (await encryption.compare(password, entry.hash)) {
       return true;
     }
   }
@@ -197,53 +197,54 @@ async function _clearStoreData (userId: string): Promise<void> {
 
 // PER-STORE KEY-VALUE DB
 
-function getKeyValueDataForStore (storeId: string): any {
-  return new (StoreKeyValueData as any)(storeId);
+function getKeyValueDataForStore (storeId: string): StoreKeyValueData {
+  return new StoreKeyValueData(storeId);
 }
 
-/**
- * @constructor
- */
-function StoreKeyValueData (this: any, storeId: string): void {
-  this.storeId = storeId;
-}
+class StoreKeyValueData {
+  storeId: string;
 
-StoreKeyValueData.prototype.getAll = async function (userId: string): Promise<Record<string, any>> {
-  const db = await getUserDB(userId);
-  const query = db.prepare('SELECT key, value FROM storeKeyValueData WHERE storeId = @storeId');
-  const res: Record<string, any> = {};
-  for (const item of query.iterate({ storeId: this.storeId }) as Iterable<{ key: string, value: string }>) {
-    res[item.key] = JSON.parse(item.value);
+  constructor (storeId: string) {
+    this.storeId = storeId;
   }
-  return res;
-};
 
-StoreKeyValueData.prototype.get = async function (userId: string, key: string): Promise<any | null> {
-  const db = await getUserDB(userId);
-  const res = db.prepare('SELECT value FROM storeKeyValueData WHERE storeId = @storeId AND key = @key').get({
-    storeId: this.storeId,
-    key
-  });
-  if (res?.value == null) return null;
-  return JSON.parse(res.value);
-};
+  async getAll (userId: string): Promise<Record<string, any>> {
+    const db = await getUserDB(userId);
+    const query = db.prepare('SELECT key, value FROM storeKeyValueData WHERE storeId = @storeId');
+    const res: Record<string, any> = {};
+    for (const item of query.iterate({ storeId: this.storeId }) as Iterable<{ key: string, value: string }>) {
+      res[item.key] = JSON.parse(item.value);
+    }
+    return res;
+  }
 
-StoreKeyValueData.prototype.set = async function (userId: string, key: string, value: any): Promise<void> {
-  const db = await getUserDB(userId);
-  if (value == null) {
-    db.prepare('DELETE FROM storeKeyValueData WHERE storeId = @storeId AND key = @key)').run({
+  async get (userId: string, key: string): Promise<any | null> {
+    const db = await getUserDB(userId);
+    const res = db.prepare('SELECT value FROM storeKeyValueData WHERE storeId = @storeId AND key = @key').get({
       storeId: this.storeId,
       key
     });
-  } else {
-    const valueStr = JSON.stringify(value);
-    db.prepare('REPLACE INTO storeKeyValueData (storeId, key, value) VALUES (@storeId, @key, @value)').run({
-      storeId: this.storeId,
-      key,
-      value: valueStr
-    });
+    if (res?.value == null) return null;
+    return JSON.parse(res.value);
   }
-};
+
+  async set (userId: string, key: string, value: any): Promise<void> {
+    const db = await getUserDB(userId);
+    if (value == null) {
+      db.prepare('DELETE FROM storeKeyValueData WHERE storeId = @storeId AND key = @key)').run({
+        storeId: this.storeId,
+        key
+      });
+    } else {
+      const valueStr = JSON.stringify(value);
+      db.prepare('REPLACE INTO storeKeyValueData (storeId, key, value) VALUES (@storeId, @key, @value)').run({
+        storeId: this.storeId,
+        key,
+        value: valueStr
+      });
+    }
+  }
+}
 
 // COMMON FUNCTIONS
 

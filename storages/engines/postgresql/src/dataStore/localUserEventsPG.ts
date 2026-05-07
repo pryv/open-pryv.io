@@ -405,6 +405,8 @@ const userEvents = ds.createUserEvents({
 });
 
 // Expose rowToEvent for use by StorageLayer.iterateAllEvents
+// PLAN57-AUDIT-ANY: function-with-attached-property; rowToEvent is also exported below
+// as a named binding, but consumers reach for it via the userEvents namespace.
 (userEvents as any).rowToEvent = rowToEvent;
 
 export { userEvents, rowToEvent };

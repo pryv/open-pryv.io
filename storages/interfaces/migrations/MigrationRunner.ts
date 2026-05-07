@@ -69,7 +69,13 @@ class MigrationRunner {
 
   constructor (engines: MigrationCapableEngine[], { logger }: RunnerOptions = {}) {
     this.engines = engines;
-    this.logger = (logger as any) || { info () {}, warn () {}, error () {}, debug () {} };
+    const noop = (): void => {};
+    this.logger = {
+      info: logger?.info ?? noop,
+      warn: logger?.warn ?? noop,
+      error: logger?.error ?? noop,
+      debug: logger?.debug ?? noop
+    };
   }
 
   async status (): Promise<EngineStatus[]> {

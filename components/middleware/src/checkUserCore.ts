@@ -95,6 +95,7 @@ async function checkUserCore (req, res, next) {
   }
 }
 
+// PLAN57-AUDIT-ANY: function-with-attached-property — test-only handle exposed on the middleware fn.
 (checkUserCore as any)._resetPlatformCache = _resetPlatformCache;
 export default checkUserCore;
 export { _resetPlatformCache };

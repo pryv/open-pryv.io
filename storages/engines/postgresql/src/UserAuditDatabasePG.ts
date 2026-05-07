@@ -386,7 +386,8 @@ function convertCondition (item: any, idx: number, values: any[]): { condition: 
     }
     case 'streamsQuery': {
       const parts: string[] = [];
-      for (const sq of item.content as any[]) {
+      type StreamsQuery = { any?: string[], not?: string[], all?: string[] };
+      for (const sq of item.content as StreamsQuery[]) {
         if (sq.any && sq.any.length > 0) {
           const anyParts = sq.any.map((sid: string) => {
             values.push('%' + sid + ' %');

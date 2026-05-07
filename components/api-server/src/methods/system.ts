@@ -126,12 +126,12 @@ export default async function (systemAPI, api) {
         for (const [username, userId] of Object.entries(usersMap)) {
           const user = await usersRepository.getUserById(userId);
           if (user == null) continue;
-          const entry = {
+          const entry: { username: string, id: string, email: string, language: string, core?: string | null } = {
             username,
             id: userId,
             email: user.email,
             language: user.language
-          } as any;
+          };
           // Multi-core: include which core hosts this user
           if (!platform.isSingleCore) {
             const coreId = await platform.getUserCore(username);
