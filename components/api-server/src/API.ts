@@ -70,8 +70,6 @@ class API {
    * - `api.register('resources.get', fn1, fn2, ...)`
    * - `api.register('events.start', fn1, 'events.create', ...)`
    *
-   * @param id
-   * @param fns
    */
   register (id, ...fns) {
     if (isAuditActive) { throwIfMethodIsNotDeclared(id); }
@@ -133,7 +131,6 @@ class API {
   /**
    * Searches for filters that match `id` and applies them.
    *
-   * @param id
    */
   applyMatchingFilters (id) {
     const filters = this.filters;
@@ -146,7 +143,6 @@ class API {
   /**
    * Searches for existing methods that are matched by this filter.
    *
-   * @param filter
    */
   applyToMatchingIds (filter) {
     const methodMap = this.map;
@@ -160,8 +156,6 @@ class API {
    * If `filter` matches/applies to `id`, appends the filter functions to the
    * list of functions of `id`.
    *
-   * @param filter
-   * @param id
    */
   applyIfMatches (filter, id) {
     if (matches(filter.idFilter, id)) {
@@ -174,11 +168,6 @@ class API {
 
   // ------------------------------------------------------------ handling calls
 
-  /**
-   * @param context
-   * @param params
-   * @param callback
-   */
   call (context, params, callback) {
     const methodId = context.methodId;
     const methodMap = this.map;
@@ -244,10 +233,6 @@ class API {
 
 export default API;
 export { API };
-/**
- * @param idFilter
- * @param id
- */
 function matches (idFilter, id) {
   // i.e. check whether the given id starts with the given filter without the
   // wildcard

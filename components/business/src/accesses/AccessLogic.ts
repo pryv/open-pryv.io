@@ -139,7 +139,6 @@ class AccessLogic {
 
   /**
    * returns the permissions for this store if it exists
-   * @param storeId
    */
   getStoresPermissions (storeId) {
     const storeStreamPermissionMap = this._streamByStorePermissionsMap[storeId];
@@ -149,8 +148,6 @@ class AccessLogic {
 
   /**
    * returns the permission for this stream if it exists
-   * @param storeId
-   * @param streamId
    */
   getStreamPermission (storeId, streamId) {
     const storeStreamPermissionMap = this._streamByStorePermissionsMap[storeId];
@@ -160,8 +157,6 @@ class AccessLogic {
 
   /**
    * get a List of readable (root) streams that can be read / listed
-   * @param storeId
-   * @returns
    */
   getListableStreamIds () {
     const res = [];
@@ -180,7 +175,6 @@ class AccessLogic {
 
   /**
    * get StreamIds with explicit "no-list" permissions ("none", ...)
-   * @param storeId
    */
   getCannotListStreamsStreamIds (storeId) {
     const res = (storeId === 'local') ? [].concat(accountStreams.hiddenStreamIds) : [];
@@ -200,7 +194,6 @@ class AccessLogic {
   /**
    * get StreamIds with explicit "no-read" permissions
    * Note!! "create-only", is not forbidden if a "read" permission has been given to a parent
-   * @param storeId
    */
   getForbiddenGetEventsStreamIds (storeId) {
     if (this._streamByStorePermissionsMap == null) return [];
@@ -218,7 +211,6 @@ class AccessLogic {
 
   /**
    * get StreamIds with explicit which are forced for GetEvent by forceStreamIds
-   * @param storeId
    */
   getForcedStreamsGetEventsStreamIds (storeId) {
     if (this._streamByStoreForced == null) return null;
@@ -456,7 +448,6 @@ AccessLogic.PERMISSION_LEVEL_CREATE_ONLY = 'create-only';
  * return true is A >= B
  * @param permissionLevelA - level to challenge
  * @param permissionLevelB  - level
- * @returns
  */
 function isHigherOrEqualLevel (permissionLevelA, permissionLevelB) {
   return PermissionLevels[permissionLevelA] >= PermissionLevels[permissionLevelB];

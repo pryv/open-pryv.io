@@ -85,9 +85,6 @@ class WebhooksService {
     }
   }
 
-  /**
-   * @param usernameWebhook
-   */
   async onCreate (usernameWebhook) {
     const username = usernameWebhook.username;
     const usersRepository = await getUsersRepository();
@@ -98,24 +95,14 @@ class WebhooksService {
     })));
   }
 
-  /**
-   * @param usernameWebhook
-   */
   onActivate (usernameWebhook) {
     this.activateWebhook(usernameWebhook.username, usernameWebhook.webhook);
   }
 
-  /**
-   * @param usernameWebhook
-   */
   onStop (usernameWebhook) {
     this.stopWebhook(usernameWebhook.username, usernameWebhook.webhook.id);
   }
 
-  /**
-   * @param username
-   * @param webhook
-   */
   async addWebhook (username, webhook) {
     let userWebhooks = this.webhooks.get(username);
     if (userWebhooks == null) {
@@ -127,10 +114,6 @@ class WebhooksService {
     this.logger.info(`Loaded webhook ${webhook.id} for ${username}`);
   }
 
-  /**
-   * @param username
-   * @param webhook
-   */
   async activateWebhook (username, webhook) {
     const userWebhooks = this.webhooks.get(username);
     if (userWebhooks == null) {
@@ -146,10 +129,6 @@ class WebhooksService {
     this.logger.info(`Reactivated webhook ${stoppedWebhook.id} for ${username}`);
   }
 
-  /**
-   * @param username
-   * @param webhookId
-   */
   stopWebhook (username, webhookId) {
     const [usersWebhooks, webhook, idx] = this.getWebhook(username, webhookId);
     if (webhook == null || usersWebhooks == null || idx == null) {
@@ -162,10 +141,6 @@ class WebhooksService {
     this.logger.info(`Stopped webhook ${webhookId} for ${username}`);
   }
 
-  /**
-   * @param username
-   * @param webhookId
-   */
   getWebhook (username, webhookId) {
     const usersWebhooks = this.webhooks.get(username);
     if (usersWebhooks == null) {

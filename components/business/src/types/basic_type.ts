@@ -46,9 +46,6 @@ class BasicType {
     return this.requiredFields();
   }
 
-  /**
-   * @param name
-   */
   forField (name) {
     // NOTE BasicType only represents types that are not composed of multiple
     // fields. So the name MUST be 'value' here.
@@ -60,10 +57,6 @@ class BasicType {
     return false;
   }
 
-  /**
-   * @param validator
-   * @param content
-   */
   async callValidator (validator, content) {
     // Perform coercion into target type first. Then verify using the
     // validator. This saves us one roundtrip.

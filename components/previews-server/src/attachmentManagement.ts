@@ -19,9 +19,6 @@ const previewsDirPath = getConfigUnsafe(true).get('storages:engines:filesystem:p
  * Ensures the preview path for the specific event exists.
  * Only support JPEG preview images (fixed size) at the moment.
  *
- * @param user
- * @param eventId
- * @param dimension
  */
 async function ensurePreviewPath (user, eventId, dimension) {
   const dirPath = path.join(previewsDirPath, user.id, eventId);
@@ -31,11 +28,6 @@ async function ensurePreviewPath (user, eventId, dimension) {
 
 export { ensurePreviewPath };
 
-/**
- * @param user
- * @param eventId
- * @param dimension
- */
 function getPreviewPath (user, eventId, dimension) {
   return path.join(previewsDirPath, user.id, eventId, getPreviewFileName(dimension));
 }

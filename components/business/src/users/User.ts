@@ -83,9 +83,6 @@ class User {
     return res;
   }
 }
-/**
- * @param user
- */
 function buildAccountFields (user) {
   const accountMap = accountStreams.accountMap;
   user.accountFieldsWithPrefix = [];
@@ -100,9 +97,6 @@ function buildAccountFields (user) {
     user.accountFields.push(withoutPrefix);
   }
 }
-/**
- * @param user
- */
 function loadAccountData (user, params) {
   user.accountFields.forEach((field) => {
     if (field === 'dbDocuments' || field === 'attachedFiles') {
@@ -120,8 +114,6 @@ function loadAccountData (user, params) {
 }
 /**
  * Assign events data to user account fields
- * @param user
- * @param events
  */
 function buildAccountDataFromListOfEvents (user, events) {
   const account = buildAccountRecursive(accountStreams.accountChildren, events, {});
@@ -136,9 +128,6 @@ function buildAccountDataFromListOfEvents (user, events) {
  * @param object streams
  * @param array events
  * @param object user
- * @param streams
- * @param events
- * @param user
  */
 function buildAccountRecursive (streams, events, user) {
   let streamIndex;

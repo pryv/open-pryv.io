@@ -35,9 +35,6 @@ class BatchRequest {
 
   // Append an element to the list of elements in this BatchRequest.
   //
-  /**
-   * @param element
-   */
   append (element) {
     this.list.push(element);
   }
@@ -89,17 +86,11 @@ class Parser {
     this.resolver = resolver;
   }
 
-  /**
-   * @param jsonObj
-   */
   parse (jsonObj) {
     if (jsonObj == null || typeof jsonObj !== 'object') { throw error('Request body needs to be in JSON format.'); }
     return this.parseSeriesBatch(jsonObj);
   }
 
-  /**
-   * @param obj
-   */
   async parseSeriesBatch (obj) {
     const resolver = this.resolver;
     const out = new BatchRequest();
@@ -113,10 +104,6 @@ class Parser {
 }
 
 class ElementParser {
-  /**
-   * @param obj
-   * @param resolver
-   */
   async parse (obj, resolver) {
     if (obj == null || typeof obj !== 'object') { throw error('Batch element must be an object with properties.'); }
     const eventId = obj.eventId;

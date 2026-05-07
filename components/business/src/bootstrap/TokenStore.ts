@@ -47,7 +47,6 @@ const RAW_TOKEN_BYTES = 32;
 
 class TokenStore {
   /**
-   * @param opts
    * @param opts.path - absolute path to the JSON file backing the store.
    */
   path: string;
@@ -60,7 +59,6 @@ class TokenStore {
   /**
    * Mint a new one-time join token for a specific core.
    *
-   * @param opts
    * @param opts.coreId
    * @param [opts.ttlMs=24h]
    * @param [opts.now=Date.now()] - injectable for testing
@@ -89,7 +87,6 @@ class TokenStore {
    * Verify a raw token. Does NOT consume it. Useful for dry-run checks or
    * for the ack endpoint's early-reject path.
    *
-   * @param rawToken
    * @param [opts]
    * @param [opts.now=Date.now()]
    */
@@ -110,7 +107,6 @@ class TokenStore {
    * valid AND had not been consumed before. Any second call with the same
    * token returns ok:false.
    *
-   * @param rawToken
    * @param [opts]
    * @param [opts.consumerIp=null] - recorded for audit
    * @param [opts.now=Date.now()]
@@ -150,7 +146,6 @@ class TokenStore {
    * Revoke all active tokens for a given core. Returns the number of
    * tokens revoked.
    *
-   * @param coreId
    */
   revokeByCoreId (coreId) {
     if (!coreId) throw new Error('TokenStore.revokeByCoreId: coreId is required');

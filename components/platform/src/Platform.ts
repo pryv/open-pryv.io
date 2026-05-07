@@ -106,8 +106,6 @@ class Platform {
 
   /**
    * Update user fields in PlatformDB (unique + indexed).
-   * @param username
-   * @param operations
    */
   async updateUser (username, operations) {
     const uniquenessErrors = await this.checkUpdateOperationUniqueness(username, operations);
@@ -119,8 +117,6 @@ class Platform {
 
   /**
    * Apply operations to PlatformDB.
-   * @param username
-   * @param operations
    */
   async #applyOperations (username, operations) {
     for (const op of operations) {
@@ -178,8 +174,6 @@ class Platform {
 
   /**
    * Fully delete a user from PlatformDB.
-   * @param username
-   * @param user
    */
   async deleteUser (username, user) {
     const operations = [];
@@ -232,7 +226,6 @@ class Platform {
    * a cascade rewrite. The cache is refreshed on `init()` and via
    * `_refreshCoreUrlCache()` (called from this core after `registerSelf()`).
    *
-   * @param coreId
    */
   coreIdToUrl (coreId) {
     let url;
@@ -330,7 +323,6 @@ class Platform {
 
   /**
    * Get which core hosts a user.
-   * @param username
    */
   async getUserCore (username) {
     return await this.#db.getUserCore(username);
@@ -338,8 +330,6 @@ class Platform {
 
   /**
    * Set which core hosts a user.
-   * @param username
-   * @param coreId
    */
   async setUserCore (username, coreId) {
     await this.#db.setUserCore(username, coreId);
@@ -354,7 +344,6 @@ class Platform {
 
   /**
    * Get info for a specific core.
-   * @param coreId
    */
   async getCoreInfo (coreId) {
     return await this.#db.getCoreInfo(coreId);
@@ -372,16 +361,11 @@ class Platform {
   /**
    * Set a persistent DNS record. Runtime-managed entries like ACME challenges.
    * Static infrastructure records stay in YAML config; admin MUST NOT shadow them.
-   * @param subdomain
-   * @param records
    */
   async setDnsRecord (subdomain, records) {
     await this.#db.setDnsRecord(subdomain, records);
   }
 
-  /**
-   * @param subdomain
-   */
   async getDnsRecord (subdomain) {
     return await this.#db.getDnsRecord(subdomain);
   }
@@ -390,16 +374,12 @@ class Platform {
     return await this.#db.getAllDnsRecords();
   }
 
-  /**
-   * @param subdomain
-   */
   async deleteDnsRecord (subdomain) {
     await this.#db.deleteDnsRecord(subdomain);
   }
 
   /**
    * Update this core's availability in PlatformDB.
-   * @param available
    */
   async setAvailable (available) {
     if (!this.#db) {
@@ -462,8 +442,6 @@ class Platform {
    * - Atomically reserve unique fields
    * - Assign user to core (multi-core: may redirect)
    *
-   * @param username
-   * @param invitationToken
    * @param uniqueFields - e.g. { username: 'bob', email: 'bob@example.com' }
    * @param [hosting] - hosting key from the registration payload;
    *   when set, narrows `selectCoreForRegistration` to that hosting so
@@ -558,7 +536,6 @@ class Platform {
 
   /**
    * Consume an invitation token (mark as used).
-   * @param token
    * @param username - the user who consumed it
    */
   async consumeInvitationToken (token, username) {
@@ -571,7 +548,6 @@ class Platform {
 
   /**
    * Check if invitation token is valid (for /access/invitationtoken/check).
-   * @param token
    */
   async isInvitationTokenValid (token) {
     const allTokens = await this.#db.getAllInvitationTokens();
@@ -597,7 +573,6 @@ class Platform {
 
   /**
    * Generate N new invitation tokens.
-   * @param count
    * @param createdBy - admin username
    * @param [description]
    */
@@ -639,7 +614,6 @@ class Platform {
 
   /**
    * Check if username is reserved (starts with "pryv" or in reserved words list).
-   * @param username
    */
   #isUsernameReserved (username) {
     const lower = username.toLowerCase();
@@ -728,7 +702,6 @@ class Platform {
    * cluster's in-memory cache after writing — e.g. via the
    * `/system/admin/observability/invalidate-cache` admin route.
    *
-   * @param key
    * @param value — JSON-encodable.
    */
   async setObservabilityValue (key, value) {

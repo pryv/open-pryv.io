@@ -396,7 +396,6 @@ export { events };
 
 /**
  * Creates a cuid-like id (required event id format).
- * @param n
  */
 function getTestEventId (n) {
   n = n + '';

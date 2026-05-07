@@ -54,7 +54,6 @@ class RestoreOrchestrator {
 
   /**
    * Restore all users and platform data from a backup.
-   * @param reader
    * @param [options]
    * @param [options.overwrite=true] - clearAll before import
    * @param [options.skipPlatform=false] - skip platform data
@@ -106,8 +105,6 @@ class RestoreOrchestrator {
 
   /**
    * Restore a single user from backup.
-   * @param reader
-   * @param userId
    * @param [options]
    * @param [options.overwrite=false] - clearAll before import
    * @param [options.skipPlatform=true] - skip platform data
@@ -143,7 +140,6 @@ class RestoreOrchestrator {
 
   /**
    * Restore platform data only.
-   * @param reader
    */
   async restorePlatform (reader) {
     await reader.readManifest();

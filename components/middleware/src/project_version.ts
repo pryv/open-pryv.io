@@ -86,9 +86,6 @@ class ProjectVersion {
   }
 }
 let version = null;
-/**
- * @param forceRefresh
- */
 async function getAPIVersion (forceRefresh = false) {
   if (!version || forceRefresh) {
     const pv = new ProjectVersion();

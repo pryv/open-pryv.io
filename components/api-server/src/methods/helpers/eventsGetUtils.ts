@@ -65,10 +65,6 @@ export { init, applyDefaultsForRetrieval, coerceStreamsParam, validateStreamsQue
  *          example: `{all: ['A', 'B']}` => `{and: [{any: [...expand('A')]}, {any: [...expand('B')]}]}`
  *      - "not" is expanded in third and added to `and` -- !! we exclude streamIds that are in 'any' as some authorization might have been given on child now expanded
  *          example: `{all: ['A'], not['B', 'C']}` =>  `{and: [{any: [...expand('A')]}, {not: [...expand('B')...expand('C')]}]}
- * @param context
- * @param params
- * @param result
- * @param next
  */
 function coerceStreamsParam (context, params, result, next) {
   if (params.streams == null) {
@@ -113,7 +109,6 @@ function coerceStreamsParam (context, params, result, next) {
   /**
    * we detect if it's JSON by looking at first char.
    * Note: since RFC 7159 JSON can also starts with ", true, false or number - this does not apply in this case.
-   * @param input
    */
   function isStringifiedJSON (input) {
     return typeof input === 'string' && ['[', '{'].includes(input.substr(0, 1));
@@ -127,12 +122,6 @@ function coerceStreamsParam (context, params, result, next) {
     return true;
   }
 }
-/**
- * @param context
- * @param params
- * @param result
- * @param next
- */
 async function applyDefaultsForRetrieval (context, params, result, next) {
   params.streams ??= [{ any: ['*'] }];
   params.types ??= null;
@@ -158,12 +147,6 @@ async function applyDefaultsForRetrieval (context, params, result, next) {
   }
   next();
 }
-/**
- * @param context
- * @param params
- * @param result
- * @param next
- */
 function transformArrayOfStringsToStreamsQuery (context, params, result, next) {
   try {
     params.arrayOfStreamQueries =
@@ -173,12 +156,6 @@ function transformArrayOfStringsToStreamsQuery (context, params, result, next) {
   }
   next();
 }
-/**
- * @param context
- * @param params
- * @param result
- * @param next
- */
 function validateStreamsQueriesAndSetStore (context, params, result, next) {
   try {
     streamsQueryUtils.validateStreamsQueriesAndSetStore(params.arrayOfStreamQueries);
@@ -189,12 +166,6 @@ function validateStreamsQueriesAndSetStore (context, params, result, next) {
   next();
 }
 // the two tasks are joined as '*' replaced have their permissions checked
-/**
- * @param context
- * @param params
- * @param result
- * @param next
- */
 async function streamQueryCheckPermissionsAndReplaceStars (context, params, result, next) {
   context.tracing.startSpan('streamQueries');
   const unAuthorizedStreamIds = [];
@@ -282,10 +253,6 @@ async function streamQueryCheckPermissionsAndReplaceStars (context, params, resu
 }
 /**
  * Add "forced" and "none" events from permissions
- * @param context
- * @param params
- * @param result
- * @param next
  */
 function streamQueryAddForcedAndForbiddenStreams (context, params, result, next) {
   for (const streamQuery of params.arrayOfStreamQueriesWithStoreId) {
@@ -315,12 +282,6 @@ function streamQueryAddForcedAndForbiddenStreams (context, params, result, next)
   }
   next();
 }
-/**
- * @param context
- * @param params
- * @param result
- * @param next
- */
 async function streamQueryExpandStreams (context, params, result, next) {
   try {
     params.arrayOfStreamQueriesWithStoreId =
@@ -366,10 +327,6 @@ function stripDoNotExpandMarker (streamIdWithDoNotExpandMarker) {
 }
 /**
  * Add Hidden StreamsId (System) to local queries and eventually trashed streams if state !== 'all'
- * @param context
- * @param params
- * @param result
- * @param next
  */
 async function streamQueryAddHiddenStreams (context, params, result, next) {
   // forbidden stream
@@ -404,11 +361,6 @@ async function streamQueryAddHiddenStreams (context, params, result, next) {
 /**
  * - Create a copy of the params per query
  * - Add specific stream queries to each of them
- * @param filesReadTokenSecret
- * @param context
- * @param params
- * @param result
- * @param next
  */
 async function findEventsFromStore (filesReadTokenSecret, context, params, result, next) {
   if (params.arrayOfStreamQueriesWithStoreId?.length === 0) {
@@ -433,7 +385,6 @@ async function findEventsFromStore (filesReadTokenSecret, context, params, resul
   // out> paramsByStoreId = { local: {fromTime: 2, streams: [{any: '*}]}, audit: {fromTime: 2, streams: [{any: 'access-gagsg'}, {any: 'action-events.get}]}
   /**
    * Will be called by "mall" for each store of events that need to be streamed to result
-   * @param storeSettings
    * @param eventsStream of "Events"
    */
   function addEventsStreamFromStore (storeSettings, eventsStream) {

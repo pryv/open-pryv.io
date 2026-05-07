@@ -20,7 +20,6 @@ let customLoggerInstance = null;
 
 /**
  *
- * @param options
  * @param options.color - set to true to have colors
  * @param options.time - set to true to for timestamp
  * @param options.align - set to true to allign logs items

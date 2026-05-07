@@ -27,7 +27,6 @@ const logger = getLogger('mail-delivery');
  * This avoids forking `email-templates` while still keeping PlatformDB as
  * the authoritative template store cluster-wide.
  *
- * @param opts
  * @param opts.getAllMailTemplates   async () → Array<{ type, lang, part, pug }>
  * @param opts.smtp                  nodemailer-compatible transport config
  * @param opts.from                  default `from` (name + address)

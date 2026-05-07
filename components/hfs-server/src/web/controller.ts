@@ -10,16 +10,9 @@ const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const business = require('business');
 const cls = require('../tracing/cls.ts').default;
-/**
- * @param ctx
- * @param handler
- */
 function mount (ctx, handler) {
   return catchAndNext(handler.bind(null, ctx));
 }
-/**
- * @param handler
- */
 function catchAndNext (handler) {
   return async (req, res, next) => {
     try {
@@ -43,9 +36,6 @@ const TAG_ERROR_MESSAGE = 'error.message';
 //
 // NOTE This method should not throw an error!
 //
-/**
- * @param err
- */
 function storeErrorInTrace (err) {
   try {
     const root = cls.getRootSpan();

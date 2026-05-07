@@ -38,7 +38,6 @@ export { BaseStorage };
  * - Caller-bound (from DB) converter functions directly alter the object served from the DB
  *   (which is safe).
  *
- * @param database
  */
 function BaseStorage (database) {
   this.database = database;
@@ -124,10 +123,8 @@ BaseStorage.prototype.findIncludingDeletionsAndVersions = function (userOrUserId
  *
  * This is used by integrity processes to re-set integrity values on updateMany
  *
- * @param collectionInfo
  * @param query Mongo-style query
  * @param updateIfNeededCallback .. returns update to do on document or null if no update
- * @param callback
  */
 BaseStorage.prototype.findAndUpdateIfNeeded = function (userOrUserId, query, options, updateIfNeededCallback, callback) {
   const collectionInfo = this.getCollectionInfo(userOrUserId);
@@ -253,10 +250,6 @@ BaseStorage.prototype.insertOne = function (userOrUserId, item, callback, option
 /**
  * Finds and updates atomically a single document matching the given query,
  * returning the updated document.
- * @param user
- * @param query
- * @param updatedData
- * @param callback
  */
 BaseStorage.prototype.findOneAndUpdate = function (userOrUserId, query, updatedData, callback) {
   this.database.findOneAndUpdate(
@@ -275,20 +268,12 @@ BaseStorage.prototype.findOneAndUpdate = function (userOrUserId, query, updatedD
 /**
  * Updates the single document matching the given query, returning the updated document.
  *
- * @param user
- * @param query
- * @param updatedData
- * @param callback
  */
 BaseStorage.prototype.updateOne = BaseStorage.prototype.findOneAndUpdate;
 
 /**
  * Updates the one or multiple document(s) matching the given query.
  *
- * @param user
- * @param query
- * @param updatedData
- * @param callback
  */
 BaseStorage.prototype.updateMany = function (
   userOrUserId,
@@ -313,9 +298,6 @@ BaseStorage.prototype.updateMany = function (
  *
  * @see `remove()`, which actually removes the document from the collection
  *
- * @param user
- * @param query
- * @param callback
  */
 BaseStorage.prototype.delete = function (userOrUserId, query, callback) {
   callback(new Error('Not implemented (user: ' + userOrUserId + ')'));
@@ -411,9 +393,6 @@ BaseStorage.prototype.insertMany = function (userOrUserId, items, callback, opti
 /**
  * Gets the indexes set for the collection.
  *
- * @param user
- * @param options
- * @param callback
  */
 BaseStorage.prototype.listIndexes = function (userOrUserId, options, callback) {
   this.database.listIndexes(this.getCollectionInfo(userOrUserId), options, callback);
@@ -425,8 +404,6 @@ BaseStorage.prototype.listIndexes = function (userOrUserId, options, callback) {
 
 /**
  * Export all documents for a user (raw, bypasses converters).
- * @param userOrUserId
- * @param callback
  */
 BaseStorage.prototype.exportAll = function (userOrUserId, callback) {
   this.database.find(
@@ -439,9 +416,6 @@ BaseStorage.prototype.exportAll = function (userOrUserId, callback) {
 
 /**
  * Import raw documents for a user (bypasses converters).
- * @param userOrUserId
- * @param items
- * @param callback
  */
 BaseStorage.prototype.importAll = function (userOrUserId, items, callback) {
   if (!items || items.length === 0) return callback(null);
@@ -455,8 +429,6 @@ BaseStorage.prototype.importAll = function (userOrUserId, items, callback) {
 /**
  * Remove all documents for a user (actual delete, not soft delete).
  * Same as removeAll but with explicit naming for migration use.
- * @param userOrUserId
- * @param callback
  */
 BaseStorage.prototype.clearAll = function (userOrUserId, callback) {
   this.database.deleteMany(

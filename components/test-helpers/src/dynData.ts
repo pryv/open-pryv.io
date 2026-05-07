@@ -31,7 +31,6 @@ const staticProfile = require('./data/profile.ts').default;
 
 /**
  * Creates a new dynamic data instance with unique IDs.
- * @param options
  * @param [options.prefix] - Prefix for generated IDs (default: cuid())
  */
 function createDynData (options: any = {}) {

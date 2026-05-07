@@ -21,7 +21,6 @@ const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUti
 const { platform } = require('platform');
 
 /**
- * @param systemAPI
  * @param api The user-facing API, used to compute usage stats per method
  */
 export default async function (systemAPI, api) {

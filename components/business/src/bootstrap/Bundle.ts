@@ -43,7 +43,6 @@ const REQUIRED_RQLITE = ['raftPort', 'httpPort'];
 /**
  * Assemble a bundle object from its inputs. Pure — no side effects, no I/O.
  *
- * @param input
  * @param input.cluster
  * @param input.cluster.domain - e.g. 'mc.example.com'
  * @param input.cluster.ackUrl - URL of the existing core to ack back to
@@ -117,7 +116,6 @@ function assemble (input) {
  * consumed — protects against malformed, tampered or downgraded payloads.
  * Throws descriptive Errors on failure.
  *
- * @param bundle
  */
 function validate (bundle) {
   if (!bundle || typeof bundle !== 'object') {

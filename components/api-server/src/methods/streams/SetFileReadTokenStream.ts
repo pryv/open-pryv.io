@@ -13,7 +13,6 @@ const utils = require('utils');
  * Sets the FileReadToken for each of the given event's attachments (if any) for the given
  * access.
  *
- * @param params
  *        params.access {Object} Access with which the API call was made
  *        params.filesReadTokenSecret {String} available in authSettings
  */

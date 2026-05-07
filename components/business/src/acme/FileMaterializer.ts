@@ -42,7 +42,6 @@ class FileMaterializer {
   #log;
 
   /**
-   * @param opts
    * @param opts.certRenewer  - exposes getCertificate(hostname) returning decrypted record
    * @param opts.tlsDir       - root dir; certs go in <tlsDir>/<normalised-host>/
    * @param opts.hostname     - which hostname this core cares about (e.g. '*.mc.example.com')
@@ -121,7 +120,6 @@ function sha256 (s) {
  * { exitCode, stdout, stderr, durationMs }. Non-zero exits do NOT
  * throw — the caller logs and moves on (Plan 35 Phase 4c semantics).
  *
- * @param opts
  * @param opts.scriptPath
  * @param opts.hostname
  * @param opts.certPath

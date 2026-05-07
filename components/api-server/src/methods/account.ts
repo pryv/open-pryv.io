@@ -25,9 +25,6 @@ const ErrorIds = require('errors').ErrorIds;
 const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users/index.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
 
-/**
- * @param api
- */
 export default async function (api) {
   const config = await getConfig();
   const authSettings = config.get('auth');
@@ -74,10 +71,6 @@ export default async function (api) {
   /**
    * Validate if given parameters are allowed for the edit
    *
-   * @param context
-   * @param params
-   * @param result
-   * @param next
    */
   function validateThatAllFieldsAreEditable (context, params, result, next) {
     const accountMap = accountStreams.accountMap;
@@ -269,10 +262,6 @@ export default async function (api) {
 
   /**
    * Build response body for the account update
-   * @param context
-   * @param params
-   * @param result
-   * @param next
    */
   async function buildResultData (context, params, result, next) {
     Object.keys(params.update).forEach((key) => {

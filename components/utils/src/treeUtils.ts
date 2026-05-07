@@ -59,7 +59,6 @@ function verifyFlatItem (item) {
 
 /**
  * The result is made from copies of the original items (which are left untouched).
- * @param array
  */
 function flattenTreeWithoutParents (array) {
   if (!Array.isArray(array)) {
@@ -99,7 +98,6 @@ function flattenRecursiveWithoutParents (originalArray, parentId, resultArray) {
  *  dbDocuments: 1,
  *  attachedFiles: 3
  * }
- * @param object
  */
 function flattenSimpleObject (object) {
   if (!(object instanceof Object)) {
@@ -110,9 +108,6 @@ function flattenSimpleObject (object) {
   return result;
 }
 
-/**
- * @param resultArray
- */
 function flattenRecursiveSimpleObject (originalObject, resultArray) {
   Object.keys(originalObject).forEach(function (key) {
     const value = structuredClone(originalObject[key]);
@@ -126,7 +121,6 @@ function flattenRecursiveSimpleObject (originalObject, resultArray) {
 
 /**
  * The result is made from copies of the original items (which are left untouched).
- * @param array
  */
 function flattenTree (array) {
   if (!Array.isArray(array)) {
@@ -288,7 +282,6 @@ function collectPluckFromRootItem (item, propertyName) {
  * Returns an array with the given ids plus those of their descendants, excluding unknown ids but
  * including `null` if present.
  *
- * @param ids
  */
 function expandIds (array, ids) {
   const expandedIds = [];
@@ -336,7 +329,6 @@ function applyRecursive (item, iterator) {
 
 /**
  * Display in the console
- * @param array
  * @param properties to display ['id', ..]
  * @param depth  - private
  */

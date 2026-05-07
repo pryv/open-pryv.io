@@ -9,8 +9,6 @@ import type {} from 'node:fs';
 /**
  * Helper function for handling method responses.
  *
- * @param res
- * @param next
  * @param successCode Can be a function accepting the result in arg
  *                                      and returning a number
  */

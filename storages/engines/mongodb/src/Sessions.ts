@@ -29,7 +29,6 @@ const collectionInfo = {
 /**
  * Creates a new instance with the given database and options.
  *
- * @param database
  * @param options Possible options: `maxAge` (in milliseconds)
  */
 function Sessions (database, options) {
@@ -42,7 +41,6 @@ function Sessions (database, options) {
 /**
  * Fetches the specified session's data (or null if the session does not exist or has expired).
  *
- * @param id
  * @param callback Args: err, data
  */
 Sessions.prototype.get = function (id, callback) {
@@ -69,7 +67,6 @@ Sessions.prototype.get = function (id, callback) {
 /**
  * Retrieves the valid session id matching the data (or null if not found).
  *
- * @param data
  * @param callback Args: err, id
  */
 Sessions.prototype.getMatching = function (data, callback) {
@@ -96,7 +93,6 @@ Sessions.prototype.getMatching = function (data, callback) {
 /**
  * Creates a new session with the given data.
  *
- * @param data
  * @param callback Args: err, id
  */
 Sessions.prototype.generate = function (data, options, callback) {
@@ -115,8 +111,6 @@ Sessions.prototype.generate = function (data, options, callback) {
 /**
  * Renews the specified session's expiration date.
  *
- * @param id
- * @param callback
  */
 Sessions.prototype.touch = function (id, callback) {
   const update = { $set: { expires: this.getNewExpirationDate() } };
@@ -128,8 +122,6 @@ Sessions.prototype.touch = function (id, callback) {
  * Updates 'expires' to now, so that the session will be destroyed the next time Sessions.get()
  * or Sessions.getMatching() is called.
  *
- * @param id
- * @param callback
  */
 Sessions.prototype.expireNow = function (id, callback) {
   const update = { $set: { expires: new Date() } };
@@ -139,8 +131,6 @@ Sessions.prototype.expireNow = function (id, callback) {
 /**
  * Deletes the specified session.
  *
- * @param id
- * @param callback
  */
 Sessions.prototype.destroy = function (id, callback) {
   this.database.deleteOne(collectionInfo, { _id: id }, callback);
@@ -149,7 +139,6 @@ Sessions.prototype.destroy = function (id, callback) {
 /**
  * Destroys all sessions.
  *
- * @param callback
  */
 Sessions.prototype.clearAll = function (callback) {
   this.database.deleteMany(collectionInfo, {}, callback);
@@ -162,7 +151,6 @@ Sessions.prototype.getNewExpirationDate = function () {
 /**
  * Delete sessions whose data matches the given fields.
  * @param query — plain key/value to match inside session data
- * @param callback
  */
 Sessions.prototype.remove = function (query, callback) {
   // Convert plain {field: value} to MongoDB dot-notation on the data subdocument
@@ -181,7 +169,6 @@ Sessions.prototype.remove = function (query, callback) {
 
 /**
  * Export all session documents (raw).
- * @param callback
  */
 Sessions.prototype.exportAll = function (callback) {
   this.database.find(collectionInfo, {}, {}, callback);
@@ -189,8 +176,6 @@ Sessions.prototype.exportAll = function (callback) {
 
 /**
  * Import raw session documents.
- * @param data
- * @param callback
  */
 Sessions.prototype.importAll = function (data, callback) {
   if (!data || data.length === 0) return callback(null);

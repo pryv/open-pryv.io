@@ -30,7 +30,6 @@ const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('mail-template-seeder');
 
 /**
- * @param opts
  * @param opts.platformDB     — the PlatformDB instance (setMailTemplate + getAllMailTemplates)
  * @param opts.templatesRootDir — absolute path to the Pug root
  */

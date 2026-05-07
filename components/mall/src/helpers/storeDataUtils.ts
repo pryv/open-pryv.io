@@ -28,7 +28,6 @@ export { LocalStoreId, AccountStoreId, parseStoreIdAndStoreItemId, getFullItemId
  * - `local`: items have no store prefix (e.g. `myStream`)
  * - `account`: items keep their `:_system:` / `:system:` prefix as-is
  *
- * @param storeId
  */
 function isPassthroughStore (storeId) {
   return storeId === LOCAL_STORE_ID || storeId === ACCOUNT_STORE_ID;
@@ -37,7 +36,6 @@ function isPassthroughStore (storeId) {
 /**
  * Extract the store id and the in-store item id (without the store reference) from the given item id.
  * For streams, converts the store's root pseudo-stream id (`:store:`) to `*`.
- * @param fullItemId
  */
 function parseStoreIdAndStoreItemId (fullItemId) {
   if (!fullItemId.startsWith(STORE_ID_MARKER)) return [LOCAL_STORE_ID, fullItemId];
@@ -60,8 +58,6 @@ function parseStoreIdAndStoreItemId (fullItemId) {
 /**
  * Get full item id from the given store id and in-store item id.
  * For streams, converts the `*` id to the store's root pseudo-stream (`:store:`).
- * @param storeId
- * @param storeItemId
  */
 function getFullItemId (storeId, storeItemId) {
   // Passthrough stores: store-internal IDs ARE the external IDs
@@ -72,8 +68,6 @@ function getFullItemId (storeId, storeItemId) {
 /**
  * Handle the given error from a data store, wrapping it as an API error if needed
  * before throwing it further.
- * @param err
- * @param storeId
  */
 function throwAPIError (err, storeId) {
   if (!(err instanceof Error)) {

@@ -19,10 +19,6 @@ class TracedOperations {
     this.context = context;
   }
 
-  /**
-   * @param name
-   * @param opts
-   */
   start (name, opts) {
     const ongoing = this.ongoingOps;
     const ctx = this.context;
@@ -30,9 +26,6 @@ class TracedOperations {
     ongoing.set(name, span);
   }
 
-  /**
-   * @param name
-   */
   finish (name) {
     const ongoing = this.ongoingOps;
     const span = ongoing.get(name);

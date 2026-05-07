@@ -43,7 +43,6 @@ const typeRepo = new TypeRepository();
 
 /**
  * Events API methods implementations.
- * @param api
  */
 export default async function (api) {
   const config = await getConfig();
@@ -572,7 +571,6 @@ export default async function (api) {
    * Fixes req.files structure for when attachments were sent without a filename, in which case
    * Express lists files as an array in a `file` property (instead of directly as properties).
    *
-   * @param files
    */
   function sanitizeRequestFiles (files) {
     if (!files || !files.file || !Array.isArray(files.file)) {
@@ -626,9 +624,6 @@ export default async function (api) {
    * Will try casting string content to number if appropriate.
    *
    * @param context.newEvent contains the event data
-   * @param params
-   * @param result
-   * @param next
    */
   async function validateEventContentAndCoerce (context, params, result, next) {
     const type = context.newEvent.type;
@@ -787,8 +782,6 @@ export default async function (api) {
    * Sets the file read token for each of the given event's attachments (if any) for the given
    * access.
    *
-   * @param access
-   * @param attachments
    */
   function setFileReadToken (access, attachments) {
     if (attachments == null) {

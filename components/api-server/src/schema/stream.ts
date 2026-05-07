@@ -18,9 +18,7 @@ const string = helpers.string;
 const boolean = helpers.boolean;
 
 /**
- * @param action
  * @param ignoreChildren Whether to ignore `children` property
- * @param refToStreamSchema
  */
 export default function (action, ignoreChildren, refToStreamSchema) {
   const schema: any = {

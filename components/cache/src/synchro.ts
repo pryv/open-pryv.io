@@ -23,9 +23,6 @@ const MESSAGES = {
 };
 // ------- listener
 // listen for a userId
-/**
- * @param userId
- */
 function registerListenerForUserId (userId) {
   logger.debug('activate listener for user:', userId);
   if (listenerMap.has(userId)) { return; }
@@ -34,9 +31,6 @@ function registerListenerForUserId (userId) {
   }));
 }
 // unregister listner
-/**
- * @param userId
- */
 function removeListenerForUserId (userId) {
   logger.debug('disable listener for user:', userId);
   if (!listenerMap.has(userId)) { return; }
@@ -44,10 +38,6 @@ function removeListenerForUserId (userId) {
   listenerMap.delete(userId);
 }
 // listener
-/**
- * @param userId
- * @param msg
- */
 function handleMessage (userId, msg) {
   logger.debug('handleMessage', userId, msg);
   if (msg.action === MESSAGES.UNSET_ACCESS_LOGIC) {
@@ -62,9 +52,6 @@ function handleMessage (userId, msg) {
   }
 }
 // ------- emitter
-/**
- * @param userId
- */
 function unsetAccessLogic (userId, accessLogic) {
   pubsub.cache.emit(userId, {
     action: MESSAGES.UNSET_ACCESS_LOGIC,
@@ -72,17 +59,11 @@ function unsetAccessLogic (userId, accessLogic) {
     accessToken: accessLogic.token
   });
 }
-/**
- * @param userId
- */
 function unsetUserData (userId) {
   pubsub.cache.emit(userId, {
     action: MESSAGES.UNSET_USER_DATA
   });
 }
-/**
- * @param username
- */
 function unsetUser (username) {
   pubsub.cache.emit(MESSAGES.UNSET_USER, {
     username

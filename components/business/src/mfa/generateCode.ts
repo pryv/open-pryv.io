@@ -13,7 +13,6 @@ const randomBytes = promisify(require('node:crypto').randomBytes);
  * Generates a numeric code of the requested length.
  * Uses 4 random bytes and pads/truncates to `codeLength` digits.
  *
- * @param codeLength
  */
 async function generateCode (codeLength) {
   const bytes = await randomBytes(4);

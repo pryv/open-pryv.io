@@ -23,7 +23,6 @@ const MFA_PROFILE_ID = 'private';
 /**
  * Auth API methods implementations.
  *
- * @param api
  */
 export default async function (api) {
   const usersRepository = await getUsersRepository();

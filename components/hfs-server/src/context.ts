@@ -44,9 +44,6 @@ class Context {
     await this.configureMetadataCache();
   }
 
-  /**
-   * @param url
-   */
   configureTypeRepository (url) {
     const typeRepo = new business.types.TypeRepository();
     typeRepo.tryUpdate(url); // async
@@ -70,10 +67,6 @@ class Context {
 
   // Starts a child span below the request span.
   //
-  /**
-   * @param name
-   * @param opts
-   */
   childSpan (name, opts) {
     const tracer = this.tracer;
     const rootSpan = cls.getRootSpan();

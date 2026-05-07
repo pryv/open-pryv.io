@@ -21,7 +21,6 @@ export { produceHandleErrorMiddleware };
 
 /**
  * Error route handling.
- * @param logging
  */
 function produceHandleErrorMiddleware (logging) {
   const logger = logging.getLogger('error-middleware');

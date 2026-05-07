@@ -45,9 +45,6 @@ class ConditionVariable {
     this.waiters = [];
   }
 
-  /**
-   * @param timeout
-   */
   wait (timeout) {
     const waiter = new Waiter(timeout);
     this.waiters.push(waiter);
@@ -78,9 +75,6 @@ class Fuse {
     this.cv = new ConditionVariable();
   }
 
-  /**
-   * @param timeout
-   */
   async wait (timeout) {
     if (this.burnt) { return; }
     await this.cv.wait(timeout);

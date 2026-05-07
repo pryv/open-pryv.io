@@ -47,9 +47,6 @@ export default function (ignoredPaths, ignoredSubdomains) {
     });
   }
 };
-/**
- * @param candidate
- */
 function looksLikeUsername (candidate) {
   const reUsername = new RegExp(USERNAME_REGEXP_STR);
   const lowercasedUsername = candidate.toLowerCase(); // for retro-compatibility

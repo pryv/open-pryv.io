@@ -151,9 +151,6 @@ function getKeyValueDataForStore (storeId) {
   return new StoreKeyValueData(storeId);
 }
 
-/**
- * @param storeId
- */
 function StoreKeyValueData (storeId) {
   this.storeId = storeId;
 }

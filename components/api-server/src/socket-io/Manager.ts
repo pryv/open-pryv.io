@@ -48,9 +48,6 @@ class Manager {
 
   // Returns true if the `candidate` could be a username on a lexical level.
   //
-  /**
-   * @param candidate
-   */
   looksLikeUsername (candidate) {
     const reUsername = new RegExp(USERNAME_REGEXP_STR);
     const lowercasedUsername = candidate.toLowerCase(); // for retro-compatibility
@@ -62,9 +59,6 @@ class Manager {
   //
   //    manager.getUsername('/foobar') // => 'foobar'
   //
-  /**
-   * @param namespaceName
-   */
   extractUsername (namespaceName) {
     const ns = cleanNS(namespaceName);
     if (!ns.startsWith('/')) { return null; }
@@ -75,7 +69,6 @@ class Manager {
     /**
      * Takes the last field of the NS path
      *
-     * @param namespace
      */
     function cleanNS (namespace) {
       let cleaned = '' + namespace;
@@ -90,9 +83,6 @@ class Manager {
     }
   }
 
-  /**
-   * @param namespaceName
-   */
   async ensureInitNamespace (namespaceName) {
     await initAsyncProps.call(this);
     const username = this.extractUsername(namespaceName);
@@ -145,9 +135,6 @@ class NamespaceContext {
   // Adds a connection to the namespace. This produces a `Connection` instance
   // and stores it in (our) namespace.
   //
-  /**
-   * @param socket
-   */
   addConnection (socket, _methodContext?) {
     // This will represent state that we keep for every connection.
     const connection = new Connection(this.logger, socket, this, socket.methodContext, this.api, this.apiVersion, this.hostname);
@@ -157,17 +144,11 @@ class NamespaceContext {
     connection.init();
   }
 
-  /**
-   * @param conn
-   */
   storeConnection (conn) {
     const connMap = this.connections;
     connMap.set(conn.key(), conn);
   }
 
-  /**
-   * @param conn
-   */
   deleteConnection (conn) {
     const connMap = this.connections;
     connMap.delete(conn.key());
@@ -199,9 +180,6 @@ class NamespaceContext {
   // ------------------------------------------------------------ event handlers
   // Called when a new socket connects to the namespace `socketNs`.
   //
-  /**
-   * @param socket
-   */
   onConnect (socket) {
     const logger = this.logger;
     const namespaceName = socket.nsp.name;
@@ -218,9 +196,6 @@ class NamespaceContext {
 
   // Called when the underlying socket-io socket disconnects.
   //
-  /**
-   * @param conn
-   */
   async onDisconnect (conn) {
     const logger = this.logger;
     const namespace = this.socketNs;
@@ -270,10 +245,6 @@ class Connection {
   // ------------------------------------------------------------ event handlers
   // Called when the socket wants to call a Pryv IO method.
   //
-  /**
-   * @param callData
-   * @param callback
-   */
   async onMethodCall (callData, callback) {
     const methodContext = this.methodContext;
     methodContext.tracing = initRootSpan('socket.io', {

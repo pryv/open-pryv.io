@@ -24,7 +24,6 @@ export function toMongoDBQuery (streamQueriesArray) {
 
 /**
  * Convert a streamQuery to a query usable by MongoDB
- * @param streamQuery
  */
 function streamQueryToMongoDBQuery (streamQuery) {
   if (streamQuery == null) return {};

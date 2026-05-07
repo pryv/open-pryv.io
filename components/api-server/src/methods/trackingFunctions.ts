@@ -12,7 +12,6 @@ const { getConfig } = require('@pryv/boiler');
 /**
  * Call tracking functions, to be registered after all methods have been registered.
  *
- * @param api
  */
 export default async function (api) {
   const config = await getConfig();

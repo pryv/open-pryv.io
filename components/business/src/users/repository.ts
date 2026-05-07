@@ -83,16 +83,10 @@ class UsersRepository {
     return users;
   }
 
-  /**
-   * @param username
-   */
   async getUserIdForUsername (username) {
     return await this.usersIndex.getUserId(username);
   }
 
-  /**
-   * @param userId
-   */
   async getUserById (userId) {
     const userAccountStreamsIds = Object.keys(accountStreams.accountMap);
     const query = {
@@ -127,16 +121,10 @@ class UsersRepository {
     return user;
   }
 
-  /**
-   * @param username
-   */
   async usernameExists (username) {
     return await this.usersIndex.usernameExists(username);
   }
 
-  /**
-   * @param username
-   */
   async getUserByUsername (username) {
     const userId = await this.getUserIdForUsername(username);
     if (userId) {
@@ -146,9 +134,6 @@ class UsersRepository {
     return null;
   }
 
-  /**
-   * @param userId
-   */
   async getStorageUsedByUserId (userId) {
     return {
       dbDocuments: (await this.getOnePropertyValue(userId, 'dbDocuments')) || 0,
@@ -156,10 +141,6 @@ class UsersRepository {
     };
   }
 
-  /**
-   * @param userId
-   * @param propertyKey
-   */
   async getOnePropertyValue (userId, propertyKey) {
     const query = {
       limit: 1,
@@ -177,20 +158,10 @@ class UsersRepository {
     return userAccountEvents[0].content;
   }
 
-  /**
-   * @param username
-   * @param appId
-   * @param transactionSession
-   */
   async createSessionForUser (username, appId, transactionSession) {
     return await fromCallback((cb) => this.sessionsStorage.generate({ username, appId }, { transactionSession }, cb));
   }
 
-  /**
-   * @param userId
-   * @param token
-   * @param appId
-   */
   async createPersonalAccessForUser (userId, token, appId, transactionSession) {
     const accessData = {
       token,
@@ -213,10 +184,6 @@ class UsersRepository {
     return true;
   }
 
-  /**
-   * @param user
-   * @param withSession
-   */
   async insertOne (user, withSession = false) {
     // Create the User at a Platform Level
     const operations = [];
@@ -285,11 +252,6 @@ class UsersRepository {
     return user;
   }
 
-  /**
-   * @param user
-   * @param update
-   * @param accessId
-   */
   async updateOne (user, update, accessId) {
     // change password into hash if it exists
     if (update.password) {
@@ -322,10 +284,6 @@ class UsersRepository {
     });
   }
 
-  /**
-   * @param userId
-   * @param username
-   */
   async deleteOne (userId, username) {
     // Fetch user object BEFORE any deletions — platform.deleteUser needs it
     // for unique field cleanup (e.g. email).
@@ -352,10 +310,6 @@ class UsersRepository {
 
   // -------------------- Password Management ------------------- //
 
-  /**
-   * @param userId
-   * @param password
-   */
   async checkUserPassword (userId, password) {
     const currentPass = await this.userAccountStorage.getPasswordHash(userId);
     let isValid = false;

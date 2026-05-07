@@ -43,7 +43,6 @@ const OVERRIDE_HEADER_SUFFIX =
  * On any failure after PlatformDB writes, rolls back: revokes the token and
  * unregisters the core. Throws the original error.
  *
- * @param opts
  * @param opts.platformDB
  * @param opts.caDir
  * @param opts.tokensPath
@@ -135,7 +134,6 @@ async function newCore (opts) {
 }
 
 /**
- * @param opts
  * @param opts.tokensPath
  */
 function listTokens ({ tokensPath }) {
@@ -147,7 +145,6 @@ function listTokens ({ tokensPath }) {
  * Revoke active tokens for `coreId`. When `platformDB` and `ip` are given,
  * also undoes the DNS + PlatformDB pre-registration.
  *
- * @param opts
  * @param opts.tokensPath
  * @param opts.coreId
  * @param [opts.platformDB]
@@ -181,7 +178,6 @@ async function revokeToken ({ tokensPath, coreId, platformDB = null, ip = null }
  * `verifyClient: true` flag is set on both ends — that is the invariant the
  * Plan 36 manual workaround was about.
  *
- * @param opts
  * @param opts.caDir - cluster CA dir (`ClusterCA` ensures this).
  * @param opts.tlsDir - where ca.crt / node.crt / node.key go.
  * @param opts.coreId - this core's identifier.

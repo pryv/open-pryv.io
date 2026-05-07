@@ -34,10 +34,6 @@ class Deletion {
    * Authorization check order:
    * 1- is a valid admin token
    * 2- is a valid personalToken
-   * @param context
-   * @param params
-   * @param result
-   * @param next
    */
   checkIfAuthorized (context, params, result, next) {
     const canDelete = this.config.get('user-account:delete');
@@ -58,12 +54,6 @@ class Deletion {
     return next(errors.unknownResource());
   }
 
-  /**
-   * @param context
-   * @param params
-   * @param result
-   * @param next
-   */
   async validateUserExists (context, params, result, next) {
     const usersRepository = await getUsersRepository();
     const user = await usersRepository.getUserByUsername(params.username);
@@ -75,12 +65,6 @@ class Deletion {
     next();
   }
 
-  /**
-   * @param context
-   * @param params
-   * @param result
-   * @param next
-   */
   async validateUserFilepaths (context, params, result, next) {
     const dirPaths = [
       path.join(this.config.get('storages:engines:filesystem:previewsDirPath'), context.user.id)
@@ -99,12 +83,6 @@ class Deletion {
     next();
   }
 
-  /**
-   * @param context
-   * @param params
-   * @param result
-   * @param next
-   */
   async deleteUserFiles (context, params, result, next) {
     const dirPaths = [
       this.config.get('storages:engines:filesystem:previewsDirPath')
@@ -115,12 +93,6 @@ class Deletion {
     next();
   }
 
-  /**
-   * @param context
-   * @param params
-   * @param result
-   * @param next
-   */
   async deleteHFData (context, params, result, next) {
     const conn = require('storages').seriesConnection;
     if (conn) {
@@ -129,24 +101,12 @@ class Deletion {
     next();
   }
 
-  /**
-   * @param context
-   * @param params
-   * @param result
-   * @param next
-   */
   async deleteAuditData (context, params, result, next) {
     const deleteUserDirectory = require('storage').userLocalDirectory.deleteUserDirectory;
     await deleteUserDirectory(context.user.id);
     next();
   }
 
-  /**
-   * @param context
-   * @param params
-   * @param result
-   * @param next
-   */
   async deleteUser (context, params, result, next) {
     try {
       const dbCollections = [
@@ -169,9 +129,6 @@ class Deletion {
   }
 }
 
-/**
- * @param paths
- */
 function findNotAccessibleDir (paths) {
   let notAccessibleDir = '';
   for (const path of paths) {

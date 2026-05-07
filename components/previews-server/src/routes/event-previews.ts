@@ -34,10 +34,6 @@ const StandardDimensionsLength = StandardDimensions.length;
 /**
  * Routes for retrieving preview images for events.
  *
- * @param expressApp
- * @param initContextMiddleware
- * @param loadAccessMiddleware
- * @param logging
  */
 export default async function (expressApp, initContextMiddleware, loadAccessMiddleware, logging) {
   const mall = await getMall();

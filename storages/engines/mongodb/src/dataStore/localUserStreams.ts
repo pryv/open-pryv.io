@@ -82,8 +82,6 @@ const userStreams = ds.createUserStreams({
   },
 
   /**
-   * @param userId
-   * @param query
    * @param [options]
    */
   async getDeletions (userId, query, options) {
@@ -137,10 +135,6 @@ const userStreams = ds.createUserStreams({
 
 export { userStreams };
 
-/**
- * @param stream
- * @param childrenDepth
- */
 function cloneStream (stream, childrenDepth) {
   if (childrenDepth === -1) {
     return structuredClone(stream);

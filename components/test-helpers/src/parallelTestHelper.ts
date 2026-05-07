@@ -43,7 +43,6 @@ const databaseFixture = require('./databaseFixture.ts').default;
 
 /**
  * Creates an isolated test context for parallel-safe testing
- * @param options
  * @param options.password - User password (default: 'test-password')
  * @param options.prefix - Username prefix (default: 'test')
  */

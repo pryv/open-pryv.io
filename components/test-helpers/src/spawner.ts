@@ -89,9 +89,6 @@ class SpawnContext {
 
   // Spawns a server instance.
   //
-  /**
-   * @param customSettings
-   */
   async spawn (customSettings?) {
     // If by any chance we exhausted our processes really quickly, make
     // sure to spawn a few now.
@@ -146,9 +143,6 @@ class SpawnContext {
 
   // Spawns `n` instances at different listening ports. See #spawn.
   //
-  /**
-   * @param n
-   */
   spawn_multi (n) {
     if (n <= 0) { throw new Error('AF: n expected to be > 0'); }
     return Array.from({ length: n }, () => this.spawn());
@@ -230,9 +224,6 @@ class ProcessProxy {
     }
   }
 
-  /**
-   * @param err
-   */
   onChildError (err) {
     logger.debug(err);
   }
@@ -246,9 +237,6 @@ class ProcessProxy {
 
   // Starts the express/socket.io server with the settings given.
   //
-  /**
-   * @param settings
-   */
   async startServer (settings) {
     if (this.exited.isBurnt()) { throw new Error('Child exited prematurely; please check your setup code.'); }
     await this.sendToChild('int_startServer', settings);
@@ -278,10 +266,6 @@ class ProcessProxy {
     }
   }
 
-  /**
-   * @param msg
-   * @param args
-   */
   sendToChild (msg, ...args) {
     return new Promise((resolve, reject) => {
       const child = this.childProcess;
@@ -292,10 +276,6 @@ class ProcessProxy {
     });
   }
 
-  /**
-   * @param res
-   * @param rej
-   */
   createPendingMessage (res, rej) {
     let remainingTries = 1000;
     const pendingMessages = this.pendingMessages;
@@ -367,16 +347,10 @@ class Server extends EventEmitter {
     }
   }
 
-  /**
-   * @param path
-   */
   url (path) {
     return new url.URL(path || '', this.baseUrl).toString();
   }
 
-  /**
-   * @param newUrl
-   */
   request (newUrl) {
     return supertest(newUrl || this.baseUrl);
   }

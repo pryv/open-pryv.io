@@ -72,12 +72,9 @@ class Config {
   /**
    * @private
    * Init Config with Files should be called just once when starting an APP
-   * @param options
-   * @param appName
    * @param [options.baseConfigDir] - (optional) directory to use to look for configs (default, env)
    * @param [options.baseFilesDir] - (optional) directory to use for `file://` relative path
    * @param [options.extras] - (optional) and array of extra files or plugins to load (synchronously or async)
-   * @param logging
    */
   initSync (options, logging) {
     this.appName = options.appName;
@@ -250,7 +247,6 @@ class Config {
 
   /**
    * Return true if key as value
-   * @param key
    */
   has (key) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
@@ -271,7 +267,6 @@ class Config {
 
   /**
    * Retreive value and store info that applies
-   * @param key
    */
   getScopeAndValue (key) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
@@ -296,8 +291,6 @@ class Config {
 
   /**
    * Set value
-   * @param key
-   * @param value
    */
   set (key, value) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }

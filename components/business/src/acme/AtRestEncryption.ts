@@ -71,7 +71,6 @@ function deriveKey (source, purpose, salt = Buffer.alloc(0)) {
  * Encrypt a plaintext string or Buffer with a 32-byte key. Returns a
  * base64-encoded envelope safe to store in a JSON field.
  *
- * @param plaintext
  * @param key - 32 bytes
  */
 function encrypt (plaintext, key) {
@@ -94,7 +93,6 @@ function encrypt (plaintext, key) {
  * Decrypt a base64 envelope produced by encrypt(). Throws on tamper,
  * wrong key, or unknown envelope version.
  *
- * @param encoded
  * @param key - 32 bytes
  */
 function decrypt (encoded, key) {

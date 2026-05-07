@@ -30,9 +30,6 @@ class MallUserStreams {
    */
   storeNames = new Map();
 
-  /**
-   * @param storesHolder
-   */
   constructor (storesHolder) {
     for (const [storeId, store] of storesHolder.storesById) {
       this.streamsStores.set(storeId, store.streams);
@@ -43,8 +40,6 @@ class MallUserStreams {
   /**
    * Get a single stream from id and optional storeId.
    * Will not expand children.
-   * @param userId
-   * @param streamId
    * @param [storeId]
    */
   async getOneWithNoChildren (userId, streamId, storeId) {
@@ -174,7 +169,6 @@ class MallUserStreams {
   }
 
   /**
-   * @param userId
    * @param [deletedSince]
    * @param [storeIds]
    */
@@ -194,8 +188,6 @@ class MallUserStreams {
    * As some stores might not keep "deletion" records
    * A "local" cache of deleted streams could be implemented
    * This is mostly used by tests fixtures for now
-   * @param userId
-   * @param streamData
    */
   async createDeleted (userId, streamData) {
     const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(streamData.id);
@@ -205,10 +197,6 @@ class MallUserStreams {
     return res;
   }
 
-  /**
-   * @param userId
-   * @param streamData
-   */
   async create (userId, streamData) {
     if (streamData.deleted != null) {
       return await this.createDeleted(userId, streamData);
@@ -263,10 +251,6 @@ class MallUserStreams {
     return res;
   }
 
-  /**
-   * @param userId
-   * @param streamData
-   */
   async update (userId, streamData) {
     const streamForStore = structuredClone(streamData);
     const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamData.id);
@@ -307,7 +291,6 @@ class MallUserStreams {
    * Used by tests
    * Might be replaced by standard delete.
    * @param userId  undefined
-   * @param storeId
    */
   async deleteAll (userId, storeId) {
     const streamsStore = this.streamsStores.get(storeId);
@@ -318,9 +301,6 @@ class MallUserStreams {
   /**
    * @private
    * get name of children stream
-   * @param userId
-   * @param streamId
-   * @param exludedIds
    */
   async getNamesOfChildren (userId, streamId, exludedIds) {
     const streams = await this.get(userId, {

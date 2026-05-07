@@ -46,8 +46,6 @@ class Repository {
    * Return webhooks for a given User and Access.
    * Personal access: returns all webhooks
    * App access: all those created by the access
-   * @param user
-   * @param access
    */
   async get (user, access) {
     const query: any = {};
@@ -66,8 +64,6 @@ class Repository {
 
   /**
    * Returns a webhook for a user, fetched by its id
-   * @param user
-   * @param webhookId
    */
   async getById (user, webhookId) {
     const query = {
@@ -81,8 +77,6 @@ class Repository {
 
   /**
    * Inserts a webhook for a user
-   * @param user
-   * @param webhook
    */
   async insertOne (user, webhook) {
     await fromCallback((cb) => this.storage.insertOne(user, webhook.forStorage(), cb));
@@ -90,9 +84,6 @@ class Repository {
 
   /**
    * Updates certain fields of a webhook for a user
-   * @param user
-   * @param update
-   * @param webhookId
    */
   async updateOne (user, update, webhookId) {
     const query = { id: webhookId };
@@ -101,8 +92,6 @@ class Repository {
 
   /**
    * Deletes a webhook for a user, given the webhook's id
-   * @param user
-   * @param webhookId
    */
   async deleteOne (user, webhookId) {
     await fromCallback((cb) => this.storage.delete(user, { id: webhookId }, cb));
@@ -110,7 +99,6 @@ class Repository {
 
   /**
    * Deletes all webhooks for a user.
-   * @param user
    */
   async deleteForUser (user) {
     await fromCallback((cb) => this.storage.delete(user, {}, cb));
@@ -118,11 +106,6 @@ class Repository {
 }
 export default Repository;
 export { Repository };
-/**
- * @param user
- * @param repository
- * @param webhook
- */
 function initWebhook (user, repository, webhook) {
   return new Webhook(deepMerge({
     webhooksRepository: repository,

@@ -17,9 +17,6 @@ const SERIES_PREFIX = 'series:';
 // Returns true if the name given refers to a series type. Currently this means
 // that the name starts with SERIES_PREFIX.
 //
-/**
- * @param name
- */
 function isSeriesType (name) {
   return name.startsWith(SERIES_PREFIX);
 }
@@ -29,18 +26,10 @@ function isSeriesType (name) {
 class TypeValidator {
   // Validates the given event type against its schema.
   //
-  /**
-   * @param type
-   * @param content
-   */
   validate (type, content) {
     return type.callValidator(this, content);
   }
 
-  /**
-   * @param content
-   * @param schema
-   */
   async validateWithSchema (content, schema) {
     const validator = jsonValidator();
     await new Promise<void>((resolve, reject) => {
@@ -92,7 +81,6 @@ class TypeRepository {
    * - validate()
    *
    * The old path: lookup(), then validator() are too heavy
-   * @param event
    */
   async validate (event) {
     const content = event.content != null ? event.content : null;
@@ -106,9 +94,6 @@ class TypeRepository {
   // it needs to be part of our standard types list that we load on startup
   // (#tryUpdate).
   //
-  /**
-   * @param name
-   */
   isKnown (name) {
     if (isSeriesType(name)) {
       const leafTypeName = name.slice(SERIES_PREFIX.length);
@@ -121,9 +106,6 @@ class TypeRepository {
   // complex ('position/wgs84'). Leaf types are listed in
   // `event-types.default.json`.
   //
-  /**
-   * @param name
-   */
   lookupLeafType (name) {
     if (!this.isKnown(name)) { throw new errors.TypeDoesNotExistError(`Type '${name}' does not exist in this Pryv instance.`); }
     const typeSchema = defaultTypes.types[name];
@@ -139,9 +121,6 @@ class TypeRepository {
   //
   // @throw {TypeDoesNotExistError} when name doesn't refer to a built in type.
   //
-  /**
-   * @param name
-   */
   lookup (name) {
     if (isSeriesType(name)) {
       const leafTypeName = name.slice(SERIES_PREFIX.length);
@@ -161,10 +140,6 @@ class TypeRepository {
   // Tries to update the stored type definitions with a file found on the
   // internet.
   //
-  /**
-   * @param sourceURL
-   * @param apiVersion
-   */
   async tryUpdate (sourceURL, apiVersion) {
     function unavailableError (err) {
       throw new Error('Could not update event types from ' +

@@ -36,7 +36,6 @@ class CertRenewer {
   #acmeLib;
 
   /**
-   * @param opts
    * @param opts.platformDB   - needs setAcmeAccount/getAcmeAccount/setCertificate/getCertificate/listCertificates
    * @param opts.atRestKey    - 32-byte symmetric key for encrypting private-key material
    * @param opts.email        - ACME account contact; required to create an account
@@ -103,7 +102,6 @@ class CertRenewer {
    * The keyPem is encrypted at rest before being handed to PlatformDB;
    * the public certPem + chainPem are stored as-is.
    *
-   * @param opts
    * @param opts.hostname                - e.g. '*.mc.example.com'
    * @param [opts.altNames=[]]           - e.g. ['mc.example.com']
    * @param opts.dnsWriter               - { create(name, value), remove(name) }; see PlatformDBDnsWriter
@@ -161,7 +159,6 @@ class CertRenewer {
    * Retrieve a stored cert with its keyPem decrypted. Other fields
    * (certPem, chainPem) pass through unchanged.
    *
-   * @param hostname
    */
   async getCertificate (hostname) {
     const stored = await this.#platformDB.getCertificate(hostname);

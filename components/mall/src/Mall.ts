@@ -43,8 +43,6 @@ class Mall {
 
   /**
    * Register a DataStore
-   * @param store
-   * @param storeDescription
    */
   addStore (store, storeDescription) {
     if (this.initialized) { throw new Error('Sources cannot be added after init()'); }
@@ -108,7 +106,6 @@ class Mall {
 
   /**
    * Return storage informations per store Id.
-   * @param userId
   */
   async getUserStorageInfos (userId) {
     const storageInfos = { };
@@ -134,8 +131,6 @@ export { Mall };
 
 /**
  * Get store-specific integrity calculation function
- * @param storeId
- * @param integrity
 */
 function getEventIntegrityFn (storeId, integrity) {
   return function setIntegrityForEvent (storeEventData) {

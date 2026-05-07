@@ -34,7 +34,6 @@ const { URL } = require('node:url');
 const applyBundleMod = require('./applyBundle.ts');
 
 /**
- * @param opts
  * @param opts.bundlePath - path to the armored .json.age (or any name) file
  * @param [opts.passphrase] - if given, used directly (test path)
  * @param [opts.passphraseFile] - read from this file; trim trailing newlines

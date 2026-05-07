@@ -30,11 +30,6 @@ const { getLogger } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 // Initializes the SocketIO subsystem.
 //
-/**
- * @param server
- * @param api
- * @param customAuthStepFn
- */
 async function setupSocketIO (server, api, customAuthStepFn) {
   const logger = getLogger('socketIO');
   const storageLayer = await getStorageLayer();

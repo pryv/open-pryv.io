@@ -26,9 +26,6 @@ class Context {
   db;
   storageLayer;
 
-  /**
-   * @param dbOrStorageLayer
-   */
   constructor (dbOrStorageLayer) {
     const { StorageLayer } = require('storage/src/StorageLayer.ts');
     if (dbOrStorageLayer instanceof StorageLayer) {
@@ -39,9 +36,6 @@ class Context {
     }
   }
 
-  /**
-   * @param user
-   */
   forUser (user) {
     return new UserContext(this, user);
   }
@@ -114,7 +108,6 @@ class DependentsList {
   /**
    * Adds a dependent fixture item and creates it in the DB, before calling the given callback (`cb`) if any.
    * @template {FixtureItem} T
-   * @param fixtureItem
    * @param [cb]
    */
   async addAndCreate (fixtureItem, cb) {
@@ -132,7 +125,6 @@ class DependentsList {
    * Calls function for each dependent item, accumulating the promises returned by the function and
    * then returning a promise that only resolves once all individual promises
    * resolve (aka Promise.all).
-   * @param fn
    */
   all (fn) {
     return Promise.all(this.dependentItems.map(fn));
@@ -159,7 +151,6 @@ class FixtureItem {
   /**
    * Merges attributes given with generated attributes and returns the
    * resulting attribute set.
-   * @param attrs
    */
   attributes (attrs) {
     return deepMerge({
@@ -205,9 +196,6 @@ class DatabaseFixture {
   /**
    * Creates a Pryv user. If a callback is given (`cb`), it is called after
    * the user is created.
-   * @param name
-   * @param attrs
-   * @param cb
    */
   async user (name, attrs = {}, cb) {
     await initMall();
@@ -256,44 +244,27 @@ class FixtureUser extends FixtureItem {
     }, attrs));
   }
 
-  /**
-   * @param attrs
-   * @param cb
-   */
   stream (attrs: any = {}, cb?) {
     const s = new FixtureStream(this.context, attrs);
     return this.dependents.addAndCreate(s, cb);
   }
 
-  /**
-   * @param attrs
-   */
   event (attrs) {
     logger.debug('event', attrs);
     const e = new FixtureEvent(this.context, attrs);
     return this.dependents.addAndCreate(e);
   }
 
-  /**
-   * @param attrs
-   */
   access (attrs: any = {}) {
     const a = new FixtureAccess(this.context, attrs);
     return this.dependents.addAndCreate(a);
   }
 
-  /**
-   * @param token
-   */
   session (token) {
     const s = new FixtureSession(this.context, token);
     return this.dependents.addAndCreate(s);
   }
 
-  /**
-   * @param attrs
-   * @param accessId
-   */
   webhook (attrs = {}, accessId) {
     const w = new FixtureWebhook(this.context, attrs, accessId);
     return this.dependents.addAndCreate(w);
@@ -346,18 +317,11 @@ class FixtureStream extends FixtureItem {
     this.parentId = attrs.parentId;
   }
 
-  /**
-   * @param attrs
-   * @param cb
-   */
   stream (attrs = {}, cb) {
     const s = new FixtureStream(this.context, attrs, this.attrs.id);
     return this.dependents.addAndCreate(s, cb);
   }
 
-  /**
-   * @param attrs
-   */
   event (attrs) {
     logger.debug('event', attrs);
     const e = new FixtureEvent(this.context, attrs, this.attrs.id);
@@ -576,8 +540,6 @@ class Sessions {
    * @param {{
    *       id: string;
    *     }} user
-   * @param attributes
-   * @param cb
    */
   insertOne (user, attributes, cb) {
     const id = attributes.id;
@@ -586,18 +548,11 @@ class Sessions {
     this.db.insertOne(this.collectionInfo, attributes, cb);
   }
 
-  /**
-   * @param id
-   * @param cb
-   */
   destroy (id, cb) {
     this.db.deleteOne(this.collectionInfo, { _id: id }, cb);
   }
 }
 
-/**
- * @param dbOrStorageLayer
- */
 function databaseFixture (dbOrStorageLayer) {
   const context = new Context(dbOrStorageLayer);
   return new DatabaseFixture(context);

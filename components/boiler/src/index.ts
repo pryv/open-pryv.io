@@ -23,7 +23,6 @@ const config = new Config();
 const boiler = {
   /**
    * get a Logger
-   * @param name
    */
   getLogger: logging.getLogger,
   /**
@@ -39,7 +38,6 @@ const boiler = {
 
   /**
    * Init Boiler, should be called just once when starting an APP
-   * @param options
    * @param options.appName - the name of the Application used by Logger and debug
    * @param [options.baseConfigDir] - (optional) directory to use to look for configs
    * @param [options.extraConfigs] - (optional) and array of extra files to load

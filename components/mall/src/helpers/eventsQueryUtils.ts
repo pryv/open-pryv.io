@@ -103,7 +103,6 @@ function getStoreStreamQuery (streamQuery, context) {
  *  /!\ As per 1.9.0 we decided to keep a streamQuery in the format of [{any: ..}, {not: ...}, {any: ...}] an extra step
  *      `normalizeStreamQuery` is added, the full process should be refactored in order to avoid this step.
  *
- * @param streamQuery
  */
 function normalizeStreamQuery (streamQuery) {
   if (streamQuery == null) return null;
@@ -150,7 +149,6 @@ function getStoreOptionsFromParams (params) {
 /**
  * Clean API query params to the store query format.
  * To be called on store-level params just before querying the store.
- * @param params
  */
 function getStoreQueryFromParams (params) {
   const query: any = {

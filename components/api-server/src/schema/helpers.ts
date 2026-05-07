@@ -23,8 +23,6 @@ export { USERNAME_REGEXP_STR };
 /**
  * Gets the full core type URI for the given type name and action (read, create, etc.)
  *
- * @param name
- * @param action
  */
 export const getTypeURI = function (name, action) {
   return 'pryv.core.' + name + (action ? '-' + action : '');
@@ -33,7 +31,6 @@ export const getTypeURI = function (name, action) {
 /**
  * Returns an 'object' schema definition with the given properties definition.
  *
- * @param propertiesDef
  * @param options Extra properties to merge into the returned object definition
  */
 export const object = function (propertiesDef, options) {
@@ -43,7 +40,6 @@ export const object = function (propertiesDef, options) {
 /**
  * Returns an 'array' schema definition with the given items definition.
  *
- * @param itemsDef
  * @param options Extra properties to merge into the returned array definition
  */
 export const array = function (itemsDef, options) {
@@ -114,7 +110,6 @@ function getBaseSchema (type, options) {
 /**
  * Adds `created`, `createdBy`, `modified`, `modifiedBy` property definitions to the given schema.
  *
- * @param schema
  */
 export const addTrackingProperties = function (schema) {
   schema.properties.created = { type: 'number' };

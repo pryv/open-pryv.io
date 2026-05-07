@@ -29,7 +29,6 @@ class DBrqlite {
 
   /**
    * Execute a write statement (INSERT, UPDATE, DELETE, CREATE).
-   * @param sql
    * @param [params]
    */
   async execute (sql: string, params?: any[]): Promise<any> {
@@ -51,7 +50,6 @@ class DBrqlite {
 
   /**
    * Execute a read query (SELECT).
-   * @param sql
    * @param [params]
    */
   async query (sql: string, params?: any[]): Promise<any[]> {

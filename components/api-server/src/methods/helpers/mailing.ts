@@ -77,12 +77,6 @@ export const sendmail = function (emailSettings, template, recipient, subs, lang
  * contract as the legacy HTTP paths — registration/reset-password callers
  * already treat mail failures as non-fatal.
  *
- * @param emailSettings
- * @param template
- * @param recipient
- * @param subs
- * @param lang
- * @param callback
  */
 function _sendmailInProcess (emailSettings, template, recipient, subs, lang, callback) {
   (async () => {
@@ -119,11 +113,6 @@ function _sendmailInProcess (emailSettings, template, recipient, subs, lang, cal
     }
   );
 }
-/**
- * @param url
- * @param data
- * @param cb
- */
 function _sendmail (url, data, cb) {
   fetch(url, {
     method: 'POST',

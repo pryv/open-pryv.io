@@ -19,7 +19,6 @@ const { findForbiddenChar } = require('../../schema/streamId.ts');
  * @typedef {Object} StreamQueryScoped
  * @property {Array.<StreamQuery>} streamQuery - An array of streamQueries
  * @property {Array} nonAuthorizedStreams - The list of stream that have been unAuthorized
- * @param arrayOfQueries
  */
 type StreamQuery = {
   any: Array<StreamId>|'*'; // Any of the streamIds should match or "*" for all accessible streams
@@ -31,7 +30,6 @@ type StreamId = string;
 /**
  * For backwardCompatibility with older streams parameter ['A', 'B'] transform it to streams query [{any: ['A', 'B']}]
  * Takes care of grouping by store. ['A', 'B', ':_audit:xx'] => [{any: ['A', 'B']}, {any: ':audit:xx'}]
- * @param arrayOfQueries
  * @throws - Error if mixed strings and other are found in array
  */
 function transformArrayOfStringsToStreamsQuery (arrayOfQueries) {
@@ -176,18 +174,11 @@ function validateStreamsQuerySchemaAndSetStore (arrayOfQueries, streamQuery) {
   }
 }
 /**
- * @param streamId
- * @param storeId
  * @param excludedIds - Array of streams to exclude from expand
  */
 function uniqueStreamIds (arrayOfStreamiIs) {
   return [...new Set(arrayOfStreamiIs)];
 }
-/**
- * @param streamQueries
- * @param expandStream
- * @returns
- */
 export const expandAndTransformStreamQueries = async function expandAndTransformStreamQueries (streamQueries, expandStream) {
       async function expandSet (streamIds, storeId, excludedIds = []) {
         const expandedSet = new Set(); // use a Set to avoid duplicate entries;

@@ -61,16 +61,10 @@ class SessionStore {
     return id;
   }
 
-  /**
-   * @param id
-   */
   async has (id) {
     return (await this.kv.get(this.namespace + id)) != null;
   }
 
-  /**
-   * @param id
-   */
   async get (id) {
     const session = await this.kv.get(this.namespace + id);
     if (!session) return undefined;
@@ -83,7 +77,6 @@ class SessionStore {
 
   /**
    * Clear a session immediately. Idempotent — safe to call on an unknown id.
-   * @param id
    */
   async clear (id) {
     const existed = (await this.kv.get(this.namespace + id)) != null;

@@ -13,7 +13,6 @@ const errors = require('errors').factory;
 const { setMinimalMethodContext, setMethodId } = require('middleware');
 /**
  * Routes for users
- * @param app
  */
 export default function (expressApp, app) {
   const api = app.api;

@@ -18,17 +18,11 @@ class SeriesDateType {
     this.deltaTo = eventTime;
   }
 
-  /**
-   * @param secs
-   */
   secondsToNanos (secs) {
     if (secs < 0) { throw new Error('Deltatime must be greater than 0'); }
     return Math.trunc(secs * 1000 * 1000 * 1000);
   }
 
-  /**
-   * @param value
-   */
   coerce (value) {
     switch (typeof value) {
       case 'number':
@@ -54,9 +48,6 @@ class SeriesRowType {
     this.applyDeltaTimeToSerie = 0;
   }
 
-  /**
-   * @param seriesMeta
-   */
   setSeriesMeta (seriesMeta) {
     this.seriesMeta = seriesMeta;
   }
@@ -72,7 +63,6 @@ class SeriesRowType {
    * WARNING If 'timestamp' column is found a column name will be renamed to "deltaTime"
    * and next coerce will convert timestamps to deltaTime relatively to the
    * Event time.
-   * @param columnNames
    */
   validateColumns (columnNames) {
     const underlyingType = this.eventType;
@@ -187,9 +177,6 @@ class SeriesRowType {
   }
 
   // check if a field is required
-  /**
-   * @param name
-   */
   isOptionalField (name) {
     return this.optionalFields().includes(name);
   }
@@ -208,10 +195,6 @@ class SeriesRowType {
     return true;
   }
 
-  /**
-   * @param validator
-   * @param content
-   */
   callValidator (validator,
 
     content) {

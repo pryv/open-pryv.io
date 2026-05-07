@@ -162,7 +162,6 @@ class Database {
 
   /**
    * @protected
-   * @param collectionInfo
    */
   async getCollection (collectionInfo) {
     await this.ensureConnect();
@@ -178,7 +177,6 @@ class Database {
 
   /**
    * @private
-   * @param collection
    */
   async ensureIndexes (collection, indexes) {
     const initializedCollections = this.initializedCollections;
@@ -209,11 +207,6 @@ class Database {
   //      ...
   //    }
   //
-  /**
-   * @param collectionInfo
-   * @param errCallback
-   * @param collCallback
-   */
   getCollectionSafe (collectionInfo, errCallback, collCallback) {
     this.getCollection(collectionInfo).then(collCallback, errCallback);
   }
@@ -241,7 +234,6 @@ class Database {
    * Add User Id to Object or To all Items of an Array
    *
    * @param collectionInfo  undefined
-   * @param mixed
    */
   addUserIdIfneed (collectionInfo, mixed) {
     if (collectionInfo.useUserId) {
@@ -369,7 +361,6 @@ class Database {
    * @param collectionInfo  undefined
    * @param item  undefined
    * @param callback  undefined
-   * @param options
    */
   insertOne (collectionInfo, item, callback, options = {}) {
     if (collectionInfo.name === 'streams') {
@@ -385,10 +376,6 @@ class Database {
 
   /**
    * Inserts an array of items (each item must have a valid id already).
-   * @param collectionInfo
-   * @param items
-   * @param callback
-   * @param options
    */
   insertMany (collectionInfo, items, callback, options = {}) {
     if (collectionInfo.name === 'streams') {
@@ -410,7 +397,6 @@ class Database {
    * @param query  undefined
    * @param update  undefined
    * @param callback  undefined
-   * @param options
    */
   updateOne (collectionInfo, query, update, callback, options = {}) {
     if (collectionInfo.name === 'streams') {
@@ -447,8 +433,6 @@ class Database {
 
   /**
    * Execute N requests directly on the DB
-   * @param collectionInfo
-   * @param requests
    */
   async bulkWrite (collectionInfo, requests) {
     const collection = await this.getCollection(collectionInfo);
@@ -539,7 +523,6 @@ class Database {
 
   /**
    * @param callback  *
-   * @param collectionInfo
    */
   dropCollection (collectionInfo, callback) {
     if (collectionInfo.name === 'streams') {
@@ -559,8 +542,6 @@ class Database {
   /**
    * Drops the actual MongoDB collection (including indexes).
    * Primarily for tests when indexes need to be recreated.
-   * @param collectionInfo
-   * @param callback
    */
   async dropCollectionFully (collectionInfo, callback) {
     try {

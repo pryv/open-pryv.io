@@ -29,7 +29,6 @@ const collectionInfo = {
 /**
  * Creates a new instance with the given database and options.
  *
- * @param database
  * @param options Possible options: `maxAge` (in milliseconds)
  */
 function PasswordResetRequests (database, options) {
@@ -42,8 +41,6 @@ function PasswordResetRequests (database, options) {
 /**
  * Fetches the specified reset request's data (or null if the request doesn't exist or has expired).
  *
- * @param id
- * @param username
  * @param callback Args: err, data
  */
 PasswordResetRequests.prototype.get = function (id, username, callback) {
@@ -89,9 +86,6 @@ PasswordResetRequests.prototype.generate = function (username, callback) {
 /**
  * Deletes the specified reset request.
  *
- * @param id
- * @param username
- * @param callback
  */
 PasswordResetRequests.prototype.destroy = function (id, username, callback) {
   const query = {
@@ -104,7 +98,6 @@ PasswordResetRequests.prototype.destroy = function (id, username, callback) {
 /**
  * Destroys all reset requests.
  *
- * @param callback
  */
 PasswordResetRequests.prototype.clearAll = function (callback) {
   this.database.deleteMany(collectionInfo, {}, callback);
@@ -118,7 +111,6 @@ PasswordResetRequests.prototype.getNewExpirationDate = function () {
 
 /**
  * Export all password reset request documents (raw).
- * @param callback
  */
 PasswordResetRequests.prototype.exportAll = function (callback) {
   this.database.find(collectionInfo, {}, {}, callback);
@@ -126,8 +118,6 @@ PasswordResetRequests.prototype.exportAll = function (callback) {
 
 /**
  * Import raw password reset request documents.
- * @param data
- * @param callback
  */
 PasswordResetRequests.prototype.importAll = function (data, callback) {
   if (!data || data.length === 0) return callback(null);

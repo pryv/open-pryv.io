@@ -68,8 +68,6 @@ const userEvents = ds.createUserEvents({
   },
 
   /**
-   * @param userId
-   * @param query
    * @param [options]
    */
   async getDeletionsStreamed (userId, query, options) {
@@ -220,7 +218,6 @@ export { userEvents };
 
 /**
  * change _id to id, remove userId, from result
- * @param result
  */
 function cleanResult (result) {
   if (result?.value == null) { return result; }
@@ -235,7 +232,6 @@ function cleanResult (result) {
 
 /**
  * change remove _id to set id to headId, from result
- * @param result
  */
 function cleanHistoryResult (result) {
   if (result?.value == null) { return result; }
@@ -282,7 +278,6 @@ const converters = {
 
 /**
  * Transform the given events query to the MongoDB format.
- * @param query
  */
 function getMongoQuery (query) {
   const mongoQuery = { $and: [{ deleted: null, headId: null }] };
@@ -299,7 +294,6 @@ function getMongoQuery (query) {
 /**
  * Returns the query value to use for the given type, handling possible wildcards.
  *
- * @param requestedType
  */
 function getTypeQueryValue (requestedType) {
   const wildcardIndex = requestedType.indexOf('/*');
@@ -310,7 +304,6 @@ function getTypeQueryValue (requestedType) {
 
 /**
  * Get a readable stream from a cursor
- * @param cursor
  */
 function readableStreamFromEventCursor (cursor) {
   // streaming with backpressure - highWaterMark has really some effect "4000" seems to be an optimnal value

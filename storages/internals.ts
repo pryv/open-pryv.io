@@ -68,7 +68,6 @@ function clearAll () {
 
 /**
  * Check if a given internal is registered.
- * @param name
  */
 function isRegistered (name) {
   return name in registry;

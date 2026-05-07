@@ -13,9 +13,6 @@ const require = createRequire(import.meta.url);
 const Action = require('./Action.ts');
 const helpers = require('./helpers.ts');
 
-/**
- * @param action
- */
 export default function (action) {
   const schema: any = {
     id: helpers.getTypeURI('user', action),

@@ -38,7 +38,6 @@ const TLS_FILE_NAMES = {
 };
 
 /**
- * @param opts
  * @param opts.armoredBundle - armored ciphertext (output of bin/bootstrap.js)
  * @param opts.passphrase
  * @param opts.configDir - directory to write override-config.yml into (e.g. baseConfigDir)

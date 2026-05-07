@@ -17,9 +17,6 @@ const { localStorePrepareOptions, localStorePrepareQuery } = require('storage/sr
 const audit = require('audit').default;
 const auditStorage = audit.storage;
 const { ConvertEventFromStoreStream } = require('mall/src/helpers/eventsUtils.ts');
-/**
- * @param api
- */
 export default function (api) {
   api.register('audit.getLogs',
     eventsGetUtils.coerceStreamsParam,
@@ -38,7 +35,6 @@ function anyStarStreamQueryIsNullQUery (context, params, result, next) {
   next();
   /**
    * arrayOfStreamQueries === [{ any: ['*']}]
-   * @param arrayOfStreamQueries
    */
   function isStar (arrayOfStreamQueries) {
     return (params.arrayOfStreamQueries.length === 1 &&

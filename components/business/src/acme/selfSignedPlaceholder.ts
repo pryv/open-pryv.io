@@ -93,7 +93,6 @@ function generate ({ commonName, altNames = [] }) {
  * not configured, or when the files already exist (e.g. cluster has already
  * been issued a cert and we're restarting).
  *
- * @param opts
  * @param opts.config        - @pryv/boiler config
  * @param [opts.deriveHostnames] - injectable for tests; defaults to ../deriveHostnames
  * @param [opts.log]       - logger

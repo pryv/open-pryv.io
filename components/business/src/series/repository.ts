@@ -50,9 +50,6 @@ class Repository {
   //    // ... as many times as you like
   //    await batch.store();
   //
-  /**
-   * @param namespace
-   */
   async makeBatch (namespace) {
     // TODO Cache all the setup checks we do here in an LRU cache.
     // Make sure that the database exists:

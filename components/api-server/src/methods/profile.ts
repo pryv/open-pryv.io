@@ -16,7 +16,6 @@ const { getStorageLayer } = require('storage');
  * Profile methods implementation.
  * TODO: add change notifications
  *
- * @param api
  */
 export default async function (api) {
   const storageLayer = await getStorageLayer();

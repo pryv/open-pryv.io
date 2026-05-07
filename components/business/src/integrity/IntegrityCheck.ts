@@ -34,7 +34,6 @@ class IntegrityCheck {
 
   /**
    * Run integrity check on a single user.
-   * @param userId
    */
   async checkUser (userId) {
     const report: any = {

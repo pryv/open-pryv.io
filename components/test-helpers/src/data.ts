@@ -234,7 +234,6 @@ function getAttachmentInfo (id, filename, type) {
  * The output folder will be overwritten if it already exists.
  *
  * @param mongoFolder Path to MongoDB base folder
- * @param callback
  */
 export const dumpCurrent = function (mongoFolder, version, callback) {
   const mongodump = path.resolve(mongoFolder, 'bin/mongodump');
@@ -280,7 +279,6 @@ export const dumpCurrent = function (mongoFolder, version, callback) {
  *
  * @param versionNum Must match an existing dumped version (e.g. "0.3.0")
  * @param mongoFolder Path to MongoDB base folder
- * @param callback
  */
 export const restoreFromDump = function (versionNum, mongoFolder, callback) {
   const mongorestore = path.resolve(mongoFolder, 'bin/mongorestore');
@@ -327,7 +325,6 @@ export const restoreFromDump = function (versionNum, mongoFolder, callback) {
 /**
  * Fetches the database structure for a given version
  *
- * @param version
  */
 export const getStructure = function (version) {
   return require(path.join(__dirname, '/structure/', version));

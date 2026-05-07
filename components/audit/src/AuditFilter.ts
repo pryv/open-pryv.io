@@ -130,7 +130,6 @@ class AuditFilter {
     }
     /**
      * Builds a map with an { i => true } entry for each array element
-     * @param array
      */
     function buildMap (array) {
       const map = {};

@@ -16,11 +16,6 @@ const TracedOperations = require('./traced_operations.ts').default;
 const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts').setCommonMeta;
 // POST /:user_name/series/batch
 //
-/**
- * @param ctx
- * @param req
- * @param res
- */
 async function storeSeriesBatch (ctx, req, res) {
   const trace = new TracedOperations(ctx);
   const seriesRepository = ctx.series;
@@ -66,10 +61,6 @@ async function storeSeriesBatch (ctx, req, res) {
 // Parses the request body and transforms the data contained in it into the
 // BatchRequest format.
 //
-/**
- * @param batchRequestBody
- * @param resolver
- */
 function parseData (batchRequestBody, resolver) {
   return BatchRequest.parse(batchRequestBody, (eventId) => resolver.getRowType(eventId));
 }
@@ -106,9 +97,6 @@ class EventMetaDataCache {
   // Loads an event, checks access rights for the current token, then looks
   // up the type of the event and returns it as a SeriesRowType.
   //
-  /**
-   * @param eventId
-   */
   async getRowType (eventId) {
     const ctx = this.ctx;
     const repo = ctx.typeRepository;
@@ -120,9 +108,6 @@ class EventMetaDataCache {
     return seriesMeta.produceRowType(repo);
   }
 
-  /**
-   * @param eventId
-   */
   async getMeasurementName (eventId) {
     const seriesMeta = await this.getSeriesMeta(eventId);
     const [namespace, name] = seriesMeta.namespaceAndName(); // eslint-disable-line no-unused-vars
@@ -139,10 +124,6 @@ class EventMetaDataCache {
 
   // Handles memoisation through the cache in `this.cache`.
   //
-  /**
-   * @param key
-   * @param factory
-   */
   async fromCacheOrProduce (key, factory) {
     const cache = this.cache;
     // From Cache

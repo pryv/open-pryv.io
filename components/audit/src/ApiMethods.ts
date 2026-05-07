@@ -103,7 +103,6 @@ export { AUDITED_METHODS, AUDITED_METHODS_MAP, ALL_METHODS, ALL_METHODS_MAP, WIT
 
 /**
  * Builds a map with an { i => true } entry for each array element
- * @param array
  */
 function buildMap (array) {
   const map = {};

@@ -37,7 +37,6 @@ const DEFAULT_BOOT_TIMEOUT_MS = 30_000;
 const DEFAULT_CALL_TIMEOUT_MS = 15_000;
 
 /**
- * @param opts
  * @param opts.count - number of child workers to spawn
  * @param opts.workerScript - absolute path to the worker harness module
  * @param [opts.env] - extra env vars passed to children

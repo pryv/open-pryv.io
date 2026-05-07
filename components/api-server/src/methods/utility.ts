@@ -16,7 +16,6 @@ const updateAccessUsageStats = require('./helpers/updateAccessUsageStats.ts').de
 /**
  * Utility API methods implementations.
  *
- * @param api
  */
 export default async function (api) {
   const logger = getLogger('methods:batch');

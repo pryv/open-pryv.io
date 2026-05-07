@@ -17,16 +17,11 @@ const validator = createValidator({ breakOnFirstError: false });
 /**
  * Validates the object against the JSON-schema definition.
  *
- * @param object
- * @param schema
- * @param callback
  */
 export const validate = validator.validate;
 /**
  * Validates the given JSON-schema definition.
  *
- * @param schema
- * @param callback
  */
 export const validateSchema = validator.validateSchema;
 /**

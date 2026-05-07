@@ -10,9 +10,6 @@ import type {} from 'node:fs';
 //
 class ParseFailure extends Error {
 }
-/**
- * @param msg
- */
 function error (msg) {
   return new ParseFailure(msg);
 }

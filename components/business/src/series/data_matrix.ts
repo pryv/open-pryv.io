@@ -85,9 +85,6 @@ class DataMatrix {
 
   // Returns the row at index `idx`.
   //
-  /**
-   * @param idx
-   */
   atRow (idx) {
     const raw = this.at(idx);
     return new Row(raw, this.columns);
@@ -107,9 +104,6 @@ class DataMatrix {
   // Transforms this matrix in place by calling `fn` for each cell, replacing
   // its value with what fn returns.
   //
-  /**
-   * @param fn
-   */
   transform (fn) {
     for (const row of this.data) {
       row.forEach((cell, idx) => (row[idx] = fn(this.columns[idx], cell)));
@@ -145,10 +139,6 @@ class Parser {
     this.out = out;
   }
 
-  /**
-   * @param obj
-   * @param type
-   */
   parse (obj, type) {
     const out = this.out;
     if (obj == null || typeof obj !== 'object') { throw error('flatJSON structure must be an object.'); }
@@ -174,9 +164,6 @@ class Parser {
     });
   }
 
-  /**
-   * @param val
-   */
   checkFields (val) {
     if (val == null) { throw error('Field names must be a list.'); }
     if (!Array.isArray(val)) { throw error('Field names must be a list.'); }

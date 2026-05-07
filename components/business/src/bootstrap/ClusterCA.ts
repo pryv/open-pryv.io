@@ -31,7 +31,6 @@ const CA_SUBJECT = '/CN=pryv-cluster-ca';
 
 class ClusterCA {
   /**
-   * @param opts
    * @param opts.dir - directory where ca.key and ca.crt live.
    *   The private key never leaves this directory; 0600 permissions are
    *   enforced. Callers are responsible for backing this directory up.
@@ -100,7 +99,6 @@ class ClusterCA {
    * the CA directory except a serial-number bookkeeping file (openssl needs
    * a serial per signing).
    *
-   * @param opts
    * @param opts.coreId - e.g. 'core-b'. Used as the CN and as a DNS SAN.
    * @param [opts.ip=null] - optional IP SAN (e.g. '1.2.3.4').
    * @param [opts.hostname=null] - optional extra hostname SAN (e.g. 'core-b.mc.example.com').

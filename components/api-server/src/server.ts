@@ -119,9 +119,6 @@ class Server {
     this.logger.debug('api methods registered');
   }
 
-  /**
-   * @param server
-   */
   async setupSocketIO (server) {
     const api = app.api;
     const customAuthStepFn = app.getCustomAuthFunction('server.js');
@@ -132,7 +129,6 @@ class Server {
 
   /**
    * Open http port and listen to incoming connections.
-   * @param server
    */
   async startListen (server, info: any = {}) {
     const config = this.config;

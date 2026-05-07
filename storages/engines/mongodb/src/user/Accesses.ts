@@ -44,7 +44,6 @@ const indexes = [
 /**
  * DB persistence for accesses.
  *
- * @param database
  * @param integrityAccesses - { isActive, set } from business/integrity
  */
 class Accesses extends BaseStorage {
@@ -175,10 +174,7 @@ export { Accesses };
  * - Always unset 'integrity' of updated events by modifying the update query.
  * - If integrity is active for event, returns a callback to be executed after the update.
  *
- * @param accessesStore
- * @param userOrUserId
  * @param update -- the update query to be modified
- * @param callback
  * @returns either the original callback or a process to reset events' integrity
  */
 function getResetIntegrity (accessesStore, userOrUserId, update, callback) {

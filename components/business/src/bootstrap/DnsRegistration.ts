@@ -34,7 +34,6 @@ const LSC_SUBDOMAIN = 'lsc';
  * Pre-register a new core in PlatformDB and publish its DNS entries.
  * Idempotent: re-running with the same inputs leaves the state unchanged.
  *
- * @param opts
  * @param opts.platformDB - object exposing setCoreInfo / getDnsRecord / setDnsRecord (PlatformDB.js interface)
  * @param opts.coreId     - e.g. 'core-b'
  * @param opts.ip         - the new core's IP address (IPv4 or IPv6)
@@ -80,7 +79,6 @@ async function registerNewCore ({ platformDB, coreId, ip, url = null, hosting = 
  * operator decides not to actually deploy the core the bundle was issued
  * for. Intentionally does NOT touch other cores' entries in `lsc`.
  *
- * @param opts
  * @param opts.platformDB
  * @param opts.coreId
  * @param opts.ip

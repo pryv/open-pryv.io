@@ -46,9 +46,6 @@ class ComplexType {
     return Object.keys(this._schema.properties);
   }
 
-  /**
-   * @param name
-   */
   forField (name) {
     const PATH_SEPARATOR = '.';
     const parts = name.split(PATH_SEPARATOR);
@@ -83,10 +80,6 @@ class ComplexType {
     return false;
   }
 
-  /**
-   * @param validator
-   * @param content
-   */
   callValidator (validator, content) {
     // NOTE We don't currently perform coercion on leaf types of complex
     // named types. We could though - and this is where we would do it.

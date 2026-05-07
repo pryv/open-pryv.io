@@ -14,8 +14,6 @@ const { getFullItemId } = require('./storeDataUtils.ts');
 export { createStoreRootStream, addStoreIdPrefixToStreams };
 /**
  * Create a pseudo-stream representing a data store's root.
- * @param storeDescription
- * @param extraProperties
  */
 function createStoreRootStream (storeDescription, extraProperties) {
   return Object.assign({

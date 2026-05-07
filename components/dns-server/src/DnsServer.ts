@@ -52,7 +52,6 @@ class DnsServer {
   #platformRefreshIntervalMs;
 
   /**
-   * @param opts
    * @param opts.config - @pryv/boiler config
    * @param opts.platform - Platform instance (needs getAllDnsRecords/setDnsRecord/deleteDnsRecord for persistence; DNS-record methods are optional — absence disables PlatformDB persistence)
    * @param opts.logger - logger with .info/.warn/.error
@@ -74,7 +73,6 @@ class DnsServer {
 
   /**
    * Start the DNS server.
-   * @param opts
    * @param opts.port - UDP port
    * @param opts.ip - bind address (e.g. '0.0.0.0')
    * @param opts.ip6 - IPv6 bind address (null = disabled)
@@ -211,7 +209,6 @@ class DnsServer {
 
   /**
    * Delete a runtime DNS entry. No-op for config-sourced static entries.
-   * @param subdomain
    */
   async deleteStaticEntry (subdomain) {
     if (this.#configKeys.has(subdomain)) {

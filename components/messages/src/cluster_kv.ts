@@ -42,7 +42,6 @@ let _cluster: any = null;
  * Initialise the master-side handler. Call once from `bin/master.js` after
  * `cluster.setupPrimary()`. Idempotent — second call is a no-op.
  *
- * @param opts
  * @param [opts.log] - logger; called with (msg)
  * @param [opts.cluster] - injectable for tests; defaults to `require('node:cluster')`
  */

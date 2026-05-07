@@ -11,9 +11,6 @@ const errors = require('./errors.ts');
 //
 
 class NumberType {
-  /**
-   * @param value
-   */
   coerce (value) {
     switch (typeof value) {
       case 'string':
@@ -24,9 +21,6 @@ class NumberType {
     throw new errors.InputTypeError(`Unknown outer type (${typeof value}).`);
   }
 
-  /**
-   * @param str
-   */
   coerceString (str) {
     const reNumber = /^\d+(\.\d+)?$/;
     if (!reNumber.test(str)) {
@@ -37,9 +31,6 @@ class NumberType {
 }
 
 class BooleanType {
-  /**
-   * @param value
-   */
   coerce (value) {
     if (value === true) { return true; }
     if (value === false) { return false; }
@@ -50,9 +41,6 @@ class BooleanType {
 }
 
 class StringType {
-  /**
-   * @param value
-   */
   coerce (value) {
     return '' + value;
   }
@@ -63,9 +51,6 @@ class NullType {
     return null;
   }
 }
-/**
- * @param type
- */
 function produceInner (type) {
   switch (type) {
     case 'number':

@@ -37,29 +37,18 @@ class Service {
   }
 
   /**
-   * @param username
-   * @param profile
    * @param clientRequest - { headers, body, ... } — the MFA HTTP request context
    */
   async challenge (_username, _profile, _clientRequest) {
     throw new Error('override challenge() in a Service subclass');
   }
 
-  /**
-   * @param username
-   * @param profile
-   * @param clientRequest
-   */
   async verify (_username, _profile, _clientRequest) {
     throw new Error('override verify() in a Service subclass');
   }
 
   /**
    * Make a POST or GET request to an SMS provider endpoint.
-   * @param method
-   * @param url
-   * @param headers
-   * @param body
    */
   async _makeRequest (method, url, headers, body) {
     try {

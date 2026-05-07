@@ -71,7 +71,6 @@ class BackupOrchestrator {
 
   /**
    * Backup all users and platform data.
-   * @param writer
    * @param [options]
    * @param [options.incremental=false] - only export changes since previous backup
    * @param [options.previousManifest] - previous backup manifest (for incremental)
@@ -114,8 +113,6 @@ class BackupOrchestrator {
 
   /**
    * Backup a single user.
-   * @param writer
-   * @param userId
    * @param [options]
    */
   async backupUser (userId, writer, options: any = {}) {
@@ -147,7 +144,6 @@ class BackupOrchestrator {
 
   /**
    * Backup platform data only.
-   * @param writer
    */
   async backupPlatform (writer) {
     await this._backupPlatform(writer);
@@ -177,12 +173,8 @@ class BackupOrchestrator {
   }
 
   /**
-   * @param writer
-   * @param userId
-   * @param username
    * @param snapshotBefore - unix timestamp: only export items modified <= this
    * @param since - for incremental: only export items modified > this
-   * @param options
    */
   async _backupSingleUser (writer, userId, username, snapshotBefore, since, options) {
     const userWriter = await writer.openUser(userId, username);
@@ -263,7 +255,6 @@ class BackupOrchestrator {
    * Items without `modified` or `created` fields are always included
    * (e.g. profile data, or items from engines that don't track timestamps).
    *
-   * @param items
    * @param snapshotBefore - unix timestamp (seconds)
    * @param since - unix timestamp (seconds), null for full backup
    */

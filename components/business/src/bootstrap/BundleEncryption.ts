@@ -46,7 +46,6 @@ const ARMOR_END = '-----END PRYV BOOTSTRAP BUNDLE-----';
  * suitable for writing to a .bootstrap file and transporting out-of-band.
  *
  * @param bundle - the plain bundle (see Bundle.js)
- * @param passphrase
  */
 function encrypt (bundle, passphrase) {
   if (bundle == null || typeof bundle !== 'object') {
@@ -77,7 +76,6 @@ function encrypt (bundle, passphrase) {
  * passphrase or unknown envelope version.
  *
  * @param armored - ASCII-armored ciphertext (as produced by encrypt)
- * @param passphrase
  */
 function decrypt (armored, passphrase) {
   if (typeof armored !== 'string' || !armored.includes(ARMOR_BEGIN)) {

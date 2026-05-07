@@ -36,7 +36,6 @@ const DIRECTORY_PRODUCTION = 'https://acme-v02.api.letsencrypt.org/directory';
  * case) and reused on every subsequent cert issuance. Fresh accounts
  * burn rate-limit quota.
  *
- * @param opts
  * @param opts.email
  * @param [opts.directoryUrl] - default: LE production
  * @param [opts.acmeLib]      - default: require('acme-client'); injectable for tests
@@ -64,7 +63,6 @@ async function createAccount ({ email, directoryUrl, acmeLib }: any = {}) {
 /**
  * Issue (or renew — same thing from ACME's point of view) a cert.
  *
- * @param opts
  * @param opts.commonName              - e.g. '*.mc.example.com'
  * @param [opts.altNames=[]]         - SAN list, e.g. ['mc.example.com']
  * @param opts.account                 - { accountKey, accountUrl } from createAccount()

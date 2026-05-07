@@ -29,7 +29,6 @@ function getDestination (req, file, cb) {
 
 /**
  * @function IntegrityMulterDiskStorage - Returns a StorageEngine implementation configured to store files on the local file system and computes a hash.
- * @param opts
  */
 function MulterIntegrityDiskStorage (opts) {
   this.getFilename = (opts.filename || getFilename);

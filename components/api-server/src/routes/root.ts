@@ -18,10 +18,6 @@ const { setMethodId } = require('middleware');
 })();
 // Handlers for path roots at various places; handler for batch calls and
 // access-info.
-/**
- * @param expressApp
- * @param app
- */
 function root (expressApp, app) {
   const api = app.api;
 
@@ -64,9 +60,6 @@ export { root };
 // Renders a greeting message; this route is displayed on the various forms
 // of roots ('/', 'foo.pryv.me/')
 //
-/**
- * @param req
- */
 function rootIndex (req, res) {
   const devSiteURL = 'https://pryv.github.io/';
   const result = commonMeta.setCommonMeta({});

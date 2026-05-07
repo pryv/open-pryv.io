@@ -29,7 +29,6 @@ function withTrailingSlash (url) {
 /**
  * Auth API methods implementations.
  *
- * @param api
  */
 export default async function (api) {
   const config = await getConfig();

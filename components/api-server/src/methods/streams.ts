@@ -23,11 +23,6 @@ const Readable = require('stream').Readable;
 /**
  * Event streams API methods implementation.
  *
- * @param api
- * @param notifyTests
- * @param logging
- * @param auditSettings
- * @param updatesSettings
  */
 export default async function (api) {
   const config = await getConfig();

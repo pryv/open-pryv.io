@@ -30,9 +30,6 @@ class MallUserEvents {
   eventsStores = new Map();
   storeSettings = new Map();
 
-  /**
-   * @param storesHolder
-   */
   constructor (storesHolder) {
     for (const [storeId, store] of storesHolder.storesById) {
       this.eventsStores.set(storeId, store.events);
@@ -45,8 +42,6 @@ class MallUserEvents {
   /**
    * Get one event without filtering
    * Should also return eventual deleted events
-   * @param userId
-   * @param fullEventId
    */
   async getOne (userId, fullEventId) {
     const [storeId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(fullEventId);
@@ -173,9 +168,6 @@ class MallUserEvents {
   }
 
   /**
-   * @param storeId
-   * @param userId
-   * @param query
    * @param [options]
    */
   async getDeletionsStreamed (storeId, userId, query, options) {
@@ -187,9 +179,6 @@ class MallUserEvents {
   }
 
   /**
-   * @param storeId
-   * @param userId
-   * @param query
    * @param [options]
    */
   async getDeletions (storeId, userId, query, options) {
@@ -205,8 +194,6 @@ class MallUserEvents {
 
   /**
    *
-   * @param userId
-   * @param eventData
    * @param [doNotOverrideIntegrity] - Used by tests to create event with preset integrity such as historical data
    */
   async create (userId, eventData, mallTransaction?: any, doNotOverrideIntegrity = false) {
@@ -223,12 +210,6 @@ class MallUserEvents {
 
   // ----------------- ATTACHMENTS ----------------- //
 
-  /**
-   * @param userId
-   * @param eventId
-   * @param attachmentItem
-   * @param mallTransaction
-   */
   async addAttachment (userId, eventId, attachmentItem, mallTransaction?: any) {
     const [storeId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(eventId);
     const eventsStore = this.eventsStores.get(storeId);
@@ -237,10 +218,6 @@ class MallUserEvents {
     return event;
   }
 
-  /**
-   * @param userId
-   * @param fileId
-   */
   async getAttachment (userId, eventData, fileId) {
     const [storeId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.id);
     const eventsStore = this.eventsStores.get(storeId);
@@ -250,12 +227,6 @@ class MallUserEvents {
     return await eventsStore.getAttachment(userId, storeEventId, fileId);
   }
 
-  /**
-   * @param userId
-   * @param eventId
-   * @param fileId
-   * @param mallTransaction
-   */
   async deleteAttachment (userId, eventId, fileId, mallTransaction) {
     const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(eventId);
     const eventsStore = this.eventsStores.get(storeId);
@@ -268,12 +239,6 @@ class MallUserEvents {
     return event;
   }
 
-  /**
-   * @param userId
-   * @param eventDataWithoutAttachments
-   * @param attachmentsItems
-   * @param mallTransaction
-   */
   async createWithAttachments (userId, eventDataWithoutAttachments, attachmentsItems, mallTransaction) {
     let event = await this.create(userId, eventDataWithoutAttachments);
     for (const attachmentItem of attachmentsItems) {
@@ -337,7 +302,6 @@ class MallUserEvents {
    * @param update.removeStreams - array of streams ids to be remove from the events streamIds
    * @param update.filter - function to filter events to update (return true to update)
    * @param [forEachEvent] - each updated event is passed as parameter, null is passed after last event.
-   * @param mallTransaction
    */
   async updateMany (userId, query, update, forEachEvent, mallTransaction) {
     const result = [];
@@ -366,7 +330,6 @@ class MallUserEvents {
    * @param update.addStreams - array of streams ids to add to the events streamIds
    * @param update.removeStreams - array of streams ids to be remove from the events streamIds
    * @param update.filter - function to filter events to update (return true to update)
-   * @param mallTransaction
    */
   async updateStreamedMany (userId, query, update: any = {}, mallTransaction) {
     const paramsByStore = eventsQueryUtils.getParamsByStore(query);
@@ -420,7 +383,6 @@ class MallUserEvents {
 
   /**
    * Common utils for events.create and events.createWithAttachmentss
-   * @param eventData
    * @param [mallTransaction]
    * @param [doNotOverrideIntegrity] - Used during tests to store raw events (ex: history or deleted event)
    * @private

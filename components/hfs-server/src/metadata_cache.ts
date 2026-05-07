@@ -58,16 +58,10 @@ class MetadataCache {
   }
 
   // transport messages
-  /**
-   * @param usernameEvent
-   */
   dropSeries (usernameEvent) {
     return this.series.connection.dropMeasurement('event.' + usernameEvent.event.id, 'user.' + usernameEvent.username);
   }
 
-  /**
-   * @param usernameEvent
-   */
   invalidateEvent (usernameEvent) {
     const cache = this.cache;
     const eventKey = usernameEvent.username + '/' + usernameEvent.event.id;
@@ -86,11 +80,6 @@ class MetadataCache {
   }
 
   // cache logic
-  /**
-   * @param userName
-   * @param eventId
-   * @param accessToken
-   */
   async forSeries (userName, eventId, accessToken) {
     const cache = this.cache;
     const key = [userName, eventId, accessToken].join('/');
@@ -133,11 +122,6 @@ class MetadataLoader {
     this.storage = await storage.getStorageLayer();
   }
 
-  /**
-   * @param userName
-   * @param eventId
-   * @param accessToken
-   */
   forSeries (userName, eventId, accessToken) {
     const storage = this.storage;
     const mall = this.mall;
@@ -233,9 +217,6 @@ class SeriesMetadataImpl {
   }
 
   // Return the InfluxDB row type for the given event.
-  /**
-   * @param repo
-   */
   produceRowType (repo) {
     const type = repo.lookup(this.eventType);
 
@@ -249,10 +230,6 @@ class SeriesMetadataImpl {
     return type;
   }
 }
-/**
- * @param access
- * @param event
- */
 async function definePermissions (access, event) {
   const streamIds = event.streamIds;
   const permissions = {

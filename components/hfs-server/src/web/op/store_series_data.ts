@@ -72,11 +72,6 @@ async function storeSeriesData (ctx, req, res) {
 // Parses request data into a data matrix that can be used as input to the
 // influx store. You should give this method the `req.body`.
 //
-/**
- * @param createRequest
- * @param meta
- * @param typeRepo
- */
 function parseData (createRequest, meta, typeRepo) {
   try {
     const type = meta.produceRowType(typeRepo);

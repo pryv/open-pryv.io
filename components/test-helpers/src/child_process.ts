@@ -28,19 +28,12 @@ class ChildProcess {
 
   // Handles promise rejections that aren't caught somewhere. This is very
   // useful for debugging.
-  /**
-   * @param reason
-   * @param promise
-   */
   unhandledRejection (reason, promise) {
     logger.warn(
 
       'Unhandled promise rejection:', promise, 'reason:', reason.stack || reason);
   }
 
-  /**
-   * @param wireMessage
-   */
   async handleParentMessage (wireMessage) {
     const message = msgpack.decode(wireMessage);
 
@@ -67,19 +60,12 @@ class ChildProcess {
     logger.debug('handleParentMessage/done', cmd);
   }
 
-  /**
-   * @param msg
-   */
   respondToParent (msg) {
     logger.debug('respondToParent', msg);
 
     process.send(msgpack.encode(msg));
   }
 
-  /**
-   * @param cmd
-   * @param args
-   */
   dispatchParentMessage (cmd, ...args) {
     if (!cmd.startsWith('int_')) {
       const launcher = this.launcher;
@@ -101,9 +87,6 @@ class ChildProcess {
   // Tells the launcher to launch the application, injecting the given
   // `injectSettings`.
   //
-  /**
-   * @param injectSettings
-   */
   async intStartServer (injectSettings) {
     const launcher = this.launcher;
 

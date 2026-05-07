@@ -47,7 +47,6 @@ function generateKey () {
  * Splitting create into build + persist avoids a read-modify-write
  * round-trip we'd otherwise need to add the URLs after the initial save.
  *
- * @param params
  */
 function buildState (params) {
   const key = generateKey();
@@ -76,8 +75,6 @@ function buildState (params) {
  * write after `buildState()` and to push subsequent mutations of `state`
  * back to the store.
  *
- * @param key
- * @param state
  * @param [expiresAt] - defaults to `state.expiresAt`
  */
 async function persist (key, state, expiresAt) {
@@ -91,7 +88,6 @@ async function persist (key, state, expiresAt) {
  * writes; new code should use `buildState()` + `persist()` instead. Kept
  * for tests and any external caller that doesn't decorate the state.
  *
- * @param params
  */
 async function create (params) {
   const built = buildState(params);
@@ -101,7 +97,6 @@ async function create (params) {
 
 /**
  * Get an access request state.
- * @param key
  */
 async function get (key) {
   const row = await getPlatformDB().getAccessState(key);
@@ -110,8 +105,6 @@ async function get (key) {
 
 /**
  * Update an access request state (accept or refuse).
- * @param key
- * @param update
  */
 async function update (key, update) {
   const platformDB = getPlatformDB();
@@ -132,7 +125,6 @@ async function update (key, update) {
 
 /**
  * Delete an access request.
- * @param key
  */
 async function remove (key) {
   await getPlatformDB().deleteAccessState(key);

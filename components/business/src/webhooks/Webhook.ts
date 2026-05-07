@@ -91,9 +91,6 @@ class Webhook {
     this.runsSize = params.runsSize || 50;
   }
 
-  /**
-   * @param username
-   */
   startListenting (username) {
     if (this.pubsubTurnOffListener != null) {
       throw new Error('Cannot listen twice');
@@ -105,8 +102,6 @@ class Webhook {
 
   /**
    * Send the message with the throttling and retry mechanics - to use in webhooks service
-   * @param message
-   * @param isRescheduled
    */
   async send (message, isRescheduled) {
     if (this.state === 'inactive') { return; }
@@ -178,7 +173,6 @@ class Webhook {
 
   /**
    * Only make the HTTP call - used for webhook.test API method
-   * @param messages
    */
   async makeCall (messages) {
     const res = await fetch(this.url, {
@@ -211,9 +205,6 @@ class Webhook {
     }
   }
 
-  /**
-   * @param run
-   */
   addRun (run) {
     if (this.runCount > this.runsSize) {
       this.runs.splice(-1, 1);
@@ -228,9 +219,6 @@ class Webhook {
     await this.repository.insertOne(this.user, this);
   }
 
-  /**
-   * @param fieldsToUpdate
-   */
   async update (fieldsToUpdate) {
     const fields = Object.keys(fieldsToUpdate);
     deepMerge(this, fieldsToUpdate);
@@ -288,16 +276,10 @@ class Webhook {
     ]);
   }
 
-  /**
-   * @param version
-   */
   setApiVersion (version) {
     this.apiVersion = version;
   }
 
-  /**
-   * @param serial
-   */
   setSerial (serial) {
     this.serial = serial;
   }
@@ -308,18 +290,10 @@ class Webhook {
 }
 export default Webhook;
 export { Webhook };
-/**
- * @param webhook
- * @param msg
- */
 function log (webhook, msg) {
   if (webhook.logger == null) { return; }
   webhook.logger.info(msg);
 }
-/**
- * @param fields
- * @param webhook
- */
 async function makeUpdate (fields, webhook) {
   if (webhook.repository == null) {
     throw new Error('repository not set for Webhook object.');

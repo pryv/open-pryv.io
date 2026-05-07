@@ -112,7 +112,6 @@ function validateEngineExports () {
 
 /**
  * Get the module for an engine, loading it if needed.
- * @param engineName
  */
 function getEngineModule (engineName) {
   const engine = engines[engineName];
@@ -195,7 +194,6 @@ async function init (config) {
 
 /**
  * Get the resolved engine name for a storageType.
- * @param storageType
  */
 function getEngineFor (storageType) {
   if (!resolvedConfig) {
@@ -214,7 +212,6 @@ function listEngines () {
 
 /**
  * Get manifest for a discovered engine.
- * @param engineName
  */
 function getManifest (engineName) {
   const engine = engines[engineName];

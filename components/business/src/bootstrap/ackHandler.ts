@@ -31,7 +31,6 @@ import type {} from 'node:fs';
 const VALID_REASONS = new Set(['unknown', 'expired', 'already-consumed', 'invalid-format']);
 
 /**
- * @param deps
  * @param deps.tokenStore - business/src/bootstrap/TokenStore instance
  * @param deps.platformDB - exposes getCoreInfo / setCoreInfo / getAllCoreInfos / getDnsRecord
  */

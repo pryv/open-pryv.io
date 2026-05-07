@@ -50,7 +50,6 @@ class AcmeOrchestrator {
   #materializeTimer;
 
   /**
-   * @param opts
    * @param opts.hostSpec           - output of deriveHostnames()
    * @param opts.certRenewer        - a CertRenewer instance
    * @param opts.fileMaterializer   - a FileMaterializer instance for hostSpec.commonName
@@ -202,7 +201,6 @@ class AcmeOrchestrator {
  * typically has access to. Saves the master process from knowing the
  * construction order of CertRenewer / FileMaterializer / PlatformDBDnsWriter.
  *
- * @param opts
  * @param opts.config             - @pryv/boiler config
  * @param opts.platformDB
  * @param opts.atRestKey

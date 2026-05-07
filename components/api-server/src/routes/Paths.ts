@@ -55,9 +55,6 @@ export {
   Favicon
 };
 
-/**
- * @param a
- */
 function makePath (...a) {
   a.unshift('/');
   return path.join(...a);

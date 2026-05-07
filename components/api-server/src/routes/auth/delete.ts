@@ -11,7 +11,6 @@ const middleware = require('middleware');
 
 /**
  * Routes for users
- * @param app
  */
 export default function (expressApp, app) {
   const api = app.api;
