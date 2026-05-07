@@ -7,8 +7,6 @@
       "es2022",
       "DOM"
     ],
-    "outDir": "./dist",
-    "rootDir": ".",
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
