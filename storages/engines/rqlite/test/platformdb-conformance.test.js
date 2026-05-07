@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { DBrqlite } = require('../src/DBrqlite');
-const conformanceTests = require('platform/test/conformance/PlatformDB.test');
+const conformanceTests = require('platform/test/conformance/PlatformDB.test').default;
 
 // rqlite must be running on localhost:4001 for these tests.
 // Start with: rqlited -node-id 1 /tmp/rqlite-test-node

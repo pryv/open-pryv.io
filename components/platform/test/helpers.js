@@ -10,10 +10,13 @@
  * Uses base helpers - platform tests are mostly unit tests
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 const base = require('test-helpers/src/helpers-base');
 
 base.init({
   methods: [] // Platform tests don't need API methods
 });
 
-exports.mochaHooks = base.getMochaHooks(false);
+export const mochaHooks = base.getMochaHooks(false);

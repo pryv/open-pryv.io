@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const helpers = require('../../../test/helpers');
-const conformanceTests = require('platform/test/conformance/PlatformDB.test');
+const conformanceTests = require('platform/test/conformance/PlatformDB.test').default;
 
 describe('[MGPF] MongoDB PlatformDB conformance', () => {
   conformanceTests(async () => {

@@ -5,11 +5,14 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 /**
  * PlatformDB conformance test suite.
  * @param {Function} getDB - async function returning an initialized PlatformDB instance
  */
-module.exports = function conformanceTests (getDB) {
+export default function conformanceTests (getDB) {
   const assert = require('node:assert');
   const cuid = require('cuid');
 
@@ -631,4 +634,4 @@ module.exports = function conformanceTests (getDB) {
       });
     });
   });
-};
+}
