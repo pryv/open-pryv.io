@@ -9,6 +9,7 @@
  * Helper functions for error handling.
  */
 import { createRequire } from 'node:module';
+import type { APIError as APIErrorType } from './APIError.ts';
 const require = createRequire(import.meta.url);
 
 const { APIError } = require('./APIError.ts');
@@ -22,7 +23,7 @@ export { errorHandling };
  * @param req The request context; expected properties: url, method, body
  * @param logger The logger object (expected methods: debug, info, warn, error)
  */
-errorHandling.logError = function (error, req, logger) {
+errorHandling.logError = function (error: Error, req: { url?: string, method?: string, body?: unknown } | null, logger: { debug: Function, info: Function, warn: Function, error: Function }) {
   // console.log('XXXXXX', error); // uncomment to log 500 errors on test running using InstanceManager
   const metadata: any = {};
   if (req) {
@@ -33,21 +34,22 @@ errorHandling.logError = function (error, req, logger) {
     };
   }
   if (error instanceof APIError) {
-    const logMsg = error.id +
+    const apiError = error as APIErrorType;
+    const logMsg = apiError.id +
             ' error (' +
-            (error.httpStatus || 'n/a') +
+            (apiError.httpStatus || 'n/a') +
             '): ' +
-            error.message;
-    if (error.data) {
-      metadata.errorData = error.data;
+            apiError.message;
+    if (apiError.data) {
+      metadata.errorData = apiError.data;
     }
-    if (error.innerError) {
+    if (apiError.innerError) {
       metadata.innerError =
-                error.id === ErrorIds.UnexpectedError
-                  ? error.innerError.stack || error.innerError.message
-                  : error.innerError.message;
+                apiError.id === ErrorIds.UnexpectedError
+                  ? apiError.innerError.stack || apiError.innerError.message
+                  : apiError.innerError.message;
     }
-    if (error.id === ErrorIds.UnexpectedError) {
+    if (apiError.id === ErrorIds.UnexpectedError) {
       logger.error(logMsg, metadata);
     } else {
       logger.info(logMsg, metadata);
@@ -65,15 +67,15 @@ errorHandling.logError = function (error, req, logger) {
 /**
  * Returns a public-safe error object from the given API error.
  */
-errorHandling.getPublicErrorData = function (error) {
+errorHandling.getPublicErrorData = function (error: Error) {
   if (error instanceof APIError) {
-    const publicError = {
-      id: error.id,
-      message: error.message,
-      data: undefined
+    const apiError = error as APIErrorType;
+    const publicError: { id: string, message: string, data?: unknown } = {
+      id: apiError.id,
+      message: apiError.message
     };
-    if (error.data) {
-      publicError.data = error.data;
+    if (apiError.data) {
+      publicError.data = apiError.data;
     }
     return publicError;
   } else {

@@ -6,18 +6,23 @@
  */
 
 
+type APIErrorOptions = {
+  httpStatus?: number;
+  data?: unknown;
+  innerError?: Error | null;
+};
+
 /**
  * The constructor to use for all errors within the API.
  */
 class APIError extends Error {
-  id;
-  message;
-  httpStatus;
-  data;
-  innerError;
+  id: string;
+  httpStatus: number;
+  data: unknown;
+  innerError: Error | null;
 
-  constructor (id, message, options) {
-    super();
+  constructor (id: string, message: string, options?: APIErrorOptions) {
+    super(message);
 
     this.id = id;
     this.message = message;
@@ -34,8 +39,4 @@ class APIError extends Error {
 }
 
 export { APIError };
-type APIErrorOptions = {
-  httpStatus?: number;
-  data?: unknown;
-  innerError?: Error | null;
-};
+export type { APIErrorOptions };

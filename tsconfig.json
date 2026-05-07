@@ -3,7 +3,10 @@
     "target": "es2022",
     "module": "nodenext",
     "moduleResolution": "nodenext",
-    "lib": ["es2022", "DOM"],
+    "lib": [
+      "es2022",
+      "DOM"
+    ],
     "outDir": "./dist",
     "rootDir": ".",
     "esModuleInterop": true,
