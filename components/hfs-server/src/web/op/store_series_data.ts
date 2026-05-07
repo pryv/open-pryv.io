@@ -91,4 +91,4 @@ function parseData (createRequest, meta, typeRepo) {
 export default storeSeriesData;
 export { storeSeriesData };
 
-type DataMatrix = any; // PLAN57-AUDIT-ANY: was business.series.DataMatrix (JSDoc namespace)
+type DataMatrix = any; // was business.series.DataMatrix (JSDoc namespace)

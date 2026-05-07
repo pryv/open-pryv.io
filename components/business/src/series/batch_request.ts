@@ -126,4 +126,4 @@ class ElementParser {
   }
 }
 export { BatchRequest, BatchRequestElement, ParseFailure };
-type TypeResolveFunction = (eventId: string) => Promise<any> /* PLAN57-AUDIT-ANY: JSDoc-only SeriesRowType */;
+type TypeResolveFunction = (eventId: string) => Promise<any> /* JSDoc-only SeriesRowType */;

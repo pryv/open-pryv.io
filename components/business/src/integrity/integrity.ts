@@ -43,7 +43,7 @@ function getHTTPDigestHeaderForAttachment (subResourceIntegrity) {
 }
 
 // Integrity access and computation for attachments
-// PLAN57-AUDIT-ANY: IntegrityMulterDiskStorage, IntegrityCompute, IntegritySet,
+// IntegrityMulterDiskStorage, IntegrityCompute, IntegritySet,
 // IntegrityHash were JSDoc-only references that have no real TS declaration.
 type IntegrityAttachments = {
   isActive: boolean; // Setting: Add integrity hash to attachment if true
@@ -83,9 +83,9 @@ const attachments = {
 // Setting and computation tools for a Pryv.io db item
 type IntegrityItem = {
   isActive: boolean; // Setting: Add integrity hash to item if true
-  compute: any; // PLAN57-AUDIT-ANY: was IntegrityCompute (JSDoc-only)
-  set: any; // PLAN57-AUDIT-ANY: was IntegritySet (JSDoc-only)
-  hash: any; // PLAN57-AUDIT-ANY: was IntegrityHash (JSDoc-only)
+  compute: any; // was IntegrityCompute (JSDoc-only)
+  set: any; // was IntegritySet (JSDoc-only)
+  hash: any; // was IntegrityHash (JSDoc-only)
 };
 // ------------- events ------------------ //
 

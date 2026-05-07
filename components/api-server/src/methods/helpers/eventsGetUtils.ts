@@ -514,7 +514,7 @@ async function init () {
   mall = await getMall();
 }
 
-// PLAN57-AUDIT-ANY: StreamQuery + StreamQueryWithStoreId were JSDoc-only types
+// StreamQuery + StreamQueryWithStoreId were JSDoc-only types
 // (declared in references/events-typedef.js, not imported as TS types).
 type GetEventsParams = {
   streams?: Array<string> | string | any | Array<any>;
@@ -534,7 +534,7 @@ type StoreQuery = {
   id: string;
   storeId: string;
   includeTrashed: boolean;
-  childrenDepth: number /* PLAN57-AUDIT-ANY: was JSDoc {integer} */;
+  childrenDepth: number /* was JSDoc {integer} */;
   excludedIds: Array<string>;
   hideStoreRoots?: boolean;
 };

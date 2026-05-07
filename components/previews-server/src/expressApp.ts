@@ -33,6 +33,6 @@ export default function expressApp (commonHeadersMiddleware, errorsMiddleware, r
 };
 
 type AppAndEndWare = {
-  expressApp: any /* PLAN57-AUDIT-ANY: was express$Application (Flow type) */;
+  expressApp: any /* was express$Application (Flow type) */;
   routesDefined: () => unknown;
 };

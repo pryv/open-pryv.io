@@ -5,10 +5,6 @@
  * Refer to LICENSE file
  */
 
-// Plan 57 .ts loader shim — chained here so every entry that already
-// requires _observability-boot picks up the .ts loader for free.
-require('./_ts-register');
-
 /**
  * Provider-agnostic observability boot shim.
  *

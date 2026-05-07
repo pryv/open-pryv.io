@@ -359,7 +359,7 @@ type ResultOptions = {
 };
 type StreamDescriptor = {
   name: string;
-  // PLAN57-AUDIT-ANY: Readable was a JSDoc Node-stream reference, not imported as TS type here.
+  // Readable was a JSDoc Node-stream reference, not imported as TS type here.
   stream: any;
 };
 type APIResult = { [x: string]: any } | { [x: string]: Array<any> };

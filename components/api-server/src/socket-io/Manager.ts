@@ -334,7 +334,7 @@ export default Manager;
 export { Manager };
 type SocketIO$SocketId = string;
 type SocketIO$Handshake = {
-  methodContext: any /* PLAN57-AUDIT-ANY: JSDoc-only MethodContext */;
+  methodContext: any /* JSDoc-only MethodContext */;
   query: {
   resource: string;
   auth: string;

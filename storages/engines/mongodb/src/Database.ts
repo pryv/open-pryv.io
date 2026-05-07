@@ -665,7 +665,7 @@ type MongoDBError = {
   isDuplicateIndex?: (key: string) => boolean;
   getDuplicateSystemStreamId?: () => string;
 };
-// PLAN57-AUDIT-ANY: Collection is the mongodb driver type, not imported as TS type here.
+// Collection is the mongodb driver type, not imported as TS type here.
 type CollectionCallback = (coll: any) => unknown;
 type CollectionInfo = {
   name: string;

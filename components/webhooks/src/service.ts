@@ -197,7 +197,7 @@ export { WebhooksService };
 
 type UsernameWebhook = {
   username: string;
-  // PLAN57-AUDIT-ANY: Webhook is imported as a value via require(); typing it
+  // Webhook is imported as a value via require(); typing it
   // would require also importing the class as a type, which isn't exposed.
   webhook: any;
 };

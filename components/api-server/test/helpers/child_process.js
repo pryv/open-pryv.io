@@ -8,9 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-// Plan 57 .ts loader shim — must run before any storages/ require.
-// This file is the entry point used by test-helpers/spawner.js child_process.fork().
-require('../../../../bin/_ts-register');
+// Entry point used by test-helpers/spawner.ts child_process.fork().
 
 const Server = require('../../src/server.ts').default;
 const { getApplication } = require('api-server/src/application.ts');

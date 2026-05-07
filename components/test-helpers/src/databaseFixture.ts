@@ -612,7 +612,7 @@ async function initMall () {
 
 type DatabaseShortcuts = {
   sessions: Sessions;
-  // PLAN57-AUDIT-ANY: import('storage').user.X were JSDoc-only namespaced
+  // import('storage').user.X were JSDoc-only namespaced
   // types that don't translate to TS imports. These are storage layer instances.
   streams: any;
   accesses: any;
