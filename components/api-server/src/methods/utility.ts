@@ -103,9 +103,7 @@ export default async function (api) {
   }
 };
 
-/**
- * @typedef {{
- *   method: string;
- *   params: unknown;
- * }} ApiCall
- */
+type ApiCall = {
+  method: string;
+  params: unknown;
+};

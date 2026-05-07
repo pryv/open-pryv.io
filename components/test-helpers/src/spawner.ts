@@ -387,15 +387,10 @@ class Server extends EventEmitter {
 }
 export { SpawnContext, Server, ConditionVariable };
 
-/** @typedef {number} MessageId */
-
-/** @typedef {(val: unknown) => void} ResolveFun */
-
-/** @typedef {(err: Error) => void} RejectFun */
-
-/**
- * @typedef {{
- *   resolve: ResolveFun;
- *   reject: RejectFun;
- * }} Resolver
- */
+type MessageId = number;
+type ResolveFun = (val: unknown) => void;
+type RejectFun = (err: Error) => void;
+type Resolver = {
+  resolve: ResolveFun;
+  reject: RejectFun;
+};

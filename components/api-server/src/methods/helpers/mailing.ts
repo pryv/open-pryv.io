@@ -155,57 +155,40 @@ function parseError (url, err, res) {
   return errors.unexpectedError(baseMsg + errorMsg);
 }
 
-/**
- * @typedef {(error?: Error | null, res?: any | null) => any} Callback
- */
-/**
- * @typedef {{
- *   email: string;
- *   name: string;
- *   type: string | undefined | null;
- * }} Recipient
- */
-/**
- * @typedef {{
- *   method: EmailMethod;
- *   url: string;
- *   key: string;
- *   welcomeTemplate: string;
- *   resetPasswordTemplate: string;
- * }} EmailSettings
- */
-/** @typedef {'mandrill' | 'microservice' | 'in-process'} EmailMethod
- */
-/**
- * @typedef {{
- *   key: string;
- *   template_name: string;
- *   template_content: Array<string>;
- *   message: MandrillMessage;
- * }} MandrillData
- */
-/**
- * @typedef {{
- *   to: Recipient[];
- *   global_merge_vars: Array<MandrillSubstitution>;
- *   tags: Array<string>;
- * }} MandrillMessage
- */
-/**
- * @typedef {{
- *   name: string;
- *   content: string;
- * }} MandrillSubstitution
- */
-/**
- * @typedef {{
- *   key: string;
- *   to: Recipient;
- *   substitutions: Substitutions;
- * }} MicroserviceData
- */
-/**
- * @typedef {{
- *   [x: string]: string;
- * }} Substitutions
- */
+type Callback = (error?: Error | null, res?: any | null) => any;
+type Recipient = {
+  email: string;
+  name: string;
+  type: string | undefined | null;
+};
+type EmailSettings = {
+  method: EmailMethod;
+  url: string;
+  key: string;
+  welcomeTemplate: string;
+  resetPasswordTemplate: string;
+};
+type EmailMethod = 'mandrill' | 'microservice' | 'in-process';
+type MandrillData = {
+  key: string;
+  template_name: string;
+  template_content: Array<string>;
+  message: MandrillMessage;
+};
+type MandrillMessage = {
+  to: Recipient[];
+  global_merge_vars: Array<MandrillSubstitution>;
+  tags: Array<string>;
+};
+type MandrillSubstitution = {
+  name: string;
+  content: string;
+};
+type MicroserviceData = {
+  key: string;
+  to: Recipient;
+  substitutions: Substitutions;
+};
+type Substitutions = {
+  [x: string]: string;
+};

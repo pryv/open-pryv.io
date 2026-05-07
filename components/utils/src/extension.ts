@@ -70,4 +70,4 @@ class ExtensionLoader {
 }
 export { ExtensionLoader, Extension };
 
-/** @typedef {() => void} ExtensionFunction */
+type ExtensionFunction = () => void;

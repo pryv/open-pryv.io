@@ -294,8 +294,7 @@ class MethodContext {
 }
 export default MethodContext;
 export { MethodContext };
-/** @typedef {(err: any) => void} CustomAuthFunctionCallback */
-
+type CustomAuthFunctionCallback = (err: any) => void;
 /**
  * @typedef {(
  *   b: MethodContext,
@@ -303,25 +302,16 @@ export { MethodContext };
  * ) => void} CustomAuthFunction
  */
 
-/** @typedef {'http' | 'socket.io' | 'hf' | 'test'} ContextSourceName */
-
-/**
- * @typedef {{
- *   name: ContextSourceName;
- *   ip?: string;
- * }} ContextSource
- */
-
-/**
- * @typedef {{
- *   id: string | undefined | null;
- *   username: string;
- * }} UserDef
- */
-
-/**
- * @typedef {{
- *   accessToken: string;
- *   callerId?: string;
- * }} AuthenticationData
- */
+type ContextSourceName = 'http' | 'socket.io' | 'hf' | 'test';
+type ContextSource = {
+  name: ContextSourceName;
+  ip?: string;
+};
+type UserDef = {
+  id: string | undefined | null;
+  username: string;
+};
+type AuthenticationData = {
+  accessToken: string;
+  callerId?: string;
+};

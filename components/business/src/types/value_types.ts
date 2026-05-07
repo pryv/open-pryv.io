@@ -81,4 +81,4 @@ function produceInner (type) {
 }
 export default produceInner;
 export { produceInner };
-/** @typedef {Object} ValueType */
+type ValueType = Object;

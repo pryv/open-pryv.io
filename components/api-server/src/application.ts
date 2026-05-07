@@ -289,8 +289,6 @@ function getApplication (forceNewApp) {
 }
 
 export { getApplication };
-/**
- * @typedef {{
- *   ignoreProtectedFields: boolean;
- * }} UpdatesSettingsHolder
- */
+type UpdatesSettingsHolder = {
+  ignoreProtectedFields: boolean;
+};

@@ -188,15 +188,10 @@ class Parser {
 }
 export default DataMatrix;
 export { DataMatrix };
-/** @typedef {string | number} Element */
-
-/** @typedef {Array<Element>} RawRow */
-
-/** @typedef {number} EpochTime */
-
-/**
- * @typedef {{
- *   from: EpochTime;
- *   to: EpochTime;
- * }} DataExtent
- */
+type Element = string | number;
+type RawRow = Array<Element>;
+type EpochTime = number;
+type DataExtent = {
+  from: EpochTime;
+  to: EpochTime;
+};

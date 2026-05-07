@@ -42,12 +42,13 @@ function getHTTPDigestHeaderForAttachment (subResourceIntegrity) {
   return digestAlgo + '=' + sum;
 }
 
-/**
- * Integrity access and computation for attachments
- * @typedef {Object} IntegrityAttachments
- * @property {boolean} isActive - Setting: Add integrity hash to attachment if true
- * @property {IntegrityMulterDiskStorage} MulterIntegrityDiskStorage
- */
+// Integrity access and computation for attachments
+// PLAN57-AUDIT-ANY: IntegrityMulterDiskStorage, IntegrityCompute, IntegritySet,
+// IntegrityHash were JSDoc-only references that have no real TS declaration.
+type IntegrityAttachments = {
+  isActive: boolean; // Setting: Add integrity hash to attachment if true
+  MulterIntegrityDiskStorage: any;
+};
 const attachments = {
   isActive: attachmentsIsActive,
   getHTTPDigestHeaderForAttachment,
@@ -79,15 +80,13 @@ const attachments = {
  * @param save - This computation should be saved for audit
  */
 
-/**
- * Setting and computation tools for a Pryv.io db item
- * @typedef {Object} IntegrityItem
- * @property {boolean} isActive - Setting: Add integrity hash to item if true
- * @property {IntegrityCompute} compute
- * @property {IntegritySet} set
- * @property {IntegrityHash} hash
- */
-
+// Setting and computation tools for a Pryv.io db item
+type IntegrityItem = {
+  isActive: boolean; // Setting: Add integrity hash to item if true
+  compute: any; // PLAN57-AUDIT-ANY: was IntegrityCompute (JSDoc-only)
+  set: any; // PLAN57-AUDIT-ANY: was IntegritySet (JSDoc-only)
+  hash: any; // PLAN57-AUDIT-ANY: was IntegrityHash (JSDoc-only)
+};
 // ------------- events ------------------ //
 
 function computeEvent (event) {

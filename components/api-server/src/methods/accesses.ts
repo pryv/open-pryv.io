@@ -31,28 +31,19 @@ const { getStorageLayer } = require('storage');
 
 const { integrity } = require('business');
 
-/**
- * @typedef {{
- *   streamId: string;
- *   level: 'manage' | 'contribute' | 'read' | 'create-only' | 'none';
- * }} Permission
- */
-
-/**
- * @typedef {{
- *   type: 'personal' | 'app' | 'shared';
- *   permissions: Array<Permission>;
- *   expires: number | undefined | null;
- *   clientData: {} | undefined | null;
- * }} Access
- */
-
-/**
- * @typedef {{
- *   ignoreProtectedFields: boolean;
- * }} UpdatesSettingsHolder
- */
-
+type Permission = {
+  streamId: string;
+  level: 'manage' | 'contribute' | 'read' | 'create-only' | 'none';
+};
+type Access = {
+  type: 'personal' | 'app' | 'shared';
+  permissions: Array<Permission>;
+  expires: number | undefined | null;
+  clientData: {} | undefined | null;
+};
+type UpdatesSettingsHolder = {
+  ignoreProtectedFields: boolean;
+};
 export default async function produceAccessesApiMethods (api) {
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };
   const mall = await getMall();

@@ -20,29 +20,14 @@ const RESULT_TO_OBJECT_MAX_ARRAY_SIZE = 100000;
 // The string used as wildcard for method id filters. Must be 1-character long.
 const WILDCARD = '*';
 
-/**
- * @typedef {{
- *   idFilter: string;
- *   fns: Array<ApiFunction>;
- * }} Filter
- */
-
-/**
- * @typedef {| string
- *   | ((
- *       context: MethodContext,
- *       params: any,
- *       result: Result,
- *       next: ApiCallback
- *     ) => unknown)} ApiFunction
- */
-
-/**
- * @typedef {(
- *   err?: Error | null,
- *   result?: Result | null
- * ) => unknown} ApiCallback
- */
+// PLAN57-AUDIT-ANY: Result is imported as a value (require().default); MethodContext
+// was a JSDoc-only namespaced reference. `any` for both at the type level.
+type ApiCallback = (err?: Error | null, result?: any | null) => unknown;
+type ApiFunction = string | ((context: any, params: any, result: any, next: ApiCallback) => unknown);
+type Filter = {
+  idFilter: string;
+  fns: Array<ApiFunction>;
+};
 
 /**
  * Maps each API method's implementation as a chain of functions (akin to

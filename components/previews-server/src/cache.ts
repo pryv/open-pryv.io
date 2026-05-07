@@ -65,10 +65,8 @@ async function getFiles (dir) {
 export default Cache;
 export { Cache };
 
-/**
- * @typedef {{
- *   maxAge: number;
- *   rootPath: string;
- *   logger: any;
- * }} CacheSettings
- */
+type CacheSettings = {
+  maxAge: number;
+  rootPath: string;
+  logger: any;
+};

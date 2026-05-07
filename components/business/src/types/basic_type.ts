@@ -73,8 +73,6 @@ class BasicType {
 }
 export default BasicType;
 export { BasicType };
-/**
- * @typedef {{
- *   type: string;
- * }} JSONSchema
- */
+type JSONSchema = {
+  type: string;
+};

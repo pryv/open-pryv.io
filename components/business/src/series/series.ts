@@ -128,11 +128,8 @@ class Series {
 }
 export default Series;
 export { Series };
-/** @typedef {number} Timestamp */
-
-/**
- * @typedef {{
- *   from?: Timestamp;
- *   to?: Timestamp;
- * }} Query
- */
+type Timestamp = number;
+type Query = {
+  from?: Timestamp;
+  to?: Timestamp;
+};

@@ -125,4 +125,4 @@ class ChildProcess {
 export default ChildProcess;
 export { ChildProcess };
 
-/** @typedef {Object} ApplicationLauncher */
+type ApplicationLauncher = Object;

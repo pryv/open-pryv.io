@@ -52,12 +52,10 @@ export const setCommonMeta = function (result) {
   return result;
 };
 
-/**
- * @typedef {{
- *   meta: {
- *     apiVersion: string;
- *     serverTime: number;
- *     serial: string;
- *   };
- * }} MetaInfo
- */
+type MetaInfo = {
+  meta: {
+  apiVersion: string;
+  serverTime: number;
+  serial: string;
+  };
+};

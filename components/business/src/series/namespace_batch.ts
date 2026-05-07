@@ -68,4 +68,4 @@ class NamespaceBatch {
 }
 export default NamespaceBatch;
 export { NamespaceBatch };
-/** @typedef {(eventId: string) => Promise<string>} MeasurementNameResolver */
+type MeasurementNameResolver = (eventId: string) => Promise<string>;

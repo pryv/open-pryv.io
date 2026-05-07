@@ -514,30 +514,27 @@ async function init () {
   mall = await getMall();
 }
 
-/**
- * @typedef {{
- *   streams?: Array<string> | string | StreamQuery | Array<StreamQuery>;
- *   arrayOfStreamQueries?: Array<StreamQuery>;
- *   arrayOfStreamQueriesWithStoreId?: Array<StreamQueryWithStoreId>;
- *   types?: Array<string>;
- *   fromTime?: number;
- *   toTime?: number;
- *   sortAscending?: boolean;
- *   skip?: number;
- *   limit?: number;
- *   state?: 'default' | 'all' | 'trashed';
- *   modifiedSince?: number;
- *   includeDeletions?: boolean;
- * }} GetEventsParams
- */
-
-/**
- * @typedef {{
- *   id: string;
- *   storeId: string;
- *   includeTrashed: boolean;
- *   childrenDepth: integer;
- *   excludedIds: Array<string>;
- *   hideStoreRoots?: boolean;
- * }} StoreQuery
- */
+// PLAN57-AUDIT-ANY: StreamQuery + StreamQueryWithStoreId were JSDoc-only types
+// (declared in references/events-typedef.js, not imported as TS types).
+type GetEventsParams = {
+  streams?: Array<string> | string | any | Array<any>;
+  arrayOfStreamQueries?: Array<any>;
+  arrayOfStreamQueriesWithStoreId?: Array<any>;
+  types?: Array<string>;
+  fromTime?: number;
+  toTime?: number;
+  sortAscending?: boolean;
+  skip?: number;
+  limit?: number;
+  state?: 'default' | 'all' | 'trashed';
+  modifiedSince?: number;
+  includeDeletions?: boolean;
+};
+type StoreQuery = {
+  id: string;
+  storeId: string;
+  includeTrashed: boolean;
+  childrenDepth: number /* PLAN57-AUDIT-ANY: was JSDoc {integer} */;
+  excludedIds: Array<string>;
+  hideStoreRoots?: boolean;
+};

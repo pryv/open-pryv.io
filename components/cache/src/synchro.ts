@@ -109,11 +109,9 @@ export {
   MESSAGES
 };
 
-/**
- * @typedef {{
- *   action: string;
- *   username?: string;
- *   accessId?: string;
- *   accessToken?: string;
- * }} Message
- */
+type Message = {
+  action: string;
+  username?: string;
+  accessId?: string;
+  accessToken?: string;
+};

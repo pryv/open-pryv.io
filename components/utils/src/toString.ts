@@ -24,10 +24,8 @@ toString.user = function (user) {
   return '"' + user.username + '" (' + (user.id || user._id || 'n/a') + ')';
 };
 
-/**
- * @typedef {{
- *   username: string;
- *   id?: string;
- *   _id?: string;
- * }} User
- */
+type User = {
+  username: string;
+  id?: string;
+  _id?: string;
+};

@@ -21,21 +21,15 @@ const { pubsub } = require('messages');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 
-/**
- * @typedef {{
- *   minIntervalMs: number;
- *   maxRetries: number;
- *   runsSize: number;
- * }} WebhooksSettingsHolder
- */
-
-/**
- * @typedef {{
- *   id: string;
- *   isApp(): Boolean;
- * }} Access
- */
-
+type WebhooksSettingsHolder = {
+  minIntervalMs: number;
+  maxRetries: number;
+  runsSize: number;
+};
+type Access = {
+  id: string;
+  isApp(): Boolean;
+};
 export default async function produceWebhooksApiMethods (api) {
   const config = await getConfig();
   const wehbooksSettings = config.get('webhooks');

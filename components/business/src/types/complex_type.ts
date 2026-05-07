@@ -95,10 +95,8 @@ class ComplexType {
 }
 export default ComplexType;
 export { ComplexType };
-/**
- * @typedef {{
- *   type: string;
- *   properties?: {};
- *   required?: Array<string>;
- * }} JSONSchema
- */
+type JSONSchema = {
+  type: string;
+  properties?: {};
+  required?: Array<string>;
+};

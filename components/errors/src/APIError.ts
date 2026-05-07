@@ -34,10 +34,8 @@ class APIError extends Error {
 }
 
 export { APIError };
-/**
- * @typedef {{
- *   httpStatus?: number;
- *   data?: unknown;
- *   innerError?: Error | null;
- * }} APIErrorOptions
- */
+type APIErrorOptions = {
+  httpStatus?: number;
+  data?: unknown;
+  innerError?: Error | null;
+};

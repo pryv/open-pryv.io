@@ -78,4 +78,3 @@ async function getMall () {
   return mall;
 }
 
-/** @typedef {Class<import>} DataStore */

@@ -271,40 +271,28 @@ async function definePermissions (access, event) {
 }
 export { MetadataLoader, MetadataCache };
 
-/**
- * @typedef {{
- *   username: string;
- *   event: {
- *     id: string;
- *   };
- * }} UsernameEvent
- */
-
-/**
- * @typedef {{
- *   canCreateEventsOnStream(streamId: string): boolean;
- *   canGetEventsOnStream(streamId: string, storeId: string): boolean;
- * }} AccessModel
- */
-
-/**
- * @typedef {{
- *   id: string;
- *   streamIds: string;
- *   type: string;
- *   time: number;
- *   trashed: boolean;
- *   deleted: number;
- * }} EventModel
- */
-
-/**
- * @typedef {{
- *   id: string;
- *   username: string;
- * }} UserModel
- */
-
+type UsernameEvent = {
+  username: string;
+  event: {
+  id: string;
+  };
+};
+type AccessModel = {
+  canCreateEventsOnStream(streamId: string): boolean;
+  canGetEventsOnStream(streamId: string, storeId: string): boolean;
+};
+type EventModel = {
+  id: string;
+  streamIds: string;
+  type: string;
+  time: number;
+  trashed: boolean;
+  deleted: number;
+};
+type UserModel = {
+  id: string;
+  username: string;
+};
 /** A repository for meta data on series.
  * @typedef {Object} MetadataRepository
  */

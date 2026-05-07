@@ -610,18 +610,15 @@ async function initMall () {
   }
 }
 
-/**
- * @typedef {{
- *   sessions: Sessions;
- *   streams: import('storage').user.Streams;
- *   accesses: import('storage').user.Accesses;
- *   webhooks: import('storage').user.Webhooks;
- * }} DatabaseShortcuts
- */
-
-/**
- * @typedef {{
- *   id: string;
- *   _id: string;
- * }} Attributes
- */
+type DatabaseShortcuts = {
+  sessions: Sessions;
+  // PLAN57-AUDIT-ANY: import('storage').user.X were JSDoc-only namespaced
+  // types that don't translate to TS imports. These are storage layer instances.
+  streams: any;
+  accesses: any;
+  webhooks: any;
+};
+type Attributes = {
+  id: string;
+  _id: string;
+};

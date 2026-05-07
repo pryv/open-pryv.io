@@ -33,18 +33,15 @@ function p2cWithDup (promise, callback) {
   );
 }
 
-/**
- * @typedef {{
- *   writeConcern: {
- *     j?: boolean;
- *     w?: number;
- *   };
- *   autoReconnect?: boolean;
- *   connectTimeoutMS?: number;
- *   socketTimeoutMS?: number;
- * }} DatabaseOptions
- */
-
+type DatabaseOptions = {
+  writeConcern: {
+  j?: boolean;
+  w?: number;
+  };
+  autoReconnect?: boolean;
+  connectTimeoutMS?: number;
+  socketTimeoutMS?: number;
+};
 /**
  * Handles actual interaction with the Mongo database.
  * It handles Mongo-specific tasks such as connecting, retrieving collections and applying indexes,
@@ -660,51 +657,37 @@ class Database {
 }
 
 export { Database };
-/**
- * @typedef {{
- *   errmsg?: string;
- *   code?: number;
- *   lastErrorObject?: MongoDBError;
- *   isDuplicate?: boolean;
- *   isDuplicateIndex?: (key: string) => boolean;
- *   getDuplicateSystemStreamId?: () => string;
- * }} MongoDBError
- */
-
-/** @typedef {(coll: Collection) => unknown} CollectionCallback */
-
-/**
- * @typedef {object} CollectionInfo
- * @property {string } name
- * @property {Array<IndexDefinition>} [indexes]
- */
-
-/**
- * @typedef {{
- *   index: {
- *     [field: string]: number;
- *   };
- *   options: IndexOptions;
- * }} IndexDefinition
- */
-
-/**
- * @typedef {{
- *   unique?: boolean;
- * }} IndexOptions
- */
-
-/**
- * @typedef {{
- *   projection: {
- *     [key: string]: 0 | 1;
- *   };
- *   sort: any;
- *   skip: number | undefined | null;
- *   limit: number | undefined | null;
- * }} FindOptions
- */
-
+type MongoDBError = {
+  errmsg?: string;
+  code?: number;
+  lastErrorObject?: MongoDBError;
+  isDuplicate?: boolean;
+  isDuplicateIndex?: (key: string) => boolean;
+  getDuplicateSystemStreamId?: () => string;
+};
+// PLAN57-AUDIT-ANY: Collection is the mongodb driver type, not imported as TS type here.
+type CollectionCallback = (coll: any) => unknown;
+type CollectionInfo = {
+  name: string;
+  indexes?: Array<IndexDefinition>;
+};
+type IndexDefinition = {
+  index: {
+  [field: string]: number;
+  };
+  options: IndexOptions;
+};
+type IndexOptions = {
+  unique?: boolean;
+};
+type FindOptions = {
+  projection: {
+  [key: string]: 0 | 1;
+  };
+  sort: any;
+  skip: number | undefined | null;
+  limit: number | undefined | null;
+};
 function getAuthPart (settings) {
   const authUser = settings.authUser;
   let authPart = '';

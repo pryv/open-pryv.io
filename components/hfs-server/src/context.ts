@@ -87,4 +87,4 @@ class Context {
 export default Context;
 export { Context };
 
-/** @typedef {business.series.Repository} Repository */
+type Repository = any; // PLAN57-AUDIT-ANY: was business.series.Repository (JSDoc namespace)

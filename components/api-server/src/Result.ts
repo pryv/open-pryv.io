@@ -353,51 +353,24 @@ class StreamConcatArray {
   }
 }
 
-/**
- * @typedef {{
- *   arrayLimit?: number;
- *   tracing?: object;
- * }} ResultOptions
- */
-
-/**
- * @typedef {{
- *   name: string;
- *   stream: Readable;
- * }} StreamDescriptor
- */
-
-/**
- * @typedef {| {
- *       [x: string]: any;
- *     }
- *   | {
- *       [x: string]: Array<any>;
- *     }} APIResult
- */
-
-/** @typedef {(err?: Error | null, res?: APIResult | null) => unknown} ToObjectCallback */
-
-/** @typedef {() => unknown} doneCallBack */
-
-/**
- * @typedef {{
- *   id: string;
- *   deleted: number;
- * }} itemDeletion
- */
-
-/** @typedef {'read' | 'contribute' | 'manage'} PermissionLevel */
-
-/** @typedef {'forbidden'} Setting */
-
-/**
- * @typedef {| {
- *       streamId: string;
- *       level: PermissionLevel;
- *     }
- *   | {
- *       feature: string;
- *       setting: Setting;
- *     }} Permission
- */
+type ResultOptions = {
+  arrayLimit?: number;
+  tracing?: object;
+};
+type StreamDescriptor = {
+  name: string;
+  // PLAN57-AUDIT-ANY: Readable was a JSDoc Node-stream reference, not imported as TS type here.
+  stream: any;
+};
+type APIResult = { [x: string]: any } | { [x: string]: Array<any> };
+type ToObjectCallback = (err?: Error | null, res?: APIResult | null) => unknown;
+type doneCallBack = () => unknown;
+type itemDeletion = {
+  id: string;
+  deleted: number;
+};
+type PermissionLevel = 'read' | 'contribute' | 'manage';
+type Setting = 'forbidden';
+type Permission =
+  | { streamId: string; level: PermissionLevel }
+  | { feature: string; setting: Setting };

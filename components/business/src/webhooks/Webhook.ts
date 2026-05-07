@@ -333,18 +333,12 @@ async function makeUpdate (fields, webhook) {
   await webhook.repository.updateOne(webhook.user, update, webhook.id);
 }
 
-/**
- * @typedef {{
- *   status: number;
- *   timestamp: number;
- * }} Run
- */
-
-/** @typedef {'active' | 'inactive'} WebhookState */
-
-/**
- * @typedef {{
- *   state: WebhookState;
- *   currentRetries: number;
- * }} WebhookUpdate
- */
+type Run = {
+  status: number;
+  timestamp: number;
+};
+type WebhookState = 'active' | 'inactive';
+type WebhookUpdate = {
+  state: WebhookState;
+  currentRetries: number;
+};

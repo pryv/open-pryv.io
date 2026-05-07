@@ -190,4 +190,4 @@ async function groupByNamespace (batchRequest, resolver) {
 export default storeSeriesBatch;
 export { storeSeriesBatch };
 
-/** @typedef {Map<string, BatchRequest>} NamespacedBatchRequests */
+type NamespacedBatchRequests = Map<string, any> /* PLAN57-AUDIT-ANY: BatchRequest is value-only */;

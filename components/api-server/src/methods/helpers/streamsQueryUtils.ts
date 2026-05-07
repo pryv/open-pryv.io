@@ -21,16 +21,13 @@ const { findForbiddenChar } = require('../../schema/streamId');
  * @property {Array} nonAuthorizedStreams - The list of stream that have been unAuthorized
  * @param arrayOfQueries
  */
-/**
- * @typedef {Object} StreamQuery
- * @property {Array.<StreamId>|'*'} any - Any of the streamIds should match or "*" for all accessible streams
- * @property {Array.<StreamId>} all - All of the streamIds should match
- * @property {Array.<StreamId>} not - All of the streamIds should match
- */
-/**
- * A streamId
- * @typedef {string} StreamId
- */
+type StreamQuery = {
+  any: Array<StreamId>|'*'; // Any of the streamIds should match or "*" for all accessible streams
+  all: Array<StreamId>; // All of the streamIds should match
+  not: Array<StreamId>; // All of the streamIds should match
+};
+// A streamId
+type StreamId = string;
 /**
  * For backwardCompatibility with older streams parameter ['A', 'B'] transform it to streams query [{any: ['A', 'B']}]
  * Takes care of grouping by store. ['A', 'B', ':_audit:xx'] => [{any: ['A', 'B']}, {any: ':audit:xx'}]

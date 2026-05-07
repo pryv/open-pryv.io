@@ -332,51 +332,36 @@ function pubsubMessageToSocket (payload) {
 }
 export default Manager;
 export { Manager };
-/** @typedef {string} SocketIO$SocketId */
-
-/**
- * @typedef {{
- *   methodContext: MethodContext;
- *   query: {
- *     resource: string;
- *     auth: string;
- *   };
- * }} SocketIO$Handshake
- */
-
-/**
- * @typedef {{
- *   name: string;
- *   args: Array<unknown>;
- * }} SocketIO$CallData
- */
-
-/**
- * @typedef {{
- *   id: SocketIO$SocketId;
- *   on(a: string, ...a: Array<unknown>): unknown;
- *   once(a: string, ...a: Array<unknown>): unknown;
- *   namespace: SocketIO$Namespace;
- * }} SocketIO$Socket
- */
-
-/**
- * @typedef {{
- *   // Here's a bad interface.
- *   on(a: string, ...a: Array<unknown>): unknown;
- *   emit(a: string, ...a: Array<unknown>): void;
- *   name: string;
- *   sockets: {
- *     [socketId in SocketIO$SocketId]: SocketIO$Socket;
- *   };
- * }} SocketIO$Namespace
- */
-
-/**
- * @typedef {{
- *   of: (a: string) => SocketIO$Namespace;
- *   handshaken: {
- *     [id in SocketIO$SocketId]: SocketIO$Handshake;
- *   };
- * }} SocketIO$Server
- */
+type SocketIO$SocketId = string;
+type SocketIO$Handshake = {
+  methodContext: any /* PLAN57-AUDIT-ANY: JSDoc-only MethodContext */;
+  query: {
+  resource: string;
+  auth: string;
+  };
+};
+type SocketIO$CallData = {
+  name: string;
+  args: Array<unknown>;
+};
+type SocketIO$Socket = {
+  id: SocketIO$SocketId;
+  on(eventName: string, ...args: Array<unknown>): unknown;
+  once(eventName: string, ...args: Array<unknown>): unknown;
+  namespace: SocketIO$Namespace;
+};
+type SocketIO$Namespace = {
+  // Here's a bad interface.
+  on(eventName: string, ...args: Array<unknown>): unknown;
+  emit(eventName: string, ...args: Array<unknown>): void;
+  name: string;
+  sockets: {
+  [socketId in SocketIO$SocketId]: SocketIO$Socket;
+  };
+};
+type SocketIO$Server = {
+  of: (a: string) => SocketIO$Namespace;
+  handshaken: {
+  [id in SocketIO$SocketId]: SocketIO$Handshake;
+  };
+};
