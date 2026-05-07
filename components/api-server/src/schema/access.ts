@@ -151,13 +151,20 @@ function permissions (action) {
   });
 }
 
-// PLAN57-AUDIT-ANY: function-with-attached-property pattern — the default-export callable
-// also exposes the helper functions as properties on itself. Typing this cleanly would need
-// `accessSchema as AccessSchemaFn & { permissions, permissionLevel, featureSetting }`; the
-// 3 casts below are localised and stable.
-(accessSchema as any).permissions = permissions;
-(accessSchema as any).permissionLevel = permissionLevel;
-(accessSchema as any).featureSetting = featureSetting;
+// Callable schema with helper functions attached as properties.
+// Consumers can either call the default export directly or reach for the
+// helpers via either `require('./access').permissions(action)` or
+// `require('./access').default.permissions(action)`.
+type AccessSchema = typeof accessSchema & {
+  permissions: typeof permissions,
+  permissionLevel: typeof permissionLevel,
+  featureSetting: typeof featureSetting
+};
+const accessSchemaWithProps: AccessSchema = Object.assign(accessSchema, {
+  permissions,
+  permissionLevel,
+  featureSetting
+});
 
-export default accessSchema;
+export default accessSchemaWithProps;
 export { permissions, permissionLevel, featureSetting };

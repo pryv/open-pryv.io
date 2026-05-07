@@ -216,9 +216,8 @@ function createValidator (options: any = {}) {
 // Default export = the function itself; also export `createValidator` as a
 // named export so consumers using `const { createValidator } = require(...)`
 // keep working under both CJS-via-require(esm) and ESM imports.
-// PLAN57-AUDIT-ANY: function-with-attached-property; the static-property pattern
-// gives consumers access via both shapes (`require(...).createValidator` and
-// `require(...).default()`) without forcing them to pick one.
-(createValidator as any).createValidator = createValidator;
-export default createValidator;
+type CreateValidatorFn = typeof createValidator & { createValidator: typeof createValidator };
+const createValidatorWithSelf: CreateValidatorFn = Object.assign(createValidator, { createValidator });
+
+export default createValidatorWithSelf;
 export { createValidator };
