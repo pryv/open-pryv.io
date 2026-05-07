@@ -7,25 +7,19 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-// this file uses util.inherits(Cls, Parent) pseudo-inheritance.
-// The (Cls as any).super_ calls below cannot be typed without converting to ES "class Cls extends Parent". Tracked as separate refactor.
-
 /**
  * DynamicInstanceManager - Instance manager with dynamic port allocation
  * Enables parallel test execution by allocating unique ports per instance
  */
 
-const EventEmitter = require('events').EventEmitter;
+const { EventEmitter } = require('events');
 const fs = require('fs');
-const spawn = require('child_process').spawn;
+const { spawn } = require('child_process');
 const temp = require('temp');
 const util = require('util');
 
 const { getLogger } = require('@pryv/boiler');
 const portAllocator = require('./portAllocator.ts');
-
-export default DynamicInstanceManager;
-export { DynamicInstanceManager };
 
 let spawnCounter = 0;
 
@@ -42,41 +36,55 @@ let spawnCounter = 0;
  * @param config Must contain `serverFilePath`
  * @param options Optional: { messagePrefix: string } for message filtering
  */
-function DynamicInstanceManager (config, options: any = {}) {
-  (DynamicInstanceManager as any).super_.call(this);
+class DynamicInstanceManager extends EventEmitter {
+  url?: string;
+  private config: any;
+  private messagePrefix: string;
+  private serverSettings: any = null;
+  private tempConfigPath: string;
+  private serverProcess: any = null;
+  private serverReady: boolean = false;
+  private allocatedHttpPort: number | null = null;
+  private logger: any;
 
-  const messagePrefix = options.messagePrefix || '';
-  let serverSettings = null;
-  const tempConfigPath = temp.path({ suffix: '.json' });
-  let serverProcess = null;
-  let serverReady = false;
-  let allocatedHttpPort = null;
-  const logger = getLogger('dynamic-instance-manager');
-  const self = this;
+  ensureStartedAsync: (settings: any) => Promise<void>;
+  restartAsync: () => Promise<void>;
+  stopAsync: () => Promise<void>;
 
-  // Cleanup handler
-  const cleanup = () => {
-    if (serverProcess) {
+  constructor (config, options: any = {}) {
+    super();
+    this.config = config;
+    this.messagePrefix = options.messagePrefix || '';
+    this.tempConfigPath = temp.path({ suffix: '.json' });
+    this.logger = getLogger('dynamic-instance-manager');
+
+    this.ensureStartedAsync = util.promisify(this.ensureStarted).bind(this);
+    this.restartAsync = util.promisify(this.restart).bind(this);
+    this.stopAsync = util.promisify(this.stop).bind(this);
+
+    // Cleanup handlers for graceful shutdown
+    process.on('exit', () => this.cleanup());
+    process.on('SIGINT', () => this.cleanup());
+    process.on('SIGTERM', () => this.cleanup());
+  }
+
+  private cleanup () {
+    if (this.serverProcess) {
       try {
-        serverProcess.kill('SIGKILL');
+        this.serverProcess.kill('SIGKILL');
       } catch (e) {
         // Ignore
       }
-      serverProcess = null;
+      this.serverProcess = null;
     }
-  };
+  }
 
-  // Register cleanup handlers for graceful shutdown
-  process.on('exit', cleanup);
-  process.on('SIGINT', cleanup);
-  process.on('SIGTERM', cleanup);
+  private isRunning () {
+    return !!this.serverProcess;
+  }
 
-  /**
-   * Allocate ports and start the server
-   * @param inputSettings - Server configuration settings
-   * @param callback
-   */
-  this.ensureStarted = function (inputSettings, callback) {
+  /** Allocate ports and start the server. */
+  ensureStarted (inputSettings, callback) {
     const settingsCopy = structuredClone(inputSettings);
 
     // Force console settings
@@ -93,20 +101,19 @@ function DynamicInstanceManager (config, options: any = {}) {
     // Allocate ports asynchronously
     (async () => {
       try {
-        // Stop existing server if running and wait for it
-        if (isRunning()) {
-          await self.stopAsync();
+        if (this.isRunning()) {
+          await this.stopAsync();
         }
 
         // Reuse existing port if already allocated, otherwise allocate a new one
-        let httpPort;
-        if (allocatedHttpPort) {
-          httpPort = allocatedHttpPort;
-          logger.debug(`Reusing port: HTTP ${httpPort}`);
+        let httpPort: number;
+        if (this.allocatedHttpPort) {
+          httpPort = this.allocatedHttpPort;
+          this.logger.debug(`Reusing port: HTTP ${httpPort}`);
         } else {
           httpPort = await portAllocator.allocatePort();
-          allocatedHttpPort = httpPort;
-          logger.debug(`Allocated new port: HTTP ${httpPort}`);
+          this.allocatedHttpPort = httpPort;
+          this.logger.debug(`Allocated new port: HTTP ${httpPort}`);
         }
 
         // Configure HTTP — set all port keys so any server type gets the right port
@@ -119,149 +126,124 @@ function DynamicInstanceManager (config, options: any = {}) {
         // Configure test notifications (IPC-based, no port needed)
         settingsCopy.testNotifications = { enabled: true };
 
-        serverSettings = settingsCopy;
-        self.url = `http://${settingsCopy.http.ip}:${httpPort}`;
+        this.serverSettings = settingsCopy;
+        this.url = `http://${settingsCopy.http.ip}:${httpPort}`;
 
-        logger.debug(`Starting server on port ${httpPort}`);
-        self.start(callback);
+        this.logger.debug(`Starting server on port ${httpPort}`);
+        this.start(callback);
       } catch (err) {
         callback(err);
       }
     })();
-  };
+  }
 
-  this.ensureStartedAsync = util.promisify(this.ensureStarted).bind(this);
-
-  /**
-   * Restart the server with the same settings
-   */
-  this.restart = function (callback) {
-    const self = this;
-    if (!serverSettings) {
+  /** Restart the server with the same settings. */
+  restart (callback) {
+    if (!this.serverSettings) {
       return callback(new Error('Cannot restart: server was never started with ensureStarted'));
     }
+    this.ensureStarted(this.serverSettings, callback);
+  }
 
-    // Use ensureStarted which properly handles stop and restart
-    self.ensureStarted(serverSettings, callback);
-  };
-
-  this.restartAsync = util.promisify(this.restart).bind(this);
-
-  /**
-   * Start the server process
-   * @api private
-   */
-  this.start = function (callback) {
-    if (isRunning()) {
+  /** Start the server process. @api private */
+  start (callback) {
+    if (this.isRunning()) {
       throw new Error('Server is already running; stop it first.');
     }
 
-    // Write config to temp file
-    fs.writeFileSync(tempConfigPath, JSON.stringify(serverSettings, null, 2));
-    const args = ['--config=' + tempConfigPath];
-    args.unshift(config.serverFilePath);
+    fs.writeFileSync(this.tempConfigPath, JSON.stringify(this.serverSettings, null, 2));
+    const args = ['--config=' + this.tempConfigPath];
+    args.unshift(this.config.serverFilePath);
 
-    // Debug support
     if (process.execArgv.indexOf('--debug') !== -1) {
       args.unshift('--debug=5859');
     }
     if (process.execArgv.indexOf('--debug-brk') !== -1) {
       args.unshift('--debug-brk=5859');
     }
-
-    // Profiling support
-    if (serverSettings.profile) {
+    if (this.serverSettings.profile) {
       args.unshift('--prof');
     }
 
-    logger.debug('Starting server instance with config ' + tempConfigPath);
+    this.logger.debug('Starting server instance with config ' + this.tempConfigPath);
     const options = {
       stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
       env: { ...process.env, PRYV_BOILER_SUFFIX: '-dyn' + spawnCounter++ }
     };
 
-    serverProcess = spawn(process.argv[0], args, options);
+    this.serverProcess = spawn(process.argv[0], args, options);
     let serverExited = false;
-    let exitCode = null;
+    let exitCode: number | null = null;
 
-    serverProcess.on('exit', function (code) {
-      logger.debug('Server instance exited with code ' + code);
+    this.serverProcess.on('exit', (code) => {
+      this.logger.debug('Server instance exited with code ' + code);
       serverExited = true;
       exitCode = code;
-      serverProcess = null;
+      this.serverProcess = null;
     });
 
-    serverProcess.on('error', function (err) {
-      logger.error('Server process error:', err);
+    this.serverProcess.on('error', (err) => {
+      this.logger.error('Server process error:', err);
       serverExited = true;
       exitCode = 1;
-      serverProcess = null;
+      this.serverProcess = null;
     });
 
-    serverProcess.on('message', function (msg) {
+    this.serverProcess.on('message', (msg) => {
       if (msg && msg.type === 'test-notification') {
-        // Support message prefix filtering for isolation
         const event = msg.event;
-        if (messagePrefix && !event.startsWith(messagePrefix)) return;
-        if (event === 'test-server-ready') serverReady = true;
-        self.emit(event, msg.data);
+        if (this.messagePrefix && !event.startsWith(this.messagePrefix)) return;
+        if (event === 'test-server-ready') this.serverReady = true;
+        this.emit(event, msg.data);
       }
     });
 
+    const isReadyOrExited = () => this.serverReady || serverExited;
     (async () => {
       while (!isReadyOrExited()) {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      if (serverExited && exitCode > 0) {
+      if (serverExited && exitCode != null && exitCode > 0) {
         return callback(new Error('Server failed (code ' + exitCode + ')'));
       }
       callback();
     })();
+  }
 
-    function isReadyOrExited () {
-      return serverReady || serverExited;
-    }
-  };
-
-  /**
-   * Check if the server crashed
-   */
-  this.crashed = function () {
-    return serverProcess && serverProcess.exitCode > 0;
-  };
+  /** Check if the server crashed. */
+  crashed () {
+    return this.serverProcess && this.serverProcess.exitCode > 0;
+  }
 
   /**
-   * Stop the server (async version that waits for process to exit)
+   * Stop the server (async version that waits for process to exit).
    * @param callback - Called when server has stopped
    */
-  this.stop = function (callback) {
-    if (!isRunning()) {
+  stop (callback) {
+    if (!this.isRunning()) {
       if (callback) callback();
       return;
     }
-    logger.debug('Stopping server instance...');
+    this.logger.debug('Stopping server instance...');
 
-    const proc = serverProcess;
-    serverProcess = null;
-    serverReady = false;
+    const proc = this.serverProcess;
+    this.serverProcess = null;
+    this.serverReady = false;
 
-    // Set up exit handler before killing
     const onExit = () => {
-      logger.debug('Server instance stopped');
+      this.logger.debug('Server instance stopped');
       if (callback) callback();
     };
 
     proc.once('exit', onExit);
 
-    // Try graceful shutdown first
     try {
       proc.kill('SIGTERM');
     } catch (e) {
-      // If SIGTERM fails, try SIGKILL
       try {
         proc.kill('SIGKILL');
       } catch (e2) {
-        logger.warn('Failed to kill the server instance');
+        this.logger.warn('Failed to kill the server instance');
         proc.removeListener('exit', onExit);
         if (callback) callback();
       }
@@ -277,26 +259,18 @@ function DynamicInstanceManager (config, options: any = {}) {
         }
       }
     }, 5000);
-  };
+  }
 
-  this.stopAsync = util.promisify(this.stop).bind(this);
+  /** Force kill (for cleanup after errors). */
+  forceKill () {
+    this.cleanup();
+  }
 
-  /**
-   * Force kill (for cleanup after errors)
-   */
-  this.forceKill = function () {
-    cleanup();
-  };
-
-  /**
-   * Get allocated HTTP port
-   */
-  this.getPort = function () {
-    return allocatedHttpPort;
-  };
-
-  function isRunning () {
-    return !!serverProcess;
+  /** Get allocated HTTP port. */
+  getPort () {
+    return this.allocatedHttpPort;
   }
 }
-util.inherits(DynamicInstanceManager, EventEmitter);
+
+export default DynamicInstanceManager;
+export { DynamicInstanceManager };
