@@ -5,11 +5,13 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * UsersLocalIndexDB conformance test suite.
  * @param {Function} getDB - async function returning an initialized UsersLocalIndexDB instance
  */
-module.exports = function conformanceTests (getDB) {
+export default function conformanceTests (getDB) {
   const assert = require('node:assert');
   const cuid = require('cuid');
 
@@ -114,4 +116,4 @@ module.exports = function conformanceTests (getDB) {
       });
     });
   });
-};
+}

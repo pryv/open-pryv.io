@@ -11,7 +11,7 @@ const { createId: cuid } = require('@paralleldrive/cuid2');
 const helpers = require('../../../test/helpers');
 const { DatabasePG } = require('../src/DatabasePG.ts');
 const { AuditStoragePG } = require('../src/AuditStoragePG.ts');
-const conformanceTests = require('storages/interfaces/auditStorage/conformance/AuditStorage.test');
+const conformanceTests = require('storages/interfaces/auditStorage/conformance/AuditStorage.test.js').default;
 
 describe('[PGAC] PostgreSQL AuditStorage conformance', function () {
   before(function () {

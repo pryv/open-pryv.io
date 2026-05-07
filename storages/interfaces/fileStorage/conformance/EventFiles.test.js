@@ -5,12 +5,14 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * EventFiles conformance test suite.
  * @param {Function} getEventFiles - async function returning an initialized EventFiles instance
  * @param {Function} cleanupFn - async function for cleanup (receives userId)
  */
-module.exports = function conformanceTests (getEventFiles, cleanupFn) {
+export default function conformanceTests (getEventFiles, cleanupFn) {
   const assert = require('node:assert');
   const cuid = require('cuid');
   const { Readable } = require('stream');
@@ -99,4 +101,4 @@ module.exports = function conformanceTests (getEventFiles, cleanupFn) {
       });
     });
   });
-};
+}

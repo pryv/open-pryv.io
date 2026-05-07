@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * PasswordResetRequests conformance test suite.
  * Tests: generate -> get -> destroy flow, clearAll.
@@ -12,7 +14,7 @@
  * @param {Function} getStore - function returning an initialized PasswordResetRequests instance
  * @param {Function} cleanupFn - function(callback) called after tests for cleanup
  */
-module.exports = function conformanceTests (getStore, cleanupFn) {
+export default function conformanceTests (getStore, cleanupFn) {
   const assert = require('node:assert');
   const { validatePasswordResetRequests } = require('../PasswordResetRequests.ts');
 
@@ -129,4 +131,4 @@ module.exports = function conformanceTests (getStore, cleanupFn) {
       });
     });
   });
-};
+}

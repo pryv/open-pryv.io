@@ -5,12 +5,14 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * UserAccountStorage conformance test suite.
  * @param {Function} getStorage - async function returning an initialized UserAccountStorage instance
  * @param {Function} cleanupFn - async function called after tests for cleanup (receives userId)
  */
-module.exports = function conformanceTests (getStorage, cleanupFn) {
+export default function conformanceTests (getStorage, cleanupFn) {
   const assert = require('node:assert');
   const cuid = require('cuid');
   const timestamp = require('unix-timestamp');
@@ -164,4 +166,4 @@ module.exports = function conformanceTests (getStorage, cleanupFn) {
       });
     });
   });
-};
+}

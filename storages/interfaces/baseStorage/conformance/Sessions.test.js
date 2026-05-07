@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * Sessions conformance test suite.
  * Tests: generate -> get -> touch -> destroy flow, getMatching, clearAll.
@@ -12,7 +14,7 @@
  * @param {Function} getSessions - function returning an initialized Sessions instance
  * @param {Function} cleanupFn - function(callback) called after tests for cleanup
  */
-module.exports = function conformanceTests (getSessions, cleanupFn) {
+export default function conformanceTests (getSessions, cleanupFn) {
   const assert = require('node:assert');
   const { validateSessions } = require('../Sessions.ts');
 
@@ -148,4 +150,4 @@ module.exports = function conformanceTests (getSessions, cleanupFn) {
       });
     });
   });
-};
+}

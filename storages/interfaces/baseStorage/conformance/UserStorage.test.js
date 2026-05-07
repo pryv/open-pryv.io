@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * UserStorage conformance test suite.
  * Tests the common BaseStorage contract: insertOne -> find -> findOne ->
@@ -14,7 +16,7 @@
  * @param {Function} getUserId - function returning a unique userId for test isolation
  * @param {Function} cleanupFn - function(userId, callback) called after tests for cleanup
  */
-module.exports = function conformanceTests (getStorage, getUserId, cleanupFn) {
+export default function conformanceTests (getStorage, getUserId, cleanupFn) {
   const assert = require('node:assert');
   const { validateUserStorage } = require('../UserStorage.ts');
 
@@ -167,4 +169,4 @@ module.exports = function conformanceTests (getStorage, getUserId, cleanupFn) {
       });
     });
   });
-};
+}

@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { userLocalDirectory, getUserAccountStorage } = require('storage');
-const conformanceTests = require('storages/interfaces/baseStorage/conformance/UserAccountStorage.test');
+const conformanceTests = require('storages/interfaces/baseStorage/conformance/UserAccountStorage.test.js').default;
 
 describe('[UAST] Users Account Storage', () => {
   conformanceTests(

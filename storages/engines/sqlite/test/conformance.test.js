@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const cuid = require('cuid');
 const userLocalDirectory = require('../../../test/helpers').userLocalDirectory;
 const { SqliteStorage: Storage } = require('storages/engines/sqlite/src/userSQLite/Storage.ts');
-const conformanceTests = require('storages/interfaces/auditStorage/conformance/AuditStorage.test');
+const conformanceTests = require('storages/interfaces/auditStorage/conformance/AuditStorage.test.js').default;
 
 describe('[SQCF] UserSQLite conformance', () => {
   conformanceTests(

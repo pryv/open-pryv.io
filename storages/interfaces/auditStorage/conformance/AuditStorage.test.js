@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 /**
  * AuditStorage + UserAuditDatabase conformance test suite.
  * Tests the LRU-cached Storage manager and the per-user Database contract.
@@ -13,7 +15,7 @@
  * @param {Function} getUserId - function returning a unique userId for test isolation
  * @param {Function} cleanupFn - async function called after tests for cleanup (receives userId)
  */
-module.exports = function conformanceTests (getStorage, getUserId, cleanupFn) {
+export default function conformanceTests (getStorage, getUserId, cleanupFn) {
   const assert = require('node:assert');
   const { validateAuditStorage } = require('../AuditStorage.ts');
   const { validateUserAuditDatabase } = require('../UserAuditDatabase.ts');
@@ -165,4 +167,4 @@ module.exports = function conformanceTests (getStorage, getUserId, cleanupFn) {
       });
     });
   });
-};
+}
