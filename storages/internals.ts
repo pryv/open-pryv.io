@@ -22,8 +22,8 @@ const registry = {};
 
 /**
  * Register a host capability that plugins can request.
- * @param {string} name - Capability name (e.g. 'userLocalDirectory')
- * @param {*} value - The capability (function, object, etc.)
+ * @param name - Capability name (e.g. 'userLocalDirectory')
+ * @param value - The capability (function, object, etc.)
  */
 function register (name, value) {
   if (typeof name !== 'string' || !name) {
@@ -34,9 +34,8 @@ function register (name, value) {
 
 /**
  * Resolve the requested internals for a plugin.
- * @param {string[]} requiredInternals - Names from manifest.requiredInternals
- * @param {string} engineName - Engine name (for error messages)
- * @returns {Object} Map of name → capability
+ * @param requiredInternals - Names from manifest.requiredInternals
+ * @param engineName - Engine name (for error messages)
  */
 function resolve (requiredInternals, engineName) {
   const result = {};
@@ -53,7 +52,6 @@ function resolve (requiredInternals, engineName) {
 
 /**
  * Get all registered internals (for debugging).
- * @returns {string[]}
  */
 function listRegistered () {
   return Object.keys(registry);
@@ -70,8 +68,7 @@ function clearAll () {
 
 /**
  * Check if a given internal is registered.
- * @param {string} name
- * @returns {boolean}
+ * @param name
  */
 function isRegistered (name) {
   return name in registry;

@@ -42,12 +42,12 @@ class FileMaterializer {
   #log;
 
   /**
-   * @param {Object} opts
-   * @param {Object} opts.certRenewer  - exposes getCertificate(hostname) returning decrypted record
-   * @param {string} opts.tlsDir       - root dir; certs go in <tlsDir>/<normalised-host>/
-   * @param {string} opts.hostname     - which hostname this core cares about (e.g. '*.mc.example.com')
-   * @param {Function} [opts.onRotate] - (certPath, keyPath, hostname) => Promise; called after a successful swap
-   * @param {Function} [opts.log]      - default: console.log
+   * @param opts
+   * @param opts.certRenewer  - exposes getCertificate(hostname) returning decrypted record
+   * @param opts.tlsDir       - root dir; certs go in <tlsDir>/<normalised-host>/
+   * @param opts.hostname     - which hostname this core cares about (e.g. '*.mc.example.com')
+   * @param [opts.onRotate] - (certPath, keyPath, hostname) => Promise; called after a successful swap
+   * @param [opts.log]      - default: console.log
    */
   constructor ({ certRenewer, tlsDir, hostname, onRotate, log }: any = {}) {
     if (certRenewer == null) throw new Error('FileMaterializer: certRenewer is required');
@@ -121,12 +121,12 @@ function sha256 (s) {
  * { exitCode, stdout, stderr, durationMs }. Non-zero exits do NOT
  * throw — the caller logs and moves on (Plan 35 Phase 4c semantics).
  *
- * @param {Object} opts
- * @param {string} opts.scriptPath
- * @param {string} opts.hostname
- * @param {string} opts.certPath
- * @param {string} opts.keyPath
- * @param {number} [opts.timeoutMs=30000]
+ * @param opts
+ * @param opts.scriptPath
+ * @param opts.hostname
+ * @param opts.certPath
+ * @param opts.keyPath
+ * @param [opts.timeoutMs=30000]
  */
 async function runRotateScript ({ scriptPath, hostname, certPath, keyPath, timeoutMs = 30000 }) {
   const { spawn } = require('node:child_process');

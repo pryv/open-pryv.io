@@ -92,8 +92,7 @@ class Webhook {
   }
 
   /**
-   * @param {string} username
-   * @returns {void}
+   * @param username
    */
   startListenting (username) {
     if (this.pubsubTurnOffListener != null) {
@@ -106,9 +105,8 @@ class Webhook {
 
   /**
    * Send the message with the throttling and retry mechanics - to use in webhooks service
-   * @param {string} message
-   * @param {boolean} isRescheduled
-   * @returns {Promise<void>}
+   * @param message
+   * @param isRescheduled
    */
   async send (message, isRescheduled) {
     if (this.state === 'inactive') { return; }
@@ -180,8 +178,7 @@ class Webhook {
 
   /**
    * Only make the HTTP call - used for webhook.test API method
-   * @param {Array<string>} messages
-   * @returns {Promise<any>}
+   * @param messages
    */
   async makeCall (messages) {
     const res = await fetch(this.url, {
@@ -204,9 +201,6 @@ class Webhook {
     return { status: res.status };
   }
 
-  /**
-   * @returns {void}
-   */
   stop () {
     if (this.timeout != null) {
       clearTimeout(this.timeout);
@@ -218,8 +212,7 @@ class Webhook {
   }
 
   /**
-   * @param {Run} run
-   * @returns {void}
+   * @param run
    */
   addRun (run) {
     if (this.runCount > this.runsSize) {
@@ -228,9 +221,6 @@ class Webhook {
     this.runs.unshift(run);
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async save () {
     if (this.repository == null) {
       throw new Error('repository not set for Webhook object.');
@@ -239,8 +229,7 @@ class Webhook {
   }
 
   /**
-   * @param {{}} fieldsToUpdate
-   * @returns {Promise<void>}
+   * @param fieldsToUpdate
    */
   async update (fieldsToUpdate) {
     const fields = Object.keys(fieldsToUpdate);
@@ -248,9 +237,6 @@ class Webhook {
     await makeUpdate(fields, this);
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async delete () {
     if (this.repository == null) {
       throw new Error('repository not set for Webhook object.');
@@ -258,16 +244,10 @@ class Webhook {
     await this.repository.deleteOne(this.user, this.id);
   }
 
-  /**
-   * @returns {string[]}
-   */
   getMessageBuffer () {
     return Array.from(this.messageBuffer);
   }
 
-  /**
-   * @returns {{}}
-   */
   forStorage () {
     return pick(this, [
       'id',
@@ -288,9 +268,6 @@ class Webhook {
     ]);
   }
 
-  /**
-   * @returns {{}}
-   */
   forApi () {
     return pick(this, [
       'id',
@@ -312,24 +289,19 @@ class Webhook {
   }
 
   /**
-   * @param {string} version
-   * @returns {void}
+   * @param version
    */
   setApiVersion (version) {
     this.apiVersion = version;
   }
 
   /**
-   * @param {string} serial
-   * @returns {void}
+   * @param serial
    */
   setSerial (serial) {
     this.serial = serial;
   }
 
-  /**
-   * @returns {void}
-   */
   setLogger (logger) {
     this.logger = logger;
   }
@@ -337,18 +309,16 @@ class Webhook {
 export default Webhook;
 export { Webhook };
 /**
- * @param {Webhook} webhook
- * @param {string} msg
- * @returns {void}
+ * @param webhook
+ * @param msg
  */
 function log (webhook, msg) {
   if (webhook.logger == null) { return; }
   webhook.logger.info(msg);
 }
 /**
- * @param {Array<string> | undefined | null} fields
- * @param {Webhook} webhook
- * @returns {Promise<void>}
+ * @param fields
+ * @param webhook
  */
 async function makeUpdate (fields, webhook) {
   if (webhook.repository == null) {

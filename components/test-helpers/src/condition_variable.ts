@@ -28,16 +28,10 @@ class Waiter {
     });
   }
 
-  /**
-   * @returns {void}
-   */
   timeoutFired () {
     this.reject(new Error('timeout'));
   }
 
-  /**
-   * @returns {void}
-   */
   release () {
     if (this.done) { throw new Error('AF: waiter is not released'); }
     this.done = true;
@@ -52,8 +46,7 @@ class ConditionVariable {
   }
 
   /**
-   * @param {number} timeout
-   * @returns {Promise<void>}
+   * @param timeout
    */
   wait (timeout) {
     const waiter = new Waiter(timeout);
@@ -61,9 +54,6 @@ class ConditionVariable {
     return waiter.promise;
   }
 
-  /**
-   * @returns {void}
-   */
   broadcast () {
     const list = this.waiters;
     // release this reference before broadcasting; this avoids somehow
@@ -89,25 +79,18 @@ class Fuse {
   }
 
   /**
-   * @param {number} timeout
-   * @returns {Promise<void>}
+   * @param timeout
    */
   async wait (timeout) {
     if (this.burnt) { return; }
     await this.cv.wait(timeout);
   }
 
-  /**
-   * @returns {void}
-   */
   burn () {
     this.burnt = true;
     this.cv.broadcast();
   }
 
-  /**
-   * @returns {boolean}
-   */
   isBurnt () {
     return this.burnt;
   }

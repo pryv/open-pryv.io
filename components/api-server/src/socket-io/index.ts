@@ -31,10 +31,9 @@ const { getStorageLayer } = require('storage');
 // Initializes the SocketIO subsystem.
 //
 /**
- * @param {Server} server
- * @param {API} api
- * @param {CustomAuthFunction | null} customAuthStepFn
- * @returns {Promise<void>}
+ * @param server
+ * @param api
+ * @param customAuthStepFn
  */
 async function setupSocketIO (server, api, customAuthStepFn) {
   const logger = getLogger('socketIO');

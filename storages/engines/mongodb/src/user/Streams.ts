@@ -21,8 +21,7 @@ export { Streams };
 /**
  * DB persistence for event streams.
  *
- * @param {Database} database
- * @constructor
+ * @param database
  */
 function Streams (database) {
   (Streams as any).super_.call(this, database);

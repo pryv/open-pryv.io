@@ -10,13 +10,7 @@ import type {} from 'node:fs';
 
 // TODO: move this inside mall once the latter is a proper singleton object
 class MallTransaction {
-  /**
-   * @type {Mall}
-   */
   mall;
-  /**
-   * @type {Map<string, DataStore.Transaction>}
-   */
   storeTransactions;
 
   constructor (mall) {

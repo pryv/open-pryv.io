@@ -19,8 +19,7 @@ export { Webhooks };
 /**
  * DB persistence for webhooks.
  *
- * @param {Database} database
- * @constructor
+ * @param database
  */
 function Webhooks (database) {
   (Webhooks as any).super_.call(this, database);
@@ -90,9 +89,9 @@ Webhooks.prototype.delete = function (userOrUserId, query, callback) {
 /**
  * Override base method to set deleted:null
  *
- * @param {*} user
- * @param {*} item
- * @param {*} callback
+ * @param user
+ * @param item
+ * @param callback
  */
 Webhooks.prototype.insertOne = function (userOrUserId, webhook, callback) {
   const webhookToCreate = structuredClone(webhook);

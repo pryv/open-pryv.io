@@ -31,9 +31,8 @@ const staticProfile = require('./data/profile').default;
 
 /**
  * Creates a new dynamic data instance with unique IDs.
- * @param {Object} options
- * @param {string} [options.prefix] - Prefix for generated IDs (default: cuid())
- * @returns {DynData}
+ * @param options
+ * @param [options.prefix] - Prefix for generated IDs (default: cuid())
  */
 function createDynData (options: any = {}) {
   const prefix = options.prefix || cuid().slice(0, 8);

@@ -52,11 +52,11 @@ class DnsServer {
   #platformRefreshIntervalMs;
 
   /**
-   * @param {Object} opts
-   * @param {Object} opts.config - @pryv/boiler config
-   * @param {Object} opts.platform - Platform instance (needs getAllDnsRecords/setDnsRecord/deleteDnsRecord for persistence; DNS-record methods are optional — absence disables PlatformDB persistence)
-   * @param {Object} opts.logger - logger with .info/.warn/.error
-   * @param {number} [opts.platformRefreshIntervalMs] - override refresh interval (tests)
+   * @param opts
+   * @param opts.config - @pryv/boiler config
+   * @param opts.platform - Platform instance (needs getAllDnsRecords/setDnsRecord/deleteDnsRecord for persistence; DNS-record methods are optional — absence disables PlatformDB persistence)
+   * @param opts.logger - logger with .info/.warn/.error
+   * @param [opts.platformRefreshIntervalMs] - override refresh interval (tests)
    */
   constructor ({ config, platform, logger, platformRefreshIntervalMs }) {
     this.#config = config;
@@ -74,10 +74,10 @@ class DnsServer {
 
   /**
    * Start the DNS server.
-   * @param {Object} opts
-   * @param {number} opts.port - UDP port
-   * @param {string} opts.ip - bind address (e.g. '0.0.0.0')
-   * @param {string|null} opts.ip6 - IPv6 bind address (null = disabled)
+   * @param opts
+   * @param opts.port - UDP port
+   * @param opts.ip - bind address (e.g. '0.0.0.0')
+   * @param opts.ip6 - IPv6 bind address (null = disabled)
    */
   async start ({ port, ip, ip6 }) {
     this.#server = dns2.createServer({
@@ -193,9 +193,8 @@ class DnsServer {
    * Config-sourced static entries are authoritative and cannot be shadowed —
    * an attempt to update one throws an error.
    *
-   * @param {string} subdomain - e.g. '_acme-challenge'
-   * @param {Object} records - e.g. { txt: ['validation-token'] } or { cname: 'target.example.com' }
-   * @returns {Promise<void>}
+   * @param subdomain - e.g. '_acme-challenge'
+   * @param records - e.g. { txt: ['validation-token'] } or { cname: 'target.example.com' }
    */
   async updateStaticEntry (subdomain, records) {
     if (this.#configKeys.has(subdomain)) {
@@ -212,7 +211,7 @@ class DnsServer {
 
   /**
    * Delete a runtime DNS entry. No-op for config-sourced static entries.
-   * @param {string} subdomain
+   * @param subdomain
    */
   async deleteStaticEntry (subdomain) {
     if (this.#configKeys.has(subdomain)) {

@@ -40,16 +40,12 @@ class Context {
     this.configureTypeRepository(typeRepoUpdateUrl);
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async init () {
     await this.configureMetadataCache();
   }
 
   /**
-   * @param {string} url
-   * @returns {void}
+   * @param url
    */
   configureTypeRepository (url) {
     const typeRepo = new business.types.TypeRepository();
@@ -57,9 +53,6 @@ class Context {
     this.typeRepository = typeRepo;
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async configureMetadataCache () {
     const mall = await getMall();
     const metadataLoader = new MetadataLoader();
@@ -78,9 +71,8 @@ class Context {
   // Starts a child span below the request span.
   //
   /**
-   * @param {string} name
-   * @param {any} opts
-   * @returns {any}
+   * @param name
+   * @param opts
    */
   childSpan (name, opts) {
     const tracer = this.tracer;

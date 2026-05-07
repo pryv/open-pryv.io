@@ -12,9 +12,6 @@ const { getConfig } = require('@pryv/boiler');
 
 let syslog;
 
-/**
- *@returns {Syslog|null}
- */
 async function getSyslog () {
   if (!syslog) {
     const config = await getConfig();

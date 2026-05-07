@@ -13,8 +13,8 @@ const { setMethodId } = require('middleware');
 /**
  * Webhooks route handling.
  *
- * @param {App} expressApp
- * @param {Object} api The API object for registering methods
+ * @param expressApp
+ * @param api The API object for registering methods
  */
 export default function (expressApp, app) {
   const api = app.api;

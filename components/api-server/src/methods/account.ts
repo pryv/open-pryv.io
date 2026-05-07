@@ -74,10 +74,10 @@ export default async function (api) {
   /**
    * Validate if given parameters are allowed for the edit
    *
-   * @param {*} context
-   * @param {*} params
-   * @param {*} result
-   * @param {*} next
+   * @param context
+   * @param params
+   * @param result
+   * @param next
    */
   function validateThatAllFieldsAreEditable (context, params, result, next) {
     const accountMap = accountStreams.accountMap;
@@ -269,10 +269,10 @@ export default async function (api) {
 
   /**
    * Build response body for the account update
-   * @param {*} context
-   * @param {*} params
-   * @param {*} result
-   * @param {*} next
+   * @param context
+   * @param params
+   * @param result
+   * @param next
    */
   async function buildResultData (context, params, result, next) {
     Object.keys(params.update).forEach((key) => {

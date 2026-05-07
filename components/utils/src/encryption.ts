@@ -16,8 +16,7 @@ const crypto = require('crypto');
 const salt = bcrypt.genSaltSync(process.env.NODE_ENV === 'development' ? 1 : 10);
 
 /**
- * @param {String} value The value to be hashed.
- * @returns {String} The hash
+ * @param value The value to be hashed.
  */
 async function hash (value) {
   return await bcrypt.hash(value, salt);
@@ -31,9 +30,8 @@ function hashSync (value) {
 }
 
 /**
- * @param {String} value The value to check
- * @param {String} hash The hash to check the value against
- * @return {Boolean} True if the value matches the hash
+ * @param value The value to check
+ * @param hash The hash to check the value against
  */
 async function compare (value, hash) {
   return await bcrypt.compare(value, hash);

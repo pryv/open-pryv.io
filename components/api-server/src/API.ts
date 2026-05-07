@@ -51,13 +51,9 @@ const WILDCARD = '*';
 class API {
   /**
    * Each key is a method id, each value is the array of functions implementing it.
-   * @type {Map<string, Array<ApiFunction>>}
    */
   map;
 
-  /**
-   * @type {Array<Filter>}
-   */
   filters;
 
   constructor () {
@@ -89,9 +85,8 @@ class API {
    * - `api.register('resources.get', fn1, fn2, ...)`
    * - `api.register('events.start', fn1, 'events.create', ...)`
    *
-   * @param {string} id
-   * @param {Array<ApiFunction>} fns
-   * @returns {void}
+   * @param id
+   * @param fns
    */
   register (id, ...fns) {
     if (isAuditActive) { throwIfMethodIsNotDeclared(id); }
@@ -153,8 +148,7 @@ class API {
   /**
    * Searches for filters that match `id` and applies them.
    *
-   * @param {string} id
-   * @returns {void}
+   * @param id
    */
   applyMatchingFilters (id) {
     const filters = this.filters;
@@ -167,8 +161,7 @@ class API {
   /**
    * Searches for existing methods that are matched by this filter.
    *
-   * @param {Filter} filter
-   * @returns {void}
+   * @param filter
    */
   applyToMatchingIds (filter) {
     const methodMap = this.map;
@@ -182,9 +175,8 @@ class API {
    * If `filter` matches/applies to `id`, appends the filter functions to the
    * list of functions of `id`.
    *
-   * @param {Filter} filter
-   * @param {string} id
-   * @returns {void}
+   * @param filter
+   * @param id
    */
   applyIfMatches (filter, id) {
     if (matches(filter.idFilter, id)) {
@@ -198,10 +190,9 @@ class API {
   // ------------------------------------------------------------ handling calls
 
   /**
-   * @param {MethodContext} context
-   * @param {unknown} params
-   * @param {ApiCallback} callback
-   * @returns {unknown}
+   * @param context
+   * @param params
+   * @param callback
    */
   call (context, params, callback) {
     const methodId = context.methodId;
@@ -260,9 +251,6 @@ class API {
 
   // ----------------------------------------------------------- call statistics
 
-  /**
-   * @returns {string[]}
-   */
   getMethodKeys () {
     const methodMap = this.map;
     return Array.from(methodMap.keys());
@@ -272,9 +260,8 @@ class API {
 export default API;
 export { API };
 /**
- * @param {string} idFilter
- * @param {string} id
- * @returns {boolean}
+ * @param idFilter
+ * @param id
  */
 function matches (idFilter, id) {
   // i.e. check whether the given id starts with the given filter without the

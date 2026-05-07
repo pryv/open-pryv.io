@@ -73,10 +73,9 @@ async function storeSeriesData (ctx, req, res) {
 // influx store. You should give this method the `req.body`.
 //
 /**
- * @param {unknown} createRequest
- * @param {SeriesMetadata} meta
- * @param {TypeRepository} typeRepo
- * @returns {any}
+ * @param createRequest
+ * @param meta
+ * @param typeRepo
  */
 function parseData (createRequest, meta, typeRepo) {
   try {

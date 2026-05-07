@@ -45,9 +45,8 @@ const ARMOR_END = '-----END PRYV BOOTSTRAP BUNDLE-----';
  * Encrypt a bundle with a passphrase. Returns an ASCII-armored string
  * suitable for writing to a .bootstrap file and transporting out-of-band.
  *
- * @param {Object} bundle - the plain bundle (see Bundle.js)
- * @param {string} passphrase
- * @returns {string} PEM-armored ciphertext
+ * @param bundle - the plain bundle (see Bundle.js)
+ * @param passphrase
  */
 function encrypt (bundle, passphrase) {
   if (bundle == null || typeof bundle !== 'object') {
@@ -77,9 +76,8 @@ function encrypt (bundle, passphrase) {
  * Decrypt an armored bundle with a passphrase. Throws on tampering, wrong
  * passphrase or unknown envelope version.
  *
- * @param {string} armored - ASCII-armored ciphertext (as produced by encrypt)
- * @param {string} passphrase
- * @returns {Object} the decoded (but not yet Bundle-schema-validated) object
+ * @param armored - ASCII-armored ciphertext (as produced by encrypt)
+ * @param passphrase
  */
 function decrypt (armored, passphrase) {
   if (typeof armored !== 'string' || !armored.includes(ARMOR_BEGIN)) {
@@ -137,7 +135,6 @@ function decrypt (armored, passphrase) {
  * 128 bits of entropy in 22 chars (base64url-without-padding), grouped in
  * 4-char chunks separated by dashes so operators can type it without
  * losing their place.
- * @returns {string}
  */
 function generatePassphrase () {
   const raw = crypto.randomBytes(16).toString('base64url');

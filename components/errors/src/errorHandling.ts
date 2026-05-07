@@ -18,9 +18,9 @@ export { errorHandling };
 /**
  * Logs the given error.
  *
- * @param {Error} error The error object (can be an API error or not)
- * @param {Object} req The request context; expected properties: url, method, body
- * @param {Object} logger The logger object (expected methods: debug, info, warn, error)
+ * @param error The error object (can be an API error or not)
+ * @param req The request context; expected properties: url, method, body
+ * @param logger The logger object (expected methods: debug, info, warn, error)
  */
 errorHandling.logError = function (error, req, logger) {
   // console.log('XXXXXX', error); // uncomment to log 500 errors on test running using InstanceManager

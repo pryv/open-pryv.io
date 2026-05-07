@@ -17,7 +17,7 @@ const array = helpers.array;
 const string = helpers.string;
 
 /**
- * @param {Action} action
+ * @param action
  */
 function accessSchema (action) {
   if (action === Action.STORE) { action = Action.READ; } // read items === stored items

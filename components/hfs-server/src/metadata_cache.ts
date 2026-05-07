@@ -53,25 +53,20 @@ class MetadataCache {
     this.subscribeToNotifications();
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async init () {
     this.mall = await getMall();
   }
 
   // transport messages
   /**
-   * @param {UsernameEvent} usernameEvent
-   * @returns {any}
+   * @param usernameEvent
    */
   dropSeries (usernameEvent) {
     return this.series.connection.dropMeasurement('event.' + usernameEvent.event.id, 'user.' + usernameEvent.username);
   }
 
   /**
-   * @param {UsernameEvent} usernameEvent
-   * @returns {void}
+   * @param usernameEvent
    */
   invalidateEvent (usernameEvent) {
     const cache = this.cache;
@@ -85,9 +80,6 @@ class MetadataCache {
     }
   }
 
-  /**
-   * @returns {void}
-   */
   subscribeToNotifications () {
     pubsub.series.on(pubsub.SERIES_UPDATE_EVENTID_USERNAME, this.invalidateEvent.bind(this));
     pubsub.series.on(pubsub.SERIES_DELETE_EVENTID_USERNAME, this.dropSeries.bind(this));
@@ -95,10 +87,9 @@ class MetadataCache {
 
   // cache logic
   /**
-   * @param {string} userName
-   * @param {string} eventId
-   * @param {string} accessToken
-   * @returns {Promise<import("/Users/sim/Code/Pryv/dev/service-core/metadata_cache.ts-to-jsdoc").SeriesMetadata>}
+   * @param userName
+   * @param eventId
+   * @param accessToken
    */
   async forSeries (userName, eventId, accessToken) {
     const cache = this.cache;
@@ -143,10 +134,9 @@ class MetadataLoader {
   }
 
   /**
-   * @param {string} userName
-   * @param {string} eventId
-   * @param {string} accessToken
-   * @returns {Promise<import("/Users/sim/Code/Pryv/dev/service-core/metadata_cache.ts-to-jsdoc").SeriesMetadata>}
+   * @param userName
+   * @param eventId
+   * @param accessToken
    */
   forSeries (userName, eventId, accessToken) {
     const storage = this.storage;
@@ -222,45 +212,29 @@ class SeriesMetadataImpl {
     this.deleted = event.deleted;
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async init () {
     this.permissions = await definePermissions(this._access, this._event);
   }
 
-  /**
-   * @returns {boolean}
-   */
   isTrashedOrDeleted () {
     return this.trashed || this.deleted != null;
   }
 
-  /**
-   * @returns {boolean}
-   */
   canWrite () {
     return this.permissions.write;
   }
 
-  /**
-   * @returns {boolean}
-   */
   canRead () {
     return this.permissions.read;
   }
 
-  /**
-   * @returns {[string, string]}
-   */
   namespaceAndName () {
     return [`user.${this.userName}`, `event.${this.eventId}`];
   }
 
   // Return the InfluxDB row type for the given event.
   /**
-   * @param {TypeRepository} repo
-   * @returns {any}
+   * @param repo
    */
   produceRowType (repo) {
     const type = repo.lookup(this.eventType);
@@ -276,9 +250,8 @@ class SeriesMetadataImpl {
   }
 }
 /**
- * @param {AccessModel} access
- * @param {EventModel} event
- * @returns {{ write: boolean; read: boolean; }}
+ * @param access
+ * @param event
  */
 async function definePermissions (access, event) {
   const streamIds = event.streamIds;

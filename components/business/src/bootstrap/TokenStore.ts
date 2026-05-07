@@ -47,8 +47,8 @@ const RAW_TOKEN_BYTES = 32;
 
 class TokenStore {
   /**
-   * @param {Object} opts
-   * @param {string} opts.path - absolute path to the JSON file backing the store.
+   * @param opts
+   * @param opts.path - absolute path to the JSON file backing the store.
    */
   path: string;
 
@@ -60,11 +60,10 @@ class TokenStore {
   /**
    * Mint a new one-time join token for a specific core.
    *
-   * @param {Object} opts
-   * @param {string} opts.coreId
-   * @param {number} [opts.ttlMs=24h]
-   * @param {number} [opts.now=Date.now()] - injectable for testing
-   * @returns {{ token: string, coreId: string, issuedAt: number, expiresAt: number }}
+   * @param opts
+   * @param opts.coreId
+   * @param [opts.ttlMs=24h]
+   * @param [opts.now=Date.now()] - injectable for testing
    */
   mint ({ coreId, ttlMs = DEFAULT_TTL_MS, now = Date.now() }) {
     if (!coreId) throw new Error('TokenStore.mint: coreId is required');
@@ -90,10 +89,9 @@ class TokenStore {
    * Verify a raw token. Does NOT consume it. Useful for dry-run checks or
    * for the ack endpoint's early-reject path.
    *
-   * @param {string} rawToken
-   * @param {Object} [opts]
-   * @param {number} [opts.now=Date.now()]
-   * @returns {{ ok: boolean, coreId?: string, reason?: string }}
+   * @param rawToken
+   * @param [opts]
+   * @param [opts.now=Date.now()]
    */
   verify (rawToken, { now = Date.now() } = {}) {
     if (typeof rawToken !== 'string' || rawToken.length === 0) {
@@ -112,11 +110,10 @@ class TokenStore {
    * valid AND had not been consumed before. Any second call with the same
    * token returns ok:false.
    *
-   * @param {string} rawToken
-   * @param {Object} [opts]
-   * @param {string|null} [opts.consumerIp=null] - recorded for audit
-   * @param {number} [opts.now=Date.now()]
-   * @returns {{ ok: boolean, coreId?: string, reason?: string }}
+   * @param rawToken
+   * @param [opts]
+   * @param [opts.consumerIp=null] - recorded for audit
+   * @param [opts.now=Date.now()]
    */
   consume (rawToken, { consumerIp = null, now = Date.now() } = {}) {
     if (typeof rawToken !== 'string' || rawToken.length === 0) {
@@ -138,9 +135,8 @@ class TokenStore {
    * List tokens that have not been consumed and have not expired.
    * Does NOT return raw tokens (we only store hashes) — only metadata.
    *
-   * @param {Object} [opts]
-   * @param {number} [opts.now=Date.now()]
-   * @returns {Array<{ coreId: string, issuedAt: number, expiresAt: number }>}
+   * @param [opts]
+   * @param [opts.now=Date.now()]
    */
   listActive ({ now = Date.now() } = {}) {
     type Entry = { coreId: string, issuedAt: number, expiresAt: number, consumedAt: number | null };
@@ -154,8 +150,7 @@ class TokenStore {
    * Revoke all active tokens for a given core. Returns the number of
    * tokens revoked.
    *
-   * @param {string} coreId
-   * @returns {number}
+   * @param coreId
    */
   revokeByCoreId (coreId) {
     if (!coreId) throw new Error('TokenStore.revokeByCoreId: coreId is required');
@@ -177,10 +172,9 @@ class TokenStore {
    * Returns the number of entries removed. Purely housekeeping; a stale
    * consumed entry is harmless (it stays rejected).
    *
-   * @param {Object} [opts]
-   * @param {number} [opts.retainMs=7 days] - how long to keep consumed/expired entries for audit
-   * @param {number} [opts.now=Date.now()]
-   * @returns {number}
+   * @param [opts]
+   * @param [opts.retainMs=7 days] - how long to keep consumed/expired entries for audit
+   * @param [opts.now=Date.now()]
    */
   purge ({ retainMs = 7 * 24 * 60 * 60 * 1000, now = Date.now() } = {}) {
     const store = this._load();

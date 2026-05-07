@@ -11,16 +11,14 @@ const errors = require('errors').factory;
 const business = require('business');
 const cls = require('../tracing/cls').default;
 /**
- * @param {Context} ctx
- * @param {ControllerMethod} handler
- * @returns {any}
+ * @param ctx
+ * @param handler
  */
 function mount (ctx, handler) {
   return catchAndNext(handler.bind(null, ctx));
 }
 /**
- * @param {ExpressHandler} handler
- * @returns {any}
+ * @param handler
  */
 function catchAndNext (handler) {
   return async (req, res, next) => {
@@ -46,8 +44,7 @@ const TAG_ERROR_MESSAGE = 'error.message';
 // NOTE This method should not throw an error!
 //
 /**
- * @param {any} err
- * @returns {void}
+ * @param err
  */
 function storeErrorInTrace (err) {
   try {

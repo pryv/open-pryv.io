@@ -29,9 +29,8 @@ export default function loadAccess (storageLayer) {
  * within the `Pryv-Access-Id` header of the given result.
  * It is extracted from the request context.
  *
- * @param {express$Request} req  Current express request.
- * @param {express$Response} res  Current express response. MODIFIED IN PLACE.
- * @returns {any}
+ * @param req  Current express request.
+ * @param res  Current express response. MODIFIED IN PLACE.
  */
 function setAccessIdHeader (req, res) {
   if (req != null) {

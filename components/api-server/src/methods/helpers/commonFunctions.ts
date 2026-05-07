@@ -36,8 +36,7 @@ export const basicAccessAuthorizationCheck = function (context, params, result, 
  * (Lazy-loads and caches the `trustedApps` setting.)
  * The returned function expects the call's `params` to have `appId` and `origin` properties.
  *
- * @param {Object} authSettings
- * @return {Function}
+ * @param authSettings
  */
 export const getTrustedAppCheck = function getTrustedAppCheck (authSettings) {
   let trustedApps;

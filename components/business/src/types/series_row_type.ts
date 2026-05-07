@@ -19,8 +19,7 @@ class SeriesDateType {
   }
 
   /**
-   * @param {number} secs
-   * @returns {number}
+   * @param secs
    */
   secondsToNanos (secs) {
     if (secs < 0) { throw new Error('Deltatime must be greater than 0'); }
@@ -28,8 +27,7 @@ class SeriesDateType {
   }
 
   /**
-   * @param {any} value
-   * @returns {any}
+   * @param value
    */
   coerce (value) {
     switch (typeof value) {
@@ -57,8 +55,7 @@ class SeriesRowType {
   }
 
   /**
-   * @param {SeriesMetadata} seriesMeta
-   * @returns {void}
+   * @param seriesMeta
    */
   setSeriesMeta (seriesMeta) {
     this.seriesMeta = seriesMeta;
@@ -66,9 +63,6 @@ class SeriesRowType {
 
   // Returns the name of the type inside the series.
   //
-  /**
-   * @returns {any}
-   */
   elementTypeName () {
     return this.eventType.typeName();
   }
@@ -78,8 +72,7 @@ class SeriesRowType {
    * WARNING If 'timestamp' column is found a column name will be renamed to "deltaTime"
    * and next coerce will convert timestamps to deltaTime relatively to the
    * Event time.
-   * @param {Array<string>} columnNames
-   * @returns {boolean}
+   * @param columnNames
    */
   validateColumns (columnNames) {
     const underlyingType = this.eventType;
@@ -170,9 +163,6 @@ class SeriesRowType {
 
   // As part of being an EventType, return the name of this type.
   //
-  /**
-   * @returns {string}
-   */
   typeName () {
     return 'series:' + this.eventType.typeName();
   }
@@ -192,17 +182,13 @@ class SeriesRowType {
   // What fields may be present? See `requiredFields` for a list of mandatory
   // fields.
   //
-  /**
-   * @returns {string[]}
-   */
   optionalFields () {
     return this.eventType.optionalFields();
   }
 
   // check if a field is required
   /**
-   * @param {string} name
-   * @returns {Boolean}
+   * @param name
    */
   isOptionalField (name) {
     return this.optionalFields().includes(name);
@@ -210,31 +196,21 @@ class SeriesRowType {
 
   // What fields MUST be present?
   //
-  /**
-   * @returns {string[]}
-   */
   requiredFields () {
     return [FIELD_DELTATIME].concat(this.eventType.requiredFields());
   }
 
-  /**
-   * @returns {string[]}
-   */
   fields () {
     return [FIELD_DELTATIME].concat(this.eventType.fields());
   }
 
-  /**
-   * @returns {true}
-   */
   isSeries () {
     return true;
   }
 
   /**
-   * @param {Validator} validator
-   * @param {Content} content
-   * @returns {Promise<any>}
+   * @param validator
+   * @param content
    */
   callValidator (validator,
 

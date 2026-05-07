@@ -44,9 +44,6 @@ class Audit {
     return this._syslog;
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async init () {
     logger.debug('Audit initiating...');
     const config = await getConfig();
@@ -59,9 +56,6 @@ class Audit {
     logger.info('Audit started');
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async validApiCall (context, result) {
     const methodId = context.methodId;
     if (!this.filter.isAudited(methodId)) { return; }
@@ -81,9 +75,6 @@ class Audit {
     context.tracing.finishSpan('audit.validApiCall');
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async errorApiCall (context, error) {
     const methodId = context.methodId;
     if (!this.filter.isAudited(methodId)) { return; }
@@ -100,9 +91,6 @@ class Audit {
     context.tracing.finishSpan('audit.errorApiCall');
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async eventForUser (userId, event, _methodId?: any) {
     logger.debug('eventForUser: ' +
             userId +
@@ -131,25 +119,16 @@ class Audit {
     }
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async reloadConfig () {
     await this.init();
   }
 
-  /**
-   * @returns {void}
-   */
   close () {
     // auditStorage lifecycle is managed by the barrel (storages.reset())
   }
 }
 export default Audit;
 export { Audit };
-/**
- * @returns {{ id: any; createdBy: string; modifiedBy: string; streamIds: any[]; time: number; endTime: number; created: number; modified: number; trashed: boolean; content: { source: any; action: any; query: any; }; }}
- */
 function buildDefaultEvent (context) {
   const time = timestamp.now();
   const event: any = {

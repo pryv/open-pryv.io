@@ -30,37 +30,24 @@ class BasicType {
     this._innerType = valueTypes(schema.type);
   }
 
-  /**
-   * @returns {string}
-   */
   typeName () {
     return this._outerType;
   }
 
-  /**
-   * @returns {string[]}
-   */
   requiredFields () {
     return ['value'];
   }
 
-  /**
-   * @returns {any[]}
-   */
   optionalFields () {
     return [];
   }
 
-  /**
-   * @returns {string[]}
-   */
   fields () {
     return this.requiredFields();
   }
 
   /**
-   * @param {string} name
-   * @returns {any}
+   * @param name
    */
   forField (name) {
     // NOTE BasicType only represents types that are not composed of multiple
@@ -69,17 +56,13 @@ class BasicType {
     return this._innerType;
   }
 
-  /**
-   * @returns {false}
-   */
   isSeries () {
     return false;
   }
 
   /**
-   * @param {Validator} validator
-   * @param {Content} content
-   * @returns {Promise<any>}
+   * @param validator
+   * @param content
    */
   async callValidator (validator, content) {
     // Perform coercion into target type first. Then verify using the

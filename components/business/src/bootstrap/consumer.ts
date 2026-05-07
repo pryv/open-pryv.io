@@ -34,16 +34,15 @@ const { URL } = require('node:url');
 const applyBundleMod = require('./applyBundle');
 
 /**
- * @param {Object} opts
- * @param {string} opts.bundlePath - path to the armored .json.age (or any name) file
- * @param {string} [opts.passphrase] - if given, used directly (test path)
- * @param {string} [opts.passphraseFile] - read from this file; trim trailing newlines
- * @param {string} opts.configDir
- * @param {string} opts.tlsDir
- * @param {Function} [opts.httpClient] - (url, body, caCertPem) => Promise<{ statusCode, body }>;
+ * @param opts
+ * @param opts.bundlePath - path to the armored .json.age (or any name) file
+ * @param [opts.passphrase] - if given, used directly (test path)
+ * @param [opts.passphraseFile] - read from this file; trim trailing newlines
+ * @param opts.configDir
+ * @param opts.tlsDir
+ * @param [opts.httpClient] - (url, body, caCertPem) => Promise<{ statusCode, body }>;
  *                                       defaults to a CA-pinned node https POST
- * @param {Function} [opts.log] - logger; default = console.log
- * @returns {Promise<{
+ * @param [opts.log] - logger; default = console.log
  *   coreId: string,
  *   ackResponse: Object,
  *   overridePath: string,

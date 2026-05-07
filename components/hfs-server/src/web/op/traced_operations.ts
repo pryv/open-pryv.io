@@ -20,9 +20,8 @@ class TracedOperations {
   }
 
   /**
-   * @param {string} name
-   * @param {any} opts
-   * @returns {void}
+   * @param name
+   * @param opts
    */
   start (name, opts) {
     const ongoing = this.ongoingOps;
@@ -32,8 +31,7 @@ class TracedOperations {
   }
 
   /**
-   * @param {string} name
-   * @returns {void}
+   * @param name
    */
   finish (name) {
     const ongoing = this.ongoingOps;

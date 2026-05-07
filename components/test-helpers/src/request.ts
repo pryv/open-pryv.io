@@ -16,14 +16,10 @@ export { request };
  * - that sets the `authorization` header with the given token if any
  * - that always succeeds regardless of the HTTP status code (see SuperAgent's `ok()` method)
  * - whose `end()` method calls the given callback function with a single argument if expected
- * @returns {Request}
  */
 function request (serverURL) {
   return new Request(serverURL);
 }
-/**
- * @returns {void}
- */
 function Request (serverURL) {
   this.serverURL = serverURL;
   this.token = null;
@@ -44,7 +40,7 @@ Request.prototype.execute = function (method, path, token) {
     .set('authorization', authToken);
 };
 /**
- * @param {Function} callback (error)
+ * @param callback (error)
  */
 Request.prototype.login = function (user, callback) {
   const targetURL = new URL(user.username + '/auth/login', this.serverURL).href;
@@ -72,7 +68,6 @@ Request.prototype.login = function (user, callback) {
  * SuperAgent request sub-constructor.
  *
  * NOTE: This can be removed if/when we don't need the `end()` override (see below).
- * @returns {void}
  */
 function PryvTestRequest (method, url) {
   superagent.Request.call(this, method, url);

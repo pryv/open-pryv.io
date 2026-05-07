@@ -31,12 +31,12 @@ const CA_SUBJECT = '/CN=pryv-cluster-ca';
 
 class ClusterCA {
   /**
-   * @param {Object} opts
-   * @param {string} opts.dir - directory where ca.key and ca.crt live.
+   * @param opts
+   * @param opts.dir - directory where ca.key and ca.crt live.
    *   The private key never leaves this directory; 0600 permissions are
    *   enforced. Callers are responsible for backing this directory up.
-   * @param {number} [opts.caValidityDays=3650]
-   * @param {number} [opts.nodeValidityDays=365]
+   * @param [opts.caValidityDays=3650]
+   * @param [opts.nodeValidityDays=365]
    */
   dir: string;
   caKeyPath: string;
@@ -59,7 +59,6 @@ class ClusterCA {
    * Generate the cluster CA if it doesn't already exist. Safe to call
    * repeatedly. Returns an object describing whether the CA was newly
    * created on this call.
-   * @returns {{ created: boolean, caCertPath: string }}
    */
   ensure () {
     if (fs.existsSync(this.caKeyPath) && fs.existsSync(this.caCertPath)) {
@@ -84,7 +83,6 @@ class ClusterCA {
   /**
    * Read the CA public cert as a PEM string. Used to include the CA in the
    * bootstrap bundle so new cores can verify peer certs.
-   * @returns {string}
    */
   getCACertPem () {
     if (!fs.existsSync(this.caCertPath)) {
@@ -102,11 +100,10 @@ class ClusterCA {
    * the CA directory except a serial-number bookkeeping file (openssl needs
    * a serial per signing).
    *
-   * @param {Object} opts
-   * @param {string} opts.coreId - e.g. 'core-b'. Used as the CN and as a DNS SAN.
-   * @param {string|null} [opts.ip=null] - optional IP SAN (e.g. '1.2.3.4').
-   * @param {string|null} [opts.hostname=null] - optional extra hostname SAN (e.g. 'core-b.mc.example.com').
-   * @returns {{ certPem: string, keyPem: string }}
+   * @param opts
+   * @param opts.coreId - e.g. 'core-b'. Used as the CN and as a DNS SAN.
+   * @param [opts.ip=null] - optional IP SAN (e.g. '1.2.3.4').
+   * @param [opts.hostname=null] - optional extra hostname SAN (e.g. 'core-b.mc.example.com').
    */
   issueNodeCert ({ coreId, ip = null, hostname = null }) {
     if (!coreId) throw new Error('issueNodeCert: coreId is required');

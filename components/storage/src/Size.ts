@@ -16,7 +16,7 @@ class Size {
   /**
    * Computes and updates storage size for the given user.
    *
-   * @param {Object} user
+   * @param user
    */
   async computeForUser (user) {
     const mall = await getMall();

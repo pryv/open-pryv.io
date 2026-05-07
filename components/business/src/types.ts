@@ -18,8 +18,7 @@ const SERIES_PREFIX = 'series:';
 // that the name starts with SERIES_PREFIX.
 //
 /**
- * @param {string} name
- * @returns {boolean}
+ * @param name
  */
 function isSeriesType (name) {
   return name.startsWith(SERIES_PREFIX);
@@ -31,18 +30,16 @@ class TypeValidator {
   // Validates the given event type against its schema.
   //
   /**
-   * @param {EventType} type
-   * @param {Content} content
-   * @returns {Promise<any>}
+   * @param type
+   * @param content
    */
   validate (type, content) {
     return type.callValidator(this, content);
   }
 
   /**
-   * @param {Content} content
-   * @param {any} schema
-   * @returns {Promise<any>}
+   * @param content
+   * @param schema
    */
   async validateWithSchema (content, schema) {
     const validator = jsonValidator();
@@ -95,8 +92,7 @@ class TypeRepository {
    * - validate()
    *
    * The old path: lookup(), then validator() are too heavy
-   * @param {Event} event
-   * @returns {Promise<any>}
+   * @param event
    */
   async validate (event) {
     const content = event.content != null ? event.content : null;
@@ -111,8 +107,7 @@ class TypeRepository {
   // (#tryUpdate).
   //
   /**
-   * @param {string} name
-   * @returns {boolean}
+   * @param name
    */
   isKnown (name) {
     if (isSeriesType(name)) {
@@ -127,8 +122,7 @@ class TypeRepository {
   // `event-types.default.json`.
   //
   /**
-   * @param {string} name
-   * @returns {any}
+   * @param name
    */
   lookupLeafType (name) {
     if (!this.isKnown(name)) { throw new errors.TypeDoesNotExistError(`Type '${name}' does not exist in this Pryv instance.`); }
@@ -146,8 +140,7 @@ class TypeRepository {
   // @throw {TypeDoesNotExistError} when name doesn't refer to a built in type.
   //
   /**
-   * @param {string} name
-   * @returns {any}
+   * @param name
    */
   lookup (name) {
     if (isSeriesType(name)) {
@@ -161,9 +154,6 @@ class TypeRepository {
 
   // Produces a validator instance.
   //
-  /**
-   * @returns {TypeValidator}
-   */
   validator () {
     return new TypeValidator();
   }
@@ -172,9 +162,8 @@ class TypeRepository {
   // internet.
   //
   /**
-   * @param {string} sourceURL
-   * @param {string} apiVersion
-   * @returns {Promise<void>}
+   * @param sourceURL
+   * @param apiVersion
    */
   async tryUpdate (sourceURL, apiVersion) {
     function unavailableError (err) {

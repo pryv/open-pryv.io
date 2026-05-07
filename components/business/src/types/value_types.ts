@@ -12,8 +12,7 @@ const errors = require('./errors');
 
 class NumberType {
   /**
-   * @param {any} value
-   * @returns {number}
+   * @param value
    */
   coerce (value) {
     switch (typeof value) {
@@ -26,8 +25,7 @@ class NumberType {
   }
 
   /**
-   * @param {string} str
-   * @returns {number}
+   * @param str
    */
   coerceString (str) {
     const reNumber = /^\d+(\.\d+)?$/;
@@ -40,8 +38,7 @@ class NumberType {
 
 class BooleanType {
   /**
-   * @param {any} value
-   * @returns {boolean}
+   * @param value
    */
   coerce (value) {
     if (value === true) { return true; }
@@ -54,8 +51,7 @@ class BooleanType {
 
 class StringType {
   /**
-   * @param {any} value
-   * @returns {string}
+   * @param value
    */
   coerce (value) {
     return '' + value;
@@ -63,16 +59,12 @@ class StringType {
 }
 
 class NullType {
-  /**
-   * @returns {null}
-   */
   coerce /* value: any */() {
     return null;
   }
 }
 /**
- * @param {string} type
- * @returns {import("/Users/sim/Code/Pryv/dev/service-core/value_types.ts-to-jsdoc").ValueType}
+ * @param type
  */
 function produceInner (type) {
   switch (type) {

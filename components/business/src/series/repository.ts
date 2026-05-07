@@ -51,8 +51,7 @@ class Repository {
   //    await batch.store();
   //
   /**
-   * @param {string} namespace
-   * @returns {Promise<any>}
+   * @param namespace
    */
   async makeBatch (namespace) {
     // TODO Cache all the setup checks we do here in an LRU cache.

@@ -14,9 +14,6 @@ const { getConfig } = require('@pryv/boiler');
 // Creates and returns an express application with a standard set of middleware.
 // `version` should be the version string you want to show to API clients.
 //
-/**
- * @returns {Promise<any>}
- */
 async function expressAppInit (logging) {
   const config = await getConfig();
   const app = express(); // register common middleware

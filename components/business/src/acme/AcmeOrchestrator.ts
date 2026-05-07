@@ -50,16 +50,16 @@ class AcmeOrchestrator {
   #materializeTimer;
 
   /**
-   * @param {Object} opts
-   * @param {Object} opts.hostSpec           - output of deriveHostnames()
-   * @param {Object} opts.certRenewer        - a CertRenewer instance
-   * @param {Object} opts.fileMaterializer   - a FileMaterializer instance for hostSpec.commonName
-   * @param {Object} opts.dnsWriter          - dnsWriter passed into certRenewer.renew()
-   * @param {boolean} [opts.isRenewer=false] - if true, this core runs ACME; otherwise poll-only
-   * @param {number} [opts.renewBeforeDays=30]
-   * @param {number} [opts.renewIntervalMs=DAY_MS]
-   * @param {number} [opts.materializeIntervalMs=60_000]
-   * @param {Function} [opts.log]
+   * @param opts
+   * @param opts.hostSpec           - output of deriveHostnames()
+   * @param opts.certRenewer        - a CertRenewer instance
+   * @param opts.fileMaterializer   - a FileMaterializer instance for hostSpec.commonName
+   * @param opts.dnsWriter          - dnsWriter passed into certRenewer.renew()
+   * @param [opts.isRenewer=false] - if true, this core runs ACME; otherwise poll-only
+   * @param [opts.renewBeforeDays=30]
+   * @param [opts.renewIntervalMs=DAY_MS]
+   * @param [opts.materializeIntervalMs=60_000]
+   * @param [opts.log]
    */
   constructor ({
     hostSpec, certRenewer, fileMaterializer, dnsWriter,
@@ -132,8 +132,7 @@ class AcmeOrchestrator {
    * Use cases: admin-triggered rotation (key compromise, brand-new cert
    * testing, debugging). Throws when called on a non-renewer core.
    *
-   * @param {string} [hostname] - defaults to the core's primary hostname.
-   * @returns {Promise<{renewed: true, hostname: string, issuedAt: number, expiresAt: number}>}
+   * @param [hostname] - defaults to the core's primary hostname.
    */
   async forceRenew (hostname) {
     if (!this.#isRenewer) {
@@ -203,14 +202,14 @@ class AcmeOrchestrator {
  * typically has access to. Saves the master process from knowing the
  * construction order of CertRenewer / FileMaterializer / PlatformDBDnsWriter.
  *
- * @param {Object} opts
- * @param {Object} opts.config             - @pryv/boiler config
- * @param {Object} opts.platformDB
- * @param {Buffer} opts.atRestKey
- * @param {Object} [opts.dnsServer]        - optional; when provided, the DNS-01 TXT writer forces an immediate refreshFromPlatform() after each PlatformDB write so LE validators see the challenge record without waiting for the DnsServer's periodic refresh tick. Without it, LE often times out on "No TXT records found".
- * @param {Function} [opts.onRotate]       - called after each successful on-disk write (see FileMaterializer)
- * @param {Object}   [opts.acmeLib]
- * @param {Function} [opts.log]
+ * @param opts
+ * @param opts.config             - @pryv/boiler config
+ * @param opts.platformDB
+ * @param opts.atRestKey
+ * @param [opts.dnsServer]        - optional; when provided, the DNS-01 TXT writer forces an immediate refreshFromPlatform() after each PlatformDB write so LE validators see the challenge record without waiting for the DnsServer's periodic refresh tick. Without it, LE often times out on "No TXT records found".
+ * @param [opts.onRotate]       - called after each successful on-disk write (see FileMaterializer)
+ * @param [opts.acmeLib]
+ * @param [opts.log]
  */
 function build (opts: any = {}) {
   const { config, platformDB, atRestKey, dnsServer, onRotate, acmeLib, log } = opts;

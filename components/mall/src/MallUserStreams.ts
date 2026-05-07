@@ -21,19 +21,17 @@ const errorFactory = require('errors').factory;
  */
 class MallUserStreams {
   /**
-   * @type {Map<string, UserStream>}
    * @default new Map()
    */
   streamsStores = new Map();
   /**
    * Store names are used for the stores' root pseudo-streams.
-   * @type {Map<string, string>}
    * @default new Map()
    */
   storeNames = new Map();
 
   /**
-   * @param {{ storesById: Map, storeDescriptionsByStore: Map }} storesHolder
+   * @param storesHolder
    */
   constructor (storesHolder) {
     for (const [storeId, store] of storesHolder.storesById) {
@@ -45,10 +43,9 @@ class MallUserStreams {
   /**
    * Get a single stream from id and optional storeId.
    * Will not expand children.
-   * @param {string} userId
-   * @param {string} streamId
-   * @param {string} [storeId]
-   * @returns {Promise<any>}
+   * @param userId
+   * @param streamId
+   * @param [storeId]
    */
   async getOneWithNoChildren (userId, streamId, storeId) {
     if (storeId == null) {
@@ -78,9 +75,8 @@ class MallUserStreams {
   /**
    * Get the stream that will be set as root for all Stream Structure of this Data Store.
    * @see https://pryv.github.io/reference/#get-streams
-   * @param {string} userId  undefined
-   * @param {StoreQuery} params  undefined
-   * @returns {Promise<any[]>} - the stream or null if not found:
+   * @param userId  undefined
+   * @param params  undefined
    */
   async get (userId, params) {
     // -------- cleanup params --------- //
@@ -178,10 +174,9 @@ class MallUserStreams {
   }
 
   /**
-   * @param {String} userId
-   * @param {timestamp} [deletedSince]
-   * @param {Array<string>} [storeIds]
-   * @returns {Promise<any[]>}
+   * @param userId
+   * @param [deletedSince]
+   * @param [storeIds]
    */
   async getDeletions (userId, deletedSince, storeIds) {
     if (deletedSince == null) { deletedSince = Number.MIN_SAFE_INTEGER; }
@@ -199,9 +194,8 @@ class MallUserStreams {
    * As some stores might not keep "deletion" records
    * A "local" cache of deleted streams could be implemented
    * This is mostly used by tests fixtures for now
-   * @param {string} userId
-   * @param {Stream} streamData
-   * @returns {Promise<any>}
+   * @param userId
+   * @param streamData
    */
   async createDeleted (userId, streamData) {
     const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(streamData.id);
@@ -212,9 +206,8 @@ class MallUserStreams {
   }
 
   /**
-   * @param {string} userId
-   * @param {Stream} streamData
-   * @returns {Promise<any>}
+   * @param userId
+   * @param streamData
    */
   async create (userId, streamData) {
     if (streamData.deleted != null) {
@@ -271,9 +264,8 @@ class MallUserStreams {
   }
 
   /**
-   * @param {string} userId
-   * @param {Stream} streamData
-   * @returns {Promise<any>}
+   * @param userId
+   * @param streamData
    */
   async update (userId, streamData) {
     const streamForStore = structuredClone(streamData);
@@ -305,9 +297,6 @@ class MallUserStreams {
   }
 
   // ---------------------- delete ----------------- //
-  /**
-   * @returns {Promise<any>}
-   */
   async delete (userId, streamId) {
     const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamId);
     const streamsStore = this.streamsStores.get(storeId);
@@ -317,9 +306,8 @@ class MallUserStreams {
   /**
    * Used by tests
    * Might be replaced by standard delete.
-   * @param {string} userId  undefined
-   * @param {string} storeId
-   * @returns {Promise<void>}
+   * @param userId  undefined
+   * @param storeId
    */
   async deleteAll (userId, storeId) {
     const streamsStore = this.streamsStores.get(storeId);
@@ -330,10 +318,9 @@ class MallUserStreams {
   /**
    * @private
    * get name of children stream
-   * @param {string} userId
-   * @param {string} streamId
-   * @param {Array<string>} exludedIds
-   * @returns {Promise<any[]>}
+   * @param userId
+   * @param streamId
+   * @param exludedIds
    */
   async getNamesOfChildren (userId, streamId, exludedIds) {
     const streams = await this.get(userId, {

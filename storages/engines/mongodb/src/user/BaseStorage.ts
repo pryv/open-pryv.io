@@ -38,8 +38,7 @@ export { BaseStorage };
  * - Caller-bound (from DB) converter functions directly alter the object served from the DB
  *   (which is safe).
  *
- * @param {Database} database
- * @constructor
+ * @param database
  */
 function BaseStorage (database) {
   this.database = database;
@@ -66,8 +65,7 @@ BaseStorage.prototype.getUserIdFromUserOrUserId = function (userOrUserId) {
  * Retrieves collection information (name and indexes).
  * Must be implemented by storage modules.
  *
- * @param {Object|String} userOrUserId The user owning the collection
- * @return {{name: string, indexes: Array}}
+ * @param userOrUserId The user owning the collection
  */
 BaseStorage.prototype.getCollectionInfo = function (userOrUserId) {
   return new Error('Not implemented (user: ' + userOrUserId + ')');
@@ -126,10 +124,10 @@ BaseStorage.prototype.findIncludingDeletionsAndVersions = function (userOrUserId
  *
  * This is used by integrity processes to re-set integrity values on updateMany
  *
- * @param {Object} collectionInfo
- * @param {Object} query Mongo-style query
- * @param {UpdateIfNeededCallback} updateIfNeededCallback .. returns update to do on document or null if no update
- * @param {Function} callback
+ * @param collectionInfo
+ * @param query Mongo-style query
+ * @param updateIfNeededCallback .. returns update to do on document or null if no update
+ * @param callback
  */
 BaseStorage.prototype.findAndUpdateIfNeeded = function (userOrUserId, query, options, updateIfNeededCallback, callback) {
   const collectionInfo = this.getCollectionInfo(userOrUserId);
@@ -413,9 +411,9 @@ BaseStorage.prototype.insertMany = function (userOrUserId, items, callback, opti
 /**
  * Gets the indexes set for the collection.
  *
- * @param {Object} user
- * @param {Object} options
- * @param {Function} callback
+ * @param user
+ * @param options
+ * @param callback
  */
 BaseStorage.prototype.listIndexes = function (userOrUserId, options, callback) {
   this.database.listIndexes(this.getCollectionInfo(userOrUserId), options, callback);
@@ -427,8 +425,8 @@ BaseStorage.prototype.listIndexes = function (userOrUserId, options, callback) {
 
 /**
  * Export all documents for a user (raw, bypasses converters).
- * @param {Object|String} userOrUserId
- * @param {Function} callback
+ * @param userOrUserId
+ * @param callback
  */
 BaseStorage.prototype.exportAll = function (userOrUserId, callback) {
   this.database.find(
@@ -441,9 +439,9 @@ BaseStorage.prototype.exportAll = function (userOrUserId, callback) {
 
 /**
  * Import raw documents for a user (bypasses converters).
- * @param {Object|String} userOrUserId
- * @param {Array} items
- * @param {Function} callback
+ * @param userOrUserId
+ * @param items
+ * @param callback
  */
 BaseStorage.prototype.importAll = function (userOrUserId, items, callback) {
   if (!items || items.length === 0) return callback(null);
@@ -457,8 +455,8 @@ BaseStorage.prototype.importAll = function (userOrUserId, items, callback) {
 /**
  * Remove all documents for a user (actual delete, not soft delete).
  * Same as removeAll but with explicit naming for migration use.
- * @param {Object|String} userOrUserId
- * @param {Function} callback
+ * @param userOrUserId
+ * @param callback
  */
 BaseStorage.prototype.clearAll = function (userOrUserId, callback) {
   this.database.deleteMany(

@@ -37,9 +37,6 @@ const { execSync } = require('child_process');
 class ProjectVersion {
   // Returns the projects version number.
   //
-  /**
-   * @returns {string}
-   */
   version () {
     const version = this.readStaticVersion();
     if (version != null && version !== '1.2.3') { return version; }
@@ -54,9 +51,6 @@ class ProjectVersion {
     return versionFromGitTag || version || DEFAULT_VERSION;
   }
 
-  /**
-   * @returns {string}
-   */
   readStaticVersion () {
     // Sources, in priority order:
     //   1. `process.mainModule.paths` siblings (CJS entry point)
@@ -93,8 +87,7 @@ class ProjectVersion {
 }
 let version = null;
 /**
- * @param {boolean | null} forceRefresh
- * @returns {Promise<string>}
+ * @param forceRefresh
  */
 async function getAPIVersion (forceRefresh = false) {
   if (!version || forceRefresh) {

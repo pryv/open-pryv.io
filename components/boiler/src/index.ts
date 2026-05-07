@@ -23,30 +23,27 @@ const config = new Config();
 const boiler = {
   /**
    * get a Logger
-   * @param {string} name
-   * @returns {Logger}
+   * @param name
    */
   getLogger: logging.getLogger,
   /**
    * Prefered way to get the configuration
-   * @returns {Promise<Config>}
    */
   getConfig,
   /**
    * get the configuration.
    * If the configuration is not fully initialized throw an error
-   * @param {boolean} warnOnly - Only warns about potential misuse of config
-   * @returns {Config}
+   * @param warnOnly - Only warns about potential misuse of config
    */
   getConfigUnsafe,
 
   /**
    * Init Boiler, should be called just once when starting an APP
-   * @param {Object} options
-   * @param {string} options.appName - the name of the Application used by Logger and debug
-   * @param {string} [options.baseConfigDir] - (optional) directory to use to look for configs
-   * @param {Array<ConfigFile|ConfigRemoteURL|ConfigRemoteURLFromKey|ConfigPlugin>} [options.extraConfigs] - (optional) and array of extra files to load
-   * @param {Function} [fullyLoadedCallback] - (optional) called when the config is fully loaded
+   * @param options
+   * @param options.appName - the name of the Application used by Logger and debug
+   * @param [options.baseConfigDir] - (optional) directory to use to look for configs
+   * @param [options.extraConfigs] - (optional) and array of extra files to load
+   * @param [fullyLoadedCallback] - (optional) called when the config is fully loaded
    */
   init
 };

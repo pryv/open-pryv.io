@@ -14,7 +14,7 @@ const Action = require('./Action');
 const helpers = require('./helpers');
 
 /**
- * @param {Action} action
+ * @param action
  */
 export default function (action) {
   const schema: any = {

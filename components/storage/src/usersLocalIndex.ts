@@ -21,9 +21,6 @@ const logger = getLogger('users:local-index');
 
 class UsersLocalIndex {
   initialized;
-  /**
-   * @type {DBIndex}
-   */
   db;
 
   constructor () {
@@ -47,7 +44,6 @@ class UsersLocalIndex {
 
   /**
    * Check the integrity of the userIndex compared to the username events in SystemStreams
-   * @returns {Promise<Object>} With `errors` an array of error messages if discrepencies are found
    */
   async checkIntegrity () {
     const errors = [];
@@ -104,9 +100,6 @@ class UsersLocalIndex {
     return res;
   }
 
-  /**
-   * @returns {Promise<Object>} An object whose keys are the usernames and values are the user ids.
-   */
   async getAllByUsername () {
     logger.debug('getAllByUsername');
     return await this.db.getAllByUsername();

@@ -204,7 +204,7 @@ export default async function (expressApp, initContextMiddleware, loadAccessMidd
   logger.info('Start cron job for cache clean-up, time pattern: ' + cronJob.cronTime);
   cronJob.start();
   /**
-   * @param {Function} callback Optional, will be passed an error on failure
+   * @param callback Optional, will be passed an error on failure
    */
   function runCacheCleanupWorker (callback?: any) {
     callback = typeof callback === 'function' ? callback : function () { };

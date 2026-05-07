@@ -82,10 +82,9 @@ const userStreams = ds.createUserStreams({
   },
 
   /**
-   * @param {string} userId
-   * @param {{deletedSince: timestamp}} query
-   * @param {{skip: number, limit: number, sortAscending: boolean}} [options]
-   * @returns {Promise<any[]>}
+   * @param userId
+   * @param query
+   * @param [options]
    */
   async getDeletions (userId, query, options) {
     const dbOptions: any = { sort: { deleted: options?.sortAscending ? 1 : -1 } };
@@ -139,9 +138,8 @@ const userStreams = ds.createUserStreams({
 export { userStreams };
 
 /**
- * @param {object} stream
- * @param {number} childrenDepth
- * @returns {object}
+ * @param stream
+ * @param childrenDepth
  */
 function cloneStream (stream, childrenDepth) {
   if (childrenDepth === -1) {

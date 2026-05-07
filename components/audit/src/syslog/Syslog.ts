@@ -62,8 +62,8 @@ class Syslog {
 
   /**
    * send an new event for syslog
-   * @param {string} userId
-   * @param {PryvEvent} event
+   * @param userId
+   * @param event
    */
   eventForUser (userId, event) {
     logger.debug('eventForUser', userId);
@@ -79,10 +79,10 @@ export { Syslog };
 
 /**
  * Generate syslog Format for Winston
- * @param {Object} options
- * @param {boolean} options.color - set to true to have colors
- * @param {boolean} options.time - set to true to for timestamp
- * @param {boolean} options.align - set to true to allign logs items
+ * @param options
+ * @param options.color - set to true to have colors
+ * @param options.time - set to true to for timestamp
+ * @param options.align - set to true to allign logs items
  */
 function generateFormat (options) {
   const formats = [];

@@ -30,10 +30,9 @@ const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('mail-template-seeder');
 
 /**
- * @param {object} opts
- * @param {object} opts.platformDB     — the PlatformDB instance (setMailTemplate + getAllMailTemplates)
- * @param {string} opts.templatesRootDir — absolute path to the Pug root
- * @returns {Promise<{ seeded: boolean, count: number, reason?: string }>}
+ * @param opts
+ * @param opts.platformDB     — the PlatformDB instance (setMailTemplate + getAllMailTemplates)
+ * @param opts.templatesRootDir — absolute path to the Pug root
  */
 async function seedIfEmpty ({ platformDB, templatesRootDir }) {
   if (!platformDB) throw new Error('TemplateSeeder: platformDB is required');

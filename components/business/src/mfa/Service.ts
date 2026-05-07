@@ -29,7 +29,7 @@ class Service {
   static replaceRecursively: (obj: any, key: string, value: any) => any;
 
   /**
-   * @param {Object} mfaConfig - the `services.mfa` config block
+   * @param mfaConfig - the `services.mfa` config block
    */
   constructor (mfaConfig) {
     this.config = mfaConfig;
@@ -37,20 +37,18 @@ class Service {
   }
 
   /**
-   * @param {string} username
-   * @param {Profile} profile
-   * @param {Object} clientRequest - { headers, body, ... } — the MFA HTTP request context
-   * @returns {Promise<void>}
+   * @param username
+   * @param profile
+   * @param clientRequest - { headers, body, ... } — the MFA HTTP request context
    */
   async challenge (_username, _profile, _clientRequest) {
     throw new Error('override challenge() in a Service subclass');
   }
 
   /**
-   * @param {string} username
-   * @param {Profile} profile
-   * @param {Object} clientRequest
-   * @returns {Promise<void>}
+   * @param username
+   * @param profile
+   * @param clientRequest
    */
   async verify (_username, _profile, _clientRequest) {
     throw new Error('override verify() in a Service subclass');
@@ -58,11 +56,10 @@ class Service {
 
   /**
    * Make a POST or GET request to an SMS provider endpoint.
-   * @param {'GET'|'POST'} method
-   * @param {string} url
-   * @param {Object} headers
-   * @param {string|Object} body
-   * @returns {Promise<Response>}
+   * @param method
+   * @param url
+   * @param headers
+   * @param body
    */
   async _makeRequest (method, url, headers, body) {
     try {

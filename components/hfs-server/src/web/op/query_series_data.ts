@@ -37,8 +37,7 @@ async function querySeriesData (ctx, req, res) {
   await retrievePoints(seriesRepo, res, query, seriesMeta);
 }
 /**
- * @param {any} params
- * @returns {any}
+ * @param params
  */
 function coerceStringParams (params) {
   tryCoerceStringValues(params, {
@@ -52,15 +51,13 @@ function coerceStringParams (params) {
   return query;
 }
 /**
- * @param {any} query
- * @returns {void}
+ * @param query
  */
 function applyDefaultValues (query) {
   if (query.to == null) { query.to = timestamp.now(); }
 }
 /**
- * @param {Query} query
- * @returns {void}
+ * @param query
  */
 function validateQuery (query) {
   if (query.from != null && isNaN(query.from)) { throw errors.invalidParametersFormat("'from' must contain seconds since epoch."); }
@@ -68,11 +65,10 @@ function validateQuery (query) {
   if (query.from != null && query.to != null && query.to < query.from) { throw errors.invalidParametersFormat("'to' must be >= 'from'."); }
 }
 /**
- * @param {string} username
- * @param {string} eventId
- * @param {string} authToken
- * @param {MetadataRepository} metadata
- * @returns {Promise<any>}
+ * @param username
+ * @param eventId
+ * @param authToken
+ * @param metadata
  */
 async function verifyAccess (username, eventId, authToken, metadata) {
   const seriesMeta = await metadata.forSeries(username, eventId, authToken);
@@ -80,11 +76,10 @@ async function verifyAccess (username, eventId, authToken, metadata) {
   return seriesMeta;
 }
 /**
- * @param {Repository} seriesRepo
- * @param {express$Response} res
- * @param {Query} query
- * @param {SeriesMetadata} seriesMeta
- * @returns {Promise<void>}
+ * @param seriesRepo
+ * @param res
+ * @param query
+ * @param seriesMeta
  */
 async function retrievePoints (seriesRepo, res, query, seriesMeta) {
   const seriesInstance = await seriesRepo.get(...seriesMeta.namespaceAndName());

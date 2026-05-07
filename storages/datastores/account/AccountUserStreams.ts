@@ -54,8 +54,7 @@ function filterShown (streams) {
  * Returns the system stream tree from config; rejects all CRUD
  * (streams are config-defined, not user-modifiable).
  *
- * @param {Array} streamTree - system stream tree (fully built, with prefixed IDs)
- * @returns {UserStreams}
+ * @param streamTree - system stream tree (fully built, with prefixed IDs)
  */
 function create (streamTree) {
   // Build a readable-only tree for get() responses (before stripping config props)

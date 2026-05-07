@@ -36,12 +36,12 @@ class CertRenewer {
   #acmeLib;
 
   /**
-   * @param {Object} opts
-   * @param {Object} opts.platformDB   - needs setAcmeAccount/getAcmeAccount/setCertificate/getCertificate/listCertificates
-   * @param {Buffer} opts.atRestKey    - 32-byte symmetric key for encrypting private-key material
-   * @param {string} opts.email        - ACME account contact; required to create an account
-   * @param {string} [opts.directoryUrl] - default: LE production
-   * @param {Object} [opts.acmeLib]    - default: require('acme-client'); injectable for tests
+   * @param opts
+   * @param opts.platformDB   - needs setAcmeAccount/getAcmeAccount/setCertificate/getCertificate/listCertificates
+   * @param opts.atRestKey    - 32-byte symmetric key for encrypting private-key material
+   * @param opts.email        - ACME account contact; required to create an account
+   * @param [opts.directoryUrl] - default: LE production
+   * @param [opts.acmeLib]    - default: require('acme-client'); injectable for tests
    */
   constructor ({ platformDB, atRestKey, email, directoryUrl, acmeLib }: any = {}) {
     if (platformDB == null) throw new Error('CertRenewer: platformDB is required');
@@ -60,7 +60,6 @@ class CertRenewer {
    * Retrieve the stored ACME account (decrypted) or null. Used mostly by
    * admin surfaces and by ensureAccount() itself.
    *
-   * @returns {Promise<{accountKey: string, accountUrl: string, email: string}|null>}
    */
   async getAccount () {
     const stored = await this.#platformDB.getAcmeAccount();
@@ -77,7 +76,6 @@ class CertRenewer {
    * time this is called. The account key is encrypted at rest before
    * being handed to PlatformDB.
    *
-   * @returns {Promise<{accountKey: string, accountUrl: string, email: string}>}
    */
   async ensureAccount () {
     const existing = await this.getAccount();
@@ -105,12 +103,11 @@ class CertRenewer {
    * The keyPem is encrypted at rest before being handed to PlatformDB;
    * the public certPem + chainPem are stored as-is.
    *
-   * @param {Object} opts
-   * @param {string}   opts.hostname                - e.g. '*.mc.example.com'
-   * @param {string[]} [opts.altNames=[]]           - e.g. ['mc.example.com']
-   * @param {Object}   opts.dnsWriter               - { create(name, value), remove(name) }; see PlatformDBDnsWriter
-   * @param {string[]} [opts.challengePriority]     - default ['dns-01']
-   * @returns {Promise<{hostname: string, issuedAt: number, expiresAt: number}>}
+   * @param opts
+   * @param opts.hostname                - e.g. '*.mc.example.com'
+   * @param [opts.altNames=[]]           - e.g. ['mc.example.com']
+   * @param opts.dnsWriter               - { create(name, value), remove(name) }; see PlatformDBDnsWriter
+   * @param [opts.challengePriority]     - default ['dns-01']
    */
   async renew ({ hostname, altNames = [], dnsWriter, challengePriority }: any = {}) {
     if (!hostname) throw new Error('CertRenewer.renew: hostname is required');
@@ -164,8 +161,7 @@ class CertRenewer {
    * Retrieve a stored cert with its keyPem decrypted. Other fields
    * (certPem, chainPem) pass through unchanged.
    *
-   * @param {string} hostname
-   * @returns {Promise<{certPem, chainPem, keyPem, issuedAt, expiresAt}|null>}
+   * @param hostname
    */
   async getCertificate (hostname) {
     const stored = await this.#platformDB.getCertificate(hostname);
@@ -249,8 +245,7 @@ class PlatformDBDnsWriter {
  * This function used to return the FQDN shape; Plan 36 pre-prod
  * rollout surfaced the mismatch with DnsServer.
  *
- * @param {string} identifierValue - LE authz identifier (e.g. `*.example.com`)
- * @returns {string} always `_acme-challenge`
+ * @param identifierValue - LE authz identifier (e.g. `*.example.com`)
  */
 // identifierValue is ignored today — LE's DNS-01 spec says all challenges
 // for a multi-SAN cert land at the same `_acme-challenge.{zone}` TXT

@@ -51,9 +51,6 @@ class NoopTracer {
   inject () {}
 }
 
-/**
- * @returns {Promise<any>}
- */
 async function createContext (config) {
   const storages = require('storages');
   await storages.init(config);
@@ -81,9 +78,6 @@ class Application {
   server;
 
   config;
-  /**
-   * @returns {Promise<void>}
-   */
   async init () {
     this.logger = getLogger('application');
     this.config = await getConfig();
@@ -93,17 +87,11 @@ class Application {
     this.server = new Server(this.config, this.context);
   }
 
-  /**
-   * @returns {Promise<Application>}
-   */
   async start () {
     await this.server.start();
     return this;
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async run () {
     await this.init();
     await this.start();

@@ -34,23 +34,14 @@ async function ensureBarrel () {
   return storages;
 }
 
-/**
- * @returns {Promise<Object>} usersLocalIndex singleton
- */
 async function getUsersLocalIndex () {
   return (await ensureBarrel()).usersLocalIndex;
 }
 
-/**
- * @returns {Promise<Object>} userAccountStorage singleton
- */
 async function getUserAccountStorage () {
   return (await ensureBarrel()).userAccountStorage;
 }
 
-/**
- * @returns {Promise<StorageLayer>}
- */
 async function getStorageLayer () {
   return (await ensureBarrel()).storageLayer;
 }
@@ -75,7 +66,6 @@ function _ensureMongoDatabase () {
 /**
  * Get the MongoDB database connection (sync).
  * Falls back to lazy construction for test code that needs it before barrel init.
- * @returns {Object}
  */
 function getDatabaseSync () {
   return require('storages').database || _ensureMongoDatabase();

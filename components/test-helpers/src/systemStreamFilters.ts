@@ -17,8 +17,7 @@ const CUSTOMER_PREFIX = ':system:';
 
 /**
  * Returns true if the streamId is a system stream (private or customer prefix).
- * @param {string} streamId
- * @returns {boolean}
+ * @param streamId
  */
 function isSystemStreamId (streamId) {
   return streamId.startsWith(PRYV_PREFIX) || streamId.startsWith(CUSTOMER_PREFIX);
@@ -26,8 +25,7 @@ function isSystemStreamId (streamId) {
 
 /**
  * Remove events that belong to system streams from an events array.
- * @param {Array} events
- * @returns {Array} events without system stream events
+ * @param events
  */
 function removeSystemEvents (events) {
   return events.filter(e =>
@@ -37,8 +35,7 @@ function removeSystemEvents (events) {
 
 /**
  * Separate events into normal events and system stream events.
- * @param {Array} events
- * @returns {{ events: Array, systemEvents: Array }}
+ * @param events
  */
 function separateSystemEvents (events) {
   const normal = [];
@@ -56,8 +53,7 @@ function separateSystemEvents (events) {
 /**
  * Remove system streams (root-level) from a streams array.
  * Filters out any stream whose id starts with a system prefix.
- * @param {Array} streams
- * @returns {Array} streams without system streams
+ * @param streams
  */
 function removeSystemStreams (streams) {
   return streams.filter(s => !isSystemStreamId(s.id));
@@ -66,8 +62,7 @@ function removeSystemStreams (streams) {
 /**
  * Adds private system stream prefix to a stream id.
  * Test-only — simple concatenation, no validation.
- * @param {string} id
- * @returns {string}
+ * @param id
  */
 function addPrivatePrefixToStreamId (id) {
   return PRYV_PREFIX + id;
@@ -76,8 +71,7 @@ function addPrivatePrefixToStreamId (id) {
 /**
  * Adds customer system stream prefix to a stream id.
  * Test-only — simple concatenation, no validation.
- * @param {string} id
- * @returns {string}
+ * @param id
  */
 function addCustomerPrefixToStreamId (id) {
   return CUSTOMER_PREFIX + id;

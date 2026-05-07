@@ -19,8 +19,7 @@ const { findForbiddenChar } = require('../../schema/streamId');
  * @typedef {Object} StreamQueryScoped
  * @property {Array.<StreamQuery>} streamQuery - An array of streamQueries
  * @property {Array} nonAuthorizedStreams - The list of stream that have been unAuthorized
- * @param {Array<any>} arrayOfQueries
- * @returns {any[]}
+ * @param arrayOfQueries
  */
 /**
  * @typedef {Object} StreamQuery
@@ -35,7 +34,7 @@ const { findForbiddenChar } = require('../../schema/streamId');
 /**
  * For backwardCompatibility with older streams parameter ['A', 'B'] transform it to streams query [{any: ['A', 'B']}]
  * Takes care of grouping by store. ['A', 'B', ':_audit:xx'] => [{any: ['A', 'B']}, {any: ':audit:xx'}]
- * @param {Array.<StreamQuery>} arrayOfQueries
+ * @param arrayOfQueries
  * @throws - Error if mixed strings and other are found in array
  */
 function transformArrayOfStringsToStreamsQuery (arrayOfQueries) {
@@ -66,9 +65,8 @@ function transformArrayOfStringsToStreamsQuery (arrayOfQueries) {
 }
 export { transformArrayOfStringsToStreamsQuery };
 /**
- * @param {Array<StreamQuery>} arrayOfQueries  undefined
+ * @param arrayOfQueries  undefined
  * @throws - Error if query does not respect the schema
- * @returns {any[]}
  */
 function validateStreamsQueriesAndSetStore (arrayOfQueries) {
   arrayOfQueries.forEach((streamQuery) => {
@@ -80,15 +78,13 @@ export { validateStreamsQueriesAndSetStore };
 /**
  * throw an error if streamQuery is not of the form {any: all: not: } with at least one of any or all
  * [{any: ['A', 'B', '.email']}, {any: ':_audit:xx'}] => [{any: ['A', 'B', '.email'], storeId: 'local'}, {any: 'xx', storeId: 'audit'}]
- * @param {Array<StreamQuery>} arrayOfQueries  - the full request for error message
- * @param {StreamQuery} streamQuery  undefined
- * @returns {void}
+ * @param arrayOfQueries  - the full request for error message
+ * @param streamQuery  undefined
  */
 function validateStreamsQuerySchemaAndSetStore (arrayOfQueries, streamQuery) {
   /**
    * Get StoreID, add storeId property to query and remove eventual storeId from streamId
-   * @param {string} fullStreamId - a streamId with its store prefix
-   * @returns {string} streamId without its prefix
+   * @param fullStreamId - a streamId with its store prefix
    */
   function validateAndAttachStore (fullStreamId) {
     // queries must be grouped by store
@@ -183,19 +179,16 @@ function validateStreamsQuerySchemaAndSetStore (arrayOfQueries, streamQuery) {
   }
 }
 /**
- * @callback ExpandStream
- * @param {identifier} streamId
- * @param {identifier} storeId
- * @param {Array.<StreamId>} excludedIds - Array of streams to exclude from expand
- * @return {Array.<StreamId>|string} - returns all children recursively for this stream OR a proprietary string to be interpreted by events.get() in the streamQuery OR null if not expandable
- * @returns {unknown[]}
+ * @param streamId
+ * @param storeId
+ * @param excludedIds - Array of streams to exclude from expand
  */
 function uniqueStreamIds (arrayOfStreamiIs) {
   return [...new Set(arrayOfStreamiIs)];
 }
 /**
- * @param {Array.<StreamQuery>} streamQueries
- * @param {ExpandStream} expandStream
+ * @param streamQueries
+ * @param expandStream
  * @returns
  */
 export const expandAndTransformStreamQueries = async function expandAndTransformStreamQueries (streamQueries, expandStream) {
@@ -216,9 +209,6 @@ export const expandAndTransformStreamQueries = async function expandAndTransform
       }
       return res;
     };
-/**
- * @returns {Promise<{ storeId: any; }>}
- */
 async function expandAndTransformStreamQuery (streamQuery, expandSet) {
   let containsAtLeastOneInclusion = false;
   const res: any = { storeId: streamQuery.storeId };
@@ -258,7 +248,6 @@ async function expandAndTransformStreamQuery (streamQuery, expandSet) {
 // ------------------------ helpers ----------------------------------//
 /**
  * for nice error message with clear query content
- * @returns {any}
  */
 function objectToString (object) {
   return util.inspect(object, { depth: 5 });

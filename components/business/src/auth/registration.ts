@@ -34,9 +34,6 @@ class Registration {
     this.servicesSettings = servicesSettings;
   }
 
-  /**
-   * @returns {Promise<this>}
-   */
   async init () {
     if (this.platform == null) {
       this.platform = await getPlatform();

@@ -178,9 +178,6 @@ export const resetStreams = function (done, user) {
   })();
 };
 
-/**
- * @returns {void}
- */
 function resetMongoDBCollectionFor (storage, user, items, done) {
   storage.removeAll(user, function (err) {
     if (err) return done(err);
@@ -207,9 +204,6 @@ export { attachments };
 // compute sri with openssl
 // cat FILENAME.js | openssl dgst -sha384 -binary | openssl base64 -A
 // replaces: 'sha256 ' + crypto.createHash('sha256').update(data).digest('hex');
-/**
- * @returns {string}
- */
 function getSubresourceIntegrity (filePath) {
   const algorithm = 'sha256';
   return (algorithm +
@@ -217,9 +211,6 @@ function getSubresourceIntegrity (filePath) {
         childProcess.execSync(`cat "${filePath}" | openssl dgst -${algorithm} -binary | openssl base64 -A`));
 }
 
-/**
- * @returns {{ id: any; filename: any; path: any; data: any; size: any; type: any; integrity: string; }}
- */
 function getAttachmentInfo (id, filename, type) {
   const filePath = path.join(testsAttachmentsDirPath, filename);
   const data = fs.readFileSync(filePath);
@@ -242,8 +233,8 @@ function getAttachmentInfo (id, filename, type) {
  * DB data is mongodumped, attachments data is tarballed.
  * The output folder will be overwritten if it already exists.
  *
- * @param {String} mongoFolder Path to MongoDB base folder
- * @param {Function} callback
+ * @param mongoFolder Path to MongoDB base folder
+ * @param callback
  */
 export const dumpCurrent = function (mongoFolder, version, callback) {
   const mongodump = path.resolve(mongoFolder, 'bin/mongodump');
@@ -287,8 +278,8 @@ export const dumpCurrent = function (mongoFolder, version, callback) {
 
 /**
  *
- * @param {String} versionNum Must match an existing dumped version (e.g. "0.3.0")
- * @param {String} mongoFolder Path to MongoDB base folder
+ * @param versionNum Must match an existing dumped version (e.g. "0.3.0")
+ * @param mongoFolder Path to MongoDB base folder
  * @param callback
  */
 export const restoreFromDump = function (versionNum, mongoFolder, callback) {
@@ -336,45 +327,29 @@ export const restoreFromDump = function (versionNum, mongoFolder, callback) {
 /**
  * Fetches the database structure for a given version
  *
- * @param {String} version
- * @returns {Object} structure
+ * @param version
  */
 export const getStructure = function (version) {
   return require(path.join(__dirname, '/structure/', version));
 };
 
-/**
- * @returns {void}
- */
 function clearAllData (callback) {
   deleteUsersDataDirectory();
   storage.database.dropDatabase(callback);
 }
 
-/**
- * @returns {any}
- */
 function getDumpFolder (versionNum) {
   return path.resolve(__dirname, 'data/dumps', versionNum);
 }
 
-/**
- * @returns {any}
- */
 function getDumpDBSubfolder (dumpFolder) {
   return path.resolve(dumpFolder, 'db');
 }
 
-/**
- * @returns {any}
- */
 function getDumpFilesArchive (dumpFolder) {
   return path.resolve(dumpFolder, 'event-files.tar.gz');
 }
 
-/**
- * @returns {{}}
- */
 function buildCustomAccountProperties () {
   const customStreams = getConfigUnsafe(true).get('custom:systemStreams:account');
   if (customStreams == null) { return {}; }

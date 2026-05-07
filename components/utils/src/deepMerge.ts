@@ -15,9 +15,8 @@
  * Drop-in replacement for `_.merge(target, ...sources)`. Returns target.
  *
  * @template T
- * @param {T} target
- * @param  {...any} sources
- * @returns {T}
+ * @param target
+ * @param sources
  */
 function deepMerge (target, ...sources) {
   if (target == null) target = {};

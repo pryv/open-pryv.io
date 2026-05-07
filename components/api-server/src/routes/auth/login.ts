@@ -16,7 +16,7 @@ const { getConfigUnsafe } = require('@pryv/boiler');
 /**
  * Auth routes.
  *
- * @param {Object} api The API object for registering methods
+ * @param api The API object for registering methods
  */
 export default function (expressApp, app) {
   const config = getConfigUnsafe();

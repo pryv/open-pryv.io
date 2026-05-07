@@ -54,14 +54,13 @@ class RestoreOrchestrator {
 
   /**
    * Restore all users and platform data from a backup.
-   * @param {BackupReader} reader
-   * @param {Object} [options]
-   * @param {boolean} [options.overwrite=true] - clearAll before import
-   * @param {boolean} [options.skipPlatform=false] - skip platform data
-   * @param {boolean} [options.skipConflicts=false] - skip conflicting users instead of failing
-   * @param {boolean} [options.deleteOnSuccess=false] - delete backup data after successful restore
-   * @param {string} [options.moveOnSuccess] - move backup data to this path after successful restore
-   * @returns {Promise<Object>} restore report { restored: [], skipped: [], conflicts: [] }
+   * @param reader
+   * @param [options]
+   * @param [options.overwrite=true] - clearAll before import
+   * @param [options.skipPlatform=false] - skip platform data
+   * @param [options.skipConflicts=false] - skip conflicting users instead of failing
+   * @param [options.deleteOnSuccess=false] - delete backup data after successful restore
+   * @param [options.moveOnSuccess] - move backup data to this path after successful restore
    */
   async restoreAllUsers (reader, options: any = {}) {
     const opts: any = Object.assign({ overwrite: true, skipPlatform: false, skipConflicts: false }, options);
@@ -107,13 +106,12 @@ class RestoreOrchestrator {
 
   /**
    * Restore a single user from backup.
-   * @param {BackupReader} reader
-   * @param {string} userId
-   * @param {Object} [options]
-   * @param {boolean} [options.overwrite=false] - clearAll before import
-   * @param {boolean} [options.skipPlatform=true] - skip platform data
-   * @param {string} [options.remapUserId] - remap to a different userId
-   * @returns {Promise<Object>} restore report
+   * @param reader
+   * @param userId
+   * @param [options]
+   * @param [options.overwrite=false] - clearAll before import
+   * @param [options.skipPlatform=true] - skip platform data
+   * @param [options.remapUserId] - remap to a different userId
    */
   async restoreUser (userId, reader, options: any = {}) {
     const opts: any = Object.assign({ overwrite: false, skipPlatform: true }, options);
@@ -145,8 +143,7 @@ class RestoreOrchestrator {
 
   /**
    * Restore platform data only.
-   * @param {BackupReader} reader
-   * @returns {Promise<void>}
+   * @param reader
    */
   async restorePlatform (reader) {
     await reader.readManifest();

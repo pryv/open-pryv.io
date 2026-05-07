@@ -106,8 +106,8 @@ class Platform {
 
   /**
    * Update user fields in PlatformDB (unique + indexed).
-   * @param {string} username
-   * @param {Array} operations
+   * @param username
+   * @param operations
    */
   async updateUser (username, operations) {
     const uniquenessErrors = await this.checkUpdateOperationUniqueness(username, operations);
@@ -119,8 +119,8 @@ class Platform {
 
   /**
    * Apply operations to PlatformDB.
-   * @param {string} username
-   * @param {Array} operations
+   * @param username
+   * @param operations
    */
   async #applyOperations (username, operations) {
     for (const op of operations) {
@@ -178,8 +178,8 @@ class Platform {
 
   /**
    * Fully delete a user from PlatformDB.
-   * @param {string} username
-   * @param {User|null} user
+   * @param username
+   * @param user
    */
   async deleteUser (username, user) {
     const operations = [];
@@ -203,30 +203,18 @@ class Platform {
 
   // ----------------  Core identity (multi-core)  ----------------
 
-  /**
-   * @returns {string} This core's ID.
-   */
   get coreId () {
     return this.#config.get('core:id') || 'single';
   }
 
-  /**
-   * @returns {string|null} This core's public URL.
-   */
   get coreUrl () {
     return this.#config.get('core:url') || null;
   }
 
-  /**
-   * @returns {boolean} True when in dnsLess / single-core mode.
-   */
   get isSingleCore () {
     return this.#config.get('core:isSingleCore') !== false;
   }
 
-  /**
-   * @returns {string|null} The primary domain (dns:domain).
-   */
   get domain () {
     return this.#config.get('dns:domain') || null;
   }
@@ -244,8 +232,7 @@ class Platform {
    * a cascade rewrite. The cache is refreshed on `init()` and via
    * `_refreshCoreUrlCache()` (called from this core after `registerSelf()`).
    *
-   * @param {string} coreId
-   * @returns {string}
+   * @param coreId
    */
   coreIdToUrl (coreId) {
     let url;
@@ -321,7 +308,6 @@ class Platform {
    * value each core logs at startup. `auth.adminAccessKey` is surfaced only as
    * a short SHA-256 prefix — the secret itself never leaves config.
    *
-   * @returns {{ snapshot: object, hash: string }}
    */
   getPlatformConfigSnapshot () {
     const snapshot = {
@@ -344,8 +330,7 @@ class Platform {
 
   /**
    * Get which core hosts a user.
-   * @param {string} username
-   * @returns {Promise<string|null>} core ID
+   * @param username
    */
   async getUserCore (username) {
     return await this.#db.getUserCore(username);
@@ -353,8 +338,8 @@ class Platform {
 
   /**
    * Set which core hosts a user.
-   * @param {string} username
-   * @param {string} coreId
+   * @param username
+   * @param coreId
    */
   async setUserCore (username, coreId) {
     await this.#db.setUserCore(username, coreId);
@@ -362,7 +347,6 @@ class Platform {
 
   /**
    * Get all user-to-core mappings.
-   * @returns {Promise<Array<{username: string, coreId: string}>>}
    */
   async getAllUserCores () {
     return await this.#db.getAllUserCores();
@@ -370,8 +354,7 @@ class Platform {
 
   /**
    * Get info for a specific core.
-   * @param {string} coreId
-   * @returns {Promise<Object|null>}
+   * @param coreId
    */
   async getCoreInfo (coreId) {
     return await this.#db.getCoreInfo(coreId);
@@ -379,7 +362,6 @@ class Platform {
 
   /**
    * Get all registered cores.
-   * @returns {Promise<Array<Object>>}
    */
   async getAllCoreInfos () {
     return await this.#db.getAllCoreInfos();
@@ -390,30 +372,26 @@ class Platform {
   /**
    * Set a persistent DNS record. Runtime-managed entries like ACME challenges.
    * Static infrastructure records stay in YAML config; admin MUST NOT shadow them.
-   * @param {string} subdomain
-   * @param {Object} records
+   * @param subdomain
+   * @param records
    */
   async setDnsRecord (subdomain, records) {
     await this.#db.setDnsRecord(subdomain, records);
   }
 
   /**
-   * @param {string} subdomain
-   * @returns {Promise<Object|null>}
+   * @param subdomain
    */
   async getDnsRecord (subdomain) {
     return await this.#db.getDnsRecord(subdomain);
   }
 
-  /**
-   * @returns {Promise<Array<{subdomain: string, records: Object}>>}
-   */
   async getAllDnsRecords () {
     return await this.#db.getAllDnsRecords();
   }
 
   /**
-   * @param {string} subdomain
+   * @param subdomain
    */
   async deleteDnsRecord (subdomain) {
     await this.#db.deleteDnsRecord(subdomain);
@@ -421,7 +399,7 @@ class Platform {
 
   /**
    * Update this core's availability in PlatformDB.
-   * @param {boolean} available
+   * @param available
    */
   async setAvailable (available) {
     if (!this.#db) {
@@ -437,8 +415,7 @@ class Platform {
   /**
    * Select a core for a new registration.
    * Single-core: returns self. Multi-core: least-users among available cores in the given hosting.
-   * @param {string|null} [hosting] - hosting key (null = any)
-   * @returns {Promise<string>} core ID
+   * @param [hosting] - hosting key (null = any)
    */
   async selectCoreForRegistration (hosting) {
     if (this.isSingleCore) return this.coreId;
@@ -485,14 +462,13 @@ class Platform {
    * - Atomically reserve unique fields
    * - Assign user to core (multi-core: may redirect)
    *
-   * @param {string} username
-   * @param {string|undefined} invitationToken
-   * @param {Object} uniqueFields - e.g. { username: 'bob', email: 'bob@example.com' }
-   * @param {string} [hosting] - hosting key from the registration payload;
+   * @param username
+   * @param invitationToken
+   * @param uniqueFields - e.g. { username: 'bob', email: 'bob@example.com' }
+   * @param [hosting] - hosting key from the registration payload;
    *   when set, narrows `selectCoreForRegistration` to that hosting so
    *   aws-us-east-1 registrations land on the correct core even if
    *   another hosting has fewer users.
-   * @returns {Promise<{redirect?: string}>} redirect URL if registration should happen elsewhere
    */
   async validateRegistration (username, invitationToken, uniqueFields, hosting) {
     // 1. Check invitation token
@@ -582,8 +558,8 @@ class Platform {
 
   /**
    * Consume an invitation token (mark as used).
-   * @param {string} token
-   * @param {string} username - the user who consumed it
+   * @param token
+   * @param username - the user who consumed it
    */
   async consumeInvitationToken (token, username) {
     const info = await this.#db.getInvitationToken(token);
@@ -595,8 +571,7 @@ class Platform {
 
   /**
    * Check if invitation token is valid (for /access/invitationtoken/check).
-   * @param {string} token
-   * @returns {Promise<boolean>}
+   * @param token
    */
   async isInvitationTokenValid (token) {
     const allTokens = await this.#db.getAllInvitationTokens();
@@ -615,7 +590,6 @@ class Platform {
 
   /**
    * Get all invitation tokens.
-   * @returns {Promise<Array>}
    */
   async getAllInvitationTokens () {
     return this.#db.getAllInvitationTokens();
@@ -623,10 +597,9 @@ class Platform {
 
   /**
    * Generate N new invitation tokens.
-   * @param {number} count
-   * @param {string} createdBy - admin username
-   * @param {string} [description]
-   * @returns {Promise<Array>} created tokens
+   * @param count
+   * @param createdBy - admin username
+   * @param [description]
    */
   async generateInvitationTokens (count, createdBy, description) {
     const crypto = require('node:crypto');
@@ -666,8 +639,7 @@ class Platform {
 
   /**
    * Check if username is reserved (starts with "pryv" or in reserved words list).
-   * @param {string} username
-   * @returns {boolean}
+   * @param username
    */
   #isUsernameReserved (username) {
     const lower = username.toLowerCase();
@@ -692,7 +664,6 @@ class Platform {
    * Resolution rule: local `observability.enabled: false` ALWAYS wins
    * (emergency off-switch). Otherwise PlatformDB is authoritative.
    *
-   * @returns {Promise<{
    *   enabled: boolean,
    *   provider: string,
    *   appName: string,
@@ -757,8 +728,8 @@ class Platform {
    * cluster's in-memory cache after writing — e.g. via the
    * `/system/admin/observability/invalidate-cache` admin route.
    *
-   * @param {string} key
-   * @param {any} value — JSON-encodable.
+   * @param key
+   * @param value — JSON-encodable.
    */
   async setObservabilityValue (key, value) {
     const serialised = SECRET_OBSERVABILITY_KEYS.has(key)

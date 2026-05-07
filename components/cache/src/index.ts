@@ -29,8 +29,7 @@ const config = getConfigUnsafe(true);
  */
 const userIdForUsername = new Map();
 /**
- * @param {string} namespace
- * @returns {any}
+ * @param namespace
  */
 function getNameSpace (namespace) {
   if (namespace == null) { console.log('XXXX', new Error('Null namespace')); }
@@ -40,10 +39,9 @@ function getNameSpace (namespace) {
         })));
 }
 /**
- * @param {string} namespace
- * @param {string} key
- * @param {string} value
- * @returns {string}
+ * @param namespace
+ * @param key
+ * @param value
  */
 function set (namespace, key, value) {
   if (!isActive) { return; }
@@ -53,9 +51,8 @@ function set (namespace, key, value) {
   return value;
 }
 /**
- * @param {string} namespace
- * @param {string} key
- * @returns {void}
+ * @param namespace
+ * @param key
  */
 function unset (namespace, key) {
   if (!isActive) { return; }
@@ -64,9 +61,8 @@ function unset (namespace, key) {
   debug.unset(namespace, key);
 }
 /**
- * @param {string} namespace
- * @param {string} key
- * @returns {any}
+ * @param namespace
+ * @param key
  */
 function get (namespace, key) {
   if (!isActive) { return null; }
@@ -75,8 +71,7 @@ function get (namespace, key) {
   return getNameSpace(namespace).get(key);
 }
 /**
- * @param {string} namespace
- * @returns {void}
+ * @param namespace
  */
 function clear (namespace) {
   if (namespace == null) {
@@ -95,8 +90,7 @@ function clear (namespace) {
 }
 // --------------- Users ---------------//
 /**
- * @param {string} username
- * @returns {string}
+ * @param username
  */
 function getUserId (username) {
   if (!isActive) { return; }
@@ -104,9 +98,8 @@ function getUserId (username) {
   return userIdForUsername.get(username);
 }
 /**
- * @param {string} username
- * @param {string} userId
- * @returns {void}
+ * @param username
+ * @param userId
  */
 function setUserId (username, userId) {
   if (!isActive) { return; }
@@ -114,9 +107,8 @@ function setUserId (username, userId) {
   userIdForUsername.set(username, userId);
 }
 /**
- * @param {string} username
- * @param {boolean} notifyOtherProcesses
- * @returns {void}
+ * @param username
+ * @param notifyOtherProcesses
  */
 function unsetUser (username, notifyOtherProcesses = true) {
   if (!isActive) { return; }
@@ -129,9 +121,8 @@ function unsetUser (username, notifyOtherProcesses = true) {
   userIdForUsername.delete(username);
 }
 /**
- * @param {string} userId
- * @param {boolean} notifyOtherProcesses
- * @returns {void}
+ * @param userId
+ * @param notifyOtherProcesses
  */
 function unsetUserData (userId, notifyOtherProcesses = true) {
   if (!isActive) { return; }
@@ -147,18 +138,16 @@ function unsetUserData (userId, notifyOtherProcesses = true) {
 }
 // --------------- Streams ---------------//
 /**
- * @param {string} userId
- * @param {string} storeId
- * @returns {any[]}
+ * @param userId
+ * @param storeId
  */
 function getStreams (userId, storeId = 'local') {
   return get(NS.STREAMS_FOR_USERID + storeId, userId);
 }
 /**
- * @param {string} userId
- * @param {string} storeId
- * @param {Array<Stream>} streams
- * @returns {void}
+ * @param userId
+ * @param storeId
+ * @param streams
  */
 function setStreams (userId, storeId = 'local', streams) {
   if (!isActive) { return; }
@@ -166,26 +155,23 @@ function setStreams (userId, storeId = 'local', streams) {
   set(NS.STREAMS_FOR_USERID + storeId, userId, streams);
 }
 /**
- * @param {string} userId
- * @param {string} storeId
- * @returns {void}
+ * @param userId
+ * @param storeId
  */
 function _unsetStreams (userId, storeId = 'local') {
   unset(NS.STREAMS_FOR_USERID + storeId, userId);
 }
 /**
- * @param {string} userId
- * @param {string} storeId
- * @returns {void}
+ * @param userId
+ * @param storeId
  */
 function unsetStreams (userId, storeId = 'local') {
   unsetUserData(userId);
 }
 // --------------- Access Logic -----------//
 /**
- * @param {string} userId
- * @param {string} token
- * @returns {any}
+ * @param userId
+ * @param token
  */
 function getAccessLogicForToken (userId, token) {
   if (!isActive) { return null; }
@@ -194,9 +180,8 @@ function getAccessLogicForToken (userId, token) {
   return accessLogics.tokens[token];
 }
 /**
- * @param {string} userId
- * @param {string} accessId
- * @returns {any}
+ * @param userId
+ * @param accessId
  */
 function getAccessLogicForId (userId, accessId) {
   if (!isActive) { return null; }
@@ -205,10 +190,9 @@ function getAccessLogicForId (userId, accessId) {
   return accessLogics.ids[accessId];
 }
 /**
- * @param {string} userId
- * @param {string} accessLogic
- * @param {boolean} notifyOtherProcesses
- * @returns {void}
+ * @param userId
+ * @param accessLogic
+ * @param notifyOtherProcesses
  */
 function unsetAccessLogic (userId, accessLogic, notifyOtherProcesses = true) {
   if (!isActive) { return; }
@@ -221,16 +205,14 @@ function unsetAccessLogic (userId, accessLogic, notifyOtherProcesses = true) {
   delete accessLogics.ids[accessLogic.id];
 }
 /**
- * @param {string} userId
- * @returns {void}
+ * @param userId
  */
 function _clearAccessLogics (userId) {
   unset(NS.ACCESS_LOGICS_FOR_USERID, userId);
 }
 /**
- * @param {string} userId
- * @param {{}} accessLogic
- * @returns {void}
+ * @param userId
+ * @param accessLogic
  */
 function setAccessLogic (userId, accessLogic) {
   if (!isActive) { return; }
@@ -271,7 +253,6 @@ const cache = {
 };
 /**
  * Used only from tests to reload configuration after settting changes
- * @returns {void}
  */
 function loadConfiguration () {
   // could be true/false or 1/0 if launched from command line

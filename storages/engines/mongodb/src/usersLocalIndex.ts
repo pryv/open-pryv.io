@@ -50,9 +50,6 @@ class DBIndex {
     return await this.id4nameCollection.deleteOne({ userId });
   }
 
-  /**
-   * @returns {Object} An object whose keys are the usernames and values are the user ids.
-   */
   async getAllByUsername () {
     const allCursor = this.id4nameCollection.find({});
     const users = {};

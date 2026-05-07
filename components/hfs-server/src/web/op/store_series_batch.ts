@@ -17,10 +17,9 @@ const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta').se
 // POST /:user_name/series/batch
 //
 /**
- * @param {Context} ctx
- * @param {express$Request} req
- * @param {express$Response} res
- * @returns {Promise<void>}
+ * @param ctx
+ * @param req
+ * @param res
  */
 async function storeSeriesBatch (ctx, req, res) {
   const trace = new TracedOperations(ctx);
@@ -68,9 +67,8 @@ async function storeSeriesBatch (ctx, req, res) {
 // BatchRequest format.
 //
 /**
- * @param {unknown} batchRequestBody
- * @param {EventMetaDataCache} resolver
- * @returns {Promise<any>}
+ * @param batchRequestBody
+ * @param resolver
  */
 function parseData (batchRequestBody, resolver) {
   return BatchRequest.parse(batchRequestBody, (eventId) => resolver.getRowType(eventId));
@@ -109,8 +107,7 @@ class EventMetaDataCache {
   // up the type of the event and returns it as a SeriesRowType.
   //
   /**
-   * @param {string} eventId
-   * @returns {Promise<any>}
+   * @param eventId
    */
   async getRowType (eventId) {
     const ctx = this.ctx;
@@ -124,8 +121,7 @@ class EventMetaDataCache {
   }
 
   /**
-   * @param {string} eventId
-   * @returns {Promise<string>}
+   * @param eventId
    */
   async getMeasurementName (eventId) {
     const seriesMeta = await this.getSeriesMeta(eventId);
@@ -135,9 +131,6 @@ class EventMetaDataCache {
 
   // Returns the SeriesMetadata for the event designated by `eventId`.
   //
-  /**
-   * @returns {Promise<any>}
-   */
   async getSeriesMeta (eventId) {
     const ctx = this.ctx;
     const loader = ctx.metadata;
@@ -147,9 +140,8 @@ class EventMetaDataCache {
   // Handles memoisation through the cache in `this.cache`.
   //
   /**
-   * @param {string} key
-   * @param {() => Promise<SeriesMetadata>} factory
-   * @returns {Promise<any>}
+   * @param key
+   * @param factory
    */
   async fromCacheOrProduce (key, factory) {
     const cache = this.cache;
@@ -177,9 +169,6 @@ class EventMetaDataCache {
 //  currently always return a map with one entry. This doesn't make the
 //  code harder to write; but it is more correct, since SOP.
 //
-/**
- * @returns {Promise<NamespacedBatchRequests>}
- */
 async function groupByNamespace (batchRequest, resolver) {
   const nsToBatch = new Map();
   for (const element of batchRequest.elements()) {

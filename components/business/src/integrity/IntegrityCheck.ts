@@ -34,8 +34,7 @@ class IntegrityCheck {
 
   /**
    * Run integrity check on a single user.
-   * @param {string} userId
-   * @returns {Promise<IntegrityReport>}
+   * @param userId
    */
   async checkUser (userId) {
     const report: any = {
@@ -59,8 +58,7 @@ class IntegrityCheck {
 
   /**
    * Run integrity check on all users.
-   * @param {Function} [onUserComplete] - callback(userId, report) after each user
-   * @returns {Promise<IntegrityReport[]>}
+   * @param [onUserComplete] - callback(userId, report) after each user
    */
   async checkAllUsers (onUserComplete) {
     const { getUsersLocalIndex } = require('storage');

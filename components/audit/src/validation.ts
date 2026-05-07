@@ -33,8 +33,8 @@ const filterSchema = helpers.object({
 });
 
 /**
- * @param {identifier} userId
- * @param {PryvEvent} event
+ * @param userId
+ * @param event
  */
 function eventForUser (userId, event) {
   // validate uiserid

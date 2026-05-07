@@ -11,8 +11,7 @@ const DataMatrix = require('./data_matrix').default;
 /**
  * Convert a timestamp (seconds) or ISO string to a quoted date string
  * for InfluxQL / series WHERE clauses.
- * @param {number|string} v - timestamp in seconds or ISO date string
- * @returns {string} e.g. "'2021-01-01 00:00:00.000000000'"
+ * @param v - timestamp in seconds or ISO date string
  */
 function timestampToDateString (v) {
   const date = new Date(typeof v === 'number' ? v * 1000 : v);

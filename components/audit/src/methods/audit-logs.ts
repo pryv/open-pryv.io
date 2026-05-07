@@ -31,9 +31,6 @@ export default function (api) {
     limitStreamQueryToAccessToken,
     getAuditLogs);
 };
-/**
- * @returns {void}
- */
 function anyStarStreamQueryIsNullQUery (context, params, result, next) {
   if (isStar(params.arrayOfStreamQueries)) {
     params.arrayOfStreamQueries = null;
@@ -41,7 +38,7 @@ function anyStarStreamQueryIsNullQUery (context, params, result, next) {
   next();
   /**
    * arrayOfStreamQueries === [{ any: ['*']}]
-   * @param {*} arrayOfStreamQueries
+   * @param arrayOfStreamQueries
    */
   function isStar (arrayOfStreamQueries) {
     return (params.arrayOfStreamQueries.length === 1 &&
@@ -51,7 +48,6 @@ function anyStarStreamQueryIsNullQUery (context, params, result, next) {
 }
 /**
  * Remove ':audit:' from stream query;
- * @returns {any}
  */
 function removeStoreIdFromStreamQuery (context, params, result, next) {
   if (params.arrayOfStreamQueries == null) { return next(); }
@@ -73,9 +69,6 @@ function removeStoreIdFromStreamQuery (context, params, result, next) {
   }
   next();
 }
-/**
- * @returns {any}
- */
 function limitStreamQueryToAccessToken (context, params, result, next) {
   if (context.access.isPersonal()) { return next(); }
   if (params.arrayOfStreamQueries == null) {
@@ -96,9 +89,6 @@ function limitStreamQueryToAccessToken (context, params, result, next) {
   next();
 }
 // From storage
-/**
- * @returns {Promise<any>}
- */
 async function getAuditLogs (context, params, result, next) {
   try {
     const userDB = await auditStorage.forUser(context.user.id);

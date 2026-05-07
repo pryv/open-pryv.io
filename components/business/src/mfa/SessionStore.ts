@@ -25,11 +25,11 @@ const Profile = require('./Profile').default;
  */
 class SessionStore {
   /**
-   * @param {number} ttlSeconds - session lifetime in seconds (default 1800)
-   * @param {Object} [opts]
-   * @param {Object} [opts.kvClient] - injectable; defaults to a fresh
+   * @param ttlSeconds - session lifetime in seconds (default 1800)
+   * @param [opts]
+   * @param [opts.kvClient] - injectable; defaults to a fresh
    *   `cluster_kv.clientFor()` over the live process IPC channel.
-   * @param {string} [opts.namespace='mfa-session/'] - key prefix in cluster_kv.
+   * @param [opts.namespace='mfa-session/'] - key prefix in cluster_kv.
    */
   ttlMilliseconds: number;
   kv: any;
@@ -45,9 +45,8 @@ class SessionStore {
   /**
    * Create a new session and return its mfaToken.
    *
-   * @param {Object} profile - the MFA profile (with content + recoveryCodes)
-   * @param {Object} context - opaque per-flow context (e.g. the resolved user, login params)
-   * @returns {Promise<string>} the mfaToken (UUID v4)
+   * @param profile - the MFA profile (with content + recoveryCodes)
+   * @param context - opaque per-flow context (e.g. the resolved user, login params)
    */
   async create (profile, context) {
     const id = uuidv4();
@@ -63,16 +62,14 @@ class SessionStore {
   }
 
   /**
-   * @param {string} id
-   * @returns {Promise<boolean>}
+   * @param id
    */
   async has (id) {
     return (await this.kv.get(this.namespace + id)) != null;
   }
 
   /**
-   * @param {string} id
-   * @returns {Promise<{id: string, profile: any, context: any}|undefined>}
+   * @param id
    */
   async get (id) {
     const session = await this.kv.get(this.namespace + id);
@@ -86,8 +83,7 @@ class SessionStore {
 
   /**
    * Clear a session immediately. Idempotent — safe to call on an unknown id.
-   * @param {string} id
-   * @returns {Promise<boolean>} true if a session was removed
+   * @param id
    */
   async clear (id) {
     const existed = (await this.kv.get(this.namespace + id)) != null;

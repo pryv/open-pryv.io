@@ -46,8 +46,8 @@ async function init () {
 
 /**
  * Return and **creates** the desired user path
- * @param {string} userId -- user id (cuid format)
- * @param {string} [extraPath] -- Optional, extra path
+ * @param userId -- user id (cuid format)
+ * @param [extraPath] -- Optional, extra path
  */
 async function ensureUserDirectory (userId, extraPath = '') {
   const resultPath = getPathForUser(userId, extraPath);
@@ -57,8 +57,8 @@ async function ensureUserDirectory (userId, extraPath = '') {
 
 /**
  * Return the local storage for this user. (does not create it)
- * @param {string} userId -- user id (cuid format)
- * @param {string} [extraPath] -- Optional, extra path
+ * @param userId -- user id (cuid format)
+ * @param [extraPath] -- Optional, extra path
  */
 function getPathForUser (userId, extraPath = '') {
   if (basePath == null) {
@@ -77,7 +77,7 @@ function getPathForUser (userId, extraPath = '') {
 /**
  * Delete user data folder
  *
- * @param {*} userId -- user id
+ * @param userId -- user id
  */
 async function deleteUserDirectory (userId) {
   const userFolder = getPathForUser(userId);

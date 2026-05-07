@@ -177,10 +177,10 @@ export default async function produceAccessesApiMethods (api) {
 
   /**
    * If user is creating an access for system streams, apply some validations
-   * @param {*} context
-   * @param {*} params
-   * @param {*} result
-   * @param {*} next
+   * @param context
+   * @param params
+   * @param result
+   * @param next
    */
   function applyAccountStreamsValidation (context, params, result, next) {
     if (params.permissions == null) { return next(); }

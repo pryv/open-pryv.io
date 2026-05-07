@@ -40,15 +40,15 @@ async function init () {
     getPasswordExpirationAndChangeTimes,
     /**
      * TODO: merge with verification of current password once passwords are entirely within user account storage
-     * @param {String} userId
+     * @param userId
      * @throws {APIError} If the password does not follow the configured rules
      */
     async checkCurrentPasswordAge (userId) {
       await checkMinimumAge(userId);
     },
     /**
-     * @param {String} userId Optional; if set, will check the user's password history
-     * @param {String} password
+     * @param userId Optional; if set, will check the user's password history
+     * @param password
      * @throws {APIError} If the password does not follow the configured rules
      */
     async checkNewPassword (userId, password) {
@@ -61,10 +61,7 @@ async function init () {
   };
 
   /**
-   * @param {String} userId
-   * @returns {Object} times
-   * @returns {number} times.passwordExpires `undefined` if "max age" setting is disabled
-   * @returns {number} times.passwordCanBeChanged `undefined` if "min age" setting is disabled
+   * @param userId
    */
   async function getPasswordExpirationAndChangeTimes (userId) {
     const maxDays = settings().passwordAgeMaxDays;

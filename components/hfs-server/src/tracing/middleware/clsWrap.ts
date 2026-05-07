@@ -11,17 +11,13 @@ const require = createRequire(import.meta.url);
 // context for each express request.
 const cls = require('../cls').default;
 /**
- * @param {express$Request} req
- * @param {express$Response} res
- * @param {express$NextFunction} next
- * @returns {any}
+ * @param req
+ * @param res
+ * @param next
  */
 function clsWrap (req, res, next) {
   return cls.startExpressContext(req, res, next);
 }
-/**
- * @returns {any}
- */
 function factory () {
   return clsWrap;
 }

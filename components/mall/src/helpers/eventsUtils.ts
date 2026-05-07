@@ -12,9 +12,6 @@ const Transform = require('stream').Transform;
 const storeDataUtils = require('./storeDataUtils');
 const errorFactory = require('errors').factory;
 // ------------  Duration -----------//
-/**
- * @returns {any}
- */
 function durationToStoreEndTime (eventData) {
   if (eventData.time == null) {
     delete eventData.duration;
@@ -34,9 +31,6 @@ function durationToStoreEndTime (eventData) {
   delete eventData.duration;
   return eventData;
 }
-/**
- * @returns {any}
- */
 function endTimeFromStoreToDuration (eventData) {
   if (eventData.time == null) {
     delete eventData.endTime;
@@ -59,24 +53,15 @@ function endTimeFromStoreToDuration (eventData) {
   return eventData;
 }
 // state
-/**
- * @returns {any}
- */
 function stateToStore (eventData) {
   eventData.trashed = eventData.trashed === true;
   return eventData;
 }
-/**
- * @returns {any}
- */
 function stateFromStore (eventData) {
   if (eventData.trashed !== true) { delete eventData.trashed; }
   return eventData;
 }
 // ---------  deletion ------ //
-/**
- * @returns {any}
- */
 function deletionToStore (eventData) {
   if (eventData.deleted === undefined) {
     // undefined => null
@@ -84,9 +69,6 @@ function deletionToStore (eventData) {
   }
   return eventData;
 }
-/**
- * @returns {any}
- */
 function deletionFromStore (eventData) {
   if (eventData == null) {
     return eventData;
@@ -116,7 +98,6 @@ const ALL_FIELDS = [
 ];
 /**
  * set to null all undefined fields
- * @returns {any}
  */
 function nullifyToStore (eventData) {
   for (const field of ALL_FIELDS) {
@@ -126,9 +107,6 @@ function nullifyToStore (eventData) {
   }
   return eventData;
 }
-/**
- * @returns {any}
- */
 function nullifyFromStore (eventData) {
   for (const field of ALL_FIELDS) {
     if (eventData[field] === null && field !== 'endTime') {
@@ -138,9 +116,6 @@ function nullifyFromStore (eventData) {
   return eventData;
 }
 // ------------ storeId ------------- //
-/**
- * @returns {any}
- */
 function removeStoreIds (storeId, eventData) {
   const original = structuredClone(eventData);
   const [eventStoreId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.id);
@@ -171,9 +146,6 @@ function removeStoreIds (storeId, eventData) {
   }
   return eventData;
 }
-/**
- * @returns {any}
- */
 function addStoreId (storeId, eventData) {
   eventData.id = storeDataUtils.getFullItemId(storeId, eventData.id);
   if (eventData.streamIds) {
@@ -181,9 +153,6 @@ function addStoreId (storeId, eventData) {
   }
   return eventData;
 }
-/**
- * @returns {any}
- */
 function removeEmptyAttachments (eventData) {
   if (eventData?.attachments != null && eventData.attachments.length === 0) {
     delete eventData.attachments;
@@ -191,9 +160,6 @@ function removeEmptyAttachments (eventData) {
   return eventData;
 }
 // ------------- pack ----------------//
-/**
- * @returns {any}
- */
 function convertEventToStore (storeId, eventData) {
   const event = structuredClone(eventData);
   if (storeId === storeDataUtils.AccountStoreId) {
@@ -210,9 +176,6 @@ function convertEventToStore (storeId, eventData) {
   nullifyToStore(event);
   return event;
 }
-/**
- * @returns {any}
- */
 function convertEventFromStore (storeId, eventData) {
   const event = structuredClone(eventData);
   endTimeFromStoreToDuration(event);

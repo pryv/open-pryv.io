@@ -50,10 +50,9 @@ const TAG_BYTES = 16;
  * label. The purpose lets one source key feed multiple independent
  * schedules (e.g. one for TLS certs, one for future uses).
  *
- * @param {Buffer|string} source - source material (e.g. CA private key DER bytes)
- * @param {string} purpose       - label, e.g. 'pryv-at-rest-tls-v1'
- * @param {Buffer} [salt]        - optional salt; default: empty (acceptable because source has entropy)
- * @returns {Buffer} 32 bytes
+ * @param source - source material (e.g. CA private key DER bytes)
+ * @param purpose       - label, e.g. 'pryv-at-rest-tls-v1'
+ * @param [salt]        - optional salt; default: empty (acceptable because source has entropy)
  */
 function deriveKey (source, purpose, salt = Buffer.alloc(0)) {
   if (source == null || (Buffer.isBuffer(source) && source.length === 0) ||
@@ -72,9 +71,8 @@ function deriveKey (source, purpose, salt = Buffer.alloc(0)) {
  * Encrypt a plaintext string or Buffer with a 32-byte key. Returns a
  * base64-encoded envelope safe to store in a JSON field.
  *
- * @param {string|Buffer} plaintext
- * @param {Buffer} key - 32 bytes
- * @returns {string}
+ * @param plaintext
+ * @param key - 32 bytes
  */
 function encrypt (plaintext, key) {
   if (plaintext == null) {
@@ -96,9 +94,8 @@ function encrypt (plaintext, key) {
  * Decrypt a base64 envelope produced by encrypt(). Throws on tamper,
  * wrong key, or unknown envelope version.
  *
- * @param {string} encoded
- * @param {Buffer} key - 32 bytes
- * @returns {Buffer} plaintext bytes (caller decides how to interpret)
+ * @param encoded
+ * @param key - 32 bytes
  */
 function decrypt (encoded, key) {
   if (typeof encoded !== 'string' || encoded.length === 0) {

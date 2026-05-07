@@ -29,9 +29,8 @@ class DBrqlite {
 
   /**
    * Execute a write statement (INSERT, UPDATE, DELETE, CREATE).
-   * @param {string} sql
-   * @param {Array} [params]
-   * @returns {Promise<Object>} rqlite result
+   * @param sql
+   * @param [params]
    */
   async execute (sql: string, params?: any[]): Promise<any> {
     const body = params ? [[sql, ...params]] : [[sql]];
@@ -52,9 +51,8 @@ class DBrqlite {
 
   /**
    * Execute a read query (SELECT).
-   * @param {string} sql
-   * @param {Array} [params]
-   * @returns {Promise<Array>} rows as objects
+   * @param sql
+   * @param [params]
    */
   async query (sql: string, params?: any[]): Promise<any[]> {
     const body = params ? [[sql, ...params]] : [[sql]];

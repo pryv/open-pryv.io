@@ -13,10 +13,9 @@ const errors = require('errors').factory;
  * body content by sending them as fields in urlencoded requests. Does not
  * perform request body parsing (expects req.body to exist), so must be executed
  * after e.g. bodyParser middleware.
- * @param {RequestWithOriginalMethodAndBody} req
- * @param {express$Response} res
- * @param {express$NextFunction} next
- * @returns {any}
+ * @param req
+ * @param res
+ * @param next
  */
 function normalizeRequest (req, res, next) {
   if (!req.is('application/x-www-form-urlencoded')) {

@@ -29,8 +29,7 @@ import type {} from 'node:fs';
  * When none of the four apply, throws — the operator must fix their
  * topology config, not invent a hostname list.
  *
- * @param {Object} config - thing with `.get(key)` (e.g. @pryv/boiler)
- * @returns {{ commonName: string, altNames: string[], challenge: 'http-01'|'dns-01' }}
+ * @param config - thing with `.get(key)` (e.g. @pryv/boiler)
  */
 function deriveHostnames (config) {
   const dnsLessActive = config.get('dnsLess:isActive');

@@ -23,9 +23,8 @@ export { Accesses };
 /**
  * DB persistence for accesses.
  *
- * @param {Database} database
- * @param {Object} integrityAccesses - { isActive, set } from business/integrity
- * @constructor
+ * @param database
+ * @param integrityAccesses - { isActive, set } from business/integrity
  */
 function Accesses (database, integrityAccesses) {
   (Accesses as any).super_.call(this, database);
@@ -136,7 +135,6 @@ Accesses.prototype.delete = function (userOrUserId, query, callback) {
 /**
  * Exposed for convenience.
  *
- * @returns {String}
  */
 Accesses.prototype.generateToken = function () {
   return generateId();
@@ -192,10 +190,10 @@ Accesses.prototype.insertMany = function (userOrUserId, accesses, callback) {
 /**
  * - Allways unset 'integrity' of updated events by modifiying update query
  * - If integrity is active for event returns a callBack to be exectued at after the update
- * @param {Accesses} accessesStore
- * @param {User | userId} userOrUserId
- * @param {Object} upddate -- the update query to be modified
- * @param {*} callback
+ * @param accessesStore
+ * @param userOrUserId
+ * @param upddate -- the update query to be modified
+ * @param callback
  * @returns either the original callback or a process to reset events' integrity
  */
 function getResetIntegrity (accessesStore, userOrUserId, update, callback) {

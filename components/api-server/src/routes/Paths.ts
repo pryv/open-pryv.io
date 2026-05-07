@@ -56,16 +56,12 @@ export {
 };
 
 /**
- * @param {Array<string>} a
- * @returns {string}
+ * @param a
  */
 function makePath (...a) {
   a.unshift('/');
   return path.join(...a);
 }
-/**
- * @returns {string}
- */
 function param (name) {
   return ':' + name;
 }

@@ -31,9 +31,6 @@ class Server {
   httpsServer: any;
   isAuditActive: boolean;
 
-  /**
-   * @returns {Promise<void>}
-   */
   async start () {
     this.logger = getLogger('server');
     this.logger.debug('start initiated');
@@ -92,9 +89,6 @@ class Server {
     this.logger.debug('start completed');
   }
 
-  /**
-   * @returns {string}
-   */
   findDefaultParam () {
     const DEFAULT_VALUES = ['REPLACE_ME'];
     if (DEFAULT_VALUES.includes(this.config.get('auth:adminAccessKey'))) { return 'auth:adminAccessKey'; }
@@ -103,7 +97,6 @@ class Server {
 
   /**
    * Requires and registers all API methods.
-   * @returns {Promise<void>}
    */
   async registerApiMethods () {
     await require('./methods/system').default(app.systemAPI, app.api);
@@ -127,8 +120,7 @@ class Server {
   }
 
   /**
-   * @param {http.Server} server
-   * @returns {Promise<void>}
+   * @param server
    */
   async setupSocketIO (server) {
     const api = app.api;
@@ -140,8 +132,7 @@ class Server {
 
   /**
    * Open http port and listen to incoming connections.
-   * @param {http.Server} server
-   * @returns {Promise<void>}
+   * @param server
    */
   async startListen (server, info: any = {}) {
     const config = this.config;
@@ -202,7 +193,6 @@ class Server {
 
   /**
    * Sets up `Notifications` bus and registers it for everyone to consume.
-   * @returns {Promise<void>}
    */
   async setupTestsNotificationBus () {
     const testNotifier = await testMessaging.getTestNotifier();
@@ -212,7 +202,6 @@ class Server {
   /**
    * Starts the webhooks service in-process, eliminating the need for a
    * separate webhooks container/process.
-   * @returns {Promise<void>}
    */
   async startWebhooksService () {
     const config = this.config;
@@ -228,9 +217,6 @@ class Server {
     this.logger.info('Webhooks service started in-process');
   }
 
-  /**
-   * @returns {Promise<Number>}
-   */
   async getUserCount () {
     let numUsers;
     try {

@@ -17,7 +17,6 @@ const MAX_WAIT_MS = 100;
  * Stream that encapsulates the items it receives in a stringified array.
  *
  * @param arrayName {String} array name that will prefix the array
- * @constructor
  */
 class ArraySerializationStream extends Transform {
   constructor (arrayName) {

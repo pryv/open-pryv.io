@@ -32,7 +32,6 @@ class Server {
   baseUrl;
   /**
    * http server object
-   * @type {http.Server}
    */
   server;
   // Logger used here.
@@ -54,7 +53,6 @@ class Server {
   /**
    * Starts the HTTP server.
    *
-   * @return {Promise<true>} A promise that will resolve once the server is
     started and accepts connections.
    */
   async start () {
@@ -85,7 +83,6 @@ class Server {
   /**
    * Stops a running server instance.
    *
-   * @return {Promise<true>} A promise that will resolve once the server has
     stopped.
    */
   async stop () {
@@ -99,7 +96,6 @@ class Server {
    * Sets up the express application, injecting middleware and configuring the
    * instance.
    *
-   * @return {Promise<any>} express application.
    */
   async setupExpress () {
     const logger = this.logger;

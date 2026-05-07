@@ -34,11 +34,10 @@ class Deletion {
    * Authorization check order:
    * 1- is a valid admin token
    * 2- is a valid personalToken
-   * @param {MethodContext} context
-   * @param {unknown} params
-   * @param {Result} result
-   * @param {ApiCallback} next
-   * @returns {any}
+   * @param context
+   * @param params
+   * @param result
+   * @param next
    */
   checkIfAuthorized (context, params, result, next) {
     const canDelete = this.config.get('user-account:delete');
@@ -60,11 +59,10 @@ class Deletion {
   }
 
   /**
-   * @param {MethodContext} context
-   * @param {unknown} params
-   * @param {Result} result
-   * @param {ApiCallback} next
-   * @returns {Promise<any>}
+   * @param context
+   * @param params
+   * @param result
+   * @param next
    */
   async validateUserExists (context, params, result, next) {
     const usersRepository = await getUsersRepository();
@@ -78,11 +76,10 @@ class Deletion {
   }
 
   /**
-   * @param {MethodContext} context
-   * @param {unknown} params
-   * @param {Result} result
-   * @param {ApiCallback} next
-   * @returns {Promise<any>}
+   * @param context
+   * @param params
+   * @param result
+   * @param next
    */
   async validateUserFilepaths (context, params, result, next) {
     const dirPaths = [
@@ -103,11 +100,10 @@ class Deletion {
   }
 
   /**
-   * @param {MethodContext} context
-   * @param {unknown} params
-   * @param {Result} result
-   * @param {ApiCallback} next
-   * @returns {Promise<void>}
+   * @param context
+   * @param params
+   * @param result
+   * @param next
    */
   async deleteUserFiles (context, params, result, next) {
     const dirPaths = [
@@ -120,11 +116,10 @@ class Deletion {
   }
 
   /**
-   * @param {MethodContext} context
-   * @param {unknown} params
-   * @param {Result} result
-   * @param {ApiCallback} next
-   * @returns {Promise<any>}
+   * @param context
+   * @param params
+   * @param result
+   * @param next
    */
   async deleteHFData (context, params, result, next) {
     const conn = require('storages').seriesConnection;
@@ -135,11 +130,10 @@ class Deletion {
   }
 
   /**
-   * @param {MethodContext} context
-   * @param {unknown} params
-   * @param {Result} result
-   * @param {ApiCallback} next
-   * @returns {Promise<any>}
+   * @param context
+   * @param params
+   * @param result
+   * @param next
    */
   async deleteAuditData (context, params, result, next) {
     const deleteUserDirectory = require('storage').userLocalDirectory.deleteUserDirectory;
@@ -148,11 +142,10 @@ class Deletion {
   }
 
   /**
-   * @param {MethodContext} context
-   * @param {unknown} params
-   * @param {Result} result
-   * @param {ApiCallback} next
-   * @returns {Promise<any>}
+   * @param context
+   * @param params
+   * @param result
+   * @param next
    */
   async deleteUser (context, params, result, next) {
     try {
@@ -177,8 +170,7 @@ class Deletion {
 }
 
 /**
- * @param {Array<string>} paths
- * @returns {string}
+ * @param paths
  */
 function findNotAccessibleDir (paths) {
   let notAccessibleDir = '';

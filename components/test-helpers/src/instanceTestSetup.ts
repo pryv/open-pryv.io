@@ -15,8 +15,8 @@ export { set, clear, execute };
 const logger = require('@pryv/boiler').getLogger('instance-test-setup');
 
 /**
- * @param {Object} settings The main configuration settings
- * @param {Object} setup Must have method `execute()` and be self-contained (i.e. no reference
+ * @param settings The main configuration settings
+ * @param setup Must have method `execute()` and be self-contained (i.e. no reference
  *                       to outside scope, except for possible module dependencies e.g. mocking
  *                       lib which must then be declared in the current module's package).
  *                       Possible context must be passed via property `context`.
@@ -52,9 +52,6 @@ function execute (testSetup, testNotifier) {
   }
 }
 
-/**
- * @returns {string}
- */
 function stringify (obj) {
   return JSON.stringify(obj, function (key, value) {
     // stringify functions with their source, converting CRLF.
@@ -68,9 +65,6 @@ function stringify (obj) {
   });
 }
 
-/**
- * @returns {any}
- */
 function parse (str) {
   try {
     return JSON.parse(str, function (key, value) {

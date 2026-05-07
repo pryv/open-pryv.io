@@ -76,8 +76,7 @@ class MethodContext {
   /**
    * Extracts access token and optional caller id from the given auth string,
    * assigning to `this.accessToken` and `this.callerId`.
-   * @param {string} auth
-   * @returns {void}
+   * @param auth
    */
   parseAuth (auth) {
     this.accessToken = auth;
@@ -94,7 +93,6 @@ class MethodContext {
 
   /**
    * Load the userId and mall
-   * @returns {Promise<void>}
    */
   async init () {
     this.mall = await getMall();
@@ -108,7 +106,6 @@ class MethodContext {
 
   /**
    * Retrieve the userBusiness
-   * @returns {Promise<any>}
    */
   async retrieveUser () {
     this.mall = await getMall();
@@ -133,8 +130,7 @@ class MethodContext {
    * This function throws/rejects for various reasons; but it will always throw
    * a subclass of APIError.
    *
-   * @param {StorageLayer} storage
-   * @returns {Promise<void>}
+   * @param storage
    */
   async retrieveExpandedAccess (storage) {
     try {
@@ -160,8 +156,7 @@ class MethodContext {
 
   /**
    * Generic retrieve access
-   * @param {StorageLayer} storage
-   * @returns {Promise<void>}
+   * @param storage
    */
   async _retrieveAccess (storage, query) {
     const access = await fromCallback((cb) => storage.accesses.findOne(this.user, query, null, cb));
@@ -172,8 +167,7 @@ class MethodContext {
 
   /**
    * Internal: Loads `this.access`.
-   * @param {StorageLayer} storage
-   * @returns {Promise<void>}
+   * @param storage
    */
   async retrieveAccessFromToken (storage) {
     const token = this.accessToken;
@@ -196,8 +190,7 @@ class MethodContext {
    *
    * Returns nothing but throws if an error is detected.
    *
-   * @param {Access} access
-   * @returns {void}
+   * @param access
    */
   checkAccessValid (access) {
     const now = timestamp.now();
@@ -207,9 +200,8 @@ class MethodContext {
   /**
    * Loads an access by id or throw an error. On success, assigns to
    * `this.access` and `this.accessToken`.
-   * @param {StorageLayer} storage
-   * @param {string} accessId
-   * @returns {Promise<any>}
+   * @param storage
+   * @param accessId
    */
   async retrieveAccessFromId (storage, accessId) {
     this.access = cache.getAccessLogicForId(this.user.id, accessId);
@@ -223,8 +215,7 @@ class MethodContext {
 
   /**
    * Loads session and touches it (personal sessions only)
-   * @param {StorageLayer} storage
-   * @returns {Promise<void>}
+   * @param storage
    */
   async checkSessionValid (storage) {
     const access = this.access;
@@ -242,8 +233,7 @@ class MethodContext {
 
   /**
    * Perform custom auth step `customAuthStep`. Errors are caught and rethrown.
-   * @param {CustomAuthFunction} customAuthStep
-   * @returns {Promise<void>}
+   * @param customAuthStep
    */
   performCustomAuthStep (customAuthStep) {
     return new Promise<void>((resolve, reject) => {
@@ -262,18 +252,16 @@ class MethodContext {
 
   /**
    * Get a Stream for StreamId
-   * @param {string} streamId  undefined
-   * @param {string} storeId  - If storeId is null streamId should be fully scoped
-   * @returns {Promise<any>}
+   * @param streamId  undefined
+   * @param storeId  - If storeId is null streamId should be fully scoped
    */
   async streamForStreamId (streamId, storeId) {
     return await this.mall.streams.getOneWithNoChildren(this.user.id, streamId, storeId);
   }
 
   /**
-   * @param {any} item
-   * @param {string | null} authorOverride
-   * @returns {any}
+   * @param item
+   * @param authorOverride
    */
   initTrackingProperties (item, authorOverride) {
     item.created = timestamp.now();
@@ -282,9 +270,8 @@ class MethodContext {
   }
 
   /**
-   * @param {any} updatedData
-   * @param {string | null} authorOverride
-   * @returns {any}
+   * @param updatedData
+   * @param authorOverride
    */
   updateTrackingProperties (updatedData, authorOverride) {
     updatedData.modified = timestamp.now();
@@ -294,7 +281,6 @@ class MethodContext {
 
   /**
    * Returns the authorId, formed by the access id and the callerId.
-   * @returns {string}
    */
   getTrackingAuthorId () {
     const access = this.access;

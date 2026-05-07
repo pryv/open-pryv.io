@@ -65,9 +65,6 @@ class Database {
   databaseName;
   options;
 
-  /**
-   * @type {boolean}
-   */
   connecting;
   db;
   client;
@@ -99,7 +96,6 @@ class Database {
 
   /**
    * Waits until DB engine is up. For use at startup.
-   * @returns {Promise<void>}
    */
   async waitForConnection () {
     let connected = false;
@@ -117,7 +113,6 @@ class Database {
 
   /**
    * @private
-   * @returns {Promise<void>}
    */
   async ensureConnect () {
     while (this.connecting) {
@@ -147,9 +142,6 @@ class Database {
     }
   }
 
-  /**
-   * @returns {any}
-   */
   addUserIdToIndexIfNeeded (collectionInfo) {
     // force all indexes to have userId -- ! Order is important
     if (collectionInfo.useUserId) {
@@ -173,8 +165,7 @@ class Database {
 
   /**
    * @protected
-   * @param {CollectionInfo} collectionInfo
-   * @returns {Promise<any>}
+   * @param collectionInfo
    */
   async getCollection (collectionInfo) {
     await this.ensureConnect();
@@ -190,8 +181,7 @@ class Database {
 
   /**
    * @private
-   * @param {Collection} collection
-   * @returns {Promise<void>}
+   * @param collection
    */
   async ensureIndexes (collection, indexes) {
     const initializedCollections = this.initializedCollections;
@@ -223,10 +213,9 @@ class Database {
   //    }
   //
   /**
-   * @param {CollectionInfo} collectionInfo
-   * @param {DatabaseCallback} errCallback
-   * @param {CollectionCallback} collCallback
-   * @returns {void}
+   * @param collectionInfo
+   * @param errCallback
+   * @param collCallback
    */
   getCollectionSafe (collectionInfo, errCallback, collCallback) {
     this.getCollection(collectionInfo).then(collCallback, errCallback);
@@ -234,9 +223,8 @@ class Database {
 
   /**
    * Counts all documents in the collection.
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {DatabaseCallback} callback  undefined
-   * @returns {void}
+   * @param collectionInfo  undefined
+   * @param callback  undefined
    */
   countAll (collectionInfo, callback) {
     if (collectionInfo.name === 'streams') {
@@ -255,9 +243,8 @@ class Database {
   /**
    * Add User Id to Object or To all Items of an Array
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {Object|Array} mixed
-   * @returns {void}
+   * @param collectionInfo  undefined
+   * @param mixed
    */
   addUserIdIfneed (collectionInfo, mixed) {
     if (collectionInfo.useUserId) {
@@ -278,10 +265,9 @@ class Database {
   /**
    * Counts documents matching the given query.
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {{}} query  undefined
-   * @param {DatabaseCallback} callback  undefined
-   * @returns {void}
+   * @param collectionInfo  undefined
+   * @param query  undefined
+   * @param callback  undefined
    */
   count (collectionInfo, query, callback) {
     if (collectionInfo.name === 'streams') {
@@ -298,15 +284,14 @@ class Database {
   /**
    * Finds all documents matching the given query.
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {{}} query  Mongo-style query
-   * @param {FindOptions} options  Properties:
+   * @param collectionInfo  undefined
+   * @param query  Mongo-style query
+   * @param options  Properties:
    * {Object} projection Mongo-style fields inclusion/exclusion definition
    * {Object} sort Mongo-style sorting definition
    * {Number} skip Number of records to skip (or `null`)
    * {Number} limit Number of records to return (or `null`)
-   * @param {DatabaseCallback} callback  undefined
-   * @returns {void}
+   * @param callback  undefined
    */
   findCursor (collectionInfo, query, options, callback) {
     if (collectionInfo.name === 'streams') {
@@ -333,15 +318,14 @@ class Database {
   /**
    * Finds all documents matching the given query.
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {{}} query  Mongo-style query
-   * @param {FindOptions} options  Properties:
+   * @param collectionInfo  undefined
+   * @param query  Mongo-style query
+   * @param options  Properties:
    * {Object} projection Mongo-style fields inclusion/exclusion definition
    * {Object} sort Mongo-style sorting definition
    * {Number} skip Number of records to skip (or `null`)
    * {Number} limit Number of records to return (or `null`)
-   * @param {DatabaseCallback} callback  undefined
-   * @returns {void}
+   * @param callback  undefined
    */
   find (collectionInfo, query, options, callback) {
     this.findCursor(collectionInfo, query, options, (err, cursor) => {
@@ -353,24 +337,22 @@ class Database {
   /**
    * Finds all documents matching the given query and returns a readable stream.
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {{}} query  Mongo-style query
-   * @param {FindOptions} options  Properties:
+   * @param collectionInfo  undefined
+   * @param query  Mongo-style query
+   * @param options  Properties:
    * {Object} projection Mongo-style fields inclusion/exclusion definition
    * {Object} sort Mongo-style sorting definition
    * {Number} skip Number of records to skip (or `null`)
    * {Number} limit Number of records to return (or `null`)
-   * @param {DatabaseCallback} callback  undefined
-   * @returns {void}
+   * @param callback  undefined
    */
   /**
    * Finds the first document matching the given query.
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {any} query  Mongo-style query
-   * @param {FindOptions} options  Mongo-style options
-   * @param {DatabaseCallback} callback  undefined
-   * @returns {void}
+   * @param collectionInfo  undefined
+   * @param query  Mongo-style query
+   * @param options  Mongo-style options
+   * @param callback  undefined
    */
   findOne (collectionInfo, query, options, callback) {
     if (collectionInfo.name === 'streams') {
@@ -387,11 +369,10 @@ class Database {
   /**
    * Inserts a single item (must have a valid id).
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {any} item  undefined
-   * @param {DatabaseCallback} callback  undefined
-   * @param {any} options
-   * @returns {void}
+   * @param collectionInfo  undefined
+   * @param item  undefined
+   * @param callback  undefined
+   * @param options
    */
   insertOne (collectionInfo, item, callback, options = {}) {
     if (collectionInfo.name === 'streams') {
@@ -407,11 +388,10 @@ class Database {
 
   /**
    * Inserts an array of items (each item must have a valid id already).
-   * @param {CollectionInfo} collectionInfo
-   * @param {Array<any>} items
-   * @param {DatabaseCallback} callback
-   * @param {any} options
-   * @returns {void}
+   * @param collectionInfo
+   * @param items
+   * @param callback
+   * @param options
    */
   insertMany (collectionInfo, items, callback, options = {}) {
     if (collectionInfo.name === 'streams') {
@@ -429,12 +409,11 @@ class Database {
    * Applies the given update to the document matching the given query.
    * Does *not* return the document.
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {any} query  undefined
-   * @param {any} update  undefined
-   * @param {DatabaseCallback} callback  undefined
-   * @param {any} options
-   * @returns {void}
+   * @param collectionInfo  undefined
+   * @param query  undefined
+   * @param update  undefined
+   * @param callback  undefined
+   * @param options
    */
   updateOne (collectionInfo, query, update, callback, options = {}) {
     if (collectionInfo.name === 'streams') {
@@ -452,11 +431,10 @@ class Database {
    * Applies the given update to the document(s) matching the given query.
    * Does *not* return the document(s).
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {any} query  undefined
-   * @param {any} update  undefined
-   * @param {DatabaseCallback} callback  undefined
-   * @returns {void}
+   * @param collectionInfo  undefined
+   * @param query  undefined
+   * @param update  undefined
+   * @param callback  undefined
    */
   updateMany (collectionInfo, query, update, callback) {
     if (collectionInfo.name === 'streams') {
@@ -472,9 +450,8 @@ class Database {
 
   /**
    * Execute N requests directly on the DB
-   * @param {CollectionInfo} collectionInfo
-   * @param {Array<any>} requests
-   * @returns {Promise<any>}
+   * @param collectionInfo
+   * @param requests
    */
   async bulkWrite (collectionInfo, requests) {
     const collection = await this.getCollection(collectionInfo);
@@ -485,11 +462,10 @@ class Database {
    * Applies the given update to the document matching the given query, returning the updated
    * document.
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {any} query  undefined
-   * @param {any} update  undefined
-   * @param {DatabaseCallback} callback  undefined
-   * @returns {void}
+   * @param collectionInfo  undefined
+   * @param query  undefined
+   * @param update  undefined
+   * @param callback  undefined
    */
   findOneAndUpdate (collectionInfo, query, update, callback) {
     if (collectionInfo.name === 'streams') { tellMeIfStackDoesNotContains(['localUserStreams.js', 'callbackIntegrity'], { for: collectionInfo.name }); }
@@ -509,11 +485,10 @@ class Database {
   /**
    * Inserts or update the document matching the query.
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {any} query  undefined
-   * @param {any} update  undefined
-   * @param {DatabaseCallback} callback  undefined
-   * @returns {void}
+   * @param collectionInfo  undefined
+   * @param query  undefined
+   * @param update  undefined
+   * @param callback  undefined
    */
   upsertOne (collectionInfo, query, update, callback) {
     if (collectionInfo.name === 'streams') {
@@ -530,10 +505,9 @@ class Database {
   /**
    * Deletes the document matching the given query.
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {any} query  undefined
-   * @param {DatabaseCallback} callback  undefined
-   * @returns {void}
+   * @param collectionInfo  undefined
+   * @param query  undefined
+   * @param callback  undefined
    */
   deleteOne (collectionInfo, query, callback) {
     if (collectionInfo.name === 'streams') {
@@ -550,10 +524,9 @@ class Database {
   /**
    * Deletes the document(s) matching the given query.
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {any} query  undefined
-   * @param {DatabaseCallback} callback  undefined
-   * @returns {void}
+   * @param collectionInfo  undefined
+   * @param query  undefined
+   * @param callback  undefined
    */
   deleteMany (collectionInfo, query, callback) {
     if (collectionInfo.name === 'streams') {
@@ -568,9 +541,8 @@ class Database {
   }
 
   /**
-   * @param {DatabaseCallback} callback  *
-   * @param {CollectionInfo} collectionInfo
-   * @returns {void}
+   * @param callback  *
+   * @param collectionInfo
    */
   dropCollection (collectionInfo, callback) {
     if (collectionInfo.name === 'streams') {
@@ -590,9 +562,8 @@ class Database {
   /**
    * Drops the actual MongoDB collection (including indexes).
    * Primarily for tests when indexes need to be recreated.
-   * @param {CollectionInfo} collectionInfo
-   * @param {DatabaseCallback} callback
-   * @returns {void}
+   * @param collectionInfo
+   * @param callback
    */
   async dropCollectionFully (collectionInfo, callback) {
     try {
@@ -618,8 +589,7 @@ class Database {
   /**
    * Primarily meant for tests.
    *
-   * @param {DatabaseCallback} callback  undefined
-   * @returns {void}
+   * @param callback  undefined
    */
   dropDatabase (callback) {
     this.ensureConnect().then(() => {
@@ -630,10 +600,9 @@ class Database {
   /**
    * Primarily meant for tests
    *
-   * @param {CollectionInfo} collectionInfo  undefined
-   * @param {{}} options  undefined
-   * @param {DatabaseCallback} callback  undefined
-   * @returns {void}
+   * @param collectionInfo  undefined
+   * @param options  undefined
+   * @param callback  undefined
    */
   listIndexes (collectionInfo, options, callback) {
     this.getCollectionSafe(collectionInfo, callback, (collection) => {
@@ -680,16 +649,10 @@ class Database {
   /// Closes this database connection. After calling this, all other methods
   /// will produce undefined behaviour.
   ///
-  /**
-   * @returns {Promise<any>}
-   */
   async close () {
     return this.client.close();
   }
 
-  /**
-   * @returns {Promise<any>}
-   */
   async startSession () {
     const session = this.client.startSession();
     return session;
@@ -742,9 +705,6 @@ export { Database };
  * }} FindOptions
  */
 
-/**
- * @returns {string}
- */
 function getAuthPart (settings) {
   const authUser = settings.authUser;
   let authPart = '';
@@ -762,9 +722,6 @@ function getAuthPart (settings) {
   return authPart;
 }
 
-/**
- * @returns {boolean}
- */
 function tellMeIfStackDoesNotContains (needles, info) {
   const e = new Error();
   const stack = e.stack

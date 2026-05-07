@@ -39,9 +39,6 @@ const utils = require('utils');
 const { testMessaging } = require('messages');
 const accountStreams = require('business/src/system-streams');
 const ExtensionLoader = utils.extension.ExtensionLoader;
-/**
- * @returns {any}
- */
 function loadCustomAuthStepFn (customExtensions) {
   const defaultFolder = customExtensions.defaultFolder;
   const customAuthStepFnPath = customExtensions.customAuthStepFn;
@@ -49,9 +46,6 @@ function loadCustomAuthStepFn (customExtensions) {
   if (customAuthStepFnPath != null && customAuthStepFnPath !== '') { return loader.loadFrom(customAuthStepFnPath); }
   return loader.load('customAuthStepFn');
 }
-/**
- * @returns {Promise<void>}
- */
 async function start () {
   /**
    * Runs the server.

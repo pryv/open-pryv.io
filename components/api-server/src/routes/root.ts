@@ -19,9 +19,8 @@ const { setMethodId } = require('middleware');
 // Handlers for path roots at various places; handler for batch calls and
 // access-info.
 /**
- * @param {express$Application} expressApp
- * @param {Application} app
- * @returns {void}
+ * @param expressApp
+ * @param app
  */
 function root (expressApp, app) {
   const api = app.api;
@@ -66,8 +65,7 @@ export { root };
 // of roots ('/', 'foo.pryv.me/')
 //
 /**
- * @param {express$Request} req
- * @returns {void}
+ * @param req
  */
 function rootIndex (req, res) {
   const devSiteURL = 'https://pryv.github.io/';

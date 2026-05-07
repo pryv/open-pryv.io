@@ -31,10 +31,9 @@ import type {} from 'node:fs';
 const VALID_REASONS = new Set(['unknown', 'expired', 'already-consumed', 'invalid-format']);
 
 /**
- * @param {Object} deps
- * @param {Object} deps.tokenStore - business/src/bootstrap/TokenStore instance
- * @param {Object} deps.platformDB - exposes getCoreInfo / setCoreInfo / getAllCoreInfos / getDnsRecord
- * @returns {(req: { body: Object, ip?: string }) => Promise<{ statusCode: number, body: Object }>}
+ * @param deps
+ * @param deps.tokenStore - business/src/bootstrap/TokenStore instance
+ * @param deps.platformDB - exposes getCoreInfo / setCoreInfo / getAllCoreInfos / getDnsRecord
  */
 function makeHandler ({ tokenStore, platformDB }) {
   if (tokenStore == null) throw new Error('ackHandler: tokenStore is required');

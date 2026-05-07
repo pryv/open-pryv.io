@@ -20,10 +20,10 @@ let customLoggerInstance = null;
 
 /**
  *
- * @param {Object} options
- * @param {boolean} options.color - set to true to have colors
- * @param {boolean} options.time - set to true to for timestamp
- * @param {boolean} options.align - set to true to allign logs items
+ * @param options
+ * @param options.color - set to true to have colors
+ * @param options.time - set to true to for timestamp
+ * @param options.align - set to true to allign logs items
  */
 function generateFormat (options) {
   const formats = [];
@@ -235,8 +235,7 @@ class Logger {
 
 /**
  * Get a new logger, or root loggger if no name is provided
- * @param {string} [name]
- * @returns {Logger}
+ * @param [name]
  */
 function getLogger (name) {
   if (!rootLogger) {

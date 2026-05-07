@@ -71,12 +71,11 @@ class BackupOrchestrator {
 
   /**
    * Backup all users and platform data.
-   * @param {BackupWriter} writer
-   * @param {Object} [options]
-   * @param {boolean} [options.incremental=false] - only export changes since previous backup
-   * @param {Object} [options.previousManifest] - previous backup manifest (for incremental)
-   * @param {boolean} [options.includeEphemeral=false] - include sessions and password-reset-requests
-   * @returns {Promise<void>}
+   * @param writer
+   * @param [options]
+   * @param [options.incremental=false] - only export changes since previous backup
+   * @param [options.previousManifest] - previous backup manifest (for incremental)
+   * @param [options.includeEphemeral=false] - include sessions and password-reset-requests
    */
   async backupAllUsers (writer, options: any = {}) {
     const config = await this._getBackupConfig();
@@ -115,10 +114,9 @@ class BackupOrchestrator {
 
   /**
    * Backup a single user.
-   * @param {BackupWriter} writer
-   * @param {string} userId
-   * @param {Object} [options]
-   * @returns {Promise<Object>} userManifest
+   * @param writer
+   * @param userId
+   * @param [options]
    */
   async backupUser (userId, writer, options: any = {}) {
     const username = this.usersLocalIndex.getUsername(userId);
@@ -149,8 +147,7 @@ class BackupOrchestrator {
 
   /**
    * Backup platform data only.
-   * @param {BackupWriter} writer
-   * @returns {Promise<void>}
+   * @param writer
    */
   async backupPlatform (writer) {
     await this._backupPlatform(writer);
@@ -180,12 +177,12 @@ class BackupOrchestrator {
   }
 
   /**
-   * @param {Object} writer
-   * @param {string} userId
-   * @param {string} username
-   * @param {number} snapshotBefore - unix timestamp: only export items modified <= this
-   * @param {number|null} since - for incremental: only export items modified > this
-   * @param {Object} options
+   * @param writer
+   * @param userId
+   * @param username
+   * @param snapshotBefore - unix timestamp: only export items modified <= this
+   * @param since - for incremental: only export items modified > this
+   * @param options
    */
   async _backupSingleUser (writer, userId, username, snapshotBefore, since, options) {
     const userWriter = await writer.openUser(userId, username);
@@ -266,10 +263,9 @@ class BackupOrchestrator {
    * Items without `modified` or `created` fields are always included
    * (e.g. profile data, or items from engines that don't track timestamps).
    *
-   * @param {Array} items
-   * @param {number} snapshotBefore - unix timestamp (seconds)
-   * @param {number|null} since - unix timestamp (seconds), null for full backup
-   * @returns {Array}
+   * @param items
+   * @param snapshotBefore - unix timestamp (seconds)
+   * @param since - unix timestamp (seconds), null for full backup
    */
   _filterByTimestamp (items, snapshotBefore, since) {
     return items.filter(item => {

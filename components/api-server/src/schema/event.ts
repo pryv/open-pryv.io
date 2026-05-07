@@ -19,7 +19,7 @@ const number = helpers.number;
 const boolean = helpers.boolean;
 
 /**
- * @param {Action} action
+ * @param action
  */
 export default function (action) {
   // read items === stored items

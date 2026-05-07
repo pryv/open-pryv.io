@@ -18,7 +18,7 @@ const number = helpers.number;
 const array = helpers.array;
 
 /**
- * @param {Action} action
+ * @param action
  */
 export default function (action) {
   if (action === Action.STORE) { action = Action.READ; } // read items === stored items

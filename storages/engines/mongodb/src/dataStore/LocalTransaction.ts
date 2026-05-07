@@ -24,17 +24,13 @@ class LocalTransaction {
     this.transactionOptions = transactionOptions || defaultOptions;
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async init () {
     this.transactionSession = await _internals.database.startSession();
   }
 
   /**
    *
-   * @param {Function} func  undefined
-   * @returns {Promise<void>}
+   * @param func  undefined
    */
   async exec (func) {
     await this.transactionSession.withTransaction(func, this.transactionOptions);

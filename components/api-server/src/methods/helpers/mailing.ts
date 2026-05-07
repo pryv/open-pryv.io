@@ -77,12 +77,12 @@ export const sendmail = function (emailSettings, template, recipient, subs, lang
  * contract as the legacy HTTP paths — registration/reset-password callers
  * already treat mail failures as non-fatal.
  *
- * @param {EmailSettings} emailSettings
- * @param {string} template
- * @param {Recipient} recipient
- * @param {Substitutions} subs
- * @param {string} lang
- * @param {Callback} callback
+ * @param emailSettings
+ * @param template
+ * @param recipient
+ * @param subs
+ * @param lang
+ * @param callback
  */
 function _sendmailInProcess (emailSettings, template, recipient, subs, lang, callback) {
   (async () => {
@@ -120,10 +120,9 @@ function _sendmailInProcess (emailSettings, template, recipient, subs, lang, cal
   );
 }
 /**
- * @param {string} url
- * @param {MandrillData | MicroserviceData} data
- * @param {Callback} cb
- * @returns {void}
+ * @param url
+ * @param data
+ * @param cb
  */
 function _sendmail (url, data, cb) {
   fetch(url, {
@@ -139,9 +138,6 @@ function _sendmail (url, data, cb) {
     cb(parseError(url, err, null));
   });
 }
-/**
- * @returns {any}
- */
 function parseError (url, err, res) {
   // 1. Mail service answered with an error payload
   if (res != null && res.body != null && res.body.error != null) {

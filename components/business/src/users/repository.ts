@@ -32,9 +32,6 @@ class UsersRepository {
   usersIndex;
   userAccountStorage;
 
-  /**
-   * @returns {Promise<void>}
-   */
   async init () {
     this.mall = await getMall();
     this.platform = await getPlatform();
@@ -48,7 +45,6 @@ class UsersRepository {
 
   /**
    * only for testing and built-in register
-   * @returns {Promise<{ id: string, username: string, events: any[] }[]>}
    */
   async getAll () {
     const usersMap = await this.usersIndex.getAllByUsername();
@@ -65,7 +61,6 @@ class UsersRepository {
 
   /**
    * only for test data to reset all users Dbs.
-   * @returns {Promise<void>}
    */
   async deleteAll () {
     const usersMap = await this.usersIndex.getAllByUsername();
@@ -78,7 +73,6 @@ class UsersRepository {
 
   /**
    * Used only by webhooks could be refactored
-   * @returns {Promise<{ id: string, username: string }[]>}
    */
   async getAllUsersIdAndName () {
     const usersMap = await this.usersIndex.getAllByUsername();
@@ -90,16 +84,14 @@ class UsersRepository {
   }
 
   /**
-   * @param {string} username
-   * @returns {Promise<any>}
+   * @param username
    */
   async getUserIdForUsername (username) {
     return await this.usersIndex.getUserId(username);
   }
 
   /**
-   * @param {string} userId
-   * @returns {Promise<{ id: string, username: string, events: any[] }>}
+   * @param userId
    */
   async getUserById (userId) {
     const userAccountStreamsIds = Object.keys(accountStreams.accountMap);
@@ -136,16 +128,14 @@ class UsersRepository {
   }
 
   /**
-   * @param {string} username
-   * @returns {Promise<boolean>}
+   * @param username
    */
   async usernameExists (username) {
     return await this.usersIndex.usernameExists(username);
   }
 
   /**
-   * @param {string} username
-   * @returns {Promise<any>}
+   * @param username
    */
   async getUserByUsername (username) {
     const userId = await this.getUserIdForUsername(username);
@@ -157,8 +147,7 @@ class UsersRepository {
   }
 
   /**
-   * @param {string} userId
-   * @returns {Promise<any>}
+   * @param userId
    */
   async getStorageUsedByUserId (userId) {
     return {
@@ -168,9 +157,8 @@ class UsersRepository {
   }
 
   /**
-   * @param {string} userId
-   * @param {string} propertyKey
-   * @returns {Promise<any>}
+   * @param userId
+   * @param propertyKey
    */
   async getOnePropertyValue (userId, propertyKey) {
     const query = {
@@ -190,20 +178,18 @@ class UsersRepository {
   }
 
   /**
-   * @param {string} username
-   * @param {string} appId
-   * @param {any} transactionSession
-   * @returns {Promise<string>}
+   * @param username
+   * @param appId
+   * @param transactionSession
    */
   async createSessionForUser (username, appId, transactionSession) {
     return await fromCallback((cb) => this.sessionsStorage.generate({ username, appId }, { transactionSession }, cb));
   }
 
   /**
-   * @param {string} userId
-   * @param {string} token
-   * @param {string} appId
-   * @returns {any}
+   * @param userId
+   * @param token
+   * @param appId
    */
   async createPersonalAccessForUser (userId, token, appId, transactionSession) {
     const accessData = {
@@ -220,9 +206,6 @@ class UsersRepository {
     }));
   }
 
-  /**
-   * @returns {boolean}
-   */
   validateAllStorageObjectsInitialized () {
     if (this.accessStorage == null || this.sessionsStorage == null) {
       throw new Error('Please initialize the user repository with all dependencies.');
@@ -231,9 +214,8 @@ class UsersRepository {
   }
 
   /**
-   * @param {User} user
-   * @param {boolean | undefined | null} withSession
-   * @returns {Promise<any>}
+   * @param user
+   * @param withSession
    */
   async insertOne (user, withSession = false) {
     // Create the User at a Platform Level
@@ -304,10 +286,9 @@ class UsersRepository {
   }
 
   /**
-   * @param {User} user
-   * @param {{}} update
-   * @param {string} accessId
-   * @returns {Promise<void>}
+   * @param user
+   * @param update
+   * @param accessId
    */
   async updateOne (user, update, accessId) {
     // change password into hash if it exists
@@ -342,9 +323,8 @@ class UsersRepository {
   }
 
   /**
-   * @param {string} userId
-   * @param {string | null} username
-   * @returns {Promise<number>}
+   * @param userId
+   * @param username
    */
   async deleteOne (userId, username) {
     // Fetch user object BEFORE any deletions — platform.deleteUser needs it
@@ -365,9 +345,6 @@ class UsersRepository {
     await this.mall.deleteUser(userId);
   }
 
-  /**
-   * @returns {Promise<number>}
-   */
   async count () {
     const users = await this.usersIndex.getAllByUsername();
     return Object.keys(users).length;
@@ -376,9 +353,8 @@ class UsersRepository {
   // -------------------- Password Management ------------------- //
 
   /**
-   * @param {string} userId
-   * @param {string} password
-   * @returns {Promise<boolean>}
+   * @param userId
+   * @param password
    */
   async checkUserPassword (userId, password) {
     const currentPass = await this.userAccountStorage.getPasswordHash(userId);
@@ -390,8 +366,8 @@ class UsersRepository {
   }
 
   /**
-   * @param {String} userId  undefined
-   * @param {String} password  undefined
+   * @param userId  undefined
+   * @param password  undefined
    */
   async setUserPassword (userId, password, accessId = 'system', modifiedTime?) {
     const passwordHash = await encryption.hash(password);
@@ -402,9 +378,6 @@ class UsersRepository {
 let usersRepository = null;
 let usersRepositoryInitializing = false;
 
-/**
- * @returns {Promise<UsersRepository>}
- */
 async function getUsersRepository () {
   // eslint-disable-next-line no-unmodified-loop-condition
   while (usersRepositoryInitializing) {

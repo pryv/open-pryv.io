@@ -37,9 +37,8 @@ class Plugin extends SyslogTransform {
   }
 
   /**
-   * @param {string} userId
-   * @param {PryvEvent} event
-   * @returns {LogItem|null} {level: .. , message: ... }  or null to skip
+   * @param userId
+   * @param event
    */
   transform (userId, event) {
     logger.debug('Using plugin ' + this.key);
@@ -62,9 +61,6 @@ class Template extends SyslogTransform {
     logger.debug('Loaded template for [' + key + ']: ' + format.template);
   }
 
-  /**
-   * @returns {LogItem|null}
-   */
   transform (userId, event) {
     logger.debug('Using template ' + this.key);
     return {
@@ -82,9 +78,8 @@ class Template extends SyslogTransform {
 
 /**
  * Get the Syslog string correspondig to this event
- * @param {string} userId
- * @param {PryvEvent} event
- * @returns {LogItem|null}
+ * @param userId
+ * @param event
  */
 function logForEvent (userId, event) {
   if (event.type in templates) {
@@ -113,9 +108,9 @@ export { loadTemplates, logForEvent };
 
 /**
  * Get a syslog line from a tenplate + event + userid
- * @param {string} template - of the form "{userid} {content.message}"
- * @param {string} userId  - the userid
- * @param {PryvEvent} event
+ * @param template - of the form "{userid} {content.message}"
+ * @param userId  - the userid
+ * @param event
  */
 function transformFromTemplate (template, userId, event) {
   logger.debug('transformFromTemplate', template);
@@ -131,8 +126,8 @@ function transformFromTemplate (template, userId, event) {
 
 /**
  * getKey('foo.bar', {foo: { bar: "I want this"}}); //=> "I want this"
- * @param {string} key
- * @param {*} obj
+ * @param key
+ * @param obj
  */
 function getKey (key, obj) {
   return key.split('.').reduce(function (a, b) {

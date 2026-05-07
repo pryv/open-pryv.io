@@ -27,12 +27,11 @@ const logger = getLogger('mail-delivery');
  * This avoids forking `email-templates` while still keeping PlatformDB as
  * the authoritative template store cluster-wide.
  *
- * @param {object} opts
- * @param {Function} opts.getAllMailTemplates   async () → Array<{ type, lang, part, pug }>
- * @param {object}   opts.smtp                  nodemailer-compatible transport config
- * @param {object}   opts.from                  default `from` (name + address)
- * @param {string}   [opts.tmpDirRoot]          override tmpdir (tests)
- * @returns {Promise<{
+ * @param opts
+ * @param opts.getAllMailTemplates   async () → Array<{ type, lang, part, pug }>
+ * @param opts.smtp                  nodemailer-compatible transport config
+ * @param opts.from                  default `from` (name + address)
+ * @param [opts.tmpDirRoot]          override tmpdir (tests)
  *   send: Function,
  *   templateExists: Function,
  *   refresh: Function,

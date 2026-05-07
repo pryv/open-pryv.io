@@ -34,13 +34,12 @@ const LSC_SUBDOMAIN = 'lsc';
  * Pre-register a new core in PlatformDB and publish its DNS entries.
  * Idempotent: re-running with the same inputs leaves the state unchanged.
  *
- * @param {Object} opts
- * @param {Object} opts.platformDB - object exposing setCoreInfo / getDnsRecord / setDnsRecord (PlatformDB.js interface)
- * @param {string} opts.coreId     - e.g. 'core-b'
- * @param {string} opts.ip         - the new core's IP address (IPv4 or IPv6)
- * @param {string|null} [opts.url=null]     - explicit core.url (DNSless multi-core); optional
- * @param {string|null} [opts.hosting=null] - hosting region, e.g. 'us-east-1'
- * @returns {Promise<{ coreInfo: Object, perCoreAAdded: boolean, lscIpsAfter: string[] }>}
+ * @param opts
+ * @param opts.platformDB - object exposing setCoreInfo / getDnsRecord / setDnsRecord (PlatformDB.js interface)
+ * @param opts.coreId     - e.g. 'core-b'
+ * @param opts.ip         - the new core's IP address (IPv4 or IPv6)
+ * @param [opts.url=null]     - explicit core.url (DNSless multi-core); optional
+ * @param [opts.hosting=null] - hosting region, e.g. 'us-east-1'
  */
 async function registerNewCore ({ platformDB, coreId, ip, url = null, hosting = null }) {
   requireInput({ platformDB, coreId, ip });
@@ -81,11 +80,10 @@ async function registerNewCore ({ platformDB, coreId, ip, url = null, hosting = 
  * operator decides not to actually deploy the core the bundle was issued
  * for. Intentionally does NOT touch other cores' entries in `lsc`.
  *
- * @param {Object} opts
- * @param {Object} opts.platformDB
- * @param {string} opts.coreId
- * @param {string} opts.ip
- * @returns {Promise<{ coreInfoDeleted: boolean, perCoreDeleted: boolean, lscIpsAfter: string[] }>}
+ * @param opts
+ * @param opts.platformDB
+ * @param opts.coreId
+ * @param opts.ip
  */
 async function unregisterNewCore ({ platformDB, coreId, ip }) {
   requireInput({ platformDB, coreId, ip });

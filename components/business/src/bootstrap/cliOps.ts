@@ -43,26 +43,25 @@ const OVERRIDE_HEADER_SUFFIX =
  * On any failure after PlatformDB writes, rolls back: revokes the token and
  * unregisters the core. Throws the original error.
  *
- * @param {Object} opts
- * @param {Object} opts.platformDB
- * @param {string} opts.caDir
- * @param {string} opts.tokensPath
- * @param {string|null} opts.dnsDomain
- * @param {string} opts.ackUrlBase             - e.g. 'https://core-a.ex.com'
- * @param {Object} opts.secrets
- * @param {string} opts.secrets.adminAccessKey
- * @param {string} opts.secrets.filesReadTokenSecret
- * @param {string|null} [opts.secrets.letsEncryptAtRestKey=null] - propagated to bundle.platformSecrets.letsEncrypt.atRestKey when set
- * @param {Object} opts.rqlite
- * @param {number} opts.rqlite.raftPort
- * @param {number} opts.rqlite.httpPort
- * @param {string} opts.coreId
- * @param {string} opts.ip
- * @param {string|null} [opts.url=null]
- * @param {string|null} [opts.hosting=null]
- * @param {string} opts.outPath
- * @param {number} [opts.ttlMs] - token TTL; undefined = TokenStore default (24h)
- * @returns {Promise<{ outPath: string, passphrase: string, expiresAt: number, ackUrl: string, caCreated: boolean }>}
+ * @param opts
+ * @param opts.platformDB
+ * @param opts.caDir
+ * @param opts.tokensPath
+ * @param opts.dnsDomain
+ * @param opts.ackUrlBase             - e.g. 'https://core-a.ex.com'
+ * @param opts.secrets
+ * @param opts.secrets.adminAccessKey
+ * @param opts.secrets.filesReadTokenSecret
+ * @param [opts.secrets.letsEncryptAtRestKey=null] - propagated to bundle.platformSecrets.letsEncrypt.atRestKey when set
+ * @param opts.rqlite
+ * @param opts.rqlite.raftPort
+ * @param opts.rqlite.httpPort
+ * @param opts.coreId
+ * @param opts.ip
+ * @param [opts.url=null]
+ * @param [opts.hosting=null]
+ * @param opts.outPath
+ * @param [opts.ttlMs] - token TTL; undefined = TokenStore default (24h)
  */
 async function newCore (opts) {
   requireOpts(opts, ['platformDB', 'caDir', 'tokensPath', 'ackUrlBase', 'secrets', 'rqlite', 'coreId', 'ip', 'outPath']);
@@ -136,9 +135,8 @@ async function newCore (opts) {
 }
 
 /**
- * @param {Object} opts
- * @param {string} opts.tokensPath
- * @returns {Array<{ coreId: string, issuedAt: number, expiresAt: number }>}
+ * @param opts
+ * @param opts.tokensPath
  */
 function listTokens ({ tokensPath }) {
   if (!tokensPath) throw new Error('listTokens: tokensPath is required');
@@ -149,12 +147,11 @@ function listTokens ({ tokensPath }) {
  * Revoke active tokens for `coreId`. When `platformDB` and `ip` are given,
  * also undoes the DNS + PlatformDB pre-registration.
  *
- * @param {Object} opts
- * @param {string} opts.tokensPath
- * @param {string} opts.coreId
- * @param {Object} [opts.platformDB]
- * @param {string} [opts.ip]
- * @returns {Promise<{ tokensRevoked: number, unregister: Object|null }>}
+ * @param opts
+ * @param opts.tokensPath
+ * @param opts.coreId
+ * @param [opts.platformDB]
+ * @param [opts.ip]
  */
 async function revokeToken ({ tokensPath, coreId, platformDB = null, ip = null }) {
   if (!tokensPath) throw new Error('revokeToken: tokensPath is required');
@@ -184,15 +181,14 @@ async function revokeToken ({ tokensPath, coreId, platformDB = null, ip = null }
  * `verifyClient: true` flag is set on both ends — that is the invariant the
  * Plan 36 manual workaround was about.
  *
- * @param {Object} opts
- * @param {string} opts.caDir - cluster CA dir (`ClusterCA` ensures this).
- * @param {string} opts.tlsDir - where ca.crt / node.crt / node.key go.
- * @param {string} opts.coreId - this core's identifier.
- * @param {string|null} [opts.ip=null] - IP SAN for the node cert (for direct-IP peers).
- * @param {string|null} [opts.hostname=null] - extra DNS SAN (e.g. `<id>.<domain>`).
- * @param {boolean} [opts.writeConfig=true] - merge `rqlite.tls.*` into overridePath.
- * @param {string|null} [opts.overridePath=null] - path to override-config.yml; required when writeConfig is true.
- * @returns {Promise<{
+ * @param opts
+ * @param opts.caDir - cluster CA dir (`ClusterCA` ensures this).
+ * @param opts.tlsDir - where ca.crt / node.crt / node.key go.
+ * @param opts.coreId - this core's identifier.
+ * @param [opts.ip=null] - IP SAN for the node cert (for direct-IP peers).
+ * @param [opts.hostname=null] - extra DNS SAN (e.g. `<id>.<domain>`).
+ * @param [opts.writeConfig=true] - merge `rqlite.tls.*` into overridePath.
+ * @param [opts.overridePath=null] - path to override-config.yml; required when writeConfig is true.
  *   caCreated: boolean,
  *   tlsCreated: boolean,
  *   configUpdated: boolean,

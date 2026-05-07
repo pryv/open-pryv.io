@@ -21,17 +21,10 @@ const eventsUtils = require('./helpers/eventsUtils');
  * dispatching data requests for each one.
  */
 class Mall {
-  /**
-   * @type {Map<string, DataStore>}
-   */
   storesById = new Map();
-  /**
-   * @type {Map<DataStore, {id: string, name: string, settings: object}>}
-   */
   storeDescriptionsByStore = new Map();
   /**
    * Contains the list of stores included in star permissions.
-   * @type {string[]}
    */
   includedInStarPermissions = [];
 
@@ -50,9 +43,8 @@ class Mall {
 
   /**
    * Register a DataStore
-   * @param {DataStore} store
-   * @param {{ id: string, name: string, settings: object}} storeDescription
-   * @returns {void}
+   * @param store
+   * @param storeDescription
    */
   addStore (store, storeDescription) {
     if (this.initialized) { throw new Error('Sources cannot be added after init()'); }
@@ -63,9 +55,6 @@ class Mall {
     }
   }
 
-  /**
-   * @returns {Promise<this>}
-   */
   async init () {
     if (this.initialized) { throw new Error('init() can only be called once.'); }
     this.initialized = true;
@@ -107,9 +96,6 @@ class Mall {
     return this;
   }
 
-  /**
-   * @returns {Promise<void>}
-  */
   async deleteUser (userId) {
     for (const [storeId, store] of this.storesById) {
       try {
@@ -122,8 +108,7 @@ class Mall {
 
   /**
    * Return storage informations per store Id.
-   * @param {string} userId
-   * @returns {Promise<Object<storeId,UserStorageInfos>>}
+   * @param userId
   */
   async getUserStorageInfos (userId) {
     const storageInfos = { };
@@ -140,9 +125,6 @@ class Mall {
     return storageInfos;
   }
 
-  /**
- * @returns {Promise<any>}
- */
   async newTransaction () {
     return new MallTransaction(this);
   }
@@ -152,9 +134,8 @@ export { Mall };
 
 /**
  * Get store-specific integrity calculation function
- * @param {string} storeId
- * @param {*} integrity
- * @returns {Function}
+ * @param storeId
+ * @param integrity
 */
 function getEventIntegrityFn (storeId, integrity) {
   return function setIntegrityForEvent (storeEventData) {

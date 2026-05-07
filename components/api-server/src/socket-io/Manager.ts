@@ -49,8 +49,7 @@ class Manager {
   // Returns true if the `candidate` could be a username on a lexical level.
   //
   /**
-   * @param {string} candidate
-   * @returns {boolean}
+   * @param candidate
    */
   looksLikeUsername (candidate) {
     const reUsername = new RegExp(USERNAME_REGEXP_STR);
@@ -64,8 +63,7 @@ class Manager {
   //    manager.getUsername('/foobar') // => 'foobar'
   //
   /**
-   * @param {string} namespaceName
-   * @returns {string}
+   * @param namespaceName
    */
   extractUsername (namespaceName) {
     const ns = cleanNS(namespaceName);
@@ -77,7 +75,7 @@ class Manager {
     /**
      * Takes the last field of the NS path
      *
-     * @param {*} namespace
+     * @param namespace
      */
     function cleanNS (namespace) {
       let cleaned = '' + namespace;
@@ -93,8 +91,7 @@ class Manager {
   }
 
   /**
-   * @param {string} namespaceName
-   * @returns {Promise<NamespaceContext>}
+   * @param namespaceName
    */
   async ensureInitNamespace (namespaceName) {
     await initAsyncProps.call(this);
@@ -149,8 +146,7 @@ class NamespaceContext {
   // and stores it in (our) namespace.
   //
   /**
-   * @param {SocketIO$Socket} socket
-   * @returns {void}
+   * @param socket
    */
   addConnection (socket, _methodContext?) {
     // This will represent state that we keep for every connection.
@@ -162,8 +158,7 @@ class NamespaceContext {
   }
 
   /**
-   * @param {Connection} conn
-   * @returns {void}
+   * @param conn
    */
   storeConnection (conn) {
     const connMap = this.connections;
@@ -171,26 +166,19 @@ class NamespaceContext {
   }
 
   /**
-   * @param {Connection} conn
-   * @returns {void}
+   * @param conn
    */
   deleteConnection (conn) {
     const connMap = this.connections;
     connMap.delete(conn.key());
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async open () {
     // If we've already got an active subscription, leave it be.
     if (this.pubsubRemover != null) { return; }
     this.pubsubRemover = pubsub.notifications.onAndGetRemovable(this.username, this.messageFromPubSub.bind(this));
   }
 
-  /**
-   * @returns {void}
-   */
   messageFromPubSub (payload) {
     const message = pubsubMessageToSocket(payload);
     if (message != null) {
@@ -202,9 +190,6 @@ class NamespaceContext {
 
   // Closes down resources associated with this namespace context.
   //
-  /**
-   * @returns {Promise<void>}
-   */
   async close () {
     if (this.pubsubRemover == null) { return; }
     this.pubsubRemover();
@@ -215,8 +200,7 @@ class NamespaceContext {
   // Called when a new socket connects to the namespace `socketNs`.
   //
   /**
-   * @param {SocketIO$Socket} socket
-   * @returns {void}
+   * @param socket
    */
   onConnect (socket) {
     const logger = this.logger;
@@ -235,8 +219,7 @@ class NamespaceContext {
   // Called when the underlying socket-io socket disconnects.
   //
   /**
-   * @param {Connection} conn
-   * @returns {Promise<void>}
+   * @param conn
    */
   async onDisconnect (conn) {
     const logger = this.logger;
@@ -276,16 +259,10 @@ class Connection {
   }
 
   // This should be used as a key when storing the connection inside a Map.
-  /**
-   * @returns {string}
-   */
   key () {
     return this.socket.id;
   }
 
-  /**
-   * @returns {void}
-   */
   init () {
     this.socket.on('*', (callData, callback) => this.onMethodCall(callData, callback));
   }
@@ -294,9 +271,8 @@ class Connection {
   // Called when the socket wants to call a Pryv IO method.
   //
   /**
-   * @param {SocketIO$CallData} callData
-   * @param {(err: unknown, res: any) => unknown} callback
-   * @returns {Promise<unknown>}
+   * @param callData
+   * @param callback
    */
   async onMethodCall (callData, callback) {
     const methodContext = this.methodContext;
@@ -350,9 +326,6 @@ const messageMap = {};
 messageMap[pubsub.USERNAME_BASED_EVENTS_CHANGED] = 'eventsChanged';
 messageMap[pubsub.USERNAME_BASED_ACCESSES_CHANGED] = 'accessesChanged';
 messageMap[pubsub.USERNAME_BASED_STREAMS_CHANGED] = 'streamsChanged';
-/**
- * @returns {any}
- */
 function pubsubMessageToSocket (payload) {
   const key = typeof payload === 'object' ? JSON.stringify(payload) : payload;
   return messageMap[key];

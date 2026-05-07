@@ -86,8 +86,7 @@ class DataMatrix {
   // Returns the row at index `idx`.
   //
   /**
-   * @param {number} idx
-   * @returns {any}
+   * @param idx
    */
   atRow (idx) {
     const raw = this.at(idx);
@@ -109,8 +108,7 @@ class DataMatrix {
   // its value with what fn returns.
   //
   /**
-   * @param {(colName: string, cellVal: Element) => Element} fn
-   * @returns {void}
+   * @param fn
    */
   transform (fn) {
     for (const row of this.data) {
@@ -123,9 +121,6 @@ class DataMatrix {
   // No assumptions are made about the order of the data. If the matrix is
   // empty, this method throws an error.
   //
-  /**
-   * @returns {import("/Users/sim/Code/Pryv/dev/service-core/data_matrix.ts-to-jsdoc").DataExtent}
-   */
   minmax () {
     if (this.length <= 0) { throw new Error('Precondition error: matrix is empty.'); }
     // assert: length > 0 => at least one row is available
@@ -151,9 +146,8 @@ class Parser {
   }
 
   /**
-   * @param {unknown} obj
-   * @param {SeriesRowType} type
-   * @returns {void}
+   * @param obj
+   * @param type
    */
   parse (obj, type) {
     const out = this.out;
@@ -181,8 +175,7 @@ class Parser {
   }
 
   /**
-   * @param {any} val
-   * @returns {string[]}
+   * @param val
    */
   checkFields (val) {
     if (val == null) { throw error('Field names must be a list.'); }

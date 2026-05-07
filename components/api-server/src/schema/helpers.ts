@@ -23,8 +23,8 @@ export { USERNAME_REGEXP_STR };
 /**
  * Gets the full core type URI for the given type name and action (read, create, etc.)
  *
- * @param {String} name
- * @param {String} action
+ * @param name
+ * @param action
  */
 export const getTypeURI = function (name, action) {
   return 'pryv.core.' + name + (action ? '-' + action : '');
@@ -33,8 +33,8 @@ export const getTypeURI = function (name, action) {
 /**
  * Returns an 'object' schema definition with the given properties definition.
  *
- * @param {Object} propertiesDef
- * @param {Object} options Extra properties to merge into the returned object definition
+ * @param propertiesDef
+ * @param options Extra properties to merge into the returned object definition
  */
 export const object = function (propertiesDef, options) {
   return Object.assign(getBaseSchema('object', options), { properties: propertiesDef });
@@ -43,8 +43,8 @@ export const object = function (propertiesDef, options) {
 /**
  * Returns an 'array' schema definition with the given items definition.
  *
- * @param {Object} itemsDef
- * @param {Object} options Extra properties to merge into the returned array definition
+ * @param itemsDef
+ * @param options Extra properties to merge into the returned array definition
  */
 export const array = function (itemsDef, options) {
   return Object.assign(getBaseSchema('array', options), { items: itemsDef });
@@ -53,7 +53,7 @@ export const array = function (itemsDef, options) {
 /**
  * Returns a 'string' schema definition.
  *
- * @param {Object} options Extra properties to merge into the returned object definition
+ * @param options Extra properties to merge into the returned object definition
  */
 export const string = getBaseSchema.bind(null, 'string');
 
@@ -76,14 +76,14 @@ export const language = getBaseSchema('string', { maxLength: 5, minLength: 1 });
 /**
  * Returns a 'number' schema definition.
  *
- * @param {Object} options Extra properties to merge into the returned object definition
+ * @param options Extra properties to merge into the returned object definition
  */
 export const number = getBaseSchema.bind(null, 'number');
 
 /**
  * Returns a 'boolean' schema definition.
  *
- * @param {Object} options Extra properties to merge into the returned object definition
+ * @param options Extra properties to merge into the returned object definition
  */
 export const boolean = getBaseSchema.bind(null, 'boolean');
 
@@ -114,7 +114,7 @@ function getBaseSchema (type, options) {
 /**
  * Adds `created`, `createdBy`, `modified`, `modifiedBy` property definitions to the given schema.
  *
- * @param {Object} schema
+ * @param schema
  */
 export const addTrackingProperties = function (schema) {
   schema.properties.created = { type: 'number' };

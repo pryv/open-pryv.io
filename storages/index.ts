@@ -86,7 +86,7 @@ let _earlyDatabasePG = null;
  * Initialize all storage subsystems eagerly.
  * Fail-fast if any backing store is down.
  *
- * @param {Object} [config] - @pryv/boiler config (fetched if omitted)
+ * @param [config] - @pryv/boiler config (fetched if omitted)
  */
 async function init (config) {
   if (instances || initializing) return;

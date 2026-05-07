@@ -57,9 +57,6 @@ class Row {
   // Returns this rows deltaTime. If the deltaTime is not available, a runtime
   // error is thrown.
   //
-  /**
-   * @returns {number}
-   */
   deltaTime () {
     const value = this.get('deltaTime');
     if (typeof value !== 'number') { throw new Error('Deltatime must be a number'); }

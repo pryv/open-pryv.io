@@ -75,7 +75,7 @@ function deletionFromDB (dbItem) {
 
 /**
  * Inside $or clauses, converts "id" to "_id"
- * @param {*} query
+ * @param query
  */
 function idInOrClause (query) {
   if (query == null || query.$or == null) return query;

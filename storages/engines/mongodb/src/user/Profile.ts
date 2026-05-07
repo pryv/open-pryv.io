@@ -18,8 +18,7 @@ export { Profile };
 /**
  * DB persistence for profile sets.
  *
- * @param {Database} database
- * @constructor
+ * @param database
  */
 function Profile (database) {
   (Profile as any).super_.call(this, database);

@@ -43,10 +43,9 @@ const databaseFixture = require('./databaseFixture').default;
 
 /**
  * Creates an isolated test context for parallel-safe testing
- * @param {Object} options
- * @param {string} options.password - User password (default: 'test-password')
- * @param {string} options.prefix - Username prefix (default: 'test')
- * @returns {TestContext}
+ * @param options
+ * @param options.password - User password (default: 'test-password')
+ * @param options.prefix - Username prefix (default: 'test')
  */
 function createTestContext (options: any = {}) {
   const testRunId = cuid.slug();

@@ -25,10 +25,9 @@ const timestamp = require('unix-timestamp');
  * Platform coordination for indexed/unique fields is handled by callers
  * (account.js updateDataOnPlatform, repository.insertOne, etc.).
  *
- * @param {Map<string, object>} fieldStreamMap - fieldName → stream config
+ * @param fieldStreamMap - fieldName → stream config
  *   (only leaf streams that represent actual fields, not parent containers)
- * @param {function} getStorage - returns userAccountStorage (async)
- * @returns {UserEvents}
+ * @param getStorage - returns userAccountStorage (async)
  */
 function create (fieldStreamMap, getStorage) {
   return ds.createUserEvents({
@@ -161,9 +160,8 @@ function fieldToEvent (fieldName, value, streamConfig, time?, createdBy?) {
 /**
  * Extract the field name from an event's streamIds.
  * Matches against the fieldStreamMap to find the corresponding field.
- * @param {string[]} streamIds
- * @param {Map<string, object>} fieldMap
- * @returns {string|null}
+ * @param streamIds
+ * @param fieldMap
  */
 function eventIdFromStreamIds (streamIds, fieldMap) {
   if (!streamIds || streamIds.length === 0) return null;
@@ -222,9 +220,8 @@ function filterByQuery (events, query) {
 
 /**
  * Check if an event's streamIds match the normalized stream query.
- * @param {string[]} eventStreamIds
- * @param {Array} streamGroups - normalized stream query groups
- * @returns {boolean}
+ * @param eventStreamIds
+ * @param streamGroups - normalized stream query groups
  */
 function matchesStreamQuery (eventStreamIds, streamGroups) {
   const sids = new Set(eventStreamIds);
@@ -238,9 +235,8 @@ function matchesStreamQuery (eventStreamIds, streamGroups) {
 /**
  * Check if streamIds match all conditions in a group (AND).
  * A group is an array of condition objects: { any: [...] } or { not: [...] }
- * @param {Set<string>} sids
- * @param {Array<object>} group
- * @returns {boolean}
+ * @param sids
+ * @param group
  */
 function matchesGroup (sids, group) {
   // Handle both normalized format (array of conditions) and simple format (single object)

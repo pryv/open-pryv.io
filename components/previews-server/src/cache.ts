@@ -33,9 +33,6 @@ class Cache {
   }
 
   // Removes all cached files that haven't been accessed since the given time.
-  /**
-   * @returns {Promise<void>}
-   */
   async cleanUp () {
     if (this.cleanUpInProgress) {
       throw new Error('Clean-up is already in progress.');
@@ -57,9 +54,6 @@ class Cache {
     this.cleanUpInProgress = false;
   }
 }
-/**
- * @returns {Promise<any[]>}
- */
 async function getFiles (dir) {
   const dirents = await readdir(dir, { withFileTypes: true });
   const files = await Promise.all(dirents.map((dirent) => {

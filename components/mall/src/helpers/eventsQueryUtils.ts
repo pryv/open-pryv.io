@@ -28,8 +28,7 @@ export { getParamsByStore, getStoreOptionsFromParams, getStoreQueryFromParams, n
 
 /**
  * Get per-store query params from the given API query params.
- * @param {EventsGetQuery} params - a query object
- * @returns {Object.<String, EventsGetQuery>}
+ * @param params - a query object
  * @throws {Error} if params.headId is set
  * @throws {Error} if query.id is set and params.streams is querying a different store
  * @throws {Error} if query.streams contains stream queries that implies different stores
@@ -104,7 +103,7 @@ function getStoreStreamQuery (streamQuery, context) {
  *  /!\ As per 1.9.0 we decided to keep a streamQuery in the format of [{any: ..}, {not: ...}, {any: ...}] an extra step
  *      `normalizeStreamQuery` is added, the full process should be refactored in order to avoid this step.
  *
- * @param {*} streamQuery
+ * @param streamQuery
  */
 function normalizeStreamQuery (streamQuery) {
   if (streamQuery == null) return null;
@@ -151,8 +150,7 @@ function getStoreOptionsFromParams (params) {
 /**
  * Clean API query params to the store query format.
  * To be called on store-level params just before querying the store.
- * @param {object} params
- * @returns {object}
+ * @param params
  */
 function getStoreQueryFromParams (params) {
   const query: any = {

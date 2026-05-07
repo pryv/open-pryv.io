@@ -23,9 +23,8 @@
 const VALID_STORAGE_TYPES = ['baseStorage', 'dataStore', 'platformStorage', 'seriesStorage', 'fileStorage', 'auditStorage'];
 
 /**
- * @param {Object} manifest - Parsed manifest.json object
- * @param {string} engineDir - Path to the engine directory (for error messages)
- * @returns {Object} The validated manifest
+ * @param manifest - Parsed manifest.json object
+ * @param engineDir - Path to the engine directory (for error messages)
  * @throws {Error} If validation fails
  */
 function validateManifest (manifest, engineDir) {

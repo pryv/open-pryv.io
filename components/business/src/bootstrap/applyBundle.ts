@@ -38,12 +38,11 @@ const TLS_FILE_NAMES = {
 };
 
 /**
- * @param {Object} opts
- * @param {string} opts.armoredBundle - armored ciphertext (output of bin/bootstrap.js)
- * @param {string} opts.passphrase
- * @param {string} opts.configDir - directory to write override-config.yml into (e.g. baseConfigDir)
- * @param {string} opts.tlsDir    - directory for ca.crt / node.crt / node.key (created if absent)
- * @returns {Promise<{
+ * @param opts
+ * @param opts.armoredBundle - armored ciphertext (output of bin/bootstrap.js)
+ * @param opts.passphrase
+ * @param opts.configDir - directory to write override-config.yml into (e.g. baseConfigDir)
+ * @param opts.tlsDir    - directory for ca.crt / node.crt / node.key (created if absent)
  *   bundle: Object,
  *   overridePath: string,
  *   tlsPaths: { caFile: string, certFile: string, keyFile: string },

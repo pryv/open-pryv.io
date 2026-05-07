@@ -14,9 +14,8 @@ const { getFullItemId } = require('./storeDataUtils');
 export { createStoreRootStream, addStoreIdPrefixToStreams };
 /**
  * Create a pseudo-stream representing a data store's root.
- * @param {{id: string, name: string}} storeDescription
- * @param {Object} extraProperties
- * @returns {any}
+ * @param storeDescription
+ * @param extraProperties
  */
 function createStoreRootStream (storeDescription, extraProperties) {
   return Object.assign({
@@ -32,9 +31,8 @@ function createStoreRootStream (storeDescription, extraProperties) {
 /**
  * Add storeId to streamIds to parentIds of a tree
  * Add storeId to "null" parentId
- * @param {string} storeId  undefined
- * @param {Array<Stream>} streams  undefined
- * @returns {void}
+ * @param storeId  undefined
+ * @param streams  undefined
  */
 function addStoreIdPrefixToStreams (storeId, streams) {
   for (const stream of streams) {

@@ -572,8 +572,7 @@ export default async function (api) {
    * Fixes req.files structure for when attachments were sent without a filename, in which case
    * Express lists files as an array in a `file` property (instead of directly as properties).
    *
-   * @param {Object} files
-   * @returns {Object}
+   * @param files
    */
   function sanitizeRequestFiles (files) {
     if (!files || !files.file || !Array.isArray(files.file)) {
@@ -626,10 +625,10 @@ export default async function (api) {
    * Validates the event's content against its type (if known).
    * Will try casting string content to number if appropriate.
    *
-   * @param {Object} context.newEvent contains the event data
-   * @param {Object} params
-   * @param {Object} result
-   * @param {Function} next
+   * @param context.newEvent contains the event data
+   * @param params
+   * @param result
+   * @param next
    */
   async function validateEventContentAndCoerce (context, params, result, next) {
     const type = context.newEvent.type;

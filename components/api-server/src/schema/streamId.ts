@@ -23,8 +23,7 @@ const forbiddenCharsMap = {
 const STREAMID_AT_CREATION_REGEXP_STR = '^[a-z0-9-]{1,100}';
 /**
  * Find forbidden character for 'streams' or 'permission.streamId'
- * @param {string} streamId
- * @returns {string}
+ * @param streamId
  */
 function findForbiddenChar (streamId) {
   for (let i = 0; i < streamId.length; i++) {
@@ -35,8 +34,7 @@ function findForbiddenChar (streamId) {
 }
 /**
  * Tests stream id for validity at creation
- * @param {string} streamId
- * @returns {boolean}
+ * @param streamId
  */
 function isStreamIdValidForCreation (streamId) {
   const regexp = new RegExp(STREAMID_AT_CREATION_REGEXP_STR);

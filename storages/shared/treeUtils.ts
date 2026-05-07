@@ -16,7 +16,7 @@
  * Items with no parent id are just left as they are.
  * The result is made from copies of the original items (which are left untouched).
  *
- * @param {Boolean} stripParentIds Optional, default: false
+ * @param stripParentIds Optional, default: false
  */
 function buildTree (array, stripParentIds) {
   if (!Array.isArray(array)) {
@@ -51,9 +51,6 @@ function buildTree (array, stripParentIds) {
   return result;
 }
 
-/**
- * @returns {void}
- */
 function verifyFlatItem (item) {
   if (!item.hasOwnProperty('id')) {
     throw new Error('Invalid object structure: expected property "id"');
@@ -62,8 +59,7 @@ function verifyFlatItem (item) {
 
 /**
  * The result is made from copies of the original items (which are left untouched).
- * @param {any[]} array
- * @returns {any[]}
+ * @param array
  */
 function flattenTreeWithoutParents (array) {
   if (!Array.isArray(array)) {
@@ -74,9 +70,6 @@ function flattenTreeWithoutParents (array) {
   return result;
 }
 
-/**
- * @returns {void}
- */
 function flattenRecursiveWithoutParents (originalArray, parentId, resultArray) {
   originalArray.forEach(function (item) {
     const clone = structuredClone(item);
@@ -106,7 +99,7 @@ function flattenRecursiveWithoutParents (originalArray, parentId, resultArray) {
  *  dbDocuments: 1,
  *  attachedFiles: 3
  * }
- * @param {*} object
+ * @param object
  */
 function flattenSimpleObject (object) {
   if (!(object instanceof Object)) {
@@ -118,8 +111,7 @@ function flattenSimpleObject (object) {
 }
 
 /**
- * @param {any[]} resultArray
- * @returns {void}
+ * @param resultArray
  */
 function flattenRecursiveSimpleObject (originalObject, resultArray) {
   Object.keys(originalObject).forEach(function (key) {
@@ -134,8 +126,7 @@ function flattenRecursiveSimpleObject (originalObject, resultArray) {
 
 /**
  * The result is made from copies of the original items (which are left untouched).
- * @param {any[]} array
- * @returns {any[]}
+ * @param array
  */
 function flattenTree (array) {
   if (!Array.isArray(array)) {
@@ -146,9 +137,6 @@ function flattenTree (array) {
   return result;
 }
 
-/**
- * @returns {void}
- */
 function flattenRecursive (originalArray, parentId, resultArray) {
   originalArray.forEach(function (item) {
     const clone = structuredClone(item);
@@ -179,7 +167,7 @@ function findById (array, id) {
 }
 
 /**
- * @param {Function} iterator Arguments: ({Object}), return value: {Boolean}
+ * @param iterator Arguments: ({Object}), return value: {Boolean}
  */
 function findInTree (array, iterator) {
   for (let i = 0, n = array.length; i < n; i++) {
@@ -202,7 +190,7 @@ function findInTree (array, iterator) {
 
 /**
  * Iterate on Tree, if iterator returns false, do not inspect children
- * @param {Function} iterator Arguments: ({Object}), return value: {Boolean}
+ * @param iterator Arguments: ({Object}), return value: {Boolean}
  */
 async function iterateOnPromise (array, iterator) {
   if (!array) { return; }
@@ -213,9 +201,8 @@ async function iterateOnPromise (array, iterator) {
 
 /**
  * @async
- * @param {Boolean} keepOrphans Whether to take into account the children of filtered-out items
+ * @param keepOrphans Whether to take into account the children of filtered-out items
  *                              (if yes, the tree structure may be modified)
- * @callback {Promise<boolean>} iterator Arguments: ({Object}), return value: {Boolean}
  */
 async function filterTreeOnPromise (array, keepOrphans, iterator) {
   const filteredArray = [];
@@ -237,9 +224,9 @@ async function filterTreeOnPromise (array, keepOrphans, iterator) {
 
 /**
  * The result is made from copies of the original items (which are left untouched).
- * @param {Boolean} keepOrphans Whether to take into account the children of filtered-out items
+ * @param keepOrphans Whether to take into account the children of filtered-out items
  *                              (if yes, the tree structure may be modified)
- * @param {Function} iterator Arguments: ({Object}), return value: {Boolean}
+ * @param iterator Arguments: ({Object}), return value: {Boolean}
  */
 function filterTree (array, keepOrphans, iterator) {
   const filteredArray = [];
@@ -276,9 +263,6 @@ function collectFromRootItem (item, iterator) {
   return result;
 }
 
-/**
- * @returns {void}
- */
 function collectRecursive (originalArray, resultArray, iterator) {
   originalArray.forEach(function (item) {
     resultArray.push(iterator(item));
@@ -304,7 +288,7 @@ function collectPluckFromRootItem (item, propertyName) {
  * Returns an array with the given ids plus those of their descendants, excluding unknown ids but
  * including `null` if present.
  *
- * @param {Array} ids
+ * @param ids
  */
 function expandIds (array, ids) {
   const expandedIds = [];
@@ -352,9 +336,9 @@ function applyRecursive (item, iterator) {
 
 /**
  * Display in the console
- * @param {<Streams>} array
- * @param {Array} properties to display ['id', ..]
- * @param {*} depth  - private
+ * @param array
+ * @param properties to display ['id', ..]
+ * @param depth  - private
  */
 function debug (streams, properties, depth) {
   const myddepth = depth ? depth + 1 : 1;

@@ -12,9 +12,9 @@ const { getConfigUnsafe } = require('@pryv/boiler');
 
 let defaultApiFormat;
 /**
- * @param {string} username
- * @param {string} token
- * @param {string} [apiFormat] - (default the one of config "service:api") https://{username}.domain/ or https://hostname/{username}/
+ * @param username
+ * @param token
+ * @param [apiFormat] - (default the one of config "service:api") https://{username}.domain/ or https://hostname/{username}/
  */
 function build (username, token, apiFormat) {
   if (!defaultApiFormat) { defaultApiFormat = getConfigUnsafe().get('service:api'); }

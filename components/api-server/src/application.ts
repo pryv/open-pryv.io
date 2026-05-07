@@ -93,12 +93,10 @@ class Application {
 
   /**
    * Normal user API
-   * @type {API}
    */
   api;
   /**
    * API for system routes.
-   * @type {API}
    */
   systemAPI;
 
@@ -107,7 +105,6 @@ class Application {
 
   /**
    * Storage subsystem
-   * @type {import('storage').StorageLayer}
    */
   storageLayer;
 
@@ -121,9 +118,6 @@ class Application {
     this.initializing = false;
   }
 
-  /**
-   * @returns {Promise<this>}
-   */
   async initiate () {
     while (this.initializing) {
       await setTimeout(50);
@@ -167,7 +161,6 @@ class Application {
 
   /**
    * Helps that display all routes and methodId registered
-   * @returns {void}
    */
   helperShowRoutes () {
     const routes = [];
@@ -199,16 +192,10 @@ class Application {
     console.log(routes);
   }
 
-  /**
-   * @returns {Promise<any>}
-   */
   async createExpressApp () {
     this.expressApp = await expressAppInit(this.logging);
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async initiateRoutes () {
     // Register routes — always available (register functionality is built-in)
     require('./routes/register').default(this.expressApp, this);
@@ -239,9 +226,6 @@ class Application {
     }
   }
 
-  /**
-   * @returns {void}
-   */
   produceLogSubsystem () {
     this.logging = getLogger('Application');
   }
@@ -252,7 +236,6 @@ class Application {
   /**
    * Returns the custom auth function if one was configured. Otherwise returns
    * null.
-   * @returns {CustomAuthFunction|null}
    */
   getCustomAuthFunction (from) {
     if (!this.customAuthStepLoaded) {
@@ -263,9 +246,6 @@ class Application {
     return this.customAuthStepFn;
   }
 
-  /**
-   * @returns {Extension|null}
-   */
   loadCustomExtension () {
     const defaultFolder = this.config.get('customExtensions:defaultFolder');
     const name = 'customAuthStepFn';
@@ -299,8 +279,7 @@ class Application {
 let app;
 /**
  * get Application Singleton
- * @param {boolean} forceNewApp - In TEST mode only, return a new Application for fixtures and mocks
- * @returns {any}
+ * @param forceNewApp - In TEST mode only, return a new Application for fixtures and mocks
  */
 function getApplication (forceNewApp) {
   if (forceNewApp || !app) {

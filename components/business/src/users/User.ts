@@ -47,16 +47,12 @@ class User {
     this.createIdIfMissing();
   }
 
-  /**
-   * @returns {void}
-   */
   createIdIfMissing () {
     if (this.id == null) { this.id = cuid(); }
   }
 
   /**
    * Get only readable account information
-   * @returns {{}}
    */
   getReadableAccount () {
     return pick(this, this.readableAccountFields.filter((x) => x !== 'dbDocuments' && x !== 'attachedFiles'));
@@ -64,7 +60,6 @@ class User {
 
   /**
    * Get full account information
-   * @returns {{}}
    */
   getFullAccount () {
     return pick(this, this.accountFields.filter((x) => x !== 'dbDocuments' && x !== 'attachedFiles'));
@@ -72,7 +67,6 @@ class User {
 
   /**
    * Get fields provided by account methods
-   * @returns {{}}
    */
   getLegacyAccount () {
     return pick(this, ['username', 'email', 'language', 'storageUsed']);
@@ -80,7 +74,6 @@ class User {
 
   /**
    * Get account with id property added to it
-   * @returns {any}
    */
   getAccountWithId () {
     const res: any = pick(this, this.accountFields
@@ -91,8 +84,7 @@ class User {
   }
 }
 /**
- * @param {User} user
- * @returns {void}
+ * @param user
  */
 function buildAccountFields (user) {
   const accountMap = accountStreams.accountMap;
@@ -109,8 +101,7 @@ function buildAccountFields (user) {
   }
 }
 /**
- * @param {User} user
- * @returns {void}
+ * @param user
  */
 function loadAccountData (user, params) {
   user.accountFields.forEach((field) => {
@@ -129,9 +120,8 @@ function loadAccountData (user, params) {
 }
 /**
  * Assign events data to user account fields
- * @param {User} user
- * @param {Array<Event>} events
- * @returns {any[]}
+ * @param user
+ * @param events
  */
 function buildAccountDataFromListOfEvents (user, events) {
   const account = buildAccountRecursive(accountStreams.accountChildren, events, {});
@@ -146,10 +136,9 @@ function buildAccountDataFromListOfEvents (user, events) {
  * @param object streams
  * @param array events
  * @param object user
- * @param {Array<SystemStream>} streams
- * @param {Array<Event>} events
- * @param {{}} user
- * @returns {User}
+ * @param streams
+ * @param events
+ * @param user
  */
 function buildAccountRecursive (streams, events, user) {
   let streamIndex;

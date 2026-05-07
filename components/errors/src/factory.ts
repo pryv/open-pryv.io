@@ -209,8 +209,7 @@ factory.InvalidInvitationToken = () => {
 
 /**
  * Get the right article for the noun
- * @param {*} noun
- * @returns {"An " | "A "}
+ * @param noun
  */
 function functionGetRightArticle (noun) {
   return ['a', 'e', 'i', 'o', 'u'].includes(noun[0].toLowerCase())

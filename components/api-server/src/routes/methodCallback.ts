@@ -9,11 +9,10 @@ import type {} from 'node:fs';
 /**
  * Helper function for handling method responses.
  *
- * @param {Object} res
- * @param {Function} next
- * @param {Number|Function} successCode Can be a function accepting the result in arg
+ * @param res
+ * @param next
+ * @param successCode Can be a function accepting the result in arg
  *                                      and returning a number
- * @returns {Function}
  */
 export default function (res, next, successCode) {
   return function (err, result) {

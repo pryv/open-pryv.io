@@ -12,9 +12,6 @@ export default (req, res, next) => {
   req.headers.authorization = getAuth(req);
   next();
 };
-/**
- * @returns {string}
- */
 function getAuth (req) {
   let authorizationHeader = req.header('authorization');
   if (authorizationHeader != null) {

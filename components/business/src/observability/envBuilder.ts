@@ -18,8 +18,7 @@ const __dirname = require('path').dirname(__filename);
  * or the selected provider isn't `newrelic` — workers then see no
  * provider env and the boot shim no-ops.
  *
- * @param {Object} obs — output of `Platform.getObservabilityConfig()`.
- * @returns {Object.<string, string>}
+ * @param obs — output of `Platform.getObservabilityConfig()`.
  */
 const path = require('path');
 

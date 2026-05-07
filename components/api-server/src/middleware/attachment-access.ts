@@ -15,9 +15,6 @@ let config = null;
 let mall = null;
 let isAuditActive = false;
 let audit = null;
-/**
- * @returns {Class<attachmentsAccessMiddleware>>}
- */
 async function middlewareFactory () {
   if (initialized) { return attachmentsAccessMiddleware; }
   config = await getConfig();
@@ -39,9 +36,6 @@ export { middlewareFactory };
 // translates the request's resource path to match the actual physical path for
 // static-serving the file.
 //
-/**
- * @returns {Promise<any>}
- */
 async function attachmentsAccessMiddleware (req, res, next) {
   const event = await mall.events.getOne(req.context.user.id, req.params.id);
   if (!event) {

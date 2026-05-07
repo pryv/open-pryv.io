@@ -19,8 +19,7 @@ const LEAF_END_MARKER = '-----END CERTIFICATE-----';
  * returns from `client.auto()`) into the leaf cert on its own and the
  * issuer chain (possibly empty if there's only one cert).
  *
- * @param {string} bundlePem
- * @returns {{ leafPem: string, chainPem: string }}
+ * @param bundlePem
  */
 function splitCertChain (bundlePem) {
   if (typeof bundlePem !== 'string' || !bundlePem.includes(LEAF_END_MARKER)) {
@@ -36,8 +35,7 @@ function splitCertChain (bundlePem) {
 
 /**
  * Parse a single PEM cert and return its validity dates as Unix ms.
- * @param {string} pem
- * @returns {{ issuedAt: number, expiresAt: number, subject: string }}
+ * @param pem
  */
 function parseValidity (pem) {
   if (typeof pem !== 'string') throw new Error('parseValidity: pem is required');
@@ -54,8 +52,7 @@ function parseValidity (pem) {
  * ('*.domain.com') become 'wildcard.domain.com' — see Plan 35 config
  * contract (tlsDir/<hostname>/…).
  *
- * @param {string} hostname
- * @returns {string}
+ * @param hostname
  */
 function hostnameToDirName (hostname) {
   if (typeof hostname !== 'string' || hostname.length === 0) {

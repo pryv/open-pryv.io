@@ -36,10 +36,10 @@ class StorageLayer {
 
   /**
    * Initialize the storage layer.
-   * @param {Object} connection - Database connection (MongoDB Database instance,
+   * @param connection - Database connection (MongoDB Database instance,
    *   DatabasePG instance, or null for SQLite).
-   * @param {Object} [options] - Additional options from the barrel.
-   * @param {Object} [options.integrityAccesses] - Integrity module for accesses.
+   * @param [options] - Additional options from the barrel.
+   * @param [options.integrityAccesses] - Integrity module for accesses.
    */
   async init (connection, options: any = {}) {
     if (this.connection != null) {
@@ -73,9 +73,6 @@ class StorageLayer {
 
   // iterateAllEvents() is set by the engine's initStorageLayer()
 
-  /**
-   * @returns {Promise<any>}
-   */
   async waitForConnection () {
     const database = this.connection;
     return await database.waitForConnection();

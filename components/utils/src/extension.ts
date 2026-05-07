@@ -42,8 +42,7 @@ class ExtensionLoader {
   // below `defaultFolder` first, by appending '.js' to `name`.
   //
   /**
-   * @param {string} name
-   * @returns {Extension}
+   * @param name
    */
   load (name) {
     // not explicitly specified —> try to load from default folder
@@ -57,8 +56,7 @@ class ExtensionLoader {
   // Tries loading an extension from path. Throws an error if not successful.
   //
   /**
-   * @param {string} path
-   * @returns {Extension}
+   * @param path
    */
   loadFrom (path) {
     try {

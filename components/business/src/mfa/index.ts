@@ -28,8 +28,7 @@ const generateCode = require('./generateCode').default;
  * Returns null when MFA is disabled — callers should treat that as
  * "MFA not configured" (login flow stays unchanged).
  *
- * @param {Object} mfaConfig - the `services.mfa` config block
- * @returns {Service|null}
+ * @param mfaConfig - the `services.mfa` config block
  */
 function createMFAService (mfaConfig) {
   if (!mfaConfig || mfaConfig.mode == null || mfaConfig.mode === 'disabled') return null;
@@ -52,8 +51,7 @@ let _sessionStore = null;
  * Get (or lazily build) the process-wide MFA service singleton from `services.mfa` config.
  * Returns null when MFA is disabled.
  *
- * @param {Object} mfaConfig - `services.mfa` config block
- * @returns {Service|null}
+ * @param mfaConfig - `services.mfa` config block
  */
 function getMFAService (mfaConfig) {
   if (_mfaService === null) _mfaService = createMFAService(mfaConfig);
@@ -63,8 +61,7 @@ function getMFAService (mfaConfig) {
 /**
  * Get (or lazily build) the process-wide MFA session store singleton.
  *
- * @param {Object} mfaConfig - `services.mfa` config block (read sessions.ttlSeconds)
- * @returns {SessionStore}
+ * @param mfaConfig - `services.mfa` config block (read sessions.ttlSeconds)
  */
 function getMFASessionStore (mfaConfig) {
   if (_sessionStore === null) {

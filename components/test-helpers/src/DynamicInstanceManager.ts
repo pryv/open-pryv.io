@@ -39,9 +39,8 @@ let spawnCounter = 0;
  *   // use manager.url for HTTP requests
  *   // use manager.on('test-*', callback) for notifications
  *
- * @param {Object} config Must contain `serverFilePath`
- * @param {Object} options Optional: { messagePrefix: string } for message filtering
- * @constructor
+ * @param config Must contain `serverFilePath`
+ * @param options Optional: { messagePrefix: string } for message filtering
  */
 function DynamicInstanceManager (config, options: any = {}) {
   (DynamicInstanceManager as any).super_.call(this);
@@ -74,8 +73,8 @@ function DynamicInstanceManager (config, options: any = {}) {
 
   /**
    * Allocate ports and start the server
-   * @param {Object} inputSettings - Server configuration settings
-   * @param {Function} callback
+   * @param inputSettings - Server configuration settings
+   * @param callback
    */
   this.ensureStarted = function (inputSettings, callback) {
     const settingsCopy = structuredClone(inputSettings);
@@ -233,7 +232,7 @@ function DynamicInstanceManager (config, options: any = {}) {
 
   /**
    * Stop the server (async version that waits for process to exit)
-   * @param {Function} callback - Called when server has stopped
+   * @param callback - Called when server has stopped
    */
   this.stop = function (callback) {
     if (!isRunning()) {

@@ -37,13 +37,12 @@ const DEFAULT_BOOT_TIMEOUT_MS = 30_000;
 const DEFAULT_CALL_TIMEOUT_MS = 15_000;
 
 /**
- * @param {Object} opts
- * @param {number} opts.count - number of child workers to spawn
- * @param {string} opts.workerScript - absolute path to the worker harness module
- * @param {Object} [opts.env] - extra env vars passed to children
- * @param {number} [opts.bootTimeoutMs]
- * @param {number} [opts.callTimeoutMs]
- * @returns {Promise<{request: Function, stop: Function, workers: Array}>}
+ * @param opts
+ * @param opts.count - number of child workers to spawn
+ * @param opts.workerScript - absolute path to the worker harness module
+ * @param [opts.env] - extra env vars passed to children
+ * @param [opts.bootTimeoutMs]
+ * @param [opts.callTimeoutMs]
  */
 async function spawnWorkers ({
   count = 2,

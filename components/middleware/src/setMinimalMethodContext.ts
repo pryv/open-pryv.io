@@ -46,10 +46,9 @@ class MinimalMethodContext {
 /**
  * Helper for express to set a Minimal Context, for methods that does use the standard MethodContext.
  * Note: will have no effect is a context already exists.
- * @param {express$Request} req
- * @param {express$Response} res
- * @param {express$NextFunction} next
- * @returns {any}
+ * @param req
+ * @param res
+ * @param next
  */
 function setMinimalMethodContext (req, res, next) {
   if (req.context) {

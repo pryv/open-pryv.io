@@ -112,8 +112,7 @@ function validateEngineExports () {
 
 /**
  * Get the module for an engine, loading it if needed.
- * @param {string} engineName
- * @returns {Object} The engine's exports
+ * @param engineName
  */
 function getEngineModule (engineName) {
   const engine = engines[engineName];
@@ -162,7 +161,7 @@ const SHORT_NAMES = {
  * For testing with a different engine, override the config values
  * (e.g. via helpers-c.js injectTestConfig or a separate config file).
  *
- * @param {Object} config - @pryv/boiler config instance
+ * @param config - @pryv/boiler config instance
  */
 function resolveConfig (config) {
   resolvedConfig = {};
@@ -184,7 +183,7 @@ function resolveConfig (config) {
 
 /**
  * Initialize the plugin loader: discover engines, resolve config.
- * @param {Object} config - @pryv/boiler config instance
+ * @param config - @pryv/boiler config instance
  */
 async function init (config) {
   if (initialized) return;
@@ -196,8 +195,7 @@ async function init (config) {
 
 /**
  * Get the resolved engine name for a storageType.
- * @param {string} storageType
- * @returns {string|null} Engine name or null if not configured
+ * @param storageType
  */
 function getEngineFor (storageType) {
   if (!resolvedConfig) {
@@ -209,7 +207,6 @@ function getEngineFor (storageType) {
 
 /**
  * List all discovered engine names.
- * @returns {string[]}
  */
 function listEngines () {
   return Object.keys(engines);
@@ -217,8 +214,7 @@ function listEngines () {
 
 /**
  * Get manifest for a discovered engine.
- * @param {string} engineName
- * @returns {Object|null}
+ * @param engineName
  */
 function getManifest (engineName) {
   const engine = engines[engineName];

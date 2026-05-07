@@ -43,29 +43,28 @@ const REQUIRED_RQLITE = ['raftPort', 'httpPort'];
 /**
  * Assemble a bundle object from its inputs. Pure — no side effects, no I/O.
  *
- * @param {Object} input
- * @param {Object} input.cluster
- * @param {string} input.cluster.domain - e.g. 'mc.example.com'
- * @param {string} input.cluster.ackUrl - URL of the existing core to ack back to
- * @param {string} input.cluster.joinToken - opaque one-time token (base64 / hex)
- * @param {string} input.cluster.caCertPem - cluster CA cert in PEM form
- * @param {Object} input.node
- * @param {string} input.node.id - core id, e.g. 'core-b'
- * @param {string|null} [input.node.ip=null]
- * @param {string|null} [input.node.hosting=null]
- * @param {string|null} [input.node.url=null] - explicit core.url for DNSless multi-core
- * @param {string} input.node.certPem
- * @param {string} input.node.keyPem
- * @param {Object} input.platformSecrets
- * @param {Object} input.platformSecrets.auth
- * @param {string} input.platformSecrets.auth.adminAccessKey
- * @param {string} input.platformSecrets.auth.filesReadTokenSecret
- * @param {Object} [input.platformSecrets.letsEncrypt]
- * @param {string} [input.platformSecrets.letsEncrypt.atRestKey] - base64 32-byte key; omitted when issuing core has no LE atRestKey set
- * @param {Object} [input.rqlite]
- * @param {number} [input.rqlite.raftPort=4002]
- * @param {number} [input.rqlite.httpPort=4001]
- * @returns {Object} the bundle object, ready to JSON.stringify + encrypt
+ * @param input
+ * @param input.cluster
+ * @param input.cluster.domain - e.g. 'mc.example.com'
+ * @param input.cluster.ackUrl - URL of the existing core to ack back to
+ * @param input.cluster.joinToken - opaque one-time token (base64 / hex)
+ * @param input.cluster.caCertPem - cluster CA cert in PEM form
+ * @param input.node
+ * @param input.node.id - core id, e.g. 'core-b'
+ * @param [input.node.ip=null]
+ * @param [input.node.hosting=null]
+ * @param [input.node.url=null] - explicit core.url for DNSless multi-core
+ * @param input.node.certPem
+ * @param input.node.keyPem
+ * @param input.platformSecrets
+ * @param input.platformSecrets.auth
+ * @param input.platformSecrets.auth.adminAccessKey
+ * @param input.platformSecrets.auth.filesReadTokenSecret
+ * @param [input.platformSecrets.letsEncrypt]
+ * @param [input.platformSecrets.letsEncrypt.atRestKey] - base64 32-byte key; omitted when issuing core has no LE atRestKey set
+ * @param [input.rqlite]
+ * @param [input.rqlite.raftPort=4002]
+ * @param [input.rqlite.httpPort=4001]
  */
 function assemble (input) {
   if (!input || typeof input !== 'object') {
@@ -118,8 +117,7 @@ function assemble (input) {
  * consumed — protects against malformed, tampered or downgraded payloads.
  * Throws descriptive Errors on failure.
  *
- * @param {Object} bundle
- * @returns {Object} the same bundle (for chaining)
+ * @param bundle
  */
 function validate (bundle) {
   if (!bundle || typeof bundle !== 'object') {

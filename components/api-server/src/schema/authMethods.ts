@@ -205,7 +205,6 @@ const __ex_emailCheck = {
 export { __ex_emailCheck as emailCheck };
 /**
  * Append validation of custom system streams for registration method
- * @returns {any}
  */
 function loadCustomValidationSettings (validationSchema) {
   // iterate account stream settings and APPEND validation with relevant properties

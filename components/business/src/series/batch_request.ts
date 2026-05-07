@@ -36,8 +36,7 @@ class BatchRequest {
   // Append an element to the list of elements in this BatchRequest.
   //
   /**
-   * @param {BatchRequestElement} element
-   * @returns {void}
+   * @param element
    */
   append (element) {
     this.list.push(element);
@@ -45,16 +44,10 @@ class BatchRequest {
 
   // Returns the amount of batch elements stored here.
   //
-  /**
-   * @returns {number}
-   */
   length () {
     return this.list.length;
   }
 
-  /**
-   * @returns {Iterator<BatchRequestElement, any, undefined>}
-   */
   * elements () {
     // No arr.values() in node yet...
     for (const el of this.list) {
@@ -97,8 +90,7 @@ class Parser {
   }
 
   /**
-   * @param {unknown} jsonObj
-   * @returns {Promise<BatchRequest>}
+   * @param jsonObj
    */
   parse (jsonObj) {
     if (jsonObj == null || typeof jsonObj !== 'object') { throw error('Request body needs to be in JSON format.'); }
@@ -106,8 +98,7 @@ class Parser {
   }
 
   /**
-   * @param {any} obj
-   * @returns {Promise<BatchRequest>}
+   * @param obj
    */
   async parseSeriesBatch (obj) {
     const resolver = this.resolver;
@@ -123,9 +114,8 @@ class Parser {
 
 class ElementParser {
   /**
-   * @param {unknown} obj
-   * @param {TypeResolveFunction} resolver
-   * @returns {Promise<BatchRequestElement>}
+   * @param obj
+   * @param resolver
    */
   async parse (obj, resolver) {
     if (obj == null || typeof obj !== 'object') { throw error('Batch element must be an object with properties.'); }

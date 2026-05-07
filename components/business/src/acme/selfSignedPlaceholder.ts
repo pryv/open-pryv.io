@@ -93,11 +93,10 @@ function generate ({ commonName, altNames = [] }) {
  * not configured, or when the files already exist (e.g. cluster has already
  * been issued a cert and we're restarting).
  *
- * @param {Object} opts
- * @param {Object} opts.config        - @pryv/boiler config
- * @param {Object} [opts.deriveHostnames] - injectable for tests; defaults to ../deriveHostnames
- * @param {Function} [opts.log]       - logger
- * @returns {{ written: boolean, reason?: string, keyFile?: string, certFile?: string }}
+ * @param opts
+ * @param opts.config        - @pryv/boiler config
+ * @param [opts.deriveHostnames] - injectable for tests; defaults to ../deriveHostnames
+ * @param [opts.log]       - logger
  */
 function ensure ({ config, deriveHostnames: deriveHostnamesFn, log = (_: any) => {} }: any = {}) {
   if (!config.get('letsEncrypt:enabled')) {

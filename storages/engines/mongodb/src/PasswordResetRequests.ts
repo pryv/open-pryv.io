@@ -29,9 +29,8 @@ const collectionInfo = {
 /**
  * Creates a new instance with the given database and options.
  *
- * @param {Object} database
- * @param {Object} options Possible options: `maxAge` (in milliseconds)
- * @constructor
+ * @param database
+ * @param options Possible options: `maxAge` (in milliseconds)
  */
 function PasswordResetRequests (database, options) {
   this.database = database;
@@ -43,9 +42,9 @@ function PasswordResetRequests (database, options) {
 /**
  * Fetches the specified reset request's data (or null if the request doesn't exist or has expired).
  *
- * @param {String} id
- * @param {String} username
- * @param {Function} callback Args: err, data
+ * @param id
+ * @param username
+ * @param callback Args: err, data
  */
 PasswordResetRequests.prototype.get = function (id, username, callback) {
   const query = {
@@ -72,8 +71,8 @@ PasswordResetRequests.prototype.get = function (id, username, callback) {
 /**
  * Creates a new reset request for requesting username.
  *
- * @param {String} requesting username
- * @param {Function} callback Args: err, id
+ * @param requesting username
+ * @param callback Args: err, id
  */
 PasswordResetRequests.prototype.generate = function (username, callback) {
   const resetReq = {
@@ -90,9 +89,9 @@ PasswordResetRequests.prototype.generate = function (username, callback) {
 /**
  * Deletes the specified reset request.
  *
- * @param {String} id
- * @param {String} username
- * @param {Function} callback
+ * @param id
+ * @param username
+ * @param callback
  */
 PasswordResetRequests.prototype.destroy = function (id, username, callback) {
   const query = {
@@ -105,7 +104,7 @@ PasswordResetRequests.prototype.destroy = function (id, username, callback) {
 /**
  * Destroys all reset requests.
  *
- * @param {Function} callback
+ * @param callback
  */
 PasswordResetRequests.prototype.clearAll = function (callback) {
   this.database.deleteMany(collectionInfo, {}, callback);
@@ -119,7 +118,7 @@ PasswordResetRequests.prototype.getNewExpirationDate = function () {
 
 /**
  * Export all password reset request documents (raw).
- * @param {Function} callback
+ * @param callback
  */
 PasswordResetRequests.prototype.exportAll = function (callback) {
   this.database.find(collectionInfo, {}, {}, callback);
@@ -127,8 +126,8 @@ PasswordResetRequests.prototype.exportAll = function (callback) {
 
 /**
  * Import raw password reset request documents.
- * @param {Array} data
- * @param {Function} callback
+ * @param data
+ * @param callback
  */
 PasswordResetRequests.prototype.importAll = function (data, callback) {
   if (!data || data.length === 0) return callback(null);

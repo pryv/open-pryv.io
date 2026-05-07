@@ -27,7 +27,7 @@ let spawnCounter = 0;
  *
  * Usage: just call `server.ensureStarted(settings, callback)` before running tests.
  *
- * @param {Object} settings Must contain `serverFilePath` and `logging`
+ * @param settings Must contain `serverFilePath` and `logging`
  */
 class InstanceManager extends EventEmitter {
   url?: string;

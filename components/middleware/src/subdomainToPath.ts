@@ -17,8 +17,7 @@ const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers');
  *
  * TODO: this responsibility should be moved out to the reverse proxy (e.g. Nginx)
  *
- * @param {Array} ignoredPaths Paths for which no translation is needed
- * @return {Function}
+ * @param ignoredPaths Paths for which no translation is needed
  */
 export default function (ignoredPaths, ignoredSubdomains) {
   ignoredSubdomains = ignoredSubdomains || [];
@@ -49,8 +48,7 @@ export default function (ignoredPaths, ignoredSubdomains) {
   }
 };
 /**
- * @param {string} candidate
- * @returns {boolean}
+ * @param candidate
  */
 function looksLikeUsername (candidate) {
   const reUsername = new RegExp(USERNAME_REGEXP_STR);

@@ -28,9 +28,6 @@ class WebhooksService {
     this.settings = params.settings;
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async start () {
     this.apiVersion = await getAPIVersion();
     this.serial = this.settings.get('service:serial');
@@ -50,18 +47,12 @@ class WebhooksService {
     this.logger.info(numWebhooks + ' webhook(s) listening to changes from core.');
   }
 
-  /**
-   * @returns {void}
-   */
   subscribeListeners () {
     pubsub.webhooks.on(pubsub.WEBHOOKS_DELETE, this.onStop.bind(this));
     pubsub.webhooks.on(pubsub.WEBHOOKS_CREATE, this.onCreate.bind(this));
     pubsub.webhooks.on(pubsub.WEBHOOKS_ACTIVATE, this.onActivate.bind(this));
   }
 
-  /**
-   * @returns {number}
-   */
   setMeta () {
     let numWebhooks = 0;
     for (const entry of this.webhooks) {
@@ -76,9 +67,6 @@ class WebhooksService {
     return numWebhooks;
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async sendBootMessage () {
     for (const entry of this.webhooks) {
       await Promise.all(entry[1].map(async (webhook) => {
@@ -87,9 +75,6 @@ class WebhooksService {
     }
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async initSubscribers () {
     for (const entry of this.webhooks) {
       const username = entry[0];
@@ -101,8 +86,7 @@ class WebhooksService {
   }
 
   /**
-   * @param {UsernameWebhook} usernameWebhook
-   * @returns {Promise<void>}
+   * @param usernameWebhook
    */
   async onCreate (usernameWebhook) {
     const username = usernameWebhook.username;
@@ -115,25 +99,22 @@ class WebhooksService {
   }
 
   /**
-   * @param {UsernameWebhook} usernameWebhook
-   * @returns {void}
+   * @param usernameWebhook
    */
   onActivate (usernameWebhook) {
     this.activateWebhook(usernameWebhook.username, usernameWebhook.webhook);
   }
 
   /**
-   * @param {UsernameWebhook} usernameWebhook
-   * @returns {void}
+   * @param usernameWebhook
    */
   onStop (usernameWebhook) {
     this.stopWebhook(usernameWebhook.username, usernameWebhook.webhook.id);
   }
 
   /**
-   * @param {string} username
-   * @param {Webhook} webhook
-   * @returns {Promise<void>}
+   * @param username
+   * @param webhook
    */
   async addWebhook (username, webhook) {
     let userWebhooks = this.webhooks.get(username);
@@ -147,9 +128,8 @@ class WebhooksService {
   }
 
   /**
-   * @param {string} username
-   * @param {Webhook} webhook
-   * @returns {void}
+   * @param username
+   * @param webhook
    */
   async activateWebhook (username, webhook) {
     const userWebhooks = this.webhooks.get(username);
@@ -167,9 +147,8 @@ class WebhooksService {
   }
 
   /**
-   * @param {string} username
-   * @param {string} webhookId
-   * @returns {void}
+   * @param username
+   * @param webhookId
    */
   stopWebhook (username, webhookId) {
     const [usersWebhooks, webhook, idx] = this.getWebhook(username, webhookId);
@@ -184,9 +163,8 @@ class WebhooksService {
   }
 
   /**
-   * @param {string} username
-   * @param {string} webhookId
-   * @returns {[any[], any, number]}
+   * @param username
+   * @param webhookId
    */
   getWebhook (username, webhookId) {
     const usersWebhooks = this.webhooks.get(username);
@@ -202,9 +180,6 @@ class WebhooksService {
     return [null, null, null];
   }
 
-  /**
-   * @returns {void}
-   */
   stop () {
     this.logger.info('Stopping webhooks service');
     for (const usernameWebhooks of this.webhooks) {
@@ -214,9 +189,6 @@ class WebhooksService {
     }
   }
 
-  /**
-   * @returns {Promise<void>}
-   */
   async loadWebhooks () {
     this.webhooks = await this.repository.getAll();
   }

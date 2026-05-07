@@ -31,8 +31,7 @@ const subResourceCodeToDigestMap = {
 };
 
 /**
- * @param {string} subResourceIntegrity in the form of `<algo>-<hash>` example `sha256-uZKmWZ+CQ7UY3GUqFWD4sNPPEUKm8OPcAWr4780Acnk=`
- * @returns {string} An HTTP Digest header value in the form of `<algo>=<hash>` example `SHA-256=uZKmWZ+CQ7UY3GUqFWD4sNPPEUKm8OPcAWr4780Acnk=`
+ * @param subResourceIntegrity in the form of `<algo>-<hash>` example `sha256-uZKmWZ+CQ7UY3GUqFWD4sNPPEUKm8OPcAWr4780Acnk=`
  */
 function getHTTPDigestHeaderForAttachment (subResourceIntegrity) {
   const splitAt = subResourceIntegrity.indexOf('-');
@@ -58,33 +57,26 @@ const attachments = {
 // ----------------- standard db Items -------------- //
 
 /**
- * @callback IntegrityComputeResult
  * @property {string} integrity - and integrity code for an item. Exemple 'EVENT:0:sha256-uZKmWZ+CQ7UY3GUqFWD4sNPPEUKm8OPcAWr4780Acnk='
  * @property {string} key - and unique key for this object. Exemple 'EVENT:0:<id>:<modified>'
  */
 
 /**
  * Returns integrity and key of an object
- * @callback IntegrityCompute
- * @param {*} item - Object to compute on
- * @param {boolean} save - This computation should be saved for audit
- * @returns {IntegrityComputeResult}
+ * @param item - Object to compute on
+ * @param save - This computation should be saved for audit
  */
 
 /**
  * Compute and set integrity property to an item
- * @callback IntegritySet
- * @param {*} item - Object to compute on
- * @param {boolean} save - This computation should be saved for audit
- * @returns {*} - the item
+ * @param item - Object to compute on
+ * @param save - This computation should be saved for audit
  */
 
 /**
  * Get the hash (only .integrity) of an item item
- * @callback IntegrityHash
- * @param {*} item - Object to compute on
- * @param {boolean} save - This computation should be saved for audit
- * @returns {*} - the item
+ * @param item - Object to compute on
+ * @param save - This computation should be saved for audit
  */
 
 /**
@@ -117,9 +109,6 @@ function setOnEvent (event) {
   return event;
 }
 
-/**
- * @type {IntegrityItem}
- */
 const events = {
   isActive: eventsIsActive,
   compute: computeEvent,
@@ -148,9 +137,6 @@ function setOnAccess (access) {
   return access;
 }
 
-/**
- * @type {IntegrityItem}
- */
 const accesses = {
   isActive: accessesIsActive,
   compute: computeAccess,

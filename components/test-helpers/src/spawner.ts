@@ -61,9 +61,6 @@ class SpawnContext {
 
   // Prespawns processes up to PRESPAWN_LIMIT.
   //
-  /**
-   * @returns {void}
-   */
   prespawn () {
     const childPath = this.childPath;
 
@@ -97,8 +94,7 @@ class SpawnContext {
   // Spawns a server instance.
   //
   /**
-   * @param {any} customSettings
-   * @returns {Promise<Server>}
+   * @param customSettings
    */
   async spawn (customSettings?) {
     // If by any chance we exhausted our processes really quickly, make
@@ -136,9 +132,6 @@ class SpawnContext {
   // Returns the next free port to use for testing.
   // Uses the shared portAllocator for consistent port management.
   //
-  /**
-   * @returns {Promise<number>}
-   */
   async allocatePort () {
     return portAllocator.allocatePort();
   }
@@ -147,9 +140,6 @@ class SpawnContext {
   // processes ahead of time in the background and return the next process from
   // the internal prespawn pool.
   //
-  /**
-   * @returns {ProcessProxy}
-   */
   getProcess () {
     this.prespawn();
     if (this.pool.length <= 0) { throw new Error('AF: pool is not empty'); }
@@ -161,8 +151,7 @@ class SpawnContext {
   // Spawns `n` instances at different listening ports. See #spawn.
   //
   /**
-   * @param {number} n
-   * @returns {Promise<Server>[]}
+   * @param n
    */
   spawn_multi (n) {
     if (n <= 0) { throw new Error('AF: n expected to be > 0'); }
@@ -172,18 +161,12 @@ class SpawnContext {
   // Called by the ProcessProxy when the child it is connected to exits. This
   // exists to allow prespawning to catch up.
   //
-  /**
-   * @returns {void}
-   */
   onChildExit () {
     if (!this.shuttingDown) { this.prespawn(); }
   }
 
   // Call this when you want to stop all children at the end of the test suite.
   //
-  /**
-   * @returns {Promise<void>}
-   */
   async shutdown () {
     logger.debug('shutting down the context', this.pool.length);
     this.shuttingDown = true;
@@ -222,9 +205,6 @@ class ProcessProxy {
     this.registerEvents();
   }
 
-  /**
-   * @returns {void}
-   */
   registerEvents () {
     const child = this.childProcess;
     child.on('error', (err) => this.onChildError(err));
@@ -235,9 +215,6 @@ class ProcessProxy {
     });
   }
 
-  /**
-   * @returns {void}
-   */
   dispatchChildMessage (wireMsg) {
     const pendingMessages = this.pendingMessages;
     const [status, msgId, cmd, retOrErr] = msgpack.decode(wireMsg);
@@ -258,16 +235,12 @@ class ProcessProxy {
   }
 
   /**
-   * @param {unknown} err
-   * @returns {void}
+   * @param err
    */
   onChildError (err) {
     logger.debug(err);
   }
 
-  /**
-   * @returns {void}
-   */
   onChildExit () {
     logger.debug('child exited');
     this.exited.burn();
@@ -278,8 +251,7 @@ class ProcessProxy {
   // Starts the express/socket.io server with the settings given.
   //
   /**
-   * @param {unknown} settings
-   * @returns {Promise<void>}
+   * @param settings
    */
   async startServer (settings) {
     if (this.exited.isBurnt()) { throw new Error('Child exited prematurely; please check your setup code.'); }
@@ -291,9 +263,6 @@ class ProcessProxy {
 
   // Terminates the associated child process; progressing from SIGTERM to SIGKILL.
   //
-  /**
-   * @returns {Promise<unknown>}
-   */
   async terminate () {
     if (this.exited.isBurnt()) { return; }
     const child = this.childProcess;
@@ -314,9 +283,8 @@ class ProcessProxy {
   }
 
   /**
-   * @param {string} msg
-   * @param {any} args
-   * @returns {Promise<unknown>}
+   * @param msg
+   * @param args
    */
   sendToChild (msg, ...args) {
     return new Promise((resolve, reject) => {
@@ -329,9 +297,8 @@ class ProcessProxy {
   }
 
   /**
-   * @param {ResolveFun} res
-   * @param {RejectFun} rej
-   * @returns {number}
+   * @param res
+   * @param rej
    */
   createPendingMessage (res, rej) {
     let remainingTries = 1000;
@@ -378,9 +345,6 @@ class Server extends EventEmitter {
     this.listen();
   }
 
-  /**
-   * @returns {void}
-   */
   listen () {
     const child = this.process.childProcess;
     child.on('message', (msg) => {
@@ -395,9 +359,6 @@ class Server extends EventEmitter {
   // when the process could be stopped) or `false` for when the child could not
   // be terminated.
   //
-  /**
-   * @returns {Promise<boolean>}
-   */
   async stop () {
     logger.debug('stop called');
     try {
@@ -411,16 +372,14 @@ class Server extends EventEmitter {
   }
 
   /**
-   * @param {string} path
-   * @returns {string}
+   * @param path
    */
   url (path) {
     return new url.URL(path || '', this.baseUrl).toString();
   }
 
   /**
-   * @param {string} newUrl
-   * @returns {any}
+   * @param newUrl
    */
   request (newUrl) {
     return supertest(newUrl || this.baseUrl);

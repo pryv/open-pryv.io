@@ -36,11 +36,10 @@ const DIRECTORY_PRODUCTION = 'https://acme-v02.api.letsencrypt.org/directory';
  * case) and reused on every subsequent cert issuance. Fresh accounts
  * burn rate-limit quota.
  *
- * @param {Object} opts
- * @param {string} opts.email
- * @param {string} [opts.directoryUrl] - default: LE production
- * @param {Object} [opts.acmeLib]      - default: require('acme-client'); injectable for tests
- * @returns {Promise<{accountKey: string, accountUrl: string, email: string, directoryUrl: string}>}
+ * @param opts
+ * @param opts.email
+ * @param [opts.directoryUrl] - default: LE production
+ * @param [opts.acmeLib]      - default: require('acme-client'); injectable for tests
  */
 async function createAccount ({ email, directoryUrl, acmeLib }: any = {}) {
   if (!email) throw new Error('AcmeClient.createAccount: email is required');
@@ -65,16 +64,15 @@ async function createAccount ({ email, directoryUrl, acmeLib }: any = {}) {
 /**
  * Issue (or renew — same thing from ACME's point of view) a cert.
  *
- * @param {Object} opts
- * @param {string} opts.commonName              - e.g. '*.mc.example.com'
- * @param {string[]} [opts.altNames=[]]         - SAN list, e.g. ['mc.example.com']
- * @param {Object} opts.account                 - { accountKey, accountUrl } from createAccount()
- * @param {Function} opts.challengeCreateFn     - (authz, challenge, keyAuthorization) => Promise
- * @param {Function} opts.challengeRemoveFn     - (authz, challenge, keyAuthorization) => Promise
- * @param {string[]} [opts.challengePriority]   - default ['dns-01']
- * @param {string}   [opts.directoryUrl]        - default: LE production
- * @param {Object}   [opts.acmeLib]             - default require('acme-client')
- * @returns {Promise<{
+ * @param opts
+ * @param opts.commonName              - e.g. '*.mc.example.com'
+ * @param [opts.altNames=[]]         - SAN list, e.g. ['mc.example.com']
+ * @param opts.account                 - { accountKey, accountUrl } from createAccount()
+ * @param opts.challengeCreateFn     - (authz, challenge, keyAuthorization) => Promise
+ * @param opts.challengeRemoveFn     - (authz, challenge, keyAuthorization) => Promise
+ * @param [opts.challengePriority]   - default ['dns-01']
+ * @param [opts.directoryUrl]        - default: LE production
+ * @param [opts.acmeLib]             - default require('acme-client')
  *   commonName: string,
  *   altNames: string[],
  *   certPem: string,   // leaf only

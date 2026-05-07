@@ -84,8 +84,7 @@ export default accountStore;
  * A leaf stream is one that has a type other than 'none/none' and no children
  * (or empty children array).
  *
- * @param {Array} streamTree
- * @returns {Map<string, object>}
+ * @param streamTree
  */
 function buildFieldStreamMap (streamTree) {
   const map = new Map();

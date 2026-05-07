@@ -24,8 +24,7 @@ const MESSAGES = {
 // ------- listener
 // listen for a userId
 /**
- * @param {string} userId
- * @returns {void}
+ * @param userId
  */
 function registerListenerForUserId (userId) {
   logger.debug('activate listener for user:', userId);
@@ -36,8 +35,7 @@ function registerListenerForUserId (userId) {
 }
 // unregister listner
 /**
- * @param {string} userId
- * @returns {void}
+ * @param userId
  */
 function removeListenerForUserId (userId) {
   logger.debug('disable listener for user:', userId);
@@ -47,9 +45,8 @@ function removeListenerForUserId (userId) {
 }
 // listener
 /**
- * @param {string} userId
- * @param {Message} msg
- * @returns {any}
+ * @param userId
+ * @param msg
  */
 function handleMessage (userId, msg) {
   logger.debug('handleMessage', userId, msg);
@@ -66,8 +63,7 @@ function handleMessage (userId, msg) {
 }
 // ------- emitter
 /**
- * @param {string} userId
- * @returns {void}
+ * @param userId
  */
 function unsetAccessLogic (userId, accessLogic) {
   pubsub.cache.emit(userId, {
@@ -77,8 +73,7 @@ function unsetAccessLogic (userId, accessLogic) {
   });
 }
 /**
- * @param {string} userId
- * @returns {void}
+ * @param userId
  */
 function unsetUserData (userId) {
   pubsub.cache.emit(userId, {
@@ -86,8 +81,7 @@ function unsetUserData (userId) {
   });
 }
 /**
- * @param {string} username
- * @returns {void}
+ * @param username
  */
 function unsetUser (username) {
   pubsub.cache.emit(MESSAGES.UNSET_USER, {
@@ -95,9 +89,6 @@ function unsetUser (username) {
   });
 }
 // register cache here (to avoid require cycles)
-/**
- * @returns {void}
- */
 function setCache (c) {
   if (cache !== null) {
     return; // cache already set

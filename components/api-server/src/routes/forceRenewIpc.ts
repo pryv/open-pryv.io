@@ -21,11 +21,10 @@ const { randomUUID } = require('node:crypto');
 const DEFAULT_TIMEOUT_MS = 180_000;
 
 /**
- * @param {Object} opts
- * @param {string|undefined} opts.hostname - optional override; master falls back to primary.
- * @param {number} [opts.timeoutMs=180000] - generous default; ACME with DNS-01 + 15s propagate wait can take a couple of minutes.
- * @param {NodeJS.Process} [opts.processHandle=process] - injectable for tests.
- * @returns {Promise<{
+ * @param opts
+ * @param opts.hostname - optional override; master falls back to primary.
+ * @param [opts.timeoutMs=180000] - generous default; ACME with DNS-01 + 15s propagate wait can take a couple of minutes.
+ * @param [opts.processHandle=process] - injectable for tests.
  *   ok: boolean,
  *   hostname?: string,
  *   issuedAt?: number,

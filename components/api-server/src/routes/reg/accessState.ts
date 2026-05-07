@@ -33,7 +33,6 @@ function getPlatformDB () {
 
 /**
  * Generate a random alphanumeric key.
- * @returns {string}
  */
 function generateKey () {
   return crypto.randomBytes(KEY_LENGTH).toString('base64url').slice(0, KEY_LENGTH);
@@ -48,8 +47,7 @@ function generateKey () {
  * Splitting create into build + persist avoids a read-modify-write
  * round-trip we'd otherwise need to add the URLs after the initial save.
  *
- * @param {Object} params
- * @returns {{ key: string, state: Object, expiresAt: number }}
+ * @param params
  */
 function buildState (params) {
   const key = generateKey();
@@ -78,9 +76,9 @@ function buildState (params) {
  * write after `buildState()` and to push subsequent mutations of `state`
  * back to the store.
  *
- * @param {string} key
- * @param {Object} state
- * @param {number} [expiresAt] - defaults to `state.expiresAt`
+ * @param key
+ * @param state
+ * @param [expiresAt] - defaults to `state.expiresAt`
  */
 async function persist (key, state, expiresAt) {
   const ts = expiresAt ?? state.expiresAt;
@@ -93,8 +91,7 @@ async function persist (key, state, expiresAt) {
  * writes; new code should use `buildState()` + `persist()` instead. Kept
  * for tests and any external caller that doesn't decorate the state.
  *
- * @param {Object} params
- * @returns {Promise<{ key: string, state: Object }>}
+ * @param params
  */
 async function create (params) {
   const built = buildState(params);
@@ -104,8 +101,7 @@ async function create (params) {
 
 /**
  * Get an access request state.
- * @param {string} key
- * @returns {Promise<Object|null>}
+ * @param key
  */
 async function get (key) {
   const row = await getPlatformDB().getAccessState(key);
@@ -114,9 +110,8 @@ async function get (key) {
 
 /**
  * Update an access request state (accept or refuse).
- * @param {string} key
- * @param {Object} update
- * @returns {Promise<Object|null>} the updated state, or null if key not found.
+ * @param key
+ * @param update
  */
 async function update (key, update) {
   const platformDB = getPlatformDB();
@@ -137,8 +132,7 @@ async function update (key, update) {
 
 /**
  * Delete an access request.
- * @param {string} key
- * @returns {Promise<void>}
+ * @param key
  */
 async function remove (key) {
   await getPlatformDB().deleteAccessState(key);
@@ -147,7 +141,6 @@ async function remove (key) {
 /**
  * Clear all entries (used by tests). Calls the master sweep with `now =
  * Infinity` so every row is dropped.
- * @returns {Promise<{removed: number}>}
  */
 async function clear () {
   return await getPlatformDB().sweepExpiredAccessStates(Number.POSITIVE_INFINITY);

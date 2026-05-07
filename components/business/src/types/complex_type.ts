@@ -26,41 +26,28 @@ class ComplexType {
     this._outerType = outerType;
   }
 
-  /**
-   * @returns {string}
-   */
   typeName () {
     return this._outerType;
   }
 
-  /**
-   * @returns {string[]}
-   */
   requiredFields () {
     if (this._schema.required == null) { throw new Error('Type Schema must have a list of required fields.'); }
     return this._schema.required;
   }
 
-  /**
-   * @returns {any}
-   */
   optionalFields () {
     const requiredKeys = this.requiredFields();
     const allKeys = this.fields();
     return allKeys.filter((el) => requiredKeys.indexOf(el) < 0);
   }
 
-  /**
-   * @returns {string[]}
-   */
   fields () {
     if (this._schema.properties == null) { throw new Error('Type Schema must have a properties object.'); }
     return Object.keys(this._schema.properties);
   }
 
   /**
-   * @param {string} name
-   * @returns {any}
+   * @param name
    */
   forField (name) {
     const PATH_SEPARATOR = '.';
@@ -92,17 +79,13 @@ class ComplexType {
     throw new Error('Field names must encode the full path up to a value type.');
   }
 
-  /**
-   * @returns {false}
-   */
   isSeries () {
     return false;
   }
 
   /**
-   * @param {Validator} validator
-   * @param {Content} content
-   * @returns {Promise<any>}
+   * @param validator
+   * @param content
    */
   callValidator (validator, content) {
     // NOTE We don't currently perform coercion on leaf types of complex

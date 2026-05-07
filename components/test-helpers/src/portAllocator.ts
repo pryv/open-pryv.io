@@ -38,7 +38,6 @@ let nextPort = BASE_PORT_MIN + Math.floor(Math.random() * (BASE_PORT_MAX - BASE_
 
 /**
  * Allocates a free port for testing
- * @returns {Promise<number>} A port number that can be bound to
  */
 async function allocatePort () {
   // Keep trying until we find a free port
@@ -61,8 +60,7 @@ async function allocatePort () {
 
 /**
  * Checks if a port is available by attempting to bind to it
- * @param {number} port - The port to check
- * @returns {Promise<boolean>} True if the port is available
+ * @param port - The port to check
  */
 function isPortAvailable (port) {
   return new Promise((resolve) => {
@@ -82,8 +80,7 @@ function isPortAvailable (port) {
 
 /**
  * Allocates multiple ports at once
- * @param {number} count - Number of ports to allocate
- * @returns {Promise<number[]>} Array of allocated port numbers
+ * @param count - Number of ports to allocate
  */
 async function allocatePorts (count) {
   const ports = [];
@@ -95,7 +92,7 @@ async function allocatePorts (count) {
 
 /**
  * Resets the port allocator (useful for test setup)
- * @param {number} basePort - Starting port number (defaults to random in range)
+ * @param basePort - Starting port number (defaults to random in range)
  */
 function reset (basePort) {
   nextPort = basePort || (BASE_PORT_MIN + Math.floor(Math.random() * (BASE_PORT_MAX - BASE_PORT_MIN)));

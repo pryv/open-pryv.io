@@ -130,7 +130,7 @@ class AuditFilter {
     }
     /**
      * Builds a map with an { i => true } entry for each array element
-     * @param {Array<*>} array
+     * @param array
      */
     function buildMap (array) {
       const map = {};
@@ -144,7 +144,7 @@ class AuditFilter {
   /**
    * Returns { syslog?: true, storage?: true } if at least one of them is audited
    * otherwise, returns false
-   * @param {*} method - the method name. Ex.: events.get
+   * @param method - the method name. Ex.: events.get
    */
   isAudited (method) {
     return this.filter.methods[method];

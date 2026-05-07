@@ -12,7 +12,6 @@ const Transform = require('stream').Transform;
  * Stream that serialize the first object it receives.
  *
  * @param objectName {String} array name that will prefix the array
- * @constructor
  */
 class SingleObjectSerializationStream extends Transform {
   name;

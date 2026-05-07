@@ -152,8 +152,7 @@ function getKeyValueDataForStore (storeId) {
 }
 
 /**
- * @constructor
- * @param {string} storeId
+ * @param storeId
  */
 function StoreKeyValueData (storeId) {
   this.storeId = storeId;

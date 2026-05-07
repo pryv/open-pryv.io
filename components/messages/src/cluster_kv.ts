@@ -42,9 +42,9 @@ let _cluster: any = null;
  * Initialise the master-side handler. Call once from `bin/master.js` after
  * `cluster.setupPrimary()`. Idempotent — second call is a no-op.
  *
- * @param {Object} opts
- * @param {Function} [opts.log] - logger; called with (msg)
- * @param {Object} [opts.cluster] - injectable for tests; defaults to `require('node:cluster')`
+ * @param opts
+ * @param [opts.log] - logger; called with (msg)
+ * @param [opts.cluster] - injectable for tests; defaults to `require('node:cluster')`
  */
 function masterStart (opts: any = {}) {
   if (_masterRunning) return;
@@ -205,10 +205,10 @@ const _SHARED_FALLBACK = new _InProcessStore();
  * within their one process). Tests inject `processHandle` to drive a
  * specific channel.
  *
- * @param {Object} [opts]
- * @param {NodeJS.Process|EventEmitter} [opts.processHandle=process]
- * @param {number} [opts.timeoutMs=5000]
- * @param {boolean} [opts.fallback=true] - when false, raise instead of using the in-process store.
+ * @param [opts]
+ * @param [opts.processHandle=process]
+ * @param [opts.timeoutMs=5000]
+ * @param [opts.fallback=true] - when false, raise instead of using the in-process store.
  */
 function clientFor ({ processHandle = process, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, fallback = true } = {}) {
   // Detect "no IPC channel" up-front so we can pick the fallback once and

@@ -20,8 +20,7 @@ export { localStorePrepareOptions, localStorePrepareQuery };
 
 /**
  * Convert store API options params to local store options
- * @param {object} options
- * @returns {object}
+ * @param options
  */
 function localStorePrepareOptions (options) {
   const localOptions = {
@@ -34,8 +33,7 @@ function localStorePrepareOptions (options) {
 
 /**
  * Convert store API query params to an array of queries
- * @param {object} query
- * @returns {object}
+ * @param query
  */
 function localStorePrepareQuery (query) {
   const localQuery = [];

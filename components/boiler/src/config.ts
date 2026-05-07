@@ -72,13 +72,12 @@ class Config {
   /**
    * @private
    * Init Config with Files should be called just once when starting an APP
-   * @param {Object} options
-   * @param {string} appName
-   * @param {string} [options.baseConfigDir] - (optional) directory to use to look for configs (default, env)
-   * @param {string} [options.baseFilesDir] - (optional) directory to use for `file://` relative path
-   * @param {Array<ConfigFile|ConfigPlugin|ConfigData|ConfigRemoteURL|ConfigRemoteURLFromKey>} [options.extras] - (optional) and array of extra files or plugins to load (synchronously or async)
-   * @param {Object} logging
-   * @returns {Config} this
+   * @param options
+   * @param appName
+   * @param [options.baseConfigDir] - (optional) directory to use to look for configs (default, env)
+   * @param [options.baseFilesDir] - (optional) directory to use for `file://` relative path
+   * @param [options.extras] - (optional) and array of extra files or plugins to load (synchronously or async)
+   * @param logging
    */
   initSync (options, logging) {
     this.appName = options.appName;
@@ -251,8 +250,7 @@ class Config {
 
   /**
    * Return true if key as value
-   * @param {string} key
-   * @returns {boolean}
+   * @param key
    */
   has (key) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
@@ -262,7 +260,7 @@ class Config {
 
   /**
    * Retreive value
-   * @param {string} [key] if no key is provided all the config is returned
+   * @param [key] if no key is provided all the config is returned
    */
   get (key) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
@@ -273,7 +271,7 @@ class Config {
 
   /**
    * Retreive value and store info that applies
-   * @param {string} key
+   * @param key
    */
   getScopeAndValue (key) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
@@ -298,8 +296,8 @@ class Config {
 
   /**
    * Set value
-   * @param {string} key
-   * @param {Object} value
+   * @param key
+   * @param value
    */
   set (key, value) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
@@ -308,7 +306,7 @@ class Config {
 
   /**
    * Inject Test Config and override any other option
-   * @param {Object} configObject;
+   * @param configObject;
    */
   injectTestConfig (configObject) {
     this.replaceScopeConfig('test', configObject);
@@ -316,8 +314,8 @@ class Config {
 
   /**
    * Replace a scope config set
-   * @param {string} scope;
-   * @param {Object} configObject;
+   * @param scope;
+   * @param configObject;
    */
   replaceScopeConfig (scope, configObject) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }

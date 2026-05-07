@@ -24,9 +24,6 @@ export { getMall, storeDataUtils };
 let mall;
 let initializing = false;
 
-/**
- * @returns {Promise<any>}
- */
 async function getMall () {
   // eslint-disable-next-line no-unmodified-loop-condition
   while (initializing) {
