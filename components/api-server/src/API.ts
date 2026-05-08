@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const APIError = require('errors').APIError;
 const errors = require('errors').factory;
 const Result = require('./Result.ts').default;
-const { getConfigUnsafe } = require('@pryv/boiler');
+const { getConfigSync } = require('@pryv/boiler');
 
 let audit, throwIfMethodIsNotDeclared, isAuditActive;
 
@@ -44,7 +44,7 @@ class API {
   constructor () {
     this.map = new Map();
     this.filters = [];
-    const config = getConfigUnsafe();
+    const config = getConfigSync();
     isAuditActive = config.get('audit:active');
     if (isAuditActive) {
       audit = require('audit').default;

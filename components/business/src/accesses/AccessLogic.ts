@@ -13,13 +13,13 @@ const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 const accountStreams = require('business/src/system-streams/index.ts');
 
-const { getConfigUnsafe } = require('@pryv/boiler');
+const { getConfigSync } = require('@pryv/boiler');
 const { storeDataUtils, getMall } = require('mall');
 
 let auditIsActive = null;
 function addAuditStreams () {
   if (auditIsActive !== null) return auditIsActive;
-  auditIsActive = getConfigUnsafe().get('audit:active');
+  auditIsActive = getConfigSync().get('audit:active');
   return auditIsActive;
 }
 

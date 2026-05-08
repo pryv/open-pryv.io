@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const methodCallback = require('./methodCallback.ts').default;
 const { setMethodId } = require('middleware');
-const { getConfigUnsafe } = require('@pryv/boiler');
+const { getConfigSync } = require('@pryv/boiler');
 export default function (expressApp, app) {
   const api = app.api;
   // dnsLess compatible route
@@ -21,7 +21,7 @@ export default function (expressApp, app) {
   // the `/reg/` prefix.
   // Inside the default-export function — called from app bootstrap
   // post-`await getConfig()` — so the no-warnOnly variant is safe.
-  const config = getConfigUnsafe();
+  const config = getConfigSync();
   if (!config.get('dnsLess:isActive')) {
     expressApp.get('/service/info', setMethodId('service.info'), function (req, res, next) {
       api.call(req.context, req.query, methodCallback(res, next, 200));

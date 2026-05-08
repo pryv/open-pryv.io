@@ -8,14 +8,14 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { getConfigUnsafe } = require('@pryv/boiler');
+const { getConfigSync } = require('@pryv/boiler');
 
 let defaultApiFormat;
 /**
  * @param [apiFormat] - (default the one of config "service:api") https://{username}.domain/ or https://hostname/{username}/
  */
 function build (username, token, apiFormat) {
-  if (!defaultApiFormat) { defaultApiFormat = getConfigUnsafe().get('service:api'); }
+  if (!defaultApiFormat) { defaultApiFormat = getConfigSync().get('service:api'); }
   apiFormat = apiFormat || defaultApiFormat;
   let apiEndpoint = apiFormat.replace('{username}', username);
   if (token) {

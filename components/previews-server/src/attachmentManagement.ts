@@ -11,18 +11,17 @@ const require = createRequire(import.meta.url);
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
-const { getConfigUnsafe } = require('@pryv/boiler');
+const { getConfigSync } = require('@pryv/boiler');
 
 // Lazy memoized read: previously a module-top
 // `getConfigUnsafe(true).get(...)` capture which depended on the partial
 // boiler config being far enough along at module-load. All three readers
 // (ensurePreviewPath, getPreviewPath, removeAllPreviews) are called at
-// request/test time — post-init by lifecycle — so the no-warnOnly
-// `getConfigUnsafe()` is safe.
+// request/test time — post-init by lifecycle — so `getConfigSync()` is safe.
 let _previewsDirPath: string | undefined;
 function getPreviewsDirPath (): string {
   if (_previewsDirPath == null) {
-    _previewsDirPath = getConfigUnsafe().get('storages:engines:filesystem:previewsDirPath');
+    _previewsDirPath = getConfigSync().get('storages:engines:filesystem:previewsDirPath');
   }
   return _previewsDirPath;
 }

@@ -30,8 +30,20 @@ const boiler = {
    */
   getConfig,
   /**
-   * get the configuration.
-   * If the configuration is not fully initialized throw an error
+   * Sync access to the fully-loaded configuration. Throws if boiler
+   * init() hasn't been called or if async config-loading is still
+   * pending. Use this from request/test paths that are guaranteed to
+   * run post-init.
+   */
+  getConfigSync,
+  /**
+   * Escape hatch for pre-init reads. Returns the config object whether
+   * or not async loading has completed; with `warnOnly: true`, prints
+   * a warning instead of throwing when config is partial. Use only for
+   * call sites that genuinely run before init resolves (e.g.
+   * test-helpers fixture pre-computation, lazy-on-first-test-access
+   * MongoDB Database constructor). Prefer `getConfigSync()` everywhere
+   * else.
    * @param warnOnly - Only warns about potential misuse of config
    */
   getConfigUnsafe,
@@ -90,6 +102,35 @@ async function getConfig () {
   return config;
 }
 
+/**
+ * Sync access to the fully-loaded config. Throws if boiler hasn't been
+ * init()'d or if async config-loading is still pending. Prefer this
+ * over `getConfigUnsafe()` everywhere except the two known pre-init
+ * sites (integrity fixture-time read, storage lazy MongoDB ctor).
+ */
+function getConfigSync () {
+  if (!configInitCalledWithName) {
+    throw (new Error('boiler must be initialized with init() before using getConfigSync()'));
+  }
+  if (!configInitialized) {
+    throw (new Error('Config loaded before being fully initialized — use getConfigUnsafe(true) only if you genuinely need pre-init access'));
+  }
+  return config;
+}
+
+/**
+ * Pre-init escape hatch. With `warnOnly: true` returns the partial
+ * config + warns. Without (or with false) throws like `getConfigSync`.
+ *
+ * KEEP THIS for the two legitimate pre-init sites:
+ *   - components/business/src/integrity/integrity.ts (module-top
+ *     capture; test-helpers/data/events.ts fixture pre-computation
+ *     races against boiler init).
+ *   - components/storage/src/index.ts:_ensureMongoDatabase
+ *     (test-helpers/dependencies lazy-loads MongoDB at module-load).
+ *
+ * Anywhere else, use `getConfigSync()`.
+ */
 function getConfigUnsafe (warnOnly) {
   if (!configInitCalledWithName) {
     throw (new Error('boiler must be initialized with init() before using getConfigUnsafe()'));
@@ -108,5 +149,5 @@ function getConfigUnsafe (warnOnly) {
 // require('@pryv/boiler')` (and the deep `require('@pryv/boiler')` whole-
 // module pattern) both keep working under Node 24 require(esm).
 const { getLogger } = logging;
-export { boiler, getLogger, getConfig, getConfigUnsafe, init };
+export { boiler, getLogger, getConfig, getConfigSync, getConfigUnsafe, init };
 export default boiler;

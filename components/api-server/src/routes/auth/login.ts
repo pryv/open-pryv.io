@@ -12,14 +12,14 @@ const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 const methodCallback = require('../methodCallback.ts').default;
 const Paths = require('../Paths.ts');
-const { getConfigUnsafe } = require('@pryv/boiler');
+const { getConfigSync } = require('@pryv/boiler');
 /**
  * Auth routes.
  *
  * @param api The API object for registering methods
  */
 export default function (expressApp, app) {
-  const config = getConfigUnsafe();
+  const config = getConfigSync();
   const api = app.api;
   const ms14days = 1000 * 60 * 60 * 24 * 14;
   const sessionMaxAge = config.get('auth:sessionMaxAge') || ms14days;

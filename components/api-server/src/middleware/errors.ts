@@ -11,7 +11,7 @@ const errorsFactory = errors.factory;
 const APIError = errors.APIError;
 const errorHandling = errors.errorHandling;
 const commonMeta = require('../methods/helpers/setCommonMeta.ts');
-const { getConfigUnsafe } = require('@pryv/boiler');
+const { getConfigSync } = require('@pryv/boiler');
 
 export default produceHandleErrorMiddleware;
 export { produceHandleErrorMiddleware };
@@ -24,7 +24,7 @@ export { produceHandleErrorMiddleware };
  */
 function produceHandleErrorMiddleware (logging) {
   const logger = logging.getLogger('error-middleware');
-  const config = getConfigUnsafe();
+  const config = getConfigSync();
   const isAuditActive = config.get('audit:active');
   let audit;
   if (isAuditActive) {
