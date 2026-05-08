@@ -202,6 +202,13 @@ function getMochaHooks (isParallelMode = false) {
       if (!fs.existsSync(previewsDirPath)) {
         fs.mkdirSync(previewsDirPath, { recursive: true });
       }
+      // Static event fixtures (test-helpers/data/events.ts) defer their
+      // integrity attachment until post-init (8a-ii). Trigger that here,
+      // after `await getConfig()`, so any test consumer that reads
+      // `testData.events` directly (rather than going through
+      // `resetEvents`) still sees integrity-ready events.
+      const { ensureIntegrity: ensureEventsIntegrity } = require('./data/events.ts');
+      ensureEventsIntegrity();
     },
     // Integrity checks disabled in parallel mode (no transport between workers).
     ...(isParallelMode

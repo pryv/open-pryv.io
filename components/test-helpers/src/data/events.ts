@@ -377,22 +377,41 @@ const events = [
     event.streamIds = [event.streamId];
     delete event.streamId;
   }
-  let origId = null;
-  if (event.headId) { // remove headId to compute integrity
-    origId = event.id;
-    event.id = event.headId;
-    delete event.headId;
-  }
-  integrity.events.set(event, false);
-  if (origId) {
-    event.headId = event.id;
-    event.id = origId;
-  }
   return event;
 });
 
+/**
+ * Idempotently attaches the integrity hash to every static fixture
+ * event. Must be called after boiler init resolves (e.g. from
+ * helpers-base.ts beforeAll, or from resetEvents at first test use).
+ *
+ * Used to live as a module-top `Array.map` running
+ * `integrity.events.set(e, false)` directly — that snapshot ran at
+ * data/events.ts module-load time, BEFORE the boiler config was fully
+ * loaded. Decoupling unblocks the integrity.ts module-top capture
+ * removal that PLAN3 Path B 8a wants.
+ */
+let _integrityAttached = false;
+function ensureIntegrity () {
+  if (_integrityAttached) return;
+  _integrityAttached = true;
+  for (const event of events) {
+    let origId = null;
+    if (event.headId) { // remove headId to compute integrity
+      origId = event.id;
+      event.id = event.headId;
+      delete event.headId;
+    }
+    integrity.events.set(event, false);
+    if (origId) {
+      event.headId = event.id;
+      event.id = origId;
+    }
+  }
+}
+
 export default events;
-export { events };
+export { events, ensureIntegrity };
 
 /**
  * Creates a cuid-like id (required event id format).

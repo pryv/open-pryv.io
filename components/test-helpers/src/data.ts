@@ -97,6 +97,7 @@ export const resetProfile = function (done, user) {
 // events
 
 const events = require('./data/events.ts').default;
+const { ensureIntegrity: ensureEventsIntegrity } = require('./data/events.ts');
 export { events };
 const dynCreateAttachmentIdMap = {}; // contains real ids of created attachment per event:
 export { dynCreateAttachmentIdMap };
@@ -117,6 +118,10 @@ export { addCorrectAttachmentIds };
 export const resetEvents = function resetEvents (done, user) {
   // deleteData(storage.user.events, user || defaultUser, events, done);
   user = user || defaultUser;
+  // Lazy-attach integrity to fixture events — the static .map() at
+  // data/events.ts module-load no longer does this (post-Plan-57 8a-ii)
+  // because integrity computation needs post-boiler-init algorithm.
+  ensureEventsIntegrity();
   const eventsToWrite = events.map((e) => structuredClone(e));
   (async () => {
     try {
