@@ -19,7 +19,9 @@ export default function (expressApp, app) {
   // clients hitting `https://reg.{domain}/service/info` — the natural URL
   // for a distribution-reserved subdomain — get a valid response without
   // the `/reg/` prefix.
-  const config = getConfigUnsafe(true);
+  // Inside the default-export function — called from app bootstrap
+  // post-`await getConfig()` — so the no-warnOnly variant is safe.
+  const config = getConfigUnsafe();
   if (!config.get('dnsLess:isActive')) {
     expressApp.get('/service/info', setMethodId('service.info'), function (req, res, next) {
       api.call(req.context, req.query, methodCallback(res, next, 200));
