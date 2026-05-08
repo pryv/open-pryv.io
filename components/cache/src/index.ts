@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { getLogger, getConfigUnsafe } = require('@pryv/boiler');
+const { getLogger, getConfig } = require('@pryv/boiler');
 const { LRUCache: LRU } = require('lru-cache');
 const _caches = {};
 const MAX_PER_CACHE_SIZE = 2000; // maximum elements for each cache (namespace)
@@ -23,7 +23,6 @@ for (const key of ['set', 'get', 'unset', 'clear']) {
     logg.debug(...arguments);
   };
 }
-const config = getConfigUnsafe(true);
 /**
  * username -> userId
  */
@@ -181,9 +180,24 @@ const cache = {
   NS
 };
 /**
- * Used only from tests to reload configuration after settting changes
+ * Awaits boiler's full config then activates the cache + wires the
+ * cluster-wide synchro. Runs as a fire-and-forget at module-bottom so
+ * every consumer of `require('cache')` sees the same eventually-active
+ * instance — and crucially, sees the SAME view across the api-server
+ * forked-child + mocha-parent processes (they both await the full config
+ * before flipping `isActive`, instead of capturing a partial snapshot at
+ * module-load like the legacy `getConfigUnsafe(true)` pattern did).
+ *
+ * Cache ops short-circuit on `!isActive`, so the brief async window
+ * between module-load and `loadConfiguration` resolving is safe — it
+ * just no-ops, matching what partial-config used to do.
+ *
+ * Consumers that want to reload after mutating config (test helpers
+ * calling `cache.clear()`) get the reload async too; the returned
+ * promise can be awaited if a test needs the post-reload state.
  */
-function loadConfiguration () {
+async function loadConfiguration () {
+  const config = await getConfig();
   // could be true/false or 1/0 if launched from command line
   isActive = !!config.get('caching:isActive');
   isSynchroActive = true;
@@ -192,7 +206,12 @@ function loadConfiguration () {
     synchro.setCache(cache);
   }
 }
-loadConfiguration();
+loadConfiguration().catch((err) => {
+  // observability shim already swallows boot failures with a stderr
+  // message; do the same here so a config-misconfig doesn't kill the
+  // master process. Cache stays inactive, ops no-op.
+  process.stderr.write('[cache] loadConfiguration at boot failed: ' + (err.message || err) + '\n');
+});
 
 export default cache;
 export { cache };
