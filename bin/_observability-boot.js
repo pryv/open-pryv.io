@@ -42,7 +42,7 @@ function activate () {
     // Resolve the provider's boot module under the business component.
     // Keep this require synchronous + before any other require in the
     // consuming process.
-    const bootPath = '../components/business/src/observability/providers/' + providerId + '/boot';
+    const bootPath = '../components/business/src/observability/providers/' + providerId + '/boot.ts';
     require(bootPath); // side effect: requires the agent + attaches adapter
     return { activated: true, providerId };
   } catch (err) {
