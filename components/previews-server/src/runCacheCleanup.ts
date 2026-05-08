@@ -17,7 +17,7 @@ const __dirname = require('path').dirname(__filename);
  */
 
 const path = require('path');
-const { getConfig, getLogger } = require('@pryv/boiler').init({
+const { getConfigUnsafe, getLogger } = require('@pryv/boiler').init({
   appName: 'previews-cache-clean',
   baseFilesDir: path.resolve(__dirname, '../../../'),
   baseConfigDir: path.resolve(__dirname, '../../../config/'),
@@ -33,25 +33,23 @@ const Cache = require('./cache.ts').default;
 const errorHandling = require('errors').errorHandling;
 
 const logger = getLogger('previews-cache-worker');
+const config = getConfigUnsafe(true);
+const previewsDirPath = config.get('storages:engines:filesystem:previewsDirPath');
+const previewsCacheMaxAge = config.get('eventFiles:previewsCacheMaxAge') || 604800000; // 1 week in ms
 
-(async () => {
-  const config = await getConfig();
-  const previewsDirPath = config.get('storages:engines:filesystem:previewsDirPath');
-  const previewsCacheMaxAge = config.get('eventFiles:previewsCacheMaxAge') || 604800000; // 1 week in ms
+const cache = new Cache({
+  rootPath: previewsDirPath,
+  maxAge: previewsCacheMaxAge / 1000, // convert ms to seconds
+  logger
+});
 
-  const cache = new Cache({
-    rootPath: previewsDirPath,
-    maxAge: previewsCacheMaxAge / 1000, // convert ms to seconds
-    logger
-  });
-
-  logger.info('Starting clean-up in ' + previewsDirPath);
-  try {
-    await cache.cleanUp();
+logger.info('Starting clean-up in ' + previewsDirPath);
+cache.cleanUp()
+  .then(() => {
     logger.info('Clean-up successful.');
     process.exit(0);
-  } catch (err) {
+  })
+  .catch(err => {
     errorHandling.logError(err, null, logger);
     process.exit(1);
-  }
-})();
+  });

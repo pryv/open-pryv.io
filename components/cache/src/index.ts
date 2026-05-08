@@ -23,6 +23,7 @@ for (const key of ['set', 'get', 'unset', 'clear']) {
     logg.debug(...arguments);
   };
 }
+const config = getConfigUnsafe(true);
 /**
  * username -> userId
  */
@@ -183,18 +184,6 @@ const cache = {
  * Used only from tests to reload configuration after settting changes
  */
 function loadConfiguration () {
-  let config;
-  try {
-    config = getConfigUnsafe();
-  } catch (err) {
-    // Config not yet ready — module-bottom auto-call fires before
-    // boiler init resolves in tests that require('cache') eagerly via
-    // their helpers (business/users/repository → cache). Bail without
-    // setting isActive so cache ops no-op, matching the legacy
-    // getConfigUnsafe(true) warnOnly behavior. Re-attempt next call
-    // (e.g. via cache.clear()).
-    return;
-  }
   // could be true/false or 1/0 if launched from command line
   isActive = !!config.get('caching:isActive');
   isSynchroActive = true;

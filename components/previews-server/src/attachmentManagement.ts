@@ -13,13 +13,7 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const { getConfigUnsafe } = require('@pryv/boiler');
 
-let _previewsDirPath: string | undefined;
-function getPreviewsDirPath (): string {
-  if (_previewsDirPath == null) {
-    _previewsDirPath = getConfigUnsafe().get('storages:engines:filesystem:previewsDirPath');
-  }
-  return _previewsDirPath;
-}
+const previewsDirPath = getConfigUnsafe(true).get('storages:engines:filesystem:previewsDirPath');
 
 /**
  * Ensures the preview path for the specific event exists.
@@ -27,7 +21,7 @@ function getPreviewsDirPath (): string {
  *
  */
 async function ensurePreviewPath (user, eventId, dimension) {
-  const dirPath = path.join(getPreviewsDirPath(), user.id, eventId);
+  const dirPath = path.join(previewsDirPath, user.id, eventId);
   await fsp.mkdir(dirPath, { recursive: true });
   return path.join(dirPath, getPreviewFileName(dimension));
 }
@@ -35,7 +29,7 @@ async function ensurePreviewPath (user, eventId, dimension) {
 export { ensurePreviewPath };
 
 function getPreviewPath (user, eventId, dimension) {
-  return path.join(getPreviewsDirPath(), user.id, eventId, getPreviewFileName(dimension));
+  return path.join(previewsDirPath, user.id, eventId, getPreviewFileName(dimension));
 }
 export { getPreviewPath };
 
@@ -48,6 +42,6 @@ function getPreviewFileName (dimension) {
  * Synchronous until all related code is async/await.
  */
 function removeAllPreviews () {
-  fs.rmSync(getPreviewsDirPath(), { recursive: true, force: true });
+  fs.rmSync(previewsDirPath, { recursive: true, force: true });
 }
 export { removeAllPreviews };

@@ -6,51 +6,16 @@
  */
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { getConfigUnsafe, getLogger } = require('@pryv/boiler');
-const logger = getLogger('integrity');
+const config = require('@pryv/boiler').getConfigUnsafe(true);
+const logger = require('@pryv/boiler').getLogger('integrity');
 const stableRepresentation = require('@pryv/stable-object-representation');
 
 // --------------- CONFIGURATION -------------- //
-// Lazy-initialised on first integrity API use so the read happens
-// post-boiler-init (no need for the legacy `getConfigUnsafe(true)`
-// warnOnly escape hatch).
-let _initialized = false;
-let _eventsIsActive = false;
-let _accessesIsActive = false;
-let _attachmentsIsActive = false;
-let _algorithm: string | undefined;
-function _init () {
-  if (_initialized) return;
-  let config;
-  try {
-    config = getConfigUnsafe();
-  } catch (err) {
-    // Config not yet ready (test-helpers/src/data/events.ts pre-computes
-    // integrity hashes at module-load time, before mocha's first
-    // `before()` awaits getConfig). Bail without memoizing — flags stay
-    // default-false so events.set() no-ops, matching the legacy
-    // getConfigUnsafe(true) warnOnly behavior. Next call after init
-    // resolves will succeed and memoize.
-    return;
-  }
-  _initialized = true;
-  const configIntegrity = config.get('integrity');
-  _eventsIsActive = configIntegrity?.isActive?.events || false;
-  _accessesIsActive = configIntegrity?.isActive?.accesses || false;
-  _attachmentsIsActive = configIntegrity?.isActive?.attachments || false;
-  _algorithm = config.get('integrity:algorithm');
-  // crash early on unsupported algorithm if any integrity surface is active
-  if ((_eventsIsActive || _attachmentsIsActive) && (subResourceCodeToDigestMap[_algorithm as string] == null)) {
-    const message = 'Integrity is active and algorithm [' + _algorithm + '] is unsupported. Choose one of: ' + Object.keys(subResourceCodeToDigestMap).join(', ');
-    logger.error(message);
-    console.log('Error: ' + message);
-    process.exit(1);
-  }
-}
-function getEventsIsActive (): boolean { _init(); return _eventsIsActive; }
-function getAccessesIsActive (): boolean { _init(); return _accessesIsActive; }
-function getAttachmentsIsActive (): boolean { _init(); return _attachmentsIsActive; }
-function getAlgorithm (): string { _init(); return _algorithm as string; }
+const configIntegrity = config.get('integrity');
+const eventsIsActive = configIntegrity?.isActive?.events || false;
+const accessesIsActive = configIntegrity?.isActive?.accesses || false;
+const attachmentsIsActive = configIntegrity?.isActive?.attachments || false;
+const algorithm = config.get('integrity:algorithm');
 
 // --------------- ATTACHMENTS ---------------- //
 
@@ -85,7 +50,7 @@ type IntegrityAttachments = {
   MulterIntegrityDiskStorage: any;
 };
 const attachments = {
-  get isActive (): boolean { return getAttachmentsIsActive(); },
+  isActive: attachmentsIsActive,
   getHTTPDigestHeaderForAttachment,
   MulterIntegrityDiskStorage: require('./MulterIntegrityDiskStorage.ts').default
 };
@@ -125,7 +90,7 @@ type IntegrityItem = {
 // ------------- events ------------------ //
 
 function computeEvent (event) {
-  return stableRepresentation.event.compute(event, getAlgorithm());
+  return stableRepresentation.event.compute(event, algorithm);
 }
 
 function keyEvent (event) {
@@ -133,18 +98,18 @@ function keyEvent (event) {
 }
 
 function hashEvent (event) {
-  return stableRepresentation.event.hash(event, getAlgorithm());
+  return stableRepresentation.event.hash(event, algorithm);
 }
 
 function setOnEvent (event) {
   delete event.integrity;
-  if (!getEventsIsActive()) return;
+  if (!eventsIsActive) return;
   event.integrity = hashEvent(event);
   return event;
 }
 
 const events = {
-  get isActive (): boolean { return getEventsIsActive(); },
+  isActive: eventsIsActive,
   compute: computeEvent,
   key: keyEvent,
   hash: hashEvent,
@@ -154,7 +119,7 @@ const events = {
 // ------------- accesses ------------------ //
 
 function computeAccess (access) {
-  return stableRepresentation.access.compute(access, getAlgorithm());
+  return stableRepresentation.access.compute(access, algorithm);
 }
 
 function keyAccess (access) {
@@ -162,17 +127,17 @@ function keyAccess (access) {
 }
 
 function hashAccess (access) {
-  return stableRepresentation.access.hash(access, getAlgorithm());
+  return stableRepresentation.access.hash(access, algorithm);
 }
 
 function setOnAccess (access) {
-  if (!getAccessesIsActive()) return;
+  if (!accessesIsActive) return;
   access.integrity = hashAccess(access);
   return access;
 }
 
 const accesses = {
-  get isActive (): boolean { return getAccessesIsActive(); },
+  isActive: accessesIsActive,
   compute: computeAccess,
   key: keyAccess,
   hash: hashAccess,
@@ -191,8 +156,18 @@ const integrity = {
   events,
   accesses,
   attachments,
-  get algorithm (): string { return getAlgorithm(); }
+  algorithm
 };
+
+// config check
+// output message and crash if algorythm is not supported
+
+if ((events.isActive || attachments.isActive) && (subResourceCodeToDigestMap[algorithm] == null)) {
+  const message = 'Integrity is active and algorithm [' + algorithm + '] is unsupported. Choose one of: ' + Object.keys(subResourceCodeToDigestMap).join(', ');
+  logger.error(message);
+  console.log('Error: ' + message);
+  process.exit(1);
+}
 
 export default integrity;
 export { integrity };
