@@ -19,9 +19,9 @@ const timestamp = require('unix-timestamp');
 const { _internals } = require('./_internals.ts');
 const encryption = require('utils').encryption;
 
-let passwordsCollection = null;
-let storesKeyValueCollection = null;
-let accountFieldsCollection = null;
+let passwordsCollection: any = null;
+let storesKeyValueCollection: any = null;
+let accountFieldsCollection: any = null;
 
 const InitStates = {
   NOT_INITIALIZED: -1,
@@ -221,7 +221,7 @@ async function getAccountFieldHistory (userId, field, limit) {
     options.limit = limit;
   }
   const cursor = await accountFieldsCollection.find({ userId, field }, options);
-  const history = [];
+  const history: any[] = [];
   for await (const doc of cursor) {
     history.push({ value: doc.value, time: doc.time, createdBy: doc.createdBy });
   }
@@ -245,19 +245,19 @@ async function clearHistory (userId) {
 
 async function _exportAll (userId) {
   const passwordsCursor = await passwordsCollection.find({ userId }, { sort: { time: 1 } });
-  const passwords = [];
+  const passwords: any[] = [];
   for await (const entry of passwordsCursor) {
     passwords.push({ time: entry.time, hash: entry.hash, createdBy: entry.createdBy });
   }
 
   const storeKeyValuesCursor = await storesKeyValueCollection.find({ userId });
-  const storeKeyValues = [];
+  const storeKeyValues: any[] = [];
   for await (const entry of storeKeyValuesCursor) {
     storeKeyValues.push({ storeId: entry.storeId, key: entry.key, value: entry.value });
   }
 
   const accountFieldsCursor = await accountFieldsCollection.find({ userId }, { sort: { field: 1, time: 1 } });
-  const accountFields = [];
+  const accountFields: any[] = [];
   for await (const entry of accountFieldsCursor) {
     accountFields.push({ field: entry.field, value: entry.value, time: entry.time, createdBy: entry.createdBy });
   }

@@ -232,7 +232,7 @@ export default async function produceAccessesApiMethods (api) {
         return;
       }
       // create new stream
-      const newStream = {
+      const newStream: any = {
         id: permission.streamId,
         name: permission.defaultName,
         parentId: null
@@ -470,7 +470,7 @@ export default async function produceAccessesApiMethods (api) {
   function checkPermissions (context, permissions, callback) {
     // modify permissions in-place, assume no side fx
     const checkedPermissions = permissions;
-    let checkError = null;
+    let checkError: any = null;
     let i = 0;
     function nextPermission (err?) {
       if (err != null) {

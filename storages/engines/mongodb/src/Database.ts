@@ -688,7 +688,7 @@ function getAuthPart (settings) {
 
 function tellMeIfStackDoesNotContains (needles, info) {
   const e = new Error();
-  const stack = e.stack
+  const stack = (e.stack ?? '')
     .split('\n')
     .filter((l) => l.indexOf('node_modules') < 0)
     .filter((l) => l.indexOf('node:') < 0)

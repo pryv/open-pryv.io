@@ -31,7 +31,7 @@ import type {} from 'node:fs';
  *                                   cron-like work).
  */
 
-let activeProvider = null; // {id, setTransactionName, recordError, recordCustomEvent, startBackgroundTransaction}
+let activeProvider: any = null; // {id, setTransactionName, recordError, recordCustomEvent, startBackgroundTransaction}
 
 function init (provider) {
   if (activeProvider) {

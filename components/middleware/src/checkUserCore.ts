@@ -39,7 +39,7 @@ const require = createRequire(import.meta.url);
  *   }
  */
 
-let _platformPromise = null;
+let _platformPromise: any = null;
 
 /**
  * Lazily resolve the Platform singleton. Cached so the first request after

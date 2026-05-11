@@ -159,7 +159,7 @@ function createValidator (options: any = {}) {
   };
 
   const compileCache = new WeakMap();
-  let lastErrors = null;
+  let lastErrors: any = null;
 
   function compile (schema) {
     let fn = compileCache.get(schema);

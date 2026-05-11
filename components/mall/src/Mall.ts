@@ -26,7 +26,7 @@ class Mall {
   /**
    * Contains the list of stores included in star permissions.
    */
-  includedInStarPermissions = [];
+  includedInStarPermissions: any[] = [];
 
   _events;
   _streams;

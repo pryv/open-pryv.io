@@ -121,7 +121,7 @@ export default async function (systemAPI, api) {
     async function listUsers (context, params, result, next) {
       try {
         const usersMap: Record<string, string> = await usersIndex.getAllByUsername();
-        const users = [];
+        const users: any[] = [];
         for (const [username, userId] of Object.entries(usersMap)) {
           const user = await usersRepository.getUserById(userId);
           if (user == null) continue;

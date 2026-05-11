@@ -63,7 +63,7 @@ class ChildProcess {
   respondToParent (msg) {
     logger.debug('respondToParent', msg);
 
-    process.send(msgpack.encode(msg));
+    process.send!(msgpack.encode(msg)); // worker child; send is always defined here
   }
 
   dispatchParentMessage (cmd, ...args) {

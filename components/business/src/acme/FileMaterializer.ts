@@ -141,8 +141,8 @@ async function runRotateScript ({ scriptPath, hostname, certPath, keyPath, timeo
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
-  const stdout = [];
-  const stderr = [];
+  const stdout: any[] = [];
+  const stderr: any[] = [];
   child.stdout.on('data', (c) => stdout.push(c));
   child.stderr.on('data', (c) => stderr.push(c));
 

@@ -88,7 +88,7 @@ class MallUserEvents {
     if (!eventsStore) {
       throw errorFactory.unknownResource(`Unknown store "${storeId}"`, storeId);
     }
-    const res = [];
+    const res: any[] = [];
     try {
       const events = await eventsStore.getHistory(userId, storeEventId);
       for (const event of events) {
@@ -112,7 +112,7 @@ class MallUserEvents {
    * Specific to Mall, allow query with a prepared query by store
    */
   async getWithParamsByStore (userId, paramsByStore) {
-    const res = [];
+    const res: any[] = [];
     for (const storeId of Object.keys(paramsByStore)) {
       const eventsStore = this.eventsStores.get(storeId);
       const params = paramsByStore[storeId];
@@ -183,7 +183,7 @@ class MallUserEvents {
    */
   async getDeletions (storeId, userId, query, options) {
     const resultStream = await this.getDeletionsStreamed(storeId, userId, query, options);
-    const res = [];
+    const res: any[] = [];
     for await (const item of resultStream) {
       res.push(item);
     }
@@ -260,7 +260,7 @@ class MallUserEvents {
     const storeEvent = eventsUtils.convertEventToStore(storeId, newEventData);
 
     if (storeEvent?.streamIds) {
-      const storeStreamIds = [];
+      const storeStreamIds: any[] = [];
       for (const fullStreamId of newEventData.streamIds) {
         const [streamStoreId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(fullStreamId);
         if (streamStoreId !== storeId) {
@@ -304,7 +304,7 @@ class MallUserEvents {
    * @param [forEachEvent] - each updated event is passed as parameter, null is passed after last event.
    */
   async updateMany (userId, query, update, forEachEvent, mallTransaction) {
-    const result = [];
+    const result: any[] = [];
     const streamedUpdate = await this.updateStreamedMany(userId, query, update, mallTransaction);
     for await (const event of streamedUpdate) {
       if (forEachEvent != null) {

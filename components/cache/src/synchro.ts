@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('cache:synchro');
 const { pubsub } = require('messages');
-let cache = null;
+let cache: any = null;
 /**
  * userId -> listener
  */

@@ -40,7 +40,7 @@ class ProjectVersion {
   version () {
     const version = this.readStaticVersion();
     if (version != null && version !== '1.2.3') { return version; }
-    let versionFromGitTag = null;
+    let versionFromGitTag: any = null;
     try {
       const options = { stdio: 'pipe' }; // in order to mute stderr from console stdout. https://stackoverflow.com/a/45578119/3967660
       versionFromGitTag = execSync('git describe --tags', options).toString();

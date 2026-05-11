@@ -96,7 +96,7 @@ class PubSub extends EventEmitter {
 
 // ----- Transport
 
-let transport = null;
+let transport: any = null;
 function initTransport () {
   if (transport != null) return;
   transport = require('./tcp_pubsub.ts');
@@ -111,7 +111,7 @@ testMessageMap[CONSTANTS.USERNAME_BASED_STREAMS_CHANGED] = 'test-streams-changed
 testMessageMap[CONSTANTS.USERNAME_BASED_ACCESSES_CHANGED] = 'test-accesses-changed';
 testMessageMap[CONSTANTS.USERNAME_BASED_ACCOUNT_CHANGED] = 'test-account-changed';
 
-let globalTestNotifier = null;
+let globalTestNotifier: any = null;
 
 function forwardToTests (eventName, payload) {
   if (eventName === CONSTANTS.SERVER_READY) {

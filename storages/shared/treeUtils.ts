@@ -22,14 +22,14 @@ function buildTree (array, stripParentIds) {
   if (!Array.isArray(array)) {
     throw new Error('Invalid argument: expected an array');
   }
-  const map = {};
+  const map: any = {};
   array.forEach(function (item) {
     verifyFlatItem(item);
     const clone = structuredClone(item);
     if (clone.deleted == null) clone.children = [];
     map[item.id] = clone;
   });
-  const result = [];
+  const result: any[] = [];
   array.forEach(function (item) {
     const clone = map[item.id];
     if (clone.hasOwnProperty('parentId') && clone.parentId) {
@@ -199,7 +199,7 @@ async function iterateOnPromise (array, iterator) {
  *                              (if yes, the tree structure may be modified)
  */
 async function filterTreeOnPromise (array, keepOrphans, iterator) {
-  const filteredArray = [];
+  const filteredArray: any[] = [];
   for (let i = 0, n = array.length; i < n; i++) {
     const item = array[i];
     if (await iterator(item)) {
@@ -223,7 +223,7 @@ async function filterTreeOnPromise (array, keepOrphans, iterator) {
  * @param iterator Arguments: ({Object}), return value: {Boolean}
  */
 function filterTree (array, keepOrphans, iterator) {
-  const filteredArray = [];
+  const filteredArray: any[] = [];
   for (let i = 0, n = array.length; i < n; i++) {
     const item = array[i];
     if (iterator(item)) {
@@ -306,7 +306,7 @@ function expandIds (array, ids) {
  * Applies "iterator" function to all elements of the array and its children.
  */
 function cloneAndApply (array, iterator) {
-  const result = [];
+  const result: any[] = [];
   array.forEach((item) => {
     const clone = structuredClone(item);
     result.push(applyRecursive(iterator(clone), iterator));
@@ -319,7 +319,7 @@ function cloneAndApply (array, iterator) {
  */
 function applyRecursive (item, iterator) {
   if (!Array.isArray(item.children) || item.children.length === 0) { return item; }
-  const result = [];
+  const result: any[] = [];
   item.children.forEach((child) => {
     result.push(applyRecursive(iterator(child), iterator));
   });

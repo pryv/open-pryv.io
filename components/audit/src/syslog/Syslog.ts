@@ -82,7 +82,7 @@ export { Syslog };
  * @param options.align - set to true to allign logs items
  */
 function generateFormat (options) {
-  const formats = [];
+  const formats: any[] = [];
   function printf (info) {
     return info.message;
   }

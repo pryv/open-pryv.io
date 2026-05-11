@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
 const EventEmitter = require('events');
 const { getConfig, getLogger } = require('@pryv/boiler');
 
-let notifier = null;
+let notifier: any = null;
 let initializing = false;
 
 async function getTestNotifier () {

@@ -50,7 +50,7 @@ const engines: Record<string, any> = {};
 /**
  * Resolved config: storageType → { engine: string, config: object }
  */
-let resolvedConfig = null;
+let resolvedConfig: any = null;
 
 let initialized = false;
 

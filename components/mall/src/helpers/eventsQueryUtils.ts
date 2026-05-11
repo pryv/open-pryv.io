@@ -44,10 +44,10 @@ function getParamsByStore (params) {
   }
 
   // repack stream queries by store
-  const streamQueriesByStore = {};
+  const streamQueriesByStore: any = {};
   if (params.streams) { // must be an array
     for (const streamQuery of params.streams) {
-      const context = { storeId: null };
+      const context: { storeId: any } = { storeId: null };
 
       const resCleanQuery = getStoreStreamQuery(streamQuery, context);
       const storeId = context.storeId;
@@ -106,7 +106,7 @@ function getStoreStreamQuery (streamQuery, context) {
  */
 function normalizeStreamQuery (streamQuery) {
   if (streamQuery == null) return null;
-  const res = [];
+  const res: any[] = [];
   for (const streamQueryItem of streamQuery) {
     res.push(normalizeStreamQueryItem(streamQueryItem));
   }
@@ -114,8 +114,8 @@ function normalizeStreamQuery (streamQuery) {
 }
 
 function normalizeStreamQueryItem (streamQueryItem) {
-  const normalizedStreamQuery = [];
-  const not = []; // we need only one "not"
+  const normalizedStreamQuery: any[] = [];
+  const not: any[] = []; // we need only one "not"
   if (streamQueryItem.any != null) normalizedStreamQuery.push({ any: streamQueryItem.any });
   if (streamQueryItem.not != null) not.push(...streamQueryItem.not);
   if (streamQueryItem.and != null) {

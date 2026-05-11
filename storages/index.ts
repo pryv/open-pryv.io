@@ -73,7 +73,7 @@ function initEngines (config) {
   }
 }
 
-let instances = null;
+let instances: any = null;
 let initializing = false;
 
 // Early-published references: set as soon as created during init() so that
@@ -155,7 +155,7 @@ async function init (config) {
   validatePlatformDB(platformDB);
 
   // 7.5 AuditStorage (optional — skip if no engine declares auditStorage)
-  let auditStorage = null;
+  let auditStorage: any = null;
   const auditEngine = pluginLoader.getEngineFor('auditStorage');
   if (auditEngine) {
     const { validateAuditStorage } = require('storages/interfaces/auditStorage/AuditStorage.ts');
@@ -166,7 +166,7 @@ async function init (config) {
   }
 
   // 8. Series connection (skip if engine missing or lacks support)
-  let seriesConnection = null;
+  let seriesConnection: any = null;
   const seriesEngine = pluginLoader.getEngineFor('seriesStorage');
   if (seriesEngine) {
     let seriesModule;

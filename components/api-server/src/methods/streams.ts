@@ -77,7 +77,7 @@ export default async function (api) {
        *  - pass a list of streamIds to store.streams.get() to get a consolidated answer
        *********************************/
       const listables = context.access.getListableStreamIds();
-      const filteredStreams = [];
+      const filteredStreams: any[] = [];
       for (const listable of listables) {
         const listableFullStreamId = storeDataUtils.getFullItemId(listable.storeId, listable.streamId);
         const inResult = treeUtils.findById(streams, listableFullStreamId);

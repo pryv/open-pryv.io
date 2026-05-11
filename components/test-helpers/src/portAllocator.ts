@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
 const net = require('net');
 
 // Lazy logger - only initialize when boiler is ready
-let logger = null;
+let logger: any = null;
 function getLog () {
   if (!logger) {
     try {
@@ -83,7 +83,7 @@ function isPortAvailable (port) {
  * @param count - Number of ports to allocate
  */
 async function allocatePorts (count) {
-  const ports = [];
+  const ports: number[] = [];
   for (let i = 0; i < count; i++) {
     ports.push(await allocatePort());
   }

@@ -91,7 +91,7 @@ class PendingUpdatesMap {
   }
 
   getElapsed (now) {
-    const elapsed = [];
+    const elapsed: any[] = [];
     while (this.heap.size() > 0) {
       const head = this.heap.peek();
       if (head.flushAt() > now) break;

@@ -32,7 +32,7 @@ class Repository {
       const webhooksQuery = {};
       const webhooksOptions = {};
       const webhooks = await fromCallback((cb) => this.storage.find(user, webhooksQuery, webhooksOptions, cb));
-      const userWebhooks = [];
+      const userWebhooks: any[] = [];
       webhooks.forEach((w) => {
         userWebhooks.push(initWebhook(user, this, w));
       });
@@ -54,7 +54,7 @@ class Repository {
       query.accessId = { $eq: access.id };
     }
     const webhooks = await fromCallback((cb) => this.storage.find(user, query, options, cb));
-    const webhookObjects = [];
+    const webhookObjects: any[] = [];
     webhooks.forEach((w) => {
       const webhook = initWebhook(user, this, w);
       webhookObjects.push(webhook);

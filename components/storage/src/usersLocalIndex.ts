@@ -46,7 +46,7 @@ class UsersLocalIndex {
    * Check the integrity of the userIndex compared to the username events in SystemStreams
    */
   async checkIntegrity () {
-    const errors = [];
+    const errors: any[] = [];
     const infos = {};
     const checkedMap = {};
 

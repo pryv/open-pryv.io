@@ -37,7 +37,7 @@ function cleanStreamTree (streams) {
  * Must be called BEFORE cleanStreamTree (which strips isShown).
  */
 function filterShown (streams) {
-  const result = [];
+  const result: any[] = [];
   for (const s of streams) {
     if (s.isShown === false) continue;
     const clone = Object.assign({}, s);

@@ -15,7 +15,7 @@ const { validateEventFiles } = require('storages/interfaces/fileStorage/EventFil
 
 export { getEventFiles };
 
-let eventFiles = null;
+let eventFiles: any = null;
 
 async function getEventFiles () {
   if (eventFiles) return eventFiles;

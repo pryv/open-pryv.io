@@ -11,10 +11,10 @@ const { getConfig } = require('@pryv/boiler');
 const getHTTPDigestHeaderForAttachment = require('business').integrity.attachments.getHTTPDigestHeaderForAttachment;
 const { getMall } = require('mall');
 let initialized = false;
-let config = null;
-let mall = null;
+let config: any = null;
+let mall: any = null;
 let isAuditActive = false;
-let audit = null;
+let audit: any = null;
 async function middlewareFactory () {
   if (initialized) { return attachmentsAccessMiddleware; }
   config = await getConfig();

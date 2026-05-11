@@ -19,7 +19,7 @@ function log (...args: any[]) {
 
 function stack (start = 0, length = 100) {
   const e = new Error();
-  return e.stack.split('\n').filter(l => l.indexOf('node_modules') < 0).slice(start + 1, start + length + 1);
+  return (e.stack ?? '').split('\n').filter(l => l.indexOf('node_modules') < 0).slice(start + 1, start + length + 1);
 }
 
 function logstack (...args: any[]) {

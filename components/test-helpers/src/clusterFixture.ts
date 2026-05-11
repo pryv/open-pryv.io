@@ -52,7 +52,7 @@ async function spawnWorkers ({
 }: any = {}) {
   if (!workerScript) throw new Error('clusterFixture.spawnWorkers: workerScript is required');
 
-  const workers = [];
+  const workers: any[] = [];
   for (let i = 0; i < count; i++) {
     const child = childProcess.fork(workerScript, [], {
       env: { ...process.env, ...env, WORKER_INDEX: String(i) },

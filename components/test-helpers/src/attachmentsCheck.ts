@@ -31,7 +31,7 @@ export const compareTestAndAttachedFiles = async function (user, eventId, fileId
 
 async function streamToBuffer (readableStream): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
-    const chunks = [];
+    const chunks: any[] = [];
     readableStream.on('data', data => {
       chunks.push(data);
     });

@@ -52,7 +52,7 @@ const userStreams = ds.createUserStreams({
     assert.ok(streamId !== '*' && streamId != null);
 
     const allStreams = await this._getAllFromAccountAndCache(userId);
-    let stream = null;
+    let stream: any = null;
 
     const foundStream = treeUtils.findById(allStreams, streamId); // find the stream
     if (foundStream != null) {

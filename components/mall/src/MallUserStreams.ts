@@ -85,7 +85,7 @@ class MallUserStreams {
     const excludedIds = params.excludedIds || [];
     const hideStoreRoots = params.hideStoreRoots || false;
     // ------- create result ------//
-    let res = [];
+    let res: any[] = [];
     // *** root query we just expose store handles & local streams
     // might be moved in localDataStore ?
     if (streamId === '*' &&
@@ -147,7 +147,7 @@ class MallUserStreams {
     return res;
     // TODO: move utility func out of object
     function getChildlessRootStreamsForOtherStores (storeNames) {
-      const res = [];
+      const res: any[] = [];
       for (const [storeId, storeName] of storeNames) {
         // Passthrough stores (local, account) don't get pseudo-root streams
         if (!storeDataUtils.isPassthroughStore(storeId)) {
@@ -175,7 +175,7 @@ class MallUserStreams {
   async getDeletions (userId, deletedSince, storeIds) {
     if (deletedSince == null) { deletedSince = Number.MIN_SAFE_INTEGER; }
     storeIds = storeIds || [storeDataUtils.LocalStoreId];
-    const result = [];
+    const result: any[] = [];
     for (const storeId of storeIds) {
       const streamsStore = this.streamsStores.get(storeId);
       const deletedStreams = await streamsStore.getDeletions(userId, { deletedSince });
@@ -308,7 +308,7 @@ class MallUserStreams {
       childrenDepth: 1,
       includeTrashed: true
     });
-    let streamsToCheck = [];
+    let streamsToCheck: any[] = [];
     if (streamId == null) {
       // root
       streamsToCheck = streams;

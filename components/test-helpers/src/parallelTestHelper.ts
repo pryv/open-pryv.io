@@ -51,7 +51,7 @@ function createTestContext (options: any = {}) {
   const password = options.password || 'test-password';
   const prefix = options.prefix || 'test';
 
-  const ctx = {
+  const ctx: any = {
     testRunId,
     username: `${prefix}-${testRunId}`,
     password,

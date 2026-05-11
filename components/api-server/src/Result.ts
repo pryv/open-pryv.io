@@ -160,7 +160,7 @@ class Result {
     if (!this._private.isStreamResult) { throw new Error('AF: not a stream result.'); }
     if (streamsArray.length < 1) { throw new Error('streams array empty'); }
 
-    const streams = [];
+    const streams: any[] = [];
     for (let i = 0; i < streamsArray.length; i++) {
       const s = streamsArray[i];
       const serializedStream = s.stream.pipe(s.isArray ? new ArraySerializationStream(s.name) : new SingleObjectSerializationStream(s.name));

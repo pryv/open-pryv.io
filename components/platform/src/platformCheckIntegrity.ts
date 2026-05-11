@@ -28,7 +28,7 @@ export default async function platformCheckIntegrity (platformWideDB) {
     platformEntryByUser[entry.username][entry.field] = { value: entry.value, isUnique: entry.isUnique };
   }
 
-  const errors = [];
+  const errors: any[] = [];
   // Retrieve all existing users
   const usersRepository = await getUsersRepository();
   const usersFromRepository = await usersRepository.getAll();

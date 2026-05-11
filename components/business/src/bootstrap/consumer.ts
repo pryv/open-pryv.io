@@ -150,11 +150,11 @@ function defaultHttpClient (url, payload, caCertPem) {
       options.rejectUnauthorized = true;
     }
     const req = lib.request(options, (res) => {
-      const chunks = [];
+      const chunks: any[] = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => {
         const raw = Buffer.concat(chunks).toString('utf8');
-        let parsed = null;
+        let parsed: any = null;
         if (raw.length > 0) {
           try { parsed = JSON.parse(raw); } catch { parsed = { raw }; }
         }

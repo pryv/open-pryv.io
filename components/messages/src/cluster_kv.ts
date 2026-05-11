@@ -63,10 +63,11 @@ function masterStart (opts: any = {}) {
     try {
       switch (msg.type) {
         case 'kv:get': {
-          const entry = _store.get(msg.key);
+          // _store set before _ipcHandler is registered in masterStart
+          const entry = _store!.get(msg.key);
           if (!entry) return reply({ ok: true, value: null });
           if (entry.expiresAt != null && Date.now() > entry.expiresAt) {
-            _store.delete(msg.key);
+            _store!.delete(msg.key);
             return reply({ ok: true, value: null });
           }
           return reply({ ok: true, value: entry.value });
@@ -75,14 +76,14 @@ function masterStart (opts: any = {}) {
           const expiresAt = (typeof msg.ttlMs === 'number' && msg.ttlMs > 0)
             ? Date.now() + msg.ttlMs
             : null;
-          _store.set(msg.key, { value: msg.value, expiresAt });
+          _store!.set(msg.key, { value: msg.value, expiresAt });
           return reply({ ok: true });
         }
         case 'kv:delete':
-          _store.delete(msg.key);
+          _store!.delete(msg.key);
           return reply({ ok: true });
         case 'kv:clear':
-          _store.clear();
+          _store!.clear();
           return reply({ ok: true });
         default:
           return reply({ ok: false, error: 'cluster_kv: unknown op ' + msg.type });
@@ -95,8 +96,8 @@ function masterStart (opts: any = {}) {
 
   _sweepTimer = setInterval(() => {
     const now = Date.now();
-    for (const [k, entry] of _store) {
-      if (entry.expiresAt != null && now > entry.expiresAt) _store.delete(k);
+    for (const [k, entry] of _store!) {
+      if (entry.expiresAt != null && now > entry.expiresAt) _store!.delete(k);
     }
   }, SWEEP_INTERVAL_MS);
   _sweepTimer.unref();

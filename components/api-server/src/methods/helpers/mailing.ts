@@ -44,7 +44,7 @@ export const sendmail = function (emailSettings, template, recipient, subs, lang
     case 'mandrill':
       {
         const url = emailSettings.url;
-        const subsArray = [];
+        const subsArray: any[] = [];
         for (const key of Object.keys(subs)) {
           subsArray.push({
             name: key,

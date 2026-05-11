@@ -51,7 +51,7 @@ class Series {
     const appendOptions = {
       database: this.namespace
     };
-    const points = [];
+    const points: any[] = [];
     // Transform all data rows into a measurement point. Transform of rows
     // is done via toStruct in DataMatrix.Row.
     const toMeasurement = (row) => {
@@ -116,7 +116,7 @@ class Series {
    * @returns {string[]}
    */
   buildExpression (query) {
-    const subConditions = [];
+    const subConditions: any[] = [];
     if (query.from) {
       subConditions.push(`time >= ${timestampToDateString(query.from)}`);
     }

@@ -73,7 +73,7 @@ class RestoreOrchestrator {
 
     // Detect conflicts
     const conflicts = await this._detectConflicts(manifest.users);
-    const report = { restored: [], skipped: [], conflicts };
+    const report: { restored: any[], skipped: any[], conflicts: any[] } = { restored: [], skipped: [], conflicts };
 
     if (conflicts.length > 0 && !opts.skipConflicts) {
       const conflictDesc = conflicts.map(c => `${c.username} (${c.reason})`).join(', ');
@@ -180,7 +180,7 @@ class RestoreOrchestrator {
     // 6. Account data, Audit (independent)
     // Note: no FK constraints in MongoDB or PostgreSQL, but order is kept
     // for correctness if constraints are added in the future.
-    const streams = [];
+    const streams: any[] = [];
     for await (const stream of await userReader.readStreams()) {
       streams.push(stream);
     }
@@ -191,7 +191,7 @@ class RestoreOrchestrator {
     }
 
     // Accesses
-    const accesses = [];
+    const accesses: any[] = [];
     for await (const access of await userReader.readAccesses()) {
       accesses.push(access);
     }
@@ -202,7 +202,7 @@ class RestoreOrchestrator {
     }
 
     // Profile
-    const profile = [];
+    const profile: any[] = [];
     for await (const item of await userReader.readProfile()) {
       profile.push(item);
     }
@@ -213,7 +213,7 @@ class RestoreOrchestrator {
     }
 
     // Webhooks
-    const webhooks = [];
+    const webhooks: any[] = [];
     for await (const wh of await userReader.readWebhooks()) {
       webhooks.push(wh);
     }
@@ -224,7 +224,7 @@ class RestoreOrchestrator {
     }
 
     // Events
-    const events = [];
+    const events: any[] = [];
     for await (const event of await userReader.readEvents()) {
       events.push(event);
     }
@@ -264,7 +264,7 @@ class RestoreOrchestrator {
     // Audit (optional)
     if (this.auditStorage) {
       try {
-        const auditEvents = [];
+        const auditEvents: any[] = [];
         for await (const ae of await userReader.readAudit()) {
           auditEvents.push(ae);
         }
@@ -280,7 +280,7 @@ class RestoreOrchestrator {
     // Series (optional — skip if no series engine configured)
     if (this.seriesConnection) {
       try {
-        const seriesMeasurements = [];
+        const seriesMeasurements: any[] = [];
         for await (const item of await userReader.readSeries()) {
           seriesMeasurements.push(item);
         }
@@ -355,7 +355,7 @@ class RestoreOrchestrator {
   }
 
   async _detectConflicts (users) {
-    const conflicts = [];
+    const conflicts: any[] = [];
     for (const { userId, username } of users) {
       // Check if username already exists with a different userId
       try {
@@ -390,7 +390,7 @@ class RestoreOrchestrator {
 
   async _restorePlatform (reader) {
     if (!this.platformDB) return;
-    const data = [];
+    const data: any[] = [];
     let skipped = 0;
     for await (const item of await reader.readPlatformData()) {
       // v1 backups (and old v2 exports) write raw `{key, value}` entries straight from

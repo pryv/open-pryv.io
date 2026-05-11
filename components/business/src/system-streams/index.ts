@@ -24,8 +24,8 @@ const ALL = 'all';
 
 // Module-level state — all set by initializeState()
 let initialized = false;
-let streamIdWithPrefixToWithout = null;
-let accountStreamIdWithoutPrefixToWith = null;
+let streamIdWithPrefixToWithout: any = null;
+let accountStreamIdWithoutPrefixToWith: any = null;
 
 // Live exports — reassigned by initializeState()
 let allAsTree: any = null;
@@ -95,7 +95,7 @@ function initializeState (settings) {
 
 function buildLeavesMap (children) {
   const flatList = treeUtils.flattenTreeWithoutParents(children);
-  const map = {};
+  const map: any = {};
   for (const stream of flatList) {
     map[stream.id] = stream;
   }
@@ -119,7 +119,7 @@ function toStreamId (fieldName) {
 // ── Internal helpers ──────────────────────────────────────────────
 
 function filterMapStreams (streams, filter = IS_SHOWN) {
-  const streamsMap = {};
+  const streamsMap: any = {};
   if (!Array.isArray(streams)) { return streamsMap; }
   const flatList = treeUtils.flattenTree(streams);
   for (const stream of flatList) {

@@ -39,8 +39,8 @@ UserDatabase.prototype.init = async function (): Promise<void> {
   // create all tables
   for (const tableName of Object.keys(tableSchemas)) {
     const columnNames = Object.keys(tableSchemas[tableName]);
-    const columnTypes = [];
-    const indexes = [];
+    const columnTypes: string[] = [];
+    const indexes: string[] = [];
     columnNames.forEach((columnName) => {
       const column = tableSchemas[tableName][columnName];
       columnTypes.push(`${columnName} ${column.type}`);

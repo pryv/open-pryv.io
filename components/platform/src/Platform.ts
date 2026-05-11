@@ -176,7 +176,7 @@ class Platform {
    * Fully delete a user from PlatformDB.
    */
   async deleteUser (username, user) {
-    const operations = [];
+    const operations: any[] = [];
     for (const field of accountStreams.uniqueFieldNames) {
       // Get value from user object if available, otherwise look it up in PlatformDB
       let value = user?.[field];
@@ -578,7 +578,7 @@ class Platform {
    */
   async generateInvitationTokens (count, createdBy, description) {
     const crypto = require('node:crypto');
-    const created = [];
+    const created: any[] = [];
     for (let i = 0; i < count; i++) {
       const token = crypto.randomBytes(4).toString('hex');
       const info = {

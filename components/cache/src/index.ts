@@ -10,9 +10,9 @@ const require = createRequire(import.meta.url);
 
 const { getLogger, getConfig } = require('@pryv/boiler');
 const { LRUCache: LRU } = require('lru-cache');
-const _caches = {};
+const _caches: any = {};
 const MAX_PER_CACHE_SIZE = 2000; // maximum elements for each cache (namespace)
-let synchro = null;
+let synchro: any = null;
 let isActive = false;
 let isSynchroActive = false;
 const logger = getLogger('cache');

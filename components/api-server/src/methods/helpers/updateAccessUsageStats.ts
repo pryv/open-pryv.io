@@ -12,7 +12,7 @@ const string = require('./string.ts');
 const timestamp = require('unix-timestamp');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
-let singleton = null;
+let singleton: any = null;
 export default async function getUpdateAccessUsageStats () {
   if (singleton != null) { return singleton; }
   const logger = getLogger('methods:trackingFunctions');

@@ -163,7 +163,7 @@ class Application {
    * Helps that display all routes and methodId registered
    */
   helperShowRoutes () {
-    const routes = [];
+    const routes: any[] = [];
     function addRoute (route) {
       if (route) {
         let methodId;
@@ -231,7 +231,7 @@ class Application {
   }
 
   customAuthStepLoaded = false;
-  customAuthStepFn = null;
+  customAuthStepFn: any = null;
 
   /**
    * Returns the custom auth function if one was configured. Otherwise returns
@@ -253,7 +253,7 @@ class Application {
 
     const loader = new ExtensionLoader(defaultFolder);
 
-    let customAuthStep = null;
+    let customAuthStep: any = null;
     if (customAuthStepFnPath) {
       logger.debug('Loading CustomAuthStepFn from ' + customAuthStepFnPath);
       customAuthStep = loader.loadFrom(customAuthStepFnPath);

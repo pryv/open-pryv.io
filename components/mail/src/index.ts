@@ -37,8 +37,8 @@ const errors = require('./errors.ts');
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('mail');
 
-let state = null;
-let ipcListener = null;
+let state: any = null;
+let ipcListener: any = null;
 
 async function init (opts) {
   if (state) {

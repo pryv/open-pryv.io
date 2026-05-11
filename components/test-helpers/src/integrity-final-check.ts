@@ -23,7 +23,7 @@ async function getStorage () {
 async function events () {
   if (!integrity.events.isActive) return;
   const sl = await getStorage();
-  const erroneousEvents = [];
+  const erroneousEvents: any[] = [];
   let andNMore = 0;
   for await (const event of sl.iterateAllEvents()) {
     let originalId = null;
@@ -34,7 +34,7 @@ async function events () {
       delete event.headId;
     }
 
-    const errors = [];
+    const errors: any[] = [];
 
     if (typeof event.duration !== 'undefined') {
       errors.push('unexpected duration prop');
@@ -69,10 +69,10 @@ async function events () {
 async function accesses () {
   if (!integrity.accesses.isActive) return;
   const sl = await getStorage();
-  const erroneousAccess = [];
+  const erroneousAccess: any[] = [];
   let andNMore = 0;
   for await (const access of sl.accesses.iterateAll()) {
-    const errors = [];
+    const errors: any[] = [];
 
     if (access.integrity === undefined) {
       errors.push('access has no integrity property');

@@ -97,7 +97,7 @@ function createDynData (options: any = {}) {
 
   // Flatten streams for easier access
   function flattenStreams (streamList) {
-    const result = [];
+    const result: any[] = [];
     for (const stream of streamList) {
       const flatStream = { ...stream };
       delete flatStream.children;
@@ -128,7 +128,7 @@ function createDynData (options: any = {}) {
   });
 
   // Generate dynamic events
-  const events = [];
+  const events: any[] = [];
 
   // Map event headId indices to new event IDs
   // headIdx: original event index that this event's headId points to
@@ -225,8 +225,8 @@ function createDynData (options: any = {}) {
 
   // ========== Reset Functions (No dropCollection!) ==========
 
-  let dependencies = null;
-  let mall = null;
+  let dependencies: any = null;
+  let mall: any = null;
 
   async function ensureDependencies () {
     if (!dependencies) {
@@ -392,7 +392,7 @@ function createDynData (options: any = {}) {
         if (eventSource.attachments != null && eventSource.attachments.length > 0) {
           const attachmentsList = eventSource.attachments;
           delete eventSource.attachments;
-          const attachmentItems = [];
+          const attachmentItems: any[] = [];
           for (const file of attachmentsList) {
             const filePath = path.resolve(__dirname, 'data/attachments/' + file.fileName);
             file.attachmentData = fs.createReadStream(filePath);

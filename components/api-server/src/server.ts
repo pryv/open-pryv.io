@@ -29,7 +29,7 @@ class Server {
   logger: any;
   config: any;
   httpsServer: any;
-  isAuditActive: boolean;
+  isAuditActive!: boolean; // initialized in start()
 
   async start () {
     this.logger = getLogger('server');

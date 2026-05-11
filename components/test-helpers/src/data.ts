@@ -132,7 +132,7 @@ export const resetEvents = function resetEvents (done, user) {
         if (eventSource.attachments != null && eventSource.attachments.length > 0) {
           const attachments = eventSource.attachments;
           delete eventSource.attachments;
-          const attachmentItems = [];
+          const attachmentItems: any[] = [];
           for (const file of attachments) {
             const filePath = path.resolve(__dirname, 'data/attachments/' + file.fileName);
             file.attachmentData = fs.createReadStream(filePath);
@@ -161,7 +161,7 @@ export { streams };
 
 export const resetStreams = function (done, user) {
   const myUser = user || defaultUser;
-  let mall = null;
+  let mall: any = null;
   async function addStreams (arrayOfStreams) {
     for (const stream of arrayOfStreams) {
       const children = stream?.children || [];

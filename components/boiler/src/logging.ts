@@ -12,9 +12,9 @@ const util = require('util');
 const winston = require('winston');
 require('winston-daily-rotate-file');
 const debugModule = require('debug');
-let winstonInstance = null;
-let rootLogger = null;
-let customLoggerInstance = null;
+let winstonInstance: any = null;
+let rootLogger: any = null;
+let customLoggerInstance: any = null;
 
 // ------ winston formating
 
@@ -25,7 +25,7 @@ let customLoggerInstance = null;
  * @param options.align - set to true to allign logs items
  */
 function generateFormat (options) {
-  const formats = [];
+  const formats: any[] = [];
   if (options.color) {
     formats.push(winston.format.colorize());
   }
@@ -277,14 +277,14 @@ function _inspectAndHide (o) {
   }
   if (o !== null && typeof o === 'object') {
     if (Array.isArray(o)) {
-      const res = [];
+      const res: any[] = [];
       for (const item of o) {
         res.push(inspectAndHide(item));
       }
       return res;
     }
 
-    const res = {};
+    const res: any = {};
     for (const key of Object.keys(o)) {
       if (['password', 'passwordHash', 'newPassword'].includes(key)) {
         res[key] = '(hidden password)';

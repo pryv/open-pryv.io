@@ -91,7 +91,7 @@ const auditUserStreams: any = ds.createUserStreams({
     }
 
     if (streamId) {
-      let parentId = null;
+      let parentId: any = null;
       if (streamId.startsWith('access-')) {
         parentId = accessesStream.id;
       } else if (streamId.startsWith('action-')) {

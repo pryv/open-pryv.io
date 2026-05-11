@@ -17,10 +17,10 @@ const net = require('node:net');
 const { getConfig, getLogger } = require('@pryv/boiler');
 const logger = getLogger('messages:pubsub:tcp');
 
-let testDeliverHook = null;
-let client = null;
-let broker = null;
-let initPromise = null;
+let testDeliverHook: any = null;
+let client: any = null;
+let broker: any = null;
+let initPromise: any = null;
 
 // ──────────────────────────────────────────────────────────────────────
 // TcpBroker — net.createServer, tracks clients + subscriptions

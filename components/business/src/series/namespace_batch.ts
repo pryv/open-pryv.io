@@ -31,7 +31,7 @@ class NamespaceBatch {
     const appendOptions = {
       database: this.namespace
     };
-    const points = [];
+    const points: any[] = [];
     // Loop through all batch requests and convert each row into an IPoint
     // structure.
     for (const element of data.elements()) {

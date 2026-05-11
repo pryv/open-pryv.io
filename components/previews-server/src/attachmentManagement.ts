@@ -23,7 +23,7 @@ function getPreviewsDirPath (): string {
   if (_previewsDirPath == null) {
     _previewsDirPath = getConfigSync().get('storages:engines:filesystem:previewsDirPath');
   }
-  return _previewsDirPath;
+  return _previewsDirPath as string;
 }
 
 /**

@@ -32,7 +32,7 @@ class User {
 
   events;
   /** @default [] */
-  accountFields = [];
+  accountFields: any[] = [];
   /** @default [] */
   readableAccountFields = [];
   /** @default [] */

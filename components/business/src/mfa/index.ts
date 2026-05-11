@@ -44,8 +44,8 @@ function createMFAService (mfaConfig) {
 // in the cluster sees the same MFA sessions. Different from Plan 26's
 // original "single-core only" framing — under cluster.fork() that meant
 // per-worker, which broke the login → verify flow when polls round-robined.
-let _mfaService = null;
-let _sessionStore = null;
+let _mfaService: any = null;
+let _sessionStore: any = null;
 
 /**
  * Get (or lazily build) the process-wide MFA service singleton from `services.mfa` config.

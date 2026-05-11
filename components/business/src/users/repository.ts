@@ -48,7 +48,7 @@ class UsersRepository {
    */
   async getAll () {
     const usersMap = await this.usersIndex.getAllByUsername();
-    const users = [];
+    const users: any[] = [];
     for (const [username, userId] of Object.entries(usersMap)) {
       const user = await this.getUserById(userId);
       if (user == null) {
@@ -76,7 +76,7 @@ class UsersRepository {
    */
   async getAllUsersIdAndName () {
     const usersMap = await this.usersIndex.getAllByUsername();
-    const users = [];
+    const users: any[] = [];
     for (const [username, userId] of Object.entries(usersMap)) {
       users.push({ id: userId, username });
     }
@@ -186,7 +186,7 @@ class UsersRepository {
 
   async insertOne (user, withSession = false) {
     // Create the User at a Platform Level
-    const operations = [];
+    const operations: any[] = [];
     for (const key of accountStreams.indexedFieldNames) {
       // use default value is null;
       const value = user[key] != null
@@ -329,7 +329,7 @@ class UsersRepository {
   }
 }
 
-let usersRepository = null;
+let usersRepository: any = null;
 let usersRepositoryInitializing = false;
 
 async function getUsersRepository () {

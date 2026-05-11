@@ -17,8 +17,8 @@ const { getConfig } = require('@pryv/boiler');
 //  and store it forever. This (init and memoise) is the next best thing.
 // Memoised copy of the current project version.
 let version = 'n/a';
-let serial = null;
-let config = null;
+let serial: any = null;
+let config: any = null;
 /**
  *
  * If no parameter is provided, loads the configuration. Otherwise takes the provided loaded settings.

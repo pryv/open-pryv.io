@@ -183,7 +183,7 @@ async function streamQueryCheckPermissionsAndReplaceStars (context, params, resu
       unAuthorizedStreamIds.push(cleanStreamId);
     }
   }
-  const additionalStoreQueries = [];
+  const additionalStoreQueries: any[] = [];
   for (const streamQuery of params.arrayOfStreamQueriesWithStoreId) {
     // ------------ "*" case
     if (streamQuery.any && streamQuery.any.includes('*')) {
@@ -195,7 +195,7 @@ async function streamQueryCheckPermissionsAndReplaceStars (context, params, resu
         continue;
       } // We can keep star
       // replace any by allowed streams for reading
-      const canReadStreamIds = [];
+      const canReadStreamIds: any[] = [];
       for (const streamPermission of context.access.getStoresPermissions(streamQuery.storeId)) {
         if (await context.access.canGetEventsOnStream(streamPermission.streamId, streamQuery.storeId)) {
           canReadStreamIds.push(streamPermission.streamId);
@@ -207,13 +207,13 @@ async function streamQueryCheckPermissionsAndReplaceStars (context, params, resu
       // e.g. :system:email). Only applies to local store star queries — explicit
       // queries to other stores (like :_audit:) should not leak into unrelated stores.
       if (streamQuery.storeId !== storeDataUtils.LocalStoreId) continue;
-      for (const [otherStoreId, perms] of Object.entries(context.access._streamByStorePermissionsMap || {})) {
+      for (const [otherStoreId, perms] of Object.entries(context.access._streamByStorePermissionsMap || {}) as Array<[string, any]>) {
         if (otherStoreId === streamQuery.storeId) continue;
         if (params.arrayOfStreamQueriesWithStoreId.some(q => q.storeId === otherStoreId)) continue;
         // Skip audit store — audit events should only appear via explicit :_audit: queries
         if (otherStoreId === '_audit') continue;
-        const otherStreamIds = [];
-        for (const perm of Object.values(perms)) {
+        const otherStreamIds: any[] = [];
+        for (const perm of Object.values(perms) as any[]) {
           if (await context.access.canGetEventsOnStream(perm.streamId, otherStoreId)) {
             otherStreamIds.push(perm.streamId);
           }

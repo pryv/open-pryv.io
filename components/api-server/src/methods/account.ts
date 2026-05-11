@@ -221,7 +221,7 @@ export default async function (api) {
   async function updateDataOnPlatform (context, params, result, next) {
     try {
       const accountMap = accountStreams.accountMap;
-      const operations = [];
+      const operations: any[] = [];
       for (const [key, value] of Object.entries(params.update)) {
         // get previous value of the field;
         const previousValue = await usersRepository.getOnePropertyValue(context.user.id, key);

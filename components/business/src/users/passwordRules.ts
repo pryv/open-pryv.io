@@ -11,8 +11,8 @@ const { getConfig } = require('@pryv/boiler');
 
 const errors = require('errors').factory;
 
-let singleton = null;
-let userAccountStorage = null;
+let singleton: any = null;
+let userAccountStorage: any = null;
 
 /**
  * Return the password rules singleton, initializing it with the given settings if needed.

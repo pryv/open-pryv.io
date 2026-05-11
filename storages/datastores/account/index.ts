@@ -28,8 +28,8 @@ const ds = require('@pryv/datastore');
 const AccountUserStreams = require('./AccountUserStreams.ts');
 const AccountUserEvents = require('./AccountUserEvents.ts');
 
-let userAccountStorage = null;
-let fieldStreamMap = null;
+let userAccountStorage: any = null;
+let fieldStreamMap: any = null;
 
 const accountStore = ds.createDataStore({
   async init (params) {

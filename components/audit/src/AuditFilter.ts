@@ -103,7 +103,7 @@ class AuditFilter {
       return methods.includes('all');
     }
     function expandAggregates (methods) {
-      let expandedMethods = [];
+      let expandedMethods: any[] = [];
       methods.forEach(m => {
         if (!isAggregate(m)) {
           expandedMethods.push(m);
@@ -121,7 +121,7 @@ class AuditFilter {
       }
       function expandAggregate (aggregateMethod) {
         const resource = aggregateMethod.split('.')[0];
-        const expandedMethod = [];
+        const expandedMethod: any[] = [];
         ALL_METHODS.forEach(m => {
           if (m.startsWith(resource + '.')) expandedMethod.push(m);
         });

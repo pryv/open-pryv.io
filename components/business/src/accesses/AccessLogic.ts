@@ -40,7 +40,7 @@ class AccessLogic {
   _access: any; // Access right from the DB
   _userId: any;
   _streamPermissionLevelCache: any;
-  _streamByStorePermissionsMap: Record<string, Record<string, { streamId: string, level: string | null }>>;
+  _streamByStorePermissionsMap!: Record<string, Record<string, { streamId: string, level: string | null }>>; // initialized in loadPermissions()
   _streamByStoreForced: any;
   featurePermissionsMap: any;
   // mirrored from `access` via deepMerge() in constructor:
@@ -159,7 +159,7 @@ class AccessLogic {
    * get a List of readable (root) streams that can be read / listed
    */
   getListableStreamIds () {
-    const res = [];
+    const res: any[] = [];
     if (this._streamByStorePermissionsMap != null) {
       for (const storeId of Object.keys(this._streamByStorePermissionsMap)) {
         const storePermissions = this._streamByStorePermissionsMap[storeId];
@@ -177,7 +177,7 @@ class AccessLogic {
    * get StreamIds with explicit "no-list" permissions ("none", ...)
    */
   getCannotListStreamsStreamIds (storeId) {
-    const res = (storeId === 'local') ? [].concat(accountStreams.hiddenStreamIds) : [];
+    const res: any[] = (storeId === 'local') ? ([] as any[]).concat(accountStreams.hiddenStreamIds) : [];
 
     if (this._streamByStorePermissionsMap == null) return res;
     const perms = this._streamByStorePermissionsMap[storeId];
@@ -199,7 +199,7 @@ class AccessLogic {
     if (this._streamByStorePermissionsMap == null) return [];
     const localPerms = this._streamByStorePermissionsMap[storeId];
     if (localPerms == null) return [];
-    const res = [];
+    const res: any[] = [];
 
     for (const perm of Object.values(localPerms)) {
       if (perm.level === 'create-only' || perm.level == null || perm.level === 'none') {

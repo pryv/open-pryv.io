@@ -153,11 +153,11 @@ const userEvents = ds.createUserEvents({
     return await this.eventsCollection.deleteMany(query, options);
   },
 
-  async _generateVersionIfNeeded (userId, eventId, originalEvent = null, transaction = null) {
+  async _generateVersionIfNeeded (userId, eventId, originalEvent: any = null, transaction: any = null) {
     if (!this.keepHistory) return;
     const query = { userId, _id: eventId };
     const options = { transactionSession: transaction?.transactionSession };
-    let versionItem = null;
+    let versionItem: any = null;
     if (originalEvent != null) {
       versionItem = structuredClone(originalEvent);
       delete versionItem.id;
@@ -280,7 +280,7 @@ const converters = {
  * Transform the given events query to the MongoDB format.
  */
 function getMongoQuery (query) {
-  const mongoQuery = { $and: [{ deleted: null, headId: null }] };
+  const mongoQuery: any = { $and: [{ deleted: null, headId: null }] };
   for (const item of query) {
     const newCondition = converters[item.type](item.content);
     if (newCondition != null) {

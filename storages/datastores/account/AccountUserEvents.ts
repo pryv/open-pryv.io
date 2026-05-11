@@ -45,7 +45,7 @@ function create (fieldStreamMap, getStorage) {
     async get (userId, query, options) {
       const storage = await getStorage();
       const fields = await storage.getAccountFields(userId);
-      let events = [];
+      let events: any[] = [];
       for (const [fieldName, value] of Object.entries(fields)) {
         const streamConfig = fieldStreamMap.get(fieldName);
         if (!streamConfig) continue;

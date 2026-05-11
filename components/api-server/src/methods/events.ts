@@ -361,12 +361,12 @@ export default async function (api) {
     next();
   }
   async function createEvent (context, params, result, next) {
-    let newEvent = null;
+    let newEvent: any = null;
     // if event has attachments
     const files = sanitizeRequestFiles(params.files);
     delete params.files;
     if (files != null && files.length > 0) {
-      const attachmentItems = [];
+      const attachmentItems: any[] = [];
       for (const file of files) {
         attachmentItems.push({
           fileName: file.originalname,
@@ -521,7 +521,7 @@ export default async function (api) {
       const files = sanitizeRequestFiles(params.files);
       delete params.files;
       if (files != null && files.length > 0) {
-        let eventWithUpdatedAttachments = null;
+        let eventWithUpdatedAttachments: any = null;
         for (const file of files) {
           const attachmentItem = {
             fileName: file.originalname,
@@ -596,8 +596,8 @@ export default async function (api) {
     context.newEvent = event;
     // used only in the events creation and update
     if (event.streamIds != null && event.streamIds.length > 0) {
-      const streamIdsNotFoundList = [];
-      const streamIdsTrashed = [];
+      const streamIdsNotFoundList: any[] = [];
+      const streamIdsTrashed: any[] = [];
       for (const fullStreamId of event.streamIds) {
         const [storeId, streamId] = storeDataUtils.parseStoreIdAndStoreItemId(fullStreamId);
         const stream = await context.streamForStreamId(streamId, storeId);

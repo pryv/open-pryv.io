@@ -32,7 +32,7 @@ async function storeSeriesBatch (ctx, req, res) {
   // Iterate over all separate namespaces and store the data:
   trace.start('append');
   const dataByNamespace = await groupByNamespace(data, resolver);
-  const results = [];
+  const results: any[] = [];
   for (const [ns, data] of dataByNamespace.entries()) {
     const batchStoreOperation = await seriesRepository.makeBatch(ns);
     results.push(batchStoreOperation.store(data, (eventId) => resolver.getMeasurementName(eventId)));
@@ -41,7 +41,7 @@ async function storeSeriesBatch (ctx, req, res) {
   await Promise.all(results);
   trace.finish('append');
   trace.start('metadataUpdate');
-  const entries = [];
+  const entries: any[] = [];
   const now = Number(new Date()) / 1e3;
   for (const bre of data.elements()) {
     entries.push({

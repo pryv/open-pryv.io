@@ -37,7 +37,7 @@ function localStorePrepareOptions (options) {
  * Convert store API query params to an array of queries
  */
 function localStorePrepareQuery (query) {
-  const localQuery = [];
+  const localQuery: any[] = [];
   // trashed
   switch (query.state) {
     case 'trashed':

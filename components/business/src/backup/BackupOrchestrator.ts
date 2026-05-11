@@ -81,7 +81,7 @@ class BackupOrchestrator {
     const coreVersion = require('storage/package.json').version;
     const snapshotBefore = timestamp.now();
     const allUsers = await this.usersLocalIndex.getAllByUsername();
-    const userManifests = [];
+    const userManifests: any[] = [];
     const userCount = Object.keys(allUsers).length;
 
     // Build per-user "since" map from previous manifest

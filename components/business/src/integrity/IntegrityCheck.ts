@@ -63,7 +63,7 @@ class IntegrityCheck {
     const { getUsersLocalIndex } = require('storage');
     const usersIndex = await getUsersLocalIndex();
     const allUsers = await usersIndex.getAllByUsername();
-    const reports = [];
+    const reports: any[] = [];
 
     for (const [username, userId] of Object.entries(allUsers)) {
       this.logger.info(`Checking integrity for user: ${username} (${userId})`);

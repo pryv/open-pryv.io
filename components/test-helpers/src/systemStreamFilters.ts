@@ -35,8 +35,8 @@ function removeSystemEvents (events) {
  * Separate events into normal events and system stream events.
  */
 function separateSystemEvents (events) {
-  const normal = [];
-  const system = [];
+  const normal: any[] = [];
+  const system: any[] = [];
   for (const e of events) {
     if (e.streamIds?.some(id => isSystemStreamId(id))) {
       system.push(e);

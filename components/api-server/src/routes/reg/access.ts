@@ -59,7 +59,7 @@ export default function (expressApp, app) {
       // in config — operators deploy app-web-auth3 (or an equivalent auth UI)
       // at that address and set the config.
       const defaultAuthUrl = app.config.get('access:defaultAuthUrl');
-      let authUrl = null;
+      let authUrl: any = null;
       if (defaultAuthUrl) {
         const sep = defaultAuthUrl.indexOf('?') >= 0 ? '&' : '?';
         const params = [

@@ -9,7 +9,7 @@
  * Transform stream queries for MongoDB query format.
  */
 export function toMongoDBQuery (streamQueriesArray) {
-  let mongoQuery = null; // no streams
+  let mongoQuery: any = null; // no streams
   if (streamQueriesArray !== null) {
     if (streamQueriesArray.length === 1) {
       mongoQuery = streamQueryToMongoDBQuery(streamQueriesArray[0]);
@@ -28,7 +28,7 @@ export function toMongoDBQuery (streamQueriesArray) {
 function streamQueryToMongoDBQuery (streamQuery) {
   if (streamQuery == null) return {};
 
-  const ands = [];
+  const ands: any[] = [];
 
   for (const item of streamQuery) {
     addItem(item);
