@@ -18,19 +18,19 @@
  *
  * @param stripParentIds Optional, default: false
  */
-function buildTree (array, stripParentIds) {
+function buildTree (array: any, stripParentIds: any) {
   if (!Array.isArray(array)) {
     throw new Error('Invalid argument: expected an array');
   }
   const map: any = {};
-  array.forEach(function (item) {
+  array.forEach(function (item: any) {
     verifyFlatItem(item);
     const clone = structuredClone(item);
     if (clone.deleted == null) clone.children = [];
     map[item.id] = clone;
   });
   const result: any[] = [];
-  array.forEach(function (item) {
+  array.forEach(function (item: any) {
     const clone = map[item.id];
     if (clone.hasOwnProperty('parentId') && clone.parentId) {
       // child
@@ -51,7 +51,7 @@ function buildTree (array, stripParentIds) {
   return result;
 }
 
-function verifyFlatItem (item) {
+function verifyFlatItem (item: any) {
   if (!item.hasOwnProperty('id')) {
     throw new Error('Invalid object structure: expected property "id"');
   }
@@ -60,17 +60,17 @@ function verifyFlatItem (item) {
 /**
  * The result is made from copies of the original items (which are left untouched).
  */
-function flattenTreeWithoutParents (array) {
+function flattenTreeWithoutParents (array: any) {
   if (!Array.isArray(array)) {
     throw new Error('Invalid argument: expected an array');
   }
-  const result = [];
+  const result: any[] = [];
   flattenRecursiveWithoutParents(array, null, result);
   return result;
 }
 
-function flattenRecursiveWithoutParents (originalArray, parentId, resultArray) {
-  originalArray.forEach(function (item) {
+function flattenRecursiveWithoutParents (originalArray: any, parentId: any, resultArray: any) {
+  originalArray.forEach(function (item: any) {
     const clone = structuredClone(item);
     clone.parentId = parentId; // WTF
     const children = clone.children;
@@ -99,17 +99,17 @@ function flattenRecursiveWithoutParents (originalArray, parentId, resultArray) {
  *  attachedFiles: 3
  * }
  */
-function flattenSimpleObject (object) {
+function flattenSimpleObject (object: any) {
   if (!(object instanceof Object)) {
     throw new Error('Invalid argument: expected an object');
   }
-  const result = [];
+  const result: any[] = [];
   flattenRecursiveSimpleObject(object, result);
   return result;
 }
 
-function flattenRecursiveSimpleObject (originalObject, resultArray) {
-  Object.keys(originalObject).forEach(function (key) {
+function flattenRecursiveSimpleObject (originalObject: any, resultArray: any) {
+  Object.keys(originalObject).forEach(function (key: any) {
     const value = structuredClone(originalObject[key]);
     if (typeof value === 'object') {
       flattenRecursiveSimpleObject(value, resultArray);
@@ -122,17 +122,17 @@ function flattenRecursiveSimpleObject (originalObject, resultArray) {
 /**
  * The result is made from copies of the original items (which are left untouched).
  */
-function flattenTree (array) {
+function flattenTree (array: any) {
   if (!Array.isArray(array)) {
     throw new Error('Invalid argument: expected an array');
   }
-  const result = [];
+  const result: any[] = [];
   flattenRecursive(array, null, result);
   return result;
 }
 
-function flattenRecursive (originalArray, parentId, resultArray) {
-  originalArray.forEach(function (item) {
+function flattenRecursive (originalArray: any, parentId: any, resultArray: any) {
+  originalArray.forEach(function (item: any) {
     const clone = structuredClone(item);
     // When recursing into a parent's `children` array, the tree position
     // is authoritative — overwrite parentId with the parent's id.
@@ -154,8 +154,8 @@ function flattenRecursive (originalArray, parentId, resultArray) {
   });
 }
 
-function findById (array, id) {
-  return findInTree(array, function (item) {
+function findById (array: any, id: any) {
+  return findInTree(array, function (item: any) {
     return item.id === id;
   });
 }
@@ -163,7 +163,7 @@ function findById (array, id) {
 /**
  * @param iterator Arguments: ({Object}), return value: {Boolean}
  */
-function findInTree (array, iterator) {
+function findInTree (array: any, iterator: any): any {
   for (let i = 0, n = array.length; i < n; i++) {
     const item = array[i];
     // check if item matches
@@ -186,7 +186,7 @@ function findInTree (array, iterator) {
  * Iterate on Tree, if iterator returns false, do not inspect children
  * @param iterator Arguments: ({Object}), return value: {Boolean}
  */
-async function iterateOnPromise (array, iterator) {
+async function iterateOnPromise (array: any, iterator: any) {
   if (!array) { return; }
   for (const stream of array) {
     if ((await iterator(stream)) && stream.children) { await iterateOnPromise(stream.children, iterator); }
@@ -198,7 +198,7 @@ async function iterateOnPromise (array, iterator) {
  * @param keepOrphans Whether to take into account the children of filtered-out items
  *                              (if yes, the tree structure may be modified)
  */
-async function filterTreeOnPromise (array, keepOrphans, iterator) {
+async function filterTreeOnPromise (array: any, keepOrphans: any, iterator: any) {
   const filteredArray: any[] = [];
   for (let i = 0, n = array.length; i < n; i++) {
     const item = array[i];
@@ -222,7 +222,7 @@ async function filterTreeOnPromise (array, keepOrphans, iterator) {
  *                              (if yes, the tree structure may be modified)
  * @param iterator Arguments: ({Object}), return value: {Boolean}
  */
-function filterTree (array, keepOrphans, iterator) {
+function filterTree (array: any, keepOrphans: any, iterator: any) {
   const filteredArray: any[] = [];
   for (let i = 0, n = array.length; i < n; i++) {
     const item = array[i];
@@ -239,16 +239,16 @@ function filterTree (array, keepOrphans, iterator) {
   return filteredArray;
 }
 
-function collect (array, iterator) {
+function collect (array: any, iterator: any) {
   if (!Array.isArray(array)) {
     throw new Error('Invalid argument: expected an array');
   }
-  const result = [];
+  const result: any[] = [];
   collectRecursive(array, result, iterator);
   return result;
 }
 
-function collectFromRootItem (item, iterator) {
+function collectFromRootItem (item: any, iterator: any) {
   if (Array.isArray(item)) {
     throw new Error('Invalid argument: expected a single item');
   }
@@ -257,8 +257,8 @@ function collectFromRootItem (item, iterator) {
   return result;
 }
 
-function collectRecursive (originalArray, resultArray, iterator) {
-  originalArray.forEach(function (item) {
+function collectRecursive (originalArray: any, resultArray: any, iterator: any) {
+  originalArray.forEach(function (item: any) {
     resultArray.push(iterator(item));
     if (item.hasOwnProperty('children')) {
       collectRecursive(item.children, resultArray, iterator);
@@ -266,14 +266,14 @@ function collectRecursive (originalArray, resultArray, iterator) {
   });
 }
 
-function collectPluck (array, propertyName) {
-  return collect(array, function (item) {
+function collectPluck (array: any, propertyName: any) {
+  return collect(array, function (item: any) {
     return item[propertyName];
   });
 }
 
-function collectPluckFromRootItem (item, propertyName) {
-  return collectFromRootItem(item, function (item) {
+function collectPluckFromRootItem (item: any, propertyName: any) {
+  return collectFromRootItem(item, function (item: any) {
     return item[propertyName];
   });
 }
@@ -283,9 +283,9 @@ function collectPluckFromRootItem (item, propertyName) {
  * including `null` if present.
  *
  */
-function expandIds (array, ids) {
-  const expandedIds = [];
-  ids.forEach(function (id) {
+function expandIds (array: any, ids: any) {
+  const expandedIds: any[] = [];
+  ids.forEach(function (id: any) {
     let currentExpIds;
     if (id === null) {
       // just keep it
@@ -305,9 +305,9 @@ function expandIds (array, ids) {
 /**
  * Applies "iterator" function to all elements of the array and its children.
  */
-function cloneAndApply (array, iterator) {
+function cloneAndApply (array: any, iterator: any) {
   const result: any[] = [];
-  array.forEach((item) => {
+  array.forEach((item: any) => {
     const clone = structuredClone(item);
     result.push(applyRecursive(iterator(clone), iterator));
   });
@@ -317,10 +317,10 @@ function cloneAndApply (array, iterator) {
 /**
  * Mutates the given data.
  */
-function applyRecursive (item, iterator) {
+function applyRecursive (item: any, iterator: any) {
   if (!Array.isArray(item.children) || item.children.length === 0) { return item; }
   const result: any[] = [];
-  item.children.forEach((child) => {
+  item.children.forEach((child: any) => {
     result.push(applyRecursive(iterator(child), iterator));
   });
   item.children = result;
@@ -332,7 +332,7 @@ function applyRecursive (item, iterator) {
  * @param properties to display ['id', ..]
  * @param depth  - private
  */
-function debug (streams, properties, depth) {
+function debug (streams: any, properties: any, depth: any) {
   const myddepth = depth ? depth + 1 : 1;
   if (!properties) { properties = []; }
   const base = '-'.padStart(myddepth * 2, ' ');
