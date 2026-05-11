@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## boiler config getters — `getConfigSync()` companion; defer module-top reads
+
+- **NEW** `@pryv/boiler` exports `getConfigSync()` — sync access to the fully-loaded config. Throws if `init()` hasn't been called or if async config-loading is still pending. Use anywhere a sync read is needed at request/test time post-init.
+- **CHANGE** `getConfigUnsafe(warnOnly)` retained as the documented escape hatch for genuine pre-init reads (returns partial config; with `warnOnly: true` warns instead of throws). Two production sites remain on it after the cleanup: `components/business/src/integrity/integrity.ts:9` (module-top capture; preserves cross-process symmetry between mocha-parent and api-server forked-child that the fixture-time hash compute relies on) and `components/storage/src/index.ts:_ensureMongoDatabase` (test-helpers/dependencies lazy-loads MongoDB at module-load). Plus 3 test-helpers fixture files (`data.ts`, `dynData.ts`, `dependencies.ts`) which run pre-init by lifecycle.
+- **CHANGE** Deferred 4 module-top `getConfigUnsafe(true)` reads into function bodies:
+  - `components/cache/src/index.ts` — `loadConfiguration()` is now `async` and awaits `getConfig()`. Module-bottom auto-call becomes fire-and-forget with stderr log on misconfig; cache stays inactive on failure instead of killing the worker. Cache ops short-circuit on `!isActive` so the brief async window matches legacy partial-config behavior.
+  - `components/previews-server/src/attachmentManagement.ts` — module-top `previewsDirPath` capture → lazy-memoized `getPreviewsDirPath()`. All 3 callers run at request/test time.
+  - `components/previews-server/src/runCacheCleanup.ts` — module-top sync config reads → async IIFE that awaits `getConfig()` before constructing `Cache`. Strictly safer than the legacy race against partial config.
+  - `components/api-server/src/routes/register.ts` — drops `(true)` warnOnly; caller is express bootstrap post-`await getConfig()`.
+- **CHANGE** `components/test-helpers/src/data/events.ts` — module-top `Array.map` calling `integrity.events.set(event, false)` synchronously at module-load → idempotent `ensureIntegrity()` helper. Called from `resetEvents()` and from `helpers-base.ts beforeAll`. Decouples fixture integrity from module-load timing.
+- **CHANGE** Renamed `getConfigUnsafe()` (no warnOnly) → `getConfigSync()` at 7 production sites: `api-server/{API,middleware/errors,routes/auth/login,routes/register}.ts`, `business/src/accesses/AccessLogic.ts`, `previews-server/src/attachmentManagement.ts`, `utils/src/api-endpoint.ts`.
+- **NOTE** Test matrices at close: PG `1857/1` (only pre-existing `[ASTE]` flake), Mongo `1849/2` (pre-existing `[ASTE]` + `[3TMH]` timing-sensitive webhooks test that passes on standalone re-run).
+
 ## ESM flip — components + tests + storages (Plan 57 Phase 5c.2 → 5f close)
 
 - **CHANGE** All 22 production sources flipped to ESM. Every `package.json` for components + storages + engines now has `"type": "module"`; every `.ts` source file uses `import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);` to keep its existing CJS-style internal `require()` calls working under the ESM module loader. Default exports use `export default X`; named exports use `export { X }` or `export const X = ...`. Sub-package.json `{"type":"commonjs"}` overrides drop `bin/server` (each component's CJS fork target), three `test/helpers/` directories that use the `module.exports = { ...require('test-helpers') }` spread-mutation pattern, and a few CJS-only fixture/test-engine subtrees.
