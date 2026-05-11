@@ -246,14 +246,29 @@ function getLogger (name) {
   return rootLogger.getLogger(name);
 }
 
-export { getLogger, setGlobalName, initLoggerWithConfig };
+export { getLogger, setGlobalName, initLoggerWithConfig, inspectAndHide };
 
 // ----------------- Hide sensite data -------------------- //
 
 function inspectAndHide (o) {
-  if (typeof o === 'undefined') return o;
+  // Bypass values that don't survive JSON.parse(JSON.stringify()) — passing
+  // them through would crash the logger (and the caller) on every log call.
+  // - functions: JSON.stringify(fn) returns the string 'undefined' (actually undefined),
+  //   then JSON.parse('undefined') throws SyntaxError.
+  // - symbols: JSON.stringify(symbol) returns undefined likewise.
+  // - any object whose toJSON returns undefined: same shape.
+  // - Errors are special-cased upstream by winston, pass through unchanged.
+  if (o === undefined || typeof o === 'function' || typeof o === 'symbol') return o;
   if (o instanceof Error) return o;
-  return _inspectAndHide(JSON.parse(JSON.stringify(o))); // clone and remove circular
+  let cloned;
+  try {
+    cloned = JSON.parse(JSON.stringify(o));
+  } catch {
+    // Non-round-trippable value (e.g. toJSON returns undefined or a non-JSON
+    // primitive). Fall back to the raw value rather than crash.
+    return o;
+  }
+  return _inspectAndHide(cloned);
 }
 
 function _inspectAndHide (o) {
