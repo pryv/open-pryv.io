@@ -69,7 +69,7 @@ class TcpBroker {
         if (line.length === 0) continue;
         try {
           this._handleMessage(cid, JSON.parse(line));
-        } catch (err) {
+        } catch (err: any) {
           logger.warn('bad message from', cid, err.message);
         }
       }
@@ -181,7 +181,7 @@ class TcpClient {
       if (line.length === 0) continue;
       try {
         this._handleMessage(JSON.parse(line));
-      } catch (err) {
+      } catch (err: any) {
         logger.warn('bad message from broker', err.message);
       }
     }
@@ -245,7 +245,7 @@ async function _doInit () {
     broker = new TcpBroker();
     await broker.listen(port);
     logger.debug('acting as broker on port', port);
-  } catch (err) {
+  } catch (err: any) {
     if (err.code === 'EADDRINUSE') {
       broker = null;
       logger.debug('port in use, connecting as client only');
@@ -260,7 +260,7 @@ async function _doInit () {
     client = new TcpClient();
     await client.connect(port);
     logger.debug('connected as client, cid=', client.cid);
-  } catch (err) {
+  } catch (err: any) {
     client = null;
     logger.warn('tcp connect failed, local-only mode', err.message);
   }

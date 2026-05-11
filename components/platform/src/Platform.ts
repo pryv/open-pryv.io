@@ -749,7 +749,7 @@ class Platform {
     try {
       const atRestKey = this.#getAtRestKey('observability-' + key);
       return AtRestEncryption.decrypt(stored, atRestKey).toString('utf8');
-    } catch (err) {
+    } catch (err: any) {
       logger.warn('observability: failed to decrypt ' + key + ': ' + err.message);
       return '';
     }

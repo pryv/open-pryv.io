@@ -87,7 +87,7 @@ function masterStart (opts: any = {}) {
         default:
           return reply({ ok: false, error: 'cluster_kv: unknown op ' + msg.type });
       }
-    } catch (err) {
+    } catch (err: any) {
       reply({ ok: false, error: 'cluster_kv master error: ' + err.message });
     }
   };
@@ -156,7 +156,7 @@ function _request (payload, processHandle, timeoutMs) {
     processHandle.on('message', onMsg);
     try {
       processHandle.send({ ...payload, requestId });
-    } catch (err) {
+    } catch (err: any) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);

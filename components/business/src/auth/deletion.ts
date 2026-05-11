@@ -139,7 +139,7 @@ function findNotAccessibleDir (paths) {
         throw new Error();
       }
       fs.accessSync(path, fs.constants.W_OK + fs.constants.X_OK);
-    } catch (err) {
+    } catch (err: any) {
       if (err.code === 'ENOENT') {
         // ignore if file does not exist
         continue;

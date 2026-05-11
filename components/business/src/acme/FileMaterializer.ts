@@ -91,7 +91,7 @@ class FileMaterializer {
 
     try {
       await this.#onRotate(this.certPath, this.keyPath, this.#hostname);
-    } catch (err) {
+    } catch (err: any) {
       // onRotate failure is the operator's concern — surface it but don't
       // undo the file write (the new cert is valid either way).
       this.#log(`onRotate hook failed: ${err.message}`);

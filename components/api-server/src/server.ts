@@ -180,7 +180,7 @@ class Server {
       try {
         const testNotifier = await testMessaging.getTestNotifier();
         require('test-helpers').instanceTestSetup.execute(instanceTestSetup, testNotifier);
-      } catch (err) {
+      } catch (err: any) {
         logger.error(err);
         logger.warn('Error executing instance test setup instructions: ' + err.message);
       }
@@ -245,7 +245,7 @@ class Server {
       this.httpsServer.setSecureContext(options);
       this.logger.info('TLS context reloaded from disk');
       return { reloaded: true };
-    } catch (err) {
+    } catch (err: any) {
       this.logger.error('reloadTls failed: ' + err.message);
       return { reloaded: false, reason: 'error', error: err.message };
     }

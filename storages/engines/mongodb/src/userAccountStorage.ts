@@ -109,7 +109,7 @@ async function addPasswordHash (userId, passwordHash, createdBy, time = timestam
   const item = { userId, time, hash: passwordHash, createdBy };
   try {
     await passwordsCollection.insertOne(item);
-  } catch (e) {
+  } catch (e: any) {
     console.log(e.message);
     if (e.message && e.message.startsWith('E11000 duplicate key error collection: pryv-node-test.passwords index: userId_1_time_1 dup key')) {
       throw new Error('UNIQUE constraint failed: passwords.time');
@@ -206,7 +206,7 @@ async function setAccountField (userId, field, value, createdBy, time = timestam
   const item = { userId, field, value, time, createdBy };
   try {
     await accountFieldsCollection.insertOne(item);
-  } catch (e) {
+  } catch (e: any) {
     if (e.message && e.message.includes('E11000 duplicate key error')) {
       throw new Error('UNIQUE constraint failed: account-fields.time');
     }

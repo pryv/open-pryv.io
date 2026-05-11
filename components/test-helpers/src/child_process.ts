@@ -46,7 +46,7 @@ class ChildProcess {
       // msgpack cannot encode undefined.
       if (ret === undefined) { ret = null; }
       this.respondToParent(['ok', msgId, cmd, ret]);
-    } catch (err) {
+    } catch (err: any) {
       logger.debug('handleParentMessage/catch', err.message);
       // Using JSON.stringify as message que does nos support Object (just strings)
       this.respondToParent([

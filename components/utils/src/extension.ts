@@ -57,7 +57,7 @@ class ExtensionLoader {
       const fn = require(path);
       if (typeof fn !== 'function') { throw new Error(`Not a function (${typeof fn})`); }
       return new Extension(path, fn);
-    } catch (err) {
+    } catch (err: any) {
       throw new Error(`Cannot load function module @'${path}': ${err.message}`);
     }
   }

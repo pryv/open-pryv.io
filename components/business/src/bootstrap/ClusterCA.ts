@@ -164,7 +164,7 @@ function buildSanExtfile ({ coreId, ip, hostname }) {
 function openssl (args) {
   try {
     execFileSync('openssl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  } catch (err) {
+  } catch (err: any) {
     const stderr = err.stderr ? err.stderr.toString() : '';
     throw new Error(`openssl ${args[0]} failed: ${err.message}\n${stderr}`);
   }

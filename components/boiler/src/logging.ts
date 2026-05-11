@@ -166,7 +166,7 @@ function inspect (...args: any[]): string {
   let line = '';
   try {
     throw new Error();
-  } catch (e) {
+  } catch (e: any) {
     line = e.stack.split(' at ')[2].trim();
   }
   let res = '\n * dump at: ' + line;

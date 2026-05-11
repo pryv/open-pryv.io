@@ -193,7 +193,7 @@ function createValidator (options: any = {}) {
       ajv.compile(stripUnreferencedIds(schema));
       lastErrors = null;
       return true;
-    } catch (err) {
+    } catch (err: any) {
       lastErrors = [{
         code: 'SCHEMA_INVALID',
         params: [],

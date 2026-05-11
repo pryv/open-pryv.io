@@ -226,7 +226,7 @@ class BackupOrchestrator {
         const auditEvents = await userAudit.exportAllEvents();
         const filteredAudit = this._filterByTimestamp(auditEvents, snapshotBefore, since);
         await userWriter.writeAudit(filteredAudit.map(sanitize));
-      } catch (e) {
+      } catch (e: any) {
         this.logger.warn(`Audit export failed for user ${userId}: ${e.message}`);
       }
     }
@@ -238,7 +238,7 @@ class BackupOrchestrator {
         if (seriesData.measurements && seriesData.measurements.length > 0) {
           await userWriter.writeSeries(seriesData.measurements);
         }
-      } catch (e) {
+      } catch (e: any) {
         this.logger.warn(`Series export failed for user ${userId}: ${e.message}`);
       }
     }
@@ -305,7 +305,7 @@ class BackupOrchestrator {
         try {
           const stream = await this.eventFiles.getAttachmentStream(userId, event.id, fileId);
           await userWriter.writeAttachment(event.id, fileId, stream);
-        } catch (e) {
+        } catch (e: any) {
           this.logger.warn(`Attachment backup failed: event=${event.id} file=${fileId}: ${e.message}`);
         }
       }

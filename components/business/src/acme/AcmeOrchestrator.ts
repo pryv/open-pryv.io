@@ -238,7 +238,7 @@ function build (opts: any = {}) {
     hostname: hostSpec.commonName,
     onRotate: async (certPath, keyPath, hostname) => {
       if (typeof onRotate === 'function') {
-        try { await onRotate(certPath, keyPath, hostname); } catch (err) {
+        try { await onRotate(certPath, keyPath, hostname); } catch (err: any) {
           (log || console.log)('[acme] onRotate (caller) failed: ' + err.message);
         }
       }
@@ -247,7 +247,7 @@ function build (opts: any = {}) {
           const r = await runRotateScript({ scriptPath: onRotateScript, hostname, certPath, keyPath });
           (log || console.log)(`[acme] onRotateScript ${onRotateScript} exit=${r.exitCode}`);
           if (r.stderr) (log || console.log)('[acme] onRotateScript stderr: ' + r.stderr.trim());
-        } catch (err) {
+        } catch (err: any) {
           (log || console.log)('[acme] onRotateScript spawn failed: ' + err.message);
         }
       }

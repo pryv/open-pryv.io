@@ -69,7 +69,7 @@ class Service {
         throw new Error(`HTTP ${res.status} ${res.statusText}${errBody ? ` — ${errBody}` : ''}`);
       }
       return res;
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(
         `MFA SMS provider request failed: ${method} ${url}`,
         { error: error.message }

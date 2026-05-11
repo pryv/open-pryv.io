@@ -194,7 +194,7 @@ class TokenStore {
     }
     const raw = fs.readFileSync(this.path, 'utf8');
     let parsed;
-    try { parsed = JSON.parse(raw); } catch (err) {
+    try { parsed = JSON.parse(raw); } catch (err: any) {
       throw new Error(`TokenStore: cannot parse ${this.path}: ${err.message}`);
     }
     if (parsed.version !== STORE_VERSION) {

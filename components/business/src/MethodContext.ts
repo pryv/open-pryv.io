@@ -233,7 +233,7 @@ class MethodContext {
           if (err != null) { reject(errors.invalidAccessToken(`Custom auth step failed: ${err.message}`)); }
           resolve();
         });
-      } catch (err) {
+      } catch (err: any) {
         // If the custom auth step throws a synchronous exception, then we dont
         // simply log an auth failure, but rather a server failure:
         reject(errors.unexpectedError(`Custom auth step threw synchronously: ${err.message}`));

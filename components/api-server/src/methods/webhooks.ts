@@ -109,7 +109,7 @@ export default async function produceWebhooksApiMethods (api) {
     try {
       await webhook.save();
       result.webhook = webhook.forApi();
-    } catch (error) {
+    } catch (error: any) {
       // Expecting a duplicate error
       if (error.isDuplicateIndex('url')) {
         return next(errors.itemAlreadyExists('webhook', { url: params.url }));

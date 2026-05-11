@@ -75,7 +75,7 @@ export default function system (expressApp, app) {
         issuedAt: reply.issuedAt,
         expiresAt: reply.expiresAt
       });
-    } catch (err) {
+    } catch (err: any) {
       logger.error('admin/certs/force-renew failed: ' + err.message);
       next(err);
     }
@@ -97,7 +97,7 @@ export default function system (expressApp, app) {
           daysUntilExpiry: Math.round((c.expiresAt - Date.now()) / (24 * 3600 * 1000))
         }))
       });
-    } catch (err) {
+    } catch (err: any) {
       logger.error('admin/certs handler failed: ' + err.message);
       next(err);
     }
@@ -118,7 +118,7 @@ export default function system (expressApp, app) {
       res.status(200).json({
         templates: rows.map(r => ({ type: r.type, lang: r.lang, part: r.part, length: r.pug.length }))
       });
-    } catch (err) {
+    } catch (err: any) {
       logger.error('admin/mail/templates list failed: ' + err.message);
       next(err);
     }
@@ -132,7 +132,7 @@ export default function system (expressApp, app) {
         return next(errors.unknownResource('mail template', `${type}/${lang}/${part}`));
       }
       res.status(200).type('text/plain').send(pug);
-    } catch (err) {
+    } catch (err: any) {
       logger.error('admin/mail/templates get failed: ' + err.message);
       next(err);
     }
@@ -148,7 +148,7 @@ export default function system (expressApp, app) {
         try { process.send({ type: 'mail:template-invalidate' }); } catch (e) { /* master not attached */ }
       }
       res.status(204).end();
-    } catch (err) {
+    } catch (err: any) {
       logger.error('admin/mail/templates put failed: ' + err.message);
       next(err);
     }
@@ -162,7 +162,7 @@ export default function system (expressApp, app) {
         try { process.send({ type: 'mail:template-invalidate' }); } catch (e) { /* master not attached */ }
       }
       res.status(204).end();
-    } catch (err) {
+    } catch (err: any) {
       logger.error('admin/mail/templates delete failed: ' + err.message);
       next(err);
     }
@@ -195,7 +195,7 @@ export default function system (expressApp, app) {
       }
       const result = await mail.send({ type, lang, recipient: recipientObj, substitutions: { username: recipientObj.name || 'send-test', email: recipientObj.email } });
       res.status(200).json({ sent: result.sent === true });
-    } catch (err) {
+    } catch (err: any) {
       if (err && err.id === 'unknown-resource') {
         return next(errors.unknownResource('mail template'));
       }
@@ -221,7 +221,7 @@ export default function system (expressApp, app) {
       const handle = ackHandler.makeHandler({ tokenStore, platformDB });
       const result = await handle({ body: req.body, ip: req.ip });
       res.status(result.statusCode).json(result.body);
-    } catch (err) {
+    } catch (err: any) {
       logger.error('cores/ack handler failed: ' + err.message);
       next(err);
     }

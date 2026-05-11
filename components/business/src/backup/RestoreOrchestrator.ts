@@ -272,7 +272,7 @@ class RestoreOrchestrator {
           const userAudit = this.auditStorage.forUser(targetUserId);
           await userAudit.importAllEvents(auditEvents);
         }
-      } catch (e) {
+      } catch (e: any) {
         this.logger.warn(`Audit import failed for user ${targetUserId}: ${e.message}`);
       }
     }
@@ -287,7 +287,7 @@ class RestoreOrchestrator {
         if (seriesMeasurements.length > 0) {
           await this.seriesConnection.importDatabase(targetUserId, { measurements: seriesMeasurements });
         }
-      } catch (e) {
+      } catch (e: any) {
         this.logger.warn(`Series import failed for user ${targetUserId}: ${e.message}`);
       }
     }
@@ -339,7 +339,7 @@ class RestoreOrchestrator {
     if (this.auditStorage) {
       try {
         await this.auditStorage.deleteUser(userId);
-      } catch (e) {
+      } catch (e: any) {
         this.logger.warn(`Audit clear failed for user ${userId}: ${e.message}`);
       }
     }
@@ -348,7 +348,7 @@ class RestoreOrchestrator {
     if (this.seriesConnection) {
       try {
         await this.seriesConnection.dropDatabase(userId);
-      } catch (e) {
+      } catch (e: any) {
         this.logger.warn(`Series clear failed for user ${userId}: ${e.message}`);
       }
     }
@@ -439,7 +439,7 @@ class RestoreOrchestrator {
           serverMappingsCount++;
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       // readServerMappings is optional (default impl is a no-op) — any
       // error here should not fail the whole restore.
       this.logger.warn('Restoring register/ server mappings failed: ' + err.message);

@@ -59,7 +59,7 @@ export default function (expressApp, app) {
     try {
       const platform = await getPlatform();
       await platform.setDnsRecord(subdomain, records);
-    } catch (err) {
+    } catch (err: any) {
       return res.status(500).json({
         error: { id: 'unexpected', message: 'Failed to persist DNS record: ' + err.message }
       });
@@ -92,7 +92,7 @@ export default function (expressApp, app) {
         });
       }
       await platform.deleteDnsRecord(subdomain);
-    } catch (err) {
+    } catch (err: any) {
       return res.status(500).json({
         error: { id: 'unexpected', message: 'Failed to delete DNS record: ' + err.message }
       });

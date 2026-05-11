@@ -95,7 +95,7 @@ const userEvents = ds.createUserEvents({
       delete toInsert.id;
       await this.eventsCollection.insertOne(toInsert, options);
       return event;
-    } catch (err) {
+    } catch (err: any) {
       handleDuplicateError(err);
       if (err.isDuplicateIndex != null && err.isDuplicateIndex('_id')) {
         throw errors.itemAlreadyExists('event', { id: event.id }, err);

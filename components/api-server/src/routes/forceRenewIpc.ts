@@ -62,7 +62,7 @@ async function forceRenew ({ hostname, timeoutMs = DEFAULT_TIMEOUT_MS, processHa
     processHandle.on('message', onMsg);
     try {
       processHandle.send({ type: 'acme:force-renew', requestId, hostname: hostname || null });
-    } catch (err) {
+    } catch (err: any) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);

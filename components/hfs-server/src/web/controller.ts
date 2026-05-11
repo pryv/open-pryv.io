@@ -17,7 +17,7 @@ function catchAndNext (handler) {
   return async (req, res, next) => {
     try {
       return await handler(req, res, next);
-    } catch (err) {
+    } catch (err: any) {
       storeErrorInTrace(err);
       if (err.constructor.name === 'ServiceNotAvailableError') {
         return next(errors.apiUnavailable(err.message));

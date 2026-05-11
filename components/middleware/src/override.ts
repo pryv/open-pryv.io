@@ -36,7 +36,7 @@ function normalizeRequest (req, res, next) {
     req.originalBody = req.originalBody || body;
     try {
       req.body = JSON.parse(body._json);
-    } catch (err) {
+    } catch (err: any) {
       return next(errors.invalidRequestStructure(err.message));
     }
   }

@@ -96,7 +96,7 @@ async function consume (opts) {
     fs.unlinkSync(bundlePath);
     bundleDeleted = true;
     log(`Deleted bundle file ${bundlePath} (token has been burned).`);
-  } catch (err) {
+  } catch (err: any) {
     log(`Warning: could not delete bundle file ${bundlePath}: ${err.message}`);
   }
 

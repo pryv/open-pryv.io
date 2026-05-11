@@ -269,7 +269,7 @@ class DnsServer {
         // Assume it's a username — look up the user's core
         await this.#answerUsername(response, qname, qtype, prefix);
       }
-    } catch (err) {
+    } catch (err: any) {
       this.#logger.warn(`DNS error for ${qname}: ${err.message}`);
       this.#setNxdomain(response);
     }

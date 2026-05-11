@@ -76,7 +76,7 @@ function parseData (createRequest, meta, typeRepo) {
   try {
     const type = meta.produceRowType(typeRepo);
     return business.series.DataMatrix.parse(createRequest, type);
-  } catch (err) {
+  } catch (err: any) {
     if (err instanceof business.series.ParseFailure) {
       throw errors.invalidRequestStructure(err.message);
     }

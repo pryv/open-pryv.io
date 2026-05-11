@@ -117,7 +117,7 @@ class Webhook {
     try {
       const res = await this.makeCall(sentBuffer);
       status = res.status;
-    } catch (e) {
+    } catch (e: any) {
       if (e.response != null) {
         status = e.response.status;
       } else {

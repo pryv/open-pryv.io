@@ -138,7 +138,7 @@ export default async function produceAccessesApiMethods (api) {
       if (permission.streamId != null) {
         try {
           commonFns.isValidStreamIdForQuery(permission.streamId, permission, 'permissions');
-        } catch (err) {
+        } catch (err: any) {
           return next(errors.invalidRequestStructure(err.message, params.permissions));
         }
       }

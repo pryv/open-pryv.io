@@ -161,7 +161,7 @@ class MetadataUpdater {
     for (const update of updates) {
       try {
         await flush(update);
-      } catch (err) {
+      } catch (err: any) {
         logger.error(`Flush error for ${update.key()}: ${err.message}`);
       }
     }

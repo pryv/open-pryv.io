@@ -342,7 +342,7 @@ class FixtureStream extends FixtureItem {
     if (mall == null) { mall = await getMall(); }
     try {
       await mall.streams.delete(user.id, this.attrs.id);
-    } catch (err) {
+    } catch (err: any) {
       // Ignore "stream not found" errors
       if (!err.message?.includes('unknown-resource')) throw err;
     }
@@ -381,7 +381,7 @@ class FixtureEvent extends FixtureItem {
     try {
       // mall.events.delete expects the event object
       await mall.events.delete(user.id, this.attrs);
-    } catch (err) {
+    } catch (err: any) {
       // Ignore "event not found" errors
       if (!err.message?.includes('unknown-resource')) throw err;
     }
