@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, charlatan */
+/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, charlatan, _ */
 
 const { ErrorIds } = require('errors');
 const validation = require('./helpers/validation');
@@ -482,6 +482,47 @@ describe('[ACSF] accesses (personal)', function () {
         status: 200,
         schema: methodsSchema.del.result
       });
+    });
+
+    it('[XBPF] deleting a personal access must NOT cascade to accesses it created', async function () {
+      // Create an app access via the personal token. The api server sets
+      // `createdBy = personalAccess.id` on the new app access, so the
+      // pre-fix cascade in findRelatedAccesses would pick it up.
+      const createRes = await coreRequest
+        .post(basePath)
+        .set('Authorization', personalToken)
+        .send({
+          name: 'cascade-skip-probe',
+          type: 'app',
+          deviceName: 'CascadeProbeDevice',
+          permissions: [{ streamId: stream0.attrs.id, level: 'read' }]
+        });
+      assert.strictEqual(createRes.status, 201);
+      const childAccessId = createRes.body.access.id;
+
+      // Delete the personal access.
+      const delRes = await coreRequest
+        .delete(path(sessionAccessId))
+        .set('Authorization', personalToken);
+      assert.strictEqual(delRes.status, 200);
+      // No cascade: the response must not list the child app access as a
+      // related deletion (pre-fix this was [{ id: childAccessId }]).
+      assert.ok(
+        delRes.body.relatedDeletions == null ||
+        !delRes.body.relatedDeletions.some((d) => d.id === childAccessId),
+        'personal-access delete must not cascade-delete the app access it created'
+      );
+
+      // The app access must still exist in storage.
+      const accesses = await new Promise((resolve, reject) => {
+        accessStorage.findAll(user, null, (err, acc) => {
+          if (err) reject(err);
+          else resolve(acc);
+        });
+      });
+      const survivor = _.find(accesses, { id: childAccessId });
+      assert.ok(survivor != null, 'child app access must survive the personal-access delete');
+      assert.ok(survivor.deleted == null, 'child app access must not be marked deleted');
     });
 
     it('[NN11] must return an error if the access does not exist', async function () {

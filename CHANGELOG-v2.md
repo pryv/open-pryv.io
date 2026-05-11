@@ -1,5 +1,12 @@
 # Changelog - API Changes
 
+## `accesses.delete` — personal-access delete no longer cascades
+
+- **CHANGE** `DELETE /accesses/:id` on a `personal`-type access no longer cascade-deletes the app/shared accesses it created (the ones with `createdBy === <that personal access id>`). The response's `relatedDeletions` is empty/absent in that case, and the descendant accesses survive in storage.
+- **Unchanged** for `app` and `shared` deletes: cascade still applies — every descendant access (filtered to not-self + not-expired) is included in `relatedDeletions` and removed alongside the parent.
+- **Why** the in-source comment ("deleting a personal access does not delete the accesses it created") has been the documented intent since 2023, but an operator-precedence typo (`!type === 'personal'` parses as `(!type) === 'personal'` → always false) made the early-return branch dead and personal deletes silently cascaded. Personal access tokens are session tokens; cascading on session-delete wiped out every app/shared the user had granted while logged in, which surprises users on logout/session-rotation flows. Comment and behavior now match.
+- **Migration note** for callers that relied on the cascade-on-personal-delete behavior: explicitly delete each child access (`DELETE /accesses/:childId`) before deleting the personal access, or use `app`/`shared` deletes which still cascade.
+
 ## `audit.syslog.active` defaults to `false`
 
 - **CHANGE** `config/default-config.yml`: `audit.syslog.active` now defaults to `false`. Operators on bare-metal hosts with a syslog daemon listening on `/dev/log` (rsyslog / journald) who want the host-syslog mirror must set `audit.syslog.active: true` in `override-config.yml`. The per-user audited streams (`audit.storage.*`) are unaffected — the existing audit data path keeps emitting unchanged.
