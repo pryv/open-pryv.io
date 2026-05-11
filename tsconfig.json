@@ -19,6 +19,7 @@
     "strictBindCallApply": true,
     "noImplicitThis": true,
     "useUnknownInCatchVariables": true,
+    "strictFunctionTypes": true,
     "forceConsistentCasingInFileNames": true,
     "maxNodeModuleJsDepth": 0
   },
