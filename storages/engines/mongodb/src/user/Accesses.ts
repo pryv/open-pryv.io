@@ -91,12 +91,12 @@ class Accesses extends BaseStorage {
       this.getCollectionInfo(userOrUserId),
       query,
       this.applyOptionsToDB(options),
-      function (err, dbItems) {
+      (err, dbItems) => {
         if (err) {
           return callback(err);
         }
         callback(null, this.applyItemsFromDB(dbItems));
-      }.bind(this)
+      }
     );
   }
 

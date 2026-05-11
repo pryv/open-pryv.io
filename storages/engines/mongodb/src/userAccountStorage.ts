@@ -151,7 +151,7 @@ function getKeyValueDataForStore (storeId) {
   return new StoreKeyValueData(storeId);
 }
 
-function StoreKeyValueData (storeId) {
+function StoreKeyValueData (this: any, storeId) {
   this.storeId = storeId;
 }
 

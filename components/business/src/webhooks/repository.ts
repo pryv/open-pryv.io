@@ -28,7 +28,7 @@ class Repository {
     const allWebhooks = new Map();
     await Promise.all(users.map((u) => retrieveWebhooks.call(this, u)));
     return allWebhooks;
-    async function retrieveWebhooks (user) {
+    async function retrieveWebhooks (this: any, user) {
       const webhooksQuery = {};
       const webhooksOptions = {};
       const webhooks = await fromCallback((cb) => this.storage.find(user, webhooksQuery, webhooksOptions, cb));

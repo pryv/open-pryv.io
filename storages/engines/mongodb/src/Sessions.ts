@@ -31,7 +31,7 @@ const collectionInfo = {
  *
  * @param options Possible options: `maxAge` (in milliseconds)
  */
-function Sessions (database, options) {
+function Sessions (this: any, database, options) {
   this.database = database;
   this.options = deepMerge({
     maxAge: 1000 * 60 * 60 * 24 * 14 // two weeks
@@ -43,8 +43,8 @@ function Sessions (database, options) {
  *
  * @param callback Args: err, data
  */
-Sessions.prototype.get = function (id, callback) {
-  this.database.findOne(collectionInfo, { _id: id }, null, function (err, session) {
+Sessions.prototype.get = function (this: any, id, callback) {
+  this.database.findOne(collectionInfo, { _id: id }, null, (err, session) => {
     if (err) {
       return callback(err);
     }
@@ -61,7 +61,7 @@ Sessions.prototype.get = function (id, callback) {
         callback(err, null);
       });
     }
-  }.bind(this));
+  });
 };
 
 /**
@@ -69,8 +69,8 @@ Sessions.prototype.get = function (id, callback) {
  *
  * @param callback Args: err, id
  */
-Sessions.prototype.getMatching = function (data, callback) {
-  this.database.findOne(collectionInfo, { data }, null, function (err, session) {
+Sessions.prototype.getMatching = function (this: any, data, callback) {
+  this.database.findOne(collectionInfo, { data }, null, (err, session) => {
     if (err) {
       return callback(err);
     }
@@ -87,7 +87,7 @@ Sessions.prototype.getMatching = function (data, callback) {
         callback(err, null);
       });
     }
-  }.bind(this));
+  });
 };
 
 /**

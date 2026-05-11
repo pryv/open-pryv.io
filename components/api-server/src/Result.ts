@@ -140,11 +140,11 @@ class Result {
     if (this.isStreamResult()) {
       const writeTracingId = this._private.tracing.startSpan('writeToHttpResponse', {}, this._private.tracingId);
       const stream = this.writeStreams(res, successCode);
-      stream.on('close', function () {
+      stream.on('close', () => {
         if (onEndCallBack) { onEndCallBack(); }
         this._private.tracing.finishSpan(writeTracingId);
         this.closeTracing();
-      }.bind(this));
+      });
     } else {
       this.closeTracing();
       this.writeSingle(res, successCode);

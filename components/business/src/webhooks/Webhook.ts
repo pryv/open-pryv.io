@@ -95,15 +95,15 @@ class Webhook {
     if (this.pubsubTurnOffListener != null) {
       throw new Error('Cannot listen twice');
     }
-    this.pubsubTurnOffListener = pubsub.notifications.onAndGetRemovable(username, function named (payload) {
+    this.pubsubTurnOffListener = pubsub.notifications.onAndGetRemovable(username, (payload) => {
       this.send(payload.eventName);
-    }.bind(this));
+    });
   }
 
   /**
    * Send the message with the throttling and retry mechanics - to use in webhooks service
    */
-  async send (message, isRescheduled) {
+  async send (message, isRescheduled?) {
     if (this.state === 'inactive') { return; }
     if (isRescheduled != null && isRescheduled === true) {
       this.timeout = null;
@@ -148,20 +148,20 @@ class Webhook {
     function hasError (status) {
       return status < 200 || status >= 300;
     }
-    function handleRetry (message) {
+    function handleRetry (this: any, message) {
       if (this.state === 'inactive') {
         return;
       }
       reschedule.call(this, message);
     }
-    function reschedule (message) {
+    function reschedule (this: any, message) {
       if (this.timeout != null) { return; }
       const delay = this.minIntervalMs * (this.currentRetries || 1);
       this.timeout = setTimeout(() => {
         return this.send(message, true);
       }, delay);
     }
-    function tooSoon () {
+    function tooSoon (this: any) {
       const now = timestamp.now();
       if ((now - this.lastRun.timestamp) * 1000 < this.minIntervalMs) {
         return true;

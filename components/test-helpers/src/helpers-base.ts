@@ -214,11 +214,11 @@ function getMochaHooks (isParallelMode = false) {
     ...(isParallelMode
       ? {}
       : {
-          async beforeEach () {
+          async beforeEach (this: any) {
             if (process.env.DISABLE_INTEGRITY_CHECK === '1') return;
             await checkIndexAndPlatformIntegrity('BEFORE ' + this.currentTest.title);
           },
-          async afterEach () {
+          async afterEach (this: any) {
             if (process.env.DISABLE_INTEGRITY_CHECK === '1') return;
             await checkIndexAndPlatformIntegrity('AFTER ' + this.currentTest.title);
           }

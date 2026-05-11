@@ -20,7 +20,7 @@ export { request };
 function request (serverURL) {
   return new Request(serverURL);
 }
-function Request (serverURL) {
+function Request (this: any, serverURL) {
   this.serverURL = serverURL;
   this.token = null;
 }
@@ -42,7 +42,7 @@ Request.prototype.execute = function (method, path, token) {
 /**
  * @param callback (error)
  */
-Request.prototype.login = function (user, callback) {
+Request.prototype.login = function (this: any, user, callback) {
   const targetURL = new URL(user.username + '/auth/login', this.serverURL).href;
   const authData = {
     username: user.username,
@@ -53,7 +53,7 @@ Request.prototype.login = function (user, callback) {
     .post(targetURL)
     .set('Origin', 'http://test.pryv.local')
     .send(authData)
-    .end(function (err, res) {
+    .end((err, res) => {
       assert.strictEqual(err?.message || null, null, 'Request must be a success');
       assert.ok(res !== undefined, 'Request has a result');
       assert.strictEqual(res.statusCode, 200);
@@ -62,14 +62,14 @@ Request.prototype.login = function (user, callback) {
       }
       this.token = res.body.token;
       callback();
-    }.bind(this));
+    });
 };
 /**
  * SuperAgent request sub-constructor.
  *
  * NOTE: This can be removed if/when we don't need the `end()` override (see below).
  */
-function PryvTestRequest (method, url) {
+function PryvTestRequest (this: any, method, url) {
   superagent.Request.call(this, method, url);
 }
 PryvTestRequest.prototype = Object.create(superagent.Request.prototype);

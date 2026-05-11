@@ -39,7 +39,7 @@ export { BaseStorage };
  *   (which is safe).
  *
  */
-function BaseStorage (database) {
+function BaseStorage (this: any, database) {
   this.database = database;
   this.converters = {
     itemDefaults: [],
@@ -102,17 +102,17 @@ BaseStorage.prototype.find = function (userOrUserId, query, options, callback) {
 /**
  * Used by "mall" only
  */
-BaseStorage.prototype.findIncludingDeletionsAndVersions = function (userOrUserId, query, options, callback) {
+BaseStorage.prototype.findIncludingDeletionsAndVersions = function (this: any, userOrUserId, query, options, callback) {
   this.database.find(
     this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB(query),
     this.applyOptionsToDB(options),
-    function (err, dbItems) {
+    (err, dbItems) => {
       if (err) {
         return callback(err);
       }
       callback(null, this.applyItemsFromDB(dbItems));
-    }.bind(this)
+    }
   );
 };
 
@@ -181,6 +181,7 @@ BaseStorage.prototype.findAndUpdateIfNeeded = function (userOrUserId, query, opt
 };
 
 BaseStorage.prototype.findDeletions = function (
+  this: any,
   userOrUserId,
   deletedSince,
   options,
@@ -192,57 +193,57 @@ BaseStorage.prototype.findDeletions = function (
     this.getCollectionInfo(userOrUserId),
     query,
     this.applyOptionsToDB(options),
-    function (err, dbItems) {
+    (err, dbItems) => {
       if (err) {
         return callback(err);
       }
       callback(null, this.applyItemsFromDB(dbItems));
-    }.bind(this)
+    }
   );
 };
 
-BaseStorage.prototype.findOne = function (userOrUserId, query, options, callback) {
+BaseStorage.prototype.findOne = function (this: any, userOrUserId, query, options, callback) {
   query.deleted = null;
 
   this.database.findOne(
     this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB(query),
     this.applyOptionsToDB(options),
-    function (err, dbItem) {
+    (err, dbItem) => {
       if (err) {
         return callback(err);
       }
       callback(null, this.applyItemFromDB(dbItem));
-    }.bind(this)
+    }
   );
 };
 
-BaseStorage.prototype.findDeletion = function (userOrUserId, query, options, callback) {
+BaseStorage.prototype.findDeletion = function (this: any, userOrUserId, query, options, callback) {
   query.deleted = { $ne: null };
   this.database.findOne(
     this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB(query),
     this.applyOptionsToDB(options),
-    function (err, dbItem) {
+    (err, dbItem) => {
       if (err) {
         return callback(err);
       }
       callback(null, this.applyItemFromDB(dbItem));
-    }.bind(this)
+    }
   );
 };
 
-BaseStorage.prototype.insertOne = function (userOrUserId, item, callback, options) {
+BaseStorage.prototype.insertOne = function (this: any, userOrUserId, item, callback, options) {
   const itemToInsert = this.applyItemToDB(this.applyItemDefaults(item));
   this.database.insertOne(
     this.getCollectionInfo(userOrUserId),
     itemToInsert,
-    function (err) {
+    (err) => {
       if (err) {
         return callback(err);
       }
       callback(null, this.applyItemFromDB(itemToInsert));
-    }.bind(this),
+    },
     options
   );
 };
@@ -251,17 +252,17 @@ BaseStorage.prototype.insertOne = function (userOrUserId, item, callback, option
  * Finds and updates atomically a single document matching the given query,
  * returning the updated document.
  */
-BaseStorage.prototype.findOneAndUpdate = function (userOrUserId, query, updatedData, callback) {
+BaseStorage.prototype.findOneAndUpdate = function (this: any, userOrUserId, query, updatedData, callback) {
   this.database.findOneAndUpdate(
     this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB(query),
     this.applyUpdateToDB(updatedData),
-    function (err, dbItem) {
+    (err, dbItem) => {
       if (err) {
         return callback(err);
       }
       callback(null, this.applyItemFromDB(dbItem));
-    }.bind(this)
+    }
   );
 };
 
@@ -362,17 +363,17 @@ BaseStorage.prototype.iterateAll = async function * () {
 /**
  * For tests only.
  */
-BaseStorage.prototype.findAll = function (userOrUserId, options, callback) {
+BaseStorage.prototype.findAll = function (this: any, userOrUserId, options, callback) {
   this.database.find(
     this.getCollectionInfo(userOrUserId),
     this.applyQueryToDB({}),
     this.applyOptionsToDB(options),
-    function (err, dbItems) {
+    (err, dbItems) => {
       if (err) {
         return callback(err);
       }
       callback(null, this.applyItemsFromDB(dbItems));
-    }.bind(this)
+    }
   );
 };
 

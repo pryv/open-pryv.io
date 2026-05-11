@@ -44,7 +44,7 @@ class ArraySerializationStream extends Transform {
     callback();
   }
 
-  _flush = function (callback) {
+  _flush = function (this: any, callback) {
     if (this.isStart) {
       this.push(this.prefix + JSON.stringify(this.stack));
     } else {

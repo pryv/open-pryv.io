@@ -31,7 +31,7 @@ const collectionInfo = {
  *
  * @param options Possible options: `maxAge` (in milliseconds)
  */
-function PasswordResetRequests (database, options) {
+function PasswordResetRequests (this: any, database, options) {
   this.database = database;
   this.options = deepMerge({
     maxAge: 1000 * 60 * 60 // one hour
@@ -43,12 +43,12 @@ function PasswordResetRequests (database, options) {
  *
  * @param callback Args: err, data
  */
-PasswordResetRequests.prototype.get = function (id, username, callback) {
+PasswordResetRequests.prototype.get = function (this: any, id, username, callback) {
   const query = {
     _id: id,
     username
   };
-  this.database.findOne(collectionInfo, query, null, function (err, resetReq) {
+  this.database.findOne(collectionInfo, query, null, (err, resetReq) => {
     if (err) {
       return callback(err);
     }
@@ -62,7 +62,7 @@ PasswordResetRequests.prototype.get = function (id, username, callback) {
     } else {
       this.destroy(id, username, callback);
     }
-  }.bind(this));
+  });
 };
 
 /**

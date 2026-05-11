@@ -20,7 +20,7 @@ class SingleObjectSerializationStream extends Transform {
     this.name = objectName;
   }
 
-  _transform = function (item, encoding, callback) {
+  _transform = function (this: any, item, encoding, callback) {
     this.push('"' + this.name + '": ' + JSON.stringify(item) + ', ');
     callback();
   };

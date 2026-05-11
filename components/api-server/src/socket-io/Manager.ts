@@ -97,7 +97,7 @@ class Manager {
     /**
      * putting this here because putting it above requires rendering too much code async. I'm sorry.
      */
-    async function initAsyncProps () {
+    async function initAsyncProps (this: any) {
       if (this.apiVersion == null) { this.apiVersion = await getAPIVersion(); }
     }
   }

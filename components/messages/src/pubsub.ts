@@ -63,7 +63,7 @@ class PubSub extends EventEmitter {
    */
   onAndGetRemovable (eventName, listener) {
     this.on(eventName, listener);
-    return function () {
+    return () => {
       this.off(eventName, listener);
       if ((transport != null) && (this.options.transport === CONSTANTS.TRANSPORT_MODE_KEY) && (this.transportSubMap[eventName] != null)) {
         this.logger.debug('off', eventName);
@@ -73,7 +73,7 @@ class PubSub extends EventEmitter {
           delete this.transportSubMap[eventName];
         }
       }
-    }.bind(this);
+    };
   }
 
   emit (eventName, payload) {

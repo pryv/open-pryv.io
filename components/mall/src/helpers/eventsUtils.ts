@@ -208,7 +208,7 @@ class ConvertEventFromStoreStream extends Transform {
    *     callback();
    *   }
    */
-  _transform = function (event, encoding, callback) {
+  _transform = function (this: any, event, encoding, callback) {
     this.push(convertEventFromStore(this.storeId, event));
     callback();
   };
