@@ -17,7 +17,18 @@ export default function (api) {
     // changes, or admin APIs updating `service.*`) are picked up without
     // a process restart. The earlier cache-on-first-call behaviour also
     // leaked service state across tests sharing a single api-server.
-    const serviceInfo = Object.assign({}, (await getConfig()).get('service') || {});
+    const config = await getConfig();
+    const serviceInfo: any = Object.assign({}, config.get('service') || {});
+    // Auto-derive `features.noHF` from cluster.hfsWorkers. lib-js's
+    // `Service.supportsHF()` (and any other SDK following the same
+    // contract) reads `features.noHF: true` to short-circuit HF-series
+    // calls instead of erroring opaquely against a cluster that runs
+    // with `cluster.hfsWorkers: 0`. An explicit `service.features.noHF`
+    // in config takes precedence — operators can hand-override either way.
+    serviceInfo.features = Object.assign({}, serviceInfo.features || {});
+    if (serviceInfo.features.noHF === undefined && (config.get('cluster:hfsWorkers') || 0) === 0) {
+      serviceInfo.features.noHF = true;
+    }
     // Surface the API version so SDKs can pick the direct-core
     // registration endpoint (>=1.6.0) — the legacy fallback POSTs to
     // `/reg/user` via reg.{domain} which round-robins across cores and

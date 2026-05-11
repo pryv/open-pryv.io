@@ -50,11 +50,30 @@ describe('[SINF] Service', () => {
         status: 200,
         schema: methodsSchema.get.result
       });
-      // Strip response envelope (`meta`) and the new `version` field before
+      // Strip response envelope (`meta`), the new `version` field, and the
+      // auto-derived `features` block (verified in [SN02]) before
       // comparing the rest to the fixture.
-      const { version, meta, ...rest } = res.body;
+      const { version, meta, features, ...rest } = res.body;
       assert.deepStrictEqual(rest, mockInfo);
       assert.ok(version, 'expected version field to be populated');
+    });
+
+    it('[SN02] auto-derives features.noHF=true when cluster.hfsWorkers===0', async () => {
+      // Test-config defaults `cluster.hfsWorkers: 1`, so noHF is NOT
+      // auto-derived in the [FR4K] response. Force the no-HF case by
+      // injecting `cluster.hfsWorkers: 0` and re-querying.
+      const config = await getConfig();
+      const original = config.get('cluster:hfsWorkers');
+      config.injectTestConfig({ cluster: { hfsWorkers: 0 } });
+      try {
+        const path = '/' + username + '/service/info';
+        const res = await coreRequest.get(path);
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(res.body.features && res.body.features.noHF, true,
+          'expected features.noHF=true when cluster.hfsWorkers===0');
+      } finally {
+        config.injectTestConfig({ cluster: { hfsWorkers: original } });
+      }
     });
   });
 });
