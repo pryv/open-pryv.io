@@ -15,6 +15,8 @@
     "noEmit": true,
     "strict": false,
     "noImplicitAny": false,
+    "alwaysStrict": true,
+    "strictBindCallApply": true,
     "forceConsistentCasingInFileNames": true,
     "maxNodeModuleJsDepth": 0
   },
