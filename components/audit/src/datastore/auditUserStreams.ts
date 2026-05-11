@@ -39,7 +39,12 @@ Object.freeze(auditStreams);
 const auditUserStreams: any = ds.createUserStreams({
   async get (userId, query) {
     if (query.parentId === '*' || query.parentId == null) {
-      return auditStreams;
+      // Return fresh clones: `auditStreams` and its members are Object.freeze'd
+      // module-scope singletons. The caller (mall's addStoreIdPrefixToStreams)
+      // mutates stream.id in place — that mutation silently no-op'd in
+      // pre-strict CJS but throws TypeError under ESM strict mode. Cloning
+      // gives the caller mutable copies without exposing the singleton state.
+      return auditStreams.map((s) => ({ ...s, children: [...s.children] }));
     }
     const parent = await this.getOne(userId, query.parentId, query);
     if (parent == null) return [];
