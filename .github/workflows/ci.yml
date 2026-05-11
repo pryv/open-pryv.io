@@ -75,8 +75,22 @@ jobs:
       - name: Lint
         run: npx eslint .
 
+  typecheck:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: extractions/setup-just@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Typecheck
+        run: just typecheck
+
   docker:
-    needs: [test-postgres, lint]
+    needs: [test-postgres, lint, typecheck]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-22.04
     steps:

@@ -22,9 +22,7 @@
     "components/**/*.ts",
     "components/**/*.js",
     "storages/**/*.ts",
-    "storages/**/*.js",
-    "bin/**/*.ts",
-    "bin/**/*.js"
+    "storages/**/*.js"
   ],
   "exclude": [
     "node_modules",
@@ -32,6 +30,8 @@
     "**/node_modules",
     "**/*.test.js",
     "**/*.test.ts",
-    "**/test/**"
+    "**/test/**",
+    "bin/**",
+    "config/plugins/**"
   ]
 }
