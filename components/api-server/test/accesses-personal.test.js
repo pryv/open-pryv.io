@@ -442,18 +442,20 @@ describe('[ACSF] accesses (personal)', function () {
     });
   });
 
-  describe('[AS03] PUT /<token>', function () {
+  describe('[AS03] PUT /<id>', function () {
     beforeEach(resetAccesses);
 
-    it('[U04A] must return a 410 (Gone)', async function () {
+    it('[U04A] unknown id returns unknown-resource', async function () {
+      // Plan 66: accesses.update is back. Updating an unknown id is now
+      // a 404 unknown-resource (the endpoint isn't gone anymore).
       const res = await coreRequest
         .put(path('unknown-id'))
         .set('Authorization', personalToken)
         .send({ name: '?' });
 
       validation.checkError(res, {
-        status: 410,
-        id: ErrorIds.Gone
+        status: 404,
+        id: ErrorIds.UnknownResource
       });
     });
   });

@@ -30,6 +30,8 @@ const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
 
 const { integrity } = require('business');
+const { parseAccessRef, serializeAccessRef } = require('business/src/accesses/refs.ts');
+const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
 
 type Permission = {
   streamId: string;
@@ -317,11 +319,206 @@ export default async function produceAccessesApiMethods (api: any) {
 
   api.register(
     'accesses.update',
-    goneResource
+    commonFns.basicAccessAuthorizationCheck,
+    commonFns.getParamsValidation(methodsSchema.update.params),
+    loadAccessForUpdate,
+    enforceUpdateChainRules,
+    snapshotAndApplyUpdate,
+    emitUpdateNotifications
   );
 
-  function goneResource (context: any, params: any, result: any, next: any) {
-    next(errors.goneResource('accesses.update has been removed'));
+  async function loadAccessForUpdate (context: any, params: any, result: any, next: any) {
+    // Plan 66: composite-id parse + conflict-check. The wire-form `id` is
+    // either bare cuid (never-updated access) or `<base>:<serial>`. Look
+    // up by base; reject stale composites with 409.
+    let ref;
+    try {
+      ref = parseAccessRef(params.id);
+    } catch (e: any) {
+      return next(errors.unknownResource('access', params.id));
+    }
+    let access: any;
+    try {
+      access = await fromCallback((cb: any) => {
+        storageLayer.accesses.findOne(context.user, { id: ref.base }, dbFindOptions, cb);
+      });
+    } catch (err) {
+      return next(errors.unexpectedError(err));
+    }
+    // findOne filters head_id IS NULL + deleted IS NULL (Phase A), so a
+    // soft-deleted access also returns null — Q12.2=a treats it as
+    // unknownResource. No info leak via differentiated error.
+    if (access == null) {
+      return next(errors.unknownResource('access', params.id));
+    }
+    const accessSerial = (access.serial == null) ? null : access.serial;
+    if ((accessSerial == null && ref.serial != null) ||
+        (accessSerial != null && ref.serial !== accessSerial)) {
+      return next(errors.staleResource('access', {
+        provided: params.id,
+        currentSerial: accessSerial
+      }));
+    }
+    if (!(await context.access.canUpdateAccess(access))) {
+      return next(errors.forbidden('Your access token has insufficient permissions to update this access.'));
+    }
+    params.targetAccess = access;
+    params.targetBase = ref.base;
+    next();
+  }
+
+  async function enforceUpdateChainRules (context: any, params: any, result: any, next: any) {
+    const target = params.targetAccess;
+    const updates = params.update;
+
+    // expireAfter → expires (mirrors create semantics).
+    if (updates.expireAfter !== undefined) {
+      const ea = updates.expireAfter;
+      delete updates.expireAfter;
+      if (ea == null) {
+        updates.expires = null;
+      } else if (ea >= 0) {
+        updates.expires = timestamp.now() + ea;
+      } else {
+        return next(errors.invalidParametersFormat('expireAfter cannot be negative.'));
+      }
+    }
+
+    const wantsPermChange = Array.isArray(updates.permissions);
+    const wantsExpiresChange = Object.prototype.hasOwnProperty.call(updates, 'expires');
+    if (!wantsPermChange && !wantsExpiresChange) {
+      return next();
+    }
+
+    const after: any = Object.assign({}, target, updates);
+
+    try {
+      if (target.type === 'shared') {
+        // Rules A + D — child cannot exceed managing app's scope/expiry.
+        let managingApp: any = null;
+        const createdByBase = parseAccessRef(target.createdBy).base;
+        if (createdByBase === context.access.id) {
+          managingApp = context.access;
+        } else {
+          const mgrRow = await fromCallback((cb: any) =>
+            storageLayer.accesses.findOne(context.user, { id: createdByBase }, null, cb));
+          if (mgrRow != null) {
+            managingApp = new AccessLogic(context.user.id, mgrRow);
+            await managingApp.loadPermissions();
+          }
+        }
+        if (managingApp != null) {
+          if (wantsPermChange) {
+            const fits = await managingApp.canCreateAccess({
+              type: 'shared',
+              permissions: after.permissions
+            });
+            if (!fits) {
+              return next(errors.invalidOperation(
+                'new permissions exceed managing access scope',
+                { managingAccessId: managingApp.id }
+              ));
+            }
+          }
+          if (wantsExpiresChange && managingApp.expires != null &&
+              after.expires != null && after.expires > managingApp.expires) {
+            return next(errors.invalidOperation(
+              'expires cannot be later than the managing access.',
+              { parentExpires: managingApp.expires, requestedExpires: after.expires }
+            ));
+          }
+        }
+      }
+      if (target.type === 'app') {
+        // Rules B/C + D — narrowing parent rejects if any managed shared
+        // would now sit outside the new scope/expiry.
+        const wouldBe = new AccessLogic(context.user.id, after);
+        await wouldBe.loadPermissions();
+        const allAccesses = await fromCallback((cb: any) =>
+          storageLayer.accesses.find(context.user, {}, null, cb));
+        const managed = (allAccesses || []).filter((a: any) =>
+          a.type === 'shared' && a.id !== target.id &&
+          typeof a.createdBy === 'string' &&
+          parseAccessRef(a.createdBy).base === target.id);
+        const offendingChildren: string[] = [];
+        for (const child of managed) {
+          if (wantsPermChange) {
+            const fits = await wouldBe.canCreateAccess({
+              type: 'shared',
+              permissions: child.permissions || []
+            });
+            if (!fits) {
+              offendingChildren.push(child.id);
+              continue;
+            }
+          }
+          if (wantsExpiresChange && after.expires != null &&
+              child.expires != null && child.expires > after.expires) {
+            offendingChildren.push(child.id);
+          }
+        }
+        if (offendingChildren.length > 0) {
+          return next(errors.invalidOperation(
+            'cannot narrow access: would orphan managed shared accesses',
+            { offendingChildren }
+          ));
+        }
+      }
+    } catch (err) {
+      return next(errors.unexpectedError(err));
+    }
+    next();
+  }
+
+  async function snapshotAndApplyUpdate (context: any, params: any, result: any, next: any) {
+    const target = params.targetAccess;
+    const baseId = params.targetBase;
+    const updates = params.update;
+    const accessesRepository = storageLayer.accesses;
+    const newSerial = ((target.serial == null) ? 0 : target.serial) + 1;
+    const update: any = Object.assign({}, updates);
+    update.serial = newSerial;
+    context.updateTrackingProperties(update);
+    update.modifiedBySerial = (context.access?.serial == null) ? null : context.access.serial;
+
+    try {
+      // 1. Snapshot current head into history row (frozen state pre-bump).
+      await accessesRepository.snapshotHead(context.user, baseId);
+      // 2. Apply head update (integrity-aware updateOne handles the hash).
+      await fromCallback((cb: any) =>
+        accessesRepository.updateOne(context.user, { id: baseId }, update, cb));
+      // 3. Re-read the new head.
+      const newHead = await fromCallback((cb: any) =>
+        accessesRepository.findOne(context.user, { id: baseId }, dbFindOptions, cb));
+      if (newHead == null) {
+        return next(errors.unexpectedError(new Error('head row missing after update')));
+      }
+      // 4. Compose wire-form id + api endpoint.
+      const compositeId = serializeAccessRef({ base: baseId, serial: newSerial });
+      newHead.id = compositeId;
+      newHead.apiEndpoint = ApiEndpoint.build(context.user.username, newHead.token);
+      result.access = newHead;
+      result.__plan66 = { baseId, serial: newSerial, compositeId };
+    } catch (err) {
+      return next(errors.unexpectedError(err));
+    }
+
+    // 5. Cache invalidation — parallel to delete's pattern at line ~388.
+    const cached = cache.getAccessLogicForId(context.user.id, baseId);
+    if (cached != null) {
+      cache.unsetAccessLogic(context.user.id, cached);
+    }
+    next();
+  }
+
+  function emitUpdateNotifications (context: any, params: any, result: any, next: any) {
+    pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
+    pubsub.notifications.emit(context.user.username, pubsub.ACCESS_UPDATED, {
+      accessId: result.__plan66.compositeId,
+      serial: result.__plan66.serial
+    });
+    delete result.__plan66;
+    next();
   }
 
   // DELETION
@@ -338,20 +535,37 @@ export default async function produceAccessesApiMethods (api: any) {
     const accessesRepository = storageLayer.accesses;
     const currentAccess = context.access;
     if (currentAccess == null) { return next(new Error('AF: currentAccess cannot be null.')); }
+    // Plan 66: parse composite id + serial conflict-check (mirrors update).
+    let ref;
+    try {
+      ref = parseAccessRef(params.id);
+    } catch (e: any) {
+      return next(errors.unknownResource('access', params.id));
+    }
     let access: any;
     try {
       access = await fromCallback((cb: any) => {
-        accessesRepository.findOne(context.user, { id: params.id }, dbFindOptions, cb);
+        accessesRepository.findOne(context.user, { id: ref.base }, dbFindOptions, cb);
       });
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
     if (access == null) { return next(errors.unknownResource('access', params.id)); }
+    const accessSerial = (access.serial == null) ? null : access.serial;
+    if ((accessSerial == null && ref.serial != null) ||
+        (accessSerial != null && ref.serial !== accessSerial)) {
+      return next(errors.staleResource('access', {
+        provided: params.id,
+        currentSerial: accessSerial
+      }));
+    }
     if (!(await currentAccess.canDeleteAccess(access))) {
       return next(errors.forbidden('Your access token has insufficient permissions to ' +
                 'delete this access.'));
     }
-    // used in next function
+    // Subsequent stages address the access by its bare base id (storage
+    // doesn't accept composite ids).
+    params.id = ref.base;
     params.accessToDelete = access;
     next();
   }

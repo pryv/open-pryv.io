@@ -204,6 +204,30 @@ class Accesses extends BaseStorage {
     super.findOneAndUpdate(userOrUserId, query, update, cb);
   }
 
+  /**
+   * Plan 66: snapshot the current live head document into a history doc.
+   * Reads the head doc identified by `id`, clones every field, replaces
+   * `_id` with a freshly-minted cuid and sets `headId` to the original
+   * base. The unique-token partial filter (deleted: null && headId: null)
+   * excludes the new history row, so duplicating the token is safe.
+   *
+   * Caller is expected to mutate the head doc immediately after this
+   * call to bump `serial`.
+   */
+  async snapshotHead (userOrUserId: any, baseId: string): Promise<void> {
+    await this.database.ensureConnect();
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    const coll = this.database.db.collection('accesses');
+    const head = await coll.findOne({ userId, _id: baseId, headId: null });
+    if (head == null) {
+      throw new Error('snapshotHead: no live head doc for access id ' + JSON.stringify(baseId));
+    }
+    const snapshot: any = Object.assign({}, head);
+    snapshot._id = generateId();
+    snapshot.headId = baseId;
+    await coll.insertOne(snapshot);
+  }
+
   /** Inserts an array of accesses; each item must have a valid id and data already. For tests only. */
   insertMany (userOrUserId: any, accesses: any, callback: any) {
     const accessesToCreate = accesses.map((a: any) => {

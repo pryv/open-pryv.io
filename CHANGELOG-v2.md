@@ -1,5 +1,20 @@
 # Changelog - API Changes
 
+## `accesses.update` is back — versioned, chain-checked, composite-id (Plan 66 Phase C)
+
+- **NEW** `PUT /accesses/:id` — `accesses.update` is no longer a `goneResource` stub. It mutates the head row, snapshots the prior state into history (single-collection `headId` shape), and bumps the access's `serial`. The returned access carries the new wire-format composite id `<base>:<serial>` (or bare `<base>` when never updated).
+- **Mutable fields:** `name`, `deviceName`, `permissions`, `expireAfter` / `expires`, `clientData`. Immutable: `token`, `type`, `createdBy`, `id`, `lastUsed`, `created`, `modified`, `modifiedBy`. Sending any field outside the mutable whitelist returns `invalid-parameters-format`.
+- **Who can update what:** `personal` accesses are immutable (no caller can update them). An `app` access can update only the `shared` accesses it directly manages (chain match by `base`, so a future-versioned app still matches). `shared` accesses cannot update anything. No self-update is permitted via this method (selfrevoke stays available via `accesses.delete`).
+- **Chain rules enforced on update:**
+  - **A** — a managed `shared`'s new `permissions` must remain a subset of its managing `app`'s permissions.
+  - **B / C** — narrowing an `app`'s permissions (or `expires`) is strict-rejected if any of its managed shareds would now sit outside the new scope or outlive the new expiry. Error includes `data.offendingChildren: [ids]` so the caller can resolve children first and retry.
+  - **D** — a managed `shared`'s `expires` cannot exceed its managing `app`'s `expires` (parent with `expires: null` imposes no cap).
+- **Composite-id conflict (NEW error)** — `accesses.update` and `accesses.delete` now require the caller's id to match the current head's `serial`. A stale composite returns **`409 stale-resource`** with `data: { provided, currentSerial }`; refetch the access and retry with the current head id. Bare `<base>` is only valid on a never-updated access; the same `409` fires if the access has since been versioned.
+- **Soft-deleted access → `unknownResource`** — no info leak via differentiated error.
+- **NEW pubsub event** — every successful update emits both `USERNAME_BASED_ACCESSES_CHANGED` (existing, backwards-compat) and `ACCESS_UPDATED { accessId: '<base>:<serial>', serial }` on the owner's channel. Recipients of shared-token credentials see the new scope on their next API call (token-scoped notification is out of scope, backlogged at `SCOPED-NOTIFICATION.md`).
+- **Cache invalidation** — `cache.unsetAccessLogic` fires for the updated base alongside the storage write, parallel to the existing `accesses.delete` pattern. Auth-by-token lookups observe the new permissions immediately.
+- **Composite-id conflict also on `accesses.delete`** — `DELETE /accesses/:id` validates the same way; pass the composite id you last read or accept a `409 stale-resource`. The subsequent delete path still operates on the bare base internally.
+
 ## `accesses.create` — managed shared expiry now capped by parent (Plan 66 Phase B, BREAKING)
 
 - **BREAKING** When an `app` access creates a `shared` access scoped under it, the new shared's `expires` (resolved from `expireAfter` if provided) now cannot exceed the managing app's `expires`. Violations return `invalid-operation` with `data: { parentExpires, requestedExpires }`. This was previously allowed and would silently produce a shared access that outlived its managing parent — confusing audit and breaking the symmetry with `accesses.update`'s chain rules.

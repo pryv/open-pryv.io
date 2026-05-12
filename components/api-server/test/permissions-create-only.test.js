@@ -354,6 +354,8 @@ describe('[PCRO] permissions create-only level', () => {
 
       describe('[PC11] PUT /', function () {
         it('[1WXJ] should forbid updating accesses', async function () {
+          // Plan 66: shared accesses (incl. create-only) cannot update
+          // anything — canUpdateAccess returns false → 403 forbidden.
           const res = await coreRequest
             .put(reqPath(readAccessId))
             .set('Authorization', createOnlyToken)
@@ -362,7 +364,7 @@ describe('[PCRO] permissions create-only level', () => {
                 a: 'b'
               }
             });
-          assert.strictEqual(res.status, 410);
+          assert.strictEqual(res.status, 403);
         });
       });
 

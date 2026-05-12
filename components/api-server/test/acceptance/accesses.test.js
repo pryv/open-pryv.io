@@ -173,19 +173,23 @@ describe('[AC01] accesses', () => {
             .get(`/${userId}/accesses`)
             .set('Authorization', accessToken);
           activeAccess = res.body.accesses.find((a) => a.token === activeToken);
+          // Plan 66: accesses.update is back; sending the immutable
+          // `deleted` field now lands on schema validation, which has an
+          // `additionalProperties: false` whitelist of mutable fields
+          // (name, deviceName, permissions, expireAfter, expires,
+          // clientData). The route auto-wraps the body into `update`, so
+          // send the field directly.
           res = await coreRequest
             .put(`/${userId}/accesses/${activeAccess.id}`)
             .set('Authorization', accessToken)
-            .send({
-              update: { deleted: timestamp.now() }
-            });
+            .send({ deleted: timestamp.now() });
           error = res.body.error;
         });
         it('[JNJK] should return an error', () => {
           assert.ok(error);
         });
         it('[OS36] error should say that the deleted field is forbidden upon update', () => {
-          assert.strictEqual(error.id, ErrorIds.Gone);
+          assert.strictEqual(error.id, ErrorIds.InvalidParametersFormat);
         });
       });
     });

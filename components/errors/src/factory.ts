@@ -119,6 +119,15 @@ factory.itemAlreadyExists = function (resourceType: string, conflictingKeys: Rec
   });
 };
 
+factory.staleResource = function (resourceType: string, data?: Record<string, unknown>) {
+  resourceType = resourceType || 'resource';
+  const message = 'Stale ' + resourceType + ' reference — refetch and retry with the current head id.';
+  return new APIError(ErrorIds.StaleResource, message, {
+    httpStatus: 409,
+    data: data || {}
+  });
+};
+
 factory.missingHeader = function (headerName: string, status?: number) {
   return new APIError(ErrorIds.MissingHeader, 'Missing expected header "' + headerName + '"', {
     httpStatus: status || 400

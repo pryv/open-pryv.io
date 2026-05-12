@@ -135,6 +135,47 @@ class AccessesPG extends BaseStoragePG {
     });
   }
 
+  /**
+   * Plan 66: snapshot the current live head row into a history row.
+   * Reads the head row identified by `id`, clones every column, replaces
+   * `id` with a freshly-minted cuid and sets `head_id` to the original
+   * base. Idempotent at the SQL level — INSERT will fail if the fresh
+   * id collides (cuid collision probability is negligible).
+   *
+   * Caller is expected to mutate the head row immediately after this
+   * call to bump `serial` (and update tracking + integrity).
+   */
+  async snapshotHead (userOrUserId: any, baseId: string): Promise<void> {
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    const sel = await this.db.query(
+      'SELECT * FROM accesses WHERE user_id = $1 AND id = $2 AND head_id IS NULL LIMIT 1',
+      [userId, baseId]
+    );
+    if (sel.rows.length === 0) {
+      throw new Error('snapshotHead: no live head row for access id ' + JSON.stringify(baseId));
+    }
+    const head = sel.rows[0];
+    const freshId = generateId();
+    const cols: string[] = [];
+    const placeholders: string[] = [];
+    const vals: any[] = [];
+    let idx = 1;
+    for (const [col, raw] of Object.entries(head)) {
+      cols.push(col);
+      let val: any = raw;
+      if (col === 'id') val = freshId;
+      else if (col === 'head_id') val = baseId;
+      else if (this.isJsonbCol(col) && val != null) val = JSON.stringify(val);
+      placeholders.push('$' + idx);
+      vals.push(val);
+      idx++;
+    }
+    await this.db.query(
+      `INSERT INTO accesses (${cols.join(', ')}) VALUES (${placeholders.join(', ')})`,
+      vals
+    );
+  }
+
   insertMany (userOrUserId: any, accesses: any[], callback: (err: any) => void): void {
     const accessesToCreate = accesses.map((a) => {
       if (a.deleted === undefined) return Object.assign({ deleted: null }, a);

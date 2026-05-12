@@ -48,6 +48,21 @@ const __ex_create = {
     })
   };
 export { __ex_create as create };
+const __ex_update = {
+    params: object({
+      id: string(),
+      update: access(Action.UPDATE)
+    }, {
+      id: 'accesses.update',
+      required: ['id', 'update']
+    }),
+    result: object({
+      access: access(Action.READ)
+    }, {
+      required: ['access']
+    })
+  };
+export { __ex_update as update };
 const __ex_del = {
     params: object({
       // in path for HTTP requests

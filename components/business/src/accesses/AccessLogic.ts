@@ -247,6 +247,7 @@ class AccessLogic {
         return this.isPersonal();
       case 'accesses.get':
       case 'accesses.create':
+      case 'accesses.update':
         return !this.isShared();
 
       // -- Profile

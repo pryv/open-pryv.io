@@ -1,5 +1,19 @@
 # Changelog - Internal (no API impact)
 
+## Access versioning — update handler + storage snapshot (Plan 66 Phase C)
+
+Wire-up for the revived `accesses.update` (see `CHANGELOG-v2.md`). Internal-only plumbing notes:
+
+- **NEW** `Accesses.snapshotHead(userOrUserId, baseId)` on both engines. Reads the current live head row by base, clones every column/field, replaces `id`/`_id` with a freshly-minted cuid and sets `head_id`/`headId` to the original base. The unique-token partial filters (`WHERE deleted IS NULL AND head_id IS NULL` in PG; `partialFilterExpression: { deleted: $type null, headId: $type null }` in Mongo) exclude the new history row, so the head and snapshot can share a token without violating uniqueness.
+- **Handler chain** (`api-server/src/methods/accesses.ts`): `basicAccessAuthorizationCheck → schema-validate → loadAccessForUpdate → enforceUpdateChainRules → snapshotAndApplyUpdate → emitUpdateNotifications`. `loadAccessForUpdate` parses the composite id, conflict-checks `serial`, treats soft-deleted as `unknownResource`, and gates on `AccessLogic.canUpdateAccess`. `enforceUpdateChainRules` resolves `expireAfter → expires` and applies Rules A/D for shared targets + Rules B/C/D for app targets (iterating the user's live shareds, matching by `base`).
+- **`AccessLogic.can('accesses.update')`** — added to the switch, returns `!isShared()`. Without this, `basicAccessAuthorizationCheck` threw on the unknown methodId and the handler crashed with `unexpected-error`.
+- **Tracking fields** — `update.modifiedBy` is set by the standard `MethodContext.updateTrackingProperties` (caller's bare base). `update.modifiedBySerial` is set explicitly from `context.access.serial` (null today since AccessLogic doesn't yet carry serial — Phase D will plumb it). `update.serial` is set to `(prev || 0) + 1`.
+- **NEW error** `stale-resource` (`ErrorIds.StaleResource`, 409) added to `errors/{ErrorIds.ts,factory.ts}`. Used by `accesses.update` and `accesses.delete` on composite-id mismatch.
+- **`accesses.delete` composite-id check** — `checkAccessForDeletion` parses the composite, conflict-checks the serial against the head, then rewrites `params.id` to the bare base for downstream stages (`findRelatedAccesses`, `deleteAccesses`) which all expect bare ids.
+- **Schema** — `accessesMethods.ts` gains `__ex_update = { params: { id, update: access(Action.UPDATE) }, result: { access: access(Action.READ) } }`. The UPDATE-action `access` schema already exists (Action.UPDATE branch) with the mutable-fields whitelist.
+- **Test updates** — 4 pre-Plan-66 "endpoint is gone" tests refreshed to assert the new behavior: `[11UZ]` app-cannot-update-sibling-app → 403, `[U04A]` unknown-id-on-PUT → 404, `[1WXJ]` create-only-shared-cannot-update → 403, `[OS36]` `deleted` in update body → `invalid-parameters-format`. Test IDs preserved; assertions and descriptions updated in place.
+- **Race safety** — no transaction (accesses storage has no transactional API). The composite-id check at entry catches the common stale-caller case; the read-then-snapshot-then-update window is narrow enough that genuine concurrent updates are rare. Plan 66 Q12.5=a explicitly accepts no-locking; honest audit captures the version that handled each request.
+
 ## Access versioning — business primitives (Plan 66 Phase B)
 
 Internal-only utilities that the upcoming `accesses.update` (Phase C) will consume. No behavior change today besides the Rule D retrofit on `accesses.create` (see `CHANGELOG-v2.md`).

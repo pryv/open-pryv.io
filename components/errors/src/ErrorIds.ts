@@ -28,6 +28,11 @@ const ErrorIds = {
   InvalidParametersFormat: 'invalid-parameters-format',
   InvalidRequestStructure: 'invalid-request-structure',
   ItemAlreadyExists: 'item-already-exists',
+  /**
+   * Plan 66: caller passed a stale `<base>:<serial>` composite id on
+   * `accesses.update` or `accesses.delete`. Refetch + retry.
+   */
+  StaleResource: 'stale-resource',
   MissingHeader: 'missing-header',
   UnexpectedError: 'unexpected-error',
   UnknownReferencedResource: 'unknown-referenced-resource',

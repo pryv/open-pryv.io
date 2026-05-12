@@ -278,16 +278,21 @@ describe('[ACCP] accesses (app)', function () {
     });
   });
 
-  describe('[AA03] PUT /<token>', function () {
+  describe('[AA03] PUT /<id>', function () {
     beforeEach(resetAccesses);
 
-    it('[11UZ]  must return a 410 (Gone)', async function () {
+    it('[11UZ] an app access cannot update a sibling app access', async function () {
+      // Plan 66: app can only update shared accesses it directly manages,
+      // not another app access. canUpdateAccess returns false → 403.
       const res = await coreRequest
         .put(path(appAccessB.attrs.id))
         .set('Authorization', appAccessAToken)
         .send({ name: 'Updated App Access' });
 
-      validation.check(res, { status: 410 });
+      validation.checkError(res, {
+        status: 403,
+        id: ErrorIds.Forbidden
+      });
     });
   });
 
