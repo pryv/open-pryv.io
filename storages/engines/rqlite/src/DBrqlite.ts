@@ -67,6 +67,11 @@ class DBrqlite {
       throw new Error(`rqlite SQL error: ${data.results[0].error}`);
     }
     const result = data.results[0];
+    // rqlite returns an empty `results` array during cluster election
+    // (before a leader is established) — guard so we don't crash with
+    // "Cannot read properties of undefined (reading 'columns')" on
+    // api-server worker boot when the cluster is still warming up.
+    if (!result) return [];
     if (!result.columns || !result.values) return [];
     // Convert columnar format to row objects
     return result.values.map((row: any) => {
