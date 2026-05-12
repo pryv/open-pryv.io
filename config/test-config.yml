@@ -32,6 +32,11 @@ tcpBroker:
 reporting:
   templateVersion: 1.0.0
 storages:
+  # Keep series tests pinned to influxdb until the test suite is
+  # re-validated against postgresql series. Default-config flipped to
+  # postgresql on 2026-05-12; this pin preserves matrix behavior.
+  series:
+    engine: influxdb
   engines:
     mongodb:
       host: 127.0.0.1

@@ -37,7 +37,7 @@ storages:
   platform:
     engine: rqlite          # platformStorage
   series:
-    engine: influxdb        # seriesStorage
+    engine: postgresql      # seriesStorage. Default since 2026-05-12; raw deploys typically don't ship influxd. Set `engine: influxdb` here in override-config.yml to opt back in (requires a running influxd on http.ip:storages.engines.influxdb.port).
   file:
     engine: filesystem      # fileStorage
   audit:

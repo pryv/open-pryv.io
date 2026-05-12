@@ -1,5 +1,12 @@
 # Changelog - Internal (no API impact)
 
+## Default `storages.series.engine` flipped from `influxdb` to `postgresql`
+
+- **CHANGE** `config/default-config.yml`: `storages.series.engine: influxdb → postgresql`. Operators who want influxdb-backed series storage must now set `storages.series.engine: influxdb` explicitly in override-config.yml (and run a reachable influxd on `http.ip:storages.engines.influxdb.port`).
+- **CHANGE** `config/test-config.yml`: pins `series.engine: influxdb` explicitly. Test matrix behavior preserved — series tests still run against influxdb. Pin can be removed once the matrix is re-validated against postgresql series.
+- **Why**: raw deploys (the now-canonical install shape per Plan 67's ingress dispatcher) rarely ship influxd. Setting `cluster.hfsWorkers > 0` with the inherited influxdb default produced a silent footgun: HFS workers came up, requests reached the worker, but every write hit a missing backend. PostgreSQL seriesStorage has been first-class since Plan 19. Flipping the default removes the trap for fresh installs.
+- **Migration**: existing deploys with `engine: influxdb` set explicitly are unaffected. Deploys without an override that have an actual influxd running need to either keep it running (and add the explicit override) or migrate any existing series data — note: PG and influxdb series stores are NOT cross-compatible, this is a forward-going default.
+
 ## In-process HFS ingress dispatcher (api-server)
 
 - **NEW** `components/api-server/src/hfsIngress.ts` — `buildHfsIngress({ hfsHost, hfsPort, logger })` factory returns a `(req, res, fallback) => void` dispatcher.
