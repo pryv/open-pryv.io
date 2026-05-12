@@ -17,6 +17,7 @@ const { getUsersRepository } = require('business/src/users/index.ts');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 const { WebhooksService } = require('webhooks/src/service.ts');
+const { buildHfsIngress } = require('./hfsIngress.ts');
 let app: any;
 
 /**
@@ -49,6 +50,21 @@ class Server {
     await this.setupTestsNotificationBus();
     // register API methods
     await this.registerApiMethods();
+    // Build the in-process HFS ingress dispatcher (no-op when no HFS
+    // worker is configured; the regex still matches but the upstream
+    // would 502 — the auto-derived `features.noHF: true` on
+    // /service/info keeps SDKs from making the request in the first
+    // place when hfsWorkers === 0).
+    //
+    // Quick / out-of-the-box path. For long-term high-throughput
+    // installs, front master with nginx and let it do the routing —
+    // see docs/nginx-ingress-sample.conf.
+    const hfsDispatch = buildHfsIngress({
+      hfsHost: config.get('http:ip') || '127.0.0.1',
+      hfsPort: config.get('http:hfsPort') || 4000,
+      logger: this.logger
+    });
+    const requestHandler = (req: any, res: any) => hfsDispatch(req, res, app.expressApp);
     // Setup HTTP and register server; setup Socket.IO.
     let server = null;
     const serverInfos: any = {
@@ -62,21 +78,21 @@ class Server {
       await new Promise<void>((resolve, reject) => {
         recLaOptionsAsync((err: any, recLaOptions: any) => {
           if (err) return reject(err);
-          server = https.createServer(recLaOptions, app.expressApp);
+          server = https.createServer(recLaOptions, requestHandler);
           serverInfos.hostname = 'my-computer.backloop.dev';
           resolve();
         });
       });
       this.logger.info('SSL Mode using backloop.dev certificates');
     } else if (config.get('http:ssl:keyFile')) { // https with local files
-      server = https.createServer(buildHttpsOptions(config), app.expressApp);
+      server = https.createServer(buildHttpsOptions(config), requestHandler);
       serverInfos.hostname = 'custom-according-to-your-ssl-cert';
       this.logger.info('SSL Mode using custom certificates');
       // Keep a reference so reloadTls() can hot-swap the SecureContext
       // when the Let's Encrypt orchestrator (Plan 35) rotates the cert.
       this.httpsServer = server;
     } else { // http
-      server = http.createServer(app.expressApp);
+      server = http.createServer(requestHandler);
     }
     await this.setupSocketIO(server);
     await this.startListen(server, serverInfos);
