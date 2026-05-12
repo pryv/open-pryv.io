@@ -12,10 +12,10 @@ const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 const tryCoerceStringValues = require('../schema/validation.ts').tryCoerceStringValues;
 // Shared accesses route handling.
-export default function (expressApp, app) {
+export default function (expressApp: any, app: any) {
   const api = app.api;
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);
-  expressApp.get(Paths.Accesses, setMethodId('accesses.get'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.get(Paths.Accesses, setMethodId('accesses.get'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     const params = Object.assign({}, req.query);
     tryCoerceStringValues(params, {
       includeExpired: 'boolean',
@@ -23,18 +23,18 @@ export default function (expressApp, app) {
     });
     api.call(req.context, params, methodCallback(res, next, 200));
   });
-  expressApp.post(Paths.Accesses, setMethodId('accesses.create'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.post(Paths.Accesses, setMethodId('accesses.create'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     api.call(req.context, req.body, methodCallback(res, next, 201));
   });
-  expressApp.put(Paths.Accesses + '/:id', setMethodId('accesses.update'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.put(Paths.Accesses + '/:id', setMethodId('accesses.update'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     const params = { id: req.params.id, update: req.body };
     api.call(req.context, params, methodCallback(res, next, 200));
   });
-  expressApp.delete(Paths.Accesses + '/:id', setMethodId('accesses.delete'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.delete(Paths.Accesses + '/:id', setMethodId('accesses.delete'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     const params = Object.assign({ id: req.params.id }, req.query);
     api.call(req.context, params, methodCallback(res, next, 200));
   });
-  expressApp.post(Paths.Accesses + '/check-app', setMethodId('accesses.checkApp'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.post(Paths.Accesses + '/check-app', setMethodId('accesses.checkApp'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     api.call(req.context, req.body, methodCallback(res, next, 200));
   });
 };

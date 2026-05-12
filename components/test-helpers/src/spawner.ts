@@ -36,9 +36,9 @@ class SpawnContext {
 
   shuttingDown;
 
-  pool;
+  pool: any[];
 
-  allocated;
+  allocated: any[];
 
   // Construct a spawn context. `childPath` should be a module require path to
   // the module that will be launched in the child process. Please see
@@ -46,7 +46,7 @@ class SpawnContext {
   // a module.
   //
 
-  constructor (childPath) {
+  constructor (childPath: any) {
     this.childPath = childPath || path.resolve(__dirname, '../../api-server/test/helpers/child_process');
 
     this.shuttingDown = false;
@@ -89,7 +89,7 @@ class SpawnContext {
 
   // Spawns a server instance.
   //
-  async spawn (customSettings?) {
+  async spawn (customSettings?: any) {
     // If by any chance we exhausted our processes really quickly, make
     // sure to spawn a few now.
     if (this.pool.length <= 0) { this.prespawn(); }
@@ -143,7 +143,7 @@ class SpawnContext {
 
   // Spawns `n` instances at different listening ports. See #spawn.
   //
-  spawn_multi (n) {
+  spawn_multi (n: any) {
     if (n <= 0) { throw new Error('AF: n expected to be > 0'); }
     return Array.from({ length: n }, () => this.spawn());
   }
@@ -183,7 +183,7 @@ class ProcessProxy {
 
   pendingMessages;
 
-  constructor (childProcess, pool) {
+  constructor (childProcess: any, pool: any) {
     this.childProcess = childProcess;
     this.pool = pool;
 
@@ -197,15 +197,15 @@ class ProcessProxy {
 
   registerEvents () {
     const child = this.childProcess;
-    child.on('error', (err) => this.onChildError(err));
+    child.on('error', (err: any) => this.onChildError(err));
     child.on('exit', () => this.onChildExit());
-    child.on('message', (wire) => {
+    child.on('message', (wire: any) => {
       if (wire && wire.type === 'test-notification') return; // skip IPC test notifications
       this.dispatchChildMessage(wire);
     });
   }
 
-  dispatchChildMessage (wireMsg) {
+  dispatchChildMessage (wireMsg: any) {
     const pendingMessages = this.pendingMessages;
     const [status, msgId, cmd, retOrErr] = msgpack.decode(wireMsg);
     logger.debug('dispatchChildMessage/msg', status, msgId, cmd, retOrErr);
@@ -224,7 +224,7 @@ class ProcessProxy {
     }
   }
 
-  onChildError (err) {
+  onChildError (err: any) {
     logger.debug(err);
   }
 
@@ -237,7 +237,7 @@ class ProcessProxy {
 
   // Starts the express/socket.io server with the settings given.
   //
-  async startServer (settings) {
+  async startServer (settings: any) {
     if (this.exited.isBurnt()) { throw new Error('Child exited prematurely; please check your setup code.'); }
     await this.sendToChild('int_startServer', settings);
 
@@ -266,7 +266,7 @@ class ProcessProxy {
     }
   }
 
-  sendToChild (msg, ...args) {
+  sendToChild (msg: any, ...args: any[]) {
     return new Promise((resolve, reject) => {
       const child = this.childProcess;
       const msgId = this.createPendingMessage(resolve, reject);
@@ -276,7 +276,7 @@ class ProcessProxy {
     });
   }
 
-  createPendingMessage (res, rej) {
+  createPendingMessage (res: any, rej: any) {
     let remainingTries = 1000;
     const pendingMessages = this.pendingMessages;
     const resolver = {
@@ -312,7 +312,7 @@ class Server extends EventEmitter {
 
   host;
 
-  constructor (port, proxy) {
+  constructor (port: any, proxy: any) {
     super();
     this.port = port;
     this.host = '127.0.0.1';
@@ -323,7 +323,7 @@ class Server extends EventEmitter {
 
   listen () {
     const child = this.process.childProcess;
-    child.on('message', (msg) => {
+    child.on('message', (msg: any) => {
       if (msg && msg.type === 'test-notification') {
         this.emit(msg.event, msg.data);
       }
@@ -347,11 +347,11 @@ class Server extends EventEmitter {
     }
   }
 
-  url (path) {
+  url (path: any) {
     return new url.URL(path || '', this.baseUrl).toString();
   }
 
-  request (newUrl) {
+  request (newUrl: any) {
     return supertest(newUrl || this.baseUrl);
   }
 }

@@ -9,8 +9,8 @@ const require = createRequire(import.meta.url);
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const accountStreams = require('business/src/system-streams/index.ts');
 
-function pick (obj, keys) {
-  const out = {};
+function pick (obj: any, keys: any) {
+  const out: any = {};
   for (const k of keys) if (k in obj) out[k] = obj[k];
   return out;
 }
@@ -18,17 +18,17 @@ function pick (obj, keys) {
 class User {
   // User properties that exists by default (email could not exist with specific config)
 
-  id;
+  id: any;
 
   username;
 
-  email;
+  email: any;
 
-  language;
+  language: any;
 
-  password;
+  password: any;
 
-  accessId;
+  accessId: any;
 
   events;
   /** @default [] */
@@ -39,7 +39,7 @@ class User {
   accountFieldsWithPrefix = [];
   /** @default [] */
   uniqueAccountFields = [];
-  constructor (params) {
+  constructor (params: any) {
     this.username = params.username;
     buildAccountFields(this);
     loadAccountData(this, params);
@@ -83,7 +83,7 @@ class User {
     return res;
   }
 }
-function buildAccountFields (user) {
+function buildAccountFields (user: any) {
   const accountMap = accountStreams.accountMap;
   user.accountFieldsWithPrefix = [];
   user.uniqueAccountFields = [];
@@ -97,8 +97,8 @@ function buildAccountFields (user) {
     user.accountFields.push(withoutPrefix);
   }
 }
-function loadAccountData (user, params) {
-  user.accountFields.forEach((field) => {
+function loadAccountData (user: any, params: any) {
+  user.accountFields.forEach((field: any) => {
     if (field === 'dbDocuments' || field === 'attachedFiles') {
       // These are computed by Size.js, not stored as account fields
     } else {
@@ -115,7 +115,7 @@ function loadAccountData (user, params) {
 /**
  * Assign events data to user account fields
  */
-function buildAccountDataFromListOfEvents (user, events) {
+function buildAccountDataFromListOfEvents (user: any, events: any) {
   const account = buildAccountRecursive(accountStreams.accountChildren, events, {});
   Object.keys(account).forEach((param) => {
     user[param] = account[param];
@@ -129,7 +129,7 @@ function buildAccountDataFromListOfEvents (user, events) {
  * @param array events
  * @param object user
  */
-function buildAccountRecursive (streams, events, user) {
+function buildAccountRecursive (streams: any, events: any, user: any) {
   let streamIndex;
   for (streamIndex = 0; streamIndex < streams.length; streamIndex++) {
     const currentStream = streams[streamIndex];

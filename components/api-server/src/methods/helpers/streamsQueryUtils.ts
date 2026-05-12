@@ -32,7 +32,7 @@ type StreamId = string;
  * Takes care of grouping by store. ['A', 'B', ':_audit:xx'] => [{any: ['A', 'B']}, {any: ':audit:xx'}]
  * @throws - Error if mixed strings and other are found in array
  */
-function transformArrayOfStringsToStreamsQuery (arrayOfQueries) {
+function transformArrayOfStringsToStreamsQuery (arrayOfQueries: any) {
   const { numStreamIds, streamIds } = countStreamIds(arrayOfQueries);
   if (numStreamIds === 0) { return arrayOfQueries; }
   if (numStreamIds !== arrayOfQueries.length) {
@@ -50,8 +50,8 @@ function transformArrayOfStringsToStreamsQuery (arrayOfQueries) {
     arrayOfStreamQueries.push({ any: v });
   }
   return arrayOfStreamQueries;
-  function countStreamIds (arrayOfQueries) {
-    const streamIds = arrayOfQueries.filter((item) => typeof item === 'string');
+  function countStreamIds (arrayOfQueries: any) {
+    const streamIds = arrayOfQueries.filter((item: any) => typeof item === 'string');
     return {
       numStreamIds: streamIds.length,
       streamIds
@@ -63,8 +63,8 @@ export { transformArrayOfStringsToStreamsQuery };
  * @param arrayOfQueries  undefined
  * @throws - Error if query does not respect the schema
  */
-function validateStreamsQueriesAndSetStore (arrayOfQueries) {
-  arrayOfQueries.forEach((streamQuery) => {
+function validateStreamsQueriesAndSetStore (arrayOfQueries: any) {
+  arrayOfQueries.forEach((streamQuery: any) => {
     validateStreamsQuerySchemaAndSetStore(arrayOfQueries, streamQuery);
   });
   return arrayOfQueries;
@@ -76,12 +76,12 @@ export { validateStreamsQueriesAndSetStore };
  * @param arrayOfQueries  - the full request for error message
  * @param streamQuery  undefined
  */
-function validateStreamsQuerySchemaAndSetStore (arrayOfQueries, streamQuery) {
+function validateStreamsQuerySchemaAndSetStore (arrayOfQueries: any, streamQuery: any) {
   /**
    * Get StoreID, add storeId property to query and remove eventual storeId from streamId
    * @param fullStreamId - a streamId with its store prefix
    */
-  function validateAndAttachStore (fullStreamId) {
+  function validateAndAttachStore (fullStreamId: any) {
     // queries must be grouped by store
     const [thisStoreId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(fullStreamId);
     if (streamQuery.storeId == null) { streamQuery.storeId = thisStoreId; }
@@ -176,16 +176,16 @@ function validateStreamsQuerySchemaAndSetStore (arrayOfQueries, streamQuery) {
 /**
  * @param excludedIds - Array of streams to exclude from expand
  */
-function uniqueStreamIds (arrayOfStreamiIs) {
+function uniqueStreamIds (arrayOfStreamiIs: any) {
   return [...new Set(arrayOfStreamiIs)];
 }
-export const expandAndTransformStreamQueries = async function expandAndTransformStreamQueries (streamQueries, expandStream) {
-      async function expandSet (streamIds, storeId, excludedIds: any[] = []) {
+export const expandAndTransformStreamQueries = async function expandAndTransformStreamQueries (streamQueries: any, expandStream: any) {
+      async function expandSet (streamIds: any, storeId: any, excludedIds: any[] = []) {
         const expandedSet = new Set(); // use a Set to avoid duplicate entries;
         for (const streamId of streamIds) {
           // skip streamId presents in exluded set
           if (!excludedIds.includes(streamId)) {
-            (await expandStream(streamId, storeId, excludedIds)).forEach((item) => expandedSet.add(item));
+            (await expandStream(streamId, storeId, excludedIds)).forEach((item: any) => expandedSet.add(item));
           }
         }
         return Array.from(expandedSet);
@@ -197,7 +197,7 @@ export const expandAndTransformStreamQueries = async function expandAndTransform
       }
       return res;
     };
-async function expandAndTransformStreamQuery (streamQuery, expandSet) {
+async function expandAndTransformStreamQuery (streamQuery: any, expandSet: any) {
   let containsAtLeastOneInclusion = false;
   const res: any = { storeId: streamQuery.storeId };
   // any
@@ -237,6 +237,6 @@ async function expandAndTransformStreamQuery (streamQuery, expandSet) {
 /**
  * for nice error message with clear query content
  */
-function objectToString (object) {
+function objectToString (object: any) {
   return util.inspect(object, { depth: 5 });
 }

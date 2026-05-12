@@ -17,32 +17,32 @@ export { request };
  * - that always succeeds regardless of the HTTP status code (see SuperAgent's `ok()` method)
  * - whose `end()` method calls the given callback function with a single argument if expected
  */
-function request (serverURL) {
-  return new Request(serverURL);
+function request (serverURL: any) {
+  return new (Request as any)(serverURL);
 }
-function Request (this: any, serverURL) {
+function Request (this: any, serverURL: any) {
   this.serverURL = serverURL;
   this.token = null;
 }
 ['get', 'post', 'put', 'del', 'options'].forEach((method) => {
-  Request.prototype[method] = function (...args) {
+  (Request as any).prototype[method] = function (...args: any[]) {
     return this.execute(method, ...args);
   };
 });
-Request.prototype.execute = function (method, path, token) {
+Request.prototype.execute = function (method: any, path: any, token: any) {
   if (method === 'del') {
     method = 'delete';
   }
   const destURL = new URL(path, this.serverURL).href;
   const authToken = token || this.token;
-  return new PryvTestRequest(method, destURL)
+  return new (PryvTestRequest as any)(method, destURL)
     .ok(() => true)
     .set('authorization', authToken);
 };
 /**
  * @param callback (error)
  */
-Request.prototype.login = function (this: any, user, callback) {
+Request.prototype.login = function (this: any, user: any, callback: any) {
   const targetURL = new URL(user.username + '/auth/login', this.serverURL).href;
   const authData = {
     username: user.username,
@@ -53,7 +53,7 @@ Request.prototype.login = function (this: any, user, callback) {
     .post(targetURL)
     .set('Origin', 'http://test.pryv.local')
     .send(authData)
-    .end((err, res) => {
+    .end((err: any, res: any) => {
       assert.strictEqual(err?.message || null, null, 'Request must be a success');
       assert.ok(res !== undefined, 'Request has a result');
       assert.strictEqual(res.statusCode, 200);
@@ -69,7 +69,7 @@ Request.prototype.login = function (this: any, user, callback) {
  *
  * NOTE: This can be removed if/when we don't need the `end()` override (see below).
  */
-function PryvTestRequest (this: any, method, url) {
+function PryvTestRequest (this: any, method: any, url: any) {
   superagent.Request.call(this, method, url);
 }
 PryvTestRequest.prototype = Object.create(superagent.Request.prototype);
@@ -78,8 +78,8 @@ PryvTestRequest.prototype = Object.create(superagent.Request.prototype);
  * single argument (the HTTP response object) _if the callback expects just
  * one argument_.
  */
-PryvTestRequest.prototype.end = function (callback) {
-  superagent.Request.prototype.end.call(this, (err, res) => {
+PryvTestRequest.prototype.end = function (callback: any) {
+  superagent.Request.prototype.end.call(this, (err: any, res: any) => {
     callback.length === 1 ? callback(res || err) : callback(err, res);
   });
 };

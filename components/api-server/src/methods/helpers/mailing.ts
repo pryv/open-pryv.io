@@ -19,7 +19,7 @@ const errors = require('errors').factory;
  * @param lang: user prefered language
  * @param callback(err,res): called once the email is sent
  */
-export const sendmail = function (emailSettings, template, recipient, subs, lang, callback) {
+export const sendmail = function (emailSettings: any, template: any, recipient: any, subs: any, lang: any, callback: any) {
   const mailingMethod = emailSettings.method;
   switch (mailingMethod) {
     case 'in-process':
@@ -78,7 +78,7 @@ export const sendmail = function (emailSettings, template, recipient, subs, lang
  * already treat mail failures as non-fatal.
  *
  */
-function _sendmailInProcess (emailSettings, template, recipient, subs, lang, callback) {
+function _sendmailInProcess (emailSettings: any, template: any, recipient: any, subs: any, lang: any, callback: any) {
   (async () => {
     const mail = require('mail');
     if (!mail.isActive()) {
@@ -113,7 +113,7 @@ function _sendmailInProcess (emailSettings, template, recipient, subs, lang, cal
     }
   );
 }
-function _sendmail (url, data, cb) {
+function _sendmail (url: any, data: any, cb: any) {
   fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -127,7 +127,7 @@ function _sendmail (url, data, cb) {
     cb(parseError(url, err, null));
   });
 }
-function parseError (url, err, res) {
+function parseError (url: any, err: any, res: any) {
   // 1. Mail service answered with an error payload
   if (res != null && res.body != null && res.body.error != null) {
     const baseMsg = 'Sending email failed, mail-service answered with the following error:\n';

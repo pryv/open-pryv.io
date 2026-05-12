@@ -20,7 +20,7 @@ const STREAM_PROPERTIES = new Set([
 /**
  * Strip non-stream properties from a stream tree (mutates in place).
  */
-function cleanStreamTree (streams) {
+function cleanStreamTree (streams: any) {
   for (const s of streams) {
     for (const key of Object.keys(s)) {
       if (!STREAM_PROPERTIES.has(key)) delete s[key];
@@ -36,7 +36,7 @@ function cleanStreamTree (streams) {
  * Non-shown streams and their subtrees are removed.
  * Must be called BEFORE cleanStreamTree (which strips isShown).
  */
-function filterShown (streams) {
+function filterShown (streams: any) {
   const result: any[] = [];
   for (const s of streams) {
     if (s.isShown === false) continue;
@@ -56,7 +56,7 @@ function filterShown (streams) {
  *
  * @param streamTree - system stream tree (fully built, with prefixed IDs)
  */
-function create (streamTree) {
+function create (streamTree: any) {
   // Build a readable-only tree for get() responses (before stripping config props)
   const readableTree = filterShown(streamTree);
   cleanStreamTree(readableTree);
@@ -71,7 +71,7 @@ function create (streamTree) {
   const streamIndex = new Map();
   indexTree(streamTree);
 
-  function indexTree (streams) {
+  function indexTree (streams: any) {
     for (const s of streams) {
       streamIndex.set(s.id, s);
       if (s.children && s.children.length > 0) {
@@ -81,7 +81,7 @@ function create (streamTree) {
   }
 
   return ds.createUserStreams({
-    async get (userId, query) {
+    async get (userId: any, query: any) {
       let streams;
       if (query.parentId === '*' || query.parentId == null) {
         streams = readableTree;
@@ -94,28 +94,28 @@ function create (streamTree) {
       return applyQuery(structuredClone(streams), query);
     },
 
-    async getOne (userId, streamId, query) {
+    async getOne (userId: any, streamId: any, query: any) {
       const stream = streamIndex.get(streamId);
       return stream ? structuredClone(stream) : null;
     },
 
-    async getDeletions (userId, deletionsSince) {
+    async getDeletions (userId: any, deletionsSince: any) {
       return [];
     },
 
-    async create (userId, streamData) {
+    async create (userId: any, streamData: any) {
       throw ds.errors.invalidOperation('It is forbidden to modify system streams.');
     },
 
-    async createDeleted (userId, streamData) {
+    async createDeleted (userId: any, streamData: any) {
       throw ds.errors.invalidOperation('It is forbidden to modify system streams.');
     },
 
-    async update (userId, updateData) {
+    async update (userId: any, updateData: any) {
       throw ds.errors.invalidOperation('It is forbidden to modify system streams.');
     },
 
-    async delete (userId, streamId) {
+    async delete (userId: any, streamId: any) {
       throw ds.errors.invalidOperation('It is forbidden to modify system streams.');
     }
   });
@@ -124,14 +124,14 @@ function create (streamTree) {
 /**
  * Apply childrenDepth and excludedIds to a list of streams.
  */
-function applyQuery (streams, query) {
+function applyQuery (streams: any, query: any) {
   let result = streams;
   if (query.excludedIds && query.excludedIds.length > 0) {
     const excluded = new Set(query.excludedIds);
-    result = result.filter(s => !excluded.has(s.id));
+    result = result.filter((s: any) => !excluded.has(s.id));
   }
   if (query.childrenDepth === 0) {
-    result = result.map(s => Object.assign({}, s, { children: [], childrenHidden: true }));
+    result = result.map((s: any) => Object.assign({}, s, { children: [], childrenHidden: true }));
   }
   return result;
 }

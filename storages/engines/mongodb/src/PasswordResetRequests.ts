@@ -31,7 +31,7 @@ const collectionInfo = {
  *
  * @param options Possible options: `maxAge` (in milliseconds)
  */
-function PasswordResetRequests (this: any, database, options) {
+function PasswordResetRequests (this: any, database: any, options: any) {
   this.database = database;
   this.options = deepMerge({
     maxAge: 1000 * 60 * 60 // one hour
@@ -43,12 +43,12 @@ function PasswordResetRequests (this: any, database, options) {
  *
  * @param callback Args: err, data
  */
-PasswordResetRequests.prototype.get = function (this: any, id, username, callback) {
+PasswordResetRequests.prototype.get = function (this: any, id: any, username: any, callback: any) {
   const query = {
     _id: id,
     username
   };
-  this.database.findOne(collectionInfo, query, null, (err, resetReq) => {
+  this.database.findOne(collectionInfo, query, null, (err: any, resetReq: any) => {
     if (err) {
       return callback(err);
     }
@@ -71,13 +71,13 @@ PasswordResetRequests.prototype.get = function (this: any, id, username, callbac
  * @param requesting username
  * @param callback Args: err, id
  */
-PasswordResetRequests.prototype.generate = function (username, callback) {
+PasswordResetRequests.prototype.generate = function (username: any, callback: any) {
   const resetReq = {
     _id: generateId(),
     username,
     expires: this.getNewExpirationDate()
   };
-  this.database.insertOne(collectionInfo, resetReq, function (err) {
+  this.database.insertOne(collectionInfo, resetReq, function (err: any) {
     if (err) { return callback(err); }
     callback(null, resetReq._id);
   });
@@ -87,7 +87,7 @@ PasswordResetRequests.prototype.generate = function (username, callback) {
  * Deletes the specified reset request.
  *
  */
-PasswordResetRequests.prototype.destroy = function (id, username, callback) {
+PasswordResetRequests.prototype.destroy = function (id: any, username: any, callback: any) {
   const query = {
     _id: id,
     username
@@ -99,7 +99,7 @@ PasswordResetRequests.prototype.destroy = function (id, username, callback) {
  * Destroys all reset requests.
  *
  */
-PasswordResetRequests.prototype.clearAll = function (callback) {
+PasswordResetRequests.prototype.clearAll = function (callback: any) {
   this.database.deleteMany(collectionInfo, {}, callback);
 };
 
@@ -112,14 +112,14 @@ PasswordResetRequests.prototype.getNewExpirationDate = function () {
 /**
  * Export all password reset request documents (raw).
  */
-PasswordResetRequests.prototype.exportAll = function (callback) {
+PasswordResetRequests.prototype.exportAll = function (callback: any) {
   this.database.find(collectionInfo, {}, {}, callback);
 };
 
 /**
  * Import raw password reset request documents.
  */
-PasswordResetRequests.prototype.importAll = function (data, callback) {
+PasswordResetRequests.prototype.importAll = function (data: any, callback: any) {
   if (!data || data.length === 0) return callback(null);
   this.database.insertMany(collectionInfo, data, callback);
 };

@@ -76,7 +76,7 @@ class Config {
    * @param [options.baseFilesDir] - (optional) directory to use for `file://` relative path
    * @param [options.extras] - (optional) and array of extra files or plugins to load (synchronously or async)
    */
-  initSync (options, logging) {
+  initSync (options: any, logging: any) {
     this.appName = options.appName;
     this.baseFilesDir = options.baseFilesDir || process.cwd();
 
@@ -163,7 +163,7 @@ class Config {
 
     // --- helpers --/
 
-    function loadFile (scope, filePath) {
+    function loadFile (scope: any, filePath: any) {
       if (fs.existsSync(filePath)) {
         if (filePath.endsWith('.js')) { // JS file
           const conf = require(filePath);
@@ -187,7 +187,7 @@ class Config {
     const baseConfigDir = this.baseConfigDir;
     const baseFilesDir = this.baseFilesDir;
 
-    async function loadUrl (scope, key, url) {
+    async function loadUrl (scope: any, key: any, url: any) {
       if (typeof url === 'undefined' || url === null) {
         logger.warn('Null or Undefined Url for [' + scope + ']');
         return;
@@ -248,7 +248,7 @@ class Config {
   /**
    * Return true if key as value
    */
-  has (key) {
+  has (key: any) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
     const value = this.store.get(key);
     return (typeof value !== 'undefined');
@@ -258,7 +258,7 @@ class Config {
    * Retreive value
    * @param [key] if no key is provided all the config is returned
    */
-  get (key) {
+  get (key: any) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
     const value = this.store.get(key);
     if (typeof value === 'undefined') this.logger.debug('get: [' + key + '] is undefined');
@@ -268,7 +268,7 @@ class Config {
   /**
    * Retreive value and store info that applies
    */
-  getScopeAndValue (key) {
+  getScopeAndValue (key: any) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
     for (const scopeName of Object.keys(this.store.stores)) {
       const store = this.store.stores[scopeName];
@@ -292,7 +292,7 @@ class Config {
   /**
    * Set value
    */
-  set (key, value) {
+  set (key: any, value: any) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
     this.store.set(key, value);
   }
@@ -301,7 +301,7 @@ class Config {
    * Inject Test Config and override any other option
    * @param configObject;
    */
-  injectTestConfig (configObject) {
+  injectTestConfig (configObject: any) {
     this.replaceScopeConfig('test', configObject);
   }
 
@@ -310,7 +310,7 @@ class Config {
    * @param scope;
    * @param configObject;
    */
-  replaceScopeConfig (scope, configObject) {
+  replaceScopeConfig (scope: any, configObject: any) {
     if (!this.store) { throw (new Error('Config not yet initialized')); }
     this.logger.debug('Replace [' + scope + '] with: ', configObject);
     this.store.add(scope, { type: 'literal', store: configObject });
@@ -324,7 +324,7 @@ export { Config };
 const FILE_PROTOCOL = 'file://';
 const FILE_PROTOCOL_LENGTH = FILE_PROTOCOL.length;
 
-async function loadFromUrl (url) {
+async function loadFromUrl (url: any) {
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`loadFromUrl: ${url} returned HTTP ${res.status} ${res.statusText}`);
@@ -332,7 +332,7 @@ async function loadFromUrl (url) {
   return await res.json();
 }
 
-function loadFromFile (fileUrl, baseFilesDir) {
+function loadFromFile (fileUrl: any, baseFilesDir: any) {
   const filePath = stripFileProtocol(fileUrl);
 
   if (isRelativePath(filePath)) {
@@ -347,15 +347,15 @@ function loadFromFile (fileUrl, baseFilesDir) {
   return res;
 }
 
-function isFileUrl (filePath) {
+function isFileUrl (filePath: any) {
   return filePath.startsWith(FILE_PROTOCOL);
 }
 
-function isRelativePath (filePath) {
+function isRelativePath (filePath: any) {
   return !path.isAbsolute(filePath);
 }
 
-function stripFileProtocol (filePath) {
+function stripFileProtocol (filePath: any) {
   return filePath.substring(FILE_PROTOCOL_LENGTH);
 }
 

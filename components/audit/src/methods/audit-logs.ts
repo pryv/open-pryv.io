@@ -17,7 +17,7 @@ const { localStorePrepareOptions, localStorePrepareQuery } = require('storage/sr
 const audit = require('audit').default;
 const auditStorage = audit.storage;
 const { ConvertEventFromStoreStream } = require('mall/src/helpers/eventsUtils.ts');
-export default function (api) {
+export default function (api: any) {
   api.register('audit.getLogs',
     eventsGetUtils.coerceStreamsParam,
     commonFns.getParamsValidation(methodsSchema.get.params),
@@ -28,7 +28,7 @@ export default function (api) {
     limitStreamQueryToAccessToken,
     getAuditLogs);
 };
-function anyStarStreamQueryIsNullQUery (context, params, result, next) {
+function anyStarStreamQueryIsNullQUery (context: any, params: any, result: any, next: any) {
   if (isStar(params.arrayOfStreamQueries)) {
     params.arrayOfStreamQueries = null;
   }
@@ -36,7 +36,7 @@ function anyStarStreamQueryIsNullQUery (context, params, result, next) {
   /**
    * arrayOfStreamQueries === [{ any: ['*']}]
    */
-  function isStar (arrayOfStreamQueries) {
+  function isStar (arrayOfStreamQueries: any) {
     return (params.arrayOfStreamQueries.length === 1 &&
             params.arrayOfStreamQueries[0]?.any?.length === 1 &&
             params.arrayOfStreamQueries[0]?.any[0] === '*');
@@ -45,7 +45,7 @@ function anyStarStreamQueryIsNullQUery (context, params, result, next) {
 /**
  * Remove ':audit:' from stream query;
  */
-function removeStoreIdFromStreamQuery (context, params, result, next) {
+function removeStoreIdFromStreamQuery (context: any, params: any, result: any, next: any) {
   if (params.arrayOfStreamQueries == null) { return next(); }
   for (const query of params.arrayOfStreamQueries) {
     for (const item of ['all', 'any', 'not']) {
@@ -65,7 +65,7 @@ function removeStoreIdFromStreamQuery (context, params, result, next) {
   }
   next();
 }
-function limitStreamQueryToAccessToken (context, params, result, next) {
+function limitStreamQueryToAccessToken (context: any, params: any, result: any, next: any) {
   if (context.access.isPersonal()) { return next(); }
   if (params.arrayOfStreamQueries == null) {
     params.arrayOfStreamQueries = [{}];
@@ -85,7 +85,7 @@ function limitStreamQueryToAccessToken (context, params, result, next) {
   next();
 }
 // From storage
-async function getAuditLogs (context, params, result, next) {
+async function getAuditLogs (context: any, params: any, result: any, next: any) {
   try {
     const userDB = await auditStorage.forUser(context.user.id);
     params.streams = params.arrayOfStreamQueries;

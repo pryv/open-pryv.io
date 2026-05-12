@@ -11,24 +11,24 @@ const Paths = require('./Paths.ts');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 // User account details route handling.
-export default function (expressApp, app) {
+export default function (expressApp: any, app: any) {
   const api = app.api;
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);
-  expressApp.get(Paths.Account, setMethodId('account.get'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.get(Paths.Account, setMethodId('account.get'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     api.call(req.context, req.query, methodCallback(res, next, 200));
   });
-  expressApp.put(Paths.Account, setMethodId('account.update'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.put(Paths.Account, setMethodId('account.update'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     api.call(req.context, { update: req.body }, methodCallback(res, next, 200));
   });
-  expressApp.post(Paths.Account + '/change-password', setMethodId('account.changePassword'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.post(Paths.Account + '/change-password', setMethodId('account.changePassword'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     api.call(req.context, req.body, methodCallback(res, next, 200));
   });
-  expressApp.post(Paths.Account + '/request-password-reset', setMethodId('account.requestPasswordReset'), function (req, res, next) {
+  expressApp.post(Paths.Account + '/request-password-reset', setMethodId('account.requestPasswordReset'), function (req: any, res: any, next: any) {
     const params = req.body;
     params.origin = req.headers.origin;
     api.call(req.context, params, methodCallback(res, next, 200));
   });
-  expressApp.post(Paths.Account + '/reset-password', setMethodId('account.resetPassword'), function (req, res, next) {
+  expressApp.post(Paths.Account + '/reset-password', setMethodId('account.resetPassword'), function (req: any, res: any, next: any) {
     const params = req.body;
     params.origin = req.headers.origin;
     api.call(req.context, params, methodCallback(res, next, 200));

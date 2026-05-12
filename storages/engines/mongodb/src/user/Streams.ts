@@ -13,8 +13,8 @@ const { _internals } = require('../_internals.ts');
 const treeUtils = require('../../../../shared/treeUtils.ts');
 const timestamp = require('unix-timestamp');
 
-function cleanupDeletions (streams) {
-  streams.forEach(function (s) {
+function cleanupDeletions (streams: any) {
+  streams.forEach(function (s: any) {
     if (s.deleted) {
       delete s.parentId;
     }
@@ -52,7 +52,7 @@ const indexes = [
 class Streams extends BaseStorage {
   defaultOptions: any;
 
-  constructor (database) {
+  constructor (database: any) {
     super(database);
 
     Object.assign(this.converters, {
@@ -78,7 +78,7 @@ class Streams extends BaseStorage {
     };
   }
 
-  getCollectionInfo (userOrUserId) {
+  getCollectionInfo (userOrUserId: any) {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     return {
       name: 'streams',
@@ -87,13 +87,13 @@ class Streams extends BaseStorage {
     };
   }
 
-  countAll (user, callback) {
+  countAll (user: any, callback: any) {
     this.count(user, {}, callback);
   }
 
   /** Override importAll: convert canonical backup format `id` → MongoDB `streamId`. */
-  importAll (userOrUserId, items, callback) {
-    const mapped = items.map((item) => {
+  importAll (userOrUserId: any, items: any, callback: any) {
+    const mapped = items.map((item: any) => {
       const doc = Object.assign({}, item);
       if (doc.id != null && doc.streamId == null) {
         doc.streamId = doc.id;
@@ -104,12 +104,12 @@ class Streams extends BaseStorage {
     super.importAll(userOrUserId, mapped, callback);
   }
 
-  insertOne (user, stream, callback) {
+  insertOne (user: any, stream: any, callback: any) {
     _internals.cache.unsetUserData(user.id);
     super.insertOne(user, stream, callback);
   }
 
-  updateOne (user, query, updatedData, callback) {
+  updateOne (user: any, query: any, updatedData: any, callback: any) {
     if (typeof updatedData.parentId !== 'undefined') { // clear ALL when a stream is moved
       _internals.cache.unsetUserData(user.id);
     } else { // only stream Structure
@@ -118,7 +118,7 @@ class Streams extends BaseStorage {
     super.updateOne(user, query, updatedData, callback);
   }
 
-  delete (userOrUserId, query, callback) {
+  delete (userOrUserId: any, query: any, callback: any) {
     const userId = userOrUserId.id || userOrUserId;
     _internals.cache.unsetUserData(userId);
     const update = {

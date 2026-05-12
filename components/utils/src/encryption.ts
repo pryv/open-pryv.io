@@ -18,14 +18,14 @@ const salt = bcrypt.genSaltSync(process.env.NODE_ENV === 'development' ? 1 : 10)
 /**
  * @param value The value to be hashed.
  */
-async function hash (value) {
+async function hash (value: any) {
   return await bcrypt.hash(value, salt);
 }
 
 /**
  * For tests only.
  */
-function hashSync (value) {
+function hashSync (value: any) {
   return bcrypt.hashSync(value, salt);
 }
 
@@ -33,21 +33,21 @@ function hashSync (value) {
  * @param value The value to check
  * @param hash The hash to check the value against
  */
-async function compare (value, hash) {
+async function compare (value: any, hash: any) {
   return await bcrypt.compare(value, hash);
 }
 
 /**
  * Computes the given file's read token for the given access and server secret.
  */
-function fileReadToken (fileId, accessId, accessToken, secret) {
+function fileReadToken (fileId: any, accessId: any, accessToken: any, secret: any) {
   return accessId + '-' + getFileHMAC(fileId, accessToken, secret);
 }
 
 /**
  * Extracts the parts from the given file read token.
  */
-function parseFileReadToken (fileReadToken) {
+function parseFileReadToken (fileReadToken: any) {
   const sepIndex = fileReadToken.indexOf('-');
   if (sepIndex <= 0) {
     return {};
@@ -58,11 +58,11 @@ function parseFileReadToken (fileReadToken) {
   };
 }
 
-function isFileReadTokenHMACValid (hmac, fileId, token, secret) {
+function isFileReadTokenHMACValid (hmac: any, fileId: any, token: any, secret: any) {
   return hmac === getFileHMAC(fileId, token, secret);
 }
 
-function getFileHMAC (fileId, token, secret) {
+function getFileHMAC (fileId: any, token: any, secret: any) {
   const hmac = crypto.createHmac('sha1', secret);
   hmac.setEncoding('base64');
   hmac.write(fileId + '-' + token);

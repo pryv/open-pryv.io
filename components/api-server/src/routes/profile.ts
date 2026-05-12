@@ -11,26 +11,26 @@ const Paths = require('./Paths.ts');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 // Profile route handling.
-export default function (expressApp, app) {
+export default function (expressApp: any, app: any) {
   const api = app.api;
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);
-  expressApp.get(Paths.Profile + '/public', setMethodId('profile.getPublic'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.get(Paths.Profile + '/public', setMethodId('profile.getPublic'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     api.call(req.context, req.query, methodCallback(res, next, 200));
   });
-  expressApp.put(Paths.Profile + '/public', setMethodId('profile.update'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.put(Paths.Profile + '/public', setMethodId('profile.update'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     api.call(req.context, { id: 'public', update: req.body }, methodCallback(res, next, 200));
   });
-  expressApp.get(Paths.Profile + '/app', setMethodId('profile.getApp'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.get(Paths.Profile + '/app', setMethodId('profile.getApp'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     api.call(req.context, req.query, methodCallback(res, next, 200));
   });
-  expressApp.put(Paths.Profile + '/app', setMethodId('profile.updateApp'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.put(Paths.Profile + '/app', setMethodId('profile.updateApp'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     const params = { update: req.body };
     api.call(req.context, params, methodCallback(res, next, 200));
   });
-  expressApp.get(Paths.Profile + '/private', setMethodId('profile.get'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.get(Paths.Profile + '/private', setMethodId('profile.get'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     api.call(req.context, Object.assign(req.query, { id: 'private' }), methodCallback(res, next, 200));
   });
-  expressApp.put(Paths.Profile + '/private', setMethodId('profile.update'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.put(Paths.Profile + '/private', setMethodId('profile.update'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     api.call(req.context, { id: 'private', update: req.body }, methodCallback(res, next, 200));
   });
 };

@@ -18,7 +18,7 @@ const { getConfigSync } = require('@pryv/boiler');
  *
  * @param api The API object for registering methods
  */
-export default function (expressApp, app) {
+export default function (expressApp: any, app: any) {
   const config = getConfigSync();
   const api = app.api;
   const ms14days = 1000 * 60 * 60 * 24 * 14;
@@ -31,7 +31,7 @@ export default function (expressApp, app) {
   // Returns true if the given `obj` has all of the property values identified
   // by the names contained in `keys`.
   //
-  function hasProperties (obj, keys) {
+  function hasProperties (obj: any, keys: any) {
     if (obj == null) {
       return false;
     }
@@ -43,7 +43,7 @@ export default function (expressApp, app) {
     }
     return true;
   }
-  function setSSOCookie (data, res) {
+  function setSSOCookie (data: any, res: any) {
     res.cookie('sso', data, {
       domain: ssoCookieDomain,
       maxAge: sessionMaxAge,
@@ -52,7 +52,7 @@ export default function (expressApp, app) {
       httpOnly: ssoHttpOnly
     });
   }
-  function clearSSOCookie (res) {
+  function clearSSOCookie (res: any) {
     res.clearCookie('sso', {
       domain: ssoCookieDomain,
       secure: ssoCookieSecure,
@@ -61,10 +61,10 @@ export default function (expressApp, app) {
   }
   // Define local routes
   expressApp.all(Paths.Auth + '*', cookieParser(ssoCookieSignSecret));
-  expressApp.get(Paths.Auth + '/who-am-i', function routeWhoAmI (req, res, next) {
+  expressApp.get(Paths.Auth + '/who-am-i', function routeWhoAmI (req: any, res: any, next: any) {
     return next(errors.goneResource());
   });
-  expressApp.post(Paths.Auth + '/login', setMethodId('auth.login'), function routeLogin (req, res, next) {
+  expressApp.post(Paths.Auth + '/login', setMethodId('auth.login'), function routeLogin (req: any, res: any, next: any) {
     if (typeof req.body !== 'object' ||
             req.body == null ||
             !hasProperties(req.body, ['username', 'password', 'appId'])) {
@@ -78,13 +78,13 @@ export default function (expressApp, app) {
       // some browsers provide origin, some provide only referer
       origin: req.headers.origin || req.headers.referer || ''
     };
-    api.call(req.context, params, function (err, result) {
+    api.call(req.context, params, function (err: any, result: any) {
       if (err) { return next(err); }
       setSSOCookie({ username: req.context.user.username, token: result.token }, res);
       methodCallback(res, next, 200)(err, result);
     });
   });
-  expressApp.post(Paths.Auth + '/logout', setMethodId('auth.logout'), loadAccessMiddleware, function routeLogout (req, res, next) {
+  expressApp.post(Paths.Auth + '/logout', setMethodId('auth.logout'), loadAccessMiddleware, function routeLogout (req: any, res: any, next: any) {
     clearSSOCookie(res);
     api.call(req.context, {}, methodCallback(res, next, 200));
   });

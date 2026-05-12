@@ -12,7 +12,7 @@ const Transform = require('stream').Transform;
 const storeDataUtils = require('./storeDataUtils.ts');
 const errorFactory = require('errors').factory;
 // ------------  Duration -----------//
-function durationToStoreEndTime (eventData) {
+function durationToStoreEndTime (eventData: any) {
   if (eventData.time == null) {
     delete eventData.duration;
     return eventData;
@@ -31,7 +31,7 @@ function durationToStoreEndTime (eventData) {
   delete eventData.duration;
   return eventData;
 }
-function endTimeFromStoreToDuration (eventData) {
+function endTimeFromStoreToDuration (eventData: any) {
   if (eventData.time == null) {
     delete eventData.endTime;
     return eventData;
@@ -53,23 +53,23 @@ function endTimeFromStoreToDuration (eventData) {
   return eventData;
 }
 // state
-function stateToStore (eventData) {
+function stateToStore (eventData: any) {
   eventData.trashed = eventData.trashed === true;
   return eventData;
 }
-function stateFromStore (eventData) {
+function stateFromStore (eventData: any) {
   if (eventData.trashed !== true) { delete eventData.trashed; }
   return eventData;
 }
 // ---------  deletion ------ //
-function deletionToStore (eventData) {
+function deletionToStore (eventData: any) {
   if (eventData.deleted === undefined) {
     // undefined => null
     eventData.deleted = null;
   }
   return eventData;
 }
-function deletionFromStore (eventData) {
+function deletionFromStore (eventData: any) {
   if (eventData == null) {
     return eventData;
   }
@@ -99,7 +99,7 @@ const ALL_FIELDS = [
 /**
  * set to null all undefined fields
  */
-function nullifyToStore (eventData) {
+function nullifyToStore (eventData: any) {
   for (const field of ALL_FIELDS) {
     if (eventData[field] === undefined) {
       eventData[field] = null;
@@ -107,7 +107,7 @@ function nullifyToStore (eventData) {
   }
   return eventData;
 }
-function nullifyFromStore (eventData) {
+function nullifyFromStore (eventData: any) {
   for (const field of ALL_FIELDS) {
     if (eventData[field] === null && field !== 'endTime') {
       delete eventData[field];
@@ -116,7 +116,7 @@ function nullifyFromStore (eventData) {
   return eventData;
 }
 // ------------ storeId ------------- //
-function removeStoreIds (storeId, eventData) {
+function removeStoreIds (storeId: any, eventData: any) {
   const original = structuredClone(eventData);
   const [eventStoreId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.id);
   if (eventStoreId !== storeId) {
@@ -146,21 +146,21 @@ function removeStoreIds (storeId, eventData) {
   }
   return eventData;
 }
-function addStoreId (storeId, eventData) {
+function addStoreId (storeId: any, eventData: any) {
   eventData.id = storeDataUtils.getFullItemId(storeId, eventData.id);
   if (eventData.streamIds) {
     eventData.streamIds = eventData.streamIds.map(storeDataUtils.getFullItemId.bind(null, storeId));
   }
   return eventData;
 }
-function removeEmptyAttachments (eventData) {
+function removeEmptyAttachments (eventData: any) {
   if (eventData?.attachments != null && eventData.attachments.length === 0) {
     delete eventData.attachments;
   }
   return eventData;
 }
 // ------------- pack ----------------//
-function convertEventToStore (storeId, eventData) {
+function convertEventToStore (storeId: any, eventData: any) {
   const event = structuredClone(eventData);
   if (storeId === storeDataUtils.AccountStoreId) {
     // Account events: extract field name from stream-ID-based event ID
@@ -176,7 +176,7 @@ function convertEventToStore (storeId, eventData) {
   nullifyToStore(event);
   return event;
 }
-function convertEventFromStore (storeId, eventData) {
+function convertEventFromStore (storeId: any, eventData: any) {
   const event = structuredClone(eventData);
   endTimeFromStoreToDuration(event);
   stateFromStore(event);
@@ -197,7 +197,7 @@ function convertEventFromStore (storeId, eventData) {
 /** @extends Transform */
 class ConvertEventFromStoreStream extends Transform {
   storeId;
-  constructor (storeId) {
+  constructor (storeId: any) {
     super({ objectMode: true });
     this.storeId = storeId;
   }
@@ -208,7 +208,7 @@ class ConvertEventFromStoreStream extends Transform {
    *     callback();
    *   }
    */
-  _transform = function (this: any, event, encoding, callback) {
+  _transform = function (this: any, event: any, encoding: any, callback: any) {
     this.push(convertEventFromStore(this.storeId, event));
     callback();
   };

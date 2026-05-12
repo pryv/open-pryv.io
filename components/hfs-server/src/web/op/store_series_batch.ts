@@ -16,7 +16,7 @@ const TracedOperations = require('./traced_operations.ts').default;
 const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts').setCommonMeta;
 // POST /:user_name/series/batch
 //
-async function storeSeriesBatch (ctx, req, res) {
+async function storeSeriesBatch (ctx: any, req: any, res: any) {
   const trace = new TracedOperations(ctx);
   const seriesRepository = ctx.series;
   const userName = req.params.user_name;
@@ -35,7 +35,7 @@ async function storeSeriesBatch (ctx, req, res) {
   const results: any[] = [];
   for (const [ns, data] of dataByNamespace.entries()) {
     const batchStoreOperation = await seriesRepository.makeBatch(ns);
-    results.push(batchStoreOperation.store(data, (eventId) => resolver.getMeasurementName(eventId)));
+    results.push(batchStoreOperation.store(data, (eventId: any) => resolver.getMeasurementName(eventId)));
   }
   // Wait for all store operations to complete.
   await Promise.all(results);
@@ -61,8 +61,8 @@ async function storeSeriesBatch (ctx, req, res) {
 // Parses the request body and transforms the data contained in it into the
 // BatchRequest format.
 //
-function parseData (batchRequestBody, resolver) {
-  return BatchRequest.parse(batchRequestBody, (eventId) => resolver.getRowType(eventId));
+function parseData (batchRequestBody: any, resolver: any) {
+  return BatchRequest.parse(batchRequestBody, (eventId: any) => resolver.getRowType(eventId));
 }
 // This is how many eventId -> seriesMeta mappings we keep around in the
 // EventMetaDataCache. Usually, batches will be about a small number of sensors,
@@ -87,7 +87,7 @@ class EventMetaDataCache {
   ctx;
 
   cache;
-  constructor (userName, accessToken, ctx) {
+  constructor (userName: any, accessToken: any, ctx: any) {
     this.userName = userName;
     this.accessToken = accessToken;
     this.ctx = ctx;
@@ -97,7 +97,7 @@ class EventMetaDataCache {
   // Loads an event, checks access rights for the current token, then looks
   // up the type of the event and returns it as a SeriesRowType.
   //
-  async getRowType (eventId) {
+  async getRowType (eventId: any) {
     const ctx = this.ctx;
     const repo = ctx.typeRepository;
     const seriesMeta = await this.getSeriesMeta(eventId);
@@ -108,7 +108,7 @@ class EventMetaDataCache {
     return seriesMeta.produceRowType(repo);
   }
 
-  async getMeasurementName (eventId) {
+  async getMeasurementName (eventId: any) {
     const seriesMeta = await this.getSeriesMeta(eventId);
     const [namespace, name] = seriesMeta.namespaceAndName(); // eslint-disable-line no-unused-vars
     return name;
@@ -116,7 +116,7 @@ class EventMetaDataCache {
 
   // Returns the SeriesMetadata for the event designated by `eventId`.
   //
-  async getSeriesMeta (eventId) {
+  async getSeriesMeta (eventId: any) {
     const ctx = this.ctx;
     const loader = ctx.metadata;
     return this.fromCacheOrProduce(eventId, () => loader.forSeries(this.userName, eventId, this.accessToken));
@@ -124,7 +124,7 @@ class EventMetaDataCache {
 
   // Handles memoisation through the cache in `this.cache`.
   //
-  async fromCacheOrProduce (key, factory) {
+  async fromCacheOrProduce (key: any, factory: any) {
     const cache = this.cache;
     // From Cache
     if (cache.has(key)) {
@@ -150,7 +150,7 @@ class EventMetaDataCache {
 //  currently always return a map with one entry. This doesn't make the
 //  code harder to write; but it is more correct, since SOP.
 //
-async function groupByNamespace (batchRequest, resolver) {
+async function groupByNamespace (batchRequest: any, resolver: any) {
   const nsToBatch = new Map();
   for (const element of batchRequest.elements()) {
     const eventId = element.eventId;
@@ -159,7 +159,7 @@ async function groupByNamespace (batchRequest, resolver) {
     storeToMap(namespace, element);
   }
   return nsToBatch;
-  function storeToMap (namespace, batchRequestElement) {
+  function storeToMap (namespace: any, batchRequestElement: any) {
     if (!nsToBatch.has(namespace)) {
       nsToBatch.set(namespace, new BatchRequest());
     }

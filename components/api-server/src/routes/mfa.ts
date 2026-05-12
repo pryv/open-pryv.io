@@ -32,7 +32,7 @@ const { setMethodId } = require('middleware');
 const methodCallback = require('./methodCallback.ts').default;
 const Paths = require('./Paths.ts');
 
-export default function (expressApp, app) {
+export default function (expressApp: any, app: any) {
   const api = app.api;
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);
 
@@ -40,34 +40,34 @@ export default function (expressApp, app) {
   expressApp.post(Paths.MFA + '/activate',
     setMethodId('mfa.activate'),
     loadAccessMiddleware,
-    function routeMFAActivate (req, res, next) {
+    function routeMFAActivate (req: any, res: any, next: any) {
       api.call(req.context, req.body || {}, methodCallback(res, next, 302));
     });
 
   expressApp.post(Paths.MFA + '/deactivate',
     setMethodId('mfa.deactivate'),
     loadAccessMiddleware,
-    function routeMFADeactivate (req, res, next) {
+    function routeMFADeactivate (req: any, res: any, next: any) {
       api.call(req.context, {}, methodCallback(res, next, 200));
     });
 
   // --- mfaToken-bound routes --------------------------------------------
   expressApp.post(Paths.MFA + '/confirm',
     setMethodId('mfa.confirm'),
-    function routeMFAConfirm (req, res, next) {
+    function routeMFAConfirm (req: any, res: any, next: any) {
       const params = Object.assign({}, req.body || {}, { mfaToken: extractToken(req) });
       api.call(req.context, params, methodCallback(res, next, 200));
     });
 
   expressApp.post(Paths.MFA + '/challenge',
     setMethodId('mfa.challenge'),
-    function routeMFAChallenge (req, res, next) {
+    function routeMFAChallenge (req: any, res: any, next: any) {
       api.call(req.context, { mfaToken: extractToken(req) }, methodCallback(res, next, 200));
     });
 
   expressApp.post(Paths.MFA + '/verify',
     setMethodId('mfa.verify'),
-    function routeMFAVerify (req, res, next) {
+    function routeMFAVerify (req: any, res: any, next: any) {
       const params = Object.assign({}, req.body || {}, { mfaToken: extractToken(req) });
       api.call(req.context, params, methodCallback(res, next, 200));
     });
@@ -75,7 +75,7 @@ export default function (expressApp, app) {
   // --- Unauth route -----------------------------------------------------
   expressApp.post(Paths.MFA + '/recover',
     setMethodId('mfa.recover'),
-    function routeMFARecover (req, res, next) {
+    function routeMFARecover (req: any, res: any, next: any) {
       api.call(req.context, req.body || {}, methodCallback(res, next, 200));
     });
 };
@@ -85,7 +85,7 @@ export default function (expressApp, app) {
  * `Bearer <token>` shapes. Returns null if the header is missing — the API
  * method will then reject via schema validation.
  */
-function extractToken (req) {
+function extractToken (req: any) {
   const raw = req.headers && req.headers.authorization;
   if (!raw) return null;
   const parts = raw.trim().split(/\s+/);

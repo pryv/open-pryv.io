@@ -17,7 +17,7 @@ const { getStorageLayer } = require('storage');
  * TODO: add change notifications
  *
  */
-export default async function (api) {
+export default async function (api: any) {
   const storageLayer = await getStorageLayer();
   const userProfileStorage = storageLayer.profile;
   // RETRIEVAL / CREATION
@@ -27,7 +27,7 @@ export default async function (api) {
     commonFns.getParamsValidation(methodsSchema.get.params),
     getProfile);
 
-  function setPublicProfile (context, params, result, next) {
+  function setPublicProfile (context: any, params: any, result: any, next: any) {
     params.id = 'public';
     next();
   }
@@ -42,8 +42,8 @@ export default async function (api) {
     commonFns.getParamsValidation(methodsSchema.get.params),
     getProfile);
 
-  function getProfile (context, params, result, next) {
-    userProfileStorage.findOne(context.user, { id: params.id }, null, function (err, profileSet) {
+  function getProfile (context: any, params: any, result: any, next: any) {
+    userProfileStorage.findOne(context.user, { id: params.id }, null, function (err: any, profileSet: any) {
       if (err) { return next(errors.unexpectedError(err)); }
       result.profile = profileSet ? profileSet.data : {};
       next();
@@ -62,19 +62,19 @@ export default async function (api) {
     commonFns.getParamsValidation(methodsSchema.update.params),
     updateProfile);
 
-  function updateProfile (context, params, result, next) {
-    userProfileStorage.findOne(context.user, { id: params.id }, null, function (err, profileSet) {
+  function updateProfile (context: any, params: any, result: any, next: any) {
+    userProfileStorage.findOne(context.user, { id: params.id }, null, function (err: any, profileSet: any) {
       if (err) return next(errors.unexpectedError(err));
       if (profileSet) return doUpdate();
       // item missing -> create it
-      userProfileStorage.insertOne(context.user, { id: params.id, data: {} }, function (err) {
+      userProfileStorage.insertOne(context.user, { id: params.id, data: {} }, function (err: any) {
         if (err) return next(err);
         doUpdate();
       });
     });
     function doUpdate () {
       userProfileStorage.updateOne(context.user, { id: params.id }, { data: params.update },
-        function (err, updatedProfile) {
+        function (err: any, updatedProfile: any) {
           if (err) return next(errors.unexpectedError(err));
           result.profile = updatedProfile.data;
           next();
@@ -82,7 +82,7 @@ export default async function (api) {
     }
   }
 
-  function setAppProfile (context, params, result, next) {
+  function setAppProfile (context: any, params: any, result: any, next: any) {
     if (!context.access.isApp()) {
       return next(errors.invalidOperation(
         'This resource is only available to app accesses.'));

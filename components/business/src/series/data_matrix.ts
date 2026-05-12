@@ -15,10 +15,10 @@ const Row = require('./row.ts').default;
 class DataMatrix {
   columns;
 
-  data;
+  data: any;
   // @return {number} number of rows this data matrix has.
 
-  length;
+  length: any;
   // Parses a data matrix given a javascript object of the right form
   // ('flatJSON'). This method will throw a ParseFailure if the internal
   // structure of the object is not correct.
@@ -28,7 +28,7 @@ class DataMatrix {
    * @param {SeriesRowType} type
    * @returns {DataMatrix}
    */
-  static parse (obj, type) {
+  static parse (obj: any, type: any) {
     const out = this.empty();
     const parser = new Parser(out);
     parser.parse(obj, type);
@@ -58,7 +58,7 @@ class DataMatrix {
    * @param data {Array<Array<Element>} data
    * @return {void}
    */
-  constructor (columns, data) {
+  constructor (columns: any, data: any) {
     this.columns = columns;
     this.setData(data);
   }
@@ -67,7 +67,7 @@ class DataMatrix {
    * @param {Array<any>} data
    * @returns {void}
    */
-  setData (data) {
+  setData (data: any) {
     this.data = data;
     this.length = data.length;
   }
@@ -77,7 +77,7 @@ class DataMatrix {
    * @param {number} idx
    * @returns {import("/Users/sim/Code/Pryv/dev/service-core/data_matrix.ts-to-jsdoc").Element[]}
    */
-  at (idx) {
+  at (idx: any) {
     assert.ok(idx >= 0);
     assert.ok(idx < this.length);
     return this.data[idx];
@@ -85,7 +85,7 @@ class DataMatrix {
 
   // Returns the row at index `idx`.
   //
-  atRow (idx) {
+  atRow (idx: any) {
     const raw = this.at(idx);
     return new Row(raw, this.columns);
   }
@@ -94,8 +94,8 @@ class DataMatrix {
    * @param {(row: Row, idx: number) => void} fn
    * @returns {void}
    */
-  eachRow (fn) {
-    this.data.forEach((row, idx) => {
+  eachRow (fn: any) {
+    this.data.forEach((row: any, idx: any) => {
       const rowObj = new Row(row, this.columns);
       fn(rowObj, idx);
     });
@@ -104,9 +104,9 @@ class DataMatrix {
   // Transforms this matrix in place by calling `fn` for each cell, replacing
   // its value with what fn returns.
   //
-  transform (fn) {
+  transform (fn: any) {
     for (const row of this.data) {
-      row.forEach((cell, idx) => (row[idx] = fn(this.columns[idx], cell)));
+      row.forEach((cell: any, idx: any) => (row[idx] = fn(this.columns[idx], cell)));
     }
   }
 
@@ -120,7 +120,7 @@ class DataMatrix {
     // assert: length > 0 => at least one row is available
     const first = this.atRow(0).deltaTime();
     let [min, max] = [first, first];
-    this.eachRow((row) => {
+    this.eachRow((row: any) => {
       const deltaTime = row.deltaTime();
       min = Math.min(min, deltaTime);
       max = Math.max(max, deltaTime);
@@ -135,11 +135,11 @@ const FLAT_JSON = 'flatJSON';
 
 class Parser {
   out;
-  constructor (out) {
+  constructor (out: any) {
     this.out = out;
   }
 
-  parse (obj, type) {
+  parse (obj: any, type: any) {
     const out = this.out;
     if (obj == null || typeof obj !== 'object') { throw error('flatJSON structure must be an object.'); }
     // assert: obj is a {}
@@ -152,7 +152,7 @@ class Parser {
     if (!type.validateAllRows(points, fields)) { throw error('"points" matrix must contain correct data types according to series type.'); }
     out.columns = fields;
     out.setData(points);
-    out.transform((columnName, cellValue) => {
+    out.transform((columnName: any, cellValue: any) => {
       try {
         if (type.isOptionalField(columnName) && cellValue === null) { return null; }
         const cellType = type.forField(columnName);
@@ -164,7 +164,7 @@ class Parser {
     });
   }
 
-  checkFields (val) {
+  checkFields (val: any) {
     if (val == null) { throw error('Field names must be a list.'); }
     if (!Array.isArray(val)) { throw error('Field names must be a list.'); }
     for (const el of val) {

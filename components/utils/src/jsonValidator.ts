@@ -31,7 +31,7 @@ const require = createRequire(import.meta.url);
 const Ajv = require('ajv-draft-04');
 const addFormats = require('ajv-formats');
 
-const KEYWORD_TO_ZSCHEMA_CODE = {
+const KEYWORD_TO_ZSCHEMA_CODE: Record<string, string> = {
   pattern: 'PATTERN',
   required: 'OBJECT_MISSING_REQUIRED_PROPERTY',
   type: 'INVALID_TYPE',
@@ -54,7 +54,7 @@ const KEYWORD_TO_ZSCHEMA_CODE = {
   const: 'VALUE_NOT_EQUAL'
 };
 
-function paramsToArray (params, keyword) {
+function paramsToArray (params: any, keyword: any) {
   if (params == null) return [];
   switch (keyword) {
     case 'required': return [params.missingProperty];
@@ -77,7 +77,7 @@ function paramsToArray (params, keyword) {
   }
 }
 
-function translateError (e) {
+function translateError (e: any) {
   const code = KEYWORD_TO_ZSCHEMA_CODE[e.keyword] || (e.keyword || 'UNKNOWN').toUpperCase();
   // z-schema reported `required` errors with a trailing `/` and no field
   // name (e.g. `#/` for root-level missing-required), expecting the consumer
@@ -105,14 +105,14 @@ function translateError (e) {
  * always preserved so self-references (`systemStreamsSchema → $ref:
  * 'systemStreamsSchema'`) keep resolving.
  */
-function stripUnreferencedIds (schema) {
+function stripUnreferencedIds (schema: any) {
   if (schema == null || typeof schema !== 'object' || Array.isArray(schema)) return schema;
   const referenced = new Set();
   collectRefs(schema, referenced);
   return cloneStrip(schema, referenced, true);
 }
 
-function collectRefs (node, out) {
+function collectRefs (node: any, out: any) {
   if (node == null || typeof node !== 'object') return;
   if (Array.isArray(node)) {
     for (const item of node) collectRefs(item, out);
@@ -129,10 +129,10 @@ function collectRefs (node, out) {
   for (const key of Object.keys(node)) collectRefs(node[key], out);
 }
 
-function cloneStrip (node, referenced, isTop) {
+function cloneStrip (node: any, referenced: any, isTop: any): any {
   if (node == null || typeof node !== 'object') return node;
-  if (Array.isArray(node)) return node.map((item) => cloneStrip(item, referenced, false));
-  const result = {};
+  if (Array.isArray(node)) return node.map((item: any) => cloneStrip(item, referenced, false));
+  const result: any = {};
   for (const key of Object.keys(node)) {
     if ((key === 'id' || key === '$id') && !isTop && typeof node[key] === 'string') {
       // Schema-level id (string value sitting next to type/properties/etc).
@@ -161,7 +161,7 @@ function createValidator (options: any = {}) {
   const compileCache = new WeakMap();
   let lastErrors: any = null;
 
-  function compile (schema) {
+  function compile (schema: any) {
     let fn = compileCache.get(schema);
     if (fn != null) return fn;
     // Per-schema fresh ajv. addUsedSchema:true (default) keeps self-refs
@@ -174,7 +174,7 @@ function createValidator (options: any = {}) {
     return fn;
   }
 
-  function validate (data, schema, callback) {
+  function validate (data: any, schema: any, callback: any) {
     const fn = compile(schema);
     const valid = fn(data);
     lastErrors = valid ? null : (fn.errors || []).map(translateError);
@@ -186,7 +186,7 @@ function createValidator (options: any = {}) {
     return valid;
   }
 
-  function validateSchema (schema) {
+  function validateSchema (schema: any) {
     try {
       const ajv = new Ajv(ajvOptions);
       addFormats(ajv);
