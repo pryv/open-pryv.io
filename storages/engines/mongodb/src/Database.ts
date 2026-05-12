@@ -17,16 +17,16 @@ const { _internals } = require('./_internals.ts');
 // so we wrap each driver call. `p2c` is the plain Promise→callback bridge;
 // `p2cWithDup` adds the duplicate-key annotation that several mutation paths
 // rely on (`err.isDuplicate`, `err.isDuplicateIndex`).
-function p2c (promise, callback) {
+function p2c (promise: any, callback: any) {
   promise.then(
-    (res) => callback(null, res),
-    (err) => callback(err)
+    (res: any) => callback(null, res),
+    (err: any) => callback(err)
   );
 }
-function p2cWithDup (promise, callback) {
+function p2cWithDup (promise: any, callback: any) {
   promise.then(
-    (res) => callback(null, res),
-    (err) => {
+    (res: any) => callback(null, res),
+    (err: any) => {
       Database.handleDuplicateError(err);
       callback(err);
     }
@@ -63,15 +63,15 @@ class Database {
   options;
 
   connecting;
-  db;
-  client;
+  db: any;
+  client: any;
 
-  initializedCollections;
+  initializedCollections: any;
   collectionConnectionsCache: any;
 
   logger;
 
-  constructor (settings) {
+  constructor (settings: any) {
     const authPart = getAuthPart(settings);
     this.logger = _internals.getLogger('database');
     this.connectionString = `mongodb://${authPart}${settings.host}:${settings.port}/`;
@@ -139,12 +139,12 @@ class Database {
     }
   }
 
-  addUserIdToIndexIfNeeded (collectionInfo) {
+  addUserIdToIndexIfNeeded (collectionInfo: any) {
     // force all indexes to have userId -- ! Order is important
     if (collectionInfo.useUserId) {
       const newIndexes = [{ index: { userId: 1 }, options: {} }];
       for (let i = 0; i < collectionInfo.indexes.length; i++) {
-        const tempIndex = { userId: 1 };
+        const tempIndex: any = { userId: 1 };
         for (const property in collectionInfo.indexes[i].index) {
           if (collectionInfo.indexes[i].index[property] != null) {
             tempIndex[property] = collectionInfo.indexes[i].index[property];
@@ -163,7 +163,7 @@ class Database {
   /**
    * @protected
    */
-  async getCollection (collectionInfo) {
+  async getCollection (collectionInfo: any) {
     await this.ensureConnect();
     if (this.collectionConnectionsCache[collectionInfo.name]) {
       return this.collectionConnectionsCache[collectionInfo.name];
@@ -178,8 +178,8 @@ class Database {
   /**
    * @private
    */
-  async ensureIndexes (collection, indexes) {
-    const initializedCollections = this.initializedCollections;
+  async ensureIndexes (collection: any, indexes: any) {
+    const initializedCollections: any = this.initializedCollections;
     const collectionName = collection.collectionName;
     if (indexes == null) { return; }
     if (initializedCollections[collectionName]) { return; }
@@ -207,7 +207,7 @@ class Database {
   //      ...
   //    }
   //
-  getCollectionSafe (collectionInfo, errCallback, collCallback) {
+  getCollectionSafe (collectionInfo: any, errCallback: any, collCallback: any) {
     this.getCollection(collectionInfo).then(collCallback, errCallback);
   }
 
@@ -216,7 +216,7 @@ class Database {
    * @param collectionInfo  undefined
    * @param callback  undefined
    */
-  countAll (collectionInfo, callback) {
+  countAll (collectionInfo: any, callback: any) {
     if (collectionInfo.name === 'streams') {
       tellMeIfStackDoesNotContains(['localUserStreams.js'], {
         for: collectionInfo.name
@@ -225,7 +225,7 @@ class Database {
     if (collectionInfo.useUserId) {
       return this.count(collectionInfo, {}, callback);
     }
-    this.getCollectionSafe(collectionInfo, callback, (collection) => {
+    this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
       p2c(collection.countDocuments(), callback);
     });
   }
@@ -235,7 +235,7 @@ class Database {
    *
    * @param collectionInfo  undefined
    */
-  addUserIdIfneed (collectionInfo, mixed) {
+  addUserIdIfneed (collectionInfo: any, mixed: any) {
     if (collectionInfo.useUserId) {
       if (mixed.constructor === Array) {
         const length = mixed.length;
@@ -246,7 +246,7 @@ class Database {
         addUserIdProperty(mixed);
       }
     }
-    function addUserIdProperty (object) {
+    function addUserIdProperty (object: any) {
       object.userId = collectionInfo.useUserId;
     }
   }
@@ -258,14 +258,14 @@ class Database {
    * @param query  undefined
    * @param callback  undefined
    */
-  count (collectionInfo, query, callback) {
+  count (collectionInfo: any, query: any, callback: any) {
     if (collectionInfo.name === 'streams') {
       tellMeIfStackDoesNotContains(['localUserStreams.js'], {
         for: collectionInfo.name
       });
     }
     this.addUserIdIfneed(collectionInfo, query);
-    this.getCollectionSafe(collectionInfo, callback, (collection) => {
+    this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
       p2c(collection.countDocuments(query), callback);
     });
   }
@@ -282,14 +282,14 @@ class Database {
    * {Number} limit Number of records to return (or `null`)
    * @param callback  undefined
    */
-  findCursor (collectionInfo, query, options, callback) {
+  findCursor (collectionInfo: any, query: any, options: any, callback: any) {
     if (collectionInfo.name === 'streams') {
       tellMeIfStackDoesNotContains(['localUserStreams.js'], {
         for: collectionInfo.name
       });
     }
     this.addUserIdIfneed(collectionInfo, query);
-    this.getCollectionSafe(collectionInfo, callback, (collection) => {
+    this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
       const queryOptions = {
         projection: options.projection
       };
@@ -316,8 +316,8 @@ class Database {
    * {Number} limit Number of records to return (or `null`)
    * @param callback  undefined
    */
-  find (collectionInfo, query, options, callback) {
-    this.findCursor(collectionInfo, query, options, (err, cursor) => {
+  find (collectionInfo: any, query: any, options: any, callback: any) {
+    this.findCursor(collectionInfo, query, options, (err: any, cursor: any) => {
       if (err) { return callback(err); }
       p2c(cursor.toArray(), callback);
     });
@@ -343,14 +343,14 @@ class Database {
    * @param options  Mongo-style options
    * @param callback  undefined
    */
-  findOne (collectionInfo, query, options, callback) {
+  findOne (collectionInfo: any, query: any, options: any, callback: any) {
     if (collectionInfo.name === 'streams') {
       tellMeIfStackDoesNotContains(['localUserStreams.js'], {
         for: collectionInfo.name
       });
     }
     this.addUserIdIfneed(collectionInfo, query);
-    this.getCollectionSafe(collectionInfo, callback, (collection) => {
+    this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
       p2c(collection.findOne(query, options || {}), callback);
     });
   }
@@ -362,14 +362,14 @@ class Database {
    * @param item  undefined
    * @param callback  undefined
    */
-  insertOne (collectionInfo, item, callback, options = {}) {
+  insertOne (collectionInfo: any, item: any, callback: any, options = {}) {
     if (collectionInfo.name === 'streams') {
       tellMeIfStackDoesNotContains(['localUserStreams.js'], {
         for: collectionInfo.name
       });
     }
     this.addUserIdIfneed(collectionInfo, item);
-    this.getCollectionSafe(collectionInfo, callback, (collection) => {
+    this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
       p2cWithDup(collection.insertOne(item, options), callback);
     });
   }
@@ -377,14 +377,14 @@ class Database {
   /**
    * Inserts an array of items (each item must have a valid id already).
    */
-  insertMany (collectionInfo, items, callback, options = {}) {
+  insertMany (collectionInfo: any, items: any, callback: any, options = {}) {
     if (collectionInfo.name === 'streams') {
       tellMeIfStackDoesNotContains(['localUserStreams.js'], {
         for: collectionInfo.name
       });
     }
     this.addUserIdIfneed(collectionInfo, items);
-    this.getCollectionSafe(collectionInfo, callback, (collection) => {
+    this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
       p2cWithDup(collection.insertMany(items, options), callback);
     });
   }
@@ -398,14 +398,14 @@ class Database {
    * @param update  undefined
    * @param callback  undefined
    */
-  updateOne (collectionInfo, query, update, callback, options = {}) {
+  updateOne (collectionInfo: any, query: any, update: any, callback: any, options = {}) {
     if (collectionInfo.name === 'streams') {
       tellMeIfStackDoesNotContains(['localUserStreams.js'], {
         for: collectionInfo.name
       });
     }
     this.addUserIdIfneed(collectionInfo, query);
-    this.getCollectionSafe(collectionInfo, callback, (collection) => {
+    this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
       p2cWithDup(collection.updateOne(query, update, options), callback);
     });
   }
@@ -419,14 +419,14 @@ class Database {
    * @param update  undefined
    * @param callback  undefined
    */
-  updateMany (collectionInfo, query, update, callback) {
+  updateMany (collectionInfo: any, query: any, update: any, callback: any) {
     if (collectionInfo.name === 'streams') {
       tellMeIfStackDoesNotContains(['localUserStreams.js'], {
         for: collectionInfo.name
       });
     }
     this.addUserIdIfneed(collectionInfo, query);
-    this.getCollectionSafe(collectionInfo, callback, (collection) => {
+    this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
       p2c(collection.updateMany(query, update, {}), callback);
     });
   }
@@ -434,7 +434,7 @@ class Database {
   /**
    * Execute N requests directly on the DB
    */
-  async bulkWrite (collectionInfo, requests) {
+  async bulkWrite (collectionInfo: any, requests: any) {
     const collection = await this.getCollection(collectionInfo);
     return await collection.bulkWrite(requests);
   }
@@ -448,14 +448,14 @@ class Database {
    * @param update  undefined
    * @param callback  undefined
    */
-  findOneAndUpdate (collectionInfo, query, update, callback) {
+  findOneAndUpdate (collectionInfo: any, query: any, update: any, callback: any) {
     if (collectionInfo.name === 'streams') { tellMeIfStackDoesNotContains(['localUserStreams.js', 'callbackIntegrity'], { for: collectionInfo.name }); }
     this.addUserIdIfneed(collectionInfo, query);
-    this.getCollectionSafe(collectionInfo, callback, (collection) => {
+    this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
       // mongodb v6+ returns the updated doc directly (no `.value` wrapper).
       collection.findOneAndUpdate(query, update, { returnDocument: 'after' }).then(
-        (r) => callback(null, r),
-        (err) => {
+        (r: any) => callback(null, r),
+        (err: any) => {
           Database.handleDuplicateError(err);
           callback(err);
         }
@@ -471,14 +471,14 @@ class Database {
    * @param update  undefined
    * @param callback  undefined
    */
-  upsertOne (collectionInfo, query, update, callback) {
+  upsertOne (collectionInfo: any, query: any, update: any, callback: any) {
     if (collectionInfo.name === 'streams') {
       tellMeIfStackDoesNotContains(['localUserStreamss.js'], {
         for: collectionInfo.name
       });
     }
     this.addUserIdIfneed(collectionInfo, query);
-    this.getCollectionSafe(collectionInfo, callback, (collection) => {
+    this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
       p2c(collection.updateOne(query, update, { upsert: true }), callback);
     });
   }
@@ -490,14 +490,14 @@ class Database {
    * @param query  undefined
    * @param callback  undefined
    */
-  deleteOne (collectionInfo, query, callback) {
+  deleteOne (collectionInfo: any, query: any, callback: any) {
     if (collectionInfo.name === 'streams') {
       tellMeIfStackDoesNotContains(['localUserStreams.js'], {
         for: collectionInfo.name
       });
     }
     this.addUserIdIfneed(collectionInfo, query);
-    this.getCollectionSafe(collectionInfo, callback, (collection) => {
+    this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
       p2c(collection.deleteOne(query, {}), callback);
     });
   }
@@ -509,14 +509,14 @@ class Database {
    * @param query  undefined
    * @param callback  undefined
    */
-  deleteMany (collectionInfo, query, callback) {
+  deleteMany (collectionInfo: any, query: any, callback: any) {
     if (collectionInfo.name === 'streams') {
       tellMeIfStackDoesNotContains(['localUserStreams.js'], {
         for: collectionInfo.name
       });
     }
     this.addUserIdIfneed(collectionInfo, query);
-    this.getCollectionSafe(collectionInfo, callback, (collection) => {
+    this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
       p2c(collection.deleteMany(query, {}), callback);
     });
   }
@@ -524,7 +524,7 @@ class Database {
   /**
    * @param callback  *
    */
-  dropCollection (collectionInfo, callback) {
+  dropCollection (collectionInfo: any, callback: any) {
     if (collectionInfo.name === 'streams') {
       tellMeIfStackDoesNotContains(['localUserStreams.js'], {
         for: collectionInfo.name
@@ -533,7 +533,7 @@ class Database {
     if (collectionInfo.useUserId) {
       return this.deleteMany(collectionInfo, {}, callback);
     } else {
-      return this.getCollectionSafe(collectionInfo, callback, (collection) => {
+      return this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
         p2c(collection.drop(), callback);
       });
     }
@@ -543,7 +543,7 @@ class Database {
    * Drops the actual MongoDB collection (including indexes).
    * Primarily for tests when indexes need to be recreated.
    */
-  async dropCollectionFully (collectionInfo, callback) {
+  async dropCollectionFully (collectionInfo: any, callback: any) {
     try {
       await this.ensureConnect();
       // Clear caches so indexes will be recreated on next access
@@ -553,7 +553,7 @@ class Database {
       const collection = this.db.collection(collectionInfo.name);
       collection.drop().then(
         () => callback(null),
-        (err) => {
+        (err: any) => {
           // Ignore "ns not found" error (collection doesn't exist)
           if (err && err.codeName !== 'NamespaceNotFound') return callback(err);
           callback(null);
@@ -569,7 +569,7 @@ class Database {
    *
    * @param callback  undefined
    */
-  dropDatabase (callback) {
+  dropDatabase (callback: any) {
     this.ensureConnect().then(() => {
       p2c(this.db.dropDatabase(), callback);
     }, callback);
@@ -582,8 +582,8 @@ class Database {
    * @param options  undefined
    * @param callback  undefined
    */
-  listIndexes (collectionInfo, options, callback) {
-    this.getCollectionSafe(collectionInfo, callback, (collection) => {
+  listIndexes (collectionInfo: any, options: any, callback: any) {
+    this.getCollectionSafe(collectionInfo, callback, (collection: any) => {
       p2c(collection.listIndexes(options).toArray(), callback);
     });
   }
@@ -593,7 +593,7 @@ class Database {
    * @param {MongoDBError | null} err
    * @returns {boolean}
    */
-  static isDuplicateError (err) {
+  static isDuplicateError (err: any) {
     if (err == null) {
       return false;
     }
@@ -605,9 +605,9 @@ class Database {
    * @param {MongoDBError} err
    * @returns {void}
    */
-  static handleDuplicateError (err) {
+  static handleDuplicateError (err: any) {
     err.isDuplicate = Database.isDuplicateError(err);
-    err.isDuplicateIndex = (key) => {
+    err.isDuplicateIndex = (key: any) => {
       // Check both errmsg (older drivers) and message (newer drivers)
       const errorMessage = err?.errmsg || err?.message;
       if (err != null && errorMessage != null && err.isDuplicate) {
@@ -669,7 +669,7 @@ type FindOptions = {
   skip: number | undefined | null;
   limit: number | undefined | null;
 };
-function getAuthPart (settings) {
+function getAuthPart (settings: any) {
   const authUser = settings.authUser;
   let authPart = '';
   if (authUser != null && typeof authUser === 'string' && authUser.length > 0) {
@@ -686,7 +686,7 @@ function getAuthPart (settings) {
   return authPart;
 }
 
-function tellMeIfStackDoesNotContains (needles, info) {
+function tellMeIfStackDoesNotContains (needles: any, info: any) {
   const e = new Error();
   const stack = (e.stack ?? '')
     .split('\n')

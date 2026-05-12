@@ -69,8 +69,8 @@ class DBrqlite {
     const result = data.results[0];
     if (!result.columns || !result.values) return [];
     // Convert columnar format to row objects
-    return result.values.map(row => {
-      const obj = {};
+    return result.values.map((row: any) => {
+      const obj: any = {};
       for (let i = 0; i < result.columns.length; i++) {
         obj[result.columns[i]] = row[i];
       }
@@ -80,7 +80,7 @@ class DBrqlite {
 
   // --- PlatformDB interface --- //
 
-  async setUserUniqueField (username, field, value) {
+  async setUserUniqueField (username: any, field: any, value: any) {
     const key = getUserUniqueKey(field, value);
     await this.execute(
       'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
@@ -88,7 +88,7 @@ class DBrqlite {
     );
   }
 
-  async setUserUniqueFieldIfNotExists (username, field, value) {
+  async setUserUniqueFieldIfNotExists (username: any, field: any, value: any) {
     const key = getUserUniqueKey(field, value);
     // Atomic: INSERT OR IGNORE, then check
     await this.execute(
@@ -103,12 +103,12 @@ class DBrqlite {
     return rows[0].value === username;
   }
 
-  async deleteUserUniqueField (field, value) {
+  async deleteUserUniqueField (field: any, value: any) {
     const key = getUserUniqueKey(field, value);
     await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
   }
 
-  async setUserIndexedField (username, field, value) {
+  async setUserIndexedField (username: any, field: any, value: any) {
     const key = getUserIndexedKey(username, field);
     await this.execute(
       'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
@@ -116,24 +116,24 @@ class DBrqlite {
     );
   }
 
-  async deleteUserIndexedField (username, field) {
+  async deleteUserIndexedField (username: any, field: any) {
     const key = getUserIndexedKey(username, field);
     await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
   }
 
-  async getUserIndexedField (username, field) {
+  async getUserIndexedField (username: any, field: any) {
     const key = getUserIndexedKey(username, field);
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key]);
     return rows.length === 0 ? null : rows[0].value;
   }
 
-  async getUsersUniqueField (field, value) {
+  async getUsersUniqueField (field: any, value: any) {
     const key = getUserUniqueKey(field, value);
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key]);
     return rows.length === 0 ? null : rows[0].value;
   }
 
-  async getAllWithPrefix (prefix) {
+  async getAllWithPrefix (prefix: any) {
     const rows = await this.query(
       "SELECT key, value FROM keyValue WHERE key LIKE (? || '%')",
       [prefix]
@@ -159,7 +159,7 @@ class DBrqlite {
     return await this.getAllWithPrefix('user');
   }
 
-  async importAll (data) {
+  async importAll (data: any) {
     for (const entry of data) {
       if (entry.isUnique) {
         await this.setUserUniqueField(entry.username, entry.field, entry.value);
@@ -175,7 +175,7 @@ class DBrqlite {
 
   // --- User-to-core mapping --- //
 
-  async setUserCore (username, coreId) {
+  async setUserCore (username: any, coreId: any) {
     const key = getUserCoreKey(username);
     await this.execute(
       'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
@@ -183,7 +183,7 @@ class DBrqlite {
     );
   }
 
-  async getUserCore (username) {
+  async getUserCore (username: any) {
     const key = getUserCoreKey(username);
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key]);
     return rows.length === 0 ? null : rows[0].value;
@@ -193,7 +193,7 @@ class DBrqlite {
     const rows = await this.query(
       "SELECT key, value FROM keyValue WHERE key LIKE 'user-core/%'"
     );
-    return rows.map(row => ({
+    return rows.map((row: any) => ({
       username: row.key.slice('user-core/'.length),
       coreId: row.value
     }));
@@ -201,7 +201,7 @@ class DBrqlite {
 
   // --- Core registration --- //
 
-  async setCoreInfo (coreId, info) {
+  async setCoreInfo (coreId: any, info: any) {
     const key = 'core-info/' + coreId;
     await this.execute(
       'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
@@ -209,7 +209,7 @@ class DBrqlite {
     );
   }
 
-  async getCoreInfo (coreId) {
+  async getCoreInfo (coreId: any) {
     const key = 'core-info/' + coreId;
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key]);
     return rows.length === 0 ? null : JSON.parse(rows[0].value);
@@ -219,12 +219,12 @@ class DBrqlite {
     const rows = await this.query(
       "SELECT value FROM keyValue WHERE key LIKE 'core-info/%'"
     );
-    return rows.map(row => JSON.parse(row.value));
+    return rows.map((row: any) => JSON.parse(row.value));
   }
 
   // --- Invitation tokens --- //
 
-  async createInvitationToken (token, info) {
+  async createInvitationToken (token: any, info: any) {
     const key = 'invitation/' + token;
     await this.execute(
       'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
@@ -232,7 +232,7 @@ class DBrqlite {
     );
   }
 
-  async getInvitationToken (token) {
+  async getInvitationToken (token: any) {
     const key = 'invitation/' + token;
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key]);
     return rows.length === 0 ? null : JSON.parse(rows[0].value);
@@ -242,24 +242,24 @@ class DBrqlite {
     const rows = await this.query(
       "SELECT key, value FROM keyValue WHERE key LIKE 'invitation/%'"
     );
-    return rows.map(row => ({
+    return rows.map((row: any) => ({
       id: row.key.slice('invitation/'.length),
       ...JSON.parse(row.value)
     }));
   }
 
-  async updateInvitationToken (token, info) {
+  async updateInvitationToken (token: any, info: any) {
     await this.createInvitationToken(token, info);
   }
 
-  async deleteInvitationToken (token) {
+  async deleteInvitationToken (token: any) {
     const key = 'invitation/' + token;
     await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
   }
 
   // --- DNS records (Plan 27 Phase 1) --- //
 
-  async setDnsRecord (subdomain, records) {
+  async setDnsRecord (subdomain: any, records: any) {
     const key = getDnsRecordKey(subdomain);
     await this.execute(
       'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
@@ -267,7 +267,7 @@ class DBrqlite {
     );
   }
 
-  async getDnsRecord (subdomain) {
+  async getDnsRecord (subdomain: any) {
     const key = getDnsRecordKey(subdomain);
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key]);
     return rows.length === 0 ? null : JSON.parse(rows[0].value);
@@ -277,20 +277,20 @@ class DBrqlite {
     const rows = await this.query(
       "SELECT key, value FROM keyValue WHERE key LIKE 'dns-record/%'"
     );
-    return rows.map(row => ({
+    return rows.map((row: any) => ({
       subdomain: row.key.slice('dns-record/'.length),
       records: JSON.parse(row.value)
     }));
   }
 
-  async deleteDnsRecord (subdomain) {
+  async deleteDnsRecord (subdomain: any) {
     const key = getDnsRecordKey(subdomain);
     await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
   }
 
   // --- ACME account + TLS certs (auto-renewed public certs) --- //
 
-  async setAcmeAccount (account) {
+  async setAcmeAccount (account: any) {
     await this.execute(
       'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
       [ACME_ACCOUNT_KEY, JSON.stringify(account)]
@@ -302,7 +302,7 @@ class DBrqlite {
     return rows.length === 0 ? null : JSON.parse(rows[0].value);
   }
 
-  async setCertificate (hostname, cert) {
+  async setCertificate (hostname: any, cert: any) {
     const key = getCertificateKey(hostname);
     await this.execute(
       'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
@@ -310,7 +310,7 @@ class DBrqlite {
     );
   }
 
-  async getCertificate (hostname) {
+  async getCertificate (hostname: any) {
     const key = getCertificateKey(hostname);
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key]);
     return rows.length === 0 ? null : JSON.parse(rows[0].value);
@@ -320,7 +320,7 @@ class DBrqlite {
     const rows = await this.query(
       "SELECT key, value FROM keyValue WHERE key LIKE 'tls-cert/%'"
     );
-    return rows.map(row => {
+    return rows.map((row: any) => {
       const cert = JSON.parse(row.value);
       return {
         hostname: row.key.slice('tls-cert/'.length),
@@ -330,14 +330,14 @@ class DBrqlite {
     });
   }
 
-  async deleteCertificate (hostname) {
+  async deleteCertificate (hostname: any) {
     const key = getCertificateKey(hostname);
     await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
   }
 
   // --- Observability config (optional APM) --- //
 
-  async setObservabilityValue (key, value) {
+  async setObservabilityValue (key: any, value: any) {
     const storeKey = getObservabilityKey(key);
     await this.execute(
       'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
@@ -345,7 +345,7 @@ class DBrqlite {
     );
   }
 
-  async getObservabilityValue (key) {
+  async getObservabilityValue (key: any) {
     const storeKey = getObservabilityKey(key);
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [storeKey]);
     return rows.length === 0 ? null : rows[0].value;
@@ -355,20 +355,20 @@ class DBrqlite {
     const rows = await this.query(
       "SELECT key, value FROM keyValue WHERE key LIKE 'observability/%'"
     );
-    return rows.map(row => ({
+    return rows.map((row: any) => ({
       key: row.key.slice('observability/'.length),
       value: row.value
     }));
   }
 
-  async deleteObservabilityValue (key) {
+  async deleteObservabilityValue (key: any) {
     const storeKey = getObservabilityKey(key);
     await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
   }
 
   // --- Mail templates (in-process mail delivery) --- //
 
-  async setMailTemplate (type, lang, part, pug) {
+  async setMailTemplate (type: any, lang: any, part: any, pug: any) {
     const storeKey = getMailTemplateKey(type, lang, part);
     await this.execute(
       'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
@@ -376,7 +376,7 @@ class DBrqlite {
     );
   }
 
-  async getMailTemplate (type, lang, part) {
+  async getMailTemplate (type: any, lang: any, part: any) {
     const storeKey = getMailTemplateKey(type, lang, part);
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [storeKey]);
     return rows.length === 0 ? null : rows[0].value;
@@ -386,7 +386,7 @@ class DBrqlite {
     const rows = await this.query(
       "SELECT key, value FROM keyValue WHERE key LIKE 'mail-template/%'"
     );
-    return rows.map(row => {
+    return rows.map((row: any) => {
       // key shape: `mail-template/<type>/<lang>/<part>`
       const parts = row.key.split('/');
       // parts[0] = 'mail-template', parts[1..-1] = type segments, parts[-2] = lang, parts[-1] = part
@@ -401,7 +401,7 @@ class DBrqlite {
     });
   }
 
-  async deleteMailTemplate (type, lang, part) {
+  async deleteMailTemplate (type: any, lang: any, part: any) {
     if (part != null) {
       const storeKey = getMailTemplateKey(type, lang, part);
       await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
@@ -418,7 +418,7 @@ class DBrqlite {
 
   // --- Access-request state (Plan 55 §12 fix) --- //
 
-  async setAccessState (key, value, expiresAt) {
+  async setAccessState (key: any, value: any, expiresAt: any) {
     const storeKey = getAccessStateKey(key);
     await this.execute(
       'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
@@ -426,7 +426,7 @@ class DBrqlite {
     );
   }
 
-  async getAccessState (key) {
+  async getAccessState (key: any) {
     const storeKey = getAccessStateKey(key);
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [storeKey]);
     if (rows.length === 0) return null;
@@ -439,7 +439,7 @@ class DBrqlite {
     return parsed;
   }
 
-  async deleteAccessState (key) {
+  async deleteAccessState (key: any) {
     const storeKey = getAccessStateKey(key);
     await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
   }
@@ -468,7 +468,7 @@ class DBrqlite {
 
 // --- Key helpers (same as SQLite engine) --- //
 
-function parseEntry (entry) {
+function parseEntry (entry: any) {
   const [type, field, userNameOrValue] = entry.key.split('/');
   const isUnique = (type === 'user-unique');
   return {
@@ -479,37 +479,37 @@ function parseEntry (entry) {
   };
 }
 
-function getUserUniqueKey (field, value) {
+function getUserUniqueKey (field: any, value: any) {
   return 'user-unique/' + field + '/' + value;
 }
 
-function getUserIndexedKey (username, field) {
+function getUserIndexedKey (username: any, field: any) {
   return 'user-indexed/' + field + '/' + username;
 }
 
-function getUserCoreKey (username) {
+function getUserCoreKey (username: any) {
   return 'user-core/' + username;
 }
 
-function getDnsRecordKey (subdomain) {
+function getDnsRecordKey (subdomain: any) {
   return 'dns-record/' + subdomain;
 }
 
-function getCertificateKey (hostname) {
+function getCertificateKey (hostname: any) {
   return 'tls-cert/' + hostname;
 }
 
 const ACME_ACCOUNT_KEY = 'tls-acme-account';
 
-function getObservabilityKey (key) {
+function getObservabilityKey (key: any) {
   return 'observability/' + key;
 }
 
-function getMailTemplateKey (type, lang, part) {
+function getMailTemplateKey (type: any, lang: any, part: any) {
   return 'mail-template/' + type + '/' + lang + '/' + part;
 }
 
-function getAccessStateKey (key) {
+function getAccessStateKey (key: any) {
   return 'access-state/' + key;
 }
 

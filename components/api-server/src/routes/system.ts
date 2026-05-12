@@ -13,7 +13,7 @@ const contentType = require('middleware').contentType;
 const { getLogger } = require('@pryv/boiler');
 const { setMinimalMethodContext, setMethodId } = require('middleware');
 // System (e.g. registration server) calls route handling.
-export default function system (expressApp, app) {
+export default function system (expressApp: any, app: any) {
   const systemAPI = app.systemAPI;
   const config = app.config;
   const adminAccessKey = config.get('auth:adminAccessKey');
@@ -27,25 +27,25 @@ export default function system (expressApp, app) {
    */
   expressApp.all(Paths.System + '/*', setMinimalMethodContext, checkAuth);
   expressApp.post(Paths.System + '/create-user', contentType.json, setMethodId('system.createUser'), createUser);
-  function createUser (req, res, next) {
+  function createUser (req: any, res: any, next: any) {
     const params = Object.assign({}, req.body);
     systemAPI.call(req.context, params, methodCallback(res, next, 201));
   }
-  expressApp.get(Paths.System + '/user-info/:username', setMethodId('system.getUserInfo'), function (req, res, next) {
+  expressApp.get(Paths.System + '/user-info/:username', setMethodId('system.getUserInfo'), function (req: any, res: any, next: any) {
     const params = {
       username: req.params.username
     };
     systemAPI.call(req.context, params, methodCallback(res, next, 200));
   });
-  expressApp.delete(Paths.System + '/users/:username/mfa', setMethodId('system.deactivateMfa'), function (req, res, next) {
+  expressApp.delete(Paths.System + '/users/:username/mfa', setMethodId('system.deactivateMfa'), function (req: any, res: any, next: any) {
     systemAPI.call(req.context, { username: req.params.username }, methodCallback(res, next, 204));
   });
   // --------------------- admin user listing ----------------- //
-  expressApp.get(Paths.System + '/admin/users', setMethodId('system.listUsers'), function (req, res, next) {
+  expressApp.get(Paths.System + '/admin/users', setMethodId('system.listUsers'), function (req: any, res: any, next: any) {
     systemAPI.call(req.context, {}, methodCallback(res, next, 200));
   });
   // --------------------- admin cores listing ----------------- //
-  expressApp.get(Paths.System + '/admin/cores', setMethodId('system.listCores'), function (req, res, next) {
+  expressApp.get(Paths.System + '/admin/cores', setMethodId('system.listCores'), function (req: any, res: any, next: any) {
     systemAPI.call(req.context, {}, methodCallback(res, next, 200));
   });
   // --------------------- admin force-renew --------------------- //
@@ -55,7 +55,7 @@ export default function system (expressApp, app) {
   // Use cases: key compromise, manual rotation, debugging. Body:
   //   { hostname?: string }   // omit to renew the core's primary host
   // Returns: { ok, hostname, issuedAt, expiresAt }.
-  expressApp.post(Paths.System + '/admin/certs/force-renew', contentType.json, async (req, res, next) => {
+  expressApp.post(Paths.System + '/admin/certs/force-renew', contentType.json, async (req: any, res: any, next: any) => {
     try {
       const { forceRenew } = require('./forceRenewIpc.ts');
       const hostname = req.body?.hostname;
@@ -83,14 +83,14 @@ export default function system (expressApp, app) {
   // --------------------- admin certs listing ----------------- //
   // Read-only. Returns the cert metadata PlatformDB has (hostname +
   // validity dates) — never the cert or key material itself.
-  expressApp.get(Paths.System + '/admin/certs', async (req, res, next) => {
+  expressApp.get(Paths.System + '/admin/certs', async (req: any, res: any, next: any) => {
     try {
       const platformDB = require('storages').platformDB;
       const certs = typeof platformDB.listCertificates === 'function'
         ? await platformDB.listCertificates()
         : [];
       res.status(200).json({
-        certs: certs.map(c => ({
+        certs: certs.map((c: any) => ({
           hostname: c.hostname,
           issuedAt: c.issuedAt,
           expiresAt: c.expiresAt,
@@ -109,21 +109,21 @@ export default function system (expressApp, app) {
   // every worker on this core refreshes its materialised Pug tmp-dir on
   // the next request; other cores pick up the change via rqlite
   // replication + their own master's periodic cache re-read.
-  expressApp.get(Paths.System + '/admin/mail/templates', async (req, res, next) => {
+  expressApp.get(Paths.System + '/admin/mail/templates', async (req: any, res: any, next: any) => {
     try {
       const platformDB = require('storages').platformDB;
       const rows = typeof platformDB.getAllMailTemplates === 'function'
         ? await platformDB.getAllMailTemplates()
         : [];
       res.status(200).json({
-        templates: rows.map(r => ({ type: r.type, lang: r.lang, part: r.part, length: r.pug.length }))
+        templates: rows.map((r: any) => ({ type: r.type, lang: r.lang, part: r.part, length: r.pug.length }))
       });
     } catch (err: any) {
       logger.error('admin/mail/templates list failed: ' + err.message);
       next(err);
     }
   });
-  expressApp.get(Paths.System + '/admin/mail/templates/:type/:lang/:part', async (req, res, next) => {
+  expressApp.get(Paths.System + '/admin/mail/templates/:type/:lang/:part', async (req: any, res: any, next: any) => {
     try {
       const { type, lang, part } = req.params;
       const platformDB = require('storages').platformDB;
@@ -137,7 +137,7 @@ export default function system (expressApp, app) {
       next(err);
     }
   });
-  expressApp.put(Paths.System + '/admin/mail/templates/:type/:lang/:part', contentType.json, async (req, res, next) => {
+  expressApp.put(Paths.System + '/admin/mail/templates/:type/:lang/:part', contentType.json, async (req: any, res: any, next: any) => {
     try {
       const { type, lang, part } = req.params;
       const pug = req.body && typeof req.body.pug === 'string' ? req.body.pug : null;
@@ -153,7 +153,7 @@ export default function system (expressApp, app) {
       next(err);
     }
   });
-  expressApp.delete(Paths.System + '/admin/mail/templates/:type/:lang/:part', async (req, res, next) => {
+  expressApp.delete(Paths.System + '/admin/mail/templates/:type/:lang/:part', async (req: any, res: any, next: any) => {
     try {
       const { type, lang, part } = req.params;
       const platformDB = require('storages').platformDB;
@@ -167,7 +167,7 @@ export default function system (expressApp, app) {
       next(err);
     }
   });
-  expressApp.post(Paths.System + '/admin/mail/send-test', contentType.json, async (req, res, next) => {
+  expressApp.post(Paths.System + '/admin/mail/send-test', contentType.json, async (req: any, res: any, next: any) => {
     try {
       const { type, lang, recipient } = req.body || {};
       if (!type || !lang || !recipient) {
@@ -208,7 +208,7 @@ export default function system (expressApp, app) {
   // Auth is the one-time join token in the request body, NOT the admin key
   // (see bypass in checkAuth below). The handler verifies the token via
   // TokenStore, flips PlatformDB's `available:true`, returns a cluster snapshot.
-  expressApp.post(Paths.System + '/admin/cores/ack', contentType.json, async (req, res, next) => {
+  expressApp.post(Paths.System + '/admin/cores/ack', contentType.json, async (req: any, res: any, next: any) => {
     try {
       const TokenStore = require('business/src/bootstrap/index.ts').TokenStore;
       const ackHandler = require('business/src/bootstrap/index.ts').ackHandler;
@@ -227,7 +227,7 @@ export default function system (expressApp, app) {
     }
   });
   // --------------------- user validation (pre-registration) ----------------- //
-  expressApp.post(Paths.System + '/users/validate', contentType.json, async (req, res, next) => {
+  expressApp.post(Paths.System + '/users/validate', contentType.json, async (req: any, res: any, next: any) => {
     try {
       const { username, invitationToken, uniqueFields = {} } = req.body;
       const { getPlatform } = require('platform');
@@ -249,7 +249,7 @@ export default function system (expressApp, app) {
 
       // 3. Check unique fields
       delete uniqueFields.username;
-      const conflicts = {};
+      const conflicts: any = {};
       for (const [field, value] of Object.entries(uniqueFields)) {
         const existing = await platformDB.getUsersUniqueField(field, value);
         if (existing) {
@@ -280,7 +280,7 @@ export default function system (expressApp, app) {
     }
   });
   // --------------------- user update (system) ----------------- //
-  expressApp.put(Paths.System + '/users', contentType.json, async (req, res, next) => {
+  expressApp.put(Paths.System + '/users', contentType.json, async (req: any, res: any, next: any) => {
     try {
       const { username, user: fieldsForUpdate = {}, fieldsToDelete = {} } = req.body;
       if (!username) {
@@ -322,7 +322,7 @@ export default function system (expressApp, app) {
     }
   });
   // --------------------- user delete (system, with onlyReg/dryRun) ----------------- //
-  expressApp.delete(Paths.System + '/users/:username', async (req, res, next) => {
+  expressApp.delete(Paths.System + '/users/:username', async (req: any, res: any, next: any) => {
     try {
       const username = req.params.username;
       const onlyReg = req.query.onlyReg === 'true';
@@ -361,12 +361,12 @@ export default function system (expressApp, app) {
     }
   });
   // --------------------- health checks ----------------- //
-  expressApp.get(Paths.System + '/check-platform-integrity', setMethodId('system.checkPlatformIntegrity'), function (req, res, next) {
+  expressApp.get(Paths.System + '/check-platform-integrity', setMethodId('system.checkPlatformIntegrity'), function (req: any, res: any, next: any) {
     systemAPI.call(req.context, {}, methodCallback(res, next, 200));
   });
   // Checks if `req` contains valid authorization to access the system routes.
   //
-  function checkAuth (req, res, next) {
+  function checkAuth (req: any, res: any, next: any) {
     // Bootstrap ack uses one-time join token instead of adminAccessKey.
     // The handler itself verifies the token; admit the request unconditionally.
     if (req.method === 'POST' && req.path === Paths.System + '/admin/cores/ack') {

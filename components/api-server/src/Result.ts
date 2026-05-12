@@ -29,51 +29,51 @@ const { DummyTracing } = require('tracing');
 //
 
 class Result {
-  _private;
+  _private!: any;
 
-  meta;
+  meta: any;
   // These are used by the various methods to store the result objects.
   // Never assume these are filled in...
   // Exercise to the reader: How can we get rid of this mixed bag of things?
 
-  accesses;
+  accesses: any;
 
-  access;
+  access: any;
 
-  accessDeletion;
+  accessDeletion: any;
 
-  accessDeletions;
+  accessDeletions: any;
 
-  relatedDeletions;
+  relatedDeletions: any;
 
-  matchingAccess;
+  matchingAccess: any;
 
-  mismatchingAccess;
+  mismatchingAccess: any;
 
-  checkedPermissions;
+  checkedPermissions: any;
 
-  error;
+  error: any;
 
-  event;
+  event: any;
 
-  events;
+  events: any;
 
-  type;
+  type: any;
 
-  name;
+  name: any;
 
-  permissions;
+  permissions: any;
 
-  results;
+  results: any;
 
-  webhook;
+  webhook: any;
 
-  webhooks;
+  webhooks: any;
 
-  webhookDeletion;
+  webhookDeletion: any;
 
-  auditLogs;
-  constructor (params) {
+  auditLogs: any;
+  constructor (params: any) {
     this._private = {
       init: false,
       first: true,
@@ -96,7 +96,7 @@ class Result {
   }
 
   // Array concat stream
-  addToConcatArrayStream (arrayName, stream) {
+  addToConcatArrayStream (arrayName: any, stream: any) {
     if (!this._private.streamsConcatArrays[arrayName]) {
       this._private.streamsConcatArrays[arrayName] = new StreamConcatArray(this._private.tracing, this._private.tracingId);
     }
@@ -105,7 +105,7 @@ class Result {
   }
 
   // Close
-  closeConcatArrayStream (arrayName) {
+  closeConcatArrayStream (arrayName: any) {
     if (!this._private.streamsConcatArrays[arrayName]) {
       return;
     }
@@ -116,7 +116,7 @@ class Result {
 
   // Pushes stream on the streamsArray stack, FIFO.
   //
-  addStream (arrayName, stream, isArray = true) {
+  addStream (arrayName: any, stream: any, isArray = true) {
     this._private.isStreamResult = true;
     this._private.streamsArray.push({ name: arrayName, stream, isArray });
   }
@@ -129,13 +129,13 @@ class Result {
 
   // Execute the following when result has been fully sent
   // If already sent callback is called right away
-  onEnd (callback) {
+  onEnd (callback: any) {
     this._private.onEndCallback = callback;
   }
 
   // Sends the content of Result to the HttpResponse stream passed in parameters.
   //
-  writeToHttpResponse (res, successCode) {
+  writeToHttpResponse (res: any, successCode: any) {
     const onEndCallBack = this._private.onEndCallback;
     if (this.isStreamResult()) {
       const writeTracingId = this._private.tracing.startSpan('writeToHttpResponse', {}, this._private.tracingId);
@@ -152,7 +152,7 @@ class Result {
     }
   }
 
-  writeStreams (res, successCode) {
+  writeStreams (res: any, successCode: any) {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Transfer-Encoding', 'chunked');
     res.statusCode = successCode;
@@ -172,7 +172,7 @@ class Result {
       .pipe(res);
   }
 
-  writeSingle (res, successCode) {
+  writeSingle (res: any, successCode: any) {
     delete this._private;
     res.status(successCode).json(commonMeta.setCommonMeta(this));
   }
@@ -180,7 +180,7 @@ class Result {
   // Returns the content of the Result object in a JS object.
   // In case the Result contains a streamsArray, it will drain them in arrays.
   //
-  toObject (callback) {
+  toObject (callback: any) {
     this.closeTracing();
     if (this.isStreamResult()) {
       this.toObjectStream(callback);
@@ -189,16 +189,16 @@ class Result {
     }
   }
 
-  toObjectStream (callback) {
+  toObjectStream (callback: any) {
     const _private = this._private;
     const streamsArray = _private.streamsArray;
-    const resultObj = {};
+    const resultObj: any = {};
     let i = 0;
-    function nextElement (err?) {
+    function nextElement (err?: any) {
       if (err) return callback(err);
       if (i >= streamsArray.length) return callback(null, resultObj);
       const elementDef = streamsArray[i++];
-      const drain = new DrainStream({ limit: _private.arrayLimit, isArray: elementDef.isArray }, (err, list) => {
+      const drain = new DrainStream({ limit: _private.arrayLimit, isArray: elementDef.isArray }, (err: any, list: any) => {
         if (err) return nextElement(err);
         resultObj[elementDef.name] = list;
         nextElement();
@@ -208,7 +208,7 @@ class Result {
     nextElement();
   }
 
-  toObjectSingle (callback) {
+  toObjectSingle (callback: any) {
     delete this._private;
     callback(null, this);
   }
@@ -217,11 +217,11 @@ class Result {
 // Http.response
 /** @extends Transform */
 class ResultStream extends Transform {
-  isStart;
-  tracing;
-  tracingId;
-  debugString;
-  constructor (tracing, parentTracingId) {
+  isStart: any;
+  tracing: any;
+  tracingId: any;
+  debugString: any;
+  constructor (tracing: any, parentTracingId: any) {
     super({ writableObjectMode: true });
     this.isStart = true;
     this.tracing = tracing;
@@ -229,7 +229,7 @@ class ResultStream extends Transform {
     this.debugString = '';
   }
 
-  _transform (data, encoding, callback) {
+  _transform (data: any, encoding: any, callback: any) {
     if (this.isStart) {
       this.push('{');
       this.isStart = false;
@@ -243,7 +243,7 @@ class ResultStream extends Transform {
   // uncomment to debug
   // push (data) { this.debugString += data; super.push(data); }
 
-  _flush (callback) {
+  _flush (callback: any) {
     const thing = ' "meta": ' + JSON.stringify(commonMeta.setCommonMeta({}).meta);
     this.push(thing + '}');
     this.tracing.finishSpan('resultStream');
@@ -255,18 +255,18 @@ class ResultStream extends Transform {
 export default Result;
 export { Result };
 class StreamConcatArray {
-  streamsToAdd;
+  streamsToAdd: any[];
 
-  nextFactoryCallBack;
+  nextFactoryCallBack: any;
 
-  multistream;
+  multistream: any;
 
-  isClosed;
+  isClosed: any;
 
-  tracing;
+  tracing: any;
 
-  tracingName;
-  constructor (tracing, parentTracingId) {
+  tracingName: any;
+  constructor (tracing: any, parentTracingId: any) {
     // holds pending stream not yet taken by
     this.streamsToAdd = [];
     this.nextFactoryCallBack = null;
@@ -274,7 +274,7 @@ class StreamConcatArray {
     this.tracing = tracing;
     this.tracingName = this.tracing.startSpan('streamConcat', {}, parentTracingId);
     const streamConcact = this;
-    function factory (callback) {
+    function factory (callback: any) {
       streamConcact.nextFactoryCallBack = callback;
       streamConcact._next();
     }
@@ -304,7 +304,7 @@ class StreamConcatArray {
     return this.multistream;
   }
 
-  add (readableStream) {
+  add (readableStream: any) {
     this.tracing.logForSpan(this.tracingName, { event: 'addStream' });
     this.streamsToAdd.push(readableStream);
   }

@@ -26,7 +26,7 @@ class Context {
   db;
   storageLayer;
 
-  constructor (dbOrStorageLayer) {
+  constructor (dbOrStorageLayer: any) {
     const { StorageLayer } = require('storage/src/StorageLayer.ts');
     if (dbOrStorageLayer instanceof StorageLayer) {
       this.storageLayer = dbOrStorageLayer;
@@ -36,7 +36,7 @@ class Context {
     }
   }
 
-  forUser (user) {
+  forUser (user: any) {
     return new UserContext(this, user);
   }
 
@@ -54,7 +54,7 @@ class Context {
         'webhooks'
       ];
       for (const collectionName of collectionNames) {
-        await fromCallback((cb) => this.db.deleteMany({ name: collectionName }, {}, cb));
+        await fromCallback((cb: any) => this.db.deleteMany({ name: collectionName }, {}, cb));
       }
     }
     const usersRepository = await getUsersRepository();
@@ -68,7 +68,7 @@ class UserContext {
   userName;
   user;
 
-  constructor (context, userName) {
+  constructor (context: any, userName: any) {
     this.context = context;
     this.userName = userName;
     // NOTE For simplicity of debugging, we'll assume that user.id ===
@@ -99,7 +99,7 @@ class UserContext {
 }
 
 class DependentsList {
-  dependentItems;
+  dependentItems: any[];
 
   constructor () {
     this.dependentItems = [];
@@ -110,7 +110,7 @@ class DependentsList {
    * @template {FixtureItem} T
    * @param [cb]
    */
-  async addAndCreate (fixtureItem, cb) {
+  async addAndCreate (fixtureItem: any, cb?: any) {
     await fixtureItem.create();
     this.dependentItems.push(fixtureItem);
     if (cb) { cb(fixtureItem); }
@@ -126,7 +126,7 @@ class DependentsList {
    * then returning a promise that only resolves once all individual promises
    * resolve (aka Promise.all).
    */
-  all (fn) {
+  all (fn: any) {
     return Promise.all(this.dependentItems.map(fn));
   }
 }
@@ -137,7 +137,7 @@ class FixtureItem {
   storage;
   attrs;
 
-  constructor (context, attrs) {
+  constructor (context: any, attrs: any) {
     this.dependents = new DependentsList();
     this.context = context;
     this.storage = this.context.initStorage();
@@ -152,7 +152,7 @@ class FixtureItem {
    * Merges attributes given with generated attributes and returns the
    * resulting attribute set.
    */
-  attributes (attrs) {
+  attributes (attrs: any) {
     return deepMerge({
       id: generateId(),
       created: timestamp.now(),
@@ -188,7 +188,7 @@ class DatabaseFixture {
   dependents;
   context;
 
-  constructor (context) {
+  constructor (context: any) {
     this.context = context;
     this.dependents = new DependentsList();
   }
@@ -197,7 +197,7 @@ class DatabaseFixture {
    * Creates a Pryv user. If a callback is given (`cb`), it is called after
    * the user is created.
    */
-  async user (name, attrs = {}, cb) {
+  async user (name: any, attrs: any = {}, cb?: any) {
     await initMall();
     const u = new FixtureUser(this.context.forUser(name), name, attrs);
     await u.remove();
@@ -222,7 +222,7 @@ class DatabaseFixture {
       }
     }
     // clean data anyway
-    const done = await this.dependents.all((fixtureItem) => {
+    const done = await this.dependents.all((fixtureItem: any) => {
       return fixtureItem.remove();
     });
     if (integrityError) {
@@ -234,7 +234,7 @@ class DatabaseFixture {
 }
 
 class FixtureUser extends FixtureItem {
-  constructor (context, name, attrs) {
+  constructor (context: any, name: any, attrs: any) {
     super(context, deepMerge({
       id: name,
       username: name,
@@ -244,12 +244,12 @@ class FixtureUser extends FixtureItem {
     }, attrs));
   }
 
-  stream (attrs: any = {}, cb?) {
+  stream (attrs: any = {}, cb?: any) {
     const s = new FixtureStream(this.context, attrs);
     return this.dependents.addAndCreate(s, cb);
   }
 
-  event (attrs) {
+  event (attrs: any) {
     logger.debug('event', attrs);
     const e = new FixtureEvent(this.context, attrs);
     return this.dependents.addAndCreate(e);
@@ -260,12 +260,12 @@ class FixtureUser extends FixtureItem {
     return this.dependents.addAndCreate(a);
   }
 
-  session (token) {
+  session (token: any) {
     const s = new FixtureSession(this.context, token);
     return this.dependents.addAndCreate(s);
   }
 
-  webhook (attrs = {}, accessId) {
+  webhook (attrs: any = {}, accessId: any) {
     const w = new FixtureWebhook(this.context, attrs, accessId);
     return this.dependents.addAndCreate(w);
   }
@@ -294,7 +294,7 @@ class FixtureUser extends FixtureItem {
     // Then remove remaining dependents (accesses, webhooks,
     // sessions). Events and streams are already gone via mall.deleteUser inside
     // deleteOne; their individual remove() methods handle "not found" gracefully.
-    await this.dependents.all((fixtureItem) => fixtureItem.remove());
+    await this.dependents.all((fixtureItem: any) => fixtureItem.remove());
   }
 
   fakeAttributes () {
@@ -309,7 +309,7 @@ class FixtureUser extends FixtureItem {
 class FixtureStream extends FixtureItem {
   parentId;
 
-  constructor (context, attrs, parentId?) {
+  constructor (context: any, attrs: any, parentId?: any) {
     if (parentId) {
       attrs.parentId = parentId;
     }
@@ -317,12 +317,12 @@ class FixtureStream extends FixtureItem {
     this.parentId = attrs.parentId;
   }
 
-  stream (attrs = {}, cb) {
+  stream (attrs: any = {}, cb: any) {
     const s = new FixtureStream(this.context, attrs, this.attrs.id);
     return this.dependents.addAndCreate(s, cb);
   }
 
-  event (attrs) {
+  event (attrs: any) {
     logger.debug('event', attrs);
     const e = new FixtureEvent(this.context, attrs, this.attrs.id);
     return this.dependents.addAndCreate(e);
@@ -336,7 +336,7 @@ class FixtureStream extends FixtureItem {
 
   async remove () {
     // First remove all dependents (child streams and events)
-    await this.dependents.all((fixtureItem) => fixtureItem.remove());
+    await this.dependents.all((fixtureItem: any) => fixtureItem.remove());
     // Then remove this stream
     const user = this.context.user;
     if (mall == null) { mall = await getMall(); }
@@ -358,7 +358,7 @@ class FixtureStream extends FixtureItem {
 }
 
 class FixtureEvent extends FixtureItem {
-  constructor (context, attrs, streamId?) {
+  constructor (context: any, attrs: any, streamId?: any) {
     if (streamId) {
       // used by stream.event()
       super(context, { ...attrs, streamIds: [streamId] });
@@ -405,13 +405,13 @@ class FixtureAccess extends FixtureItem {
     const storageItems = this.storage;
     const user = this.context.user;
     const attributes = deepMerge(this.fakeAttributes(), this.attrs);
-    return await fromCallback((cb) => storageItems.accesses.insertOne(user, attributes, cb));
+    return await fromCallback((cb: any) => storageItems.accesses.insertOne(user, attributes, cb));
   }
 
   async remove () {
     const storageItems = this.storage;
     const user = this.context.user;
-    await fromCallback((cb) => storageItems.accesses.removeOne(user, { id: this.attrs.id }, cb));
+    await fromCallback((cb: any) => storageItems.accesses.removeOne(user, { id: this.attrs.id }, cb));
   }
 
   fakeAttributes () {
@@ -425,7 +425,7 @@ class FixtureAccess extends FixtureItem {
 }
 
 class FixtureWebhook extends FixtureItem {
-  constructor (context, attrs, accessId) {
+  constructor (context: any, attrs: any, accessId: any) {
     super(context, { ...attrs, accessId });
   }
 
@@ -434,13 +434,13 @@ class FixtureWebhook extends FixtureItem {
     const user = this.context.user;
     const attributes = this.attrs;
     const webhook = new Webhook(attributes).forStorage();
-    return await fromCallback((cb) => storageItems.webhooks.insertOne(user, webhook, cb));
+    return await fromCallback((cb: any) => storageItems.webhooks.insertOne(user, webhook, cb));
   }
 
   async remove () {
     const storageItems = this.storage;
     const user = this.context.user;
-    await fromCallback((cb) => storageItems.webhooks.delete(user, { id: this.attrs.id }, cb));
+    await fromCallback((cb: any) => storageItems.webhooks.delete(user, { id: this.attrs.id }, cb));
   }
 
   fakeAttributes () {
@@ -452,9 +452,9 @@ class FixtureWebhook extends FixtureItem {
 }
 
 class FixtureSession extends FixtureItem {
-  session;
+  session: any;
 
-  constructor (context, token) {
+  constructor (context: any, token: any) {
     const attrs: any = {};
     if (token != null) { attrs.id = token; }
     super(context, attrs);
@@ -464,14 +464,14 @@ class FixtureSession extends FixtureItem {
     const storageItems = this.storage;
     const user = this.context.user;
     const attributes = this.attrs;
-    return await fromCallback((cb) => storageItems.sessions.insertOne(user, attributes, cb));
+    return await fromCallback((cb: any) => storageItems.sessions.insertOne(user, attributes, cb));
   }
 
   async remove () {
     const storageItems = this.storage;
     // Session id is stored in attrs.id or attrs._id
     const sessionId = this.attrs.id || this.attrs._id;
-    await fromCallback((cb) => storageItems.sessions.destroy(sessionId, cb));
+    await fromCallback((cb: any) => storageItems.sessions.destroy(sessionId, cb));
   }
 
   fakeAttributes () {
@@ -495,11 +495,11 @@ class FixtureSession extends FixtureItem {
 class SessionsFixture {
   sessions;
 
-  constructor (sessions) {
+  constructor (sessions: any) {
     this.sessions = sessions;
   }
 
-  insertOne (user, attributes, cb) {
+  insertOne (user: any, attributes: any, cb: any) {
     const doc = {
       _id: attributes.id || attributes._id,
       data: attributes.data,
@@ -508,7 +508,7 @@ class SessionsFixture {
     this.sessions.importAll([doc], cb);
   }
 
-  destroy (id, cb) {
+  destroy (id: any, cb: any) {
     this.sessions.destroy(id, cb);
   }
 }
@@ -522,7 +522,7 @@ class Sessions {
   collectionInfo;
   db;
 
-  constructor (db) {
+  constructor (db: any) {
     this.db = db;
     this.collectionInfo = {
       name: 'sessions',
@@ -541,24 +541,24 @@ class Sessions {
    *       id: string;
    *     }} user
    */
-  insertOne (user, attributes, cb) {
+  insertOne (user: any, attributes: any, cb: any) {
     const id = attributes.id;
     delete attributes.id;
     attributes._id = id;
     this.db.insertOne(this.collectionInfo, attributes, cb);
   }
 
-  destroy (id, cb) {
+  destroy (id: any, cb: any) {
     this.db.deleteOne(this.collectionInfo, { _id: id }, cb);
   }
 }
 
-function databaseFixture (dbOrStorageLayer) {
+function databaseFixture (dbOrStorageLayer: any) {
   const context = new Context(dbOrStorageLayer);
   return new DatabaseFixture(context);
 }
 
-let mall;
+let mall: any;
 async function initMall () {
   if (mall == null) {
     mall = await getMall();

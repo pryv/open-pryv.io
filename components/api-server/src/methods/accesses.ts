@@ -44,7 +44,7 @@ type Access = {
 type UpdatesSettingsHolder = {
   ignoreProtectedFields: boolean;
 };
-export default async function produceAccessesApiMethods (api) {
+export default async function produceAccessesApiMethods (api: any) {
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };
   const mall = await getMall();
   const storageLayer = await getStorageLayer();
@@ -59,7 +59,7 @@ export default async function produceAccessesApiMethods (api) {
     includeDeletionsIfRequested
   );
 
-  async function findAccessibleAccesses (context, params, result, next) {
+  async function findAccessibleAccesses (context: any, params: any, result: any, next: any) {
     const currentAccess = context.access;
     const accessesRepository = storageLayer.accesses;
     const query: any = {};
@@ -69,9 +69,9 @@ export default async function produceAccessesApiMethods (api) {
       query.createdBy = currentAccess.id;
     }
     try {
-      let accesses = await fromCallback((cb) => accessesRepository.find(context.user, query, dbFindOptions, cb));
+      let accesses: any = await fromCallback((cb: any) => accessesRepository.find(context.user, query, dbFindOptions, cb));
       if (excludeExpired(params)) {
-        accesses = accesses.filter((a) => !isAccessExpired(a));
+        accesses = accesses.filter((a: any) => !isAccessExpired(a));
       }
       // Add apiEndpoint
       for (let i = 0; i < accesses.length; i++) {
@@ -82,12 +82,12 @@ export default async function produceAccessesApiMethods (api) {
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
-    function excludeExpired (params) {
+    function excludeExpired (params: any) {
       return !params.includeExpired;
     }
   }
 
-  async function includeDeletionsIfRequested (context, params, result, next) {
+  async function includeDeletionsIfRequested (context: any, params: any, result: any, next: any) {
     if (params.includeDeletions == null) {
       return next();
     }
@@ -99,7 +99,7 @@ export default async function produceAccessesApiMethods (api) {
       query.createdBy = currentAccess.id;
     }
     try {
-      const deletions = await fromCallback((cb) => accessesRepository.findDeletions(context.user, query, { projection: { calls: 0 } }, cb));
+      const deletions = await fromCallback((cb: any) => accessesRepository.findDeletions(context.user, query, { projection: { calls: 0 } }, cb));
       result.accessDeletions = deletions;
       next();
     } catch (err) {
@@ -124,12 +124,12 @@ export default async function produceAccessesApiMethods (api) {
     addIntegrityToContext
   );
 
-  function applyDefaultsForCreation (context, params, result, next) {
+  function applyDefaultsForCreation (context: any, params: any, result: any, next: any) {
     params.type ??= 'shared';
     next();
   }
 
-  async function applyPrerequisitesForCreation (context, params, result, next) {
+  async function applyPrerequisitesForCreation (context: any, params: any, result: any, next: any) {
     if (params.type === 'personal') {
       return next(errors.forbidden('Personal accesses are created automatically on login.'));
     }
@@ -169,7 +169,7 @@ export default async function produceAccessesApiMethods (api) {
   /**
    * If user is creating an access for system streams, apply some validations
    */
-  function applyAccountStreamsValidation (context, params, result, next) {
+  function applyAccountStreamsValidation (context: any, params: any, result: any, next: any) {
     if (params.permissions == null) { return next(); }
     for (const permission of params.permissions) {
       if (isStreamBasedPermission(permission)) {
@@ -189,11 +189,11 @@ export default async function produceAccessesApiMethods (api) {
       }
     }
 
-    function isStreamBasedPermission (permission) {
+    function isStreamBasedPermission (permission: any) {
       return permission.streamId != null;
     }
 
-    function isUnknownSystemStream (streamId) {
+    function isUnknownSystemStream (streamId: any) {
       return ((streamId.startsWith(':_system:') || streamId.startsWith(':system:')) &&
                 accountStreams.toFieldName(streamId) === streamId);
     }
@@ -203,7 +203,7 @@ export default async function produceAccessesApiMethods (api) {
   // Creates default data structure from permissions if needed, for app
   // authorization.
   //
-  async function createDataStructureFromPermissions (context, params, result, next) {
+  async function createDataStructureFromPermissions (context: any, params: any, result: any, next: any) {
     const access = context.access;
     if (!access.isPersonal()) { return next(); } // not needed for personal access
     for (const permission of params.permissions) {
@@ -214,7 +214,7 @@ export default async function produceAccessesApiMethods (api) {
       }
     }
     return next();
-    async function ensureStream (permission) {
+    async function ensureStream (permission: any) {
       // We ensure stream Exists only if streamid is !== '*' and if a defaultName is providedd
       if (permission.streamId == null ||
                 permission.streamId === '*' ||
@@ -264,21 +264,21 @@ export default async function produceAccessesApiMethods (api) {
    * Strips off the properties in permissions that are used to create the default data structure
    * (for app authorization).
    */
-  function cleanupPermissions (context, params, result, next) {
+  function cleanupPermissions (context: any, params: any, result: any, next: any) {
     if (!params.permissions) {
       return next();
     }
-    params.permissions.forEach(function (perm) {
+    params.permissions.forEach(function (perm: any) {
       delete perm.defaultName;
       delete perm.name;
     });
     next();
   }
 
-  function createAccess (context, params, result, next) {
+  function createAccess (context: any, params: any, result: any, next: any) {
     const accessesRepository = storageLayer.accesses;
     if (params.type === 'shared') params.deviceName = null;
-    accessesRepository.insertOne(context.user, params, function (err, newAccess) {
+    accessesRepository.insertOne(context.user, params, function (err: any, newAccess: any) {
       if (err != null) {
         // Duplicate errors
         if (err.isDuplicateIndex('token')) {
@@ -310,7 +310,7 @@ export default async function produceAccessesApiMethods (api) {
     goneResource
   );
 
-  function goneResource (context, params, result, next) {
+  function goneResource (context: any, params: any, result: any, next: any) {
     next(errors.goneResource('accesses.update has been removed'));
   }
 
@@ -324,13 +324,13 @@ export default async function produceAccessesApiMethods (api) {
     deleteAccesses
   );
 
-  async function checkAccessForDeletion (context, params, result, next) {
+  async function checkAccessForDeletion (context: any, params: any, result: any, next: any) {
     const accessesRepository = storageLayer.accesses;
     const currentAccess = context.access;
     if (currentAccess == null) { return next(new Error('AF: currentAccess cannot be null.')); }
-    let access;
+    let access: any;
     try {
-      access = await fromCallback((cb) => {
+      access = await fromCallback((cb: any) => {
         accessesRepository.findOne(context.user, { id: params.id }, dbFindOptions, cb);
       });
     } catch (err) {
@@ -346,7 +346,7 @@ export default async function produceAccessesApiMethods (api) {
     next();
   }
 
-  async function findRelatedAccesses (context, params, result, next) {
+  async function findRelatedAccesses (context: any, params: any, result: any, next: any) {
     const accessToDelete = params.accessToDelete;
     const accessesRepository = storageLayer.accesses;
     // Deleting a personal access does NOT delete the app/shared accesses it
@@ -355,25 +355,25 @@ export default async function produceAccessesApiMethods (api) {
     if (accessToDelete.type === 'personal') {
       return next();
     }
-    let accesses;
+    let accesses: any;
     try {
-      accesses = await fromCallback((cb) => {
+      accesses = await fromCallback((cb: any) => {
         accessesRepository.find(context.user, { createdBy: params.id }, dbFindOptions, cb);
       });
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
     if (accesses.length === 0) { return next(); }
-    accesses = accesses.filter((a) => a.id !== params.id);
-    accesses = accesses.filter((a) => !isAccessExpired(a));
-    accesses = accesses.map((a) => {
+    accesses = accesses.filter((a: any) => a.id !== params.id);
+    accesses = accesses.filter((a: any) => !isAccessExpired(a));
+    accesses = accesses.map((a: any) => {
       return { id: a.id };
     });
     result.relatedDeletions = accesses;
     next();
   }
 
-  async function deleteAccesses (context, params, result, next) {
+  async function deleteAccesses (context: any, params: any, result: any, next: any) {
     const accessesRepository = storageLayer.accesses;
     let idsToDelete = [{ id: params.id }];
     if (result.relatedDeletions != null) {
@@ -387,7 +387,7 @@ export default async function produceAccessesApiMethods (api) {
       }
     }
     try {
-      await fromCallback((cb) => {
+      await fromCallback((cb: any) => {
         accessesRepository.delete(context.user, { $or: idsToDelete }, cb);
       });
     } catch (err) {
@@ -407,14 +407,14 @@ export default async function produceAccessesApiMethods (api) {
     checkApp
   );
 
-  function checkApp (context, params, result, next) {
+  function checkApp (context: any, params: any, result: any, next: any) {
     const accessesRepository = storageLayer.accesses;
     const query = {
       type: 'app',
       name: params.requestingAppId,
       deviceName: params.deviceName || null
     };
-    accessesRepository.findOne(context.user, query, dbFindOptions, function (err, access) {
+    accessesRepository.findOne(context.user, query, dbFindOptions, function (err: any, access: any) {
       if (err != null) { return next(errors.unexpectedError(err)); }
       // Do we have a match?
       if (accessMatches(access, params.requestedPermissions, params.clientData)) {
@@ -423,7 +423,7 @@ export default async function produceAccessesApiMethods (api) {
       }
       // No, we don't have a match. Return other information:
       if (access != null) { result.mismatchingAccess = access; }
-      checkPermissions(context, params.requestedPermissions, function (err, checkedPermissions, checkError) {
+      checkPermissions(context, params.requestedPermissions, function (err: any, checkedPermissions: any, checkError: any) {
         if (err != null) { return next(err); }
         result.checkedPermissions = checkedPermissions;
         if (checkError != null) {
@@ -436,7 +436,7 @@ export default async function produceAccessesApiMethods (api) {
 
   // Returns true if the given access' permissions match the `requestedPermissions`.
   //
-  function accessMatches (access, requestedPermissions, clientData) {
+  function accessMatches (access: any, requestedPermissions: any, clientData: any) {
     if (access == null ||
             access.type !== 'app' ||
             access.permissions.length !== requestedPermissions.length) {
@@ -458,8 +458,8 @@ export default async function produceAccessesApiMethods (api) {
       return false;
     }
     return true;
-    function findByStreamId (permissions, streamId) {
-      return permissions.find(perm => perm.streamId === streamId);
+    function findByStreamId (permissions: any, streamId: any) {
+      return permissions.find((perm: any) => perm.streamId === streamId);
     }
   }
 
@@ -467,12 +467,12 @@ export default async function produceAccessesApiMethods (api) {
   // with the actual `name` of existing streams. When defined, the callback's
   // `checkError` param signals issues with the requested permissions.
   //
-  function checkPermissions (context, permissions, callback) {
+  function checkPermissions (context: any, permissions: any, callback: any) {
     // modify permissions in-place, assume no side fx
     const checkedPermissions = permissions;
     let checkError: any = null;
     let i = 0;
-    function nextPermission (err?) {
+    function nextPermission (err?: any) {
       if (err != null) {
         return err instanceof APIError
           ? callback(err)
@@ -483,7 +483,7 @@ export default async function produceAccessesApiMethods (api) {
     }
     nextPermission();
 
-    function checkPermission (permission, done) {
+    function checkPermission (permission: any, done: any) {
       if (permission.streamId === '*') {
         // cleanup ignored properties just in case
         delete permission.defaultName;
@@ -495,7 +495,7 @@ export default async function produceAccessesApiMethods (api) {
                     '" (and maybe others) is ' +
                     'missing the required "defaultName".'));
       }
-      let permissionStream;
+      let permissionStream: any;
       (async () => {
         try {
           // checkId
@@ -513,7 +513,7 @@ export default async function produceAccessesApiMethods (api) {
               state: 'all',
               includeTrashed: true
             });
-            const rootStreamsNames = rootStreams.map((stream) => stream.name);
+            const rootStreamsNames = rootStreams.map((stream: any) => stream.name);
             const defaultBaseName = permission.defaultName;
             for (let suffixNum = 1; rootStreamsNames.indexOf(permission.defaultName) !== -1; suffixNum++) {
               permission.defaultName = `${defaultBaseName} (${suffixNum})`;
@@ -541,12 +541,12 @@ export default async function produceAccessesApiMethods (api) {
   // business model about accesses. There is one more such check in MethodContext,
   // called `checkAccessValid`.
   //
-  function isAccessExpired (access, nowParam?) {
+  function isAccessExpired (access: any, nowParam?: any) {
     const now = nowParam || timestamp.now();
     return access.expires != null && now > access.expires;
   }
 
-  function addIntegrityToContext (context, params, result, next) {
+  function addIntegrityToContext (context: any, params: any, result: any, next: any) {
     if (result?.access?.integrity != null) {
       context.auditIntegrityPayload = {
         key: integrity.accesses.key(result.access),
