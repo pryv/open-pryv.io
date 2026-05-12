@@ -14,14 +14,23 @@ const { buildHfsIngress, isHfsPath } = require('../src/hfsIngress.ts');
 
 describe('[HFSI] HFS in-process ingress dispatcher', function () {
   describe('[HF01] isHfsPath', function () {
-    it('[HF1A] matches POST /<user>/events/<id>/series', function () {
+    it('[HF1A] matches /<user>/events/<id>/series (dnsLess topology)', function () {
       assert.strictEqual(isHfsPath('/alice/events/cuid-xyz/series'), true);
       assert.strictEqual(isHfsPath('/alice/events/cuid-xyz/series?format=flatJSON'), true);
     });
 
-    it('[HF1B] matches /<user>/series/batch', function () {
+    it('[HF1B] matches /<user>/series/batch (dnsLess topology)', function () {
       assert.strictEqual(isHfsPath('/alice/series/batch'), true);
       assert.strictEqual(isHfsPath('/alice/series/batch?foo=1'), true);
+    });
+
+    it('[HF1D] matches /events/<id>/series (subdomain-per-user topology, e.g. {user}.pryv.me)', function () {
+      // The HFS server's subdomainToPath middleware extracts the
+      // username from the Host header. The dispatcher must let these
+      // through without requiring a user prefix in the URL.
+      assert.strictEqual(isHfsPath('/events/cuid-xyz/series'), true);
+      assert.strictEqual(isHfsPath('/events/cuid-xyz/series?foo=1'), true);
+      assert.strictEqual(isHfsPath('/series/batch'), true);
     });
 
     it('[HF1C] does not match unrelated paths', function () {
@@ -31,9 +40,11 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
       assert.strictEqual(isHfsPath('/service/info'), false);
       assert.strictEqual(isHfsPath('/'), false);
       assert.strictEqual(isHfsPath('/alice/series'), false);
+      assert.strictEqual(isHfsPath('/events'), false);
+      assert.strictEqual(isHfsPath('/events/cuid-xyz'), false);
       // Tricky cases that should NOT route to HFS even if they look close
       assert.strictEqual(isHfsPath('/alice/events//series'), false); // missing eventId
-      assert.strictEqual(isHfsPath('/events/cuid/series'), false); // missing user prefix
+      assert.strictEqual(isHfsPath('/events//series'), false); // missing eventId
     });
   });
 

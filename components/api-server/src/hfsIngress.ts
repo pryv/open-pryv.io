@@ -29,8 +29,14 @@ const require = createRequire(import.meta.url);
 
 const http = require('http');
 
-const HFS_SERIES_RE = /^\/[^/]+\/events\/[^/]+\/series(?:\/|\?|$)/;
-const HFS_BATCH_RE = /^\/[^/]+\/series\/batch(?:\/|\?|$)/;
+// Two URL shapes per deployment topology:
+// - dnsLess (one core, one FQDN, username in path): /<user>/events/<id>/series
+// - subdomain-per-user (e.g. pryv.me's {username}.pryv.me): /events/<id>/series
+// HFS server has a subdomainToPath middleware that extracts the
+// username from the Host header in the subdomain case, so we don't
+// need to massage the URL — just route the request as-is. Match both.
+const HFS_SERIES_RE = /^\/(?:[^/]+\/)?events\/[^/]+\/series(?:\/|\?|$)/;
+const HFS_BATCH_RE = /^\/(?:[^/]+\/)?series\/batch(?:\/|\?|$)/;
 
 function isHfsPath (url: string): boolean {
   return HFS_SERIES_RE.test(url) || HFS_BATCH_RE.test(url);
