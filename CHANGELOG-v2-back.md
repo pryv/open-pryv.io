@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## In-process HFS ingress dispatcher (api-server)
+
+- **NEW** `components/api-server/src/hfsIngress.ts` — `buildHfsIngress({ hfsHost, hfsPort, logger })` factory returns a `(req, res, fallback) => void` dispatcher.
+- **CHANGE** `components/api-server/src/server.ts` now constructs `https.createServer(opts, requestHandler)` where `requestHandler` is a wrapper that calls the HFS dispatcher first, then falls through to `app.expressApp`. The fall-through preserves the prior behavior for all non-HFS paths.
+- **Routes:** `^/<user>/events/<id>/series` and `^/<user>/series/batch` are forwarded via `http.request` to `http.ip:http.hfsPort` (default `127.0.0.1:4000`), streaming both request and response bodies. JSON-shaped 502 on upstream unreachable.
+- **Tests:** 6 `[HFSI]` cases in `components/api-server/test/hfs-ingress.test.js` cover regex matching, dispatch, fallback, and 502.
+- **Note on extraction.** The dispatcher lives inside api-server today because it was the minimum-viable shape for a single dispatcher. When more in-process dispatch lands (previews, mail-templates UI, etc.) or someone needs a clean nginx-swap story, the right shape is to extract the public listener + TLS + dispatcher into a dedicated `components/ingress/` component — filed at `_plans/XXX-Backlog/EXTRACT-INGRESS-COMPONENT.md`.
+
 ## boiler config getters — `getConfigSync()` companion; defer module-top reads
 
 - **NEW** `@pryv/boiler` exports `getConfigSync()` — sync access to the fully-loaded config. Throws if `init()` hasn't been called or if async config-loading is still pending. Use anywhere a sync read is needed at request/test time post-init.

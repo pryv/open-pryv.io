@@ -154,9 +154,11 @@ dnsLess:
 NODE_ENV=production node bin/master.js --config override.yml
 ```
 
-**Note**: When using built-in HTTPS, all three ports (API :3000, HFS :4000, Previews :3001) are served directly by master.js. No additional routing is needed — the client-facing `publicUrl` only covers the API port; HFS and previews are accessed internally or via the API.
+**Note**: When using built-in HTTPS, the public API port also routes HFS series and previews traffic in-process. Clients only need access to the configured `http.port` (typically `:443`); HFS and previews stay on their internal ports (`:4000` / `:3001`) and are reached via dispatchers in front of the api-server.
 
-> **HFS in standalone mode**: The HFS high-frequency series endpoints (`/{user}/events/{id}/series`) are served on port 4000. In standalone mode without nginx, clients need to reach port 4000 directly. If your firewall only exposes port 443, you will need nginx (see below) or to configure HFS on the same port (not yet supported).
+> **HFS in standalone mode**: high-frequency series endpoints (`/{user}/events/{id}/series`, `/{user}/series/batch`) are routed from the public port to the HFS worker on `:4000` by an in-process dispatcher in api-server. Set `cluster.hfsWorkers: 1` (or more) to enable HFS; SDKs read `features.noHF` on `/service/info` to know whether the cluster serves HFS (auto-derived from `cluster.hfsWorkers` — explicit `service.features.noHF` in config takes precedence).
+>
+> The in-process dispatcher is the **quick / out-of-the-box** path. For long-term high-throughput installs, front the cluster with nginx — see `docs/nginx-ingress-sample.conf` for the reference vhost. nginx is more efficient at proxying and unlocks edge features (rate-limiting, header munging, static assets).
 
 ### Option C: built-in HTTPS with auto-renewed Let's Encrypt certificate
 

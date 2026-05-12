@@ -1,5 +1,12 @@
 # Changelog - API Changes
 
+## High-frequency series — in-process dispatch from the public port
+
+- **CHANGE** `POST /<user>/events/<id>/series` and `POST /<user>/series/batch` are now reachable on the **same public port** as the rest of the API (typically `:443` or `http.port`), routed in-process to the HFS worker on `:4000` by a dispatcher in front of api-server. Previously these endpoints only worked if (a) clients reached port `:4000` directly, or (b) an external reverse-proxy (nginx etc.) routed them. Setting `cluster.hfsWorkers: 1` is sufficient — no extra ingress required.
+- **CHANGE** SDKs that read `features.noHF` on `/service/info` short-circuit cleanly when the deployment isn't serving HF (i.e. `cluster.hfsWorkers === 0` and no explicit `service.features.noHF: false` override). Combined with this in-process dispatcher, the previous opaque "Failed loading serie: undefined" failure mode no longer occurs on either path: HFS is either reachable on the same port as the API or explicitly advertised as unavailable.
+- **Deployment notes**: this is the **quick / out-of-the-box** ingress for raw deploys (`node bin/master.js` under systemd, etc.). For long-term high-throughput installs, front the cluster with nginx — a reference vhost ships under `docs/nginx-ingress-sample.conf`. nginx is more efficient and unlocks edge features (rate-limiting, header munging, static assets); the in-process dispatcher stays present but is bypassed because external traffic doesn't hit it.
+- **Why**: customers running raw deploys (no Dokku, no nginx) and wanting HF were previously stuck with workers that started cleanly on `:4000` but were unreachable from outside the host. The Dokku-flavoured installs sidestepped this with a per-app nginx snippet; raw deploys had no equivalent. The in-process dispatcher closes that gap.
+
 ## `accesses.delete` — personal-access delete no longer cascades
 
 - **CHANGE** `DELETE /accesses/:id` on a `personal`-type access no longer cascade-deletes the app/shared accesses it created (the ones with `createdBy === <that personal access id>`). The response's `relatedDeletions` is empty/absent in that case, and the descendant accesses survive in storage.

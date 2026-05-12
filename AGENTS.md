@@ -105,7 +105,7 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 
    Don't add a PM2 / systemd / Docker-compose-style process supervisor around it. master.js *is* the supervisor.
 
-2. **TLS termination is native.** api-server workers call `https.createServer(buildHttpsOptions(config), app.expressApp)` and `setSecureContext()` for **zero-downtime hot-swap** on cert renewal. Don't put nginx/haproxy/caddy in front unless you have a specific reason — you'll duplicate rotation logic and break the IPC-driven hot-swap.
+2. **TLS termination is native.** api-server workers call `https.createServer(buildHttpsOptions(config), requestHandler)` and `setSecureContext()` for **zero-downtime hot-swap** on cert renewal. The `requestHandler` is an in-process dispatcher (`components/api-server/src/hfsIngress.ts`) that routes `^/<user>/events/<id>/series` and `^/<user>/series/batch` to the HFS worker on `localhost:4000` before falling through to `app.expressApp`. This is the **quick / out-of-the-box** ingress; for high-throughput installs, front with nginx (`docs/nginx-ingress-sample.conf`) and let it do the routing instead — the in-process dispatcher stays present but is bypassed because external traffic doesn't reach it.
 
    If you must front-proxy, wire the front's reload into `letsEncrypt.onRotateScript` in config so the front picks up new certs within the same renewal cycle.
 
