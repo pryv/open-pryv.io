@@ -21,7 +21,7 @@ export { localStorePrepareOptions, localStorePrepareQuery };
 /**
  * Convert store API options params to local store options
  */
-function localStorePrepareOptions (options) {
+function localStorePrepareOptions (options: any) {
   const localOptions = {
     sort: { time: options.sortAscending ? 1 : -1 },
     skip: options.skip,
@@ -33,7 +33,7 @@ function localStorePrepareOptions (options) {
 /**
  * Convert store API query params to an array of queries
  */
-function localStorePrepareQuery (query) {
+function localStorePrepareQuery (query: any) {
   const localQuery: any[] = [];
   // trashed
   switch (query.state) {

@@ -85,7 +85,7 @@ class ProjectVersion {
     return null;
   }
 }
-let version = null;
+let version: any = null;
 async function getAPIVersion (forceRefresh = false) {
   if (!version || forceRefresh) {
     const pv = new ProjectVersion();

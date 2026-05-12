@@ -103,7 +103,7 @@ class ClusterCA {
    * @param [opts.ip=null] - optional IP SAN (e.g. '1.2.3.4').
    * @param [opts.hostname=null] - optional extra hostname SAN (e.g. 'core-b.mc.example.com').
    */
-  issueNodeCert ({ coreId, ip = null, hostname = null }) {
+  issueNodeCert ({ coreId, ip = null, hostname = null }: any) {
     if (!coreId) throw new Error('issueNodeCert: coreId is required');
     this.ensure();
 
@@ -149,7 +149,7 @@ class ClusterCA {
   }
 }
 
-function buildSanExtfile ({ coreId, ip, hostname }) {
+function buildSanExtfile ({ coreId, ip, hostname }: any) {
   const sans = [`DNS:${coreId}`];
   if (hostname != null && hostname !== coreId) sans.push(`DNS:${hostname}`);
   if (ip != null) sans.push(`IP:${ip}`);
@@ -161,7 +161,7 @@ function buildSanExtfile ({ coreId, ip, hostname }) {
  * exit. Swallowing stderr unless the command fails keeps the test output
  * clean while preserving diagnostics when something goes wrong.
  */
-function openssl (args) {
+function openssl (args: any) {
   try {
     execFileSync('openssl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (err: any) {

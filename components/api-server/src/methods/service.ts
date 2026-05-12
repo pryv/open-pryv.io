@@ -9,9 +9,9 @@ const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 const { getConfig } = require('@pryv/boiler');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
-export default function (api) {
+export default function (api: any) {
   api.register('service.info', getServiceInfo);
-  async function getServiceInfo (context, params, result, next) {
+  async function getServiceInfo (context: any, params: any, result: any, next: any) {
     // Read live from config every call so config mutations after boot
     // (e.g. the `public-url.js` plugin rewriting URLs when `dns.domain`
     // changes, or admin APIs updating `service.*`) are picked up without

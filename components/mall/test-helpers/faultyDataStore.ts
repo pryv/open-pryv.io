@@ -16,15 +16,15 @@ const ds = require('@pryv/datastore');
  * (Implements no data methods, so all calls will throw "not supported" errors.)
  */
 const faultyDataStore: any = ds.createDataStore({
-  async init (keyValueData) {
+  async init (keyValueData: any) {
     this.streams = createUserStreams();
     this.events = createUserEvents();
     return this;
   },
 
-  async deleteUser (userId) {},
+  async deleteUser (userId: any) {},
 
-  async getUserStorageInfos (userId) { return { }; }
+  async getUserStorageInfos (userId: any) { return { }; }
 });
 export default faultyDataStore;
 

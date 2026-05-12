@@ -381,7 +381,7 @@ const userEvents = ds.createUserEvents({
       await this.db.query('DELETE FROM events WHERE user_id = $1', [userId]);
     } else {
       // Delete events that do NOT have any account stream in their streamIds
-      const placeholders = allAccountStreamIds.map((_, i) => `$${i + 2}`).join(', ');
+      const placeholders = allAccountStreamIds.map((_: any, i: any) => `$${i + 2}`).join(', ');
       // Use the junction table to find events with account streams, then delete the rest
       await this.db.query(
         `DELETE FROM event_streams WHERE user_id = $1

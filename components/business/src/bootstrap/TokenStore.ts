@@ -63,7 +63,7 @@ class TokenStore {
    * @param [opts.ttlMs=24h]
    * @param [opts.now=Date.now()] - injectable for testing
    */
-  mint ({ coreId, ttlMs = DEFAULT_TTL_MS, now = Date.now() }) {
+  mint ({ coreId, ttlMs = DEFAULT_TTL_MS, now = Date.now() }: any) {
     if (!coreId) throw new Error('TokenStore.mint: coreId is required');
     if (!(Number.isInteger(ttlMs) && ttlMs > 0)) {
       throw new Error('TokenStore.mint: ttlMs must be a positive integer');
@@ -90,7 +90,7 @@ class TokenStore {
    * @param [opts]
    * @param [opts.now=Date.now()]
    */
-  verify (rawToken, { now = Date.now() } = {}) {
+  verify (rawToken: any, { now = Date.now() } = {}) {
     if (typeof rawToken !== 'string' || rawToken.length === 0) {
       return { ok: false, reason: 'invalid-format' };
     }
@@ -111,7 +111,7 @@ class TokenStore {
    * @param [opts.consumerIp=null] - recorded for audit
    * @param [opts.now=Date.now()]
    */
-  consume (rawToken, { consumerIp = null, now = Date.now() } = {}) {
+  consume (rawToken: any, { consumerIp = null, now = Date.now() } = {}) {
     if (typeof rawToken !== 'string' || rawToken.length === 0) {
       return { ok: false, reason: 'invalid-format' };
     }
@@ -147,7 +147,7 @@ class TokenStore {
    * tokens revoked.
    *
    */
-  revokeByCoreId (coreId) {
+  revokeByCoreId (coreId: any) {
     if (!coreId) throw new Error('TokenStore.revokeByCoreId: coreId is required');
     const store = this._load();
     let count = 0;
@@ -206,7 +206,7 @@ class TokenStore {
     return parsed;
   }
 
-  _save (store) {
+  _save (store: any) {
     fs.mkdirSync(path.dirname(this.path), { recursive: true });
     const tmp = this.path + '.tmp-' + process.pid + '-' + Date.now();
     fs.writeFileSync(tmp, JSON.stringify(store, null, 2), { mode: 0o600 });
@@ -214,7 +214,7 @@ class TokenStore {
   }
 }
 
-function sha256 (s) {
+function sha256 (s: any) {
   return crypto.createHash('sha256').update(s).digest('hex');
 }
 

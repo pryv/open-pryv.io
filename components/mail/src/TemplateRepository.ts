@@ -25,12 +25,12 @@ const logger = getLogger('mail-template-repository');
 class TemplateRepository {
   defaultLanguage: any;
   templateExists: any;
-  constructor (defaultLanguage, templateExists) {
+  constructor (defaultLanguage: any, templateExists: any) {
     this.defaultLanguage = defaultLanguage;
     this.templateExists = templateExists;
   }
 
-  async find (mailType, requestedLanguage) {
+  async find (mailType: any, requestedLanguage: any) {
     const candidateLanguages = [requestedLanguage, this.defaultLanguage];
     for (const currentLanguage of candidateLanguages) {
       if (currentLanguage == null) continue;
@@ -41,7 +41,7 @@ class TemplateRepository {
     throw errors.unknownResource('No template found.');
   }
 
-  async produceTemplate (mailType, language) {
+  async produceTemplate (mailType: any, language: any) {
     const template = new Template(mailType, language, this.templateExists);
     if (!await template.exists()) return null;
     return template;

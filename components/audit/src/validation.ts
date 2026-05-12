@@ -32,13 +32,13 @@ const filterSchema = helpers.object({
   additionalProperties: false
 });
 
-function eventForUser (userId, event) {
+function eventForUser (userId: any, event: any) {
   // validate uiserid
   if (!userId) return 'missing userId passed in validation';
   return eventWithoutUser(event);
 }
 
-function eventWithoutUser (event) {
+function eventWithoutUser (event: any) {
   if (!event) return 'event is null';
   if (!event.type) return 'event.type is missisng';
   if (!event.createdBy) return 'event.createBy is missing';
@@ -52,7 +52,7 @@ function eventWithoutUser (event) {
   return true;
 }
 
-function filter (filter) {
+function filter (filter: any) {
   const isValid = validator.validate(filter, filterSchema);
   if (!isValid) {
     throw new Error('Invalid "audit:filter" configuration parameter: \n' +
@@ -62,20 +62,20 @@ function filter (filter) {
   }
   validateFunctions(filter.methods.include);
   validateFunctions(filter.methods.exclude);
-  function validateFunctions (methods) {
-    methods.forEach(m => {
+  function validateFunctions (methods: any) {
+    methods.forEach((m: any) => {
       if (isMethodAggregate(m)) return isValidAggregate(m);
       return ALL_METHODS_MAP[m];
     });
 
-    function isMethodAggregate (m) {
+    function isMethodAggregate (m: any) {
       const parts = m.split('.');
       if (parts.length !== 2) return false;
       if (parts[1] !== 'all') return false;
       return true;
     }
 
-    function isValidAggregate (m) {
+    function isValidAggregate (m: any) {
       const parts = m.split('.');
       for (let i = 0; i < ALL_METHODS.length; i++) {
         if (ALL_METHODS[i].startsWith(parts[0])) return true;

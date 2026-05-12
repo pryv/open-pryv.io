@@ -32,7 +32,7 @@ let userAccountStorage: any = null;
 let fieldStreamMap: any = null;
 
 const accountStore = ds.createDataStore({
-  async init (params) {
+  async init (params: any) {
     const { settings } = params;
     if (!settings || !settings.streamTree) {
       throw new Error('accountStore requires settings.streamTree (system streams config)');
@@ -63,13 +63,13 @@ const accountStore = ds.createDataStore({
   streams: null,
   events: null,
 
-  async deleteUser (userId) {
+  async deleteUser (userId: any) {
     if (userAccountStorage) {
       await userAccountStorage._clearAll(userId);
     }
   },
 
-  async getUserStorageInfos (userId) {
+  async getUserStorageInfos (userId: any) {
     return {};
   }
 });
@@ -85,12 +85,12 @@ export default accountStore;
  * (or empty children array).
  *
  */
-function buildFieldStreamMap (streamTree) {
+function buildFieldStreamMap (streamTree: any) {
   const map = new Map();
   collectLeaves(streamTree);
   return map;
 
-  function collectLeaves (streams) {
+  function collectLeaves (streams: any) {
     for (const s of streams) {
       if (s.children && s.children.length > 0) {
         collectLeaves(s.children);
@@ -111,7 +111,7 @@ function buildFieldStreamMap (streamTree) {
  * ':system:phone' → 'phone'
  * 'email' → 'email' (already unprefixed)
  */
-function extractFieldName (streamId) {
+function extractFieldName (streamId: any) {
   const lastColon = streamId.lastIndexOf(':');
   if (lastColon >= 0) {
     return streamId.substring(lastColon + 1);

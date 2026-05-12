@@ -30,7 +30,7 @@ const { getLogger } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 // Initializes the SocketIO subsystem.
 //
-async function setupSocketIO (server, api, customAuthStepFn) {
+async function setupSocketIO (server: any, api: any, customAuthStepFn: any) {
   const logger = getLogger('socketIO');
   const storageLayer = await getStorageLayer();
   const io = socketIO.listen(server, {
@@ -40,13 +40,13 @@ async function setupSocketIO (server, api, customAuthStepFn) {
   const manager = new Manager(logger, io, api, storageLayer, customAuthStepFn);
   // dynamicNamspaces allow to "auto" create namespaces
   // when connected pass the socket to Manager
-  const dynamicNamespace = io.of(/^\/.+$/).on('connect', async (socket) => {
+  const dynamicNamespace = io.of(/^\/.+$/).on('connect', async (socket: any) => {
     const nameSpaceContext = await manager.ensureInitNamespace(socket.nsp.name);
     nameSpaceContext.onConnect(socket);
   });
     // add a middelware for authentication
     // add middelware for authentication
-  dynamicNamespace.use(async (socket, next) => {
+  dynamicNamespace.use(async (socket: any, next: any) => {
     try {
       const nsName = socket.nsp.name;
       const query = socket.handshake.query;

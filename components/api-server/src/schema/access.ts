@@ -16,7 +16,7 @@ const object = helpers.object;
 const array = helpers.array;
 const string = helpers.string;
 
-function accessSchema (action) {
+function accessSchema (action: any) {
   if (action === Action.STORE) { action = Action.READ; } // read items === stored items
 
   const base: any = object({
@@ -117,7 +117,7 @@ function accessSchema (action) {
 const permissionLevel = string({ enum: ['read', 'contribute', 'manage', 'create-only', 'none'] });
 const featureSetting = string({ enum: ['forbidden'] });
 
-function permissions (action) {
+function permissions (action: any) {
   const streamPermission = object({
     streamId: {
       type: ['string', 'null']

@@ -51,7 +51,7 @@ class DynamicInstanceManager extends EventEmitter {
   restartAsync: () => Promise<void>;
   stopAsync: () => Promise<void>;
 
-  constructor (config, options: any = {}) {
+  constructor (config: any, options: any = {}) {
     super();
     this.config = config;
     this.messagePrefix = options.messagePrefix || '';
@@ -84,7 +84,7 @@ class DynamicInstanceManager extends EventEmitter {
   }
 
   /** Allocate ports and start the server. */
-  ensureStarted (inputSettings, callback) {
+  ensureStarted (inputSettings: any, callback: any) {
     const settingsCopy = structuredClone(inputSettings);
 
     // Force console settings
@@ -138,7 +138,7 @@ class DynamicInstanceManager extends EventEmitter {
   }
 
   /** Restart the server with the same settings. */
-  restart (callback) {
+  restart (callback: any) {
     if (!this.serverSettings) {
       return callback(new Error('Cannot restart: server was never started with ensureStarted'));
     }
@@ -146,7 +146,7 @@ class DynamicInstanceManager extends EventEmitter {
   }
 
   /** Start the server process. @api private */
-  start (callback) {
+  start (callback: any) {
     if (this.isRunning()) {
       throw new Error('Server is already running; stop it first.');
     }
@@ -175,21 +175,21 @@ class DynamicInstanceManager extends EventEmitter {
     let serverExited = false;
     let exitCode: number | null = null;
 
-    this.serverProcess.on('exit', (code) => {
+    this.serverProcess.on('exit', (code: any) => {
       this.logger.debug('Server instance exited with code ' + code);
       serverExited = true;
       exitCode = code;
       this.serverProcess = null;
     });
 
-    this.serverProcess.on('error', (err) => {
+    this.serverProcess.on('error', (err: any) => {
       this.logger.error('Server process error:', err);
       serverExited = true;
       exitCode = 1;
       this.serverProcess = null;
     });
 
-    this.serverProcess.on('message', (msg) => {
+    this.serverProcess.on('message', (msg: any) => {
       if (msg && msg.type === 'test-notification') {
         const event = msg.event;
         if (this.messagePrefix && !event.startsWith(this.messagePrefix)) return;
@@ -219,7 +219,7 @@ class DynamicInstanceManager extends EventEmitter {
    * Stop the server (async version that waits for process to exit).
    * @param callback - Called when server has stopped
    */
-  stop (callback) {
+  stop (callback?: any) {
     if (!this.isRunning()) {
       if (callback) callback();
       return;

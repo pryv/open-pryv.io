@@ -6,8 +6,8 @@
  */
 import type {} from 'node:fs';
 
-function setAuditAccessId (accessId) {
-  return function (context, params, result, next) {
+function setAuditAccessId (accessId: any) {
+  return function (context: any, params: any, result: any, next: any) {
     if (!context.access) context.access = {};
     if (context.access.id != null) {
       return next(new Error('Access Id was already set to ' + context.access.id + ' when trying to set it to ' + accessId));

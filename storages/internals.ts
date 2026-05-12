@@ -18,14 +18,14 @@
  * - storeKeyValueData: key-value store for plugin metadata
  */
 
-const registry = {};
+const registry: any = {};
 
 /**
  * Register a host capability that plugins can request.
  * @param name - Capability name (e.g. 'userLocalDirectory')
  * @param value - The capability (function, object, etc.)
  */
-function register (name, value) {
+function register (name: any, value: any) {
   if (typeof name !== 'string' || !name) {
     throw new Error('Internal name must be a non-empty string');
   }
@@ -37,8 +37,8 @@ function register (name, value) {
  * @param requiredInternals - Names from manifest.requiredInternals
  * @param engineName - Engine name (for error messages)
  */
-function resolve (requiredInternals, engineName) {
-  const result = {};
+function resolve (requiredInternals: any, engineName: any) {
+  const result: any = {};
   if (!requiredInternals) return result;
 
   for (const name of requiredInternals) {
@@ -69,7 +69,7 @@ function clearAll () {
 /**
  * Check if a given internal is registered.
  */
-function isRegistered (name) {
+function isRegistered (name: any) {
   return name in registry;
 }
 

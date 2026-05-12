@@ -33,7 +33,7 @@ import type {} from 'node:fs';
 
 let activeProvider: any = null; // {id, setTransactionName, recordError, recordCustomEvent, startBackgroundTransaction}
 
-function init (provider) {
+function init (provider: any) {
   if (activeProvider) {
     throw new Error('observability.init: a provider is already attached (' + activeProvider.id + ')');
   }
@@ -44,22 +44,22 @@ function isActive () {
   return activeProvider !== null;
 }
 
-function setTransactionName (name) {
+function setTransactionName (name: any) {
   if (!activeProvider) return;
   try { activeProvider.setTransactionName(name); } catch { /* never let obs break a request */ }
 }
 
-function recordError (err, attrs) {
+function recordError (err: any, attrs: any) {
   if (!activeProvider) return;
   try { activeProvider.recordError(err, attrs); } catch { /* idem */ }
 }
 
-function recordCustomEvent (type, attrs) {
+function recordCustomEvent (type: any, attrs: any) {
   if (!activeProvider) return;
   try { activeProvider.recordCustomEvent(type, attrs); } catch { /* idem */ }
 }
 
-async function startBackgroundTransaction (name, fn) {
+async function startBackgroundTransaction (name: any, fn: any) {
   if (!activeProvider) return fn();
   try {
     return await activeProvider.startBackgroundTransaction(name, fn);

@@ -11,8 +11,8 @@ const { initRootSpan } = require('tracing');
 /**
  * Sets the methodId to the Request.context object of the Express stack
  */
-export default function (methodId) {
-  return function setMethodId (req, res, next) {
+export default function (methodId: any) {
+  return function setMethodId (req: any, res: any, next: any) {
     if (req.context == null) {
       const tracing = initRootSpan('express2');
       req.context = { tracing };

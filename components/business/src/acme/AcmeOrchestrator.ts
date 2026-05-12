@@ -46,8 +46,8 @@ class AcmeOrchestrator {
   #materializeIntervalMs;
   #dnsWriter;
   #log;
-  #renewTimer;
-  #materializeTimer;
+  #renewTimer: any;
+  #materializeTimer: any;
 
   /**
    * @param opts.hostSpec           - output of deriveHostnames()
@@ -80,7 +80,7 @@ class AcmeOrchestrator {
     this.#renewIntervalMs = renewIntervalMs;
     this.#materializeIntervalMs = materializeIntervalMs;
     this.#dnsWriter = dnsWriter;
-    this.#log = log || (msg => console.log('[acme] ' + msg));
+    this.#log = log || ((msg: any) => console.log('[acme] ' + msg));
   }
 
   /**
@@ -133,7 +133,7 @@ class AcmeOrchestrator {
    *
    * @param [hostname] - defaults to the core's primary hostname.
    */
-  async forceRenew (hostname) {
+  async forceRenew (hostname: any) {
     if (!this.#isRenewer) {
       throw new Error('AcmeOrchestrator.forceRenew: not the certRenewer core');
     }
@@ -176,7 +176,7 @@ class AcmeOrchestrator {
     return this.#issue();
   }
 
-  async #issue (hostname?) {
+  async #issue (hostname?: any) {
     const target = hostname ?? this.#hostSpec.commonName;
     const isPrimary = target === this.#hostSpec.commonName;
     const result = await this.#certRenewer.renew({
@@ -236,7 +236,7 @@ function build (opts: any = {}) {
     certRenewer,
     tlsDir,
     hostname: hostSpec.commonName,
-    onRotate: async (certPath, keyPath, hostname) => {
+    onRotate: async (certPath: any, keyPath: any, hostname: any) => {
       if (typeof onRotate === 'function') {
         try { await onRotate(certPath, keyPath, hostname); } catch (err: any) {
           (log || console.log)('[acme] onRotate (caller) failed: ' + err.message);

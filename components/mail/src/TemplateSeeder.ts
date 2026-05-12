@@ -33,7 +33,7 @@ const logger = getLogger('mail-template-seeder');
  * @param opts.platformDB     — the PlatformDB instance (setMailTemplate + getAllMailTemplates)
  * @param opts.templatesRootDir — absolute path to the Pug root
  */
-async function seedIfEmpty ({ platformDB, templatesRootDir }) {
+async function seedIfEmpty ({ platformDB, templatesRootDir }: any) {
   if (!platformDB) throw new Error('TemplateSeeder: platformDB is required');
   if (!templatesRootDir) {
     return { seeded: false, count: 0, reason: 'templatesRootDir-not-set' };
@@ -71,9 +71,9 @@ async function seedIfEmpty ({ platformDB, templatesRootDir }) {
   return { seeded: true, count };
 }
 
-async function listDirs (parent) {
+async function listDirs (parent: any) {
   const entries = await fs.readdir(parent, { withFileTypes: true });
-  return entries.filter(e => e.isDirectory()).map(e => e.name);
+  return entries.filter((e: any) => e.isDirectory()).map((e: any) => e.name);
 }
 
 export { seedIfEmpty };

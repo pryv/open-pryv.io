@@ -8,11 +8,11 @@ import type {} from 'node:fs';
 
 // Middleware that verifies the presence of an authorization token
 //
-export default (req, res, next) => {
+export default (req: any, res: any, next: any) => {
   req.headers.authorization = getAuth(req);
   next();
 };
-function getAuth (req) {
+function getAuth (req: any) {
   let authorizationHeader = req.header('authorization');
   if (authorizationHeader != null) {
     const basic = authorizationHeader.split(' ');

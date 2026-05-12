@@ -10,7 +10,7 @@ import type {} from 'node:fs';
 //
 class ParseFailure extends Error {
 }
-function error (msg) {
+function error (msg: any) {
   return new ParseFailure(msg);
 }
 // error class + error factories

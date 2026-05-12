@@ -19,7 +19,7 @@ const MAX_WAIT_MS = 100;
  * @param arrayName {String} array name that will prefix the array
  */
 class ArraySerializationStream extends Transform {
-  constructor (arrayName) {
+  constructor (arrayName: any) {
     super({ writableObjectMode: true });
     this.isStart = true;
     this.prefix = '"' + arrayName + '":';
@@ -28,7 +28,7 @@ class ArraySerializationStream extends Transform {
     this.lastSerialization = Date.now();
   }
 
-  _transform (item, encoding, callback) {
+  _transform (item: any, encoding: any, callback: any) {
     this.stack.push(item);
 
     if (this.stack.length >= this.size || (Date.now() - this.lastSerialization) > MAX_WAIT_MS) {
@@ -44,7 +44,7 @@ class ArraySerializationStream extends Transform {
     callback();
   }
 
-  _flush = function (this: any, callback) {
+  _flush = function (this: any, callback: any) {
     if (this.isStart) {
       this.push(this.prefix + JSON.stringify(this.stack));
     } else {

@@ -11,16 +11,16 @@
  */
 const toString: any = {};
 export { toString };
-toString.id = function (id) {
+toString.id = function (id: any) {
   return '"' + id + '"';
 };
-toString.path = function (path) {
+toString.path = function (path: any) {
   return '"' + path + '"';
 };
-toString.property = function (propertyKey) {
+toString.property = function (propertyKey: any) {
   return '`' + propertyKey + '`';
 };
-toString.user = function (user) {
+toString.user = function (user: any) {
   return '"' + user.username + '" (' + (user.id || user._id || 'n/a') + ')';
 };
 

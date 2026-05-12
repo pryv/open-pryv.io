@@ -8,7 +8,7 @@
 /**
  * Transform stream queries for MongoDB query format.
  */
-export function toMongoDBQuery (streamQueriesArray) {
+export function toMongoDBQuery (streamQueriesArray: any) {
   let mongoQuery: any = null; // no streams
   if (streamQueriesArray !== null) {
     if (streamQueriesArray.length === 1) {
@@ -25,7 +25,7 @@ export function toMongoDBQuery (streamQueriesArray) {
 /**
  * Convert a streamQuery to a query usable by MongoDB
  */
-function streamQueryToMongoDBQuery (streamQuery) {
+function streamQueryToMongoDBQuery (streamQuery: any) {
   if (streamQuery == null) return {};
 
   const ands: any[] = [];
@@ -42,7 +42,7 @@ function streamQueryToMongoDBQuery (streamQuery) {
     return { $and: ands };
   }
 
-  function addItem (item) {
+  function addItem (item: any) {
     if (item.any && item.any.length > 0) {
       if (!item.any.includes('*')) {
         // ignore queries that contains '*';

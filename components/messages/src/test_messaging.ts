@@ -34,7 +34,7 @@ async function getTestNotifier () {
   const logger = getLogger('test-messaging');
   notifier = new EventEmitter();
   const originalEmit = notifier.emit.bind(notifier);
-  notifier.emit = function (eventName, ...args) {
+  notifier.emit = function (eventName: any, ...args: any[]) {
     originalEmit(eventName, ...args);
     if (typeof process.send === 'function') {
       try { process.send({ type: 'test-notification', event: eventName, data: args[0] }); } catch (e) { /* IPC channel closed */ }

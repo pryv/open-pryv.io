@@ -9,10 +9,10 @@ const require = createRequire(import.meta.url);
 const methodCallback = require('./methodCallback.ts').default;
 const { setMethodId } = require('middleware');
 const { getConfigSync } = require('@pryv/boiler');
-export default function (expressApp, app) {
+export default function (expressApp: any, app: any) {
   const api = app.api;
   // dnsLess compatible route
-  expressApp.get('/reg/service/info', setMethodId('service.info'), function (req, res, next) {
+  expressApp.get('/reg/service/info', setMethodId('service.info'), function (req: any, res: any, next: any) {
     api.call(req.context, req.query, methodCallback(res, next, 200));
   });
   // Multi-core (dnsLess=false): also serve /service/info at the root so that
@@ -23,7 +23,7 @@ export default function (expressApp, app) {
   // post-`await getConfig()` — so the no-warnOnly variant is safe.
   const config = getConfigSync();
   if (!config.get('dnsLess:isActive')) {
-    expressApp.get('/service/info', setMethodId('service.info'), function (req, res, next) {
+    expressApp.get('/service/info', setMethodId('service.info'), function (req: any, res: any, next: any) {
       api.call(req.context, req.query, methodCallback(res, next, 200));
     });
   }

@@ -21,7 +21,7 @@ const storeDataUtils = require('./helpers/storeDataUtils.ts');
 
 export { getMall, storeDataUtils };
 
-let mall;
+let mall: any;
 let initializing = false;
 
 async function getMall () {

@@ -29,7 +29,7 @@ export { LocalStoreId, AccountStoreId, parseStoreIdAndStoreItemId, getFullItemId
  * - `account`: items keep their `:_system:` / `:system:` prefix as-is
  *
  */
-function isPassthroughStore (storeId) {
+function isPassthroughStore (storeId: any) {
   return storeId === LOCAL_STORE_ID || storeId === ACCOUNT_STORE_ID;
 }
 
@@ -37,7 +37,7 @@ function isPassthroughStore (storeId) {
  * Extract the store id and the in-store item id (without the store reference) from the given item id.
  * For streams, converts the store's root pseudo-stream id (`:store:`) to `*`.
  */
-function parseStoreIdAndStoreItemId (fullItemId) {
+function parseStoreIdAndStoreItemId (fullItemId: any) {
   if (!fullItemId.startsWith(STORE_ID_MARKER)) return [LOCAL_STORE_ID, fullItemId];
 
   const endMarkerIndex = fullItemId.indexOf(STORE_ID_MARKER, 1);
@@ -59,7 +59,7 @@ function parseStoreIdAndStoreItemId (fullItemId) {
  * Get full item id from the given store id and in-store item id.
  * For streams, converts the `*` id to the store's root pseudo-stream (`:store:`).
  */
-function getFullItemId (storeId, storeItemId) {
+function getFullItemId (storeId: any, storeItemId: any) {
   // Passthrough stores: store-internal IDs ARE the external IDs
   if (isPassthroughStore(storeId)) return storeItemId;
   return STORE_ID_MARKER + storeId + STORE_ID_MARKER + (storeItemId === '*' ? '' : storeItemId);
@@ -69,7 +69,7 @@ function getFullItemId (storeId, storeItemId) {
  * Handle the given error from a data store, wrapping it as an API error if needed
  * before throwing it further.
  */
-function throwAPIError (err, storeId) {
+function throwAPIError (err: any, storeId: any) {
   if (!(err instanceof Error)) {
     err = new Error(err);
   }

@@ -14,7 +14,7 @@ const { getConfig } = require('@pryv/boiler');
 // Creates and returns an express application with a standard set of middleware.
 // `version` should be the version string you want to show to API clients.
 //
-async function expressAppInit (logging) {
+async function expressAppInit (logging: any) {
   const config = await getConfig();
   const app = express(); // register common middleware
   const commonHeadersMiddleware = await middleware.commonHeaders();
@@ -53,7 +53,7 @@ async function expressAppInit (logging) {
     // URL shapes; tests and experimentation in confirm
     // that without this middleware the flows break (/service/info URLs
     // strip /reg/ but no route exists at root to serve them).
-    app.use(function regSubdomainPathMap (req, res, next) {
+    app.use(function regSubdomainPathMap (req: any, res: any, next: any) {
       if (!req.headers.host) return next();
       const firstChunk = req.headers.host.split('.')[0].toLowerCase();
       if (firstChunk === 'reg' || firstChunk === 'access' || firstChunk === 'mfa') {

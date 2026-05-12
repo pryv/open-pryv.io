@@ -26,7 +26,7 @@ const templates = require('./templating.ts');
  * - notice: Notice
  */
 class Syslog {
-  syslogger;
+  syslogger: any;
 
   async init () {
     if (this.syslogger) {
@@ -53,7 +53,7 @@ class Syslog {
     // listener, Writable.emit('error', err) throws synchronously, crashing
     // the api-server worker on the first audited request. Best-effort
     // observability instead of a load-bearing path.
-    syslogTransport.on('error', (err) => logger.warn('audit syslog dropped', err));
+    syslogTransport.on('error', (err: any) => logger.warn('audit syslog dropped', err));
     syslogger.add(syslogTransport);
 
     this.syslogger = syslogger;
@@ -63,7 +63,7 @@ class Syslog {
   /**
    * send an new event for syslog
    */
-  eventForUser (userId, event) {
+  eventForUser (userId: any, event: any) {
     logger.debug('eventForUser', userId);
     const logItem = templates.logForEvent(userId, event);
     if (logItem != null) {
@@ -81,9 +81,9 @@ export { Syslog };
  * @param options.time - set to true to for timestamp
  * @param options.align - set to true to allign logs items
  */
-function generateFormat (options) {
+function generateFormat (options: any) {
   const formats: any[] = [];
-  function printf (info) {
+  function printf (info: any) {
     return info.message;
   }
   formats.push(winston.format.printf(printf));

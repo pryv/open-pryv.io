@@ -10,8 +10,8 @@ import type {} from 'node:fs';
 // The access is loaded from the token previously extracted by the `initContext` middleware.
 // Also, it adds the corresponding access id as a specific response header.
 //
-export default function loadAccess (storageLayer) {
-  return async function (req, res, next) {
+export default function loadAccess (storageLayer: any) {
+  return async function (req: any, res: any, next: any) {
     try {
       await req.context.retrieveExpandedAccess(storageLayer);
       // Add access id header
@@ -32,7 +32,7 @@ export default function loadAccess (storageLayer) {
  * @param req  Current express request.
  * @param res  Current express response. MODIFIED IN PLACE.
  */
-function setAccessIdHeader (req, res) {
+function setAccessIdHeader (req: any, res: any) {
   if (req != null) {
     const requestCtx = req.context;
     if (requestCtx != null && requestCtx.access != null) {

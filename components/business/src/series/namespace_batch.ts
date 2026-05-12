@@ -19,14 +19,14 @@ class NamespaceBatch {
   connection;
 
   namespace;
-  constructor (conn, namespace) {
+  constructor (conn: any, namespace: any) {
     this.connection = conn;
     this.namespace = namespace;
   }
 
   // Stores a batch request into InfluxDB and returns a promise that will
   // resolve once the request completes successfully.
-  async store (data, resolver) {
+  async store (data: any, resolver: any) {
     // These options will apply to all the points:
     const appendOptions = {
       database: this.namespace
@@ -38,7 +38,7 @@ class NamespaceBatch {
       const eventId = element.eventId;
       const data = element.data;
       const measurementName = await resolver(eventId);
-      data.eachRow((row) => {
+      data.eachRow((row: any) => {
         points.push(toIPoint(eventId, row, measurementName));
       });
     }
@@ -46,7 +46,7 @@ class NamespaceBatch {
     return conn.writePoints(points, appendOptions);
 
     // Converts a single `Row` of data into an IPoint structure.
-    function toIPoint (eventId, row, measurementName) {
+    function toIPoint (eventId: any, row: any, measurementName: any) {
       const struct = row.toStruct();
       // TODO review this now that flow is gone:
       // This cannot fail, but somehow flow things we access the deltaTime.

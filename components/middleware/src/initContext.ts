@@ -15,8 +15,8 @@ const { MethodContext } = require('business');
 // example when calling a batch of methods. it is the api methods'
 // responsibility to load the access when needed.
 //
-export default function initContext (storageLayer, customAuthStepFn) {
-  return function (req, res, next) {
+export default function initContext (storageLayer: any, customAuthStepFn: any) {
+  return function (req: any, res: any, next: any) {
     const authorizationHeader = req.headers.authorization;
     const contextSource = {
       name: 'http',

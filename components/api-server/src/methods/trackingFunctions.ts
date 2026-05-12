@@ -13,7 +13,7 @@ const { getConfig } = require('@pryv/boiler');
  * Call tracking functions, to be registered after all methods have been registered.
  *
  */
-export default async function (api) {
+export default async function (api: any) {
   const config = await getConfig();
   if (!config.get('accessTracking:isActive')) { return; }
   const updateAccessUsage = await updateAccessUsageStats();

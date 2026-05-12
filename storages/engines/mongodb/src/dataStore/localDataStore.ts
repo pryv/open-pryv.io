@@ -19,7 +19,7 @@ const { LocalTransaction } = require('./LocalTransaction.ts');
 
 const dataStore = ds.createDataStore({
 
-  async init (params) {
+  async init (params: any) {
     this.settings = params.settings;
     const database = _internals.database;
 
@@ -59,12 +59,12 @@ const dataStore = ds.createDataStore({
     return transaction;
   },
 
-  async deleteUser (userId) {
+  async deleteUser (userId: any) {
     await userStreams._deleteUser(userId);
     await userEvents._deleteUser(userId);
   },
 
-  async getUserStorageInfos (userId) {
+  async getUserStorageInfos (userId: any) {
     const streams = await userStreams._getStorageInfos(userId);
     const events = await userEvents._getStorageInfos(userId);
     const files = await userEvents._getFilesStorageInfos(userId);

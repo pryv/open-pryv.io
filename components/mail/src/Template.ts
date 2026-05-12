@@ -17,7 +17,7 @@ const require = createRequire(import.meta.url);
 class Template {
   root: string;
   templateExists: any;
-  constructor (mailType, language, templateExists) {
+  constructor (mailType: any, language: any, templateExists: any) {
     this.root = [mailType, language].join('/');
     this.templateExists = templateExists;
   }
@@ -30,11 +30,11 @@ class Template {
     return true;
   }
 
-  async executeSend (sendOp) {
+  async executeSend (sendOp: any) {
     return await sendOp.sendMail(this.root);
   }
 
-  templatePath (part) {
+  templatePath (part: any) {
     return [this.root, part].join('/');
   }
 }

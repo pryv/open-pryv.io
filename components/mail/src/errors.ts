@@ -33,8 +33,8 @@ const ErrorIds = Object.freeze({
   UnknownResource: 'unknown-resource'
 });
 
-const invalidRequestStructure = (message) => new MailError(ErrorIds.InvalidRequestStructure, message, 400);
-const forbidden = (message) => new MailError(ErrorIds.Forbidden, message, 403);
-const unknownResource = (message) => new MailError(ErrorIds.UnknownResource, message, 404);
+const invalidRequestStructure = (message: any) => new MailError(ErrorIds.InvalidRequestStructure, message, 400);
+const forbidden = (message: any) => new MailError(ErrorIds.Forbidden, message, 403);
+const unknownResource = (message: any) => new MailError(ErrorIds.UnknownResource, message, 404);
 
 export { MailError, ErrorIds, invalidRequestStructure, forbidden, unknownResource };

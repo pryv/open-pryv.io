@@ -31,7 +31,7 @@ function getPreviewsDirPath (): string {
  * Only support JPEG preview images (fixed size) at the moment.
  *
  */
-async function ensurePreviewPath (user, eventId, dimension) {
+async function ensurePreviewPath (user: any, eventId: any, dimension: any) {
   const dirPath = path.join(getPreviewsDirPath(), user.id, eventId);
   await fsp.mkdir(dirPath, { recursive: true });
   return path.join(dirPath, getPreviewFileName(dimension));
@@ -39,12 +39,12 @@ async function ensurePreviewPath (user, eventId, dimension) {
 
 export { ensurePreviewPath };
 
-function getPreviewPath (user, eventId, dimension) {
+function getPreviewPath (user: any, eventId: any, dimension: any) {
   return path.join(getPreviewsDirPath(), user.id, eventId, getPreviewFileName(dimension));
 }
 export { getPreviewPath };
 
-function getPreviewFileName (dimension) {
+function getPreviewFileName (dimension: any) {
   return dimension + '.jpg';
 }
 

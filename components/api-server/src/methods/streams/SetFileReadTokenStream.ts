@@ -20,17 +20,17 @@ class SetFileReadTokenStream extends Transform {
   access: any;
   filesReadTokenSecret: string;
 
-  constructor (params) {
+  constructor (params: any) {
     super({ objectMode: true });
     this.access = params.access;
     this.filesReadTokenSecret = params.filesReadTokenSecret;
   }
 
-  _transform (event, encoding, callback) {
+  _transform (event: any, encoding: any, callback: any) {
     if (!event.attachments) {
       this.push(event);
     } else {
-      event.attachments.forEach((att) => {
+      event.attachments.forEach((att: any) => {
         att.readToken = utils.encryption.fileReadToken(
           att.id, this.access.id, this.access.token,
           this.filesReadTokenSecret);

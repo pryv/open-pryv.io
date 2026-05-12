@@ -12,7 +12,7 @@ const { getAPIVersion } = require('middleware/src/project_version.ts');
 // requests.
 export default async function () {
   const version = await getAPIVersion();
-  return function (req, res, next) {
+  return function (req: any, res: any, next: any) {
     // allow cross-domain requests (CORS)
     res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
     // *

@@ -62,7 +62,7 @@ const OVERRIDE_HEADER_SUFFIX =
  * @param opts.outPath
  * @param [opts.ttlMs] - token TTL; undefined = TokenStore default (24h)
  */
-async function newCore (opts) {
+async function newCore (opts: any) {
   requireOpts(opts, ['platformDB', 'caDir', 'tokensPath', 'ackUrlBase', 'secrets', 'rqlite', 'coreId', 'ip', 'outPath']);
   const {
     platformDB, caDir, tokensPath, dnsDomain = null, ackUrlBase,
@@ -136,7 +136,7 @@ async function newCore (opts) {
 /**
  * @param opts.tokensPath
  */
-function listTokens ({ tokensPath }) {
+function listTokens ({ tokensPath }: any) {
   if (!tokensPath) throw new Error('listTokens: tokensPath is required');
   return new TokenStore({ path: tokensPath }).listActive();
 }
@@ -150,7 +150,7 @@ function listTokens ({ tokensPath }) {
  * @param [opts.platformDB]
  * @param [opts.ip]
  */
-async function revokeToken ({ tokensPath, coreId, platformDB = null, ip = null }) {
+async function revokeToken ({ tokensPath, coreId, platformDB = null, ip = null }: any) {
   if (!tokensPath) throw new Error('revokeToken: tokensPath is required');
   if (!coreId) throw new Error('revokeToken: coreId is required');
 
@@ -191,7 +191,7 @@ async function revokeToken ({ tokensPath, coreId, platformDB = null, ip = null }
  *   tlsPaths: { caFile: string, certFile: string, keyFile: string }
  * }>}
  */
-async function initCaHolder (opts) {
+async function initCaHolder (opts: any) {
   requireOpts(opts, ['caDir', 'tlsDir', 'coreId']);
   const {
     caDir, tlsDir, coreId,
@@ -240,7 +240,7 @@ async function initCaHolder (opts) {
  * with the supplied paths and `verifyClient: true`. Preserves any existing
  * keys. Returns true when the file was created or its contents changed.
  */
-function mergeRqliteTlsIntoOverride (overridePath, tlsPaths) {
+function mergeRqliteTlsIntoOverride (overridePath: any, tlsPaths: any) {
   let current: any = {};
   if (fs.existsSync(overridePath)) {
     const raw = fs.readFileSync(overridePath, 'utf8');
@@ -278,7 +278,7 @@ function mergeRqliteTlsIntoOverride (overridePath, tlsPaths) {
   return true;
 }
 
-function requireOpts (opts, keys) {
+function requireOpts (opts: any, keys: any) {
   if (opts == null || typeof opts !== 'object') {
     throw new Error('cliOps: opts is required');
   }

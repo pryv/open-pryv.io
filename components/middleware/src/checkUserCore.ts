@@ -63,7 +63,7 @@ function _resetPlatformCache () {
 /**
  * Express middleware. Mount once on `/:username/*`.
  */
-async function checkUserCore (req, res, next) {
+async function checkUserCore (req: any, res: any, next: any) {
   try {
     const username = req.params && req.params.username;
     if (!username) return next();

@@ -31,7 +31,7 @@ const errors = require('errors').factory;
  * @param {Function} next  callback for next middleware in chain
  * @return {any}
  */
-function validateFileUpload (req, res, next) {
+function validateFileUpload (req: any, res: any, next: any) {
   const body = req.body;
   if (req.is('multipart/form-data') &&
         body != null &&

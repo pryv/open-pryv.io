@@ -19,7 +19,7 @@ const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts')
  * @param {express$Response} res
  * @returns {Promise<void>}
  */
-async function storeSeriesData (ctx, req, res) {
+async function storeSeriesData (ctx: any, req: any, res: any) {
   const trace = new TracedOperations(ctx);
   const series = ctx.series;
   const metadata = ctx.metadata;
@@ -72,7 +72,7 @@ async function storeSeriesData (ctx, req, res) {
 // Parses request data into a data matrix that can be used as input to the
 // influx store. You should give this method the `req.body`.
 //
-function parseData (createRequest, meta, typeRepo) {
+function parseData (createRequest: any, meta: any, typeRepo: any) {
   try {
     const type = meta.produceRowType(typeRepo);
     return business.series.DataMatrix.parse(createRequest, type);

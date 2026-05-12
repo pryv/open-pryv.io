@@ -33,8 +33,8 @@ export { getParamsByStore, getStoreOptionsFromParams, getStoreQueryFromParams, n
  * @throws {Error} if query.id is set and params.streams is querying a different store
  * @throws {Error} if query.streams contains stream queries that implies different stores
  */
-function getParamsByStore (params) {
-  let singleStoreId, singleStoreEventId;
+function getParamsByStore (params: any) {
+  let singleStoreId: any, singleStoreEventId: any;
   if (params.id) { // a specific event is queried so we have a singleStore query;
     [singleStoreId, singleStoreEventId] = storeDataUtils.parseStoreIdAndStoreItemId(params.id);
   }
@@ -80,7 +80,7 @@ function getParamsByStore (params) {
   return paramsByStore;
 }
 
-function getStoreStreamQuery (streamQuery, context) {
+function getStoreStreamQuery (streamQuery: any, context: any) {
   const storeStreamQuery: any = {};
   for (const operator of ['any', 'not']) { // for each possible segment of query
     if (streamQuery[operator]) {
@@ -94,7 +94,7 @@ function getStoreStreamQuery (streamQuery, context) {
     }
   }
   if (streamQuery.and) {
-    storeStreamQuery.and = streamQuery.and.map(sq => { return getStoreStreamQuery(sq, context); });
+    storeStreamQuery.and = streamQuery.and.map((sq: any) => { return getStoreStreamQuery(sq, context); });
   }
   return storeStreamQuery;
 }
@@ -104,7 +104,7 @@ function getStoreStreamQuery (streamQuery, context) {
  *      `normalizeStreamQuery` is added, the full process should be refactored in order to avoid this step.
  *
  */
-function normalizeStreamQuery (streamQuery) {
+function normalizeStreamQuery (streamQuery: any) {
   if (streamQuery == null) return null;
   const res: any[] = [];
   for (const streamQueryItem of streamQuery) {
@@ -113,7 +113,7 @@ function normalizeStreamQuery (streamQuery) {
   return res;
 }
 
-function normalizeStreamQueryItem (streamQueryItem) {
+function normalizeStreamQueryItem (streamQueryItem: any) {
   const normalizedStreamQuery: any[] = [];
   const not: any[] = []; // we need only one "not"
   if (streamQueryItem.any != null) normalizedStreamQuery.push({ any: streamQueryItem.any });
@@ -127,7 +127,7 @@ function normalizeStreamQueryItem (streamQueryItem) {
   if (not.length > 0) normalizedStreamQuery.push({ not });
   return normalizedStreamQuery;
 
-  function addToNots (notItems) {
+  function addToNots (notItems: any) {
     for (const item of notItems) {
       if (not.indexOf(item) === -1) not.push(item);
     }
@@ -137,7 +137,7 @@ function normalizeStreamQueryItem (streamQueryItem) {
 /**
  * Extract options from params
  */
-function getStoreOptionsFromParams (params) {
+function getStoreOptionsFromParams (params: any) {
   const options = {
     sortAscending: params.sortAscending,
     skip: params.skip,
@@ -150,7 +150,7 @@ function getStoreOptionsFromParams (params) {
  * Clean API query params to the store query format.
  * To be called on store-level params just before querying the store.
  */
-function getStoreQueryFromParams (params) {
+function getStoreQueryFromParams (params: any) {
   const query: any = {
     state: params.state || 'default'
   };

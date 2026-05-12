@@ -16,12 +16,12 @@ const { createId: cuid } = require('@paralleldrive/cuid2');
 const store = new Map();
 
 const asyncHook = asyncHooks.createHook({
-  init: (asyncId, _, triggerAsyncId) => {
+  init: (asyncId: any, _: any, triggerAsyncId: any) => {
     if (store.has(triggerAsyncId)) {
       store.set(asyncId, store.get(triggerAsyncId));
     }
   },
-  destroy: (asyncId) => {
+  destroy: (asyncId: any) => {
     if (store.has(asyncId)) {
       store.delete(asyncId);
     }
@@ -30,7 +30,7 @@ const asyncHook = asyncHooks.createHook({
 
 asyncHook.enable();
 
-const createRequestContext = (data, requestId = cuid()) => {
+const createRequestContext = (data: any, requestId = cuid()) => {
   const requestInfo = { requestId, data };
   store.set(asyncHooks.executionAsyncId(), requestInfo);
   return requestInfo;

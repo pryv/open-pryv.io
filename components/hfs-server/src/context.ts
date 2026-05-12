@@ -21,7 +21,7 @@ const { getMall } = require('mall');
 class Context {
   series;
 
-  metadata;
+  metadata: any;
 
   metadataUpdater;
 
@@ -29,10 +29,10 @@ class Context {
 
   tracer;
 
-  typeRepository;
+  typeRepository: any;
 
   config;
-  constructor (influxConn, tracer, typeRepoUpdateUrl, config) {
+  constructor (influxConn: any, tracer: any, typeRepoUpdateUrl: any, config: any) {
     this.series = new business.series.Repository(influxConn);
     this.metadataUpdater = new MetadataForgetter(getLogger('metadata.update'));
     this.tracer = tracer;
@@ -44,7 +44,7 @@ class Context {
     await this.configureMetadataCache();
   }
 
-  configureTypeRepository (url) {
+  configureTypeRepository (url: any) {
     const typeRepo = new business.types.TypeRepository();
     typeRepo.tryUpdate(url); // async
     this.typeRepository = typeRepo;
@@ -67,7 +67,7 @@ class Context {
 
   // Starts a child span below the request span.
   //
-  childSpan (name, opts) {
+  childSpan (name: any, opts: any) {
     const tracer = this.tracer;
     const rootSpan = cls.getRootSpan();
     const spanOpts = Object.assign({}, { childOf: rootSpan }, opts);

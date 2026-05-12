@@ -39,7 +39,7 @@ async function forceRenew ({ hostname, timeoutMs = DEFAULT_TIMEOUT_MS, processHa
 
   return await new Promise((resolve) => {
     let settled = false;
-    const onMsg = (msg) => {
+    const onMsg = (msg: any) => {
       if (settled) return;
       if (!msg || msg.type !== 'acme:force-renew:reply' || msg.requestId !== requestId) return;
       settled = true;

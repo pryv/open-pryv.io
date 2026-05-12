@@ -12,7 +12,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 class DBIndex {
-  id4nameCollection;
+  id4nameCollection: any;
 
   async init () {
     const { _internals } = require('./_internals.ts');
@@ -32,27 +32,27 @@ class DBIndex {
     });
   }
 
-  async getIdForName (username) {
+  async getIdForName (username: any) {
     const res = await this.id4nameCollection.findOne({ username });
     return res?.userId;
   }
 
-  async getNameForId (userId) {
+  async getNameForId (userId: any) {
     const res = await this.id4nameCollection.findOne({ userId });
     return res?.username;
   }
 
-  async addUser (username, userId) {
+  async addUser (username: any, userId: any) {
     return await this.id4nameCollection.insertOne({ userId, username });
   }
 
-  async deleteById (userId) {
+  async deleteById (userId: any) {
     return await this.id4nameCollection.deleteOne({ userId });
   }
 
   async getAllByUsername () {
     const allCursor = this.id4nameCollection.find({});
-    const users = {};
+    const users: any = {};
     for await (const user of allCursor) {
       users[user.username] = user.userId;
     }
@@ -69,7 +69,7 @@ class DBIndex {
     return await this.getAllByUsername();
   }
 
-  async importAll (data) {
+  async importAll (data: any) {
     for (const [username, userId] of Object.entries(data)) {
       await this.addUser(username, userId);
     }

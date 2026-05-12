@@ -12,13 +12,13 @@ const { setMethodId } = require('middleware');
 /**
  * Set up events route handling.
  */
-export default function (expressApp, app) {
+export default function (expressApp: any, app: any) {
   const api = app.api;
-  expressApp.get(Paths.Service + '/info', setMethodId('service.info'), function (req, res, next) {
+  expressApp.get(Paths.Service + '/info', setMethodId('service.info'), function (req: any, res: any, next: any) {
     api.call(req.context, req.query, methodCallback(res, next, 200));
   });
   // Backward-compatible alias (plural)
-  expressApp.get(Paths.Service + '/infos', setMethodId('service.info'), function (req, res, next) {
+  expressApp.get(Paths.Service + '/infos', setMethodId('service.info'), function (req: any, res: any, next: any) {
     api.call(req.context, req.query, methodCallback(res, next, 200));
   });
 };

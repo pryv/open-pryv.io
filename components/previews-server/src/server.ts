@@ -39,7 +39,7 @@ const utils = require('utils');
 const { testMessaging } = require('messages');
 const accountStreams = require('business/src/system-streams/index.ts');
 const ExtensionLoader = utils.extension.ExtensionLoader;
-function loadCustomAuthStepFn (customExtensions) {
+function loadCustomAuthStepFn (customExtensions: any) {
   const defaultFolder = customExtensions.defaultFolder;
   const customAuthStepFnPath = customExtensions.customAuthStepFn;
   const loader = new ExtensionLoader(defaultFolder);

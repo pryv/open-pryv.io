@@ -40,7 +40,7 @@ class InstanceManager extends EventEmitter {
   ensureStartedAsync: (settings: any) => Promise<void>;
   restartAsync: () => Promise<void>;
 
-  constructor (settings) {
+  constructor (settings: any) {
     super();
     this.settings = settings;
     this.tempConfigPath = temp.path({ suffix: '.json' });
@@ -54,7 +54,7 @@ class InstanceManager extends EventEmitter {
    * Makes sure the instance is started with the given config settings, restarting it if needed;
    * does nothing if the instance is already running with the same settings.
    */
-  ensureStarted (settings, callback) {
+  ensureStarted (settings: any, callback: any) {
     // force console settings to off is needed
     if (typeof settings.logs === 'undefined') settings.logs = {};
     if (typeof settings.logs.console === 'undefined') settings.logs.console = {};
@@ -86,7 +86,7 @@ class InstanceManager extends EventEmitter {
   }
 
   /** Just restarts the instance, leaving settings as they are. */
-  restart (callback) {
+  restart (callback: any) {
     if (this.isRunning()) {
       try {
         this.stop();
@@ -103,7 +103,7 @@ class InstanceManager extends EventEmitter {
   }
 
   /** @api private */
-  start (callback) {
+  start (callback: any) {
     if (this.isRunning()) {
       throw new Error('Server is already running; stop it first.');
     }
@@ -132,12 +132,12 @@ class InstanceManager extends EventEmitter {
     this.serverProcess = spawn(process.argv[0], args, options);
     let serverExited = false;
     let exitCode: number | null = null;
-    this.serverProcess.on('exit', (code) => {
+    this.serverProcess.on('exit', (code: any) => {
       this.logger.debug('Server instance exited with code ' + code);
       serverExited = true;
       exitCode = code;
     });
-    this.serverProcess.on('message', (msg) => {
+    this.serverProcess.on('message', (msg: any) => {
       if (msg && msg.type === 'test-notification') {
         if (msg.event === 'test-server-ready') this.serverReady = true;
         this.emit(msg.event, msg.data);

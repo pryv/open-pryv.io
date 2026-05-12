@@ -71,7 +71,7 @@ async function init () {
 
   dbCache = new LRU({
     max: CACHE_SIZE,
-    dispose: function (db/* , key */) { db.close(); }
+    dispose: function (db: any/* , key */) { db.close(); }
   });
 
   initState = InitStates.READY;

@@ -18,27 +18,27 @@ const CUSTOMER_PREFIX = ':system:';
 /**
  * Returns true if the streamId is a system stream (private or customer prefix).
  */
-function isSystemStreamId (streamId) {
+function isSystemStreamId (streamId: any) {
   return streamId.startsWith(PRYV_PREFIX) || streamId.startsWith(CUSTOMER_PREFIX);
 }
 
 /**
  * Remove events that belong to system streams from an events array.
  */
-function removeSystemEvents (events) {
-  return events.filter(e =>
-    !e.streamIds?.some(id => isSystemStreamId(id))
+function removeSystemEvents (events: any) {
+  return events.filter((e: any) =>
+    !e.streamIds?.some((id: any) => isSystemStreamId(id))
   );
 }
 
 /**
  * Separate events into normal events and system stream events.
  */
-function separateSystemEvents (events) {
+function separateSystemEvents (events: any) {
   const normal: any[] = [];
   const system: any[] = [];
   for (const e of events) {
-    if (e.streamIds?.some(id => isSystemStreamId(id))) {
+    if (e.streamIds?.some((id: any) => isSystemStreamId(id))) {
       system.push(e);
     } else {
       normal.push(e);
@@ -51,15 +51,15 @@ function separateSystemEvents (events) {
  * Remove system streams (root-level) from a streams array.
  * Filters out any stream whose id starts with a system prefix.
  */
-function removeSystemStreams (streams) {
-  return streams.filter(s => !isSystemStreamId(s.id));
+function removeSystemStreams (streams: any) {
+  return streams.filter((s: any) => !isSystemStreamId(s.id));
 }
 
 /**
  * Adds private system stream prefix to a stream id.
  * Test-only — simple concatenation, no validation.
  */
-function addPrivatePrefixToStreamId (id) {
+function addPrivatePrefixToStreamId (id: any) {
   return PRYV_PREFIX + id;
 }
 
@@ -67,7 +67,7 @@ function addPrivatePrefixToStreamId (id) {
  * Adds customer system stream prefix to a stream id.
  * Test-only — simple concatenation, no validation.
  */
-function addCustomerPrefixToStreamId (id) {
+function addCustomerPrefixToStreamId (id: any) {
   return CUSTOMER_PREFIX + id;
 }
 

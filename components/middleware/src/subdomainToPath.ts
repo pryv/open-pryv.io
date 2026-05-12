@@ -19,9 +19,9 @@ const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers.ts');
  *
  * @param ignoredPaths Paths for which no translation is needed
  */
-export default function (ignoredPaths, ignoredSubdomains) {
+export default function (ignoredPaths: any, ignoredSubdomains: any) {
   ignoredSubdomains = ignoredSubdomains || [];
-  return function (req, res, next) {
+  return function (req: any, res: any, next: any) {
     if (isIgnoredPath(req.url)) {
       return next();
     }
@@ -41,13 +41,13 @@ export default function (ignoredPaths, ignoredSubdomains) {
     req.url = pathPrefix + req.url;
     next();
   };
-  function isIgnoredPath (url) {
-    return ignoredPaths.some(function (ignoredPath) {
+  function isIgnoredPath (url: any) {
+    return ignoredPaths.some(function (ignoredPath: any) {
       return url.startsWith(ignoredPath);
     });
   }
 };
-function looksLikeUsername (candidate) {
+function looksLikeUsername (candidate: any) {
   const reUsername = new RegExp(USERNAME_REGEXP_STR);
   const lowercasedUsername = candidate.toLowerCase(); // for retro-compatibility
   return reUsername.test(lowercasedUsername);

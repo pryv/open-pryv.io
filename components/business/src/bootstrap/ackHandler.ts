@@ -34,11 +34,11 @@ const VALID_REASONS = new Set(['unknown', 'expired', 'already-consumed', 'invali
  * @param deps.tokenStore - business/src/bootstrap/TokenStore instance
  * @param deps.platformDB - exposes getCoreInfo / setCoreInfo / getAllCoreInfos / getDnsRecord
  */
-function makeHandler ({ tokenStore, platformDB }) {
+function makeHandler ({ tokenStore, platformDB }: any) {
   if (tokenStore == null) throw new Error('ackHandler: tokenStore is required');
   if (platformDB == null) throw new Error('ackHandler: platformDB is required');
 
-  return async function handle (req) {
+  return async function handle (req: any) {
     const body = req && req.body ? req.body : {};
     const consumerIp = req && req.ip ? req.ip : null;
 
@@ -83,7 +83,7 @@ function makeHandler ({ tokenStore, platformDB }) {
         ok: true,
         coreId,
         cluster: {
-          cores: allCores.map(c => ({
+          cores: allCores.map((c: any) => ({
             id: c.id,
             url: c.url ?? null,
             hosting: c.hosting ?? null,
@@ -96,7 +96,7 @@ function makeHandler ({ tokenStore, platformDB }) {
   };
 }
 
-function errResponse (statusCode, id, message, extra = {}) {
+function errResponse (statusCode: any, id: any, message: any, extra = {}) {
   return {
     statusCode,
     body: { error: { id, message, ...extra } }

@@ -37,7 +37,7 @@ export const loadSettings = async function () {
  *
  * @param result {Object} Current result. MODIFIED IN PLACE.
  */
-export const setCommonMeta = function (result) {
+export const setCommonMeta = function (result: any) {
   if (result.meta == null) {
     result.meta = {};
   }

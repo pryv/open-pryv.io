@@ -17,10 +17,10 @@ const defaultOptions = {
  * Per-user events data
  */
 class LocalTransaction {
-  transactionSession;
+  transactionSession: any;
 
   transactionOptions;
-  constructor (transactionOptions) {
+  constructor (transactionOptions: any) {
     this.transactionOptions = transactionOptions || defaultOptions;
   }
 
@@ -32,7 +32,7 @@ class LocalTransaction {
    *
    * @param func  undefined
    */
-  async exec (func) {
+  async exec (func: any) {
     await this.transactionSession.withTransaction(func, this.transactionOptions);
   }
 }

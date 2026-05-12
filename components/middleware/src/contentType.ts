@@ -19,7 +19,7 @@ const errors = require('errors').factory;
  */
 function checkContentType (...acceptedTypes: any[]) {
   const count = acceptedTypes.length;
-  return function (req, res, next) {
+  return function (req: any, res: any, next: any) {
     if (count < 1) { return next(); }
 
     const contentType = req.headers['content-type'];

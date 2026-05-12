@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const Syslog = require('./Syslog.ts').default;
 const { getConfig } = require('@pryv/boiler');
 
-let syslog;
+let syslog: any;
 
 async function getSyslog () {
   if (!syslog) {

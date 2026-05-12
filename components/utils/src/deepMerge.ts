@@ -16,7 +16,7 @@
  *
  * @template T
  */
-function deepMerge (target, ...sources) {
+function deepMerge (target: any, ...sources: any[]) {
   if (target == null) target = {};
   for (const source of sources) {
     if (source == null) continue;
@@ -38,7 +38,7 @@ function deepMerge (target, ...sources) {
   return target;
 }
 
-function isPlainObject (v) {
+function isPlainObject (v: any) {
   if (v === null || typeof v !== 'object') return false;
   if (Array.isArray(v)) return false;
   const proto = Object.getPrototypeOf(v);

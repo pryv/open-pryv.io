@@ -16,7 +16,7 @@ const converters = require('./../converters.ts');
 class Profile extends BaseStorage {
   defaultOptions: any;
 
-  constructor (database) {
+  constructor (database: any) {
     super(database);
 
     Object.assign(this.converters, {
@@ -30,8 +30,8 @@ class Profile extends BaseStorage {
   }
 
   /** Override importAll: convert canonical backup format `id` → MongoDB `profileId`. */
-  importAll (userOrUserId, items, callback) {
-    const mapped = items.map((item) => {
+  importAll (userOrUserId: any, items: any, callback: any) {
+    const mapped = items.map((item: any) => {
       const doc = Object.assign({}, item);
       if (doc.id != null && doc.profileId == null) {
         doc.profileId = doc.id;
@@ -42,7 +42,7 @@ class Profile extends BaseStorage {
     super.importAll(userOrUserId, mapped, callback);
   }
 
-  getCollectionInfo (userOrUserId) {
+  getCollectionInfo (userOrUserId: any) {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     return {
       name: 'profile',

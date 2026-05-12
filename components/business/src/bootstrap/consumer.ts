@@ -49,11 +49,11 @@ const applyBundleMod = require('./applyBundle.ts');
  *   bundleDeleted: boolean
  * }>}
  */
-async function consume (opts) {
+async function consume (opts: any) {
   const {
     bundlePath, passphrase, passphraseFile, configDir, tlsDir,
     httpClient = defaultHttpClient,
-    log = (m) => console.log('[bootstrap] ' + m)
+    log = (m: any) => console.log('[bootstrap] ' + m)
   } = opts || {};
 
   if (!bundlePath) throw new Error('consume: bundlePath is required');
@@ -109,7 +109,7 @@ async function consume (opts) {
   };
 }
 
-function resolvePassphrase ({ passphrase, passphraseFile }) {
+function resolvePassphrase ({ passphrase, passphraseFile }: any) {
   if (typeof passphrase === 'string' && passphrase.length > 0) return passphrase;
   if (passphraseFile) {
     if (!fs.existsSync(passphraseFile)) {
@@ -129,7 +129,7 @@ function resolvePassphrase ({ passphrase, passphraseFile }) {
  * Default httpClient — POSTs JSON over HTTPS (or HTTP for dev) with the
  * bundled CA cert pinned. Resolves with `{ statusCode, body }`.
  */
-function defaultHttpClient (url, payload, caCertPem) {
+function defaultHttpClient (url: any, payload: any, caCertPem: any) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const isHttps = u.protocol === 'https:';
@@ -149,9 +149,9 @@ function defaultHttpClient (url, payload, caCertPem) {
       options.ca = caCertPem;
       options.rejectUnauthorized = true;
     }
-    const req = lib.request(options, (res) => {
+    const req = lib.request(options, (res: any) => {
       const chunks: any[] = [];
-      res.on('data', (c) => chunks.push(c));
+      res.on('data', (c: any) => chunks.push(c));
       res.on('end', () => {
         const raw = Buffer.concat(chunks).toString('utf8');
         let parsed: any = null;

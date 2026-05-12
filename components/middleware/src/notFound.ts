@@ -12,6 +12,6 @@ const errors = require('errors').factory;
 /**
  * '404' handling to override Express' defaults. Must be set after the routes in the init sequence.
  */
-export default function (req, res, next) {
+export default function (req: any, res: any, next: any) {
   return next(errors.unknownResource());
 }

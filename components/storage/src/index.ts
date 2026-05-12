@@ -48,7 +48,7 @@ async function getStorageLayer () {
 
 // Lazy-created MongoDB database — used by getDatabaseSync before barrel init
 // (e.g. test-helpers/dependencies.js at module load).
-let _lazyDatabase;
+let _lazyDatabase: any;
 function _ensureMongoDatabase () {
   if (!_lazyDatabase) {
     const { getConfigUnsafe, getLogger } = require('@pryv/boiler');

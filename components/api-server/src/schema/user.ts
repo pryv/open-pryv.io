@@ -13,7 +13,7 @@ const require = createRequire(import.meta.url);
 const Action = require('./Action.ts');
 const helpers = require('./helpers.ts');
 
-export default function (action) {
+export default function (action: any) {
   const schema: any = {
     id: helpers.getTypeURI('user', action),
     type: 'object',

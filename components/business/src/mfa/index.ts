@@ -30,7 +30,7 @@ const generateCode = require('./generateCode.ts').default;
  *
  * @param mfaConfig - the `services.mfa` config block
  */
-function createMFAService (mfaConfig) {
+function createMFAService (mfaConfig: any) {
   if (!mfaConfig || mfaConfig.mode == null || mfaConfig.mode === 'disabled') return null;
   if (mfaConfig.mode === 'challenge-verify') return new ChallengeVerifyService(mfaConfig);
   if (mfaConfig.mode === 'single') return new SingleService(mfaConfig);
@@ -53,7 +53,7 @@ let _sessionStore: any = null;
  *
  * @param mfaConfig - `services.mfa` config block
  */
-function getMFAService (mfaConfig) {
+function getMFAService (mfaConfig: any) {
   if (_mfaService === null) _mfaService = createMFAService(mfaConfig);
   return _mfaService;
 }
@@ -63,7 +63,7 @@ function getMFAService (mfaConfig) {
  *
  * @param mfaConfig - `services.mfa` config block (read sessions.ttlSeconds)
  */
-function getMFASessionStore (mfaConfig) {
+function getMFASessionStore (mfaConfig: any) {
   if (_sessionStore === null) {
     const ttl = mfaConfig?.sessions?.ttlSeconds ?? 1800;
     _sessionStore = new SessionStore(ttl);

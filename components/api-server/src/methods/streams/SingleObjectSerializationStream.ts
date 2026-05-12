@@ -15,17 +15,17 @@ const Transform = require('stream').Transform;
  */
 class SingleObjectSerializationStream extends Transform {
   name;
-  constructor (objectName) {
+  constructor (objectName: any) {
     super({ writableObjectMode: true });
     this.name = objectName;
   }
 
-  _transform = function (this: any, item, encoding, callback) {
+  _transform = function (this: any, item: any, encoding: any, callback: any) {
     this.push('"' + this.name + '": ' + JSON.stringify(item) + ', ');
     callback();
   };
 
-  _flush = function (callback) {
+  _flush = function (callback: any) {
     callback();
   };
 }

@@ -54,7 +54,7 @@ const TAG_BYTES = 16;
  * @param purpose       - label, e.g. 'pryv-at-rest-tls-v1'
  * @param [salt]        - optional salt; default: empty (acceptable because source has entropy)
  */
-function deriveKey (source, purpose, salt = Buffer.alloc(0)) {
+function deriveKey (source: any, purpose: any, salt: any = Buffer.alloc(0)) {
   if (source == null || (Buffer.isBuffer(source) && source.length === 0) ||
       (typeof source === 'string' && source.length === 0)) {
     throw new Error('AtRestEncryption.deriveKey: source is required');
@@ -73,7 +73,7 @@ function deriveKey (source, purpose, salt = Buffer.alloc(0)) {
  *
  * @param key - 32 bytes
  */
-function encrypt (plaintext, key) {
+function encrypt (plaintext: any, key: any) {
   if (plaintext == null) {
     throw new Error('AtRestEncryption.encrypt: plaintext is required');
   }
@@ -95,14 +95,14 @@ function encrypt (plaintext, key) {
  *
  * @param key - 32 bytes
  */
-function decrypt (encoded, key) {
+function decrypt (encoded: any, key: any) {
   if (typeof encoded !== 'string' || encoded.length === 0) {
     throw new Error('AtRestEncryption.decrypt: encoded is required');
   }
   if (!Buffer.isBuffer(key) || key.length !== KEY_BYTES) {
     throw new Error(`AtRestEncryption.decrypt: key must be a ${KEY_BYTES}-byte Buffer`);
   }
-  let envelope;
+  let envelope: any;
   try { envelope = Buffer.from(encoded, 'base64'); } catch {
     throw new Error('AtRestEncryption.decrypt: invalid base64');
   }
@@ -130,14 +130,14 @@ function decrypt (encoded, key) {
 /**
  * Convenience: encrypt a JS object as JSON and return the envelope.
  */
-function encryptJson (obj, key) {
+function encryptJson (obj: any, key: any) {
   return encrypt(JSON.stringify(obj), key);
 }
 
 /**
  * Convenience: decrypt and JSON.parse. Throws if the plaintext isn't valid JSON.
  */
-function decryptJson (encoded, key) {
+function decryptJson (encoded: any, key: any) {
   const pt = decrypt(encoded, key);
   try { return JSON.parse(pt.toString('utf8')); } catch {
     throw new Error('AtRestEncryption.decryptJson: decrypted payload is not valid JSON');

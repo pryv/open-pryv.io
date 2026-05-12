@@ -35,7 +35,7 @@ const forge = require('node-forge');
  * Generate a 1-day self-signed RSA-2048 cert valid for `commonName` and
  * `altNames`. Returns { keyPem, certPem }.
  */
-function generate ({ commonName, altNames = [] }) {
+function generate ({ commonName, altNames = [] }: any) {
   if (typeof commonName !== 'string' || commonName.length === 0) {
     throw new Error('selfSignedPlaceholder.generate: commonName is required');
   }

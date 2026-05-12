@@ -12,16 +12,16 @@ const { DummyTracing } = require('tracing');
 class MinimalMethodContext {
   source;
 
-  user;
+  user: any;
 
-  username;
+  username: any;
 
-  access;
+  access: any;
 
   originalQuery;
 
   _tracing;
-  constructor (req) {
+  constructor (req: any) {
     this.source = {
       name: 'http',
       ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress
@@ -47,7 +47,7 @@ class MinimalMethodContext {
  * Helper for express to set a Minimal Context, for methods that does use the standard MethodContext.
  * Note: will have no effect is a context already exists.
  */
-function setMinimalMethodContext (req, res, next) {
+function setMinimalMethodContext (req: any, res: any, next: any) {
   if (req.context) {
     return next(new Error('Context already set'));
   }

@@ -27,7 +27,7 @@ class Cache {
    * @default 'user.pryv.lastAccessed'
    */
   static LastAccessedXattrKey = 'user.pryv.lastAccessed';
-  constructor (settings) {
+  constructor (settings: any) {
     this.settings = settings;
     this.cleanUpInProgress = false;
   }
@@ -54,9 +54,9 @@ class Cache {
     this.cleanUpInProgress = false;
   }
 }
-async function getFiles (dir) {
+async function getFiles (dir: any) {
   const dirents = await readdir(dir, { withFileTypes: true });
-  const files = await Promise.all(dirents.map((dirent) => {
+  const files = await Promise.all(dirents.map((dirent: any) => {
     const res = resolve(dir, dirent.name);
     return dirent.isDirectory() ? getFiles(res) : res;
   }));

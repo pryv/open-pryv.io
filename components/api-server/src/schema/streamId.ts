@@ -24,17 +24,17 @@ const STREAMID_AT_CREATION_REGEXP_STR = '^[a-z0-9-]{1,100}';
 /**
  * Find forbidden character for 'streams' or 'permission.streamId'
  */
-function findForbiddenChar (streamId) {
+function findForbiddenChar (streamId: any) {
   for (let i = 0; i < streamId.length; i++) {
     const char = streamId[i];
-    if (forbiddenCharsMap[char]) { return char; }
+    if ((forbiddenCharsMap as any)[char]) { return char; }
   }
   return null;
 }
 /**
  * Tests stream id for validity at creation
  */
-function isStreamIdValidForCreation (streamId) {
+function isStreamIdValidForCreation (streamId: any) {
   const regexp = new RegExp(STREAMID_AT_CREATION_REGEXP_STR);
   return regexp.test(streamId);
 }

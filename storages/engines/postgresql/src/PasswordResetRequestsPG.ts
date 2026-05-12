@@ -32,7 +32,7 @@ class PasswordResetRequestsPG {
       'SELECT id, username, expires FROM password_resets WHERE id = $1 AND username = $2',
       [id, username]
     )
-      .then((res) => {
+      .then((res: any) => {
         if (res.rows.length === 0) return callback(null, null);
         const row = res.rows[0];
         if (new Date() >= new Date(row.expires)) {

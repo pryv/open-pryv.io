@@ -24,7 +24,7 @@ class BasicType {
    * @param outerType {string} Type name such as 'mass/kg'
    * @param schema {JSONSchema} Schema to verify content against.
    */
-  constructor (outerType, schema) {
+  constructor (outerType: any, schema: any) {
     this._schema = schema;
     this._outerType = outerType;
     this._innerType = valueTypes(schema.type);
@@ -46,7 +46,7 @@ class BasicType {
     return this.requiredFields();
   }
 
-  forField (name) {
+  forField (name: any) {
     // NOTE BasicType only represents types that are not composed of multiple
     // fields. So the name MUST be 'value' here.
     assert.ok(name === 'value');
@@ -57,7 +57,7 @@ class BasicType {
     return false;
   }
 
-  async callValidator (validator, content) {
+  async callValidator (validator: any, content: any) {
     // Perform coercion into target type first. Then verify using the
     // validator. This saves us one roundtrip.
     const value = this._innerType.coerce(content);

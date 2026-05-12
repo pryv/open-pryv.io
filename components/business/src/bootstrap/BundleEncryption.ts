@@ -47,7 +47,7 @@ const ARMOR_END = '-----END PRYV BOOTSTRAP BUNDLE-----';
  *
  * @param bundle - the plain bundle (see Bundle.js)
  */
-function encrypt (bundle, passphrase) {
+function encrypt (bundle: any, passphrase: any) {
   if (bundle == null || typeof bundle !== 'object') {
     throw new Error('BundleEncryption.encrypt: bundle must be an object');
   }
@@ -77,7 +77,7 @@ function encrypt (bundle, passphrase) {
  *
  * @param armored - ASCII-armored ciphertext (as produced by encrypt)
  */
-function decrypt (armored, passphrase) {
+function decrypt (armored: any, passphrase: any) {
   if (typeof armored !== 'string' || !armored.includes(ARMOR_BEGIN)) {
     throw new Error('BundleEncryption.decrypt: input is not an armored bundle');
   }
@@ -142,7 +142,7 @@ function generatePassphrase () {
 
 // --- internal helpers ---------------------------------------------------
 
-function scryptKey (passphrase, salt) {
+function scryptKey (passphrase: any, salt: any) {
   // Synchronous scryptSync is fine here: bundle encryption is a CLI-time
   // operation and only runs once per new-core provisioning.
   return crypto.scryptSync(passphrase, salt, KEY_BYTES, {
@@ -150,12 +150,12 @@ function scryptKey (passphrase, salt) {
   });
 }
 
-function armor (b64) {
+function armor (b64: any) {
   const lines = b64.match(/.{1,64}/g) || [''];
   return [ARMOR_BEGIN, ...lines, ARMOR_END].join('\n') + '\n';
 }
 
-function deArmor (armored) {
+function deArmor (armored: any) {
   const start = armored.indexOf(ARMOR_BEGIN);
   const end = armored.indexOf(ARMOR_END);
   if (start < 0 || end < 0 || end < start) {

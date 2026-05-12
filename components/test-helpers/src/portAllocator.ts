@@ -62,7 +62,7 @@ async function allocatePort () {
  * Checks if a port is available by attempting to bind to it
  * @param port - The port to check
  */
-function isPortAvailable (port) {
+function isPortAvailable (port: any) {
   return new Promise((resolve) => {
     const server = net.createServer();
 
@@ -82,7 +82,7 @@ function isPortAvailable (port) {
  * Allocates multiple ports at once
  * @param count - Number of ports to allocate
  */
-async function allocatePorts (count) {
+async function allocatePorts (count: any) {
   const ports: number[] = [];
   for (let i = 0; i < count; i++) {
     ports.push(await allocatePort());
@@ -94,7 +94,7 @@ async function allocatePorts (count) {
  * Resets the port allocator (useful for test setup)
  * @param basePort - Starting port number (defaults to random in range)
  */
-function reset (basePort) {
+function reset (basePort: any) {
   nextPort = basePort || (BASE_PORT_MIN + Math.floor(Math.random() * (BASE_PORT_MAX - BASE_PORT_MIN)));
 }
 

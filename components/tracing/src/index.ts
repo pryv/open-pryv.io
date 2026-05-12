@@ -24,7 +24,7 @@ function initRootSpan () {
 }
 
 function tracingMiddleware (name = 'express1') {
-  return function (req, res, next) {
+  return function (req: any, res: any, next: any) {
     if (req.tracing == null) {
       req.tracing = initRootSpan();
     }

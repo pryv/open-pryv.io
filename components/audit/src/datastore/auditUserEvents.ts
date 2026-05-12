@@ -12,7 +12,7 @@ const audit = require('audit').default;
 const { localStorePrepareOptions, localStorePrepareQuery } = require('storage/src/localStoreEventQueries.ts');
 
 const auditUserEvents: any = ds.createUserEvents({
-  async getStreamed (userId, storeQuery, storeOptions) {
+  async getStreamed (userId: any, storeQuery: any, storeOptions: any) {
     const userDB = await audit.storage.forUser(userId);
     const query = localStorePrepareQuery(storeQuery);
     const options = localStorePrepareOptions(storeOptions);

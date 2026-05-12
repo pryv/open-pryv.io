@@ -17,7 +17,7 @@ class Size {
    * Computes and updates storage size for the given user.
    *
    */
-  async computeForUser (user) {
+  async computeForUser (user: any) {
     const mall = await getMall();
     const storageInfo = await mall.getUserStorageInfos(user.id);
     let dbDocuments = 0;

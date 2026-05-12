@@ -27,7 +27,7 @@ const VALID_STORAGE_TYPES = ['baseStorage', 'dataStore', 'platformStorage', 'ser
  * @param engineDir - Path to the engine directory (for error messages)
  * @throws {Error} If validation fails
  */
-function validateManifest (manifest, engineDir) {
+function validateManifest (manifest: any, engineDir: any) {
   if (!manifest || typeof manifest !== 'object') {
     throw new Error(`Invalid manifest in ${engineDir}: must be a non-null object`);
   }

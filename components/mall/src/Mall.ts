@@ -28,8 +28,8 @@ class Mall {
    */
   includedInStarPermissions: any[] = [];
 
-  _events;
-  _streams;
+  _events: any;
+  _streams: any;
 
   initialized = false;
 
@@ -44,7 +44,7 @@ class Mall {
   /**
    * Register a DataStore
    */
-  addStore (store, storeDescription) {
+  addStore (store: any, storeDescription: any) {
     if (this.initialized) { throw new Error('Sources cannot be added after init()'); }
     this.storesById.set(storeDescription.id, store);
     this.storeDescriptionsByStore.set(store, storeDescription);
@@ -74,7 +74,7 @@ class Mall {
 
     for (const [storeId, store] of this.storesById) {
       const storeKeyValueData = userAccountStorage.getKeyValueDataForStore(storeId);
-      const params = {
+      const params: any = {
         ...this.storeDescriptionsByStore.get(store),
         storeKeyValueData,
         logger: getLogger(`mall:${storeId}`),
@@ -94,7 +94,7 @@ class Mall {
     return this;
   }
 
-  async deleteUser (userId) {
+  async deleteUser (userId: any) {
     for (const [storeId, store] of this.storesById) {
       try {
         await store.deleteUser(userId);
@@ -107,8 +107,8 @@ class Mall {
   /**
    * Return storage informations per store Id.
   */
-  async getUserStorageInfos (userId) {
-    const storageInfos = { };
+  async getUserStorageInfos (userId: any) {
+    const storageInfos: any = { };
     for (const [storeId, store] of this.storesById) {
       try {
         if (store.getUserStorageInfos != null) {
@@ -132,8 +132,8 @@ export { Mall };
 /**
  * Get store-specific integrity calculation function
 */
-function getEventIntegrityFn (storeId, integrity) {
-  return function setIntegrityForEvent (storeEventData) {
+function getEventIntegrityFn (storeId: any, integrity: any) {
+  return function setIntegrityForEvent (storeEventData: any) {
     const event = eventsUtils.convertEventFromStore(storeId, storeEventData);
     storeEventData.integrity = integrity.events.compute(event).integrity;
   };

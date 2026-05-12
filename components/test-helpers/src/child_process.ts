@@ -13,7 +13,7 @@ const msgpack = require('msgpack5')();
 class ChildProcess {
   launcher;
 
-  constructor (launcher) {
+  constructor (launcher: any) {
     this.launcher = launcher;
 
     // This bit is useful to trace down promise rejections that aren't caught.
@@ -28,13 +28,13 @@ class ChildProcess {
 
   // Handles promise rejections that aren't caught somewhere. This is very
   // useful for debugging.
-  unhandledRejection (reason, promise) {
+  unhandledRejection (reason: any, promise: any) {
     logger.warn(
 
       'Unhandled promise rejection:', promise, 'reason:', reason.stack || reason);
   }
 
-  async handleParentMessage (wireMessage) {
+  async handleParentMessage (wireMessage: any) {
     const message = msgpack.decode(wireMessage);
 
     const [msgId, cmd, ...args] = message;
@@ -60,13 +60,13 @@ class ChildProcess {
     logger.debug('handleParentMessage/done', cmd);
   }
 
-  respondToParent (msg) {
+  respondToParent (msg: any) {
     logger.debug('respondToParent', msg);
 
     process.send!(msgpack.encode(msg)); // worker child; send is always defined here
   }
 
-  dispatchParentMessage (cmd, ...args) {
+  dispatchParentMessage (cmd: any, ...args: any[]) {
     if (!cmd.startsWith('int_')) {
       const launcher = this.launcher;
       if (typeof launcher[cmd] !== 'function') { throw new Error(`Unknown/unhandled launcher message ${cmd}`); }
@@ -87,7 +87,7 @@ class ChildProcess {
   // Tells the launcher to launch the application, injecting the given
   // `injectSettings`.
   //
-  async intStartServer (injectSettings) {
+  async intStartServer (injectSettings: any) {
     const launcher = this.launcher;
 
     return launcher.launch(injectSettings);

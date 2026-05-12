@@ -13,10 +13,10 @@ const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 const tryCoerceStringValues = require('api-server/src/schema/validation.ts').tryCoerceStringValues;
 // Event streams route handling.
-export default function (expressApp, app) {
+export default function (expressApp: any, app: any) {
   const api = app.api;
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);
-  expressApp.get(Paths.Audit, setMethodId('audit.getLogs'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.get(Paths.Audit, setMethodId('audit.getLogs'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     const params = Object.assign({}, req.query);
     tryCoerceStringValues(params, {
       // standard event type

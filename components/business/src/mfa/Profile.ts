@@ -19,11 +19,11 @@ const { randomUUID: uuidv4 } = require('node:crypto');
  */
 class Profile {
   /** @type {Object} */
-  content;
+  content: any;
   /** @type {string[]} */
-  recoveryCodes;
+  recoveryCodes: any;
 
-  constructor (content = {}, recoveryCodes = []) {
+  constructor (content: any = {}, recoveryCodes: any = []) {
     this.content = content;
     this.recoveryCodes = recoveryCodes;
   }

@@ -13,15 +13,15 @@ import type {} from 'node:fs';
  * Config-based: reads from config 'appList'.
  */
 
-export default function (expressApp, app) {
+export default function (expressApp: any, app: any) {
   const appsList = app.config.get('appList') || {};
 
-  expressApp.get('/apps', (req, res) => {
+  expressApp.get('/apps', (req: any, res: any) => {
     const data = (Object.entries(appsList) as Array<[string, any]>).map(([id, info]) => ({ id, ...info }));
     res.json({ apps: data });
   });
 
-  expressApp.get('/apps/:appid', (req, res) => {
+  expressApp.get('/apps/:appid', (req: any, res: any) => {
     const appid = req.params.appid;
     const info = appsList[appid];
     if (!info) {

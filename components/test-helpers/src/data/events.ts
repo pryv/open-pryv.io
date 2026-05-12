@@ -416,7 +416,7 @@ export { events, ensureIntegrity };
 /**
  * Creates a cuid-like id (required event id format).
  */
-function getTestEventId (n) {
+function getTestEventId (n: any) {
   n = n + '';
   return 'cthisistesteventno' + (n.length >= 7 ? n : new Array(7 - n.length + 1).join('0') + n);
 }

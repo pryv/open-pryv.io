@@ -42,14 +42,14 @@ async function init () {
      * TODO: merge with verification of current password once passwords are entirely within user account storage
      * @throws {APIError} If the password does not follow the configured rules
      */
-    async checkCurrentPasswordAge (userId) {
+    async checkCurrentPasswordAge (userId: any) {
       await checkMinimumAge(userId);
     },
     /**
      * @param userId Optional; if set, will check the user's password history
      * @throws {APIError} If the password does not follow the configured rules
      */
-    async checkNewPassword (userId, password) {
+    async checkNewPassword (userId: any, password: any) {
       checkLength(password);
       checkCharCategories(password);
       if (userId) {
@@ -58,7 +58,7 @@ async function init () {
     }
   };
 
-  async function getPasswordExpirationAndChangeTimes (userId) {
+  async function getPasswordExpirationAndChangeTimes (userId: any) {
     const maxDays = settings().passwordAgeMaxDays;
     const minDays = settings().passwordAgeMinDays;
     const pwdTime = await userAccountStorage.getCurrentPasswordTime(userId);
@@ -72,7 +72,7 @@ async function init () {
     return res;
   }
 
-  async function checkMinimumAge (userId) {
+  async function checkMinimumAge (userId: any) {
     const minDays = settings().passwordAgeMinDays;
     if (minDays === 0) {
       return;
@@ -84,7 +84,7 @@ async function init () {
     }
   }
 
-  function checkLength (password) {
+  function checkLength (password: any) {
     const minLength = settings().passwordComplexityMinLength;
     if (minLength === 0) {
       return;
@@ -96,7 +96,7 @@ async function init () {
     }
   }
 
-  function checkCharCategories (password) {
+  function checkCharCategories (password: any) {
     const requiredCharCats = settings().passwordComplexityMinCharCategories;
     if (requiredCharCats === 0) {
       return;
@@ -108,14 +108,14 @@ async function init () {
     }
   }
 
-  function countCharCategories (password) {
+  function countCharCategories (password: any) {
     return Object.values(charCategoriesRegExps).reduce(
       (count, regExp) => regExp.test(password) ? count + 1 : count,
       0
     );
   }
 
-  async function checkHistory (userId, password) {
+  async function checkHistory (userId: any, password: any) {
     const historyLength = settings().passwordPreventReuseHistoryLength;
     if (historyLength === 0) {
       return;

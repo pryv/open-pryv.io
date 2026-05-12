@@ -37,11 +37,11 @@ const services = {
 };
 
 class Application {
-  logger;
+  logger: any;
 
-  settings;
+  settings: any;
 
-  webhooksService;
+  webhooksService: any;
   async setup () {
     await this.initSettings();
     this.initLogger();

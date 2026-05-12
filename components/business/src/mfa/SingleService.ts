@@ -22,7 +22,14 @@ const CODE = 'code';
  * session TTL); no cross-instance sharing in single-core deployments.
  */
 class SingleService extends Service {
-  constructor (mfaConfig) {
+  url: any;
+  apiMethod: any;
+  headers: any;
+  body: any;
+  codes: any;
+  timeouts: any;
+  ttlMilliseconds: any;
+  constructor (mfaConfig: any) {
     super(mfaConfig);
     const single = mfaConfig.sms.endpoints.single;
     this.url = single.url;
@@ -36,7 +43,7 @@ class SingleService extends Service {
     this.ttlMilliseconds = (mfaConfig.sessions?.ttlSeconds ?? 1800) * 1000;
   }
 
-  async challenge (username, profile, _clientRequest) {
+  async challenge (username: any, profile: any, _clientRequest: any) {
     const code = await generateCode(CODE_LENGTH);
     this.setCode(username, code);
     // Make the code available alongside profile.content for templating.
@@ -52,7 +59,7 @@ class SingleService extends Service {
     await this._makeRequest(this.apiMethod, url, headers, body);
   }
 
-  async verify (username, _profile, clientRequest) {
+  async verify (username: any, _profile: any, clientRequest: any) {
     const code = this.codes.get(username);
     if (code !== clientRequest.body.code) {
       throw errors.invalidParametersFormat(
@@ -63,7 +70,7 @@ class SingleService extends Service {
     this.clearCode(username);
   }
 
-  setCode (username, code) {
+  setCode (username: any, code: any) {
     this.codes.set(username, code);
     this.timeouts.set(
       username,
@@ -71,7 +78,7 @@ class SingleService extends Service {
     );
   }
 
-  clearCode (username) {
+  clearCode (username: any) {
     this.codes.delete(username);
     const t = this.timeouts.get(username);
     if (t) {

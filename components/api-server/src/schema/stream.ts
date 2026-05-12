@@ -20,7 +20,7 @@ const boolean = helpers.boolean;
 /**
  * @param ignoreChildren Whether to ignore `children` property
  */
-export default function (action, ignoreChildren, refToStreamSchema) {
+export default function (action: any, ignoreChildren: any, refToStreamSchema: any) {
   const schema: any = {
     id: helpers.getTypeURI('stream', action),
     type: 'object',

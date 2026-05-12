@@ -65,7 +65,7 @@ const REQUIRED_RQLITE = ['raftPort', 'httpPort'];
  * @param [input.rqlite.raftPort=4002]
  * @param [input.rqlite.httpPort=4001]
  */
-function assemble (input) {
+function assemble (input: any) {
   if (!input || typeof input !== 'object') {
     throw new Error('Bundle.assemble: input is required');
   }
@@ -117,7 +117,7 @@ function assemble (input) {
  * Throws descriptive Errors on failure.
  *
  */
-function validate (bundle) {
+function validate (bundle: any) {
   if (!bundle || typeof bundle !== 'object') {
     throw new Error('Bundle.validate: not an object');
   }
@@ -153,7 +153,7 @@ function validate (bundle) {
   return bundle;
 }
 
-function requireAll (obj, keys, context) {
+function requireAll (obj: any, keys: any, context: any) {
   if (!obj || typeof obj !== 'object') {
     throw new Error(`Bundle.validate: ${context} is not an object`);
   }

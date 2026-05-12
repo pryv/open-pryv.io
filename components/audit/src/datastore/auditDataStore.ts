@@ -25,9 +25,9 @@ const auditDataStore: any = ds.createDataStore({
   streams: auditUserStreams,
   events: auditUserEvents,
 
-  async deleteUser (userId) {},
+  async deleteUser (userId: any) {},
 
-  async getUserStorageInfos (userId) {
+  async getUserStorageInfos (userId: any) {
     return { };
   }
 });

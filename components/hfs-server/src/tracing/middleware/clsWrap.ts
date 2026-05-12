@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 // Express middleware that makes sure we have a continuation local storage
 // context for each express request.
 const cls = require('../cls.ts').default;
-function clsWrap (req, res, next) {
+function clsWrap (req: any, res: any, next: any) {
   return cls.startExpressContext(req, res, next);
 }
 function factory () {

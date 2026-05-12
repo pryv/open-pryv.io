@@ -13,7 +13,7 @@ const middleware = require('middleware');
 /**
  * The Express app definition.
  */
-export default function expressApp (commonHeadersMiddleware, errorsMiddleware, requestTraceMiddleware) {
+export default function expressApp (commonHeadersMiddleware: any, errorsMiddleware: any, requestTraceMiddleware: any) {
   const app = express();
   /** Called once routes are defined on app, allows finalizing middleware stack
    * with things like error handling.

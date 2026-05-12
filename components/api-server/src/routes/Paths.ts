@@ -55,10 +55,10 @@ export {
   Favicon
 };
 
-function makePath (...a) {
+function makePath (...a: any[]) {
   a.unshift('/');
   return path.join(...a);
 }
-function param (name) {
+function param (name: any) {
   return ':' + name;
 }

@@ -24,7 +24,7 @@ export { USERNAME_REGEXP_STR };
  * Gets the full core type URI for the given type name and action (read, create, etc.)
  *
  */
-export const getTypeURI = function (name, action) {
+export const getTypeURI = function (name: any, action: any) {
   return 'pryv.core.' + name + (action ? '-' + action : '');
 };
 
@@ -33,7 +33,7 @@ export const getTypeURI = function (name, action) {
  *
  * @param options Extra properties to merge into the returned object definition
  */
-export const object = function (propertiesDef, options) {
+export const object = function (propertiesDef: any, options: any) {
   return Object.assign(getBaseSchema('object', options), { properties: propertiesDef });
 };
 
@@ -42,7 +42,7 @@ export const object = function (propertiesDef, options) {
  *
  * @param options Extra properties to merge into the returned array definition
  */
-export const array = function (itemsDef, options) {
+export const array = function (itemsDef: any, options: any) {
   return Object.assign(getBaseSchema('array', options), { items: itemsDef });
 };
 
@@ -91,7 +91,7 @@ export const username = getBaseSchema('string', { pattern: USERNAME_REGEXP_STR }
 
 export { getBaseSchema };
 
-function getBaseSchema (type, options) {
+function getBaseSchema (type: any, options: any) {
   const result = {
     type: [type]
   };
@@ -111,7 +111,7 @@ function getBaseSchema (type, options) {
  * Adds `created`, `createdBy`, `modified`, `modifiedBy` property definitions to the given schema.
  *
  */
-export const addTrackingProperties = function (schema) {
+export const addTrackingProperties = function (schema: any) {
   schema.properties.created = { type: 'number' };
   schema.properties.createdBy = { type: 'string' };
   schema.properties.modified = { type: 'number' };

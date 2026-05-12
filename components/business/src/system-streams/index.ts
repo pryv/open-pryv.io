@@ -53,7 +53,7 @@ async function init () {
  * Test-only — reloads from a custom config.
  * See "config.default-streams.test.js" (V9QB, 5T5S, ARD9).
  */
-async function reloadForTests (config) {
+async function reloadForTests (config: any) {
   config = config || (await getConfig());
   if (config.get('NODE_ENV') !== 'test') {
     console.error('this is meant to be used in test only');
@@ -65,7 +65,7 @@ async function reloadForTests (config) {
 
 // ── Pre-computed data (all set at init) ───────────────────────────
 
-function initializeState (settings) {
+function initializeState (settings: any) {
   allAsTree = settings;
   accountChildren = treeUtils.findById(settings, STREAM_ID_ACCOUNT).children;
 
@@ -83,7 +83,7 @@ function initializeState (settings) {
   // Prefix translation maps
   streamIdWithPrefixToWithout = {};
   accountStreamIdWithoutPrefixToWith = {};
-  const allStreamIds = treeUtils.flattenTree(settings).map((s) => s.id);
+  const allStreamIds = treeUtils.flattenTree(settings).map((s: any) => s.id);
   for (const prefixed of allStreamIds) {
     const unprefixed = stripPrefix(prefixed);
     streamIdWithPrefixToWithout[prefixed] = unprefixed;
@@ -93,7 +93,7 @@ function initializeState (settings) {
   }
 }
 
-function buildLeavesMap (children) {
+function buildLeavesMap (children: any) {
   const flatList = treeUtils.flattenTreeWithoutParents(children);
   const map: any = {};
   for (const stream of flatList) {
@@ -104,11 +104,11 @@ function buildLeavesMap (children) {
 
 // ── Prefix utilities ──────────────────────────────────────────────
 
-function toFieldName (streamIdWithPrefix) {
+function toFieldName (streamIdWithPrefix: any) {
   return streamIdWithPrefixToWithout[streamIdWithPrefix] || streamIdWithPrefix;
 }
 
-function toStreamId (fieldName) {
+function toStreamId (fieldName: any) {
   const prefixed = accountStreamIdWithoutPrefixToWith[fieldName];
   if (prefixed == null) {
     throw new Error('trying to call toStreamId() with non-account fieldName: ' + fieldName);
@@ -118,7 +118,7 @@ function toStreamId (fieldName) {
 
 // ── Internal helpers ──────────────────────────────────────────────
 
-function filterMapStreams (streams, filter = IS_SHOWN) {
+function filterMapStreams (streams: any, filter = IS_SHOWN) {
   const streamsMap: any = {};
   if (!Array.isArray(streams)) { return streamsMap; }
   const flatList = treeUtils.flattenTree(streams);
@@ -130,7 +130,7 @@ function filterMapStreams (streams, filter = IS_SHOWN) {
   return streamsMap;
 }
 
-function stripPrefix (streamId) {
+function stripPrefix (streamId: any) {
   if (streamId.startsWith(PRYV_PREFIX)) { return streamId.substring(PRYV_PREFIX.length); }
   if (streamId.startsWith(CUSTOMER_PREFIX)) { return streamId.substring(CUSTOMER_PREFIX.length); }
   throw new Error('accountStreams initialization: stripPrefix(streamId) should be called with a prefixed streamId');

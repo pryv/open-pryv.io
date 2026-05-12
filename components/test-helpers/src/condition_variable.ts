@@ -10,14 +10,14 @@ import type {} from "node:fs";
 class Waiter {
   promise;
 
-  resolve;
+  resolve: any;
 
-  reject;
+  reject: any;
 
-  timeout;
+  timeout: any;
 
   done;
-  constructor (timeout) {
+  constructor (timeout: any) {
     this.done = false;
     this.promise = new Promise((resolve, reject) => {
       this.resolve = resolve;
@@ -40,12 +40,12 @@ class Waiter {
 }
 
 class ConditionVariable {
-  waiters;
+  waiters: any;
   constructor () {
     this.waiters = [];
   }
 
-  wait (timeout) {
+  wait (timeout: any) {
     const waiter = new Waiter(timeout);
     this.waiters.push(waiter);
     return waiter.promise;
@@ -75,7 +75,7 @@ class Fuse {
     this.cv = new ConditionVariable();
   }
 
-  async wait (timeout) {
+  async wait (timeout: any) {
     if (this.burnt) { return; }
     await this.cv.wait(timeout);
   }

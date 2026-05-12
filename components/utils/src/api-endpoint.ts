@@ -10,11 +10,11 @@ const require = createRequire(import.meta.url);
 
 const { getConfigSync } = require('@pryv/boiler');
 
-let defaultApiFormat;
+let defaultApiFormat: any;
 /**
  * @param [apiFormat] - (default the one of config "service:api") https://{username}.domain/ or https://hostname/{username}/
  */
-function build (username, token, apiFormat) {
+function build (username: any, token: any, apiFormat: any) {
   if (!defaultApiFormat) { defaultApiFormat = getConfigSync().get('service:api'); }
   apiFormat = apiFormat || defaultApiFormat;
   let apiEndpoint = apiFormat.replace('{username}', username);

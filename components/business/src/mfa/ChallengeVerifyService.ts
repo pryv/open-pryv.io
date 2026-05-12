@@ -14,7 +14,7 @@ const Service = require('./Service.ts').default;
  * — service-core never sees it.
  */
 class ChallengeVerifyService extends Service {
-  constructor (mfaConfig) {
+  constructor (mfaConfig: any) {
     super(mfaConfig);
     const eps = mfaConfig.sms.endpoints;
     this.challengeUrl = eps.challenge.url;
@@ -27,7 +27,7 @@ class ChallengeVerifyService extends Service {
     this.verifyBody = eps.verify.body;
   }
 
-  async challenge (_username, profile, _clientRequest) {
+  async challenge (_username: any, profile: any, _clientRequest: any) {
     const replacements = profile.content;
     let url = this.challengeUrl;
     let headers = this.challengeHeaders;
@@ -40,7 +40,7 @@ class ChallengeVerifyService extends Service {
     await this._makeRequest(this.challengeMethod, url, headers, body);
   }
 
-  async verify (_username, profile, clientRequest) {
+  async verify (_username: any, profile: any, clientRequest: any) {
     // Verify-time replacements include both the persisted profile content and
     // whatever the client sent in the verify request body (typically `code`).
     const replacements = Object.assign({}, clientRequest.body, profile.content);

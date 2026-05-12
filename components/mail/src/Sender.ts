@@ -13,11 +13,11 @@
  */
 class Sender {
   deliveryService: any;
-  constructor (deliveryService) {
+  constructor (deliveryService: any) {
     this.deliveryService = deliveryService;
   }
 
-  async renderAndSend (template, substitutions, recipient) {
+  async renderAndSend (template: any, substitutions: any, recipient: any) {
     const sendOp = new SendOperation(recipient, substitutions, this.deliveryService);
     return await template.executeSend(sendOp);
   }
@@ -27,13 +27,13 @@ class SendOperation {
   recipient: any;
   substitutions: any;
   deliveryService: any;
-  constructor (recipient, substitutions, deliveryService) {
+  constructor (recipient: any, substitutions: any, deliveryService: any) {
     this.recipient = recipient;
     this.substitutions = substitutions;
     this.deliveryService = deliveryService;
   }
 
-  async sendMail (templateRoot) {
+  async sendMail (templateRoot: any) {
     return await this.deliveryService.send({
       message: {
         to: {

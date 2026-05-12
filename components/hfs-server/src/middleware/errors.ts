@@ -19,8 +19,8 @@ const { APIError } = require('errors');
  * @return {Function} express middleware function that logs errors and responds
  *    to them properly.
  */
-export default function produceErrorHandlingMiddleware (logger) {
-  return function handleError (error, req, res, next) {
+export default function produceErrorHandlingMiddleware (logger: any) {
+  return function handleError (error: any, req: any, res: any, next: any) {
     let safeError;
     if (error != null && error instanceof APIError) { safeError = error; } else {
       // FLOW Assume that we can toString the mistery object

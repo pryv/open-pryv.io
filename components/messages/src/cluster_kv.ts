@@ -52,10 +52,10 @@ function masterStart (opts: any = {}) {
   _store = new Map();
 
   _cluster = opts.cluster || require('node:cluster');
-  _ipcHandler = (worker, msg) => {
+  _ipcHandler = (worker: any, msg: any) => {
     if (!msg || typeof msg.type !== 'string' || !msg.type.startsWith('kv:')) return;
     if (msg.type === 'kv:reply') return; // master never receives replies
-    const reply = (body) => {
+    const reply = (body: any) => {
       try { worker.send({ type: 'kv:reply', requestId: msg.requestId, ...body }); } catch (_) {
         // worker died between request + reply; not fatal
       }
@@ -129,14 +129,14 @@ function _masterStoreForTests () {
 
 // ---------- Worker-side client ----------
 
-function _request (payload, processHandle, timeoutMs) {
+function _request (payload: any, processHandle: any, timeoutMs: any) {
   if (typeof processHandle.send !== 'function') {
     return { _noChannel: true };
   }
   const requestId = randomUUID();
   return new Promise((resolve, reject) => {
     let settled = false;
-    const onMsg = (msg) => {
+    const onMsg = (msg: any) => {
       if (settled) return;
       if (!msg || msg.type !== 'kv:reply' || msg.requestId !== requestId) return;
       settled = true;

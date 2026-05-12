@@ -18,24 +18,24 @@ const require = createRequire(import.meta.url);
  * so tests can pass a mock without touching the global agent.
  */
 
-function createAdapter (newrelicAgent) {
+function createAdapter (newrelicAgent: any) {
   if (!newrelicAgent) {
     throw new Error('newrelic adapter: newrelicAgent is required');
   }
   return {
     id: 'newrelic',
-    setTransactionName (name) {
+    setTransactionName (name: any) {
       newrelicAgent.setTransactionName(name);
     },
-    recordError (err, attrs) {
+    recordError (err: any, attrs: any) {
       newrelicAgent.noticeError(err, attrs || {});
     },
-    recordCustomEvent (type, attrs) {
+    recordCustomEvent (type: any, attrs: any) {
       // New Relic insists event-type names be alphanumeric; callers should
       // stick to something like 'PryvLog' / 'PryvForward' / 'PryvBackup'.
       newrelicAgent.recordCustomEvent(type, attrs || {});
     },
-    async startBackgroundTransaction (name, fn) {
+    async startBackgroundTransaction (name: any, fn: any) {
       return new Promise((resolve, reject) => {
         newrelicAgent.startBackgroundTransaction(name, async () => {
           const tx = newrelicAgent.getTransaction();

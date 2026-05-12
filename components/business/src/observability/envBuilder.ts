@@ -22,7 +22,7 @@ const __dirname = require('path').dirname(__filename);
  */
 const path = require('path');
 
-function buildObservabilityEnv (obs) {
+function buildObservabilityEnv (obs: any) {
   if (!obs || !obs.enabled) return {};
   if (obs.provider !== 'newrelic') return {};
   if (!obs.newrelic || !obs.newrelic.licenseKey) return {};

@@ -21,7 +21,7 @@ class Extension {
   path;
   fn;
 
-  constructor (path, fn) {
+  constructor (path: any, fn: any) {
     this.path = path;
     this.fn = fn;
   }
@@ -34,14 +34,14 @@ class Extension {
 class ExtensionLoader {
   defaultFolder;
 
-  constructor (defaultFolder) {
+  constructor (defaultFolder: any) {
     this.defaultFolder = defaultFolder;
   }
 
   // Tries loading the extension identified by name. This will try to load from
   // below `defaultFolder` first, by appending '.js' to `name`.
   //
-  load (name) {
+  load (name: any) {
     // not explicitly specified —> try to load from default folder
     const defaultModulePath = path.join(this.defaultFolder, name + '.js');
     // If default location doesn't contain a module, give up.
@@ -52,7 +52,7 @@ class ExtensionLoader {
 
   // Tries loading an extension from path. Throws an error if not successful.
   //
-  loadFrom (path) {
+  loadFrom (path: any) {
     try {
       const fn = require(path);
       if (typeof fn !== 'function') { throw new Error(`Not a function (${typeof fn})`); }

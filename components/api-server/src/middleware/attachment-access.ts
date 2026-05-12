@@ -36,7 +36,7 @@ export { middlewareFactory };
 // translates the request's resource path to match the actual physical path for
 // static-serving the file.
 //
-async function attachmentsAccessMiddleware (req, res, next) {
+async function attachmentsAccessMiddleware (req: any, res: any, next: any) {
   const event = await mall.events.getOne(req.context.user.id, req.params.id);
   if (!event) {
     return next(errors.unknownResource('event', req.params.id));
@@ -53,7 +53,7 @@ async function attachmentsAccessMiddleware (req, res, next) {
   }
   // set response content type (we can't rely on the filename)
   const attachment = event.attachments
-    ? event.attachments.find(att => att.id === req.params.fileId)
+    ? event.attachments.find((att: any) => att.id === req.params.fileId)
     : null;
   if (!attachment) {
     return next(errors.unknownResource('attachment', req.params.fileId));
@@ -72,7 +72,7 @@ async function attachmentsAccessMiddleware (req, res, next) {
   req.context.originalQuery = req.params;
   const pipedStream = fileReadStream.pipe(res);
   let streamHasErrors = false;
-  fileReadStream.on('error', async (err) => {
+  fileReadStream.on('error', async (err: any) => {
     streamHasErrors = true;
     try {
       fileReadStream.unpipe(res);

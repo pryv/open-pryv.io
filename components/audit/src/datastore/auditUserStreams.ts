@@ -37,7 +37,7 @@ const auditStreams = [accessesStream, actionsStream];
 Object.freeze(auditStreams);
 
 const auditUserStreams: any = ds.createUserStreams({
-  async get (userId, query) {
+  async get (userId: any, query: any) {
     if (query.parentId === '*' || query.parentId == null) {
       // Return fresh clones: `auditStreams` and its members are Object.freeze'd
       // module-scope singletons. The caller (mall's addStoreIdPrefixToStreams)
@@ -51,13 +51,13 @@ const auditUserStreams: any = ds.createUserStreams({
     return parent.children;
   },
 
-  async getOne (userId, streamId, query) {
+  async getOne (userId: any, streamId: any, query: any) {
     // list accesses
     if (streamId === accessesStream.id) {
       const userStorage = await audit.storage.forUser(userId);
       const accesses = await userStorage.getAllAccesses();
       if (accesses == null) return null;
-      const res = accesses.map((access) => {
+      const res = accesses.map((access: any) => {
         return {
           id: access.term,
           name: access.term,
@@ -76,7 +76,7 @@ const auditUserStreams: any = ds.createUserStreams({
       const userStorage = await audit.storage.forUser(userId);
       const actions = await userStorage.getAllActions();
       if (actions == null) return null;
-      const res = actions.map((action) => {
+      const res = actions.map((action: any) => {
         return {
           id: action.term,
           name: action.term,

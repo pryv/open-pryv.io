@@ -40,7 +40,7 @@ const logger = getLogger('mail');
 let state: any = null;
 let ipcListener: any = null;
 
-async function init (opts) {
+async function init (opts: any) {
   if (state) {
     logger.warn('mail.init called twice — ignoring');
     return;
@@ -64,7 +64,7 @@ async function init (opts) {
   // admin-API PUT/DELETE on this core. Other cores pick up the same row
   // change via rqlite replication + their master's periodic refresh.
   if (typeof process.send === 'function') {
-    ipcListener = (msg) => {
+    ipcListener = (msg: any) => {
       if (msg && msg.type === 'mail:template-invalidate') {
         refresh().catch((err) => {
           logger.warn('mail:template-invalidate refresh failed: ' + err.message);
@@ -81,7 +81,7 @@ function isActive () {
   return state != null;
 }
 
-async function send ({ type, lang, recipient, substitutions }) {
+async function send ({ type, lang, recipient, substitutions }: any) {
   if (!state) return { sent: false, skipped: 'not-active' };
   if (!type || !recipient || !recipient.email) {
     throw errors.invalidRequestStructure('send: { type, recipient.email } are required');

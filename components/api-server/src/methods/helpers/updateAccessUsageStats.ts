@@ -22,7 +22,7 @@ export default async function getUpdateAccessUsageStats () {
   const isActive = !!config.get('accessTracking:isActive');
   singleton = updateAccessUsageStats;
   return singleton;
-  function updateAccessUsageStats (context, params, result, next) {
+  function updateAccessUsageStats (context: any, params: any, result: any, next: any) {
     // don't make callers wait on this to get their reply
     next();
     if (!isActive || context.disableAccessUsageStats) { return; } // callBatch will flush all stats at the end
@@ -30,7 +30,7 @@ export default async function getUpdateAccessUsageStats () {
     try {
       const access = context?.access;
       if (access) {
-        const update = { lastUsed: timestamp.now(), $inc: {} };
+        const update: any = { lastUsed: timestamp.now(), $inc: {} };
         if (context.accessUsageStats == null) {
           // standard call
           const calledMethodKey = string.sanitizeFieldKey(context.methodId);
@@ -43,7 +43,7 @@ export default async function getUpdateAccessUsageStats () {
                             context.accessUsageStats[methodId];
           }
         }
-        userAccessesStorage.updateOne(context.user, { id: context.access.id }, update, function (err) {
+        userAccessesStorage.updateOne(context.user, { id: context.access.id }, update, function (err: any) {
           if (err) {
             errorHandling.logError(errors.unexpectedError(err), {
               url: context.user.username,

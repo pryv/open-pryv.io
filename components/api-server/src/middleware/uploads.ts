@@ -24,7 +24,7 @@ const storage = MulterDiskStorage({
 });
 const uploadMiddlewareFactory = multer({
   storage,
-  fileFilter: (req, file, cb) => {
+  fileFilter: (req: any, file: any, cb: any) => {
     file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
     cb(null, true);
   }
@@ -40,9 +40,9 @@ export { filesUploadSupport, hasFileUpload };
  * @param {express$NextFunction} next
  * @returns {void}
  */
-function hasFileUpload (req, res, next) {
+function hasFileUpload (req: any, res: any, next: any) {
   const uploadMiddleware = uploadMiddlewareFactory.any();
-  uploadMiddleware(req, res, (err) => {
+  uploadMiddleware(req, res, (err: any) => {
     if (err) { return next(err); }
     filesUploadSupport(req, res, next);
   });

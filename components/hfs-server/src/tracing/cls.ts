@@ -14,7 +14,7 @@ import type {} from 'node:fs';
 class Cls {
   setRootSpan () {}
   getRootSpan () { return null; }
-  startExpressContext (_req, _res, next) { return next(); }
+  startExpressContext (_req: any, _res: any, next: any) { return next(); }
 }
 
 const cls = new Cls();

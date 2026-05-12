@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url);
 const { getStorageLayer } = require('storage');
 const { integrity } = require('business');
 
-let storageLayer;
+let storageLayer: any;
 async function getStorage () {
   if (!storageLayer) storageLayer = await getStorageLayer();
   return storageLayer;

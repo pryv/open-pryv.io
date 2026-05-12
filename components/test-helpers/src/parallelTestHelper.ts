@@ -67,7 +67,7 @@ function createTestContext (options: any = {}) {
      * For Pattern C tests (in-process), just creates fixtures
      * For Pattern A tests, also starts a server
      */
-    async init (serverOptions) {
+    async init (serverOptions: any) {
       // Get StorageLayer (engine-agnostic)
       const storageLayer = await storage.getStorageLayer();
       ctx.fixtures = databaseFixture(storageLayer);
@@ -102,16 +102,16 @@ function createTestContext (options: any = {}) {
         // Create superagent-based request helper for real HTTP
         const superagent = require('superagent');
         ctx.request = {
-          get: (path) => superagent.get(ctx.serverUrl + path),
-          post: (path) => superagent.post(ctx.serverUrl + path),
-          put: (path) => superagent.put(ctx.serverUrl + path),
-          del: (path) => superagent.del(ctx.serverUrl + path),
-          delete: (path) => superagent.delete(ctx.serverUrl + path)
+          get: (path: any) => superagent.get(ctx.serverUrl + path),
+          post: (path: any) => superagent.post(ctx.serverUrl + path),
+          put: (path: any) => superagent.put(ctx.serverUrl + path),
+          del: (path: any) => superagent.del(ctx.serverUrl + path),
+          delete: (path: any) => superagent.delete(ctx.serverUrl + path)
         };
       } else {
         // Pattern C - use global coreRequest if available
-        if (global.coreRequest) {
-          ctx.request = global.coreRequest;
+        if ((global as any).coreRequest) {
+          ctx.request = (global as any).coreRequest;
         }
       }
 
@@ -129,7 +129,7 @@ function createTestContext (options: any = {}) {
     /**
      * Create an event for the test user
      */
-    async createEvent (streamId, eventData: any = {}) {
+    async createEvent (streamId: any, eventData: any = {}) {
       const stream = await ctx.createStream({ id: streamId });
       return stream.event({
         type: eventData.type || 'note/txt',

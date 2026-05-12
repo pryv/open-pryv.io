@@ -10,11 +10,11 @@ const require = createRequire(import.meta.url);
 
 const yaml = require('js-yaml');
 
-function stringify (obj, options) {
+function stringify (obj: any, options: any) {
   return yaml.dump(obj, options);
 }
 
-function parse (obj, options) {
+function parse (obj: any, options: any) {
   return yaml.load(obj, options);
 }
 

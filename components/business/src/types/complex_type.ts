@@ -15,7 +15,7 @@ class ComplexType {
   _schema;
 
   _outerType;
-  constructor (outerType, schema) {
+  constructor (outerType: any, schema: any) {
     // We only handle this kind of schema
     assert.ok(schema.type === 'object');
     // Complex types have a list of required fields and a schema for the object
@@ -46,7 +46,7 @@ class ComplexType {
     return Object.keys(this._schema.properties);
   }
 
-  forField (name) {
+  forField (name: any) {
     const PATH_SEPARATOR = '.';
     const parts = name.split(PATH_SEPARATOR);
     if (parts.length <= 0) { throw new Error(`Cannot resolve field, path is empty for '${name}'.`); }
@@ -80,7 +80,7 @@ class ComplexType {
     return false;
   }
 
-  callValidator (validator, content) {
+  callValidator (validator: any, content: any) {
     // NOTE We don't currently perform coercion on leaf types of complex
     // named types. We could though - and this is where we would do it.
     return validator.validateWithSchema(content, this._schema);

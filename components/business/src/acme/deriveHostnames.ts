@@ -31,7 +31,7 @@ import type {} from 'node:fs';
  *
  * @param config - thing with `.get(key)` (e.g. @pryv/boiler)
  */
-function deriveHostnames (config) {
+function deriveHostnames (config: any) {
   const dnsLessActive = config.get('dnsLess:isActive');
   const dnsLessUrl = config.get('dnsLess:publicUrl');
 
@@ -67,7 +67,7 @@ function deriveHostnames (config) {
   );
 }
 
-function hostnameFromUrl (url) {
+function hostnameFromUrl (url: any) {
   try {
     return new URL(url).hostname;
   } catch {

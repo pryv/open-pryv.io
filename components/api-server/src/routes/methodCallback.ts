@@ -12,8 +12,8 @@ import type {} from 'node:fs';
  * @param successCode Can be a function accepting the result in arg
  *                                      and returning a number
  */
-export default function (res, next, successCode) {
-  return function (err, result) {
+export default function (res: any, next: any, successCode: any) {
+  return function (err: any, result: any) {
     if (err != null) {
       return next(err);
     }

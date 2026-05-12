@@ -39,7 +39,7 @@ export const getLastError = validator.getLastError;
 // Values that are not a string in `object` will not be touched.
 //
 // Allowed types are 'boolean', 'number' and 'array'.
-function tryCoerceStringValues (object, settings) {
+function tryCoerceStringValues (object: any, settings: any) {
   for (const key of Object.keys(settings)) {
     const type = settings[key];
     const value = object[key];
@@ -47,7 +47,7 @@ function tryCoerceStringValues (object, settings) {
     if (typeof value !== 'string') { continue; }
     object[key] = tryCoerceValue(value, type);
   }
-  function tryCoerceValue (value, type) {
+  function tryCoerceValue (value: any, type: any) {
     let newNumber;
     if (value == null) { return value; }
     if (typeof value !== 'string') { return value; }

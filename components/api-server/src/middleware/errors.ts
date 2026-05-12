@@ -22,17 +22,17 @@ export { produceHandleErrorMiddleware };
 /**
  * Error route handling.
  */
-function produceHandleErrorMiddleware (logging) {
+function produceHandleErrorMiddleware (logging: any) {
   const logger = logging.getLogger('error-middleware');
   const config = getConfigSync();
   const isAuditActive = config.get('audit:active');
-  let audit;
+  let audit: any;
   if (isAuditActive) {
     audit = require('audit').default;
   }
   // NOTE next is not used, since the request is terminated on all errors.
 
-  return async function handleError (error, req, res, next) {
+  return async function handleError (error: any, req: any, res: any, next: any) {
     if (!(error instanceof APIError) && error.status) {
       // it should be coming from Express' bodyParser: just wrap the error
       error = errorsFactory.invalidRequestStructure(error.message);

@@ -23,21 +23,21 @@ const logger = require('@pryv/boiler').getLogger('instance-test-setup');
  *                       A `messagingSocket` property will be injected into `context` at execution
  *                       time to allow passing messages back to the test process.
  */
-function set (settings, setup) {
+function set (settings: any, setup: any) {
   if (!settings || !setup) {
     throw new Error('Expected config and setup object arguments');
   }
   settings.instanceTestSetup = stringify(setup);
 }
 
-function clear (settings) {
+function clear (settings: any) {
   delete settings.instanceTestSetup;
 }
 
 /**
  * @throws Any error encountered deserializing or calling the setup function
  */
-function execute (testSetup, testNotifier) {
+function execute (testSetup: any, testNotifier: any) {
   const obj = parse(testSetup);
   if (obj.context != null) {
     // inject test notifier to allow passing data back to test process via IPC
@@ -52,7 +52,7 @@ function execute (testSetup, testNotifier) {
   }
 }
 
-function stringify (obj) {
+function stringify (obj: any) {
   return JSON.stringify(obj, function (key, value) {
     // stringify functions with their source, converting CRLF.
     //
@@ -65,7 +65,7 @@ function stringify (obj) {
   });
 }
 
-function parse (str) {
+function parse (str: any) {
   try {
     return JSON.parse(str, function (key, value) {
       logger.debug('eval', value);

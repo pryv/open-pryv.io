@@ -14,19 +14,19 @@ class TracedOperations {
   ongoingOps;
 
   context;
-  constructor (context) {
+  constructor (context: any) {
     this.ongoingOps = new Map();
     this.context = context;
   }
 
-  start (name, opts) {
+  start (name: any, opts: any) {
     const ongoing = this.ongoingOps;
     const ctx = this.context;
     const span = ctx.childSpan(name, opts);
     ongoing.set(name, span);
   }
 
-  finish (name) {
+  finish (name: any) {
     const ongoing = this.ongoingOps;
     const span = ongoing.get(name);
     if (span == null) { throw new Error(`Tried to finish span '${name}', but no such ongoing span.`); }

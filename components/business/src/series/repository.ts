@@ -17,7 +17,7 @@ class Repository {
    *
    * @param influxConnection {InfluxDB} handle to the database instance
    */
-  constructor (influxConnection) {
+  constructor (influxConnection: any) {
     this.connection = influxConnection;
   }
 
@@ -34,7 +34,7 @@ class Repository {
    * @param {string} name
    * @returns {Promise<any>}
    */
-  async get (namespace, name) {
+  async get (namespace: any, name: any) {
     // TODO Cache all the setup checks we do here in an LRU cache.
     // Make sure that the database exists:
     await this.connection.createDatabase(namespace);
@@ -50,7 +50,7 @@ class Repository {
   //    // ... as many times as you like
   //    await batch.store();
   //
-  async makeBatch (namespace) {
+  async makeBatch (namespace: any) {
     // TODO Cache all the setup checks we do here in an LRU cache.
     // Make sure that the database exists:
     await this.connection.createDatabase(namespace);

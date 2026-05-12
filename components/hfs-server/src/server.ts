@@ -26,14 +26,14 @@ class Server {
   config;
   // The express application.
 
-  expressApp;
+  expressApp: any;
   // base url for any access to this server.
 
-  baseUrl;
+  baseUrl: any;
   /**
    * http server object
    */
-  server;
+  server: any;
   // Logger used here.
 
   logger;
@@ -42,7 +42,7 @@ class Server {
   // Web request context
 
   context;
-  constructor (config, context) {
+  constructor (config: any, context: any) {
     this.logger = getLogger('server');
     this.errorLogger = this.logger.getLogger('errors');
     this.config = config;
@@ -73,7 +73,7 @@ class Server {
    * @param {any} arg
    * @returns {Promise<any>}
    */
-  logStarted (arg) {
+  logStarted (arg: any) {
     const addr = this.server.address();
     this.logger.info(`started. (http://${addr.address}:${addr.port})`);
     // passthrough of our single argument
@@ -118,7 +118,7 @@ class Server {
    * @param {express$Application} app
    * @returns {void}
    */
-  defineApplication (app) {
+  defineApplication (app: any) {
     const ctx = this.context;
     const c = controllerFactory(ctx);
     app.get('/system/status', systemStatus);
@@ -133,7 +133,7 @@ class Server {
  * @param {express$Response} res
  * @returns {void}
  */
-function systemStatus (req, res) {
+function systemStatus (req: any, res: any) {
   res.status(200).json({
     status: 'ok'
   });

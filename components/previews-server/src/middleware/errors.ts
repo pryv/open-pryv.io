@@ -17,10 +17,10 @@ const { getLogger } = require('@pryv/boiler');
  * Error route handling.
  * TODO: (re)move that once something's been done about api-server's own errors middleware
  */
-export default function (logging) {
+export default function (logging: any) {
   const logger = getLogger('routes');
 
-  return function handleError (error, req, res, next) {
+  return function handleError (error: any, req: any, res: any, next: any) {
     if (!(error instanceof APIError)) {
       error = errors.unexpectedError(error);
     }

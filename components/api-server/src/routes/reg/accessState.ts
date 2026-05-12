@@ -48,7 +48,7 @@ function generateKey () {
  * round-trip we'd otherwise need to add the URLs after the initial save.
  *
  */
-function buildState (params) {
+function buildState (params: any) {
   const key = generateKey();
   const ttl = params.expireAfter || DEFAULT_TTL_MS;
   const expiresAt = Date.now() + ttl;
@@ -77,7 +77,7 @@ function buildState (params) {
  *
  * @param [expiresAt] - defaults to `state.expiresAt`
  */
-async function persist (key, state, expiresAt) {
+async function persist (key: any, state: any, expiresAt: any) {
   const ts = expiresAt ?? state.expiresAt;
   await getPlatformDB().setAccessState(key, state, ts);
 }
@@ -89,7 +89,7 @@ async function persist (key, state, expiresAt) {
  * for tests and any external caller that doesn't decorate the state.
  *
  */
-async function create (params) {
+async function create (params: any) {
   const built = buildState(params);
   await persist(built.key, built.state, built.expiresAt);
   return { key: built.key, state: built.state };
@@ -98,7 +98,7 @@ async function create (params) {
 /**
  * Get an access request state.
  */
-async function get (key) {
+async function get (key: any) {
   const row = await getPlatformDB().getAccessState(key);
   return row ? row.value : null;
 }
@@ -106,7 +106,7 @@ async function get (key) {
 /**
  * Update an access request state (accept or refuse).
  */
-async function update (key, update) {
+async function update (key: any, update: any) {
   const platformDB = getPlatformDB();
   const row = await platformDB.getAccessState(key);
   if (!row) return null;
@@ -126,7 +126,7 @@ async function update (key, update) {
 /**
  * Delete an access request.
  */
-async function remove (key) {
+async function remove (key: any) {
   await getPlatformDB().deleteAccessState(key);
 }
 

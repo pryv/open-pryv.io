@@ -13,12 +13,12 @@ class MallTransaction {
   mall;
   storeTransactions;
 
-  constructor (mall) {
+  constructor (mall: any) {
     this.mall = mall;
     this.storeTransactions = new Map();
   }
 
-  async getStoreTransaction (storeId) {
+  async getStoreTransaction (storeId: any) {
     if (this.storeTransactions.has(storeId)) {
       return this.storeTransactions.get(storeId);
     }
@@ -37,5 +37,5 @@ export default MallTransaction;
 export { MallTransaction };
 
 class StoreTransactionStub {
-  async exec (func) { return await func(); }
+  async exec (func: any) { return await func(); }
 }

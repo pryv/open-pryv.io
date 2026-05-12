@@ -14,7 +14,7 @@ const errors = require('errors').factory;
  * perform request body parsing (expects req.body to exist), so must be executed
  * after e.g. bodyParser middleware.
  */
-function normalizeRequest (req, res, next) {
+function normalizeRequest (req: any, res: any, next: any) {
   if (!req.is('application/x-www-form-urlencoded')) {
     return next();
   }

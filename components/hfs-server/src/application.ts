@@ -41,17 +41,17 @@ const accountStreams = require('business/src/system-streams/index.ts');
 // preserves the architectural slot.
 class NoopSpan {
   operationName;
-  constructor (name) { this.operationName = name; }
+  constructor (name: any) { this.operationName = name; }
   setTag () {}
   log () {}
   finish () {}
 }
 class NoopTracer {
-  startSpan (name) { return new NoopSpan(name); }
+  startSpan (name: any) { return new NoopSpan(name); }
   inject () {}
 }
 
-async function createContext (config) {
+async function createContext (config: any) {
   const storages = require('storages');
   await storages.init(config);
   const influx = storages.seriesConnection;
@@ -71,13 +71,13 @@ async function createContext (config) {
 //
 
 class Application {
-  logger;
+  logger: any;
 
-  context;
+  context: any;
 
-  server;
+  server: any;
 
-  config;
+  config: any;
   async init () {
     this.logger = getLogger('application');
     this.config = await getConfig();

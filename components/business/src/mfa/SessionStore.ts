@@ -48,7 +48,7 @@ class SessionStore {
    * @param profile - the MFA profile (with content + recoveryCodes)
    * @param context - opaque per-flow context (e.g. the resolved user, login params)
    */
-  async create (profile, context) {
+  async create (profile: any, context: any) {
     const id = uuidv4();
     // Profile is stored as a plain shape so it survives JSON round-trips
     // through the IPC channel; `get()` rehydrates the Profile class.
@@ -61,11 +61,11 @@ class SessionStore {
     return id;
   }
 
-  async has (id) {
+  async has (id: any) {
     return (await this.kv.get(this.namespace + id)) != null;
   }
 
-  async get (id) {
+  async get (id: any) {
     const session = await this.kv.get(this.namespace + id);
     if (!session) return undefined;
     const profile = new Profile(
@@ -78,7 +78,7 @@ class SessionStore {
   /**
    * Clear a session immediately. Idempotent — safe to call on an unknown id.
    */
-  async clear (id) {
+  async clear (id: any) {
     const existed = (await this.kv.get(this.namespace + id)) != null;
     await this.kv.delete(this.namespace + id);
     return existed;

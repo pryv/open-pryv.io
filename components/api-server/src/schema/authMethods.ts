@@ -206,7 +206,7 @@ export { __ex_emailCheck as emailCheck };
 /**
  * Append validation of custom system streams for registration method
  */
-function loadCustomValidationSettings (validationSchema) {
+function loadCustomValidationSettings (validationSchema: any) {
   // iterate account stream settings and APPEND validation with relevant properties
   // etc additional required fields or regex validation
   const accountStreamsSettings = accountStreams.accountMap;

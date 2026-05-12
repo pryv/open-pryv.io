@@ -96,7 +96,7 @@ function validateEngineExports () {
   for (const [engineName, engine] of Object.entries(engines)) {
     const mod = getEngineModule(engineName);
     for (const storageType of engine.manifest.storageTypes) {
-      const required = REQUIRED_EXPORTS[storageType];
+      const required = (REQUIRED_EXPORTS as any)[storageType];
       if (!required) continue;
       for (const method of required) {
         if (typeof mod[method] !== 'function') {
@@ -113,7 +113,7 @@ function validateEngineExports () {
 /**
  * Get the module for an engine, loading it if needed.
  */
-function getEngineModule (engineName) {
+function getEngineModule (engineName: any) {
   const engine = engines[engineName];
   if (!engine) {
     throw new Error(`Unknown storage engine "${engineName}". Discovered: ${Object.keys(engines).join(', ') || '(none)'}`);
@@ -162,11 +162,11 @@ const SHORT_NAMES = {
  *
  * @param config - @pryv/boiler config instance
  */
-function resolveConfig (config) {
+function resolveConfig (config: any) {
   resolvedConfig = {};
 
   for (const storageType of VALID_STORAGE_TYPES) {
-    const shortName = SHORT_NAMES[storageType];
+    const shortName = (SHORT_NAMES as any)[storageType];
     let engineName;
 
     // Config: storages.<shortName>.engine
@@ -184,7 +184,7 @@ function resolveConfig (config) {
  * Initialize the plugin loader: discover engines, resolve config.
  * @param config - @pryv/boiler config instance
  */
-async function init (config) {
+async function init (config: any) {
   if (initialized) return;
   discover();
   validateEngineExports();
@@ -195,7 +195,7 @@ async function init (config) {
 /**
  * Get the resolved engine name for a storageType.
  */
-function getEngineFor (storageType) {
+function getEngineFor (storageType: any) {
   if (!resolvedConfig) {
     throw new Error('pluginLoader not initialized. Call init(config) first.');
   }
@@ -213,7 +213,7 @@ function listEngines () {
 /**
  * Get manifest for a discovered engine.
  */
-function getManifest (engineName) {
+function getManifest (engineName: any) {
   const engine = engines[engineName];
   return engine ? engine.manifest : null;
 }

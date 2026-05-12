@@ -59,7 +59,7 @@ async function spawnWorkers ({
       stdio: ['ignore', 'inherit', 'inherit', 'ipc']
     });
     workers.push({ child, pending: new Map() });
-    child.on('message', (msg) => {
+    child.on('message', (msg: any) => {
       if (!msg || typeof msg.requestId !== 'string') return;
       const entry = workers[i].pending.get(msg.requestId);
       if (!entry) return;
@@ -68,7 +68,7 @@ async function spawnWorkers ({
       if (msg.ok) entry.resolve(msg.result);
       else entry.reject(new Error(msg.error || 'worker error'));
     });
-    child.on('exit', (code, sig) => {
+    child.on('exit', (code: any, sig: any) => {
       // Settle any pending calls so tests fail loudly instead of hanging.
       for (const entry of workers[i].pending.values()) {
         clearTimeout(entry.timer);
@@ -78,7 +78,7 @@ async function spawnWorkers ({
     });
   }
 
-  function call (workerIndex, op, args, timeoutMs = callTimeoutMs) {
+  function call (workerIndex: any, op: any, args: any, timeoutMs = callTimeoutMs) {
     const w = workers[workerIndex];
     if (!w) return Promise.reject(new Error(`no worker at index ${workerIndex}`));
     const requestId = randomUUID();

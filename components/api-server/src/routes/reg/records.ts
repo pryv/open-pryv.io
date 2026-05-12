@@ -23,21 +23,21 @@ const require = createRequire(import.meta.url);
 
 const { getPlatform } = require('platform');
 
-export default function (expressApp, app) {
+export default function (expressApp: any, app: any) {
   const adminAccessKey = app.config.get('auth:adminAccessKey');
 
-  function isAuthorized (req) {
+  function isAuthorized (req: any) {
     const secret = req.headers.authorization;
     return secret != null && secret === adminAccessKey;
   }
 
-  function nudgeMaster (subdomain) {
+  function nudgeMaster (subdomain: any) {
     if (typeof process.send === 'function') {
       process.send({ type: 'dns:updateRecords', data: { subdomain } });
     }
   }
 
-  expressApp.post('/reg/records', async (req, res) => {
+  expressApp.post('/reg/records', async (req: any, res: any) => {
     if (!isAuthorized(req)) {
       return res.status(403).json({
         error: { id: 'forbidden', message: 'Invalid admin authorization' }
@@ -69,7 +69,7 @@ export default function (expressApp, app) {
     res.status(200).json({ subdomain, records, status: 'ok' });
   });
 
-  expressApp.delete('/reg/records/:subdomain', async (req, res) => {
+  expressApp.delete('/reg/records/:subdomain', async (req: any, res: any) => {
     if (!isAuthorized(req)) {
       return res.status(403).json({
         error: { id: 'forbidden', message: 'Invalid admin authorization' }

@@ -14,7 +14,7 @@
     "checkJs": false,
     "noEmit": true,
     "strict": false,
-    "noImplicitAny": false,
+    "noImplicitAny": true,
     "strictNullChecks": true,
     "strictPropertyInitialization": true,
     "alwaysStrict": true,

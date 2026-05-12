@@ -10,11 +10,11 @@ const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const business = require('business');
 const cls = require('../tracing/cls.ts').default;
-function mount (ctx, handler) {
+function mount (ctx: any, handler: any) {
   return catchAndNext(handler.bind(null, ctx));
 }
-function catchAndNext (handler) {
-  return async (req, res, next) => {
+function catchAndNext (handler: any) {
+  return async (req: any, res: any, next: any) => {
     try {
       return await handler(req, res, next);
     } catch (err: any) {
@@ -36,7 +36,7 @@ const TAG_ERROR_MESSAGE = 'error.message';
 //
 // NOTE This method should not throw an error!
 //
-function storeErrorInTrace (err) {
+function storeErrorInTrace (err: any) {
   try {
     const root = cls.getRootSpan();
     if (root == null) { return; }
@@ -47,7 +47,7 @@ function storeErrorInTrace (err) {
   }
 }
 // --------------------------------------------------------------------- factory
-export default function (ctx) {
+export default function (ctx: any) {
   return {
     storeSeriesData: mount(ctx, require('./op/store_series_data.ts').default),
     querySeriesData: mount(ctx, require('./op/query_series_data.ts').default),

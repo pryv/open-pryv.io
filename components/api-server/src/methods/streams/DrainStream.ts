@@ -23,7 +23,7 @@ class DrainStream extends Writable {
   array: any[];
   size: number;
 
-  constructor (params, callback) {
+  constructor (params: any, callback: any) {
     super({ objectMode: true });
 
     this.limit = (params && params.limit > 0) ? params.limit : 100000;
@@ -45,7 +45,7 @@ class DrainStream extends Writable {
     this.on('error', callback);
   }
 
-  _write (object, enc, next) {
+  _write (object: any, enc: any, next: any) {
     this.size++;
     if (this.size > this.limit) {
       return next(errors.tooManyResults(this.limit));

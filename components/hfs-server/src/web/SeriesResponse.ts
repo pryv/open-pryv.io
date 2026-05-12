@@ -16,7 +16,7 @@ class SeriesResponse {
   matrix;
   /** Constructs a series response from an existing data matrix.
    */
-  constructor (mat) {
+  constructor (mat: any) {
     this.matrix = mat;
   }
 
@@ -24,7 +24,7 @@ class SeriesResponse {
    * @param {express$Response} res
    * @returns {void}
    */
-  answer (res) {
+  answer (res: any) {
     res.json(this).status(200);
   }
 
