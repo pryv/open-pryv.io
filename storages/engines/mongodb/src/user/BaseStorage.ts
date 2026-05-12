@@ -204,6 +204,7 @@ BaseStorage.prototype.findDeletions = function (
 
 BaseStorage.prototype.findOne = function (this: any, userOrUserId: any, query: any, options: any, callback: any) {
   query.deleted = null;
+  query.headId = null;
 
   this.database.findOne(
     this.getCollectionInfo(userOrUserId),

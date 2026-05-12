@@ -254,6 +254,8 @@ CREATE INDEX IF NOT EXISTS idx_es_stream
 CREATE TABLE IF NOT EXISTS accesses (
   user_id TEXT NOT NULL,
   id TEXT NOT NULL,
+  serial INTEGER,
+  head_id TEXT,
   token TEXT,
   name TEXT,
   type TEXT,
@@ -267,11 +269,18 @@ CREATE TABLE IF NOT EXISTS accesses (
   integrity_batch_code DOUBLE PRECISION,
   created DOUBLE PRECISION,
   created_by TEXT,
+  created_by_serial INTEGER,
   modified DOUBLE PRECISION,
   modified_by TEXT,
+  modified_by_serial INTEGER,
   deleted DOUBLE PRECISION,
   PRIMARY KEY (user_id, id)
 );
+-- Plan 66: index predicates intentionally omit head_id here. SCHEMA_SQL
+-- is a no-op on existing installs (table already exists without head_id),
+-- so the matching migration 20260512_132200_access_versioning.js does the
+-- ALTER + index recreate. Fresh installs converge once that migration
+-- runs at boot.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_access_token
   ON accesses(user_id, token) WHERE deleted IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_access_name_type_deviceName

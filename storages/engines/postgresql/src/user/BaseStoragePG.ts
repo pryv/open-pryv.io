@@ -332,6 +332,7 @@ class BaseStoragePG {
   findOne (userOrUserId: any, query: any, options: any, callback: (err: any, item?: any) => void): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (this.hasDeletedCol) query.deleted = null;
+    if (this.hasHeadIdCol) query.headId = null;
 
     const { select, excludeProps } = this.buildSelect(options);
     const where = this.buildWhere(userId, query);

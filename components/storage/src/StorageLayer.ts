@@ -56,7 +56,7 @@ class StorageLayer {
     const sessionMaxAge = config.get('auth:sessionMaxAge');
 
     const engineModule = pluginLoader.getEngineModule(this.engine);
-    engineModule.initStorageLayer(this, connection, {
+    await engineModule.initStorageLayer(this, connection, {
       passwordResetRequestMaxAge,
       sessionMaxAge,
       integrityAccesses: options.integrityAccesses

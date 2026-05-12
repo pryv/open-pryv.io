@@ -20,12 +20,28 @@ function createTokenIfMissing (access: any) {
   return access;
 }
 
+// Live rows MUST have an explicit BSON null `headId` — the unique-index
+// partial filter (`$type: 'null'`) excludes documents where the field is
+// absent. Setting null on insert keeps live rows in the unique-token set
+// while history rows (headId = <base>, a string) are naturally excluded.
+function setHeadIdNullIfMissing (access: any) {
+  if (access.headId === undefined) access.headId = null;
+  return access;
+}
+
+// Plan 66: `headId` is an internal storage marker — never surface it on
+// the wire. History rows are reached via dedicated history queries.
+function stripHeadId (access: any) {
+  if (access != null) delete access.headId;
+  return access;
+}
+
 const indexes = [
   {
     index: { token: 1 },
     options: {
       unique: true,
-      partialFilterExpression: { deleted: { $type: 'null' } }
+      partialFilterExpression: { deleted: { $type: 'null' }, headId: { $type: 'null' } }
     }
   },
   {
@@ -36,7 +52,13 @@ const indexes = [
     index: { name: 1, type: 1, deviceName: 1 },
     options: {
       unique: true,
-      partialFilterExpression: { deleted: { $type: 'null' } }
+      partialFilterExpression: { deleted: { $type: 'null' }, headId: { $type: 'null' } }
+    }
+  },
+  {
+    index: { headId: 1 },
+    options: {
+      partialFilterExpression: { headId: { $type: 'string' } }
     }
   }
 ];
@@ -64,7 +86,8 @@ class Accesses extends BaseStorage {
     Object.assign(this.converters, {
       itemDefaults: [
         converters.createIdIfMissing,
-        createTokenIfMissing
+        createTokenIfMissing,
+        setHeadIdNullIfMissing
       ],
       itemToDB: [converters.deletionToDB, addIntegrity],
       itemsToDB: [
@@ -74,13 +97,40 @@ class Accesses extends BaseStorage {
           return res;
         }
       ],
-      itemFromDB: [converters.deletionFromDB],
+      itemFromDB: [converters.deletionFromDB, stripHeadId],
       queryToDB: [converters.idInOrClause]
     });
 
     this.defaultOptions = {
       sort: { name: 1 }
     };
+  }
+
+  /**
+   * Plan 66 schema bootstrap. Idempotent. Drops the pre-Plan-66 unique indexes
+   * whose partial filter did not include `headId`, then backfills existing
+   * rows so the new `{ headId: { $type: 'null' } }` partial filter applies to
+   * them. Called once from the engine's `initStorageLayer`.
+   */
+  async bootstrap () {
+    await this.database.ensureConnect();
+    const coll = this.database.db.collection('accesses');
+    for (const name of ['token_1', 'name_1_type_1_deviceName_1']) {
+      try {
+        await coll.dropIndex(name);
+      } catch (err: any) {
+        // 26 = NamespaceNotFound (fresh DB, collection does not yet exist).
+        // 27 = IndexNotFound (collection exists but no such index).
+        if (err?.code !== 26 && err?.code !== 27 &&
+            err?.codeName !== 'NamespaceNotFound' && err?.codeName !== 'IndexNotFound') {
+          throw err;
+        }
+      }
+    }
+    await coll.updateMany(
+      { headId: { $exists: false } },
+      { $set: { headId: null } }
+    );
   }
 
   findDeletions (userOrUserId: any, query: any, options: any, callback: any) {

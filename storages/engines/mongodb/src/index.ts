@@ -28,7 +28,7 @@ function init (config: Record<string, any>, getLogger: (name: string) => any, in
 
 // -- BaseStorage --------------------------------------------------------
 
-function initStorageLayer (storageLayer: any, connection: any, options: any): void {
+async function initStorageLayer (storageLayer: any, connection: any, options: any): Promise<void> {
   const { PasswordResetRequests } = require('./PasswordResetRequests.ts');
   const { Sessions } = require('./Sessions.ts');
   const { Accesses } = require('./user/Accesses.ts');
@@ -86,6 +86,10 @@ function initStorageLayer (storageLayer: any, connection: any, options: any): vo
   storageLayer.clearCollection = async function (collectionName: string): Promise<void> {
     await fromCallback((cb: any) => connection.deleteMany({ name: collectionName }, {}, cb));
   };
+
+  // Plan 66: drop pre-versioning unique indexes + backfill `headId: null`
+  // on legacy rows so the new partial-filter (headId: $type null) applies.
+  await storageLayer.accesses.bootstrap();
 }
 
 function getUserAccountStorage (): any {

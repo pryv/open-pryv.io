@@ -25,7 +25,7 @@ class AccessesPG extends BaseStoragePG {
     super(db);
     this.tableName = 'accesses';
     this.hasDeletedCol = true;
-    this.hasHeadIdCol = false;
+    this.hasHeadIdCol = true;
     this.defaultSort = 'name ASC';
     this.integrityAccesses = integrityAccesses || { isActive: false, set: () => {} };
   }
@@ -35,6 +35,10 @@ class AccessesPG extends BaseStoragePG {
     if (item && item.type === 'shared' && !('deviceName' in item)) {
       item.deviceName = null;
     }
+    // Plan 66: `headId` is an internal storage marker — never surface it
+    // on the wire. History rows are reached via dedicated history queries
+    // that re-inject the marker; live-row results stay clean.
+    if (item) delete item.headId;
     return item;
   }
 
