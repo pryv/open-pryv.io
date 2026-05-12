@@ -16,9 +16,9 @@ const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('audit:syslog:templates');
 
 class SyslogTransform {
-  key;
-  constructor (key) { this.key = key; }
-  transform (userId, event) { throw new Error('Transform must be implemented'); }
+  key: any;
+  constructor (key: any) { this.key = key; }
+  transform (userId: any, event: any) { throw new Error('Transform must be implemented'); }
 }
 
 /**
@@ -26,9 +26,9 @@ class SyslogTransform {
  * Use external javascript code
  */
 class Plugin extends SyslogTransform {
-  plugin;
+  plugin: any;
 
-  constructor (key, format) {
+  constructor (key: any, format: any) {
     super(key);
     // Resolve plugin paths relative to service-core root (config is unified there)
     const rootPath = path.resolve(__dirname, '../../../../');
@@ -36,7 +36,7 @@ class Plugin extends SyslogTransform {
     logger.debug('Loaded plugin for [' + key + ']: ' + format.plugin);
   }
 
-  transform (userId, event) {
+  transform (userId: any, event: any) {
     logger.debug('Using plugin ' + this.key);
     return this.plugin(userId, event);
   }
@@ -47,17 +47,17 @@ class Plugin extends SyslogTransform {
  * Transform an event into a syslog message plus level
  */
 class Template extends SyslogTransform {
-  template;
-  level;
+  template: any;
+  level: any;
 
-  constructor (key, format) {
+  constructor (key: any, format: any) {
     super(key);
     this.template = format.template;
     this.level = format.level;
     logger.debug('Loaded template for [' + key + ']: ' + format.template);
   }
 
-  transform (userId, event) {
+  transform (userId: any, event: any) {
     logger.debug('Using template ' + this.key);
     return {
       level: this.level,
@@ -75,15 +75,15 @@ class Template extends SyslogTransform {
 /**
  * Get the Syslog string correspondig to this event
  */
-function logForEvent (userId, event) {
+function logForEvent (userId: any, event: any) {
   if (event.type in templates) {
     return templates[event.type].transform(userId, event);
   }
   return templates['log/default'].transform(userId, event);
 }
 
-const templates = {};
-function loadTemplates (templatesFromConfig) {
+const templates: any = {};
+function loadTemplates (templatesFromConfig: any) {
   for (const key of Object.keys(templatesFromConfig)) {
     const format = templatesFromConfig[key];
     if (format.template) {
@@ -105,10 +105,10 @@ export { loadTemplates, logForEvent };
  * @param template - of the form "{userid} {content.message}"
  * @param userId  - the userid
  */
-function transformFromTemplate (template, userId, event) {
+function transformFromTemplate (template: any, userId: any, event: any) {
   logger.debug('transformFromTemplate', template);
   const result = template.replace('{userid}', userId);
-  return result.replace(/{([^}]*)}/g, function (match, key) {
+  return result.replace(/{([^}]*)}/g, function (match: any, key: any) {
     let res = getKey(key, event) || match;
     if (typeof res === 'object') {
       res = JSON.stringify(res);
@@ -120,8 +120,8 @@ function transformFromTemplate (template, userId, event) {
 /**
  * getKey('foo.bar', {foo: { bar: "I want this"}}); //=> "I want this"
  */
-function getKey (key, obj) {
-  return key.split('.').reduce(function (a, b) {
+function getKey (key: any, obj: any) {
+  return key.split('.').reduce(function (a: any, b: any) {
     return a && a[b];
   }, obj);
 }

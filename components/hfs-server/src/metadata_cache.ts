@@ -26,21 +26,21 @@ const LRU_CACHE_MAX_AGE_MS = 1000 * 60 * 5; // 5 mins
  * Caches data about a series first by `accessToken`, then by `eventId`.
  * */
 class MetadataCache {
-  loader;
+  loader: any;
   /**
    * Stores:
    *  - username/eventId -> [accessTokens]
    *  - accessToken -> username/eventID/accessToken
    *  - username/eventId/accessToken -> SeriesMetadataImpl (metadata_cache.js)
    */
-  cache;
+  cache: any;
 
-  series;
+  series: any;
 
-  mall;
+  mall: any;
 
-  config;
-  constructor (series, metadataLoader, config) {
+  config: any;
+  constructor (series: any, metadataLoader: any, config: any) {
     this.loader = metadataLoader;
     this.series = series;
     this.config = config;
@@ -58,17 +58,17 @@ class MetadataCache {
   }
 
   // transport messages
-  dropSeries (usernameEvent) {
+  dropSeries (usernameEvent: any) {
     return this.series.connection.dropMeasurement('event.' + usernameEvent.event.id, 'user.' + usernameEvent.username);
   }
 
-  invalidateEvent (usernameEvent) {
+  invalidateEvent (usernameEvent: any) {
     const cache = this.cache;
     const eventKey = usernameEvent.username + '/' + usernameEvent.event.id;
     const cachedTokenListForEvent = cache.get(eventKey);
     if (cachedTokenListForEvent != null) {
       // what does this return
-      cachedTokenListForEvent.forEach((token) => {
+      cachedTokenListForEvent.forEach((token: any) => {
         cache.delete(eventKey + '/' + token);
       });
     }
@@ -80,7 +80,7 @@ class MetadataCache {
   }
 
   // cache logic
-  async forSeries (userName, eventId, accessToken) {
+  async forSeries (userName: any, eventId: any, accessToken: any) {
     const cache = this.cache;
     const key = [userName, eventId, accessToken].join('/');
     // to make sure we update the tokenList "recently used info" cache we also get eventKey
@@ -113,16 +113,16 @@ class MetadataCache {
 /** Loads metadata related to a series from the main database.
  */
 class MetadataLoader {
-  storage;
+  storage: any;
 
-  mall;
+  mall: any;
 
-  async init (mall, logger) {
+  async init (mall: any, logger: any) {
     this.mall = mall;
     this.storage = await storage.getStorageLayer();
   }
 
-  forSeries (userName, eventId, accessToken) {
+  forSeries (userName: any, eventId: any, accessToken: any) {
     const storage = this.storage;
     const mall = this.mall;
     // Retrieve Access (including accessLogic)
@@ -132,7 +132,7 @@ class MetadataLoader {
     };
     const customAuthStep = null;
     const methodContext = new MethodContext(contextSource, userName, accessToken, customAuthStep);
-    return fromCallback(async (returnValueCallback) => {
+    return fromCallback(async (returnValueCallback: any) => {
       try {
         await methodContext.init();
         await methodContext.retrieveExpandedAccess(storage);
@@ -147,14 +147,14 @@ class MetadataLoader {
         const serieMetadata = new SeriesMetadataImpl(access, user, event);
         serieMetadata.init().then(() => {
           returnValueCallback(null, serieMetadata);
-        }, (error) => {
+        }, (error: any) => {
           returnValueCallback(error, serieMetadata);
         });
       } catch (err) {
         returnValueCallback(mapErrors(err));
       }
     });
-    function mapErrors (err) {
+    function mapErrors (err: any) {
       if (!(err instanceof Error)) { return new Error(err); }
       // else
       return err;
@@ -168,24 +168,24 @@ class MetadataLoader {
  *  only things that we subsequently need for our operations.
  */
 class SeriesMetadataImpl {
-  permissions;
+  permissions: any;
 
-  userName;
+  userName: any;
 
-  eventId;
+  eventId: any;
 
-  eventType;
+  eventType: any;
 
-  time;
+  time: any;
 
-  trashed;
+  trashed: any;
 
-  deleted;
+  deleted: any;
 
-  _access;
+  _access: any;
 
-  _event;
-  constructor (access, user, event) {
+  _event: any;
+  constructor (access: any, user: any, event: any) {
     this._access = access;
     this._event = event;
     this.userName = user.username;
@@ -217,7 +217,7 @@ class SeriesMetadataImpl {
   }
 
   // Return the InfluxDB row type for the given event.
-  produceRowType (repo) {
+  produceRowType (repo: any) {
     const type = repo.lookup(this.eventType);
 
     // TODO review this now that flow is gone:
@@ -230,7 +230,7 @@ class SeriesMetadataImpl {
     return type;
   }
 }
-async function definePermissions (access, event) {
+async function definePermissions (access: any, event: any) {
   const streamIds = event.streamIds;
   const permissions = {
     write: false,
@@ -242,7 +242,7 @@ async function definePermissions (access, event) {
     if (await access.canGetEventsOnStream(streamIds[i], 'local')) { permissions.read = true; }
   }
   return permissions;
-  function readAndWriteTrue (permissions) {
+  function readAndWriteTrue (permissions: any) {
     return permissions.write === true && permissions.read === true;
   }
 }

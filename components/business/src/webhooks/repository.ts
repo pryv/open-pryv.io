@@ -14,8 +14,8 @@ const { getUsersRepository } = require('business/src/users/index.ts');
  * Repository of all Webhooks in this Pryv.io instance.
  */
 class Repository {
-  storage;
-  constructor (webhooksStorage) {
+  storage: any;
+  constructor (webhooksStorage: any) {
     this.storage = webhooksStorage;
   }
 
@@ -26,14 +26,14 @@ class Repository {
     const usersRepository = await getUsersRepository();
     const users = await usersRepository.getAllUsersIdAndName();
     const allWebhooks = new Map();
-    await Promise.all(users.map((u) => retrieveWebhooks.call(this, u)));
+    await Promise.all(users.map((u: any) => retrieveWebhooks.call(this, u)));
     return allWebhooks;
-    async function retrieveWebhooks (this: any, user) {
+    async function retrieveWebhooks (this: any, user: any) {
       const webhooksQuery = {};
       const webhooksOptions = {};
-      const webhooks = await fromCallback((cb) => this.storage.find(user, webhooksQuery, webhooksOptions, cb));
+      const webhooks = await fromCallback((cb: any) => this.storage.find(user, webhooksQuery, webhooksOptions, cb));
       const userWebhooks: any[] = [];
-      webhooks.forEach((w) => {
+      webhooks.forEach((w: any) => {
         userWebhooks.push(initWebhook(user, this, w));
       });
       if (userWebhooks.length > 0) {
@@ -47,15 +47,15 @@ class Repository {
    * Personal access: returns all webhooks
    * App access: all those created by the access
    */
-  async get (user, access) {
+  async get (user: any, access: any) {
     const query: any = {};
     const options: any = {};
     if (access.isApp()) {
       query.accessId = { $eq: access.id };
     }
-    const webhooks = await fromCallback((cb) => this.storage.find(user, query, options, cb));
+    const webhooks = await fromCallback((cb: any) => this.storage.find(user, query, options, cb));
     const webhookObjects: any[] = [];
-    webhooks.forEach((w) => {
+    webhooks.forEach((w: any) => {
       const webhook = initWebhook(user, this, w);
       webhookObjects.push(webhook);
     });
@@ -65,12 +65,12 @@ class Repository {
   /**
    * Returns a webhook for a user, fetched by its id
    */
-  async getById (user, webhookId) {
+  async getById (user: any, webhookId: any) {
     const query = {
       id: { $eq: webhookId }
     };
     const options = {};
-    const webhook = await fromCallback((cb) => this.storage.findOne(user, query, options, cb));
+    const webhook = await fromCallback((cb: any) => this.storage.findOne(user, query, options, cb));
     if (webhook == null) { return null; }
     return initWebhook(user, this, webhook);
   }
@@ -78,35 +78,35 @@ class Repository {
   /**
    * Inserts a webhook for a user
    */
-  async insertOne (user, webhook) {
-    await fromCallback((cb) => this.storage.insertOne(user, webhook.forStorage(), cb));
+  async insertOne (user: any, webhook: any) {
+    await fromCallback((cb: any) => this.storage.insertOne(user, webhook.forStorage(), cb));
   }
 
   /**
    * Updates certain fields of a webhook for a user
    */
-  async updateOne (user, update, webhookId) {
+  async updateOne (user: any, update: any, webhookId: any) {
     const query = { id: webhookId };
-    await fromCallback((cb) => this.storage.updateOne(user, query, update, cb));
+    await fromCallback((cb: any) => this.storage.updateOne(user, query, update, cb));
   }
 
   /**
    * Deletes a webhook for a user, given the webhook's id
    */
-  async deleteOne (user, webhookId) {
-    await fromCallback((cb) => this.storage.delete(user, { id: webhookId }, cb));
+  async deleteOne (user: any, webhookId: any) {
+    await fromCallback((cb: any) => this.storage.delete(user, { id: webhookId }, cb));
   }
 
   /**
    * Deletes all webhooks for a user.
    */
-  async deleteForUser (user) {
-    await fromCallback((cb) => this.storage.delete(user, {}, cb));
+  async deleteForUser (user: any) {
+    await fromCallback((cb: any) => this.storage.delete(user, {}, cb));
   }
 }
 export default Repository;
 export { Repository };
-function initWebhook (user, repository, webhook) {
+function initWebhook (user: any, repository: any, webhook: any) {
   return new Webhook(deepMerge({
     webhooksRepository: repository,
     user

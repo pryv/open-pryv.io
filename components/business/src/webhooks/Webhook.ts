@@ -8,8 +8,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 
-function pick (obj, keys) {
-  const out = {};
+function pick (obj: any, keys: any) {
+  const out: any = {};
   for (const k of keys) if (k in obj) out[k] = obj[k];
   return out;
 }
@@ -52,7 +52,7 @@ class Webhook {
 
   messageBuffer;
 
-  timeout;
+  timeout: any;
 
   isSending;
 
@@ -60,14 +60,14 @@ class Webhook {
 
   repository;
 
-  apiVersion;
+  apiVersion: any;
 
-  serial;
+  serial: any;
 
-  logger;
+  logger: any;
 
-  pubsubTurnOffListener;
-  constructor (params) {
+  pubsubTurnOffListener: any;
+  constructor (params: any) {
     this.id = params.id || cuid();
     this.accessId = params.accessId;
     this.url = params.url;
@@ -91,11 +91,11 @@ class Webhook {
     this.runsSize = params.runsSize || 50;
   }
 
-  startListenting (username) {
+  startListenting (username: any) {
     if (this.pubsubTurnOffListener != null) {
       throw new Error('Cannot listen twice');
     }
-    this.pubsubTurnOffListener = pubsub.notifications.onAndGetRemovable(username, (payload) => {
+    this.pubsubTurnOffListener = pubsub.notifications.onAndGetRemovable(username, (payload: any) => {
       this.send(payload.eventName);
     });
   }
@@ -103,7 +103,7 @@ class Webhook {
   /**
    * Send the message with the throttling and retry mechanics - to use in webhooks service
    */
-  async send (message, isRescheduled?) {
+  async send (message: any, isRescheduled?: any) {
     if (this.state === 'inactive') { return; }
     if (isRescheduled != null && isRescheduled === true) {
       this.timeout = null;
@@ -129,7 +129,7 @@ class Webhook {
     if (hasError(status)) {
       this.failCount++;
       this.currentRetries++;
-      sentBuffer.forEach((m) => {
+      sentBuffer.forEach((m: any) => {
         this.messageBuffer.add(m);
       });
       if (this.currentRetries > this.maxRetries) {
@@ -145,16 +145,16 @@ class Webhook {
     if (hasError(status)) {
       handleRetry.call(this, message);
     }
-    function hasError (status) {
+    function hasError (status: any) {
       return status < 200 || status >= 300;
     }
-    function handleRetry (this: any, message) {
+    function handleRetry (this: any, message: any) {
       if (this.state === 'inactive') {
         return;
       }
       reschedule.call(this, message);
     }
-    function reschedule (this: any, message) {
+    function reschedule (this: any, message: any) {
       if (this.timeout != null) { return; }
       const delay = this.minIntervalMs * (this.currentRetries || 1);
       this.timeout = setTimeout(() => {
@@ -174,7 +174,7 @@ class Webhook {
   /**
    * Only make the HTTP call - used for webhook.test API method
    */
-  async makeCall (messages) {
+  async makeCall (messages: any) {
     const res = await fetch(this.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -205,7 +205,7 @@ class Webhook {
     }
   }
 
-  addRun (run) {
+  addRun (run: any) {
     if (this.runCount > this.runsSize) {
       this.runs.splice(-1, 1);
     }
@@ -219,7 +219,7 @@ class Webhook {
     await this.repository.insertOne(this.user, this);
   }
 
-  async update (fieldsToUpdate) {
+  async update (fieldsToUpdate: any) {
     const fields = Object.keys(fieldsToUpdate);
     deepMerge(this, fieldsToUpdate);
     await makeUpdate(fields, this);
@@ -276,25 +276,25 @@ class Webhook {
     ]);
   }
 
-  setApiVersion (version) {
+  setApiVersion (version: any) {
     this.apiVersion = version;
   }
 
-  setSerial (serial) {
+  setSerial (serial: any) {
     this.serial = serial;
   }
 
-  setLogger (logger) {
+  setLogger (logger: any) {
     this.logger = logger;
   }
 }
 export default Webhook;
 export { Webhook };
-function log (webhook, msg) {
+function log (webhook: any, msg: any) {
   if (webhook.logger == null) { return; }
   webhook.logger.info(msg);
 }
-async function makeUpdate (fields, webhook) {
+async function makeUpdate (fields: any, webhook: any) {
   if (webhook.repository == null) {
     throw new Error('repository not set for Webhook object.');
   }

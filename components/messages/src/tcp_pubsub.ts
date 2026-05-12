@@ -39,9 +39,9 @@ class TcpBroker {
     this.subscriptions = new Map(); // scope → Set<cid>
   }
 
-  listen (port) {
+  listen (port: any) {
     return new Promise<void>((resolve, reject) => {
-      this.server = net.createServer((socket) => this._onConnection(socket));
+      this.server = net.createServer((socket: any) => this._onConnection(socket));
       this.server.once('error', reject);
       this.server.listen(port, '127.0.0.1', () => {
         this.server.removeListener('error', reject);
@@ -52,7 +52,7 @@ class TcpBroker {
     });
   }
 
-  _onConnection (socket) {
+  _onConnection (socket: any) {
     const cid = 'c' + (this.nextCid++);
     this.clients.set(cid, socket);
     socket.unref(); // don't keep process alive
@@ -60,7 +60,7 @@ class TcpBroker {
     this._send(socket, { t: 'welcome', cid });
 
     let buffer = '';
-    socket.on('data', (chunk) => {
+    socket.on('data', (chunk: any) => {
       buffer += chunk.toString();
       let nl;
       while ((nl = buffer.indexOf('\n')) !== -1) {
@@ -79,7 +79,7 @@ class TcpBroker {
     socket.on('close', () => this._removeClient(cid));
   }
 
-  _handleMessage (senderCid, msg) {
+  _handleMessage (senderCid: any, msg: any) {
     switch (msg.t) {
       case 'sub': {
         const scope = msg.scope;
@@ -101,7 +101,7 @@ class TcpBroker {
     }
   }
 
-  _route (senderCid, scope, event, payload) {
+  _route (senderCid: any, scope: any, event: any, payload: any) {
     const out = JSON.stringify({ t: 'msg', scope, event, payload }) + '\n';
     const subs = this.subscriptions.get(scope);
     if (subs) {
@@ -113,13 +113,13 @@ class TcpBroker {
     }
   }
 
-  _send (socket, obj) {
+  _send (socket: any, obj: any) {
     if (!socket.destroyed) {
       socket.write(JSON.stringify(obj) + '\n');
     }
   }
 
-  _removeClient (cid) {
+  _removeClient (cid: any) {
     this.clients.delete(cid);
     for (const subs of this.subscriptions.values()) {
       subs.delete(cid);
@@ -158,7 +158,7 @@ class TcpClient {
     this._welcomeResolve = null;
   }
 
-  connect (port) {
+  connect (port: any) {
     return new Promise((resolve, reject) => {
       this.socket = net.createConnection({ port, host: '127.0.0.1' }, () => {
         this.socket.removeListener('error', reject);
@@ -167,12 +167,12 @@ class TcpClient {
         this._welcomeResolve = resolve;
       });
       this.socket.once('error', reject);
-      this.socket.on('data', (chunk) => this._onData(chunk));
-      this.socket.on('error', (err) => logger.warn('tcp client error', err.message));
+      this.socket.on('data', (chunk: any) => this._onData(chunk));
+      this.socket.on('error', (err: any) => logger.warn('tcp client error', err.message));
     });
   }
 
-  _onData (chunk) {
+  _onData (chunk: any) {
     this._buffer += chunk.toString();
     let nl;
     while ((nl = this._buffer.indexOf('\n')) !== -1) {
@@ -187,7 +187,7 @@ class TcpClient {
     }
   }
 
-  _handleMessage (msg) {
+  _handleMessage (msg: any) {
     switch (msg.t) {
       case 'welcome':
         this.cid = msg.cid;
@@ -207,7 +207,7 @@ class TcpClient {
     }
   }
 
-  send (obj) {
+  send (obj: any) {
     if (this.socket && !this.socket.destroyed) {
       this.socket.write(JSON.stringify(obj) + '\n');
     }
@@ -266,7 +266,7 @@ async function _doInit () {
   }
 }
 
-async function deliver (scopeName, eventName, payload) {
+async function deliver (scopeName: any, eventName: any, payload: any) {
   await init();
   if (testDeliverHook != null) testDeliverHook(scopeName, eventName, payload);
   logger.debug('deliver', scopeName, eventName, payload);
@@ -275,7 +275,7 @@ async function deliver (scopeName, eventName, payload) {
   client.send({ t: 'pub', scope: scopeName, event: eventName, payload });
 }
 
-async function subscribe (scopeName, pubsub) {
+async function subscribe (scopeName: any, pubsub: any) {
   await init();
   logger.debug('subscribe', scopeName);
   if (client == null) return { unsubscribe () {} };
@@ -301,7 +301,7 @@ async function subscribe (scopeName, pubsub) {
   };
 }
 
-function setTestDeliverHook (deliverHook) {
+function setTestDeliverHook (deliverHook: any) {
   testDeliverHook = deliverHook;
 }
 

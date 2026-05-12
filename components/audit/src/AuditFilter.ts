@@ -21,7 +21,7 @@ class AuditFilter {
    * method.id => { syslog: true, storage: true } if any of them is audited
    * method.id => false if none is audited
    */
-  filter;
+  filter: any;
 
   /**
    * Builds the syslogFilter & storageFilter maps used by the filter.
@@ -53,7 +53,7 @@ class AuditFilter {
         storageFilterParam.methods.exclude
       )
     };
-    const methodsFullFilter = {};
+    const methodsFullFilter: any = {};
     for (let i = 0; i < ALL_METHODS.length; i++) {
       const m = ALL_METHODS[i];
       let methodFilter: any = {};
@@ -65,7 +65,7 @@ class AuditFilter {
 
     this.filter = { methods: methodsFullFilter };
 
-    function buildIncludeMap (baseMethods, include, exclude) {
+    function buildIncludeMap (baseMethods: any, include: any, exclude: any) {
       include = expandAggregates(include);
       exclude = expandAggregates(exclude);
 
@@ -74,37 +74,37 @@ class AuditFilter {
         if (hasAll(include)) {
           return buildMap(baseMethods);
         } else {
-          return buildMap(baseMethods.filter(m => include.includes(m)));
+          return buildMap(baseMethods.filter((m: any) => include.includes(m)));
         }
       } else if (isOnlyExcludeUsed(include, exclude)) {
         // only exclude
         if (hasAll(exclude)) {
           return {};
         } else {
-          return buildMap(baseMethods.filter(m => !exclude.includes(m)));
+          return buildMap(baseMethods.filter((m: any) => !exclude.includes(m)));
         }
       } else {
         // both included and excluded
         return buildMap(
           baseMethods
-            .filter(m => include.includes(m))
-            .filter(m => !exclude.includes(m))
+            .filter((m: any) => include.includes(m))
+            .filter((m: any) => !exclude.includes(m))
         );
       }
     }
 
-    function isOnlyIncludeUsed (include, exclude) {
+    function isOnlyIncludeUsed (include: any, exclude: any) {
       return include.length > 0 && exclude.length === 0;
     }
-    function isOnlyExcludeUsed (include, exclude) {
+    function isOnlyExcludeUsed (include: any, exclude: any) {
       return exclude.length > 0 && include.length === 0;
     }
-    function hasAll (methods) {
+    function hasAll (methods: any) {
       return methods.includes('all');
     }
-    function expandAggregates (methods) {
+    function expandAggregates (methods: any) {
       let expandedMethods: any[] = [];
-      methods.forEach(m => {
+      methods.forEach((m: any) => {
         if (!isAggregate(m)) {
           expandedMethods.push(m);
         } else {
@@ -113,16 +113,16 @@ class AuditFilter {
       });
       return expandedMethods;
 
-      function isAggregate (m) {
+      function isAggregate (m: any) {
         const parts = m.split('.');
         if (parts.length !== 2) return false;
         if (parts[1] !== 'all') return false;
         return true;
       }
-      function expandAggregate (aggregateMethod) {
+      function expandAggregate (aggregateMethod: any) {
         const resource = aggregateMethod.split('.')[0];
         const expandedMethod: any[] = [];
-        ALL_METHODS.forEach(m => {
+        ALL_METHODS.forEach((m: any) => {
           if (m.startsWith(resource + '.')) expandedMethod.push(m);
         });
         return expandedMethod;
@@ -131,9 +131,9 @@ class AuditFilter {
     /**
      * Builds a map with an { i => true } entry for each array element
      */
-    function buildMap (array) {
-      const map = {};
-      array.forEach(i => {
+    function buildMap (array: any) {
+      const map: any = {};
+      array.forEach((i: any) => {
         map[i] = true;
       });
       return map;
@@ -145,7 +145,7 @@ class AuditFilter {
    * otherwise, returns false
    * @param method - the method name. Ex.: events.get
    */
-  isAudited (method) {
+  isAudited (method: any) {
     return this.filter.methods[method];
   }
 }

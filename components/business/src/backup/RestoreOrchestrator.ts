@@ -61,7 +61,7 @@ class RestoreOrchestrator {
    * @param [options.deleteOnSuccess=false] - delete backup data after successful restore
    * @param [options.moveOnSuccess] - move backup data to this path after successful restore
    */
-  async restoreAllUsers (reader, options: any = {}) {
+  async restoreAllUsers (reader: any, options: any = {}) {
     const opts: any = Object.assign({ overwrite: true, skipPlatform: false, skipConflicts: false }, options);
 
     if (opts.skipConflicts && !opts.deleteOnSuccess && !opts.moveOnSuccess) {
@@ -110,11 +110,11 @@ class RestoreOrchestrator {
    * @param [options.skipPlatform=true] - skip platform data
    * @param [options.remapUserId] - remap to a different userId
    */
-  async restoreUser (userId, reader, options: any = {}) {
+  async restoreUser (userId: any, reader: any, options: any = {}) {
     const opts: any = Object.assign({ overwrite: false, skipPlatform: true }, options);
     const manifest = await reader.readManifest();
 
-    const userManifest = manifest.users.find(u => u.userId === userId);
+    const userManifest = manifest.users.find((u: any) => u.userId === userId);
     if (!userManifest) {
       throw new Error(`User ${userId} not found in backup manifest`);
     }
@@ -141,7 +141,7 @@ class RestoreOrchestrator {
   /**
    * Restore platform data only.
    */
-  async restorePlatform (reader) {
+  async restorePlatform (reader: any) {
     await reader.readManifest();
     await this._restorePlatform(reader);
   }
@@ -150,7 +150,7 @@ class RestoreOrchestrator {
   // Internal
   // -------------------------------------------------------------------------
 
-  async _restoreSingleUser (reader, userId, username, opts, targetUserId?) {
+  async _restoreSingleUser (reader: any, userId: any, username: any, opts: any, targetUserId?: any) {
     targetUserId = targetUserId || userId;
 
     this.logger.info(`Restoring user: ${username} (${userId}${targetUserId !== userId ? ' -> ' + targetUserId : ''})`);
@@ -186,7 +186,7 @@ class RestoreOrchestrator {
     }
     if (streams.length > 0) {
       await fromCallback(
-        (cb) => this.storageLayer.streams.importAll(user, streams, cb)
+        (cb: any) => this.storageLayer.streams.importAll(user, streams, cb)
       );
     }
 
@@ -197,7 +197,7 @@ class RestoreOrchestrator {
     }
     if (accesses.length > 0) {
       await fromCallback(
-        (cb) => this.storageLayer.accesses.importAll(user, accesses, cb)
+        (cb: any) => this.storageLayer.accesses.importAll(user, accesses, cb)
       );
     }
 
@@ -208,7 +208,7 @@ class RestoreOrchestrator {
     }
     if (profile.length > 0) {
       await fromCallback(
-        (cb) => this.storageLayer.profile.importAll(user, profile, cb)
+        (cb: any) => this.storageLayer.profile.importAll(user, profile, cb)
       );
     }
 
@@ -219,7 +219,7 @@ class RestoreOrchestrator {
     }
     if (webhooks.length > 0) {
       await fromCallback(
-        (cb) => this.storageLayer.webhooks.importAll(user, webhooks, cb)
+        (cb: any) => this.storageLayer.webhooks.importAll(user, webhooks, cb)
       );
     }
 
@@ -295,7 +295,7 @@ class RestoreOrchestrator {
     this.logger.info(`User restored: ${username} (${targetUserId})`);
   }
 
-  async _importEvents (user, events) {
+  async _importEvents (user: any, events: any) {
     // Use BaseStorage importAll via callback (same path as existing migration)
     // The storageLayer doesn't expose events directly, but the engine's
     // local data store does via the events collection.
@@ -304,18 +304,18 @@ class RestoreOrchestrator {
     const eventsStore = this.storageLayer.events;
     if (eventsStore && typeof eventsStore.importAll === 'function') {
       await fromCallback(
-        (cb) => eventsStore.importAll(user, events, cb)
+        (cb: any) => eventsStore.importAll(user, events, cb)
       );
     }
   }
 
-  async _clearUserData (user, userId) {
+  async _clearUserData (user: any, userId: any) {
     // Clear all user-scoped stores
     const collections = ['streams', 'accesses', 'profile', 'webhooks'];
     for (const coll of collections) {
       if (this.storageLayer[coll] && typeof this.storageLayer[coll].clearAll === 'function') {
         await fromCallback(
-          (cb) => this.storageLayer[coll].clearAll(user, cb)
+          (cb: any) => this.storageLayer[coll].clearAll(user, cb)
         );
       }
     }
@@ -323,7 +323,7 @@ class RestoreOrchestrator {
     // Clear events
     if (this.storageLayer.events && typeof this.storageLayer.events.clearAll === 'function') {
       await fromCallback(
-        (cb) => this.storageLayer.events.clearAll(user, cb)
+        (cb: any) => this.storageLayer.events.clearAll(user, cb)
       );
     }
 
@@ -354,7 +354,7 @@ class RestoreOrchestrator {
     }
   }
 
-  async _detectConflicts (users) {
+  async _detectConflicts (users: any) {
     const conflicts: any[] = [];
     for (const { userId, username } of users) {
       // Check if username already exists with a different userId
@@ -388,7 +388,7 @@ class RestoreOrchestrator {
     return conflicts;
   }
 
-  async _restorePlatform (reader) {
+  async _restorePlatform (reader: any) {
     if (!this.platformDB) return;
     const data: any[] = [];
     let skipped = 0;
@@ -430,7 +430,7 @@ class RestoreOrchestrator {
       const cores = typeof this.platformDB.getAllCoreInfos === 'function'
         ? await this.platformDB.getAllCoreInfos()
         : [];
-      const availableCores = cores.filter(c => c.available !== false);
+      const availableCores = cores.filter((c: any) => c.available !== false);
       const defaultCoreId = availableCores.length === 1 ? availableCores[0].id : null;
       if (defaultCoreId != null) {
         for await (const mapping of await reader.readServerMappings()) {
@@ -459,7 +459,7 @@ class RestoreOrchestrator {
  * the only key types present in v1 platform data. Other key types (user-core,
  * core-info, invitation) are v2-only and have no v1 equivalent; returns null.
  */
-function parseRawPlatformEntry (entry) {
+function parseRawPlatformEntry (entry: any) {
   const parts = entry.key.split('/');
   if (parts.length < 3) return null;
   const [type, field, userNameOrValue] = parts;

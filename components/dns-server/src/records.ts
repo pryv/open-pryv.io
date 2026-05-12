@@ -16,27 +16,27 @@ const require = createRequire(import.meta.url);
 const dns2 = require('dns2');
 const { Packet } = dns2;
 
-function buildA (name, address, ttl) {
+function buildA (name: any, address: any, ttl: any) {
   return { name, type: Packet.TYPE.A, class: Packet.CLASS.IN, ttl, address };
 }
 
-function buildAAAA (name, address, ttl) {
+function buildAAAA (name: any, address: any, ttl: any) {
   return { name, type: Packet.TYPE.AAAA, class: Packet.CLASS.IN, ttl, address };
 }
 
-function buildCNAME (name, domain, ttl) {
+function buildCNAME (name: any, domain: any, ttl: any) {
   return { name, type: Packet.TYPE.CNAME, class: Packet.CLASS.IN, ttl, domain };
 }
 
-function buildMX (name, exchange, priority, ttl) {
+function buildMX (name: any, exchange: any, priority: any, ttl: any) {
   return { name, type: Packet.TYPE.MX, class: Packet.CLASS.IN, ttl, exchange, priority };
 }
 
-function buildNS (name, ns, ttl) {
+function buildNS (name: any, ns: any, ttl: any) {
   return { name, type: Packet.TYPE.NS, class: Packet.CLASS.IN, ttl, ns };
 }
 
-function buildSOA (name, { primary, admin, serial, refresh, retry, expiration, minimum }, ttl) {
+function buildSOA (name: any, { primary, admin, serial, refresh, retry, expiration, minimum }: any, ttl: any) {
   return {
     name,
     type: Packet.TYPE.SOA,
@@ -52,11 +52,11 @@ function buildSOA (name, { primary, admin, serial, refresh, retry, expiration, m
   };
 }
 
-function buildTXT (name, data, ttl) {
+function buildTXT (name: any, data: any, ttl: any) {
   return { name, type: Packet.TYPE.TXT, class: Packet.CLASS.IN, ttl, data };
 }
 
-function buildCAA (name, flags, tag, value, ttl) {
+function buildCAA (name: any, flags: any, tag: any, value: any, ttl: any) {
   return { name, type: Packet.TYPE.CAA, class: Packet.CLASS.IN, ttl, flags, tag, value };
 }
 

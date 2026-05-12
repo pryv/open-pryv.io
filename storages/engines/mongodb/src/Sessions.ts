@@ -31,7 +31,7 @@ const collectionInfo = {
  *
  * @param options Possible options: `maxAge` (in milliseconds)
  */
-function Sessions (this: any, database, options) {
+function Sessions (this: any, database: any, options: any) {
   this.database = database;
   this.options = deepMerge({
     maxAge: 1000 * 60 * 60 * 24 * 14 // two weeks
@@ -43,8 +43,8 @@ function Sessions (this: any, database, options) {
  *
  * @param callback Args: err, data
  */
-Sessions.prototype.get = function (this: any, id, callback) {
-  this.database.findOne(collectionInfo, { _id: id }, null, (err, session) => {
+Sessions.prototype.get = function (this: any, id: any, callback: any) {
+  this.database.findOne(collectionInfo, { _id: id }, null, (err: any, session: any) => {
     if (err) {
       return callback(err);
     }
@@ -56,7 +56,7 @@ Sessions.prototype.get = function (this: any, id, callback) {
     if (!session.expires || new Date() < session.expires) {
       callback(null, session.data);
     } else {
-      this.destroy(id, function (err, res) {
+      this.destroy(id, function (err: any, res: any) {
         // the this.destroy() callback returns the op result, we must replace it with null
         callback(err, null);
       });
@@ -69,8 +69,8 @@ Sessions.prototype.get = function (this: any, id, callback) {
  *
  * @param callback Args: err, id
  */
-Sessions.prototype.getMatching = function (this: any, data, callback) {
-  this.database.findOne(collectionInfo, { data }, null, (err, session) => {
+Sessions.prototype.getMatching = function (this: any, data: any, callback: any) {
+  this.database.findOne(collectionInfo, { data }, null, (err: any, session: any) => {
     if (err) {
       return callback(err);
     }
@@ -82,7 +82,7 @@ Sessions.prototype.getMatching = function (this: any, data, callback) {
     if (!session.expires || new Date() < session.expires) {
       callback(null, session._id);
     } else {
-      this.destroy(session._id, (err, res) => {
+      this.destroy(session._id, (err: any, res: any) => {
         // the this.destroy() callback returns the op result, we must replace it with null
         callback(err, null);
       });
@@ -95,13 +95,13 @@ Sessions.prototype.getMatching = function (this: any, data, callback) {
  *
  * @param callback Args: err, id
  */
-Sessions.prototype.generate = function (data, options, callback) {
+Sessions.prototype.generate = function (data: any, options: any, callback: any) {
   const session = {
     _id: generateId(),
     data: typeof data === 'object' ? data : {},
     expires: this.getNewExpirationDate()
   };
-  this.database.insertOne(collectionInfo, session, function (err) {
+  this.database.insertOne(collectionInfo, session, function (err: any) {
     if (err) { return callback(err); }
     callback(null, session._id);
   },
@@ -112,7 +112,7 @@ Sessions.prototype.generate = function (data, options, callback) {
  * Renews the specified session's expiration date.
  *
  */
-Sessions.prototype.touch = function (id, callback) {
+Sessions.prototype.touch = function (id: any, callback: any) {
   const update = { $set: { expires: this.getNewExpirationDate() } };
   this.database.updateOne(collectionInfo, { _id: id }, update, callback);
 };
@@ -123,7 +123,7 @@ Sessions.prototype.touch = function (id, callback) {
  * or Sessions.getMatching() is called.
  *
  */
-Sessions.prototype.expireNow = function (id, callback) {
+Sessions.prototype.expireNow = function (id: any, callback: any) {
   const update = { $set: { expires: new Date() } };
   this.database.updateOne(collectionInfo, { _id: id }, update, callback);
 };
@@ -132,7 +132,7 @@ Sessions.prototype.expireNow = function (id, callback) {
  * Deletes the specified session.
  *
  */
-Sessions.prototype.destroy = function (id, callback) {
+Sessions.prototype.destroy = function (id: any, callback: any) {
   this.database.deleteOne(collectionInfo, { _id: id }, callback);
 };
 
@@ -140,7 +140,7 @@ Sessions.prototype.destroy = function (id, callback) {
  * Destroys all sessions.
  *
  */
-Sessions.prototype.clearAll = function (callback) {
+Sessions.prototype.clearAll = function (callback: any) {
   this.database.deleteMany(collectionInfo, {}, callback);
 };
 
@@ -152,9 +152,9 @@ Sessions.prototype.getNewExpirationDate = function () {
  * Delete sessions whose data matches the given fields.
  * @param query — plain key/value to match inside session data
  */
-Sessions.prototype.remove = function (query, callback) {
+Sessions.prototype.remove = function (query: any, callback: any) {
   // Convert plain {field: value} to MongoDB dot-notation on the data subdocument
-  const mongoQuery = {};
+  const mongoQuery: any = {};
   for (const [key, value] of Object.entries(query)) {
     mongoQuery[`data.${key}`] = value;
   }
@@ -170,14 +170,14 @@ Sessions.prototype.remove = function (query, callback) {
 /**
  * Export all session documents (raw).
  */
-Sessions.prototype.exportAll = function (callback) {
+Sessions.prototype.exportAll = function (callback: any) {
   this.database.find(collectionInfo, {}, {}, callback);
 };
 
 /**
  * Import raw session documents.
  */
-Sessions.prototype.importAll = function (data, callback) {
+Sessions.prototype.importAll = function (data: any, callback: any) {
   if (!data || data.length === 0) return callback(null);
   this.database.insertMany(collectionInfo, data, callback);
 };

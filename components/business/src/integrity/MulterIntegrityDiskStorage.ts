@@ -17,37 +17,37 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-function getFilename (req, file, cb) {
-  crypto.randomBytes(16, function (err, raw) {
+function getFilename (req: any, file: any, cb: any) {
+  crypto.randomBytes(16, function (err: any, raw: any) {
     cb(err, err ? undefined : raw.toString('hex'));
   });
 }
 
-function getDestination (req, file, cb) {
+function getDestination (req: any, file: any, cb: any) {
   cb(null, os.tmpdir());
 }
 
 /**
  * @function IntegrityMulterDiskStorage - Returns a StorageEngine implementation configured to store files on the local file system and computes a hash.
  */
-function MulterIntegrityDiskStorage (this: any, opts) {
+function MulterIntegrityDiskStorage (this: any, opts: any) {
   this.getFilename = (opts.filename || getFilename);
 
   if (typeof opts.destination === 'string') {
     fs.mkdirSync(opts.destination, { recursive: true });
-    this.getDestination = function ($0, $1, cb) { cb(null, opts.destination); };
+    this.getDestination = function ($0: any, $1: any, cb: any) { cb(null, opts.destination); };
   } else {
     this.getDestination = (opts.destination || getDestination);
   }
 }
 
-MulterIntegrityDiskStorage.prototype._handleFile = function _handleFile (req, file, cb) {
+MulterIntegrityDiskStorage.prototype._handleFile = function _handleFile (req: any, file: any, cb: any) {
   const that = this;
 
-  that.getDestination(req, file, function (err, destination) {
+  that.getDestination(req, file, function (err: any, destination: any) {
     if (err) return cb(err);
 
-    that.getFilename(req, file, function (err, filename) {
+    that.getFilename(req, file, function (err: any, filename: any) {
       if (err) return cb(err);
 
       const finalPath = path.join(destination, filename);
@@ -69,7 +69,7 @@ MulterIntegrityDiskStorage.prototype._handleFile = function _handleFile (req, fi
   });
 };
 
-MulterIntegrityDiskStorage.prototype._removeFile = function _removeFile (req, file, cb) {
+MulterIntegrityDiskStorage.prototype._removeFile = function _removeFile (req: any, file: any, cb: any) {
   const path = file.path;
 
   delete file.destination;
@@ -83,8 +83,8 @@ MulterIntegrityDiskStorage.prototype._removeFile = function _removeFile (req, fi
  * Multer disk storage
  * @module IntegrityMulterIntegrityDiskStorage
  */
-export default function (opts) {
-  return new MulterIntegrityDiskStorage(opts);
+export default function (opts: any) {
+  return new (MulterIntegrityDiskStorage as any)(opts);
 }
 
 // -- CHECKSUM STREAM
@@ -92,11 +92,11 @@ export default function (opts) {
 const PassThrough = require('stream').PassThrough;
 
 class IntegrityStream extends PassThrough {
-  checksum;
-  digest;
-  hashOptionsAlgorythm;
+  checksum: any;
+  digest: any;
+  hashOptionsAlgorythm: any;
 
-  constructor (hashOptionsAlgorythm, hashOptions?) {
+  constructor (hashOptionsAlgorythm: any, hashOptions?: any) {
     super();
     this.hashOptionsAlgorythm = hashOptionsAlgorythm;
     this.checksum = crypto.createHash(hashOptionsAlgorythm, hashOptions);
@@ -105,7 +105,7 @@ class IntegrityStream extends PassThrough {
     });
   }
 
-  _transform (chunk, encoding, done) {
+  _transform (chunk: any, encoding: any, done: any) {
     try {
       this.checksum.update(chunk);
       this.push(chunk);

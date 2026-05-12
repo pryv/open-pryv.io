@@ -19,16 +19,16 @@ const observability = require('business/src/observability/index.ts');
  * Create (register) a new user
  */
 class Registration {
-  logger;
+  logger: any;
 
-  storageLayer;
+  storageLayer: any;
   /** @default accountStreams.accountMap */
   accountStreamsSettings = accountStreams.accountMap;
 
-  servicesSettings; // settings to get the email to send user welcome email
+  servicesSettings: any; // settings to get the email to send user welcome email
 
-  platform;
-  constructor (logging, storageLayer, servicesSettings) {
+  platform: any;
+  constructor (logging: any, storageLayer: any, servicesSettings: any) {
     this.logger = getLogger('business:registration');
     this.storageLayer = storageLayer;
     this.servicesSettings = servicesSettings;
@@ -44,7 +44,7 @@ class Registration {
   /**
    * Do minimal manipulation with data like username conversion to lowercase
    */
-  async prepareUserData (context, params, result, next) {
+  async prepareUserData (context: any, params: any, result: any, next: any) {
     context.newUser = new User(params);
     // accept passwordHash at creation only (used by system.createUser)
     context.newUser.passwordHash = params.passwordHash;
@@ -68,7 +68,7 @@ class Registration {
    *
    * Downstream chain steps must no-op when `result.forwarded` is set.
    */
-  async forwardIfCrossCore (context, params, result, next) {
+  async forwardIfCrossCore (context: any, params: any, result: any, next: any) {
     try {
       if (!this.platform || this.platform.isSingleCore) return next();
       const selectedCoreId = await this.platform.selectCoreForRegistration(params.hosting);
@@ -121,10 +121,10 @@ class Registration {
    * - Check reserved usernames
    * - Check username + unique field availability (atomically reserved)
    */
-  async validateOnPlatform (context, params, result, next) {
+  async validateOnPlatform (context: any, params: any, result: any, next: any) {
     if (result.forwarded) return next();
     try {
-      const uniqueFields = { username: context.newUser.username };
+      const uniqueFields: any = { username: context.newUser.username };
       for (const [streamIdWithPrefix, streamSettings] of Object.entries(this.accountStreamsSettings) as Array<[string, any]>) {
         if (streamSettings?.isUnique) {
           const fieldName = accountStreams.toFieldName(streamIdWithPrefix);
@@ -151,7 +151,7 @@ class Registration {
   /**
    * Save user to the database, then store indexed fields in PlatformDB
    */
-  async createUser (context, params, result, next) {
+  async createUser (context: any, params: any, result: any, next: any) {
     // Multi-core: either legacy redirect flow OR new transparent forward
     // already returned the target's response — nothing to do locally.
     if (result.redirect || result.forwarded) return next();
@@ -176,7 +176,7 @@ class Registration {
   /**
    * Build response for user registration
    */
-  async buildResponse (context, params, result, next) {
+  async buildResponse (context: any, params: any, result: any, next: any) {
     // Transparent cross-core forward: target's response already in result.
     // Keep `result.forwarded` set so sendWelcomeMail skips (target core
     // already triggered the welcome email); strip it in the final
@@ -208,7 +208,7 @@ class Registration {
   /**
    * Send welcome email
    */
-  sendWelcomeMail (context, params, result, next) {
+  sendWelcomeMail (context: any, params: any, result: any, next: any) {
     // Multi-core redirect: no user created locally, skip mail
     if (result.core && !result.username) return next();
     // Transparent cross-core forward: target core already sent the mail.
@@ -240,7 +240,7 @@ class Registration {
       USERNAME: context.newUser.username,
       EMAIL: context.newUser.email
     };
-    mailing.sendmail(emailSettings, emailSettings.welcomeTemplate, recipient, substitutions, context.newUser.language, (err) => {
+    mailing.sendmail(emailSettings, emailSettings.welcomeTemplate, recipient, substitutions, context.newUser.language, (err: any) => {
       // Don't fail creation process itself (mail isn't critical), just log error
       if (err) {
         errorHandling.logError(err, null, this.logger);

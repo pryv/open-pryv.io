@@ -21,10 +21,10 @@ const ACCESS_TYPE_PERSONAL = 'personal';
 class MethodContext {
   source;
   user;
-  access;
-  streams;
-  accessToken;
-  callerId;
+  access: any;
+  streams: any;
+  accessToken: any;
+  callerId: any;
   /**
    * Used in custom auth function
    */
@@ -32,20 +32,20 @@ class MethodContext {
   /**
    * API method id, e.g. "events.get"
    */
-  methodId;
+  methodId: any;
   originalQuery;
   /**
    * Custom auth function, if one was configured.
    */
   customAuthStepFn;
-  mall;
+  mall: any;
   _tracing;
   /**
    * Used in events.get
    */
-  acceptStreamsQueryNonStringified;
+  acceptStreamsQueryNonStringified: any;
 
-  constructor (source, username, auth, customAuthStepFn, headers, query, tracing) {
+  constructor (source: any, username: any, auth: any, customAuthStepFn: any, headers: any, query: any, tracing: any) {
     this.source = source;
     this.user = { id: null, username };
     this.mall = null;
@@ -77,7 +77,7 @@ class MethodContext {
    * Extracts access token and optional caller id from the given auth string,
    * assigning to `this.accessToken` and `this.callerId`.
    */
-  parseAuth (auth) {
+  parseAuth (auth: any) {
     this.accessToken = auth;
     // Sometimes, the auth string will look like this:
     //    'TOKEN CALLERID'
@@ -130,7 +130,7 @@ class MethodContext {
    * a subclass of APIError.
    *
    */
-  async retrieveExpandedAccess (storage) {
+  async retrieveExpandedAccess (storage: any) {
     try {
       if (this.access == null) { await this.retrieveAccessFromToken(storage); }
       const access = this.access;
@@ -155,8 +155,8 @@ class MethodContext {
   /**
    * Generic retrieve access
    */
-  async _retrieveAccess (storage, query) {
-    const access = await fromCallback((cb) => storage.accesses.findOne(this.user, query, null, cb));
+  async _retrieveAccess (storage: any, query: any) {
+    const access = await fromCallback((cb: any) => storage.accesses.findOne(this.user, query, null, cb));
     if (access == null) { throw errors.invalidAccessToken('Cannot find access from token.', 403); }
     this.access = new AccessLogic(this.user.id, access);
     cache.setAccessLogic(this.user.id, this.access);
@@ -165,7 +165,7 @@ class MethodContext {
   /**
    * Internal: Loads `this.access`.
    */
-  async retrieveAccessFromToken (storage) {
+  async retrieveAccessFromToken (storage: any) {
     const token = this.accessToken;
     if (token == null) {
       throw errors.invalidAccessToken('The access token is missing: expected an ' +
@@ -187,7 +187,7 @@ class MethodContext {
    * Returns nothing but throws if an error is detected.
    *
    */
-  checkAccessValid (access) {
+  checkAccessValid (access: any) {
     const now = timestamp.now();
     if (access.expires != null && now > access.expires) { throw errors.forbidden('Access has expired.'); }
   }
@@ -196,7 +196,7 @@ class MethodContext {
    * Loads an access by id or throw an error. On success, assigns to
    * `this.access` and `this.accessToken`.
    */
-  async retrieveAccessFromId (storage, accessId) {
+  async retrieveAccessFromId (storage: any, accessId: any) {
     this.access = cache.getAccessLogicForId(this.user.id, accessId);
     if (this.access == null) {
       await this._retrieveAccess(storage, { id: accessId });
@@ -209,14 +209,14 @@ class MethodContext {
   /**
    * Loads session and touches it (personal sessions only)
    */
-  async checkSessionValid (storage) {
+  async checkSessionValid (storage: any) {
     const access = this.access;
     if (access == null) { throw new Error('AF: access != null'); }
     // Only 'personal' tokens expire - if it is not personal, abort.
     if (access.type !== ACCESS_TYPE_PERSONAL) { return; }
     // assert: type === 'personal'
     const token = access.token;
-    const session = await fromCallback((cb) => storage.sessions.get(token, cb));
+    const session = await fromCallback((cb: any) => storage.sessions.get(token, cb));
     if (session == null) { throw errors.invalidAccessToken('Access session has expired.', 403); }
     // Keep the session alive (don't await, see below)
     // TODO Maybe delay/amortize this so that we don't write on every request?
@@ -226,10 +226,10 @@ class MethodContext {
   /**
    * Perform custom auth step `customAuthStep`. Errors are caught and rethrown.
    */
-  performCustomAuthStep (customAuthStep) {
+  performCustomAuthStep (customAuthStep: any) {
     return new Promise<void>((resolve, reject) => {
       try {
-        customAuthStep(this, (err) => {
+        customAuthStep(this, (err: any) => {
           if (err != null) { reject(errors.invalidAccessToken(`Custom auth step failed: ${err.message}`)); }
           resolve();
         });
@@ -246,17 +246,17 @@ class MethodContext {
    * @param streamId  undefined
    * @param storeId  - If storeId is null streamId should be fully scoped
    */
-  async streamForStreamId (streamId, storeId) {
+  async streamForStreamId (streamId: any, storeId: any) {
     return await this.mall.streams.getOneWithNoChildren(this.user.id, streamId, storeId);
   }
 
-  initTrackingProperties (item, authorOverride) {
+  initTrackingProperties (item: any, authorOverride: any) {
     item.created = timestamp.now();
     item.createdBy = authorOverride || this.getTrackingAuthorId();
     return this.updateTrackingProperties(item, authorOverride);
   }
 
-  updateTrackingProperties (updatedData, authorOverride) {
+  updateTrackingProperties (updatedData: any, authorOverride: any) {
     updatedData.modified = timestamp.now();
     updatedData.modifiedBy = authorOverride || this.getTrackingAuthorId();
     return updatedData;

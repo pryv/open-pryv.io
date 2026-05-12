@@ -27,33 +27,33 @@ for (const key of ['set', 'get', 'unset', 'clear']) {
  * username -> userId
  */
 const userIdForUsername = new Map();
-function getNameSpace (namespace) {
+function getNameSpace (namespace: any) {
   if (namespace == null) { console.log('XXXX', new Error('Null namespace')); }
   return (_caches[namespace] ||
         (_caches[namespace] = new LRU({
           max: MAX_PER_CACHE_SIZE
         })));
 }
-function set (namespace, key, value) {
+function set (namespace: any, key: any, value: any) {
   if (!isActive) { return; }
   if (key == null) { throw new Error('Null key for' + namespace); }
   getNameSpace(namespace).set(key, value);
   debug.set(namespace, key);
   return value;
 }
-function unset (namespace, key) {
+function unset (namespace: any, key: any) {
   if (!isActive) { return; }
   if (key == null) { throw new Error('Null key for' + namespace); }
   getNameSpace(namespace).delete(key);
   debug.unset(namespace, key);
 }
-function get (namespace, key) {
+function get (namespace: any, key: any) {
   if (!isActive) { return null; }
   if (key == null) { throw new Error('Null key for' + namespace); }
   debug.get(namespace, key);
   return getNameSpace(namespace).get(key);
 }
-function clear (namespace) {
+function clear (namespace?: any) {
   if (namespace == null) {
     // clear all
     for (const ns of Object.keys(_caches)) {
@@ -69,17 +69,17 @@ function clear (namespace) {
   debug.clear(namespace);
 }
 // --------------- Users ---------------//
-function getUserId (username) {
+function getUserId (username: any) {
   if (!isActive) { return; }
   debug.get('user-id', username);
   return userIdForUsername.get(username);
 }
-function setUserId (username, userId) {
+function setUserId (username: any, userId: any) {
   if (!isActive) { return; }
   debug.set('user-id', username, userId);
   userIdForUsername.set(username, userId);
 }
-function unsetUser (username, notifyOtherProcesses = true) {
+function unsetUser (username: any, notifyOtherProcesses = true) {
   if (!isActive) { return; }
   debug.unset('user-id', username);
   const userId = getUserId(username);
@@ -89,7 +89,7 @@ function unsetUser (username, notifyOtherProcesses = true) {
   if (notifyOtherProcesses && isSynchroActive) { synchro.unsetUser(username); }
   userIdForUsername.delete(username);
 }
-function unsetUserData (userId, notifyOtherProcesses = true) {
+function unsetUserData (userId: any, notifyOtherProcesses = true) {
   if (!isActive) { return; }
   if (isSynchroActive) {
     synchro.removeListenerForUserId(userId);
@@ -102,34 +102,34 @@ function unsetUserData (userId, notifyOtherProcesses = true) {
   _clearAccessLogics(userId);
 }
 // --------------- Streams ---------------//
-function getStreams (userId, storeId = 'local') {
+function getStreams (userId: any, storeId = 'local') {
   return get(NS.STREAMS_FOR_USERID + storeId, userId);
 }
-function setStreams (userId, storeId = 'local', streams) {
+function setStreams (userId: any, storeId = 'local', streams?: any) {
   if (!isActive) { return; }
   if (isSynchroActive) { synchro.registerListenerForUserId(userId); } // follow this user
   set(NS.STREAMS_FOR_USERID + storeId, userId, streams);
 }
-function _unsetStreams (userId, storeId = 'local') {
+function _unsetStreams (userId: any, storeId = 'local') {
   unset(NS.STREAMS_FOR_USERID + storeId, userId);
 }
-function unsetStreams (userId, storeId = 'local') {
+function unsetStreams (userId: any, storeId = 'local') {
   unsetUserData(userId);
 }
 // --------------- Access Logic -----------//
-function getAccessLogicForToken (userId, token) {
+function getAccessLogicForToken (userId: any, token: any) {
   if (!isActive) { return null; }
   const accessLogics = get(NS.ACCESS_LOGICS_FOR_USERID, userId);
   if (accessLogics == null) { return null; }
   return accessLogics.tokens[token];
 }
-function getAccessLogicForId (userId, accessId) {
+function getAccessLogicForId (userId: any, accessId: any) {
   if (!isActive) { return null; }
   const accessLogics = get(NS.ACCESS_LOGICS_FOR_USERID, userId);
   if (accessLogics == null) { return null; }
   return accessLogics.ids[accessId];
 }
-function unsetAccessLogic (userId, accessLogic, notifyOtherProcesses = true) {
+function unsetAccessLogic (userId: any, accessLogic: any, notifyOtherProcesses = true) {
   if (!isActive) { return; }
   // notify others to unsed
   if (notifyOtherProcesses && isSynchroActive) { synchro.unsetAccessLogic(userId, accessLogic); }
@@ -139,10 +139,10 @@ function unsetAccessLogic (userId, accessLogic, notifyOtherProcesses = true) {
   delete accessLogics.tokens[accessLogic.token];
   delete accessLogics.ids[accessLogic.id];
 }
-function _clearAccessLogics (userId) {
+function _clearAccessLogics (userId: any) {
   unset(NS.ACCESS_LOGICS_FOR_USERID, userId);
 }
-function setAccessLogic (userId, accessLogic) {
+function setAccessLogic (userId: any, accessLogic: any) {
   if (!isActive) { return; }
   if (synchro != null) { synchro.registerListenerForUserId(userId); }
   let accessLogics = get(NS.ACCESS_LOGICS_FOR_USERID, userId);

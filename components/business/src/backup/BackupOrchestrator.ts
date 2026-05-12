@@ -76,7 +76,7 @@ class BackupOrchestrator {
    * @param [options.previousManifest] - previous backup manifest (for incremental)
    * @param [options.includeEphemeral=false] - include sessions and password-reset-requests
    */
-  async backupAllUsers (writer, options: any = {}) {
+  async backupAllUsers (writer: any, options: any = {}) {
     const config = await this._getBackupConfig();
     const coreVersion = require('storage/package.json').version;
     const snapshotBefore = timestamp.now();
@@ -85,7 +85,7 @@ class BackupOrchestrator {
     const userCount = Object.keys(allUsers).length;
 
     // Build per-user "since" map from previous manifest
-    const perUserSince = this._buildPerUserSince(options);
+    const perUserSince: any = this._buildPerUserSince(options);
 
     const isIncremental = options.incremental && Object.keys(perUserSince).length > 0;
     this.logger.info(`Starting ${isIncremental ? 'incremental' : 'full'} backup of ${userCount} users (snapshot before ${snapshotBefore})`);
@@ -115,13 +115,13 @@ class BackupOrchestrator {
    * Backup a single user.
    * @param [options]
    */
-  async backupUser (userId, writer, options: any = {}) {
+  async backupUser (userId: any, writer: any, options: any = {}) {
     const username = this.usersLocalIndex.getUsername(userId);
     const config = await this._getBackupConfig();
     const coreVersion = require('storage/package.json').version;
     const snapshotBefore = timestamp.now();
 
-    const perUserSince = this._buildPerUserSince(options);
+    const perUserSince: any = this._buildPerUserSince(options);
     const since = perUserSince[userId] || null;
     const isIncremental = options.incremental && since != null;
 
@@ -145,7 +145,7 @@ class BackupOrchestrator {
   /**
    * Backup platform data only.
    */
-  async backupPlatform (writer) {
+  async backupPlatform (writer: any) {
     await this._backupPlatform(writer);
   }
 
@@ -157,8 +157,8 @@ class BackupOrchestrator {
    * Build a { userId: sinceTimestamp } map from the previous manifest.
    * Each user's "since" is their individual backupTimestamp from the last backup.
    */
-  _buildPerUserSince (options) {
-    const map = {};
+  _buildPerUserSince (options: any) {
+    const map: any = {};
     if (!options.incremental || !options.previousManifest) return map;
     const prev = options.previousManifest;
     if (prev.users && Array.isArray(prev.users)) {
@@ -176,33 +176,33 @@ class BackupOrchestrator {
    * @param snapshotBefore - unix timestamp: only export items modified <= this
    * @param since - for incremental: only export items modified > this
    */
-  async _backupSingleUser (writer, userId, username, snapshotBefore, since, options) {
+  async _backupSingleUser (writer: any, userId: any, username: any, snapshotBefore: any, since: any, options: any) {
     const userWriter = await writer.openUser(userId, username);
     const user = { id: userId };
 
     // Streams
     const rawStreams = await fromCallback(
-      (cb) => this.storageLayer.streams.exportAll(user, cb)
+      (cb: any) => this.storageLayer.streams.exportAll(user, cb)
     );
     const streams = this._filterByTimestamp(rawStreams, snapshotBefore, since);
     await userWriter.writeStreams(streams.map(sanitize));
 
     // Accesses
     const rawAccesses = await fromCallback(
-      (cb) => this.storageLayer.accesses.exportAll(user, cb)
+      (cb: any) => this.storageLayer.accesses.exportAll(user, cb)
     );
     const accesses = this._filterByTimestamp(rawAccesses, snapshotBefore, since);
     await userWriter.writeAccesses(accesses.map(sanitize));
 
     // Profile (no timestamps — always full export)
     const profile = await fromCallback(
-      (cb) => this.storageLayer.profile.exportAll(user, cb)
+      (cb: any) => this.storageLayer.profile.exportAll(user, cb)
     );
     await userWriter.writeProfile(profile.map(sanitize));
 
     // Webhooks
     const rawWebhooks = await fromCallback(
-      (cb) => this.storageLayer.webhooks.exportAll(user, cb)
+      (cb: any) => this.storageLayer.webhooks.exportAll(user, cb)
     );
     const webhooks = this._filterByTimestamp(rawWebhooks, snapshotBefore, since);
     await userWriter.writeWebhooks(webhooks.map(sanitize));
@@ -258,8 +258,8 @@ class BackupOrchestrator {
    * @param snapshotBefore - unix timestamp (seconds)
    * @param since - unix timestamp (seconds), null for full backup
    */
-  _filterByTimestamp (items, snapshotBefore, since) {
-    return items.filter(item => {
+  _filterByTimestamp (items: any, snapshotBefore: any, since: any) {
+    return items.filter((item: any) => {
       const ts = item.modified || item.created || item.time;
       if (ts == null) return true; // no timestamp — always include
       // Exclude items modified after snapshot (consistency)
@@ -270,7 +270,7 @@ class BackupOrchestrator {
     });
   }
 
-  async _exportEvents (userId) {
+  async _exportEvents (userId: any) {
     // Events are in a shared collection, filtered by userId.
     // Use the database directly with BaseStorage-style query.
     const storages = require('storages');
@@ -279,7 +279,7 @@ class BackupOrchestrator {
 
     if (storages.database) {
       // MongoDB: query events collection filtered by userId
-      return await fromCallback((cb) =>
+      return await fromCallback((cb: any) =>
         database.find({ name: 'events' }, { userId }, {}, cb)
       );
     }
@@ -296,7 +296,7 @@ class BackupOrchestrator {
     return [];
   }
 
-  async _backupAttachments (userWriter, userId, events) {
+  async _backupAttachments (userWriter: any, userId: any, events: any) {
     for (const event of events) {
       if (!event.attachments || !Array.isArray(event.attachments)) continue;
       for (const att of event.attachments) {
@@ -312,7 +312,7 @@ class BackupOrchestrator {
     }
   }
 
-  async _backupPlatform (writer) {
+  async _backupPlatform (writer: any) {
     if (!this.platformDB) return;
     const platformData = await this.platformDB.exportAll();
     await writer.writePlatformData(platformData);

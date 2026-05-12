@@ -21,7 +21,7 @@ const { getPasswordRules, getUsersRepository } = require('business').users;
 // produce `https://single.example.devusers`. coreIdToUrl() normalizes
 // internally; this helper covers the two ApiEndpoint.build() fallback
 // sites below that bypass it.
-function withTrailingSlash (url) {
+function withTrailingSlash (url: any) {
   if (url == null || url === '') return url;
   return url.endsWith('/') ? url : url + '/';
 }
@@ -30,7 +30,7 @@ function withTrailingSlash (url) {
  * Auth API methods implementations.
  *
  */
-export default async function (api) {
+export default async function (api: any) {
   const config = await getConfig();
   const storageLayer = await getStorageLayer();
   const servicesSettings = config.get('services');
@@ -56,7 +56,7 @@ export default async function (api) {
     registration.buildResponse.bind(registration),
     registration.sendWelcomeMail.bind(registration));
 
-  async function enforcePasswordRules (context, params, result, next) {
+  async function enforcePasswordRules (context: any, params: any, result: any, next: any) {
     try {
       await passwordRules.checkNewPassword(null, params.password);
       next();
@@ -80,7 +80,7 @@ export default async function (api) {
   /**
    * Check if username is taken
    */
-  async function checkUsername (context, params, result, next) {
+  async function checkUsername (context: any, params: any, result: any, next: any) {
     result.reserved = await usersRepository.usernameExists(params.username);
     if (result.reserved == null) {
       return next(errors.unexpectedError('username reserved cannot be null'));
@@ -91,7 +91,7 @@ export default async function (api) {
   /**
    * Check if a unique field value is already taken (email, etc.)
    */
-  async function checkUniqueField (context, params, result, next) {
+  async function checkUniqueField (context: any, params: any, result: any, next: any) {
     result.reserved = false;
     const field = Object.keys(params)[0];
     if (field === 'username') {
@@ -113,7 +113,7 @@ export default async function (api) {
     setAuditAccessId(AuditAccessIds.PUBLIC),
     coresLookup);
 
-  async function coresLookup (context, params, result, next) {
+  async function coresLookup (context: any, params: any, result: any, next: any) {
     if (params.username == null && params.email == null) {
       return next(errors.invalidParametersFormat('provide "username" or "email" as query parameter'));
     }
@@ -157,13 +157,13 @@ export default async function (api) {
     setAuditAccessId(AuditAccessIds.PUBLIC),
     hostingsLookup);
 
-  async function hostingsLookup (context, params, result, next) {
+  async function hostingsLookup (context: any, params: any, result: any, next: any) {
     try {
       const configHostings = config.get('hostings');
       const allCores = await platform.getAllCoreInfos();
 
       // Build hosting → available core URL map
-      const hostingCores = {};
+      const hostingCores: any = {};
       for (const core of allCores) {
         if (core.available === false) continue;
         const h = core.hosting || 'default';

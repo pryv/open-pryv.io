@@ -17,7 +17,7 @@ const { getUsersRepository } = require('business/src/users/index.ts');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 const { WebhooksService } = require('webhooks/src/service.ts');
-let app;
+let app: any;
 
 /**
  * Server class for api-server process. To use this, you would:
@@ -60,7 +60,7 @@ class Server {
       // Only load when actually wired into config.
       const recLaOptionsAsync = require('backloop.dev').httpsOptionsAsync;
       await new Promise<void>((resolve, reject) => {
-        recLaOptionsAsync((err, recLaOptions) => {
+        recLaOptionsAsync((err: any, recLaOptions: any) => {
           if (err) return reject(err);
           server = https.createServer(recLaOptions, app.expressApp);
           serverInfos.hostname = 'my-computer.backloop.dev';
@@ -119,7 +119,7 @@ class Server {
     this.logger.debug('api methods registered');
   }
 
-  async setupSocketIO (server) {
+  async setupSocketIO (server: any) {
     const api = app.api;
     const customAuthStepFn = app.getCustomAuthFunction('server.js');
     const socketIOsetup = require('./socket-io/index.ts').default;
@@ -130,7 +130,7 @@ class Server {
   /**
    * Open http port and listen to incoming connections.
    */
-  async startListen (server, info: any = {}) {
+  async startListen (server: any, info: any = {}) {
     const config = this.config;
     const logger = this.logger;
     const port = config.get('http:port');
@@ -150,7 +150,7 @@ class Server {
           resolve();
         }
       });
-      server.once('error', (err) => {
+      server.once('error', (err: any) => {
         if (!startFinished) {
           startFinished = true;
           console.log(
@@ -256,7 +256,7 @@ class Server {
  * Read https options off the config's `http.ssl.*` file paths.
  * Reads fresh each call so reloadTls picks up rotated files.
  */
-function buildHttpsOptions (config) {
+function buildHttpsOptions (config: any) {
   const options: any = {
     key: fs.readFileSync(config.get('http:ssl:keyFile')),
     cert: fs.readFileSync(config.get('http:ssl:certFile'))
