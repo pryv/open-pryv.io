@@ -12,7 +12,7 @@ const { findForbiddenChar, isStreamIdValidForCreation } = require('../../schema/
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('commonFunctions');
 
-export const requirePersonalAccess = function requirePersonalAccess (context, params, result, next) {
+export const requirePersonalAccess = function requirePersonalAccess (context: any, params: any, result: any, next: any) {
   if (!context.access.isPersonal()) {
     return next(errors.forbidden('You cannot access this resource using the given access ' + 'token.'));
   }
@@ -21,7 +21,7 @@ export const requirePersonalAccess = function requirePersonalAccess (context, pa
 /**
  * Basic check for authorized access based on context.methodId
  */
-export const basicAccessAuthorizationCheck = function (context, params, result, next) {
+export const basicAccessAuthorizationCheck = function (context: any, params: any, result: any, next: any) {
   const res = context.access.can(context.methodId);
   if (res === true) { return next(); }
   const message = typeof res === 'boolean'
@@ -37,18 +37,18 @@ export const basicAccessAuthorizationCheck = function (context, params, result, 
  * The returned function expects the call's `params` to have `appId` and `origin` properties.
  *
  */
-export const getTrustedAppCheck = function getTrustedAppCheck (authSettings) {
-  let trustedApps;
-  return function requireTrustedApp (context, params, result, next) {
+export const getTrustedAppCheck = function getTrustedAppCheck (authSettings: any) {
+  let trustedApps: any;
+  return function requireTrustedApp (context: any, params: any, result: any, next: any) {
     if (!isTrustedApp(params.appId, params.origin)) {
       return next(errors.invalidCredentials('The app id ("appId") is either missing or ' + 'not trusted.'));
     }
     next();
   };
-  function isTrustedApp (appId, origin) {
+  function isTrustedApp (appId: any, origin: any) {
     if (!trustedApps) {
       trustedApps = [];
-      authSettings.trustedApps.split(',').forEach(function (pair) {
+      authSettings.trustedApps.split(',').forEach(function (pair: any) {
         const parts = /^\s*(\S+)\s*@\s*(\S+)\s*$/.exec(pair);
         if (parts == null || !Array.isArray(parts) || parts.length !== 3) {
           logger.error('Invalid Trusted app settings, please check: ' + pair);
@@ -76,7 +76,7 @@ export const getTrustedAppCheck = function getTrustedAppCheck (authSettings) {
     }
     return false;
   }
-  function getRegExp (origin) {
+  function getRegExp (origin: any) {
     // BUG The blacklist approach taken here is probably wrong; we're assuming
     //  that we can escape all the active parts of a string using a list of
     //  special chars; we're almost sure to miss something while doing that. A
@@ -95,22 +95,22 @@ export const getTrustedAppCheck = function getTrustedAppCheck (authSettings) {
  * @param  {Object} paramsSchema JSON Schema for the parameters
  * @return {void}
  */
-export const getParamsValidation = function getParamsValidation (paramsSchema) {
-  return function validateParams (context, params, result, next) {
-    validation.validate(params, paramsSchema, function (err) {
+export const getParamsValidation = function getParamsValidation (paramsSchema: any) {
+  return function validateParams (context: any, params: any, result: any, next: any) {
+    validation.validate(params, paramsSchema, function (err: any) {
       if (err) {
-        const errorsList = err.map((error) => _addCustomMessage(error, paramsSchema));
+        const errorsList = err.map((error: any) => _addCustomMessage(error, paramsSchema));
         return next(errors.invalidParametersFormat("The parameters' format is invalid.", errorsList));
       }
       next();
     });
   };
 };
-export const isValidStreamIdForQuery = function isValidStreamIdForQuery (streamId, parameter, parameterName) {
+export const isValidStreamIdForQuery = function isValidStreamIdForQuery (streamId: any, parameter: any, parameterName: any) {
   const forbiddenChar = findForbiddenChar(streamId);
   if (forbiddenChar != null) { throw new Error(`Error in '${parameterName}' parameter: ${JSON.stringify(parameter)}, forbidden chartacter(s) in streamId '${streamId}'.`); }
 };
-export const isValidStreamIdForCreation = function isValidStreamIdForCreation (streamId) {
+export const isValidStreamIdForCreation = function isValidStreamIdForCreation (streamId: any) {
   return isStreamIdValidForCreation(streamId);
 };
 /**
@@ -154,7 +154,7 @@ export const isValidStreamIdForCreation = function isValidStreamIdForCreation (s
  * @param object schema
  * @returns {any}
  */
-function _addCustomMessage (error, schema) {
+function _addCustomMessage (error: any, schema: any) {
   const pathElements = error.path.split('/');
   let paramId = pathElements[pathElements.length - 1];
   // when field is missing paramId will be empty
@@ -186,8 +186,8 @@ function _addCustomMessage (error, schema) {
   // if there are no custom messages, just return default z-schema message
   return error;
 }
-export const catchForbiddenUpdate = function catchForbiddenUpdate (paramsSchema, ignoreProtectedFieldUpdates, logger) {
-  return function validateParams (context, params, result, next) {
+export const catchForbiddenUpdate = function catchForbiddenUpdate (paramsSchema: any, ignoreProtectedFieldUpdates: any, logger: any) {
+  return function validateParams (context: any, params: any, result: any, next: any) {
     const allowed = paramsSchema.alterableProperties;
     const forbidden = Object.keys(params.update).filter((key) => !allowed.includes(key));
     if (forbidden.length > 0) {

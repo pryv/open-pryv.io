@@ -20,7 +20,7 @@ const childProcess = require('child_process');
 // step list is a mix of callback-style functions (childProcess.exec.bind(...),
 // fs.rm.bind(...), exports.resetUsers, etc). Replaces a former `async.series`
 // dependency.
-function runSeries (fns, cb) {
+function runSeries (fns: any, cb: any) {
   let i = 0;
   function next (err?: any) {
     if (err || i >= fns.length) return cb(err);
@@ -69,7 +69,7 @@ export const resetUsers = async () => {
 const accesses = require('./data/accesses.ts').default;
 export { accesses };
 
-export const resetAccesses = function (done, user, personalAccessToken, addToId) {
+export const resetAccesses = function (done: any, user: any, personalAccessToken: any, addToId: any) {
   const u = user || defaultUser;
   if (personalAccessToken) {
     accesses[0].token = personalAccessToken;
@@ -90,7 +90,7 @@ export const resetAccesses = function (done, user, personalAccessToken, addToId)
 const profile = require('./data/profile.ts').default;
 export { profile };
 
-export const resetProfile = function (done, user) {
+export const resetProfile = function (done: any, user: any) {
   resetMongoDBCollectionFor(storage.user.profile, user || defaultUser, profile, done);
 };
 
@@ -99,11 +99,11 @@ export const resetProfile = function (done, user) {
 const events = require('./data/events.ts').default;
 const { ensureIntegrity: ensureEventsIntegrity } = require('./data/events.ts');
 export { events };
-const dynCreateAttachmentIdMap = {}; // contains real ids of created attachment per event:
+const dynCreateAttachmentIdMap: any = {}; // contains real ids of created attachment per event:
 export { dynCreateAttachmentIdMap };
 
 // add createdAttachmentsId to events
-function addCorrectAttachmentIds (allEvents) {
+function addCorrectAttachmentIds (allEvents: any) {
   const allEventsCorrected = structuredClone(allEvents);
   for (const e of allEventsCorrected) {
     if (dynCreateAttachmentIdMap[e.id]) {
@@ -115,14 +115,14 @@ function addCorrectAttachmentIds (allEvents) {
 }
 export { addCorrectAttachmentIds };
 
-export const resetEvents = function resetEvents (done, user) {
+export const resetEvents = function resetEvents (done: any, user: any) {
   // deleteData(storage.user.events, user || defaultUser, events, done);
   user = user || defaultUser;
   // Lazy-attach integrity to fixture events — the static .map() at
   // data/events.ts module-load no longer does this (post-Plan-57 8a-ii)
   // because integrity computation needs post-boiler-init algorithm.
   ensureEventsIntegrity();
-  const eventsToWrite = events.map((e) => structuredClone(e));
+  const eventsToWrite = events.map((e: any) => structuredClone(e));
   (async () => {
     try {
       const mall = await getMall();
@@ -144,7 +144,7 @@ export const resetEvents = function resetEvents (done, user) {
           await mall.events.create(user.id, eventSource, null, true);
         }
       }
-      events.forEach((e) => {
+      events.forEach((e: any) => {
         if (e.duration === 0) { delete e.duration; }
       });
       done();
@@ -159,10 +159,10 @@ export const resetEvents = function resetEvents (done, user) {
 const streams = require('./data/streams.ts').default;
 export { streams };
 
-export const resetStreams = function (done, user) {
+export const resetStreams = function (done: any, user: any) {
   const myUser = user || defaultUser;
   let mall: any = null;
-  async function addStreams (arrayOfStreams) {
+  async function addStreams (arrayOfStreams: any) {
     for (const stream of arrayOfStreams) {
       const children = stream?.children || [];
       const streamData = structuredClone(stream);
@@ -183,8 +183,8 @@ export const resetStreams = function (done, user) {
   })();
 };
 
-function resetMongoDBCollectionFor (storage, user, items, done) {
-  storage.removeAll(user, function (err) {
+function resetMongoDBCollectionFor (storage: any, user: any, items: any, done: any) {
+  storage.removeAll(user, function (err: any) {
     if (err) return done(err);
     storage.insertMany(user, items, done);
   });
@@ -209,14 +209,14 @@ export { attachments };
 // compute sri with openssl
 // cat FILENAME.js | openssl dgst -sha384 -binary | openssl base64 -A
 // replaces: 'sha256 ' + crypto.createHash('sha256').update(data).digest('hex');
-function getSubresourceIntegrity (filePath) {
+function getSubresourceIntegrity (filePath: any) {
   const algorithm = 'sha256';
   return (algorithm +
         '-' +
         childProcess.execSync(`cat "${filePath}" | openssl dgst -${algorithm} -binary | openssl base64 -A`));
 }
 
-function getAttachmentInfo (id, filename, type) {
+function getAttachmentInfo (id: any, filename: any, type: any) {
   const filePath = path.join(testsAttachmentsDirPath, filename);
   const data = fs.readFileSync(filePath);
   const integrity = getSubresourceIntegrity(filePath);
@@ -240,7 +240,7 @@ function getAttachmentInfo (id, filename, type) {
  *
  * @param mongoFolder Path to MongoDB base folder
  */
-export const dumpCurrent = function (mongoFolder, version, callback) {
+export const dumpCurrent = function (mongoFolder: any, version: any, callback: any) {
   const mongodump = path.resolve(mongoFolder, 'bin/mongodump');
   const outputFolder = getDumpFolder(version);
   logger.info('Dumping current test data to ' + outputFolder);
@@ -272,7 +272,7 @@ export const dumpCurrent = function (mongoFolder, version, callback) {
             ' -czf ' +
             getDumpFilesArchive(outputFolder) +
             ' .')
-  ], function (err) {
+  ], function (err: any) {
     if (err) {
       return callback(err);
     }
@@ -285,7 +285,7 @@ export const dumpCurrent = function (mongoFolder, version, callback) {
  * @param versionNum Must match an existing dumped version (e.g. "0.3.0")
  * @param mongoFolder Path to MongoDB base folder
  */
-export const restoreFromDump = function (versionNum, mongoFolder, callback) {
+export const restoreFromDump = function (versionNum: any, mongoFolder: any, callback: any) {
   const mongorestore = path.resolve(mongoFolder, 'bin/mongorestore');
   const sourceFolder = getDumpFolder(versionNum);
   const sourceDBFolder = getDumpDBSubfolder(sourceFolder);
@@ -310,7 +310,7 @@ export const restoreFromDump = function (versionNum, mongoFolder, callback) {
             settings.storages.engines.mongodb.port +
             ' ' +
             sourceDBFolder),
-    function (done) {
+    function (done: any) {
       fs.mkdirSync(settings.storages.engines.filesystem.attachmentsDirPath, { recursive: true });
       done();
     },
@@ -318,7 +318,7 @@ export const restoreFromDump = function (versionNum, mongoFolder, callback) {
             sourceFilesArchive +
             ' -C ' +
             settings.storages.engines.filesystem.attachmentsDirPath)
-  ], function (err) {
+  ], function (err: any) {
     if (err) {
       return callback(err);
     }
@@ -331,32 +331,32 @@ export const restoreFromDump = function (versionNum, mongoFolder, callback) {
  * Fetches the database structure for a given version
  *
  */
-export const getStructure = function (version) {
+export const getStructure = function (version: any) {
   return require(path.join(__dirname, '/structure/', version));
 };
 
-function clearAllData (callback) {
+function clearAllData (callback: any) {
   deleteUsersDataDirectory();
   storage.database.dropDatabase(callback);
 }
 
-function getDumpFolder (versionNum) {
+function getDumpFolder (versionNum: any) {
   return path.resolve(__dirname, 'data/dumps', versionNum);
 }
 
-function getDumpDBSubfolder (dumpFolder) {
+function getDumpDBSubfolder (dumpFolder: any) {
   return path.resolve(dumpFolder, 'db');
 }
 
-function getDumpFilesArchive (dumpFolder) {
+function getDumpFilesArchive (dumpFolder: any) {
   return path.resolve(dumpFolder, 'event-files.tar.gz');
 }
 
 function buildCustomAccountProperties () {
   const customStreams = getConfigUnsafe(true).get('custom:systemStreams:account');
   if (customStreams == null) { return {}; }
-  const customProperties = {};
-  customStreams.forEach((stream) => {
+  const customProperties: any = {};
+  customStreams.forEach((stream: any) => {
     customProperties[accountStreams.toFieldName(stream.id)] = charlatan.Number.number(3);
   });
   return customProperties;

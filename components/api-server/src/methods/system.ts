@@ -23,7 +23,7 @@ const { platform } = require('platform');
 /**
  * @param api The user-facing API, used to compute usage stats per method
  */
-export default async function (systemAPI, api) {
+export default async function (systemAPI: any, api: any) {
   const config = await getConfig();
   const logger = getLogger('system');
   const storageLayer = await getStorageLayer();
@@ -54,7 +54,7 @@ export default async function (systemAPI, api) {
     getUserInfoSetAccessStats
   );
 
-  async function loadUserToMinimalMethodContext (minimalMethodContext, params, result, next) {
+  async function loadUserToMinimalMethodContext (minimalMethodContext: any, params: any, result: any, next: any) {
     try {
       const userId = await usersRepository.getUserIdForUsername(params.username);
       if (userId == null) {
@@ -70,7 +70,7 @@ export default async function (systemAPI, api) {
     }
   }
 
-  async function getUserInfoInit (context, params, result, next) {
+  async function getUserInfoInit (context: any, params: any, result: any, next: any) {
     const newStorageUsed = await usersRepository.getStorageUsedByUserId(context.user.id);
     result.userInfo = {
       username: context.user.username,
@@ -79,21 +79,21 @@ export default async function (systemAPI, api) {
     next();
   }
 
-  function getUserInfoSetAccessStats (context, params, result, next) {
+  function getUserInfoSetAccessStats (context: any, params: any, result: any, next: any) {
     const info = result.userInfo ??= {};
     info.lastAccess ??= 0;
     info.callsTotal ??= 0;
     info.callsDetail ??= {};
     info.callsPerAccess ??= {};
 
-    getAPIMethodKeys().forEach(function (methodKey) {
+    getAPIMethodKeys().forEach(function (methodKey: any) {
       info.callsDetail[methodKey] = 0;
     });
 
-    userAccessesStorage.find(context.user, {}, null, function (err, accesses) {
+    userAccessesStorage.find(context.user, {}, null, function (err: any, accesses: any) {
       if (err) { return next(errors.unexpectedError(err)); }
 
-      accesses.forEach(function (access) {
+      accesses.forEach(function (access: any) {
         if (access.lastUsed > info.lastAccess) {
           info.lastAccess = access.lastUsed;
         }
@@ -118,7 +118,7 @@ export default async function (systemAPI, api) {
   // --------------------------------------------------------------- listUsers
   systemAPI.register('system.listUsers',
     setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
-    async function listUsers (context, params, result, next) {
+    async function listUsers (context: any, params: any, result: any, next: any) {
       try {
         const usersMap: Record<string, string> = await usersIndex.getAllByUsername();
         const users: any[] = [];
@@ -149,12 +149,12 @@ export default async function (systemAPI, api) {
   // --------------------------------------------------------------- listCores
   systemAPI.register('system.listCores',
     setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
-    async function listCores (context, params, result, next) {
+    async function listCores (context: any, params: any, result: any, next: any) {
       try {
         const allCores = await platform.getAllCoreInfos();
         // Count users per core from PlatformDB
         const allMappings = await platform.getAllUserCores();
-        const counts = {};
+        const counts: any = {};
         for (const core of allCores) {
           counts[core.id] = 0;
         }
@@ -163,7 +163,7 @@ export default async function (systemAPI, api) {
             counts[mapping.coreId]++;
           }
         }
-        result.cores = allCores.map(core => ({
+        result.cores = allCores.map((core: any) => ({
           id: core.id,
           url: platform.coreIdToUrl(core.id),
           hosting: core.hosting || null,
@@ -179,7 +179,7 @@ export default async function (systemAPI, api) {
 
   // --------------------------------------------------------------- checks
   systemAPI.register('system.checkPlatformIntegrity',
-    async function performSystemsChecks (context, params, result, next) {
+    async function performSystemsChecks (context: any, params: any, result: any, next: any) {
       try {
         result.checks = [
           await platform.checkIntegrity(),
@@ -200,9 +200,9 @@ export default async function (systemAPI, api) {
     deactivateMfa
   );
 
-  async function deactivateMfa (context, params, result, next) {
+  async function deactivateMfa (context: any, params: any, result: any, next: any) {
     try {
-      await fromCallback(cb => userProfileStorage.findOneAndUpdate(
+      await fromCallback((cb: any) => userProfileStorage.findOneAndUpdate(
         context.user,
         {},
         { $unset: { 'data.mfa': '' } },
@@ -217,7 +217,7 @@ export default async function (systemAPI, api) {
     return api.getMethodKeys().map(string.sanitizeFieldKey);
   }
 
-  function getAccessStatsKey (access) {
+  function getAccessStatsKey (access: any) {
     if (access.type === 'shared') {
       // don't leak user private data
       return 'shared';

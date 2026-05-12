@@ -12,8 +12,8 @@ const { fromCallback } = require('utils');
 const assert = require('assert');
 const ds = require('@pryv/datastore');
 
-function pick (obj, keys) {
-  const out = {};
+function pick (obj: any, keys: any) {
+  const out: any = {};
   for (const k of keys) if (k in obj) out[k] = obj[k];
   return out;
 }
@@ -33,22 +33,22 @@ const userStreams = ds.createUserStreams({
   userStreamsStorage: null,
   streamsCollection: null,
 
-  init (streamsCollection, userStreamsStorage) {
+  init (streamsCollection: any, userStreamsStorage: any) {
     this.userStreamsStorage = userStreamsStorage;
     this.streamsCollection = streamsCollection;
   },
 
-  async get (userId, query) {
+  async get (userId: any, query: any) {
     const allStreams = await this._getAllFromAccountAndCache(userId);
     if (query.includeTrashed) {
       return structuredClone(allStreams);
     } else {
       // i.e. default behavior (return non-trashed items)
-      return treeUtils.filterTree(allStreams, false /* no orphans */, (stream) => !stream.trashed);
+      return treeUtils.filterTree(allStreams, false /* no orphans */, (stream: any) => !stream.trashed);
     }
   },
 
-  async getOne (userId, streamId, query) {
+  async getOne (userId: any, streamId: any, query: any) {
     assert.ok(streamId !== '*' && streamId != null);
 
     const allStreams = await this._getAllFromAccountAndCache(userId);
@@ -65,18 +65,18 @@ const userStreams = ds.createUserStreams({
     if (!query.includeTrashed) {
       if (stream.trashed) return null;
       // i.e. default behavior (return non-trashed items)
-      stream.children = treeUtils.filterTree(stream.children, false /* no orphans */, (stream) => !stream.trashed);
+      stream.children = treeUtils.filterTree(stream.children, false /* no orphans */, (stream: any) => !stream.trashed);
     }
 
     return stream;
   },
 
-  async _getAllFromAccountAndCache (userId) {
+  async _getAllFromAccountAndCache (userId: any) {
     let allStreamsForAccount = _internals.cache.getStreams(userId, 'local');
     if (allStreamsForAccount != null) return allStreamsForAccount;
 
     // get from DB
-    allStreamsForAccount = await fromCallback((cb) => this.userStreamsStorage.find({ id: userId }, {}, null, cb));
+    allStreamsForAccount = await fromCallback((cb: any) => this.userStreamsStorage.find({ id: userId }, {}, null, cb));
     _internals.cache.setStreams(userId, 'local', allStreamsForAccount);
     return allStreamsForAccount;
   },
@@ -84,58 +84,58 @@ const userStreams = ds.createUserStreams({
   /**
    * @param [options]
    */
-  async getDeletions (userId, query, options) {
+  async getDeletions (userId: any, query: any, options: any) {
     const dbOptions: any = { sort: { deleted: options?.sortAscending ? 1 : -1 } };
     if (options?.limit != null) dbOptions.limit = options.limit;
     if (options?.skip != null) dbOptions.skip = options.skip;
-    const deletedStreams = await fromCallback((cb) => this.userStreamsStorage.findDeletions({ id: userId }, query.deletedSince, options, cb));
+    const deletedStreams = await fromCallback((cb: any) => this.userStreamsStorage.findDeletions({ id: userId }, query.deletedSince, options, cb));
     return deletedStreams;
   },
 
-  async createDeleted (userId, streamData) {
+  async createDeleted (userId: any, streamData: any) {
     streamData.userId = userId;
     streamData.streamId = streamData.id;
     delete streamData.id;
     return await this.streamsCollection.replaceOne({ userId, streamId: streamData.streamId }, streamData, { upsert: true }); // replace of create deleted streams
   },
 
-  async create (userId, streamData) {
+  async create (userId: any, streamData: any) {
     // as we have mixed deletions and non deleted in the same table
     // remove eventual deleted items matching this id.
     const deletedStreams = await this.getDeletions(userId, { deletedSince: Number.MIN_SAFE_INTEGER });
-    const deletedStream = deletedStreams.filter(s => s.id === streamData.id);
+    const deletedStream = deletedStreams.filter((s: any) => s.id === streamData.id);
     if (deletedStream.length > 0) {
-      await fromCallback((cb) => this.userStreamsStorage.removeOne({ id: userId }, { id: deletedStream[0].id }, cb));
+      await fromCallback((cb: any) => this.userStreamsStorage.removeOne({ id: userId }, { id: deletedStream[0].id }, cb));
     }
-    return await fromCallback((cb) => this.userStreamsStorage.insertOne({ id: userId }, streamData, cb));
+    return await fromCallback((cb: any) => this.userStreamsStorage.insertOne({ id: userId }, streamData, cb));
   },
 
-  async update (userId, streamData) {
-    return await fromCallback((cb) => this.userStreamsStorage.updateOne({ id: userId }, { id: streamData.id }, streamData, cb));
+  async update (userId: any, streamData: any) {
+    return await fromCallback((cb: any) => this.userStreamsStorage.updateOne({ id: userId }, { id: streamData.id }, streamData, cb));
   },
 
-  async delete (userId, streamId) {
-    return await fromCallback((cb) => this.userStreamsStorage.delete({ id: userId }, { id: streamId }, cb));
+  async delete (userId: any, streamId: any) {
+    return await fromCallback((cb: any) => this.userStreamsStorage.delete({ id: userId }, { id: streamId }, cb));
   },
 
-  async deleteAll (userId) {
-    await fromCallback((cb) => this.userStreamsStorage.removeAll({ id: userId }, cb));
+  async deleteAll (userId: any) {
+    await fromCallback((cb: any) => this.userStreamsStorage.removeAll({ id: userId }, cb));
     _internals.cache.unsetUserData(userId);
   },
 
-  async _deleteUser (userId) {
-    return await fromCallback((cb) => this.userStreamsStorage.removeMany(userId, {}, cb));
+  async _deleteUser (userId: any) {
+    return await fromCallback((cb: any) => this.userStreamsStorage.removeMany(userId, {}, cb));
   },
 
-  async _getStorageInfos (userId) {
-    const count = await fromCallback((cb) => this.userStreamsStorage.countAll(userId, cb));
+  async _getStorageInfos (userId: any) {
+    const count = await fromCallback((cb: any) => this.userStreamsStorage.countAll(userId, cb));
     return { count };
   }
 });
 
 export { userStreams };
 
-function cloneStream (stream, childrenDepth) {
+function cloneStream (stream: any, childrenDepth: any) {
   if (childrenDepth === -1) {
     return structuredClone(stream);
   } else {
@@ -145,7 +145,7 @@ function cloneStream (stream, childrenDepth) {
       copy.childrenHidden = true;
       copy.children = [];
     } else if (stream.children) {
-      copy.children = stream.children.map((s) => cloneStream(s, childrenDepth - 1));
+      copy.children = stream.children.map((s: any) => cloneStream(s, childrenDepth - 1));
     }
     return copy;
   }

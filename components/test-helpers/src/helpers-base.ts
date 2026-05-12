@@ -25,6 +25,7 @@ const userLocalDirectory = require('storage').userLocalDirectory;
 let initTestsDone = false;
 let initCoreDone = false;
 let options: any = {};
+const _global: any = global as any;
 
 /**
  * Initialize basic test infrastructure
@@ -32,7 +33,7 @@ let options: any = {};
 async function initTests () {
   if (initTestsDone) return;
   initTestsDone = true;
-  global.config = await getConfig();
+  _global.config = await getConfig();
   await userLocalDirectory.init();
 
   if (options.beforeInitTests) {
@@ -58,16 +59,16 @@ async function initCore () {
     ...(isParallelMode ? { caching: { isActive: false } } : {}),
     ...options.testConfig
   };
-  global.config.injectTestConfig(testConfig);
+  _global.config.injectTestConfig(testConfig);
 
   // Hook before app initialization
   if (options.beforeInitCore) {
     await options.beforeInitCore();
   }
 
-  await require('storages').init(global.config);
-  global.app = getApplication();
-  await global.app.initiate();
+  await require('storages').init(_global.config);
+  _global.app = getApplication();
+  await _global.app.initiate();
 
   // Get StorageLayer (now initialized by app) for engine-agnostic fixtures
   const storageLayer = await storage.getStorageLayer();
@@ -76,16 +77,16 @@ async function initCore () {
   const dependencies = require('./dependencies.ts');
   await dependencies.init();
 
-  global.getNewFixture = function () {
+  _global.getNewFixture = function () {
     const fixture = databaseFixture(storageLayer);
     // Add profile helper — uses StorageLayer.profile (engine-agnostic)
-    fixture.context.profile = async (username, profileData) => {
+    fixture.context.profile = async (username: any, profileData: any) => {
       const user = { id: username };
       await new Promise<void>((resolve) => {
         storageLayer.profile.removeOne(user, { id: profileData.id }, () => resolve());
       });
       await new Promise((resolve, reject) => {
-        storageLayer.profile.insertOne(user, { id: profileData.id, data: profileData.data }, (err, result) => {
+        storageLayer.profile.insertOne(user, { id: profileData.id, data: profileData.data }, (err: any, result: any) => {
           if (err) reject(err);
           else resolve(result);
         });
@@ -95,26 +96,26 @@ async function initCore () {
   };
 
   // Initialize notifications
-  global.testMsgs = [];
+  _global.testMsgs = [];
   const testNotifier = {
-    emit: (...args) => global.testMsgs.push(args)
+    emit: (...args: any[]) => _global.testMsgs.push(args)
   };
   pubsub.setTestNotifier(testNotifier);
   pubsub.status.emit(pubsub.SERVER_READY);
 
   // Notification tracking helpers
-  global.notifications = {
-    reset: () => { global.testMsgs = []; },
-    count: (type, username) => {
-      return global.testMsgs.filter(msg =>
+  _global.notifications = {
+    reset: () => { _global.testMsgs = []; },
+    count: (type: any, username: any) => {
+      return _global.testMsgs.filter((msg: any) =>
         msg[0] === type && (username == null || msg[1] === username)
       ).length;
     },
-    eventsChanged: (username) => global.notifications.count('test-events-changed', username),
-    streamsChanged: (username) => global.notifications.count('test-streams-changed', username),
-    accountChanged: (username) => global.notifications.count('test-account-changed', username),
-    accessesChanged: (username) => global.notifications.count('test-accesses-changed', username),
-    all: () => global.testMsgs
+    eventsChanged: (username: any) => _global.notifications.count('test-events-changed', username),
+    streamsChanged: (username: any) => _global.notifications.count('test-streams-changed', username),
+    accountChanged: (username: any) => _global.notifications.count('test-account-changed', username),
+    accessesChanged: (username: any) => _global.notifications.count('test-accesses-changed', username),
+    all: () => _global.testMsgs
   };
 
   // Load API methods based on options
@@ -125,16 +126,16 @@ async function initCore () {
     // Node 24 require(esm) returns a namespace; the registration function lives on .default
     const loaded = (mod && mod.default) || mod;
     if (typeof loaded === 'function') {
-      await loaded(global.app.api);
+      await loaded(_global.app.api);
     }
   }
 
   // Load audit if config says so
-  if (global.config.get('audit:active')) {
-    await require('audit/src/methods/audit-logs.ts').default(global.app.api);
+  if (_global.config.get('audit:active')) {
+    await require('audit/src/methods/audit-logs.ts').default(_global.app.api);
   }
 
-  global.coreRequest = supertest(global.app.expressApp);
+  _global.coreRequest = supertest(_global.app.expressApp);
 
   // Hook after initialization
   if (options.afterInitCore) {
@@ -171,7 +172,7 @@ function getMochaHooks (isParallelMode = false) {
   const fs = require('fs');
   const util = require('util');
 
-  let usersIndex, platform;
+  let usersIndex: any, platform: any;
 
   async function initIndexPlatform () {
     if (usersIndex != null) return;
@@ -181,7 +182,7 @@ function getMochaHooks (isParallelMode = false) {
     await platform.init();
   }
 
-  async function checkIndexAndPlatformIntegrity (title) {
+  async function checkIndexAndPlatformIntegrity (title: any) {
     await initIndexPlatform();
     const checks = [
       await platform.checkIntegrity(),

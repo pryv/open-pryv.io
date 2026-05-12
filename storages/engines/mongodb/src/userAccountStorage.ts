@@ -100,12 +100,12 @@ async function init () {
 
 // PASSWORD MANAGEMENT
 
-async function getPasswordHash (userId) {
+async function getPasswordHash (userId: any) {
   const last = await passwordsCollection.findOne({ userId }, { sort: { time: -1 } });
   return last?.hash;
 }
 
-async function addPasswordHash (userId, passwordHash, createdBy, time = timestamp.now()) {
+async function addPasswordHash (userId: any, passwordHash: any, createdBy: any, time = timestamp.now()) {
   const item = { userId, time, hash: passwordHash, createdBy };
   try {
     await passwordsCollection.insertOne(item);
@@ -120,7 +120,7 @@ async function addPasswordHash (userId, passwordHash, createdBy, time = timestam
   return item;
 }
 
-async function getCurrentPasswordTime (userId) {
+async function getCurrentPasswordTime (userId: any) {
   const last = await passwordsCollection.findOne({ userId }, { sort: { time: -1 } });
   if (!last) {
     throw new Error(`No password found in database for user id "${userId}"`);
@@ -128,7 +128,7 @@ async function getCurrentPasswordTime (userId) {
   return last.time;
 }
 
-async function passwordExistsInHistory (userId, password, historyLength) {
+async function passwordExistsInHistory (userId: any, password: any, historyLength: any) {
   const lastCursor = await passwordsCollection.find({ userId }, { sort: { time: -1 }, limit: historyLength });
   for await (const entry of lastCursor) {
     if (await encryption.compare(password, entry.hash)) {
@@ -143,33 +143,33 @@ async function passwordExistsInHistory (userId, password, historyLength) {
 /**
  * Raw insert used for migration
  */
-async function _addKeyValueData (storeId, userId, key, value) {
+async function _addKeyValueData (storeId: any, userId: any, key: any, value: any) {
   await storesKeyValueCollection.insertOne({ storeId, userId, key, value });
 }
 
-function getKeyValueDataForStore (storeId) {
-  return new StoreKeyValueData(storeId);
+function getKeyValueDataForStore (storeId: any) {
+  return new (StoreKeyValueData as any)(storeId);
 }
 
-function StoreKeyValueData (this: any, storeId) {
+function StoreKeyValueData (this: any, storeId: any) {
   this.storeId = storeId;
 }
 
-StoreKeyValueData.prototype.getAll = async function (userId) {
+StoreKeyValueData.prototype.getAll = async function (userId: any) {
   const resultCursor = await storesKeyValueCollection.find({ userId, storeId: this.storeId });
-  const res = {};
+  const res: any = {};
   for await (const item of resultCursor) {
     res[item.key] = item.value;
   }
   return res;
 };
 
-StoreKeyValueData.prototype.get = async function (userId, key) {
+StoreKeyValueData.prototype.get = async function (userId: any, key: any) {
   const res = await storesKeyValueCollection.findOne({ userId, storeId: this.storeId, key });
   return res?.value || null;
 };
 
-StoreKeyValueData.prototype.set = async function (userId, key, value) {
+StoreKeyValueData.prototype.set = async function (userId: any, key: any, value: any) {
   if (value == null) {
     await storesKeyValueCollection.deleteOne({ userId, storeId: this.storeId, key });
   } else {
@@ -179,7 +179,7 @@ StoreKeyValueData.prototype.set = async function (userId, key, value) {
 
 // ACCOUNT FIELDS
 
-async function getAccountFields (userId) {
+async function getAccountFields (userId: any) {
   // Aggregate to get only the latest entry per field
   const pipeline = [
     { $match: { userId } },
@@ -187,14 +187,14 @@ async function getAccountFields (userId) {
     { $group: { _id: '$field', value: { $first: '$value' }, time: { $first: '$time' } } }
   ];
   const results = await accountFieldsCollection.aggregate(pipeline);
-  const fields = {};
+  const fields: any = {};
   for await (const doc of results) {
     fields[doc._id] = doc.value;
   }
   return fields;
 }
 
-async function getAccountField (userId, field) {
+async function getAccountField (userId: any, field: any) {
   const doc = await accountFieldsCollection.findOne(
     { userId, field },
     { sort: { time: -1 } }
@@ -202,7 +202,7 @@ async function getAccountField (userId, field) {
   return doc ? doc.value : null;
 }
 
-async function setAccountField (userId, field, value, createdBy, time = timestamp.now()) {
+async function setAccountField (userId: any, field: any, value: any, createdBy: any, time = timestamp.now()) {
   const item = { userId, field, value, time, createdBy };
   try {
     await accountFieldsCollection.insertOne(item);
@@ -215,7 +215,7 @@ async function setAccountField (userId, field, value, createdBy, time = timestam
   return { field, value, time, createdBy };
 }
 
-async function getAccountFieldHistory (userId, field, limit) {
+async function getAccountFieldHistory (userId: any, field: any, limit: any) {
   const options: any = { sort: { time: -1 } };
   if (limit != null) {
     options.limit = limit;
@@ -228,7 +228,7 @@ async function getAccountFieldHistory (userId, field, limit) {
   return history;
 }
 
-async function deleteAccountField (userId, field) {
+async function deleteAccountField (userId: any, field: any) {
   await accountFieldsCollection.deleteMany({ userId, field });
 }
 
@@ -237,13 +237,13 @@ async function deleteAccountField (userId, field) {
 /**
  * For tests
  */
-async function clearHistory (userId) {
+async function clearHistory (userId: any) {
   await passwordsCollection.deleteMany({ userId });
 }
 
 // MIGRATION METHODS
 
-async function _exportAll (userId) {
+async function _exportAll (userId: any) {
   const passwordsCursor = await passwordsCollection.find({ userId }, { sort: { time: 1 } });
   const passwords: any[] = [];
   for await (const entry of passwordsCursor) {
@@ -265,7 +265,7 @@ async function _exportAll (userId) {
   return { passwords, storeKeyValues, accountFields };
 }
 
-async function _importAll (userId, data) {
+async function _importAll (userId: any, data: any) {
   if (data.passwords) {
     for (const p of data.passwords) {
       await addPasswordHash(userId, p.hash, p.createdBy, p.time);
@@ -283,7 +283,7 @@ async function _importAll (userId, data) {
   }
 }
 
-async function _clearAll (userId) {
+async function _clearAll (userId: any) {
   await passwordsCollection.deleteMany({ userId });
   await storesKeyValueCollection.deleteMany({ userId });
   await accountFieldsCollection.deleteMany({ userId });

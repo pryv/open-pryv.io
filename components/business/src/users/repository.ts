@@ -24,13 +24,13 @@ export { getUsersRepository };
  * Repository of the users
  */
 class UsersRepository {
-  storageLayer;
-  sessionsStorage;
-  accessStorage;
-  mall;
-  platform;
-  usersIndex;
-  userAccountStorage;
+  storageLayer: any;
+  sessionsStorage: any;
+  accessStorage: any;
+  mall: any;
+  platform: any;
+  usersIndex: any;
+  userAccountStorage: any;
 
   async init () {
     this.mall = await getMall();
@@ -83,11 +83,11 @@ class UsersRepository {
     return users;
   }
 
-  async getUserIdForUsername (username) {
+  async getUserIdForUsername (username: any) {
     return await this.usersIndex.getUserId(username);
   }
 
-  async getUserById (userId) {
+  async getUserById (userId: any) {
     const userAccountStreamsIds = Object.keys(accountStreams.accountMap);
     const query = {
       state: 'all',
@@ -121,11 +121,11 @@ class UsersRepository {
     return user;
   }
 
-  async usernameExists (username) {
+  async usernameExists (username: any) {
     return await this.usersIndex.usernameExists(username);
   }
 
-  async getUserByUsername (username) {
+  async getUserByUsername (username: any) {
     const userId = await this.getUserIdForUsername(username);
     if (userId) {
       const user = await this.getUserById(userId);
@@ -134,14 +134,14 @@ class UsersRepository {
     return null;
   }
 
-  async getStorageUsedByUserId (userId) {
+  async getStorageUsedByUserId (userId: any) {
     return {
       dbDocuments: (await this.getOnePropertyValue(userId, 'dbDocuments')) || 0,
       attachedFiles: (await this.getOnePropertyValue(userId, 'attachedFiles')) || 0
     };
   }
 
-  async getOnePropertyValue (userId, propertyKey) {
+  async getOnePropertyValue (userId: any, propertyKey: any) {
     const query = {
       limit: 1,
       state: 'all',
@@ -158,11 +158,11 @@ class UsersRepository {
     return userAccountEvents[0].content;
   }
 
-  async createSessionForUser (username, appId, transactionSession) {
-    return await fromCallback((cb) => this.sessionsStorage.generate({ username, appId }, { transactionSession }, cb));
+  async createSessionForUser (username: any, appId: any, transactionSession: any) {
+    return await fromCallback((cb: any) => this.sessionsStorage.generate({ username, appId }, { transactionSession }, cb));
   }
 
-  async createPersonalAccessForUser (userId, token, appId, transactionSession) {
+  async createPersonalAccessForUser (userId: any, token: any, appId: any, transactionSession: any) {
     const accessData = {
       token,
       name: appId,
@@ -172,7 +172,7 @@ class UsersRepository {
       modified: timestamp.now(),
       modifiedBy: UserRepositoryOptions.SYSTEM_USER_ACCESS_ID
     };
-    return await fromCallback((cb) => this.accessStorage.insertOne({ id: userId }, accessData, cb, {
+    return await fromCallback((cb: any) => this.accessStorage.insertOne({ id: userId }, accessData, cb, {
       transactionSession
     }));
   }
@@ -184,7 +184,7 @@ class UsersRepository {
     return true;
   }
 
-  async insertOne (user, withSession = false) {
+  async insertOne (user: any, withSession = false) {
     // Create the User at a Platform Level
     const operations: any[] = [];
     for (const key of accountStreams.indexedFieldNames) {
@@ -252,7 +252,7 @@ class UsersRepository {
     return user;
   }
 
-  async updateOne (user, update, accessId) {
+  async updateOne (user: any, update: any, accessId: any) {
     // change password into hash if it exists
     if (update.password) {
       await this.setUserPassword(user.id, update.password, accessId);
@@ -284,7 +284,7 @@ class UsersRepository {
     });
   }
 
-  async deleteOne (userId, username) {
+  async deleteOne (userId: any, username: any) {
     // Fetch user object BEFORE any deletions — platform.deleteUser needs it
     // for unique field cleanup (e.g. email).
     const user = await this.getUserById(userId);
@@ -310,7 +310,7 @@ class UsersRepository {
 
   // -------------------- Password Management ------------------- //
 
-  async checkUserPassword (userId, password) {
+  async checkUserPassword (userId: any, password: any) {
     const currentPass = await this.userAccountStorage.getPasswordHash(userId);
     let isValid = false;
     if (currentPass != null) {
@@ -323,7 +323,7 @@ class UsersRepository {
    * @param userId  undefined
    * @param password  undefined
    */
-  async setUserPassword (userId, password, accessId = 'system', modifiedTime?) {
+  async setUserPassword (userId: any, password: any, accessId = 'system', modifiedTime?: any) {
     const passwordHash = await encryption.hash(password);
     await this.userAccountStorage.addPasswordHash(userId, passwordHash, accessId, modifiedTime);
   }

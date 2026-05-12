@@ -17,7 +17,7 @@ const { getUsersRepository } = require('business/src/users/index.ts');
 
 const PROFILE_ID = 'private';
 
-export default async function (api) {
+export default async function (api: any) {
   const storageLayer = await getStorageLayer();
   const userProfileStorage = storageLayer.profile;
   const config = await getConfig();
@@ -38,7 +38,7 @@ export default async function (api) {
   function sessionStore () {
     return getMFASessionStore(getMfaConfig());
   }
-  function requireMFAEnabled (next) {
+  function requireMFAEnabled (next: any) {
     if (maybeMFAService() == null) {
       next(errors.apiUnavailable('MFA is not enabled on this server.'));
       return false;
@@ -50,8 +50,8 @@ export default async function (api) {
    * Load the MFA profile from `profile.private.data.mfa`. Returns a fresh
    * empty Profile when nothing is stored yet.
    */
-  async function loadMFAProfile (user) {
-    const profileSet = await fromCallback(cb =>
+  async function loadMFAProfile (user: any) {
+    const profileSet = await fromCallback((cb: any) =>
       userProfileStorage.findOne(user, { id: PROFILE_ID }, null, cb));
     if (!profileSet || !profileSet.data || !profileSet.data.mfa) return new Profile();
     const stored = profileSet.data.mfa;
@@ -66,8 +66,8 @@ export default async function (api) {
    * `{ data: { mfa: X } }` becomes `$set['data.mfa'] = X`, and passing
    * `{ data: { mfa: null } }` becomes `$unset['data.mfa']`.
    */
-  async function saveMFAProfile (user, profile) {
-    const existing = await fromCallback(cb =>
+  async function saveMFAProfile (user: any, profile: any) {
+    const existing = await fromCallback((cb: any) =>
       userProfileStorage.findOne(user, { id: PROFILE_ID }, null, cb));
     const mfaValue = profile == null
       ? null // null → $unset['data.mfa']
@@ -76,11 +76,11 @@ export default async function (api) {
       // If the private profile doesn't exist yet, create it with the mfa block
       // (or skip when clearing — there's nothing to clear).
       if (profile == null) return;
-      await fromCallback(cb =>
+      await fromCallback((cb: any) =>
         userProfileStorage.insertOne(user, { id: PROFILE_ID, data: { mfa: mfaValue } }, cb));
       return;
     }
-    await fromCallback(cb =>
+    await fromCallback((cb: any) =>
       userProfileStorage.updateOne(user, { id: PROFILE_ID }, { data: { mfa: mfaValue } }, cb));
   }
 
@@ -89,7 +89,7 @@ export default async function (api) {
   // ----------------------------------------------------------------------
   api.register('mfa.activate',
     requirePersonalAccess,
-    async function activate (context, params, result, next) {
+    async function activate (context: any, params: any, result: any, next: any) {
       if (!requireMFAEnabled(next)) return;
       try {
         // Activate body is the profile content (e.g. { phone: '+41...' }) — arbitrary
@@ -110,7 +110,7 @@ export default async function (api) {
   // ----------------------------------------------------------------------
   api.register('mfa.confirm',
     commonFns.getParamsValidation(methodsSchema.confirm.params),
-    async function confirm (context, params, result, next) {
+    async function confirm (context: any, params: any, result: any, next: any) {
       if (!requireMFAEnabled(next)) return;
       try {
         const session = await sessionStore().get(params.mfaToken);
@@ -134,7 +134,7 @@ export default async function (api) {
   // ----------------------------------------------------------------------
   api.register('mfa.challenge',
     commonFns.getParamsValidation(methodsSchema.challenge.params),
-    async function challenge (context, params, result, next) {
+    async function challenge (context: any, params: any, result: any, next: any) {
       if (!requireMFAEnabled(next)) return;
       try {
         const session = await sessionStore().get(params.mfaToken);
@@ -154,7 +154,7 @@ export default async function (api) {
   // ----------------------------------------------------------------------
   api.register('mfa.verify',
     commonFns.getParamsValidation(methodsSchema.verify.params),
-    async function verify (context, params, result, next) {
+    async function verify (context: any, params: any, result: any, next: any) {
       if (!requireMFAEnabled(next)) return;
       try {
         const session = await sessionStore().get(params.mfaToken);
@@ -182,7 +182,7 @@ export default async function (api) {
   api.register('mfa.deactivate',
     requirePersonalAccess,
     commonFns.getParamsValidation(methodsSchema.deactivate.params),
-    async function deactivate (context, params, result, next) {
+    async function deactivate (context: any, params: any, result: any, next: any) {
       try {
         await saveMFAProfile(context.user, null);
         result.message = 'MFA deactivated.';
@@ -198,7 +198,7 @@ export default async function (api) {
   // ----------------------------------------------------------------------
   api.register('mfa.recover',
     commonFns.getParamsValidation(methodsSchema.recover.params),
-    async function recover (context, params, result, next) {
+    async function recover (context: any, params: any, result: any, next: any) {
       try {
         const usersRepository = await getUsersRepository();
         const user = await usersRepository.getUserByUsername(params.username);
@@ -225,7 +225,7 @@ export default async function (api) {
    * Step that requires the call to be made with a personal access token.
    * Uses the same shape as other auth-bound steps in service-core.
    */
-  function requirePersonalAccess (context, params, result, next) {
+  function requirePersonalAccess (context: any, params: any, result: any, next: any) {
     if (!context.access || context.access.type !== 'personal') {
       return next(errors.forbidden('A personal access token is required for this operation.'));
     }

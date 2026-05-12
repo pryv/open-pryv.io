@@ -21,22 +21,22 @@ const { initRootSpan } = require('tracing');
 //
 
 class Manager {
-  contexts;
+  contexts: any;
 
-  logger;
+  logger: any;
 
-  io;
+  io: any;
 
-  api;
+  api: any;
 
-  storageLayer;
+  storageLayer: any;
 
-  customAuthStepFn;
+  customAuthStepFn: any;
 
-  apiVersion;
+  apiVersion: any;
 
-  hostname;
-  constructor (logger, io, api, storageLayer, customAuthStepFn) {
+  hostname: any;
+  constructor (logger: any, io: any, api: any, storageLayer: any, customAuthStepFn: any) {
     this.logger = logger;
     this.io = io;
     this.api = api;
@@ -48,7 +48,7 @@ class Manager {
 
   // Returns true if the `candidate` could be a username on a lexical level.
   //
-  looksLikeUsername (candidate) {
+  looksLikeUsername (candidate: any) {
     const reUsername = new RegExp(USERNAME_REGEXP_STR);
     const lowercasedUsername = candidate.toLowerCase(); // for retro-compatibility
     return reUsername.test(lowercasedUsername);
@@ -59,7 +59,7 @@ class Manager {
   //
   //    manager.getUsername('/foobar') // => 'foobar'
   //
-  extractUsername (namespaceName) {
+  extractUsername (namespaceName: any) {
     const ns = cleanNS(namespaceName);
     if (!ns.startsWith('/')) { return null; }
     // assert: namespaceName[0] === '/'
@@ -70,7 +70,7 @@ class Manager {
      * Takes the last field of the NS path
      *
      */
-    function cleanNS (namespace) {
+    function cleanNS (namespace: any) {
       let cleaned = '' + namespace;
       // remove eventual trailing "/"
       if (cleaned.slice(-1) === '/') { cleaned = cleaned.slice(0, -1); }
@@ -83,7 +83,7 @@ class Manager {
     }
   }
 
-  async ensureInitNamespace (namespaceName) {
+  async ensureInitNamespace (namespaceName: any) {
     await initAsyncProps.call(this);
     const username = this.extractUsername(namespaceName);
     let context = this.contexts.get(username);
@@ -104,24 +104,24 @@ class Manager {
 }
 
 class NamespaceContext {
-  namespaceName;
+  namespaceName: any;
 
-  username;
+  username: any;
 
-  socketNs;
+  socketNs: any;
 
-  api;
+  api: any;
 
-  logger;
+  logger: any;
 
-  apiVersion;
+  apiVersion: any;
 
-  hostname;
+  hostname: any;
 
-  connections;
+  connections: any;
 
-  pubsubRemover;
-  constructor (username, socketNs, api, logger, apiVersion, hostname) {
+  pubsubRemover: any;
+  constructor (username: any, socketNs: any, api: any, logger: any, apiVersion: any, hostname: any) {
     this.username = username;
     this.socketNs = socketNs;
     this.api = api;
@@ -135,7 +135,7 @@ class NamespaceContext {
   // Adds a connection to the namespace. This produces a `Connection` instance
   // and stores it in (our) namespace.
   //
-  addConnection (socket, _methodContext?) {
+  addConnection (socket: any, _methodContext?: any) {
     // This will represent state that we keep for every connection.
     const connection = new Connection(this.logger, socket, this, socket.methodContext, this.api, this.apiVersion, this.hostname);
     // Permanently store the connection in this namespace.
@@ -144,12 +144,12 @@ class NamespaceContext {
     connection.init();
   }
 
-  storeConnection (conn) {
+  storeConnection (conn: any) {
     const connMap = this.connections;
     connMap.set(conn.key(), conn);
   }
 
-  deleteConnection (conn) {
+  deleteConnection (conn: any) {
     const connMap = this.connections;
     connMap.delete(conn.key());
   }
@@ -160,7 +160,7 @@ class NamespaceContext {
     this.pubsubRemover = pubsub.notifications.onAndGetRemovable(this.username, this.messageFromPubSub.bind(this));
   }
 
-  messageFromPubSub (payload) {
+  messageFromPubSub (payload: any) {
     const message = pubsubMessageToSocket(payload);
     if (message != null) {
       this.socketNs.emit(message);
@@ -180,7 +180,7 @@ class NamespaceContext {
   // ------------------------------------------------------------ event handlers
   // Called when a new socket connects to the namespace `socketNs`.
   //
-  onConnect (socket) {
+  onConnect (socket: any) {
     const logger = this.logger;
     const namespaceName = socket.nsp.name;
     logger.info(`New client connected on namespace '${namespaceName}' (context ${this.socketNs.name})`);
@@ -196,7 +196,7 @@ class NamespaceContext {
 
   // Called when the underlying socket-io socket disconnects.
   //
-  async onDisconnect (conn) {
+  async onDisconnect (conn: any) {
     const logger = this.logger;
     const namespace = this.socketNs;
     // Remove the connection from our connection list.
@@ -213,18 +213,18 @@ class NamespaceContext {
 }
 
 class Connection {
-  socket;
+  socket: any;
 
-  methodContext;
+  methodContext: any;
 
-  api;
+  api: any;
 
-  logger;
+  logger: any;
 
-  apiVersion;
+  apiVersion: any;
 
-  hostname;
-  constructor (logger, socket, namespaceContext, methodContext, api, apiVersion, hostname) {
+  hostname: any;
+  constructor (logger: any, socket: any, namespaceContext: any, methodContext: any, api: any, apiVersion: any, hostname: any) {
     this.socket = socket;
     this.methodContext = methodContext;
     this.api = api;
@@ -239,13 +239,13 @@ class Connection {
   }
 
   init () {
-    this.socket.on('*', (callData, callback) => this.onMethodCall(callData, callback));
+    this.socket.on('*', (callData: any, callback: any) => this.onMethodCall(callData, callback));
   }
 
   // ------------------------------------------------------------ event handlers
   // Called when the socket wants to call a Pryv IO method.
   //
-  async onMethodCall (callData, callback) {
+  async onMethodCall (callData: any, callback: any) {
     const methodContext = this.methodContext;
     methodContext.tracing = initRootSpan('socket.io', {
       apiVersion: this.apiVersion,
@@ -269,9 +269,9 @@ class Connection {
     // Accept streamQueries in JSON format for socket.io
     methodContext.acceptStreamsQueryNonStringified = true;
     try {
-      const result = await fromCallback((cb) => api.call(methodContext, params, cb));
+      const result = await fromCallback((cb: any) => api.call(methodContext, params, cb));
       if (result == null) { throw new Error('AF: either err or result must be non-null'); }
-      const obj = await fromCallback((cb) => result.toObject(cb));
+      const obj = await fromCallback((cb: any) => result.toObject(cb));
       // good ending
       methodContext.tracing.finishSpan('socket.io');
       // remove tracing for next call
@@ -293,11 +293,11 @@ class Connection {
     // NOT REACHED
   }
 }
-const messageMap = {};
+const messageMap: any = {};
 messageMap[pubsub.USERNAME_BASED_EVENTS_CHANGED] = 'eventsChanged';
 messageMap[pubsub.USERNAME_BASED_ACCESSES_CHANGED] = 'accessesChanged';
 messageMap[pubsub.USERNAME_BASED_STREAMS_CHANGED] = 'streamsChanged';
-function pubsubMessageToSocket (payload) {
+function pubsubMessageToSocket (payload: any) {
   const key = typeof payload === 'object' ? JSON.stringify(payload) : payload;
   return messageMap[key];
 }

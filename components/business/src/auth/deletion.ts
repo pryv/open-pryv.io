@@ -19,12 +19,12 @@ const setAdminAuditAccessId = setAuditAccessId(AuditAccessIds.ADMIN_TOKEN);
  * TODO: cleanup this class… it breaks encapsulation (e.g. with event files) and its scope is unclear
  */
 class Deletion {
-  logger;
+  logger: any;
 
-  storageLayer;
+  storageLayer: any;
 
-  config;
-  constructor (logging, storageLayer, config) {
+  config: any;
+  constructor (logging: any, storageLayer: any, config: any) {
     this.logger = getLogger('business:deletion');
     this.storageLayer = storageLayer;
     this.config = config;
@@ -35,7 +35,7 @@ class Deletion {
    * 1- is a valid admin token
    * 2- is a valid personalToken
    */
-  checkIfAuthorized (context, params, result, next) {
+  checkIfAuthorized (context: any, params: any, result: any, next: any) {
     const canDelete = this.config.get('user-account:delete');
     if (canDelete.includes('adminToken')) {
       if (this.config.get('auth:adminAccessKey') === context.authorizationHeader) {
@@ -54,7 +54,7 @@ class Deletion {
     return next(errors.unknownResource());
   }
 
-  async validateUserExists (context, params, result, next) {
+  async validateUserExists (context: any, params: any, result: any, next: any) {
     const usersRepository = await getUsersRepository();
     const user = await usersRepository.getUserByUsername(params.username);
     if (!user || !user.id) {
@@ -65,7 +65,7 @@ class Deletion {
     next();
   }
 
-  async validateUserFilepaths (context, params, result, next) {
+  async validateUserFilepaths (context: any, params: any, result: any, next: any) {
     const dirPaths = [
       path.join(this.config.get('storages:engines:filesystem:previewsDirPath'), context.user.id)
     ];
@@ -83,7 +83,7 @@ class Deletion {
     next();
   }
 
-  async deleteUserFiles (context, params, result, next) {
+  async deleteUserFiles (context: any, params: any, result: any, next: any) {
     const dirPaths = [
       this.config.get('storages:engines:filesystem:previewsDirPath')
     ];
@@ -93,7 +93,7 @@ class Deletion {
     next();
   }
 
-  async deleteHFData (context, params, result, next) {
+  async deleteHFData (context: any, params: any, result: any, next: any) {
     const conn = require('storages').seriesConnection;
     if (conn) {
       await conn.dropDatabase(`user.${params.username}`);
@@ -101,13 +101,13 @@ class Deletion {
     next();
   }
 
-  async deleteAuditData (context, params, result, next) {
+  async deleteAuditData (context: any, params: any, result: any, next: any) {
     const deleteUserDirectory = require('storage').userLocalDirectory.deleteUserDirectory;
     await deleteUserDirectory(context.user.id);
     next();
   }
 
-  async deleteUser (context, params, result, next) {
+  async deleteUser (context: any, params: any, result: any, next: any) {
     try {
       const dbCollections = [
         this.storageLayer.accesses,
@@ -115,11 +115,11 @@ class Deletion {
         this.storageLayer.webhooks
       ];
       const removals = dbCollections
-        .map((coll) => fromCallback((cb) => coll.removeAll(context.user, cb)));
+        .map((coll) => fromCallback((cb: any) => coll.removeAll(context.user, cb)));
       const usersRepository = await getUsersRepository();
       await usersRepository.deleteOne(context.user.id, context.user.username);
       await Promise.all(removals);
-      await fromCallback((cb) => this.storageLayer.sessions.remove({ username: context.user.username }, cb));
+      await fromCallback((cb: any) => this.storageLayer.sessions.remove({ username: context.user.username }, cb));
     } catch (error) {
       this.logger.error(error, error);
       return next(errors.unexpectedError(error));
@@ -129,7 +129,7 @@ class Deletion {
   }
 }
 
-function findNotAccessibleDir (paths) {
+function findNotAccessibleDir (paths: any) {
   let notAccessibleDir = '';
   for (const path of paths) {
     let stat;

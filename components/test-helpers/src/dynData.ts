@@ -42,7 +42,7 @@ function createDynData (options: any = {}) {
   /**
    * Generate a dynamic ID from a static ID
    */
-  function dynId (staticId) {
+  function dynId (staticId: any) {
     if (!staticId) return staticId;
     if (idMap.has(staticId)) return idMap.get(staticId);
 
@@ -56,7 +56,7 @@ function createDynData (options: any = {}) {
    * Must match pattern ^c[a-z0-9-]{24}$ (exactly 25 chars starting with 'c')
    * Format: c(1) + prefix(5) + 'testeventnum'(12) + number(7) = 25 chars
    */
-  function getTestEventId (n) {
+  function getTestEventId (n: any) {
     n = n + '';
     const paddedNumber = n.length >= 7 ? n : new Array(7 - n.length + 1).join('0') + n;
     // Ensure prefix is 5 lowercase alphanumeric chars (to distinguish test1 vs test2)
@@ -66,7 +66,7 @@ function createDynData (options: any = {}) {
 
   // Generate dynamic users
   // Username pattern: ^[a-z0-9][a-z0-9-]{3,58}[a-z0-9]$ - use hyphen, not underscore
-  const users = staticUsers.map(user => {
+  const users = staticUsers.map((user: any) => {
     const dynUser = structuredClone(user);
     dynUser.id = dynId(user.id);
     dynUser.username = `${user.username}-${prefix}`;
@@ -77,8 +77,8 @@ function createDynData (options: any = {}) {
   const defaultUser = users[0];
 
   // Generate dynamic streams (recursive for children)
-  function generateDynStreams (staticStreamList, parentDynId = null) {
-    return staticStreamList.map(stream => {
+  function generateDynStreams (staticStreamList: any, parentDynId: any = null) {
+    return staticStreamList.map((stream: any) => {
       const dynStream = structuredClone(stream);
       dynStream.id = dynId(stream.id);
       if (stream.parentId) {
@@ -96,7 +96,7 @@ function createDynData (options: any = {}) {
   const streams = generateDynStreams(staticStreams);
 
   // Flatten streams for easier access
-  function flattenStreams (streamList) {
+  function flattenStreams (streamList: any) {
     const result: any[] = [];
     for (const stream of streamList) {
       const flatStream = { ...stream };
@@ -110,7 +110,7 @@ function createDynData (options: any = {}) {
   }
 
   // Generate dynamic accesses
-  const accesses = staticAccesses.map(access => {
+  const accesses = staticAccesses.map((access: any) => {
     const dynAccess = structuredClone(access);
     dynAccess.id = dynId(access.id);
     dynAccess.token = `${access.token}_${prefix}`;
@@ -119,7 +119,7 @@ function createDynData (options: any = {}) {
 
     // Update permissions to reference dynamic stream IDs
     if (dynAccess.permissions) {
-      dynAccess.permissions = dynAccess.permissions.map(perm => ({
+      dynAccess.permissions = dynAccess.permissions.map((perm: any) => ({
         ...perm,
         streamId: perm.streamId === '*' ? '*' : dynId(perm.streamId)
       }));
@@ -132,7 +132,7 @@ function createDynData (options: any = {}) {
 
   // Map event headId indices to new event IDs
   // headIdx: original event index that this event's headId points to
-  const headIdMapping = {
+  const headIdMapping: any = {
     17: 16, // e_17 headId -> e_16
     18: 16, // e_18 headId -> e_16
     20: 19, // e_20 headId -> e_19
@@ -148,7 +148,7 @@ function createDynData (options: any = {}) {
 
     // Map streamIds
     if (dynEvent.streamIds) {
-      dynEvent.streamIds = dynEvent.streamIds.map(sid => dynId(sid));
+      dynEvent.streamIds = dynEvent.streamIds.map((sid: any) => dynId(sid));
     }
 
     // Map headId for history events
@@ -174,7 +174,7 @@ function createDynData (options: any = {}) {
   }
 
   // Generate dynamic profile
-  const profile = staticProfile.map(p => {
+  const profile = staticProfile.map((p: any) => {
     const dynProfile = structuredClone(p);
     // Profile IDs are special: 'public', 'private', and app name
     if (p.id !== 'public' && p.id !== 'private') {
@@ -191,7 +191,7 @@ function createDynData (options: any = {}) {
     text: getAttachmentInfo('text', 'text.txt', 'text/plain')
   };
 
-  function getAttachmentInfo (id, filename, type) {
+  function getAttachmentInfo (id: any, filename: any, type: any) {
     const filePath = path.join(testsAttachmentsDirPath, filename);
     const data = fs.readFileSync(filePath);
     const algorithm = 'sha256';
@@ -210,9 +210,9 @@ function createDynData (options: any = {}) {
   }
 
   // Track created attachment IDs for events
-  const dynCreateAttachmentIdMap = {};
+  const dynCreateAttachmentIdMap: any = {};
 
-  function addCorrectAttachmentIds (allEvents) {
+  function addCorrectAttachmentIds (allEvents: any) {
     const allEventsCorrected = structuredClone(allEvents);
     for (const e of allEventsCorrected) {
       if (dynCreateAttachmentIdMap[e.id]) {
@@ -266,8 +266,8 @@ function createDynData (options: any = {}) {
     const customProperties = {};
     if (customStreams) {
       const charlatan = require('charlatan');
-      customStreams.forEach((stream) => {
-        customProperties[accountStreams.toFieldName(stream.id)] = charlatan.Number.number(3);
+      customStreams.forEach((stream: any) => {
+        (customProperties as any)[accountStreams.toFieldName(stream.id)] = charlatan.Number.number(3);
       });
     }
 
@@ -281,7 +281,7 @@ function createDynData (options: any = {}) {
   /**
    * Reset accesses - delete by ID and recreate
    */
-  async function resetAccesses (done, user, personalAccessToken, addToId) {
+  async function resetAccesses (done: any, user: any, personalAccessToken: any, addToId: any) {
     await ensureDependencies();
     const storage = dependencies.storage.user.accesses;
     const u = user || defaultUser;
@@ -305,7 +305,7 @@ function createDynData (options: any = {}) {
 
     // Insert new accesses
     await new Promise<void>((resolve, reject) => {
-      storage.insertMany(u, accessesToUse, (err) => {
+      storage.insertMany(u, accessesToUse, (err: any) => {
         if (err) reject(err);
         else resolve();
       });
@@ -317,7 +317,7 @@ function createDynData (options: any = {}) {
   /**
    * Reset profile - delete and recreate
    */
-  async function resetProfile (done, user) {
+  async function resetProfile (done: any, user: any) {
     await ensureDependencies();
     const storage = dependencies.storage.user.profile;
     const u = user || defaultUser;
@@ -329,7 +329,7 @@ function createDynData (options: any = {}) {
 
     // Insert profile data
     await new Promise<void>((resolve, reject) => {
-      storage.insertMany(u, profile, (err) => {
+      storage.insertMany(u, profile, (err: any) => {
         if (err) reject(err);
         else resolve();
       });
@@ -342,10 +342,10 @@ function createDynData (options: any = {}) {
    * Reset streams - delete all and recreate using mall
    * Supports both callback and Promise patterns
    */
-  function resetStreams (done, user) {
+  function resetStreams (done: any, user: any) {
     const u = user || defaultUser;
 
-    async function addStreams (arrayOfStreams) {
+    async function addStreams (arrayOfStreams: any) {
       for (const stream of arrayOfStreams) {
         const children = stream?.children || [];
         const streamData = structuredClone(stream);
@@ -375,10 +375,10 @@ function createDynData (options: any = {}) {
    * Reset events - delete and recreate using mall
    * Supports both callback and Promise patterns
    */
-  function resetEvents (done, user) {
+  function resetEvents (done: any, user: any) {
     const u = user || defaultUser;
 
-    const eventsToWrite = events.map((e) => structuredClone(e));
+    const eventsToWrite = events.map((e: any) => structuredClone(e));
 
     const promise = (async () => {
       await ensureDependencies();
@@ -406,7 +406,7 @@ function createDynData (options: any = {}) {
       }
 
       // Clean up zero durations
-      events.forEach((e) => {
+      events.forEach((e: any) => {
         if (e.duration === 0) { delete e.duration; }
       });
     })();

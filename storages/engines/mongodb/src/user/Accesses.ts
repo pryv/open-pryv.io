@@ -15,7 +15,7 @@ const { _internals } = require('../_internals.ts');
 const logger = _internals.lazyLogger('storage:accesses');
 const timestamp = require('unix-timestamp');
 
-function createTokenIfMissing (access) {
+function createTokenIfMissing (access: any) {
   access.token = access.token || generateId();
   return access;
 }
@@ -50,12 +50,12 @@ class Accesses extends BaseStorage {
   integrityAccesses: any;
   defaultOptions: any;
 
-  constructor (database, integrityAccesses) {
+  constructor (database: any, integrityAccesses: any) {
     super(database);
     this.integrityAccesses = integrityAccesses || { isActive: false, set: () => {} };
 
     const self = this;
-    function addIntegrity (accessData) {
+    function addIntegrity (accessData: any) {
       if (!self.integrityAccesses.isActive) return accessData;
       self.integrityAccesses.set(accessData);
       return accessData;
@@ -68,9 +68,9 @@ class Accesses extends BaseStorage {
       ],
       itemToDB: [converters.deletionToDB, addIntegrity],
       itemsToDB: [
-        function (items) {
+        function (items: any) {
           if (items == null) return null;
-          const res = items.map((a) => addIntegrity(converters.deletionToDB(a)));
+          const res = items.map((a: any) => addIntegrity(converters.deletionToDB(a)));
           return res;
         }
       ],
@@ -83,7 +83,7 @@ class Accesses extends BaseStorage {
     };
   }
 
-  findDeletions (userOrUserId, query, options, callback) {
+  findDeletions (userOrUserId: any, query: any, options: any, callback: any) {
     query = query || {};
     query.deleted = { $type: 'number' };
 
@@ -91,7 +91,7 @@ class Accesses extends BaseStorage {
       this.getCollectionInfo(userOrUserId),
       query,
       this.applyOptionsToDB(options),
-      (err, dbItems) => {
+      (err: any, dbItems: any) => {
         if (err) {
           return callback(err);
         }
@@ -100,7 +100,7 @@ class Accesses extends BaseStorage {
     );
   }
 
-  getCollectionInfo (userOrUserId) {
+  getCollectionInfo (userOrUserId: any) {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     return {
       name: 'accesses',
@@ -109,7 +109,7 @@ class Accesses extends BaseStorage {
     };
   }
 
-  delete (userOrUserId, query, callback) {
+  delete (userOrUserId: any, query: any, callback: any) {
     const update = {
       $set: { deleted: timestamp.now() }
     };
@@ -122,7 +122,7 @@ class Accesses extends BaseStorage {
     return generateId();
   }
 
-  updateOne (userOrUserId, query, update, callback) {
+  updateOne (userOrUserId: any, query: any, update: any, callback: any) {
     if (update.modified == null || !this.integrityAccesses.isActive) { // only if "modified" is set .. avoid `calls` + `lastUsed` updates
       super.findOneAndUpdate(userOrUserId, query, update, callback);
       return;
@@ -135,7 +135,7 @@ class Accesses extends BaseStorage {
     }
 
     const that = this;
-    const cb = function callbackIntegrity (err, accessData) {
+    const cb = function callbackIntegrity (err: any, accessData: any) {
       if (err || (accessData?.id == null)) return callback(err, accessData);
 
       const integrityCheck = accessData.integrity;
@@ -155,8 +155,8 @@ class Accesses extends BaseStorage {
   }
 
   /** Inserts an array of accesses; each item must have a valid id and data already. For tests only. */
-  insertMany (userOrUserId, accesses, callback) {
-    const accessesToCreate = accesses.map((a) => {
+  insertMany (userOrUserId: any, accesses: any, callback: any) {
+    const accessesToCreate = accesses.map((a: any) => {
       if (a.deleted === undefined) return Object.assign({ deleted: null }, a);
       return a;
     });
@@ -177,7 +177,7 @@ export { Accesses };
  * @param update -- the update query to be modified
  * @returns either the original callback or a process to reset events' integrity
  */
-function getResetIntegrity (accessesStore, userOrUserId, update, callback) {
+function getResetIntegrity (accessesStore: any, userOrUserId: any, update: any, callback: any) {
   // anyway remove any integrity that might have existed
   if (!update.$unset) update.$unset = {};
   update.$unset.integrity = 1;
@@ -191,13 +191,13 @@ function getResetIntegrity (accessesStore, userOrUserId, update, callback) {
   update.$set.integrityBatchCode = integrityBatchCode;
 
   // return a callback that will be executed after the update
-  return function (err, res) {
+  return function (err: any, res: any) {
     if (err) return callback(err);
     const initialModifiedCount = res.modifiedCount;
 
     // will be called for each updated item; we should remove the "integrityBatchCode"
     // that helped finding them out, and add the integrity value
-    function updateIfNeeded (access) {
+    function updateIfNeeded (access: any) {
       delete access.integrityBatchCode; // remove integrity batch code for computation
       const previousIntegrity = access.integrity;
       accessesStore.integrityAccesses.set(access, true);
@@ -208,7 +208,7 @@ function getResetIntegrity (accessesStore, userOrUserId, update, callback) {
       };
     }
 
-    function doneCallBack (err2, res2) {
+    function doneCallBack (err2: any, res2: any) {
       if (err2) return callback(err2);
       if (res2.count !== initialModifiedCount) { // counts mismatch
         logger.error('Issue when adding integrity to updated events for ' + JSON.stringify(userOrUserId) + ' counts does not match');

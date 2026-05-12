@@ -16,7 +16,7 @@ const accountStreams = require('business/src/system-streams/index.ts');
 const { getConfigSync } = require('@pryv/boiler');
 const { storeDataUtils, getMall } = require('mall');
 
-let auditIsActive = null;
+let auditIsActive: any = null;
 function addAuditStreams () {
   if (auditIsActive !== null) return auditIsActive;
   auditIsActive = getConfigSync().get('audit:active');
@@ -53,7 +53,7 @@ class AccessLogic {
   static PERMISSION_LEVEL_READ: string;
   static PERMISSION_LEVEL_CREATE_ONLY: string;
 
-  constructor (userId, access) {
+  constructor (userId: any, access: any) {
     this._access = access;
     this._userId = userId;
     this._streamPermissionLevelCache = {};
@@ -122,7 +122,7 @@ class AccessLogic {
     }
   }
 
-  async _loadStreamPermission (perm) {
+  async _loadStreamPermission (perm: any) {
     const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(perm.streamId);
     if (this._streamByStorePermissionsMap[storeId] == null) this._streamByStorePermissionsMap[storeId] = {};
     this._streamByStorePermissionsMap[storeId][storeStreamId] = { streamId: storeStreamId, level: perm.level };
@@ -140,7 +140,7 @@ class AccessLogic {
   /**
    * returns the permissions for this store if it exists
    */
-  getStoresPermissions (storeId) {
+  getStoresPermissions (storeId: any) {
     const storeStreamPermissionMap = this._streamByStorePermissionsMap[storeId];
     if (storeStreamPermissionMap == null) return [];
     return Object.values(storeStreamPermissionMap);
@@ -149,7 +149,7 @@ class AccessLogic {
   /**
    * returns the permission for this stream if it exists
    */
-  getStreamPermission (storeId, streamId) {
+  getStreamPermission (storeId: any, streamId: any) {
     const storeStreamPermissionMap = this._streamByStorePermissionsMap[storeId];
     if (storeStreamPermissionMap == null) return null;
     return storeStreamPermissionMap[streamId];
@@ -176,7 +176,7 @@ class AccessLogic {
   /**
    * get StreamIds with explicit "no-list" permissions ("none", ...)
    */
-  getCannotListStreamsStreamIds (storeId) {
+  getCannotListStreamsStreamIds (storeId: any) {
     const res: any[] = (storeId === 'local') ? ([] as any[]).concat(accountStreams.hiddenStreamIds) : [];
 
     if (this._streamByStorePermissionsMap == null) return res;
@@ -195,7 +195,7 @@ class AccessLogic {
    * get StreamIds with explicit "no-read" permissions
    * Note!! "create-only", is not forbidden if a "read" permission has been given to a parent
    */
-  getForbiddenGetEventsStreamIds (storeId) {
+  getForbiddenGetEventsStreamIds (storeId: any) {
     if (this._streamByStorePermissionsMap == null) return [];
     const localPerms = this._streamByStorePermissionsMap[storeId];
     if (localPerms == null) return [];
@@ -212,17 +212,17 @@ class AccessLogic {
   /**
    * get StreamIds with explicit which are forced for GetEvent by forceStreamIds
    */
-  getForcedStreamsGetEventsStreamIds (storeId) {
+  getForcedStreamsGetEventsStreamIds (storeId: any) {
     if (this._streamByStoreForced == null) return null;
     return this._streamByStoreForced[storeId];
   }
 
-  _loadFeaturePermission (perm) {
+  _loadFeaturePermission (perm: any) {
     // here we might want to check if permission is higher
     this._registerFeaturePermission(perm);
   }
 
-  _registerFeaturePermission (perm) {
+  _registerFeaturePermission (perm: any) {
     this.featurePermissionsMap[perm.feature] = perm;
     if (perm.feature === 'forcedStreams') { // load them by store
       const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(perm.streams);
@@ -233,7 +233,7 @@ class AccessLogic {
 
   /** ---------- GENERIC --------------- */
 
-  can (methodId) {
+  can (methodId: any) {
     switch (methodId) {
       // -- Account
       case 'account.get':
@@ -264,7 +264,7 @@ class AccessLogic {
 
   /** ----------- ACCESSES -------------- */
 
-  canCreateAccessForAccountStream (permissionLevel) {
+  canCreateAccessForAccountStream (permissionLevel: any) {
     return isHigherOrEqualLevel('contribute', permissionLevel);
   }
 
@@ -274,7 +274,7 @@ class AccessLogic {
   }
 
   // Whether the current access delete manage the given access
-  async canDeleteAccess (access) {
+  async canDeleteAccess (access: any) {
     // The account owner can do everything.
     if (this.isPersonal()) return true;
     // App and Shared accesses can delete themselves (selfRevoke)
@@ -290,7 +290,7 @@ class AccessLogic {
 
   // Whether the current access can create the given access.
   //
-  async canCreateAccess (candidate) {
+  async canCreateAccess (candidate: any) {
     // The account owner can do everything.
     if (this.isPersonal()) return true;
     // Shared accesses don't manage anything.
@@ -321,26 +321,26 @@ class AccessLogic {
 
   /** ------------ STREAMS ------------- */
 
-  async canListStream (streamId) {
+  async canListStream (streamId: any) {
     if (this.isPersonal()) return true;
     const level = await this._getStreamPermissionLevel(streamId);
     return !!(((level != null) && isHigherOrEqualLevel(level, 'read')));
   }
 
-  async canCreateChildOnStream (streamId) {
+  async canCreateChildOnStream (streamId: any) {
     return await this._canManageStream(streamId);
   }
 
-  async canDeleteStream (streamId) {
+  async canDeleteStream (streamId: any) {
     return await this._canManageStream(streamId);
   }
 
-  async canUpdateStream (streamId) {
+  async canUpdateStream (streamId: any) {
     return await this._canManageStream(streamId);
   }
 
   /** @private internal  */
-  async _canManageStream (streamId) {
+  async _canManageStream (streamId: any) {
     if (this.isPersonal()) return true;
     const level = await this._getStreamPermissionLevel(streamId || undefined);
     if (level === 'create-only') return false;
@@ -349,7 +349,7 @@ class AccessLogic {
 
   /** ------------ EVENTS --------------- */
 
-  async canGetEventsOnStream (streamId, storeId) {
+  async canGetEventsOnStream (streamId: any, storeId: any) {
     if (this.isPersonal()) return true;
 
     const fullStreamId = storeDataUtils.getFullItemId(storeId, streamId);
@@ -359,13 +359,13 @@ class AccessLogic {
     return isHigherOrEqualLevel(level, 'read');
   }
 
-  async canCreateEventsOnStream (streamId) {
+  async canCreateEventsOnStream (streamId: any) {
     if (this.isPersonal()) return true;
     const level = await this._getStreamPermissionLevel(streamId);
     return (level != null) && isHigherOrEqualLevel(level, 'contribute');
   }
 
-  async canUpdateEventsOnStream (streamId) {
+  async canUpdateEventsOnStream (streamId: any) {
     if (this.isPersonal()) return true;
     const level = await this._getStreamPermissionLevel(streamId);
     if (level === 'create-only') return false;
@@ -376,7 +376,7 @@ class AccessLogic {
    * new fashion to retrieve stream permissions
    * @param fullStreamId :{storeId}:{streamId}
    */
-  async _getStreamPermissionLevel (fullStreamId) {
+  async _getStreamPermissionLevel (fullStreamId: any) {
     if (fullStreamId == null) fullStreamId = '*'; // to be investgated why this happens
 
     if (this.isPersonal()) return 'manage';
@@ -391,7 +391,7 @@ class AccessLogic {
     return permissions?.level;
   }
 
-  async _getStreamPermissions (fullStreamId) {
+  async _getStreamPermissions (fullStreamId: any) {
     const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(fullStreamId);
 
     let currentStream = (storeStreamId !== '*') ? storeStreamId : null;
@@ -417,7 +417,7 @@ class AccessLogic {
   /**
    * return true is this access can create an access with this feature
    */
-  _canCreateAccessWithFeaturePermission (featurePermission) {
+  _canCreateAccessWithFeaturePermission (featurePermission: any) {
     if (featurePermission.feature === 'selfRevoke') {
       // true if this acces canSelfRevoke or if requested setting is identical to this access
       return this._canSelfRevoke() || featurePermission.setting === this.featurePermissionsMap.selfRevoke.setting;
@@ -449,9 +449,9 @@ AccessLogic.PERMISSION_LEVEL_CREATE_ONLY = 'create-only';
  * @param permissionLevelA - level to challenge
  * @param permissionLevelB  - level
  */
-function isHigherOrEqualLevel (permissionLevelA, permissionLevelB) {
-  return PermissionLevels[permissionLevelA] >= PermissionLevels[permissionLevelB];
+function isHigherOrEqualLevel (permissionLevelA: any, permissionLevelB: any) {
+  return (PermissionLevels as any)[permissionLevelA] >= (PermissionLevels as any)[permissionLevelB];
 }
-function isLowerLevel (permissionLevelA, permissionLevelB) {
+function isLowerLevel (permissionLevelA: any, permissionLevelB: any) {
   return !isHigherOrEqualLevel(permissionLevelA, permissionLevelB);
 }

@@ -14,10 +14,10 @@ const { _internals } = require('./_internals.ts');
 const logger = _internals.lazyLogger('platform:db');
 
 class DB {
-  platformUnique;
-  platformIndexed;
-  queries;
-  db;
+  platformUnique: any;
+  platformIndexed: any;
+  queries: any;
+  db: any;
 
   async init () {
     const settings = structuredClone(_internals.config);
@@ -49,11 +49,11 @@ class DB {
   }
 
   /** Used by platformCheckIntegrity  */
-  async getAllWithPrefix (prefix) {
+  async getAllWithPrefix (prefix: any) {
     logger.debug('getAllWithPrefix', prefix);
     if (prefix !== 'user') throw new Error('Only [user] prefix is supported');
-    const res = (await this.platformIndexed.find({}).toArray()).map((i) => { i.isUnique = false; return i; });
-    const uniques = (await this.platformUnique.find({}).toArray()).map((i) => { i.isUnique = true; return i; });
+    const res = (await this.platformIndexed.find({}).toArray()).map((i: any) => { i.isUnique = false; return i; });
+    const uniques = (await this.platformUnique.find({}).toArray()).map((i: any) => { i.isUnique = true; return i; });
     res.push(...uniques);
     logger.debug('getAllWithPrefixDone', prefix);
     return res;
@@ -68,14 +68,14 @@ class DB {
 
   // ----- utilities ------- //
 
-  async setUserUniqueField (username, field, value) {
+  async setUserUniqueField (username: any, field: any, value: any) {
     const item = { field, value, username };
     logger.debug('setUserUniqueField', item);
     await this.platformUnique.updateOne({ field, value }, { $set: item }, { upsert: true });
     return item;
   }
 
-  async setUserUniqueFieldIfNotExists (username, field, value) {
+  async setUserUniqueFieldIfNotExists (username: any, field: any, value: any) {
     logger.debug('setUserUniqueFieldIfNotExists', { username, field, value });
     const existing = await this.platformUnique.findOne({ field, value });
     if (existing != null) {
@@ -85,29 +85,29 @@ class DB {
     return true;
   }
 
-  async deleteUserUniqueField (field, value) {
+  async deleteUserUniqueField (field: any, value: any) {
     logger.debug('deleteUserUniqueField', { field, value });
     await this.platformUnique.deleteOne({ field, value });
   }
 
-  async setUserIndexedField (username, field, value) {
+  async setUserIndexedField (username: any, field: any, value: any) {
     const item = { field, value, username };
     logger.debug('setUserIndexedField', item);
     await this.platformIndexed.updateOne({ field, username }, { $set: item }, { upsert: true });
   }
 
-  async deleteUserIndexedField (username, field) {
+  async deleteUserIndexedField (username: any, field: any) {
     logger.debug('deleteUserIndexedField', { username, field });
     await this.platformIndexed.deleteOne({ username, field });
   }
 
-  async getUserIndexedField (username, field) {
+  async getUserIndexedField (username: any, field: any) {
     logger.debug('getUserIndexedField', { username, field });
     const res = await this.platformIndexed.findOne({ username, field });
     return res?.value || null;
   }
 
-  async getUsersUniqueField (field, value) {
+  async getUsersUniqueField (field: any, value: any) {
     logger.debug('getUsersUniqueField', { field, value });
     const res = await this.platformUnique.findOne({ field, value });
     return res?.username || null;
@@ -128,7 +128,7 @@ class DB {
     return await this.getAllWithPrefix('user');
   }
 
-  async importAll (data) {
+  async importAll (data: any) {
     for (const entry of data) {
       if (entry.isUnique) {
         await this.setUserUniqueField(entry.username, entry.field, entry.value);
@@ -144,17 +144,17 @@ class DB {
 
   // --- User-to-core mapping --- //
 
-  async setUserCore (username, coreId) {
+  async setUserCore (username: any, coreId: any) {
     await this.setUserIndexedField(username, '_core', coreId);
   }
 
-  async getUserCore (username) {
+  async getUserCore (username: any) {
     return await this.getUserIndexedField(username, '_core');
   }
 
   async getAllUserCores () {
     const docs = await this.platformIndexed.find({ field: '_core' }).toArray();
-    return docs.map(doc => ({
+    return docs.map((doc: any) => ({
       username: doc.username,
       coreId: doc.value
     }));
@@ -162,19 +162,19 @@ class DB {
 
   // --- Core registration --- //
 
-  async setCoreInfo (coreId, info) {
+  async setCoreInfo (coreId: any, info: any) {
     // Store as indexed field with reserved username '__cores__'
     await this.setUserIndexedField('__cores__', coreId, JSON.stringify(info));
   }
 
-  async getCoreInfo (coreId) {
+  async getCoreInfo (coreId: any) {
     const val = await this.getUserIndexedField('__cores__', coreId);
     return val != null ? JSON.parse(val) : null;
   }
 
   async getAllCoreInfos () {
     const docs = await this.platformIndexed.find({ username: '__cores__' }).toArray();
-    return docs.map(doc => JSON.parse(doc.value));
+    return docs.map((doc: any) => JSON.parse(doc.value));
   }
 }
 

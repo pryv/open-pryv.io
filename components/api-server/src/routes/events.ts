@@ -16,13 +16,13 @@ const { setMethodId } = require('middleware');
 const hasFileUpload = require('../middleware/uploads.ts').hasFileUpload;
 const attachmentsAccessMiddlewareFactory = require('../middleware/attachment-access.ts').default;
 // Set up events route handling.
-export default async function (expressApp, app) {
+export default async function (expressApp: any, app: any) {
   const api = app.api;
   const config = app.config;
   const storage = app.storageLayer;
   const filesReadTokenSecret = config.get('auth:filesReadTokenSecret');
   const loadAccessMiddleware = middleware.loadAccess(storage);
-  expressApp.get(Paths.Events + '/', setMethodId('events.get'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.get(Paths.Events + '/', setMethodId('events.get'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     const params = Object.assign({}, req.query);
     tryCoerceStringValues(params, {
       fromTime: 'number',
@@ -39,7 +39,7 @@ export default async function (expressApp, app) {
     });
     api.call(req.context, params, methodCallback(res, next, 200));
   });
-  expressApp.get(Paths.Events + '/:id', setMethodId('events.getOne'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.get(Paths.Events + '/:id', setMethodId('events.getOne'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     const params = Object.assign({ id: req.params.id }, req.query);
     tryCoerceStringValues(params, {
       includeHistory: 'boolean'
@@ -59,7 +59,7 @@ export default async function (expressApp, app) {
   // Parses the 'readToken' and verifies that the access referred to by id in
   // the token corresponds to a real access and that the signature is valid.
   //
-  function retrieveAccessFromReadToken (req, res, next) {
+  function retrieveAccessFromReadToken (req: any, res: any, next: any) {
     // forbid using access tokens in the URL
     if (req.query.auth != null) {
       return next(errors.invalidAccessToken('Query parameter "auth" is forbidden here, ' +
@@ -76,16 +76,16 @@ export default async function (expressApp, app) {
     const context = req.context;
     context
       .retrieveAccessFromId(storage, accessId)
-      .then((access) => {
+      .then((access: any) => {
         const hmacValid = encryption.isFileReadTokenHMACValid(tokenParts.hmac, req.params.fileId, access.token, filesReadTokenSecret);
         if (!hmacValid) { return next(errors.invalidAccessToken('Invalid read token.')); }
         next();
       })
-      .catch((err) => next(errors.unexpectedError(err)));
+      .catch((err: any) => next(errors.unexpectedError(err)));
     // The promise chain above calls next on all branches.
   }
   // Create an event.
-  expressApp.post(Paths.Events + '/', setMethodId('events.create'), loadAccessMiddleware, hasFileUpload, function (req, res, next) {
+  expressApp.post(Paths.Events + '/', setMethodId('events.create'), loadAccessMiddleware, hasFileUpload, function (req: any, res: any, next: any) {
     const params = req.body;
     if (req.files) {
       params.files = req.files;
@@ -94,17 +94,17 @@ export default async function (expressApp, app) {
     }
     api.call(req.context, params, methodCallback(res, next, 201));
   });
-  expressApp.post(Paths.Events + '/start', function (req, res, next) {
+  expressApp.post(Paths.Events + '/start', function (req: any, res: any, next: any) {
     return next(errors.goneResource());
   });
-  expressApp.put(Paths.Events + '/:id', setMethodId('events.update'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.put(Paths.Events + '/:id', setMethodId('events.update'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     api.call(req.context, { id: req.params.id, update: req.body }, methodCallback(res, next, 200));
   });
-  expressApp.post(Paths.Events + '/stop', function (req, res, next) {
+  expressApp.post(Paths.Events + '/stop', function (req: any, res: any, next: any) {
     return next(errors.goneResource());
   });
   // Update an event
-  expressApp.post(Paths.Events + '/:id', setMethodId('events.update'), loadAccessMiddleware, hasFileUpload, function (req, res, next) {
+  expressApp.post(Paths.Events + '/:id', setMethodId('events.update'), loadAccessMiddleware, hasFileUpload, function (req: any, res: any, next: any) {
     const params: any = {
       id: req.params.id,
       update: {}
@@ -116,10 +116,10 @@ export default async function (expressApp, app) {
     }
     api.call(req.context, params, methodCallback(res, next, 200));
   });
-  expressApp.delete(Paths.Events + '/:id', setMethodId('events.delete'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.delete(Paths.Events + '/:id', setMethodId('events.delete'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     api.call(req.context, { id: req.params.id }, methodCallback(res, next, 200));
   });
-  expressApp.delete(Paths.Events + '/:id/:fileId', setMethodId('events.deleteAttachment'), loadAccessMiddleware, function (req, res, next) {
+  expressApp.delete(Paths.Events + '/:id/:fileId', setMethodId('events.deleteAttachment'), loadAccessMiddleware, function (req: any, res: any, next: any) {
     api.call(req.context, { id: req.params.id, fileId: req.params.fileId }, methodCallback(res, next, 200));
   });
 };
