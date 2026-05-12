@@ -18,7 +18,7 @@ const { setMethodId } = require('middleware');
 })();
 // Handlers for path roots at various places; handler for batch calls and
 // access-info.
-function root (expressApp, app) {
+function root (expressApp: any, app: any) {
   const api = app.api;
 
   const customAuthStepFn = app.getCustomAuthFunction('root.js');
@@ -39,7 +39,7 @@ function root (expressApp, app) {
   expressApp.get(Paths.UserRoot + '/access-info',
     setMethodId('getAccessInfo'),
     loadAccessMiddleware,
-    function (req, res, next) {
+    function (req: any, res: any, next: any) {
       api.call(req.context, req.query,
         methodCallback(res, next, 200));
     });
@@ -49,7 +49,7 @@ function root (expressApp, app) {
     initContextMiddleware,
     setMethodId('callBatch'),
     loadAccessMiddleware,
-    function (req, res, next) {
+    function (req: any, res: any, next: any) {
       api.call(req.context, req.body,
         methodCallback(res, next, 200));
     }
@@ -60,7 +60,7 @@ export { root };
 // Renders a greeting message; this route is displayed on the various forms
 // of roots ('/', 'foo.pryv.me/')
 //
-function rootIndex (req, res) {
+function rootIndex (req: any, res: any) {
   const devSiteURL = 'https://pryv.github.io/';
   const result = commonMeta.setCommonMeta({});
 

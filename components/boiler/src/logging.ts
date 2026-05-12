@@ -24,7 +24,7 @@ let customLoggerInstance: any = null;
  * @param options.time - set to true to for timestamp
  * @param options.align - set to true to allign logs items
  */
-function generateFormat (options) {
+function generateFormat (options: any) {
   const formats: any[] = [];
   if (options.color) {
     formats.push(winston.format.colorize());
@@ -36,7 +36,7 @@ function generateFormat (options) {
     formats.push(winston.format.align());
   }
 
-  function printf (info) {
+  function printf (info: any) {
     const { timestamp, level, message } = info;
 
     let items = info[Symbol.for('splat')] || {};
@@ -72,7 +72,7 @@ function generateFormat (options) {
 /**
  * Helper to pass log instructions to winston
  */
-function globalLog (level, key, message, context) {
+function globalLog (level: any, key: any, message: any, context: any) {
   const text = `[${key}] ${message}`;
   if (winstonInstance) {
     winstonInstance[level](text, context);
@@ -88,7 +88,7 @@ function globalLog (level, key, message, context) {
  * Config initialize Logger right after beeing loaded
  * This is done by config Only
  */
-async function initLoggerWithConfig (config) {
+async function initLoggerWithConfig (config: any) {
   if (winstonInstance) {
     throw new Error('Logger was already initialized');
   }
@@ -176,7 +176,7 @@ function inspect (...args: any[]): string {
   return res;
 }
 
-function setGlobalName (name) {
+function setGlobalName (name: any) {
   // create root logger
   rootLogger = new Logger(name, null);
   rootLogger.debug('setGlobalName: ' + name);
@@ -236,7 +236,7 @@ class Logger {
  * Get a new logger, or root loggger if no name is provided
  * @param [name]
  */
-function getLogger (name) {
+function getLogger (name?: any) {
   if (!rootLogger) {
     throw new Error('Initalize boiler before using logger');
   }
@@ -250,7 +250,7 @@ export { getLogger, setGlobalName, initLoggerWithConfig, inspectAndHide };
 
 // ----------------- Hide sensite data -------------------- //
 
-function inspectAndHide (o) {
+function inspectAndHide (o: any) {
   // Bypass values that don't survive JSON.parse(JSON.stringify()) — passing
   // them through would crash the logger (and the caller) on every log call.
   // - functions: JSON.stringify(fn) returns the string 'undefined' (actually undefined),
@@ -271,7 +271,7 @@ function inspectAndHide (o) {
   return _inspectAndHide(cloned);
 }
 
-function _inspectAndHide (o) {
+function _inspectAndHide (o: any) {
   if (typeof o === 'string') {
     return hideSensitiveValues(o);
   }
@@ -298,7 +298,7 @@ function _inspectAndHide (o) {
 }
 
 // Hides sensitive values (auth tokens and passwords) in log messages
-function hideSensitiveValues (msg) {
+function hideSensitiveValues (msg: any) {
   if (typeof msg !== 'string') return msg;
   const tokenRegexp = /auth=c([a-z0-9-]*)/g;
   const passwordRegexp = /"(password|passwordHash|newPassword)"[:=]"([^"]*)"/g;

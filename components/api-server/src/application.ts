@@ -85,8 +85,8 @@ logger.debug('Loading app');
  */
 class Application {
   // new config
-  config;
-  logging;
+  config: any;
+  logging: any;
 
   initalized;
   initializing;
@@ -94,21 +94,21 @@ class Application {
   /**
    * Normal user API
    */
-  api;
+  api: any;
   /**
    * API for system routes.
    */
-  systemAPI;
+  systemAPI: any;
 
   /** @type {import('storage').Database} */
-  database;
+  database: any;
 
   /**
    * Storage subsystem
    */
-  storageLayer;
+  storageLayer: any;
 
-  expressApp;
+  expressApp: any;
 
   isAuditActive;
 
@@ -164,7 +164,7 @@ class Application {
    */
   helperShowRoutes () {
     const routes: any[] = [];
-    function addRoute (route) {
+    function addRoute (route: any) {
       if (route) {
         let methodId;
         for (const layer of route.stack) {
@@ -180,13 +180,13 @@ class Application {
       }
     }
 
-    this.expressApp._router.stack.forEach(function (middleware) {
+    this.expressApp._router.stack.forEach(function (middleware: any) {
       if (middleware.route) {
         // routes registered directly on the app
         addRoute(middleware.route);
       } else if (middleware.name === 'router') {
         // router middleware
-        middleware.handle.stack.forEach((h) => addRoute(h.route));
+        middleware.handle.stack.forEach((h: any) => addRoute(h.route));
       }
     });
     console.log(routes);
@@ -237,7 +237,7 @@ class Application {
    * Returns the custom auth function if one was configured. Otherwise returns
    * null.
    */
-  getCustomAuthFunction (from) {
+  getCustomAuthFunction (from: any) {
     if (!this.customAuthStepLoaded) {
       this.customAuthStepFn = this.loadCustomExtension();
       this.customAuthStepLoaded = true;
@@ -276,12 +276,12 @@ class Application {
   }
 }
 
-let app;
+let app: any;
 /**
  * get Application Singleton
  * @param forceNewApp - In TEST mode only, return a new Application for fixtures and mocks
  */
-function getApplication (forceNewApp) {
+function getApplication (forceNewApp?: any) {
   if (forceNewApp || !app) {
     app = new Application();
   }

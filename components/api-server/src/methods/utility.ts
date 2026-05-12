@@ -17,18 +17,18 @@ const updateAccessUsageStats = require('./helpers/updateAccessUsageStats.ts').de
  * Utility API methods implementations.
  *
  */
-export default async function (api) {
+export default async function (api: any) {
   const logger = getLogger('methods:batch');
   const config = await getConfig();
   const isAuditActive = config.get('audit:active');
   const updateAccessUsage = await updateAccessUsageStats();
   const passwordRules = await getPasswordRules();
-  let audit;
+  let audit: any;
   if (isAuditActive) {
     audit = require('audit').default;
   }
   api.register('getAccessInfo', commonFns.getParamsValidation(methodsSchema.getAccessInfo.params), getAccessInfoApiFn);
-  async function getAccessInfoApiFn (context, params, result, next) {
+  async function getAccessInfoApiFn (context: any, params: any, result: any, next: any) {
     const accessInfoProps = [
       'id',
       'token',
@@ -63,13 +63,13 @@ export default async function (api) {
     next();
   }
   api.register('callBatch', commonFns.getParamsValidation(methodsSchema.callBatch.params), callBatchApiFn, updateAccessUsage);
-  async function callBatchApiFn (context, calls, result, next) {
+  async function callBatchApiFn (context: any, calls: any, result: any, next: any) {
     // allow non stringified stream queries in batch calls
     context.acceptStreamsQueryNonStringified = true;
     context.disableAccessUsageStats = true;
     // to avoid updatingAccess for each api call we are collecting all counter here
     context.accessUsageStats = {};
-    function countCall (methodId) {
+    function countCall (methodId: any) {
       if (context.accessUsageStats[methodId] == null) { context.accessUsageStats[methodId] = 0; }
       context.accessUsageStats[methodId]++;
     }
@@ -79,15 +79,15 @@ export default async function (api) {
     }
     context.disableAccessUsageStats = false; // to allow tracking functions
     next();
-    async function executeCall (call) {
+    async function executeCall (call: any) {
       try {
         countCall(call.method);
         // update methodId to match the call todo
         context.methodId = call.method;
         // Perform API call
-        const result = await fromCallback((cb) => api.call(context, call.params, cb));
+        const result = await fromCallback((cb: any) => api.call(context, call.params, cb));
         if (isAuditActive) { await audit.validApiCall(context, result); }
-        return await fromCallback((cb) => result.toObject(cb));
+        return await fromCallback((cb: any) => result.toObject(cb));
       } catch (err) {
         // Batchcalls have specific error handling hence the custom request context
         const reqContext = {

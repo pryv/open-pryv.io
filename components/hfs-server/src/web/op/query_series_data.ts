@@ -20,7 +20,7 @@ const AUTH_HEADER = 'authorization';
  * @param  {type} next: express$NextFunction  description
  * @return {unknown}
  */
-async function querySeriesData (ctx, req, res) {
+async function querySeriesData (ctx: any, req: any, res: any) {
   const metadata = ctx.metadata;
   const seriesRepo = ctx.series;
   // Extract parameters from request:
@@ -36,7 +36,7 @@ async function querySeriesData (ctx, req, res) {
   validateQuery(query);
   await retrievePoints(seriesRepo, res, query, seriesMeta);
 }
-function coerceStringParams (params) {
+function coerceStringParams (params: any) {
   tryCoerceStringValues(params, {
     fromDeltaTime: 'number',
     toDeltaTime: 'number'
@@ -47,20 +47,20 @@ function coerceStringParams (params) {
   };
   return query;
 }
-function applyDefaultValues (query) {
+function applyDefaultValues (query: any) {
   if (query.to == null) { query.to = timestamp.now(); }
 }
-function validateQuery (query) {
+function validateQuery (query: any) {
   if (query.from != null && isNaN(query.from)) { throw errors.invalidParametersFormat("'from' must contain seconds since epoch."); }
   if (isNaN(query.to)) { throw errors.invalidParametersFormat("'to' must contain seconds since epoch."); }
   if (query.from != null && query.to != null && query.to < query.from) { throw errors.invalidParametersFormat("'to' must be >= 'from'."); }
 }
-async function verifyAccess (username, eventId, authToken, metadata) {
+async function verifyAccess (username: any, eventId: any, authToken: any, metadata: any) {
   const seriesMeta = await metadata.forSeries(username, eventId, authToken);
   if (!seriesMeta.canRead()) { throw errors.forbidden(); }
   return seriesMeta;
 }
-async function retrievePoints (seriesRepo, res, query, seriesMeta) {
+async function retrievePoints (seriesRepo: any, res: any, query: any, seriesMeta: any) {
   const seriesInstance = await seriesRepo.get(...seriesMeta.namespaceAndName());
   const data = await seriesInstance.query(query);
   const responseObj = new SeriesResponse(data);

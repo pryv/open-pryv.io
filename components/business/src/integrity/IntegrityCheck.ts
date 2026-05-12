@@ -35,7 +35,7 @@ class IntegrityCheck {
   /**
    * Run integrity check on a single user.
    */
-  async checkUser (userId) {
+  async checkUser (userId: any) {
     const report: any = {
       userId,
       events: { checked: 0, errors: [] },
@@ -59,7 +59,7 @@ class IntegrityCheck {
    * Run integrity check on all users.
    * @param [onUserComplete] - callback(userId, report) after each user
    */
-  async checkAllUsers (onUserComplete) {
+  async checkAllUsers (onUserComplete?: any) {
     const { getUsersLocalIndex } = require('storage');
     const usersIndex = await getUsersLocalIndex();
     const allUsers = await usersIndex.getAllByUsername();
@@ -80,14 +80,14 @@ class IntegrityCheck {
   // Events
   // -------------------------------------------------------------------------
 
-  async _checkUserEvents (userId, report) {
+  async _checkUserEvents (userId: any, report: any) {
     const storages = require('storages');
     const database = storages.database || storages.databasePG;
     if (!database) return;
 
     let events;
     if (storages.database) {
-      events = await fromCallback((cb) =>
+      events = await fromCallback((cb: any) =>
         database.find({ name: 'events' }, { userId }, {}, cb)
       );
     } else {
@@ -123,7 +123,7 @@ class IntegrityCheck {
     }
   }
 
-  _verifyEventIntegrity (event, report, originalId?) {
+  _verifyEventIntegrity (event: any, report: any, originalId?: any) {
     if (event.integrity === undefined) {
       report.events.errors.push({
         eventId: originalId || event.id,
@@ -154,9 +154,9 @@ class IntegrityCheck {
   // Accesses
   // -------------------------------------------------------------------------
 
-  async _checkUserAccesses (userId, report) {
+  async _checkUserAccesses (userId: any, report: any) {
     const user = { id: userId };
-    const accesses = await fromCallback((cb) =>
+    const accesses = await fromCallback((cb: any) =>
       this.storageLayer.accesses.exportAll(user, cb)
     );
 

@@ -22,7 +22,7 @@ const require = createRequire(import.meta.url);
 
 const observability = require('./index.ts');
 
-const LEVEL_ORDER = { error: 0, warn: 1, info: 2, debug: 3 };
+const LEVEL_ORDER: any = { error: 0, warn: 1, info: 2, debug: 3 };
 
 let forwardLogLevel = 'error';
 
@@ -30,11 +30,11 @@ let forwardLogLevel = 'error';
  * Update the minimum log level forwarded to the provider.
  * Values outside the allowed set are clamped to `error`.
  */
-function setLogLevel (level) {
+function setLogLevel (level: any) {
   forwardLogLevel = LEVEL_ORDER[level] != null ? level : 'error';
 }
 
-function shouldForward (level) {
+function shouldForward (level: any) {
   if (!observability.isActive()) return false;
   const target = LEVEL_ORDER[forwardLogLevel];
   const event = LEVEL_ORDER[level];
@@ -47,10 +47,10 @@ function shouldForward (level) {
  * provider before (or after) calling the original. Existing boiler
  * behaviour is preserved; this is a pure add-on.
  */
-function wrap (logger, loggerName) {
+function wrap (logger: any, loggerName: any) {
   const wrapped = Object.create(logger);
 
-  wrapped.error = function (msg, ...rest) {
+  wrapped.error = function (msg: any, ...rest: any[]) {
     try {
       if (shouldForward('error')) {
         const err = msg instanceof Error ? msg : new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
@@ -61,7 +61,7 @@ function wrap (logger, loggerName) {
   };
 
   for (const level of ['warn', 'info', 'debug']) {
-    wrapped[level] = function (msg, ...rest) {
+    wrapped[level] = function (msg: any, ...rest: any[]) {
       try {
         if (shouldForward(level)) {
           observability.recordCustomEvent('PryvLog', {

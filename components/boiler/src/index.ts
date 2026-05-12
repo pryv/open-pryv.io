@@ -58,11 +58,11 @@ const boiler = {
   init
 };
 
-let logger;
+let logger: any;
 let configInitialized = false;
-let configInitCalledWithName = null;
+let configInitCalledWithName: any = null;
 
-function init (options, fullyLoadedCallback) {
+function init (options: any, fullyLoadedCallback?: any) {
   if (configInitCalledWithName) {
     logger.warn('Skipping initalization! boiler is already initialized with appName: ' + configInitCalledWithName);
     return boiler;
@@ -83,7 +83,7 @@ function init (options, fullyLoadedCallback) {
 
   logger = logging.getLogger('boiler');
 
-  config.initASync().then((config) => {
+  config.initASync().then((config: any) => {
     configInitialized = true;
     if (fullyLoadedCallback) fullyLoadedCallback(config);
   });
@@ -131,7 +131,7 @@ function getConfigSync () {
  *
  * Anywhere else, use `getConfigSync()`.
  */
-function getConfigUnsafe (warnOnly) {
+function getConfigUnsafe (warnOnly?: any) {
   if (!configInitCalledWithName) {
     throw (new Error('boiler must be initialized with init() before using getConfigUnsafe()'));
   }

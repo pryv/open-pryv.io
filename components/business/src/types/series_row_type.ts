@@ -14,16 +14,16 @@ const FIELD_TIMESTAMP = 'timestamp';
 
 class SeriesDateType {
   deltaTo;
-  constructor (eventTime) {
+  constructor (eventTime: any) {
     this.deltaTo = eventTime;
   }
 
-  secondsToNanos (secs) {
+  secondsToNanos (secs: any) {
     if (secs < 0) { throw new Error('Deltatime must be greater than 0'); }
     return Math.trunc(secs * 1000 * 1000 * 1000);
   }
 
-  coerce (value) {
+  coerce (value: any) {
     switch (typeof value) {
       case 'number':
         return this.secondsToNanos(value - this.deltaTo);
@@ -40,15 +40,15 @@ class SeriesDateType {
 class SeriesRowType {
   eventType;
 
-  seriesMeta;
+  seriesMeta: any;
 
   applyDeltaTimeToSerie;
-  constructor (eventType) {
+  constructor (eventType: any) {
     this.eventType = eventType;
     this.applyDeltaTimeToSerie = 0;
   }
 
-  setSeriesMeta (seriesMeta) {
+  setSeriesMeta (seriesMeta: any) {
     this.seriesMeta = seriesMeta;
   }
 
@@ -64,7 +64,7 @@ class SeriesRowType {
    * and next coerce will convert timestamps to deltaTime relatively to the
    * Event time.
    */
-  validateColumns (columnNames) {
+  validateColumns (columnNames: any) {
     const underlyingType = this.eventType;
     // ** do we need to transformation timestamp into deltatime
     // ** look for "timestamp" in the columns and rename it to deltatime..
@@ -115,7 +115,7 @@ class SeriesRowType {
    * @param {Array<string>} columnNames
    * @returns {boolean}
    */
-  validateAllRows (rows, columnNames) {
+  validateAllRows (rows: any, columnNames: any) {
     for (const row of rows) {
       if (!this.isRowValid(row, columnNames)) {
         logger.debug('Invalid row: ', row, columnNames.length);
@@ -142,7 +142,7 @@ class SeriesRowType {
     provided. Check these first using `validateColumns`.
    * @returns {boolean}
    */
-  isRowValid (row, columnNames) {
+  isRowValid (row: any, columnNames: any) {
     // A valid row is an array of cells.
     if (!Array.isArray(row)) { return false; }
     // It has the correct length. (Assumes that columnNames is right)
@@ -161,7 +161,7 @@ class SeriesRowType {
    * @param {string} name
    * @returns {any}
    */
-  forField (name) {
+  forField (name: any) {
     if (name === FIELD_DELTATIME) {
       return new SeriesDateType(this.applyDeltaTimeToSerie);
     } else {
@@ -177,7 +177,7 @@ class SeriesRowType {
   }
 
   // check if a field is required
-  isOptionalField (name) {
+  isOptionalField (name: any) {
     return this.optionalFields().includes(name);
   }
 
@@ -195,9 +195,9 @@ class SeriesRowType {
     return true;
   }
 
-  callValidator (validator,
+  callValidator (validator: any,
 
-    content) {
+    content: any) {
     return Promise.reject(new Error('No validation for series row types.'));
   }
 }

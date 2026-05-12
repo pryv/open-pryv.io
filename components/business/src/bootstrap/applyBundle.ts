@@ -51,7 +51,7 @@ const TLS_FILE_NAMES = {
  *   coreId: string
  * }>}
  */
-async function applyBundle ({ armoredBundle, passphrase, configDir, tlsDir }) {
+async function applyBundle ({ armoredBundle, passphrase, configDir, tlsDir }: any) {
   if (typeof armoredBundle !== 'string' || armoredBundle.length === 0) {
     throw new Error('applyBundle: armoredBundle is required');
   }
@@ -79,7 +79,7 @@ async function applyBundle ({ armoredBundle, passphrase, configDir, tlsDir }) {
   };
 }
 
-function writeTlsFiles (tlsDir, bundle) {
+function writeTlsFiles (tlsDir: any, bundle: any) {
   fs.mkdirSync(tlsDir, { recursive: true, mode: 0o700 });
   const caFile = path.join(tlsDir, TLS_FILE_NAMES.ca);
   const certFile = path.join(tlsDir, TLS_FILE_NAMES.cert);
@@ -90,7 +90,7 @@ function writeTlsFiles (tlsDir, bundle) {
   return { caFile, certFile, keyFile };
 }
 
-function writeOverrideConfig (configDir, bundle, tlsPaths) {
+function writeOverrideConfig (configDir: any, bundle: any, tlsPaths: any) {
   fs.mkdirSync(configDir, { recursive: true });
   const overridePath = path.join(configDir, 'override-config.yml');
 
@@ -148,22 +148,22 @@ function writeOverrideConfig (configDir, bundle, tlsPaths) {
   return overridePath;
 }
 
-function pruneNull (obj) {
-  const out = {};
+function pruneNull (obj: any) {
+  const out: any = {};
   for (const [k, v] of Object.entries(obj)) {
     if (v != null) out[k] = v;
   }
   return out;
 }
 
-function sha256Fingerprint (pem) {
+function sha256Fingerprint (pem: any) {
   // Match the canonical OpenSSL "SHA256 Fingerprint=AA:BB:..." format.
   const der = pemToDer(pem);
   const hex = crypto.createHash('sha256').update(der).digest('hex').toUpperCase();
   return hex.match(/.{2}/g).join(':');
 }
 
-function pemToDer (pem) {
+function pemToDer (pem: any) {
   const b64 = pem
     .replace(/-----BEGIN [^-]+-----/, '')
     .replace(/-----END [^-]+-----/, '')

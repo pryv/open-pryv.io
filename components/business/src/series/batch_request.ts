@@ -14,7 +14,7 @@ const { error, ParseFailure } = require('./errors.ts');
 //
 
 class BatchRequest {
-  list;
+  list: any[];
   // Parses an object and verifies that its structure corresponds to a series
   // batch, as described in the documentation ('seriesBatch'). If the input
   // object contains an error, it is thrown as a `ParseFailure`.
@@ -24,7 +24,7 @@ class BatchRequest {
    * @param {TypeResolveFunction} resolver
    * @returns {Promise<BatchRequest>}
    */
-  static parse (jsonObj, resolver) {
+  static parse (jsonObj: any, resolver: any) {
     const parser = new Parser(resolver);
     return parser.parse(jsonObj);
   }
@@ -35,7 +35,7 @@ class BatchRequest {
 
   // Append an element to the list of elements in this BatchRequest.
   //
-  append (element) {
+  append (element: any) {
     this.list.push(element);
   }
 
@@ -65,12 +65,12 @@ class BatchRequestElement {
    * @param {TypeResolveFunction} resolver
    * @returns {Promise<BatchRequestElement>}
    */
-  static parse (obj, resolver) {
+  static parse (obj: any, resolver: any) {
     const parser = new ElementParser();
     return parser.parse(obj, resolver);
   }
 
-  constructor (eventId, data) {
+  constructor (eventId: any, data: any) {
     this.eventId = eventId;
     this.data = data;
   }
@@ -82,16 +82,16 @@ const SERIES_BATCH = 'seriesBatch';
 
 class Parser {
   resolver;
-  constructor (resolver) {
+  constructor (resolver: any) {
     this.resolver = resolver;
   }
 
-  parse (jsonObj) {
+  parse (jsonObj: any) {
     if (jsonObj == null || typeof jsonObj !== 'object') { throw error('Request body needs to be in JSON format.'); }
     return this.parseSeriesBatch(jsonObj);
   }
 
-  async parseSeriesBatch (obj) {
+  async parseSeriesBatch (obj: any) {
     const resolver = this.resolver;
     const out = new BatchRequest();
     if (obj.format !== SERIES_BATCH) { throw error('Envelope "format" must be "seriesBatch"'); }
@@ -104,7 +104,7 @@ class Parser {
 }
 
 class ElementParser {
-  async parse (obj, resolver) {
+  async parse (obj: any, resolver: any) {
     if (obj == null || typeof obj !== 'object') { throw error('Batch element must be an object with properties.'); }
     const eventId = obj.eventId;
     if (typeof eventId !== 'string') { throw error('Batch element must contain an eventId of the series event.'); }

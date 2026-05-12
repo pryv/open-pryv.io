@@ -17,11 +17,11 @@ const require = createRequire(import.meta.url);
 
 const accessState = require('./accessState.ts');
 
-export default function (expressApp, app) {
+export default function (expressApp: any, app: any) {
   /**
    * POST /reg/access — Create a new access request.
    */
-  expressApp.post('/reg/access', async (req, res, next) => {
+  expressApp.post('/reg/access', async (req: any, res: any, next: any) => {
     try {
       const { requestingAppId, requestedPermissions } = req.body;
 
@@ -114,7 +114,7 @@ export default function (expressApp, app) {
   /**
    * GET /reg/access/:key — Poll access request state.
    */
-  expressApp.get('/reg/access/:key', async (req, res, next) => {
+  expressApp.get('/reg/access/:key', async (req: any, res: any, next: any) => {
     try {
       const state = await accessState.get(req.params.key);
       if (!state) {
@@ -173,7 +173,7 @@ export default function (expressApp, app) {
   /**
    * POST /reg/access/:key — Update access request (accept or refuse).
    */
-  expressApp.post('/reg/access/:key', async (req, res, next) => {
+  expressApp.post('/reg/access/:key', async (req: any, res: any, next: any) => {
     try {
       const { status } = req.body;
 
@@ -228,7 +228,7 @@ export default function (expressApp, app) {
    * POST /access/invitationtoken/check — Check validity of an invitation token.
    * Returns plain text 'true' or 'false'.
    */
-  expressApp.post('/access/invitationtoken/check', async (req, res) => {
+  expressApp.post('/access/invitationtoken/check', async (req: any, res: any) => {
     const token = req.body.invitationtoken;
     const { getPlatform } = require('platform');
     const platform = await getPlatform();

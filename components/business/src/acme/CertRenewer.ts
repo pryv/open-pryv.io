@@ -125,11 +125,11 @@ class CertRenewer {
           account,
           challengePriority,
           directoryUrl: this.#directoryUrl,
-          challengeCreateFn: async (authz, _challenge, keyAuthorization) => {
+          challengeCreateFn: async (authz: any, _challenge: any, keyAuthorization: any) => {
             const name = acmeChallengeName(authz.identifier.value);
             await dnsWriter.create(name, keyAuthorization);
           },
-          challengeRemoveFn: async (authz, _challenge, keyAuthorization) => {
+          challengeRemoveFn: async (authz: any, _challenge: any, keyAuthorization: any) => {
             const name = acmeChallengeName(authz.identifier.value);
             await dnsWriter.remove(name, keyAuthorization);
           },
@@ -160,7 +160,7 @@ class CertRenewer {
    * (certPem, chainPem) pass through unchanged.
    *
    */
-  async getCertificate (hostname) {
+  async getCertificate (hostname: any) {
     const stored = await this.#platformDB.getCertificate(hostname);
     if (!stored) return null;
     return {
@@ -181,9 +181,9 @@ class CertRenewer {
  */
 class PlatformDBDnsWriter {
   #platformDB;
-  #dnsServer;
+  #dnsServer: any;
   #waitMs;
-  constructor ({ platformDB, dnsServer = null, waitMs = 15000 }) {
+  constructor ({ platformDB, dnsServer = null, waitMs = 15000 }: any) {
     if (platformDB == null) throw new Error('PlatformDBDnsWriter: platformDB is required');
     this.#platformDB = platformDB;
     this.#dnsServer = dnsServer;
@@ -201,7 +201,7 @@ class PlatformDBDnsWriter {
    * after the next periodic refresh (default 30s), often causing LE to
    * time out on "No TXT records found". Surfaced on
    */
-  async create (name, value) {
+  async create (name: any, value: any) {
     const existing = await this.#platformDB.getDnsRecord(name);
     const priorTxt = (existing && Array.isArray(existing.txt)) ? existing.txt : [];
     const merged = priorTxt.includes(value) ? priorTxt : [...priorTxt, value];
@@ -212,10 +212,10 @@ class PlatformDBDnsWriter {
     if (this.#waitMs > 0) await new Promise(resolve => setTimeout(resolve, this.#waitMs));
   }
 
-  async remove (name, value) {
+  async remove (name: any, value: any) {
     const existing = await this.#platformDB.getDnsRecord(name);
     if (!existing) return;
-    const txt = (existing.txt || []).filter(v => v !== value);
+    const txt = (existing.txt || []).filter((v: any) => v !== value);
     if (txt.length === 0) {
       await this.#platformDB.deleteDnsRecord(name);
     } else {
@@ -249,7 +249,7 @@ class PlatformDBDnsWriter {
 // record, with multiple values. Argument kept for API stability + future
 // multi-zone extensions.
 
-function acmeChallengeName (identifierValue) {
+function acmeChallengeName (identifierValue: any) {
   return '_acme-challenge';
 }
 

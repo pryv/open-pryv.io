@@ -23,7 +23,7 @@ const algorithm = config.get('integrity:algorithm');
  * @private
  * mapping algo codes to https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Digest supported codes
  */
-const subResourceCodeToDigestMap = {
+const subResourceCodeToDigestMap: any = {
   sha256: 'SHA-256',
   sha512: 'SHA-512',
   sha1: 'SHA',
@@ -33,7 +33,7 @@ const subResourceCodeToDigestMap = {
 /**
  * @param subResourceIntegrity in the form of `<algo>-<hash>` example `sha256-uZKmWZ+CQ7UY3GUqFWD4sNPPEUKm8OPcAWr4780Acnk=`
  */
-function getHTTPDigestHeaderForAttachment (subResourceIntegrity) {
+function getHTTPDigestHeaderForAttachment (subResourceIntegrity: any) {
   const splitAt = subResourceIntegrity.indexOf('-');
   const algo = subResourceIntegrity.substr(0, splitAt);
   const sum = subResourceIntegrity.substr(splitAt + 1);
@@ -89,19 +89,19 @@ type IntegrityItem = {
 };
 // ------------- events ------------------ //
 
-function computeEvent (event) {
+function computeEvent (event: any) {
   return stableRepresentation.event.compute(event, algorithm);
 }
 
-function keyEvent (event) {
+function keyEvent (event: any) {
   return stableRepresentation.event.key(event);
 }
 
-function hashEvent (event) {
+function hashEvent (event: any) {
   return stableRepresentation.event.hash(event, algorithm);
 }
 
-function setOnEvent (event) {
+function setOnEvent (event: any) {
   delete event.integrity;
   if (!eventsIsActive) return;
   event.integrity = hashEvent(event);
@@ -118,19 +118,19 @@ const events = {
 
 // ------------- accesses ------------------ //
 
-function computeAccess (access) {
+function computeAccess (access: any) {
   return stableRepresentation.access.compute(access, algorithm);
 }
 
-function keyAccess (access) {
+function keyAccess (access: any) {
   return stableRepresentation.access.key(access);
 }
 
-function hashAccess (access) {
+function hashAccess (access: any) {
   return stableRepresentation.access.hash(access, algorithm);
 }
 
-function setOnAccess (access) {
+function setOnAccess (access: any) {
   if (!accessesIsActive) return;
   access.integrity = hashAccess(access);
   return access;

@@ -11,12 +11,12 @@ const require = createRequire(import.meta.url);
 
 const accountStreams = require('business/src/system-streams/index.ts');
 
-export default async function platformCheckIntegrity (platformWideDB) {
+export default async function platformCheckIntegrity (platformWideDB: any) {
   const { getUsersRepository } = require('business/src/users/repository.ts'); // to avoid some circular import
 
   // --- platformDB
   const allEntries = await platformWideDB.getAllWithPrefix('user');
-  const platformEntryByUser = {};
+  const platformEntryByUser: any = {};
   for (const entry of allEntries) {
     // Skip internal fields (e.g. _core for multi-core mapping)
     if (entry.field && entry.field.startsWith('_')) continue;

@@ -56,7 +56,7 @@ class FileMaterializer {
     this.#tlsDir = tlsDir;
     this.#hostname = hostname;
     this.#onRotate = onRotate || (async () => {});
-    this.#log = log || (msg => console.log('[fm] ' + msg));
+    this.#log = log || ((msg: any) => console.log('[fm] ' + msg));
   }
 
   get hostDir () {
@@ -100,18 +100,18 @@ class FileMaterializer {
     return { rotated: true, reason: onDisk == null ? 'initial-write' : 'cert-changed' };
   }
 
-  #readIfExists (p) {
+  #readIfExists (p: any) {
     try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
   }
 }
 
-function writeAtomic (filePath, content, opts = {}) {
+function writeAtomic (filePath: any, content: any, opts: any = {}) {
   const tmp = filePath + '.tmp.' + process.pid + '.' + Date.now();
   fs.writeFileSync(tmp, content, opts);
   fs.renameSync(tmp, filePath);
 }
 
-function sha256 (s) {
+function sha256 (s: any) {
   return crypto.createHash('sha256').update(s).digest('hex');
 }
 
@@ -126,7 +126,7 @@ function sha256 (s) {
  * @param opts.keyPath
  * @param [opts.timeoutMs=30000]
  */
-async function runRotateScript ({ scriptPath, hostname, certPath, keyPath, timeoutMs = 30000 }) {
+async function runRotateScript ({ scriptPath, hostname, certPath, keyPath, timeoutMs = 30000 }: any) {
   const { spawn } = require('node:child_process');
   if (!path.isAbsolute(scriptPath)) {
     throw new Error(`onRotateScript must be an absolute path, got ${scriptPath}`);
@@ -143,12 +143,12 @@ async function runRotateScript ({ scriptPath, hostname, certPath, keyPath, timeo
   });
   const stdout: any[] = [];
   const stderr: any[] = [];
-  child.stdout.on('data', (c) => stdout.push(c));
-  child.stderr.on('data', (c) => stderr.push(c));
+  child.stdout.on('data', (c: any) => stdout.push(c));
+  child.stderr.on('data', (c: any) => stderr.push(c));
 
   const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
   const exitCode = await new Promise(resolve => {
-    child.on('close', (code, signal) => resolve(signal === 'SIGKILL' ? 124 : (code ?? 0)));
+    child.on('close', (code: any, signal: any) => resolve(signal === 'SIGKILL' ? 124 : (code ?? 0)));
     child.on('error', () => resolve(127));
   });
   clearTimeout(timer);

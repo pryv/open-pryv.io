@@ -13,7 +13,7 @@ const DataMatrix = require('./data_matrix.ts').default;
  * for InfluxQL / series WHERE clauses.
  * @param v - timestamp in seconds or ISO date string
  */
-function timestampToDateString (v) {
+function timestampToDateString (v: any) {
   const date = new Date(typeof v === 'number' ? v * 1000 : v);
   return "'" + date.toISOString().replace('T', ' ').replace('Z', '000000') + "'";
 }
@@ -32,7 +32,7 @@ class Series {
   /** Internal constructor, creates a series with a given name in the namespace
    * given.
    */
-  constructor (conn, namespace, name) {
+  constructor (conn: any, namespace: any, name: any) {
     this.connection = conn;
     this.namespace = namespace;
     this.name = name;
@@ -47,14 +47,14 @@ class Series {
    * @param {DataMatrix} data  - data to store to the series
    * @return {Promise<any>} - promise that resolves once the data is stored
    */
-  append (data) {
+  append (data: any) {
     const appendOptions = {
       database: this.namespace
     };
     const points: any[] = [];
     // Transform all data rows into a measurement point. Transform of rows
     // is done via toStruct in DataMatrix.Row.
-    const toMeasurement = (row) => {
+    const toMeasurement = (row: any) => {
       const struct = row.toStruct();
 
       // TODO review this now that flow is gone:
@@ -67,7 +67,7 @@ class Series {
         timestamp: deltaTime
       };
     };
-    data.eachRow((row) => {
+    data.eachRow((row: any) => {
       points.push(toMeasurement(row));
     });
     return this.connection.writeMeasurement(this.name, points, appendOptions);
@@ -77,7 +77,7 @@ class Series {
    * @param {Query} query
    * @returns {Promise<any>}
    */
-  query (query) {
+  query (query: any) {
     const queryOptions = { database: this.namespace };
     // TODO worry about limit, offset
     const measurementName = this.name;
@@ -97,11 +97,11 @@ class Series {
    * @param {IResults} result
    * @returns {any}
    */
-  transformResult (result) {
+  transformResult (result: any) {
     if (result.length <= 0) { return DataMatrix.empty(); }
     // assert: result.length > 0
     const headers = Object.keys(result[0]);
-    const data = result.map((e) => headers.map((h) => e[h]));
+    const data = result.map((e: any) => headers.map((h) => e[h]));
     // Replace influx 'time' with 'deltaTime'
     const idx = headers.indexOf('time');
     if (idx >= 0) { headers[idx] = 'deltaTime'; }
@@ -115,7 +115,7 @@ class Series {
    * @param {Query} query
    * @returns {string[]}
    */
-  buildExpression (query) {
+  buildExpression (query: any) {
     const subConditions: any[] = [];
     if (query.from) {
       subConditions.push(`time >= ${timestampToDateString(query.from)}`);

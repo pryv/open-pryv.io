@@ -23,22 +23,22 @@ const MESSAGES = {
 };
 // ------- listener
 // listen for a userId
-function registerListenerForUserId (userId) {
+function registerListenerForUserId (userId: any) {
   logger.debug('activate listener for user:', userId);
   if (listenerMap.has(userId)) { return; }
-  listenerMap.set(userId, pubsub.cache.onAndGetRemovable(userId, (msg) => {
+  listenerMap.set(userId, pubsub.cache.onAndGetRemovable(userId, (msg: any) => {
     handleMessage(userId, msg);
   }));
 }
 // unregister listner
-function removeListenerForUserId (userId) {
+function removeListenerForUserId (userId: any) {
   logger.debug('disable listener for user:', userId);
   if (!listenerMap.has(userId)) { return; }
   listenerMap.get(userId)(); // remove listener
   listenerMap.delete(userId);
 }
 // listener
-function handleMessage (userId, msg) {
+function handleMessage (userId: any, msg: any) {
   logger.debug('handleMessage', userId, msg);
   if (msg.action === MESSAGES.UNSET_ACCESS_LOGIC) {
     return cache.unsetAccessLogic(userId, { id: msg.accessId, token: msg.accessToken }, false);
@@ -52,30 +52,30 @@ function handleMessage (userId, msg) {
   }
 }
 // ------- emitter
-function unsetAccessLogic (userId, accessLogic) {
+function unsetAccessLogic (userId: any, accessLogic: any) {
   pubsub.cache.emit(userId, {
     action: MESSAGES.UNSET_ACCESS_LOGIC,
     accessId: accessLogic.id,
     accessToken: accessLogic.token
   });
 }
-function unsetUserData (userId) {
+function unsetUserData (userId: any) {
   pubsub.cache.emit(userId, {
     action: MESSAGES.UNSET_USER_DATA
   });
 }
-function unsetUser (username) {
+function unsetUser (username: any) {
   pubsub.cache.emit(MESSAGES.UNSET_USER, {
     username
   });
 }
 // register cache here (to avoid require cycles)
-function setCache (c) {
+function setCache (c: any) {
   if (cache !== null) {
     return; // cache already set
   }
   cache = c;
-  pubsub.cache.on(MESSAGES.UNSET_USER, function (msg) {
+  pubsub.cache.on(MESSAGES.UNSET_USER, function (msg: any) {
     cache.unsetUser(msg.username, false);
   });
 }

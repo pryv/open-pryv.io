@@ -21,7 +21,7 @@ const logger = getLogger('users:local-index');
 
 class UsersLocalIndex {
   initialized;
-  db;
+  db: any;
 
   constructor () {
     this.initialized = false;
@@ -47,8 +47,8 @@ class UsersLocalIndex {
    */
   async checkIntegrity () {
     const errors: any[] = [];
-    const infos = {};
-    const checkedMap = {};
+    const infos: any = {};
+    const checkedMap: any = {};
 
     for (const collectionName of ['events', 'streams', 'accesses', 'profile', 'webhooks']) {
       const userIds = await getAllKnownUserIdsFromDB(collectionName);
@@ -71,18 +71,18 @@ class UsersLocalIndex {
     };
   }
 
-  async addUser (username, userId) {
+  async addUser (username: any, userId: any) {
     await this.db.addUser(username, userId);
     logger.debug('addUser', username, userId);
   }
 
-  async usernameExists (username) {
+  async usernameExists (username: any) {
     const res = ((await this.getUserId(username)) != null);
     logger.debug('usernameExists', username, res);
     return res;
   }
 
-  async getUserId (username) {
+  async getUserId (username: any) {
     let userId = cache.getUserId(username);
     if (userId == null) {
       userId = await this.db.getIdForName(username);
@@ -94,7 +94,7 @@ class UsersLocalIndex {
     return userId;
   }
 
-  async getUsername (userId) {
+  async getUsername (userId: any) {
     const res = await this.db.getNameForId(userId);
     logger.debug('nameForId', userId, res);
     return res;
@@ -114,13 +114,13 @@ class UsersLocalIndex {
     return await this.db.deleteAll();
   }
 
-  async deleteById (userId) {
+  async deleteById (userId: any) {
     logger.debug('deleteById', userId);
     return await this.db.deleteById(userId);
   }
 }
 
-async function getAllKnownUserIdsFromDB (collectionName) {
+async function getAllKnownUserIdsFromDB (collectionName: any) {
   const storage = require('storage'); // placed here to avoid some circular dependency
   const storageLayer = await storage.getStorageLayer();
   return await storageLayer.getAllUserIdsFromCollection(collectionName);

@@ -23,16 +23,16 @@ const { pluginLoader } = require('storages');
  * provides an `initStorageLayer()` method that populates this instance.
  */
 class StorageLayer {
-  connection;
-  engine;
-  passwordResetRequests;
-  sessions;
-  accesses;
-  profile;
-  streams;
-  events;
-  webhooks;
-  logger;
+  connection: any;
+  engine: any;
+  passwordResetRequests: any;
+  sessions: any;
+  accesses: any;
+  profile: any;
+  streams: any;
+  events: any;
+  webhooks: any;
+  logger: any;
 
   /**
    * Initialize the storage layer.
@@ -41,7 +41,7 @@ class StorageLayer {
    * @param [options] - Additional options from the barrel.
    * @param [options.integrityAccesses] - Integrity module for accesses.
    */
-  async init (connection, options: any = {}) {
+  async init (connection: any, options: any = {}) {
     if (this.connection != null) {
       this.logger.info('Already initialized');
       return;

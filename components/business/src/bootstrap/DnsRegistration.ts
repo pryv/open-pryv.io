@@ -40,7 +40,7 @@ const LSC_SUBDOMAIN = 'lsc';
  * @param [opts.url=null]     - explicit core.url (DNSless multi-core); optional
  * @param [opts.hosting=null] - hosting region, e.g. 'us-east-1'
  */
-async function registerNewCore ({ platformDB, coreId, ip, url = null, hosting = null }) {
+async function registerNewCore ({ platformDB, coreId, ip, url = null, hosting = null }: any) {
   requireInput({ platformDB, coreId, ip });
 
   const coreInfo = {
@@ -83,7 +83,7 @@ async function registerNewCore ({ platformDB, coreId, ip, url = null, hosting = 
  * @param opts.coreId
  * @param opts.ip
  */
-async function unregisterNewCore ({ platformDB, coreId, ip }) {
+async function unregisterNewCore ({ platformDB, coreId, ip }: any) {
   requireInput({ platformDB, coreId, ip });
 
   // Only remove the core-info row if it still belongs to this coreId and
@@ -114,7 +114,7 @@ async function unregisterNewCore ({ platformDB, coreId, ip }) {
   // (other cores may still be listed).
   const lsc = await platformDB.getDnsRecord(LSC_SUBDOMAIN);
   const lscIpsBefore = (lsc && Array.isArray(lsc.a)) ? lsc.a : [];
-  const lscIpsAfter = lscIpsBefore.filter(x => x !== ip);
+  const lscIpsAfter = lscIpsBefore.filter((x: any) => x !== ip);
   if (lscIpsAfter.length !== lscIpsBefore.length) {
     if (lscIpsAfter.length === 0) {
       await platformDB.deleteDnsRecord(LSC_SUBDOMAIN);
@@ -126,13 +126,13 @@ async function unregisterNewCore ({ platformDB, coreId, ip }) {
   return { coreInfoDeleted, perCoreDeleted, lscIpsAfter };
 }
 
-function requireInput ({ platformDB, coreId, ip }) {
+function requireInput ({ platformDB, coreId, ip }: any) {
   if (platformDB == null) throw new Error('DnsRegistration: platformDB is required');
   if (!coreId) throw new Error('DnsRegistration: coreId is required');
   if (!ip) throw new Error('DnsRegistration: ip is required');
 }
 
-function arraysEqual (a, b) {
+function arraysEqual (a: any, b: any) {
   if (!Array.isArray(a) || !Array.isArray(b)) return false;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;

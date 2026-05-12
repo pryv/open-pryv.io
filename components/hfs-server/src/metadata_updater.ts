@@ -28,15 +28,15 @@ class PendingUpdate {
   deadline;
   cooldown;
 
-  static fromUpdateRequest (now, req) {
+  static fromUpdateRequest (now: any, req: any) {
     return new PendingUpdate(now, req);
   }
 
-  static key (id) {
+  static key (id: any) {
     return `${id.userId}/${id.eventId}`;
   }
 
-  constructor (now, req) {
+  constructor (now: any, req: any) {
     this.request = req;
     this.deadline = now + STALE_LIMIT;
     this.cooldown = now + COOLDOWN_TIME;
@@ -49,9 +49,9 @@ class PendingUpdate {
     return `${r.userId}/${r.eventId}`;
   }
 
-  merge (other) {
+  merge (other: any) {
     if (this.key() !== other.key()) throw new Error('Key mismatch in merge.');
-    const ts = (e) => e.request.timestamp;
+    const ts = (e: any) => e.request.timestamp;
     const later = ts(other) > ts(this) ? other : this;
     this.request.author = later.request.author;
     this.request.timestamp = ts(later);
@@ -76,10 +76,10 @@ class PendingUpdatesMap {
 
   constructor () {
     this.map = new Map();
-    this.heap = new Heap((a, b) => a.flushAt() - b.flushAt());
+    this.heap = new Heap((a: any, b: any) => a.flushAt() - b.flushAt());
   }
 
-  merge (update) {
+  merge (update: any) {
     const key = update.key();
     if (this.map.has(key)) {
       this.map.get(key).merge(update);
@@ -90,7 +90,7 @@ class PendingUpdatesMap {
     }
   }
 
-  getElapsed (now) {
+  getElapsed (now: any) {
     const elapsed: any[] = [];
     while (this.heap.size() > 0) {
       const head = this.heap.peek();
@@ -105,7 +105,7 @@ class PendingUpdatesMap {
 
 // --- Flush: writes a pending update to the database ---
 
-async function flush (update) {
+async function flush (update: any) {
   const req = update.request;
   const usersRepository = await getUsersRepository();
   const userId = await usersRepository.getUserIdForUsername(req.userId);
@@ -125,7 +125,7 @@ async function flush (update) {
 
 class MetadataUpdater {
   pending;
-  timer;
+  timer: any;
 
   constructor () {
     this.pending = new PendingUpdatesMap();
@@ -144,7 +144,7 @@ class MetadataUpdater {
     }
   }
 
-  async scheduleUpdate (req) {
+  async scheduleUpdate (req: any) {
     const now = Date.now() / 1e3;
     for (const entry of req.entries) {
       const update = PendingUpdate.fromUpdateRequest(now, entry);
@@ -173,7 +173,7 @@ class MetadataUpdater {
 class MetadataForgetter {
   logger;
 
-  constructor (log) {
+  constructor (log: any) {
     this.logger = log;
   }
 

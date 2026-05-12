@@ -22,13 +22,13 @@ const timestamp = require('unix-timestamp');
  * EventEmitter interface is just for tests syncing for now
  */
 class Audit {
-  _storage;
+  _storage: any;
 
-  _syslog;
+  _syslog: any;
 
-  filter;
+  filter: any;
 
-  tracer;
+  tracer: any;
   /**
    * Requires to call async init() to use
    */
@@ -56,7 +56,7 @@ class Audit {
     logger.info('Audit started');
   }
 
-  async validApiCall (context, result) {
+  async validApiCall (context: any, result: any) {
     const methodId = context.methodId;
     if (!this.filter.isAudited(methodId)) { return; }
     context.tracing.startSpan('audit.validApiCall');
@@ -75,7 +75,7 @@ class Audit {
     context.tracing.finishSpan('audit.validApiCall');
   }
 
-  async errorApiCall (context, error) {
+  async errorApiCall (context: any, error: any) {
     const methodId = context.methodId;
     if (!this.filter.isAudited(methodId)) { return; }
     context.tracing.startSpan('audit.errorApiCall');
@@ -91,7 +91,7 @@ class Audit {
     context.tracing.finishSpan('audit.errorApiCall');
   }
 
-  async eventForUser (userId, event, _methodId?: any) {
+  async eventForUser (userId: any, event: any, _methodId?: any) {
     logger.debug('eventForUser: ' +
             userId +
             ' ' +
@@ -129,7 +129,7 @@ class Audit {
 }
 export default Audit;
 export { Audit };
-function buildDefaultEvent (context) {
+function buildDefaultEvent (context: any) {
   const time = timestamp.now();
   const event: any = {
     id: cuid(),

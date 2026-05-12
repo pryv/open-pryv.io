@@ -13,13 +13,13 @@ const require = createRequire(import.meta.url);
 
 const { createId: generateId } = require('@paralleldrive/cuid2');
 
-function createIdIfMissing (item) {
+function createIdIfMissing (item: any) {
   item.id = item.id || generateId();
   return item;
 }
 
-function getRenamePropertyFn (oldName, newName) {
-  return function (item) {
+function getRenamePropertyFn (oldName: any, newName: any) {
+  return function (item: any) {
     if (!item || item[oldName] == null) {
       return item;
     }
@@ -31,7 +31,7 @@ function getRenamePropertyFn (oldName, newName) {
   };
 }
 
-function stateUpdate (update) {
+function stateUpdate (update: any) {
   if (update.$set.trashed != null && !update.$set.trashed) {
     update.$unset.trashed = 1;
     delete update.$set.trashed;
@@ -39,9 +39,9 @@ function stateUpdate (update) {
   return update;
 }
 
-function getKeyValueSetUpdateFn (propertyName) {
+function getKeyValueSetUpdateFn (propertyName: any) {
   propertyName = propertyName || 'clientData';
-  return function (update) {
+  return function (update: any) {
     const keyValueSet = update.$set[propertyName];
     if (keyValueSet) {
       Object.keys(keyValueSet).forEach(function (key) {
@@ -57,14 +57,14 @@ function getKeyValueSetUpdateFn (propertyName) {
   };
 }
 
-function deletionToDB (item) {
+function deletionToDB (item: any) {
   if (item.deleted === undefined) { // undefined => null
     item.deleted = null;
   }
   return item;
 }
 
-function deletionFromDB (dbItem) {
+function deletionFromDB (dbItem: any) {
   if (dbItem == null) { return dbItem; }
 
   if (dbItem.deleted == null) { // undefined or null
@@ -76,9 +76,9 @@ function deletionFromDB (dbItem) {
 /**
  * Inside $or clauses, converts "id" to "_id"
  */
-function idInOrClause (query) {
+function idInOrClause (query: any) {
   if (query == null || query.$or == null) return query;
-  const convertedOrClause = query.$or.map(field => {
+  const convertedOrClause = query.$or.map((field: any) => {
     if (field.id != null) {
       return { _id: field.id };
     }

@@ -57,7 +57,7 @@ class WebhooksService {
     let numWebhooks = 0;
     for (const entry of this.webhooks) {
       const userWebhooks = entry[1];
-      userWebhooks.forEach((w) => {
+      userWebhooks.forEach((w: any) => {
         w.setApiVersion(this.apiVersion);
         w.setSerial(this.serial);
         w.setLogger(this.logger);
@@ -69,7 +69,7 @@ class WebhooksService {
 
   async sendBootMessage () {
     for (const entry of this.webhooks) {
-      await Promise.all(entry[1].map(async (webhook) => {
+      await Promise.all(entry[1].map(async (webhook: any) => {
         await webhook.send(BOOT_MESSAGE);
       }));
     }
@@ -85,7 +85,7 @@ class WebhooksService {
     }
   }
 
-  async onCreate (usernameWebhook) {
+  async onCreate (usernameWebhook: any) {
     const username = usernameWebhook.username;
     const usersRepository = await getUsersRepository();
     const userId = await usersRepository.getUserIdForUsername(username);
@@ -95,15 +95,15 @@ class WebhooksService {
     })));
   }
 
-  onActivate (usernameWebhook) {
+  onActivate (usernameWebhook: any) {
     this.activateWebhook(usernameWebhook.username, usernameWebhook.webhook);
   }
 
-  onStop (usernameWebhook) {
+  onStop (usernameWebhook: any) {
     this.stopWebhook(usernameWebhook.username, usernameWebhook.webhook.id);
   }
 
-  async addWebhook (username, webhook) {
+  async addWebhook (username: any, webhook: any) {
     let userWebhooks = this.webhooks.get(username);
     if (userWebhooks == null) {
       userWebhooks = [];
@@ -114,13 +114,13 @@ class WebhooksService {
     this.logger.info(`Loaded webhook ${webhook.id} for ${username}`);
   }
 
-  async activateWebhook (username, webhook) {
+  async activateWebhook (username: any, webhook: any) {
     const userWebhooks = this.webhooks.get(username);
     if (userWebhooks == null) {
       this.logger.warn(`Could not retrieve webhooks for ${username} to activate ${webhook.id}.`);
       return;
     }
-    const stoppedWebhook = userWebhooks.filter((w) => w.id === webhook.id)[0];
+    const stoppedWebhook = userWebhooks.filter((w: any) => w.id === webhook.id)[0];
     if (stoppedWebhook == null) {
       this.logger.warn(`Webhook ${webhook.id} not found for ${username}.`);
       return;
@@ -129,7 +129,7 @@ class WebhooksService {
     this.logger.info(`Reactivated webhook ${stoppedWebhook.id} for ${username}`);
   }
 
-  stopWebhook (username, webhookId) {
+  stopWebhook (username: any, webhookId: any) {
     const [usersWebhooks, webhook, idx] = this.getWebhook(username, webhookId);
     if (webhook == null || usersWebhooks == null || idx == null) {
       this.logger.warn(`Could not retrieve webhook ${webhookId} for ${username} to stop it.`);
@@ -141,7 +141,7 @@ class WebhooksService {
     this.logger.info(`Stopped webhook ${webhookId} for ${username}`);
   }
 
-  getWebhook (username, webhookId) {
+  getWebhook (username: any, webhookId: any) {
     const usersWebhooks = this.webhooks.get(username);
     if (usersWebhooks == null) {
       return [null, null, null];
@@ -158,7 +158,7 @@ class WebhooksService {
   stop () {
     this.logger.info('Stopping webhooks service');
     for (const usernameWebhooks of this.webhooks) {
-      usernameWebhooks[1].forEach((w) => {
+      usernameWebhooks[1].forEach((w: any) => {
         w.stop();
       });
     }

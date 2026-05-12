@@ -21,11 +21,11 @@ const { getConfig } = require('@pryv/boiler');
 
 export { init, ensureUserDirectory, getPathForUser, deleteUserDirectory, getBasePath, setBasePathTestOnly };
 
-let config;
-let basePath;
+let config: any;
+let basePath: any;
 
 // temporarly set baseBath for tests;
-function setBasePathTestOnly (path) {
+function setBasePathTestOnly (path: any) {
   basePath = path || config.get('storages:engines:sqlite:path');
 }
 
@@ -49,7 +49,7 @@ async function init () {
  * @param userId -- user id (cuid format)
  * @param [extraPath] -- Optional, extra path
  */
-async function ensureUserDirectory (userId, extraPath = '') {
+async function ensureUserDirectory (userId: any, extraPath = '') {
   const resultPath = getPathForUser(userId, extraPath);
   await fs.mkdir(resultPath, { recursive: true });
   return resultPath;
@@ -60,7 +60,7 @@ async function ensureUserDirectory (userId, extraPath = '') {
  * @param userId -- user id (cuid format)
  * @param [extraPath] -- Optional, extra path
  */
-function getPathForUser (userId, extraPath = '') {
+function getPathForUser (userId: any, extraPath = '') {
   if (basePath == null) {
     throw new Error('Run init() first');
   }
@@ -79,7 +79,7 @@ function getPathForUser (userId, extraPath = '') {
  *
  * @param userId -- user id
  */
-async function deleteUserDirectory (userId) {
+async function deleteUserDirectory (userId: any) {
   const userFolder = getPathForUser(userId);
   await fs.rm(userFolder, { recursive: true, force: true });
 }

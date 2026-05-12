@@ -23,7 +23,7 @@ const { getConfig, getLogger } = require('@pryv/boiler');
  * Register all host internals that engines may need.
  * Called once during init(), after database connections are created.
  */
-function registerInternals (config, database, databasePG, storageLayer) {
+function registerInternals (config: any, database: any, databasePG: any, storageLayer: any) {
   // Live instances
   if (database) internals.register('database', database);
   if (databasePG) internals.register('databasePG', databasePG);
@@ -53,17 +53,17 @@ function registerInternals (config, database, databasePG, storageLayer) {
  * The engine name is the folder name under storages/engines/.
  * Config structure: storages.engines.<engineName>.{...fields}
  */
-function getEngineConfig (config, engineName) {
+function getEngineConfig (config: any, engineName: any) {
   return config.get(`storages:engines:${engineName}`) || {};
 }
 
-function initEngines (config) {
+function initEngines (config: any) {
   for (const engineName of pluginLoader.listEngines()) {
     const manifest = pluginLoader.getManifest(engineName);
     if (!manifest) continue;
     const required = manifest.requiredInternals || [];
     // Skip engines whose internals are not all registered
-    if (!required.every(name => internals.isRegistered(name))) continue;
+    if (!required.every((name: any) => internals.isRegistered(name))) continue;
     const resolved = internals.resolve(required, engineName);
     const engineConfig = getEngineConfig(config, engineName);
     const mod = pluginLoader.getEngineModule(engineName);
@@ -79,8 +79,8 @@ let initializing = false;
 // Early-published references: set as soon as created during init() so that
 // sub-components calling back into the barrel (e.g. PG userAccountStorage
 // calling getDatabasePG()) can find them before `instances` is assembled.
-let _earlyDatabase = null;
-let _earlyDatabasePG = null;
+let _earlyDatabase: any = null;
+let _earlyDatabasePG: any = null;
 
 /**
  * Initialize all storage subsystems eagerly.
@@ -88,7 +88,7 @@ let _earlyDatabasePG = null;
  *
  * @param [config] - @pryv/boiler config (fetched if omitted)
  */
-async function init (config) {
+async function init (config?: any) {
   if (instances || initializing) return;
   initializing = true;
   if (!config) config = await getConfig();

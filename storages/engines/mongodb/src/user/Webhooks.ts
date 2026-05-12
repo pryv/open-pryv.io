@@ -27,7 +27,7 @@ const indexes = [
 class Webhooks extends BaseStorage {
   defaultOptions: any;
 
-  constructor (database) {
+  constructor (database: any) {
     super(database);
 
     Object.assign(this.converters, {
@@ -41,7 +41,7 @@ class Webhooks extends BaseStorage {
     this.defaultOptions = {};
   }
 
-  getCollectionInfo (userOrUserId) {
+  getCollectionInfo (userOrUserId: any) {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     return {
       name: 'webhooks',
@@ -50,7 +50,7 @@ class Webhooks extends BaseStorage {
     };
   }
 
-  delete (userOrUserId, query, callback) {
+  delete (userOrUserId: any, query: any, callback: any) {
     const update = {
       $set: { deleted: timestamp.now() },
       $unset: {
@@ -75,13 +75,13 @@ class Webhooks extends BaseStorage {
   }
 
   /** Override base method to set deleted:null. */
-  insertOne (userOrUserId, webhook, callback) {
+  insertOne (userOrUserId: any, webhook: any, callback: any) {
     const webhookToCreate = structuredClone(webhook);
     if (webhookToCreate.deleted === undefined) webhookToCreate.deleted = null;
     this.database.insertOne(
       this.getCollectionInfo(userOrUserId),
       this.applyItemToDB(this.applyItemDefaults(webhookToCreate)),
-      function (err) {
+      function (err: any) {
         if (err) {
           return callback(err);
         }
@@ -92,8 +92,8 @@ class Webhooks extends BaseStorage {
   }
 
   /** Inserts an array of webhooks; each item must have a valid id and data already. For tests only. */
-  insertMany (userOrUserId, webhooks, callback) {
-    const webhooksToCreate = webhooks.map((w) => {
+  insertMany (userOrUserId: any, webhooks: any, callback: any) {
+    const webhooksToCreate = webhooks.map((w: any) => {
       if (w.deleted === undefined) return Object.assign({ deleted: null }, w);
       return w;
     });

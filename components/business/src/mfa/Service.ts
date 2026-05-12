@@ -31,7 +31,7 @@ class Service {
   /**
    * @param mfaConfig - the `services.mfa` config block
    */
-  constructor (mfaConfig) {
+  constructor (mfaConfig: any) {
     this.config = mfaConfig;
     this.logger = getLogger('mfa-service');
   }
@@ -39,18 +39,18 @@ class Service {
   /**
    * @param clientRequest - { headers, body, ... } — the MFA HTTP request context
    */
-  async challenge (_username, _profile, _clientRequest) {
+  async challenge (_username: any, _profile: any, _clientRequest: any) {
     throw new Error('override challenge() in a Service subclass');
   }
 
-  async verify (_username, _profile, _clientRequest) {
+  async verify (_username: any, _profile: any, _clientRequest: any) {
     throw new Error('override verify() in a Service subclass');
   }
 
   /**
    * Make a POST or GET request to an SMS provider endpoint.
    */
-  async _makeRequest (method, url, headers, body) {
+  async _makeRequest (method: any, url: any, headers: any, body: any) {
     try {
       const init: any = { method, headers: { ...headers } };
       if (method === 'POST') {
@@ -100,7 +100,7 @@ Service.replaceRecursively = function replaceRecursively (obj, key, value) {
   if (typeof obj === 'string') return Service.replaceAll(obj, key, value);
   if (Array.isArray(obj)) return obj.map(item => Service.replaceRecursively(item, key, value));
   if (typeof obj === 'object') {
-    const out = {};
+    const out: any = {};
     for (const k of Object.keys(obj)) {
       out[k] = Service.replaceRecursively(obj[k], key, value);
     }
