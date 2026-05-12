@@ -85,7 +85,7 @@ class Platform {
   /**
    * Get if value exists for this unique key
    */
-  async getUsersUniqueField (field, value) {
+  async getUsersUniqueField (field: any, value: any) {
     return await this.#db.getUsersUniqueField(field, value);
   }
 
@@ -93,8 +93,8 @@ class Platform {
    * Check uniqueness of operations against PlatformDB.
    * Used by repository.insertOne to gather all conflicts before throwing.
    */
-  async checkUpdateOperationUniqueness (username, operations) {
-    const uniquenessErrors = {};
+  async checkUpdateOperationUniqueness (username: any, operations: any) {
+    const uniquenessErrors: any = {};
     for (const op of operations) {
       if (op.action !== 'delete' && op.isUnique) {
         const value = await this.#db.getUsersUniqueField(op.key, op.value);
@@ -107,7 +107,7 @@ class Platform {
   /**
    * Update user fields in PlatformDB (unique + indexed).
    */
-  async updateUser (username, operations) {
+  async updateUser (username: any, operations: any) {
     const uniquenessErrors = await this.checkUpdateOperationUniqueness(username, operations);
     if (Object.keys(uniquenessErrors).length > 0) {
       throw (errors.itemAlreadyExists('user', uniquenessErrors));
@@ -118,7 +118,7 @@ class Platform {
   /**
    * Apply operations to PlatformDB.
    */
-  async #applyOperations (username, operations) {
+  async #applyOperations (username: any, operations: any) {
     for (const op of operations) {
       switch (op.action) {
         case 'create':
@@ -175,7 +175,7 @@ class Platform {
   /**
    * Fully delete a user from PlatformDB.
    */
-  async deleteUser (username, user) {
+  async deleteUser (username: any, user: any) {
     const operations: any[] = [];
     for (const field of accountStreams.uniqueFieldNames) {
       // Get value from user object if available, otherwise look it up in PlatformDB
@@ -227,7 +227,7 @@ class Platform {
    * `_refreshCoreUrlCache()` (called from this core after `registerSelf()`).
    *
    */
-  coreIdToUrl (coreId) {
+  coreIdToUrl (coreId: any) {
     let url;
     if (this.#coreUrlCache.has(coreId)) {
       url = this.#coreUrlCache.get(coreId);
@@ -303,7 +303,7 @@ class Platform {
    *
    */
   getPlatformConfigSnapshot () {
-    const snapshot = {
+    const snapshot: any = {
       'dns.domain': this.#config.get('dns:domain') || null,
       'integrity.algorithm': this.#config.get('integrity:algorithm') || null,
       'versioning.deletionMode': this.#config.get('versioning:deletionMode') || null,
@@ -324,14 +324,14 @@ class Platform {
   /**
    * Get which core hosts a user.
    */
-  async getUserCore (username) {
+  async getUserCore (username: any) {
     return await this.#db.getUserCore(username);
   }
 
   /**
    * Set which core hosts a user.
    */
-  async setUserCore (username, coreId) {
+  async setUserCore (username: any, coreId: any) {
     await this.#db.setUserCore(username, coreId);
   }
 
@@ -345,7 +345,7 @@ class Platform {
   /**
    * Get info for a specific core.
    */
-  async getCoreInfo (coreId) {
+  async getCoreInfo (coreId: any) {
     return await this.#db.getCoreInfo(coreId);
   }
 
@@ -362,11 +362,11 @@ class Platform {
    * Set a persistent DNS record. Runtime-managed entries like ACME challenges.
    * Static infrastructure records stay in YAML config; admin MUST NOT shadow them.
    */
-  async setDnsRecord (subdomain, records) {
+  async setDnsRecord (subdomain: any, records: any) {
     await this.#db.setDnsRecord(subdomain, records);
   }
 
-  async getDnsRecord (subdomain) {
+  async getDnsRecord (subdomain: any) {
     return await this.#db.getDnsRecord(subdomain);
   }
 
@@ -374,14 +374,14 @@ class Platform {
     return await this.#db.getAllDnsRecords();
   }
 
-  async deleteDnsRecord (subdomain) {
+  async deleteDnsRecord (subdomain: any) {
     await this.#db.deleteDnsRecord(subdomain);
   }
 
   /**
    * Update this core's availability in PlatformDB.
    */
-  async setAvailable (available) {
+  async setAvailable (available: any) {
     if (!this.#db) {
       throw new Error('Platform.setAvailable: PlatformDB is not initialised (init() was not awaited).');
     }
@@ -397,14 +397,14 @@ class Platform {
    * Single-core: returns self. Multi-core: least-users among available cores in the given hosting.
    * @param [hosting] - hosting key (null = any)
    */
-  async selectCoreForRegistration (hosting) {
+  async selectCoreForRegistration (hosting: any) {
     if (this.isSingleCore) return this.coreId;
 
     // Get all registered cores, filter by hosting + availability
     const allCores = await this.#db.getAllCoreInfos();
-    let candidates = allCores.filter(c => c.available !== false);
+    let candidates = allCores.filter((c: any) => c.available !== false);
     if (hosting != null) {
-      candidates = candidates.filter(c => c.hosting === hosting);
+      candidates = candidates.filter((c: any) => c.hosting === hosting);
     }
     if (candidates.length === 0) return this.coreId; // fallback to self
     if (candidates.length === 1) return candidates[0].id;
@@ -448,7 +448,7 @@ class Platform {
    *   aws-us-east-1 registrations land on the correct core even if
    *   another hosting has fewer users.
    */
-  async validateRegistration (username, invitationToken, uniqueFields, hosting) {
+  async validateRegistration (username: any, invitationToken: any, uniqueFields: any, hosting: any) {
     // 1. Check invitation token
     await this.#checkInvitationToken(invitationToken);
 
@@ -462,7 +462,7 @@ class Platform {
     const usersRepository = await getUsersRepository();
     if (await usersRepository.usernameExists(username)) {
       // Gather other eventual uniqueness conflicts for a complete error
-      const allConflicts = { username };
+      const allConflicts: any = { username };
       for (const [field, value] of Object.entries(uniqueFields)) {
         if (field === 'username') continue;
         const existingUsername = await this.#db.getUsersUniqueField(field, value);
@@ -474,7 +474,7 @@ class Platform {
     }
 
     // 4. Atomically reserve unique fields (except username, handled by usersIndex)
-    const conflicts = {};
+    const conflicts: any = {};
     for (const [field, value] of Object.entries(uniqueFields)) {
       if (field === 'username') continue;
       if (value == null) continue;
@@ -508,7 +508,7 @@ class Platform {
    * - Token exists and not consumed → valid
    * - Token missing or already consumed → invalid
    */
-  async #checkInvitationToken (invitationToken) {
+  async #checkInvitationToken (invitationToken: any) {
     const allTokens = await this.#db.getAllInvitationTokens();
 
     // No tokens in PlatformDB → check config fallback
@@ -538,7 +538,7 @@ class Platform {
    * Consume an invitation token (mark as used).
    * @param username - the user who consumed it
    */
-  async consumeInvitationToken (token, username) {
+  async consumeInvitationToken (token: any, username: any) {
     const info = await this.#db.getInvitationToken(token);
     if (info == null) return; // static config token or no tokens — nothing to consume
     info.consumedAt = Date.now();
@@ -549,7 +549,7 @@ class Platform {
   /**
    * Check if invitation token is valid (for /access/invitationtoken/check).
    */
-  async isInvitationTokenValid (token) {
+  async isInvitationTokenValid (token: any) {
     const allTokens = await this.#db.getAllInvitationTokens();
 
     // No tokens in PlatformDB → check config fallback
@@ -576,7 +576,7 @@ class Platform {
    * @param createdBy - admin username
    * @param [description]
    */
-  async generateInvitationTokens (count, createdBy, description) {
+  async generateInvitationTokens (count: any, createdBy: any, description: any) {
     const crypto = require('node:crypto');
     const created: any[] = [];
     for (let i = 0; i < count; i++) {
@@ -615,7 +615,7 @@ class Platform {
   /**
    * Check if username is reserved (starts with "pryv" or in reserved words list).
    */
-  #isUsernameReserved (username) {
+  #isUsernameReserved (username: any) {
     const lower = username.toLowerCase();
     if (/^pryv/.test(lower)) return true;
     return reservedWords.has(lower);
@@ -704,14 +704,14 @@ class Platform {
    *
    * @param value — JSON-encodable.
    */
-  async setObservabilityValue (key, value) {
+  async setObservabilityValue (key: any, value: any) {
     const serialised = SECRET_OBSERVABILITY_KEYS.has(key)
       ? await this.#encryptObservabilitySecret(key, value)
       : JSON.stringify(value);
     await this.#db.setObservabilityValue(key, serialised);
   }
 
-  async deleteObservabilityValue (key) {
+  async deleteObservabilityValue (key: any) {
     await this.#db.deleteObservabilityValue(key);
   }
 
@@ -728,7 +728,7 @@ class Platform {
     return require('os').hostname();
   }
 
-  #getAtRestKey (purpose) {
+  #getAtRestKey (purpose: any) {
     const adminKey = this.#config.get('auth:adminAccessKey');
     if (!adminKey) {
       throw new Error('observability: auth.adminAccessKey is required to derive at-rest key');
@@ -739,12 +739,12 @@ class Platform {
     );
   }
 
-  async #encryptObservabilitySecret (key, value) {
+  async #encryptObservabilitySecret (key: any, value: any) {
     const atRestKey = this.#getAtRestKey('observability-' + key);
     return AtRestEncryption.encrypt(Buffer.from(String(value), 'utf8'), atRestKey);
   }
 
-  async #decryptObservabilitySecret (key, stored) {
+  async #decryptObservabilitySecret (key: any, stored: any) {
     if (!stored) return '';
     try {
       const atRestKey = this.#getAtRestKey('observability-' + key);
@@ -762,16 +762,16 @@ const SECRET_OBSERVABILITY_KEYS = new Set(['newrelic-license-key']);
 // (matches serviceInfo.{register,api,access}). Centralizing here so naive
 // `url + 'users'` concatenation in clients/tests can't produce
 // `https://single.example.devusers`.
-function withTrailingSlash (url) {
+function withTrailingSlash (url: any) {
   if (url == null || url === '') return url;
   return url.endsWith('/') ? url : url + '/';
 }
 
-function parseJsonBoolean (raw) {
+function parseJsonBoolean (raw: any) {
   try { return JSON.parse(raw) === true; } catch { return false; }
 }
 
-function parseJsonString (raw) {
+function parseJsonString (raw: any) {
   try {
     const v = JSON.parse(raw);
     return typeof v === 'string' ? v : '';

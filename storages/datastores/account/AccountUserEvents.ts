@@ -29,10 +29,10 @@ const timestamp = require('unix-timestamp');
  *   (only leaf streams that represent actual fields, not parent containers)
  * @param getStorage - returns userAccountStorage (async)
  */
-function create (fieldStreamMap, getStorage) {
+function create (fieldStreamMap: any, getStorage: any) {
   return ds.createUserEvents({
 
-    async getOne (userId, eventId) {
+    async getOne (userId: any, eventId: any) {
       const storage = await getStorage();
       const fieldName = toFieldName(eventId);
       const streamConfig = fieldStreamMap.get(fieldName);
@@ -42,7 +42,7 @@ function create (fieldStreamMap, getStorage) {
       return fieldToEvent(fieldName, value, streamConfig);
     },
 
-    async get (userId, query, options) {
+    async get (userId: any, query: any, options: any) {
       const storage = await getStorage();
       const fields = await storage.getAccountFields(userId);
       let events: any[] = [];
@@ -56,16 +56,16 @@ function create (fieldStreamMap, getStorage) {
       return events;
     },
 
-    async getStreamed (userId, query, options) {
+    async getStreamed (userId: any, query: any, options: any) {
       const events = await this.get(userId, query, options);
       return Readable.from(events);
     },
 
-    async getDeletionsStreamed (userId, query, options) {
+    async getDeletionsStreamed (userId: any, query: any, options: any) {
       return Readable.from([]);
     },
 
-    async getHistory (userId, eventId) {
+    async getHistory (userId: any, eventId: any) {
       const storage = await getStorage();
       const fieldName = toFieldName(eventId);
       const streamConfig = fieldStreamMap.get(fieldName);
@@ -73,7 +73,7 @@ function create (fieldStreamMap, getStorage) {
       const history = await storage.getAccountFieldHistory(userId, fieldName);
       // Skip the first entry (current value) — history should only contain previous versions
       const previousVersions = history.slice(1);
-      return previousVersions.map((entry) => ({
+      return previousVersions.map((entry: any) => ({
         id: fieldName,
         headId: fieldName,
         streamIds: [streamConfig.id],
@@ -87,7 +87,7 @@ function create (fieldStreamMap, getStorage) {
       }));
     },
 
-    async create (userId, eventData) {
+    async create (userId: any, eventData: any) {
       const fieldName = eventIdFromStreamIds(eventData.streamIds, fieldStreamMap);
       if (!fieldName) {
         throw ds.errors.invalidRequestStructure('Event must belong to a known account stream');
@@ -105,7 +105,7 @@ function create (fieldStreamMap, getStorage) {
       return fieldToEvent(fieldName, eventData.content, streamConfig, time, createdBy);
     },
 
-    async update (userId, eventData) {
+    async update (userId: any, eventData: any) {
       const fieldName = toFieldName(eventData.id);
       const streamConfig = fieldStreamMap.get(fieldName);
       if (!streamConfig) return false;
@@ -119,7 +119,7 @@ function create (fieldStreamMap, getStorage) {
       return true;
     },
 
-    async delete (userId, eventId) {
+    async delete (userId: any, eventId: any) {
       // Account events represent current field values — deletion is blocked.
       // To clear a field, use update with content = null.
       throw ds.errors.unsupportedOperation(
@@ -134,7 +134,7 @@ function create (fieldStreamMap, getStorage) {
  * Extract the unprefixed field name from an event ID.
  * Handles both prefixed (':_system:language') and plain ('language') IDs.
  */
-function toFieldName (eventId) {
+function toFieldName (eventId: any) {
   const lastColon = eventId.lastIndexOf(':');
   return lastColon >= 0 ? eventId.substring(lastColon + 1) : eventId;
 }
@@ -142,7 +142,7 @@ function toFieldName (eventId) {
 /**
  * Convert a stored field to an event object.
  */
-function fieldToEvent (fieldName, value, streamConfig, time?, createdBy?) {
+function fieldToEvent (fieldName: any, value: any, streamConfig: any, time?: any, createdBy?: any) {
   const now = time || timestamp.now();
   return {
     id: fieldName,
@@ -161,7 +161,7 @@ function fieldToEvent (fieldName, value, streamConfig, time?, createdBy?) {
  * Extract the field name from an event's streamIds.
  * Matches against the fieldStreamMap to find the corresponding field.
  */
-function eventIdFromStreamIds (streamIds, fieldMap) {
+function eventIdFromStreamIds (streamIds: any, fieldMap: any) {
   if (!streamIds || streamIds.length === 0) return null;
   for (const sid of streamIds) {
     const lastColon = sid.lastIndexOf(':');
@@ -180,7 +180,7 @@ function eventIdFromStreamIds (streamIds, fieldMap) {
  *   Within a group: AND (all conditions must match)
  *   Between groups: OR (any group matching is enough)
  */
-function filterByQuery (events, query) {
+function filterByQuery (events: any, query: any) {
   if (!query) return events;
 
   // Account events are never trashed — return empty for 'trashed' state
@@ -189,12 +189,12 @@ function filterByQuery (events, query) {
   }
 
   if (query.streams && query.streams.length > 0) {
-    events = events.filter(e => matchesStreamQuery(e.streamIds, query.streams));
+    events = events.filter((e: any) => matchesStreamQuery(e.streamIds, query.streams));
   }
 
   if (query.types && query.types.length > 0) {
     const typeSet = new Set(query.types);
-    events = events.filter(e => typeSet.has(e.type));
+    events = events.filter((e: any) => typeSet.has(e.type));
   }
 
   // Account events are never "running" period events (no duration concept)
@@ -203,14 +203,14 @@ function filterByQuery (events, query) {
   }
 
   if (query.fromTime != null) {
-    events = events.filter(e => e.time >= query.fromTime);
+    events = events.filter((e: any) => e.time >= query.fromTime);
   }
   if (query.toTime != null) {
-    events = events.filter(e => e.time < query.toTime);
+    events = events.filter((e: any) => e.time < query.toTime);
   }
 
   if (query.modifiedSince != null) {
-    events = events.filter(e => e.modified >= query.modifiedSince);
+    events = events.filter((e: any) => e.modified >= query.modifiedSince);
   }
 
   return events;
@@ -220,7 +220,7 @@ function filterByQuery (events, query) {
  * Check if an event's streamIds match the normalized stream query.
  * @param streamGroups - normalized stream query groups
  */
-function matchesStreamQuery (eventStreamIds, streamGroups) {
+function matchesStreamQuery (eventStreamIds: any, streamGroups: any) {
   const sids = new Set(eventStreamIds);
   // OR between groups
   for (const group of streamGroups) {
@@ -233,17 +233,17 @@ function matchesStreamQuery (eventStreamIds, streamGroups) {
  * Check if streamIds match all conditions in a group (AND).
  * A group is an array of condition objects: { any: [...] } or { not: [...] }
  */
-function matchesGroup (sids, group) {
+function matchesGroup (sids: any, group: any) {
   // Handle both normalized format (array of conditions) and simple format (single object)
   const conditions = Array.isArray(group) ? group : [group];
   for (const cond of conditions) {
     if (cond.any) {
       // At least one of 'any' must be in the event's streamIds
-      if (!cond.any.some(sid => sids.has(sid))) return false;
+      if (!cond.any.some((sid: any) => sids.has(sid))) return false;
     }
     if (cond.not) {
       // None of 'not' must be in the event's streamIds
-      if (cond.not.some(sid => sids.has(sid))) return false;
+      if (cond.not.some((sid: any) => sids.has(sid))) return false;
     }
   }
   return true;
@@ -252,12 +252,12 @@ function matchesGroup (sids, group) {
 /**
  * Apply skip/limit/sort options.
  */
-function applyOptions (events, options) {
+function applyOptions (events: any, options: any) {
   if (!options) return events;
   if (options.sortAscending === true) {
-    events.sort((a, b) => a.time - b.time);
+    events.sort((a: any, b: any) => a.time - b.time);
   } else if (options.sortAscending === false) {
-    events.sort((a, b) => b.time - a.time);
+    events.sort((a: any, b: any) => b.time - a.time);
   }
   if (options.skip) {
     events = events.slice(options.skip);

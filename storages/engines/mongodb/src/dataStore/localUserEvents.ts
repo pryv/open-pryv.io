@@ -30,7 +30,7 @@ const userEvents = ds.createUserEvents({
   },
   setIntegrityOnEvent: null,
 
-  init (eventsCollection, eventsFileStorage, setIntegrityOnEventFn, systemStreams) {
+  init (eventsCollection: any, eventsFileStorage: any, setIntegrityOnEventFn: any, systemStreams: any) {
     this.eventsCollection = eventsCollection;
     this.eventsFileStorage = eventsFileStorage;
     this.setIntegrityOnEvent = setIntegrityOnEventFn;
@@ -46,21 +46,21 @@ const userEvents = ds.createUserEvents({
     this.keepHistory = this.settings.versioning?.forceKeepHistory || false;
   },
 
-  async getOne (userId, eventId) {
+  async getOne (userId: any, eventId: any) {
     const cursor = this._getCursor(userId, { _id: eventId }, {});
-    const res = (await cursor.toArray()).map((value) => cleanResult({ value }));
+    const res = (await cursor.toArray()).map((value: any) => cleanResult({ value }));
     return res[0];
   },
 
-  async get (userId, query, options) {
+  async get (userId: any, query: any, options: any) {
     const localQuery = localStoreEventQueries.localStorePrepareQuery(query);
     const localOptions = localStoreEventQueries.localStorePrepareOptions(options);
     const cursor = this._getCursor(userId, getMongoQuery(localQuery), localOptions);
-    const res = (await cursor.toArray()).map((value) => cleanResult({ value }));
+    const res = (await cursor.toArray()).map((value: any) => cleanResult({ value }));
     return res;
   },
 
-  async getStreamed (userId, query, options) {
+  async getStreamed (userId: any, query: any, options: any) {
     const localQuery = localStoreEventQueries.localStorePrepareQuery(query);
     const localOptions = localStoreEventQueries.localStorePrepareOptions(options);
     const cursor = this._getCursor(userId, getMongoQuery(localQuery), localOptions);
@@ -70,7 +70,7 @@ const userEvents = ds.createUserEvents({
   /**
    * @param [options]
    */
-  async getDeletionsStreamed (userId, query, options) {
+  async getDeletionsStreamed (userId: any, query: any, options: any) {
     const mongoQuery = { deleted: { $gt: query.deletedSince } };
     const mongoOptions: any = { sort: { deleted: options?.sortAscending ? 1 : -1 } };
     if (options?.limit != null) mongoOptions.limit = options.limit;
@@ -79,14 +79,14 @@ const userEvents = ds.createUserEvents({
     return readableStreamFromEventCursor(cursor);
   },
 
-  async getHistory (userId, eventId) {
+  async getHistory (userId: any, eventId: any) {
     const options = { sort: { modified: 1 } };
     const cursor = this._getCursor(userId, { headId: eventId }, options);
-    const res = (await cursor.toArray()).map((value) => cleanHistoryResult({ value }));
+    const res = (await cursor.toArray()).map((value: any) => cleanHistoryResult({ value }));
     return res;
   },
 
-  async create (userId, event, transaction) {
+  async create (userId: any, event: any, transaction: any) {
     try {
       const options = { transactionSession: transaction?.transactionSession };
       const toInsert = structuredClone(event);
@@ -104,7 +104,7 @@ const userEvents = ds.createUserEvents({
     }
   },
 
-  async update (userId, eventData, transaction) {
+  async update (userId: any, eventData: any, transaction: any) {
     const update = structuredClone(eventData);
     update._id = update.id;
     update.userId = userId;
@@ -120,7 +120,7 @@ const userEvents = ds.createUserEvents({
     }
   },
 
-  async delete (userId, originalEvent) {
+  async delete (userId: any, originalEvent: any) {
     const deletedEventContent = structuredClone(originalEvent);
     await this._generateVersionIfNeeded(userId, originalEvent.id, originalEvent);
     // if attachments are to be deleted
@@ -147,13 +147,13 @@ const userEvents = ds.createUserEvents({
     await this.eventsCollection.replaceOne({ userId, _id: deletedEventContent._id }, deletedEventContent);
   },
 
-  async _deleteHistory (userId, eventId) {
+  async _deleteHistory (userId: any, eventId: any) {
     const options = { sort: { modified: 1 } };
     const query = { userId, headId: eventId };
     return await this.eventsCollection.deleteMany(query, options);
   },
 
-  async _generateVersionIfNeeded (userId, eventId, originalEvent: any = null, transaction: any = null) {
+  async _generateVersionIfNeeded (userId: any, eventId: any, originalEvent: any = null, transaction: any = null) {
     if (!this.keepHistory) return;
     const query = { userId, _id: eventId };
     const options = { transactionSession: transaction?.transactionSession };
@@ -169,7 +169,7 @@ const userEvents = ds.createUserEvents({
     await this.eventsCollection.insertOne(versionItem);
   },
 
-  _getCursor (userId, query, options) {
+  _getCursor (userId: any, query: any, options: any) {
     query.userId = userId;
     const queryOptions = { projection: options.projection };
     let cursor = this.eventsCollection
@@ -184,19 +184,19 @@ const userEvents = ds.createUserEvents({
     return cursor;
   },
 
-  async _deleteUser (userId) {
+  async _deleteUser (userId: any) {
     const query = { userId };
     const res = await this.eventsCollection.deleteMany(query, {});
     await this.eventsFileStorage.removeAllForUser(userId);
     return res;
   },
 
-  async _getStorageInfos (userId) {
+  async _getStorageInfos (userId: any) {
     const count = await this.eventsCollection.countDocuments({ userId });
     return { count };
   },
 
-  async _getFilesStorageInfos (userId) {
+  async _getFilesStorageInfos (userId: any) {
     const sizeKb = await this.eventsFileStorage.getFileStorageInfos(userId);
     return { sizeKb };
   },
@@ -204,7 +204,7 @@ const userEvents = ds.createUserEvents({
   /**
    * Local stores only - as long as SystemStreams are embedded
    */
-  async removeAllNonAccountEventsForUser (userId) {
+  async removeAllNonAccountEventsForUser (userId: any) {
     const query = { userId, streamIds: { $nin: this.accountStreamIds } };
     const res = await this.eventsCollection.deleteMany(query, {});
     await this.eventsFileStorage.removeAllForUser(userId);
@@ -219,7 +219,7 @@ export { userEvents };
 /**
  * change _id to id, remove userId, from result
  */
-function cleanResult (result) {
+function cleanResult (result: any) {
   if (result?.value == null) { return result; }
   const value = result.value;
   if (value != null) {
@@ -233,7 +233,7 @@ function cleanResult (result) {
 /**
  * change remove _id to set id to headId, from result
  */
-function cleanHistoryResult (result) {
+function cleanHistoryResult (result: any) {
   if (result?.value == null) { return result; }
   const value = result.value;
   if (value != null) {
@@ -245,21 +245,21 @@ function cleanHistoryResult (result) {
   return value;
 }
 
-const converters = {
-  equal: (content) => {
+const converters: any = {
+  equal: (content: any) => {
     const realfield = content.field === 'id' ? '_id' : content.field;
     return { [realfield]: { $eq: content.value } };
   },
-  greater: (content) => {
+  greater: (content: any) => {
     return { [content.field]: { $gt: content.value } };
   },
-  greaterOrEqual: (content) => {
+  greaterOrEqual: (content: any) => {
     return { [content.field]: { $gte: content.value } };
   },
-  lowerOrEqual: (content) => {
+  lowerOrEqual: (content: any) => {
     return { [content.field]: { $lte: content.value } };
   },
-  greaterOrEqualOrNull: (content) => {
+  greaterOrEqualOrNull: (content: any) => {
     return {
       $or: [
         { [content.field]: { $gte: content.value } },
@@ -267,11 +267,11 @@ const converters = {
       ]
     };
   },
-  typesList: (list) => {
+  typesList: (list: any) => {
     if (list.length === 0) { return null; }
     return { type: { $in: list.map(getTypeQueryValue) } };
   },
-  streamsQuery: (content) => {
+  streamsQuery: (content: any) => {
     return toMongoDBQuery(content);
   }
 };
@@ -279,7 +279,7 @@ const converters = {
 /**
  * Transform the given events query to the MongoDB format.
  */
-function getMongoQuery (query) {
+function getMongoQuery (query: any) {
   const mongoQuery: any = { $and: [{ deleted: null, headId: null }] };
   for (const item of query) {
     const newCondition = converters[item.type](item.content);
@@ -295,7 +295,7 @@ function getMongoQuery (query) {
  * Returns the query value to use for the given type, handling possible wildcards.
  *
  */
-function getTypeQueryValue (requestedType) {
+function getTypeQueryValue (requestedType: any) {
   const wildcardIndex = requestedType.indexOf('/*');
   return wildcardIndex > 0
     ? new RegExp('^' + requestedType.substr(0, wildcardIndex + 1))
@@ -305,7 +305,7 @@ function getTypeQueryValue (requestedType) {
 /**
  * Get a readable stream from a cursor
  */
-function readableStreamFromEventCursor (cursor) {
+function readableStreamFromEventCursor (cursor: any) {
   // streaming with backpressure - highWaterMark has really some effect "4000" seems to be an optimnal value
   const readableUnderPressure = new Readable({
     objectMode: true,

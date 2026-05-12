@@ -25,7 +25,7 @@ const ErrorIds = require('errors').ErrorIds;
 const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users/index.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
 
-export default async function (api) {
+export default async function (api: any) {
   const config = await getConfig();
   const authSettings = config.get('auth');
   const servicesSettings = config.get('services');
@@ -45,7 +45,7 @@ export default async function (api) {
     commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.get.params),
     addUserBusinessToContext,
-    async function (context, params, result, next) {
+    async function (context: any, params: any, result: any, next: any) {
       try {
         result.account = context.userBusiness.getLegacyAccount();
         next();
@@ -72,9 +72,9 @@ export default async function (api) {
    * Validate if given parameters are allowed for the edit
    *
    */
-  function validateThatAllFieldsAreEditable (context, params, result, next) {
+  function validateThatAllFieldsAreEditable (context: any, params: any, result: any, next: any) {
     const accountMap = accountStreams.accountMap;
-    Object.keys(params.update).forEach((streamId) => {
+    Object.keys(params.update).forEach((streamId: any) => {
       const streamIdWithPrefix = accountStreams.toStreamId(streamId);
       if (!accountMap[streamIdWithPrefix]?.isEditable) {
         // if user tries to add new streamId from non editable streamsIds
@@ -96,7 +96,7 @@ export default async function (api) {
     setPassword
   );
 
-  async function verifyOldPassword (context, params, result, next) {
+  async function verifyOldPassword (context: any, params: any, result: any, next: any) {
     try {
       const isValid = await usersRepository.checkUserPassword(context.user.id, params.oldPassword);
       if (!isValid) {
@@ -109,7 +109,7 @@ export default async function (api) {
     }
   }
 
-  async function enforcePasswordRules (context, params, result, next) {
+  async function enforcePasswordRules (context: any, params: any, result: any, next: any) {
     try {
       await passwordRules.checkCurrentPasswordAge(context.user.id);
       await passwordRules.checkNewPassword(context.user.id, params.newPassword);
@@ -131,12 +131,12 @@ export default async function (api) {
     setAuditAccessId(AuditAccessIds.PASSWORD_RESET_REQUEST)
   );
 
-  function generatePasswordResetRequest (context, params, result, next) {
+  function generatePasswordResetRequest (context: any, params: any, result: any, next: any) {
     const username = context.user.username;
     if (username == null) {
       return next(new Error('AF: username is not empty.'));
     }
-    passwordResetRequestsStorage.generate(username, function (err, token) {
+    passwordResetRequestsStorage.generate(username, function (err: any, token: any) {
       if (err) {
         return next(errors.unexpectedError(err));
       }
@@ -145,7 +145,7 @@ export default async function (api) {
     });
   }
 
-  async function addUserBusinessToContext (context, params, result, next) {
+  async function addUserBusinessToContext (context: any, params: any, result: any, next: any) {
     try {
       // get user details
       const usersRepository = await getUsersRepository();
@@ -157,7 +157,7 @@ export default async function (api) {
     next();
   }
 
-  async function setPassword (context, params, result, next) {
+  async function setPassword (context: any, params: any, result: any, next: any) {
     try {
       const usersRepository = await getUsersRepository();
       await usersRepository.setUserPassword(context.userBusiness.id, params.newPassword, 'system');
@@ -168,7 +168,7 @@ export default async function (api) {
     next();
   }
 
-  function sendPasswordResetMail (context, params, result, next) {
+  function sendPasswordResetMail (context: any, params: any, result: any, next: any) {
     // Skip this step if reset mail is deactivated
     const isMailActivated = emailSettings.enabled;
     if (isMailActivated === false ||
@@ -201,12 +201,12 @@ export default async function (api) {
     setAuditAccessId(AuditAccessIds.PASSWORD_RESET_TOKEN)
   );
 
-  function checkResetToken (context, params, result, next) {
+  function checkResetToken (context: any, params: any, result: any, next: any) {
     const username = context.user.username;
     if (username == null) {
       return next(new Error('AF: username is not empty.'));
     }
-    passwordResetRequestsStorage.get(params.resetToken, username, function (err, reqData) {
+    passwordResetRequestsStorage.get(params.resetToken, username, function (err: any, reqData: any) {
       if (err) {
         return next(errors.unexpectedError(err));
       }
@@ -218,7 +218,7 @@ export default async function (api) {
     });
   }
 
-  async function updateDataOnPlatform (context, params, result, next) {
+  async function updateDataOnPlatform (context: any, params: any, result: any, next: any) {
     try {
       const accountMap = accountStreams.accountMap;
       const operations: any[] = [];
@@ -241,7 +241,7 @@ export default async function (api) {
     next();
   }
 
-  async function updateAccount (context, params, result, next) {
+  async function updateAccount (context: any, params: any, result: any, next: any) {
     try {
       const accessId = context.access?.id
         ? context.access.id
@@ -254,17 +254,17 @@ export default async function (api) {
     next();
   }
 
-  async function destroyPasswordResetToken (context, params, result, next) {
+  async function destroyPasswordResetToken (context: any, params: any, result: any, next: any) {
     const id = context.passwordResetRequest._id;
-    await fromCallback((cb) => passwordResetRequestsStorage.destroy(id, context.user.username, cb));
+    await fromCallback((cb: any) => passwordResetRequestsStorage.destroy(id, context.user.username, cb));
     next();
   }
 
   /**
    * Build response body for the account update
    */
-  async function buildResultData (context, params, result, next) {
-    Object.keys(params.update).forEach((key) => {
+  async function buildResultData (context: any, params: any, result: any, next: any) {
+    Object.keys(params.update).forEach((key: any) => {
       context.user[key] = params.update[key];
     });
     result.account = context.userBusiness.getLegacyAccount();

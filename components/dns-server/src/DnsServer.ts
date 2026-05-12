@@ -42,13 +42,13 @@ class DnsServer {
   #config;
   #platform;
   #logger;
-  #server;
+  #server: any;
   #domain;
   #ttl;
   #rootRecords;
-  #staticEntries;       // working map: config entries + runtime entries
+  #staticEntries: any;       // working map: config entries + runtime entries
   #configKeys;          // Set of subdomain keys that came from YAML config (immutable)
-  #platformRefreshTimer;
+  #platformRefreshTimer: any;
   #platformRefreshIntervalMs;
 
   /**
@@ -57,7 +57,7 @@ class DnsServer {
    * @param opts.logger - logger with .info/.warn/.error
    * @param [opts.platformRefreshIntervalMs] - override refresh interval (tests)
    */
-  constructor ({ config, platform, logger, platformRefreshIntervalMs }) {
+  constructor ({ config, platform, logger, platformRefreshIntervalMs }: any) {
     this.#config = config;
     this.#platform = platform;
     this.#logger = logger;
@@ -77,19 +77,19 @@ class DnsServer {
    * @param opts.ip - bind address (e.g. '0.0.0.0')
    * @param opts.ip6 - IPv6 bind address (null = disabled)
    */
-  async start ({ port, ip, ip6 }) {
+  async start ({ port, ip, ip6 }: any) {
     this.#server = dns2.createServer({
       udp: true,
-      handle: (request, send, rinfo) => {
+      handle: (request: any, send: any, rinfo: any) => {
         this.#handleRequest(request, send, rinfo);
       }
     });
 
-    this.#server.on('requestError', (err) => {
+    this.#server.on('requestError', (err: any) => {
       this.#logger.warn('DNS request parse error: ' + err.message);
     });
 
-    this.#server.on('error', (err) => {
+    this.#server.on('error', (err: any) => {
       this.#logger.error('DNS server error: ' + err.message);
     });
 
@@ -103,7 +103,7 @@ class DnsServer {
     // If IPv6 is configured, start a second UDP6 server
     if (ip6) {
       this.#server._udp6 = dns2.createUDPServer({ type: 'udp6' });
-      this.#server._udp6.on('request', (request, send, rinfo) => {
+      this.#server._udp6.on('request', (request: any, send: any, rinfo: any) => {
         this.#handleRequest(request, send, rinfo);
       });
       await this.#server._udp6.listen(port, ip6);
@@ -194,7 +194,7 @@ class DnsServer {
    * @param subdomain - e.g. '_acme-challenge'
    * @param records - e.g. { txt: ['validation-token'] } or { cname: 'target.example.com' }
    */
-  async updateStaticEntry (subdomain, records) {
+  async updateStaticEntry (subdomain: any, records: any) {
     if (this.#configKeys.has(subdomain)) {
       const msg = `DNS runtime update rejected: '${subdomain}' is a config-static entry and cannot be overwritten at runtime`;
       this.#logger.warn(msg);
@@ -210,7 +210,7 @@ class DnsServer {
   /**
    * Delete a runtime DNS entry. No-op for config-sourced static entries.
    */
-  async deleteStaticEntry (subdomain) {
+  async deleteStaticEntry (subdomain: any) {
     if (this.#configKeys.has(subdomain)) {
       const msg = `DNS runtime delete rejected: '${subdomain}' is a config-static entry`;
       this.#logger.warn(msg);
@@ -226,7 +226,7 @@ class DnsServer {
   /**
    * Handle an incoming DNS request.
    */
-  async #handleRequest (request, send, rinfo) {
+  async #handleRequest (request: any, send: any, rinfo: any) {
     const response = Packet.createResponseFromRequest(request);
     const question = request.questions[0];
     if (!question) {
@@ -280,7 +280,7 @@ class DnsServer {
   /**
    * Answer root domain queries with configured records.
    */
-  #answerRoot (response, qname, qtype) {
+  #answerRoot (response: any, qname: any, qtype: any) {
     const root = this.#rootRecords;
     const ttl = this.#ttl;
 
@@ -324,7 +324,7 @@ class DnsServer {
   /**
    * Answer lsc.{domain} — return all core IPs for rqlite cluster discovery.
    */
-  async #answerClusterDiscovery (response, qname, qtype) {
+  async #answerClusterDiscovery (response: any, qname: any, qtype: any) {
     const cores = await this.#platform.getAllCoreInfos();
     const ttl = this.#ttl;
 
@@ -341,7 +341,7 @@ class DnsServer {
   /**
    * Answer a static subdomain entry.
    */
-  #answerStatic (response, qname, qtype, entry) {
+  #answerStatic (response: any, qname: any, qtype: any, entry: any) {
     const ttl = this.#ttl;
 
     if (entry.cname && (qtype === Packet.TYPE.CNAME || qtype === Packet.TYPE.A || qtype === Packet.TYPE.ANY)) {
@@ -373,7 +373,7 @@ class DnsServer {
   /**
    * Answer {username}.{domain} — look up user's core, return its IP or CNAME.
    */
-  async #answerUsername (response, qname, qtype, username) {
+  async #answerUsername (response: any, qname: any, qtype: any, username: any) {
     const coreId = await this.#platform.getUserCore(username);
     if (coreId == null) {
       this.#setNxdomain(response);
@@ -399,7 +399,7 @@ class DnsServer {
    * — and used for inter-core HTTP routing in multi-core — is unreachable
    * via the embedded DNS unless the operator pre-populates `dns.staticEntries`.
    */
-  async #tryAnswerCoreInfo (response, qname, qtype, prefix) {
+  async #tryAnswerCoreInfo (response: any, qname: any, qtype: any, prefix: any) {
     const coreInfo = await this.#platform.getCoreInfo(prefix);
     if (coreInfo == null) return false;
     this.#emitCoreInfoRecords(response, qname, qtype, coreInfo);
@@ -409,7 +409,7 @@ class DnsServer {
   /**
    * Emit A / AAAA / CNAME from a coreInfo row.
    */
-  #emitCoreInfoRecords (response, qname, qtype, coreInfo) {
+  #emitCoreInfoRecords (response: any, qname: any, qtype: any, coreInfo: any) {
     const ttl = this.#ttl;
 
     if (coreInfo.ip && (qtype === Packet.TYPE.A || qtype === Packet.TYPE.ANY)) {
@@ -427,7 +427,7 @@ class DnsServer {
   /**
    * Set NXDOMAIN (rcode 3) on response.
    */
-  #setNxdomain (response) {
+  #setNxdomain (response: any) {
     response.header.rcode = 3; // NXDOMAIN
   }
 }
@@ -435,7 +435,7 @@ class DnsServer {
 /**
  * Factory function.
  */
-function createDnsServer ({ config, platform, logger, platformRefreshIntervalMs }) {
+function createDnsServer ({ config, platform, logger, platformRefreshIntervalMs }: any) {
   return new DnsServer({ config, platform, logger, platformRefreshIntervalMs });
 }
 

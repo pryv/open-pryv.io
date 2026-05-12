@@ -24,7 +24,7 @@ const MFA_PROFILE_ID = 'private';
  * Auth API methods implementations.
  *
  */
-export default async function (api) {
+export default async function (api: any) {
   const usersRepository = await getUsersRepository();
   const storageLayer = await getStorageLayer();
   const userAccessesStorage = storageLayer.accesses;
@@ -48,7 +48,7 @@ export default async function (api) {
     setAdditionalInfo,
     mfaCheckIfActive);
 
-  function applyPrerequisitesForLogin (context, params, result, next) {
+  function applyPrerequisitesForLogin (context: any, params: any, result: any, next: any) {
     const fixedUsername = params.username.toLowerCase();
     if (context.user.username !== fixedUsername) {
       return next(errors.invalidOperation('The username in the path does not match that of ' +
@@ -57,7 +57,7 @@ export default async function (api) {
     next();
   }
 
-  async function checkPassword (context, params, result, next) {
+  async function checkPassword (context: any, params: any, result: any, next: any) {
     try {
       const isValid = await usersRepository.checkUserPassword(context.user.id, params.password);
       if (!isValid) {
@@ -78,18 +78,18 @@ export default async function (api) {
     }
   }
 
-  function openSession (context, params, result, next) {
+  function openSession (context: any, params: any, result: any, next: any) {
     context.sessionData = {
       username: context.user.username,
       appId: params.appId
     };
-    sessionsStorage.getMatching(context.sessionData, function (err, sessionId) {
+    sessionsStorage.getMatching(context.sessionData, function (err: any, sessionId: any) {
       if (err) { return next(errors.unexpectedError(err)); }
       if (sessionId) {
         result.token = sessionId;
         next();
       } else {
-        sessionsStorage.generate(context.sessionData, null, function (err, sessionId) {
+        sessionsStorage.generate(context.sessionData, null, function (err: any, sessionId: any) {
           if (err) { return next(errors.unexpectedError(err)); }
           result.token = sessionId;
           next();
@@ -98,22 +98,22 @@ export default async function (api) {
     });
   }
 
-  function updateOrCreatePersonalAccess (context, params, result, next) {
+  function updateOrCreatePersonalAccess (context: any, params: any, result: any, next: any) {
     context.accessQuery = { name: params.appId, type: 'personal' };
-    findAccess(context, (err, access) => {
+    findAccess(context, (err: any, access: any) => {
       if (err) { return next(errors.unexpectedError(err)); }
-      const accessData = { token: result.token };
+      const accessData: any = { token: result.token };
       if (access != null) {
         // Access is already existing, updating it with new token (as we have updated the sessions with it earlier).
         updatePersonalAccess(accessData, context, next);
       } else {
         // Access not found, creating it
-        createAccess(accessData, context, (err) => {
+        createAccess(accessData, context, (err: any) => {
           if (err != null) {
             // Concurrency issue, the access is already created
             // by a simultaneous login (happened between a & b), retrieving and updating its modifiedTime, while keeping the same previous token
             if (err.isDuplicate) {
-              findAccess(context, (err, access) => {
+              findAccess(context, (err: any, access: any) => {
                 if (err || access == null) { return next(errors.unexpectedError(err)); }
                 result.token = access.token;
                 accessData.token = access.token;
@@ -130,30 +130,30 @@ export default async function (api) {
       }
     });
 
-    function findAccess (context, callback) {
+    function findAccess (context: any, callback: any) {
       userAccessesStorage.findOne(context.user, context.accessQuery, null, callback);
     }
 
-    function createAccess (access, context, callback) {
+    function createAccess (access: any, context: any, callback: any) {
       Object.assign(access, context.accessQuery);
       context.initTrackingProperties(access, UserRepositoryOptions.SYSTEM_USER_ACCESS_ID);
       userAccessesStorage.insertOne(context.user, access, callback);
     }
 
-    function updatePersonalAccess (access, context, callback) {
+    function updatePersonalAccess (access: any, context: any, callback: any) {
       context.updateTrackingProperties(access, UserRepositoryOptions.SYSTEM_USER_ACCESS_ID);
       userAccessesStorage.updateOne(context.user, context.accessQuery, access, callback);
     }
   }
 
-  function addApiEndpoint (context, params, result, next) {
+  function addApiEndpoint (context: any, params: any, result: any, next: any) {
     if (result.token) {
       result.apiEndpoint = ApiEndpoint.build(context.user.username, result.token);
     }
     next();
   }
 
-  async function setAdditionalInfo (context, params, result, next) {
+  async function setAdditionalInfo (context: any, params: any, result: any, next: any) {
     // get user details
     const usersRepository = await getUsersRepository();
     const userBusiness = await usersRepository.getUserByUsername(context.user.username);
@@ -180,12 +180,12 @@ export default async function (api) {
    * When MFA is disabled server-wide OR the user has no `profile.mfa`, this step
    * is a no-op and the original login response is returned unchanged.
    */
-  async function mfaCheckIfActive (context, params, result, next) {
+  async function mfaCheckIfActive (context: any, params: any, result: any, next: any) {
     const mfaCfg = getMfaConfig();
     const mfaService = getMFAService(mfaCfg);
     if (mfaService == null) return next(); // MFA disabled server-wide
     try {
-      const profileSet = await fromCallback(cb =>
+      const profileSet: any = await fromCallback((cb: any) =>
         userProfileStorage.findOne(context.user, { id: MFA_PROFILE_ID }, null, cb));
       const storedMfa = profileSet && profileSet.data && profileSet.data.mfa;
       if (!storedMfa || !storedMfa.content || Object.keys(storedMfa.content).length === 0) {
@@ -221,8 +221,8 @@ export default async function (api) {
     commonFns.getParamsValidation(methodsSchema.logout.params),
     destroySession);
 
-  function destroySession (context, params, result, next) {
-    sessionsStorage.destroy(context.accessToken, function (err) {
+  function destroySession (context: any, params: any, result: any, next: any) {
+    sessionsStorage.destroy(context.accessToken, function (err: any) {
       next(err ? errors.unexpectedError(err) : null);
     });
   }

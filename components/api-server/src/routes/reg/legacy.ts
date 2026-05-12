@@ -13,12 +13,12 @@ const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
 
-export default function (expressApp, app) {
+export default function (expressApp: any, app: any) {
   const adminAccessKey = app.config.get('auth:adminAccessKey');
   const domain = app.config.get('dns:domain');
 
   // Lazy-loaded dependencies (avoid circular requires at module load)
-  let _usersRepository;
+  let _usersRepository: any;
   async function getUsersRepository () {
     if (!_usersRepository) {
       const { getUsersRepository: getRepo } = require('business/src/users/index.ts');
@@ -32,7 +32,7 @@ export default function (expressApp, app) {
   }
 
   // --- Admin auth middleware (same as system routes) ---
-  function checkAdmin (req, res, next) {
+  function checkAdmin (req: any, res: any, next: any) {
     const secret = req.headers.authorization;
     if (secret == null || secret !== adminAccessKey) {
       return next(errors.unknownResource());
@@ -48,7 +48,7 @@ export default function (expressApp, app) {
    * GET /:email/username — get username from email.
    * Returns { username } or 404.
    */
-  expressApp.get('/reg/:email/username', async (req, res, next) => {
+  expressApp.get('/reg/:email/username', async (req: any, res: any, next: any) => {
     try {
       const email = req.params.email;
       const platformDB = getPlatformDB();
@@ -67,7 +67,7 @@ export default function (expressApp, app) {
   /**
    * GET /:email/uid — deprecated alias, returns { uid }.
    */
-  expressApp.get('/reg/:email/uid', async (req, res, next) => {
+  expressApp.get('/reg/:email/uid', async (req: any, res: any, next: any) => {
     try {
       const email = req.params.email;
       const platformDB = getPlatformDB();
@@ -90,7 +90,7 @@ export default function (expressApp, app) {
   /**
    * GET /:uid/server — redirect to the core hosting this user.
    */
-  expressApp.get('/reg/:uid/server', async (req, res, next) => {
+  expressApp.get('/reg/:uid/server', async (req: any, res: any, next: any) => {
     try {
       const username = req.params.uid;
       // Prefer PlatformDB (rqlite, replicated) over per-core usersLocalIndex —
@@ -113,7 +113,7 @@ export default function (expressApp, app) {
   /**
    * POST /:uid/server — JSON response with server and alias.
    */
-  expressApp.post('/reg/:uid/server', async (req, res, next) => {
+  expressApp.post('/reg/:uid/server', async (req: any, res: any, next: any) => {
     try {
       const username = req.params.uid;
       const coreUrl = await getCoreUrlForUser(username);
@@ -136,7 +136,7 @@ export default function (expressApp, app) {
   /**
    * GET /admin/users/:username — get user details (system role).
    */
-  expressApp.get('/reg/admin/users/:username', checkAdmin, async (req, res, next) => {
+  expressApp.get('/reg/admin/users/:username', checkAdmin, async (req: any, res: any, next: any) => {
     try {
       const username = req.params.username;
       const usersRepo = await getUsersRepository();
@@ -147,7 +147,7 @@ export default function (expressApp, app) {
       }
       const platformDB = getPlatformDB();
       const systemStreams = require('business/src/system-streams/index.ts');
-      const userInfo = { username };
+      const userInfo: any = { username };
 
       // Collect indexed fields from PlatformDB
       for (const field of systemStreams.indexedFieldNames) {
@@ -169,17 +169,17 @@ export default function (expressApp, app) {
    * GET /admin/servers — list cores with user counts.
    * Maps to the multi-core PlatformDB.
    */
-  expressApp.get('/reg/admin/servers', checkAdmin, async (req, res, next) => {
+  expressApp.get('/reg/admin/servers', checkAdmin, async (req: any, res: any, next: any) => {
     try {
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
       const cores = await platform.getAllCoreInfos();
       const allUserCores = await getPlatformDB().getAllUserCores();
 
-      const servers = {};
+      const servers: any = {};
       for (const core of cores) {
         const coreUrl = platform.coreIdToUrl(core.id);
-        const userCount = allUserCores.filter(uc => uc.coreId === core.id).length;
+        const userCount = allUserCores.filter((uc: any) => uc.coreId === core.id).length;
         servers[coreUrl] = { userCount };
       }
 
@@ -200,7 +200,7 @@ export default function (expressApp, app) {
   /**
    * GET /admin/servers/:serverName/users — list users on a specific core.
    */
-  expressApp.get('/reg/admin/servers/:serverName/users', checkAdmin, async (req, res, next) => {
+  expressApp.get('/reg/admin/servers/:serverName/users', checkAdmin, async (req: any, res: any, next: any) => {
     try {
       const serverName = req.params.serverName;
       const { getPlatform } = require('platform');
@@ -209,7 +209,7 @@ export default function (expressApp, app) {
 
       // Find coreId matching this serverName (could be URL or coreId)
       const cores = await platform.getAllCoreInfos();
-      const matchingCore = cores.find(c =>
+      const matchingCore = cores.find((c: any) =>
         c.id === serverName ||
         platform.coreIdToUrl(c.id).includes(serverName)
       );
@@ -219,8 +219,8 @@ export default function (expressApp, app) {
       }
 
       const users = allUserCores
-        .filter(uc => uc.coreId === matchingCore.id)
-        .map(uc => ({ username: uc.username }));
+        .filter((uc: any) => uc.coreId === matchingCore.id)
+        .map((uc: any) => ({ username: uc.username }));
 
       res.json({ users });
     } catch (err) {
@@ -232,7 +232,7 @@ export default function (expressApp, app) {
    * GET /admin/servers/:src/rename/:dst — rename server (migrate users).
    * In multi-core: updates user-to-core mappings in PlatformDB.
    */
-  expressApp.get('/reg/admin/servers/:srcServerName/rename/:dstServerName', checkAdmin, async (req, res, next) => {
+  expressApp.get('/reg/admin/servers/:srcServerName/rename/:dstServerName', checkAdmin, async (req: any, res: any, next: any) => {
     try {
       const srcName = req.params.srcServerName;
       const dstName = req.params.dstServerName;
@@ -260,7 +260,7 @@ export default function (expressApp, app) {
   /**
    * GET /admin/invitations — list all invitation tokens.
    */
-  expressApp.get('/reg/admin/invitations', checkAdmin, async (req, res, next) => {
+  expressApp.get('/reg/admin/invitations', checkAdmin, async (req: any, res: any, next: any) => {
     try {
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
@@ -275,7 +275,7 @@ export default function (expressApp, app) {
    * GET /admin/invitations/post — generate new invitation tokens.
    * Query params: count (number), message (optional description).
    */
-  expressApp.get('/reg/admin/invitations/post', checkAdmin, async (req, res, next) => {
+  expressApp.get('/reg/admin/invitations/post', checkAdmin, async (req: any, res: any, next: any) => {
     try {
       const count = parseInt(req.query.count) || 1;
       const message = req.query.message || '';
@@ -292,7 +292,7 @@ export default function (expressApp, app) {
   // Helper
   // =====================================================================
 
-  async function getCoreUrlForUser (username) {
+  async function getCoreUrlForUser (username: any) {
     const { getPlatform } = require('platform');
     const platform = await getPlatform();
 

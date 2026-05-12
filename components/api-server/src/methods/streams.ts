@@ -24,18 +24,18 @@ const Readable = require('stream').Readable;
  * Event streams API methods implementation.
  *
  */
-export default async function (api) {
+export default async function (api: any) {
   const config = await getConfig();
   const updatesSettings = config.get('updates');
   const mall = await getMall();
   // RETRIEVAL
   api.register('streams.get', commonFns.getParamsValidation(methodsSchema.get.params), checkAuthorization, applyDefaultsForRetrieval, findAccessibleStreams, includeDeletionsIfRequested);
-  function applyDefaultsForRetrieval (context, params, result, next) {
+  function applyDefaultsForRetrieval (context: any, params: any, result: any, next: any) {
     params.parentId ??= null;
     params.includeDeletionsSince ??= null;
     next();
   }
-  async function checkAuthorization (context, params, result, next) {
+  async function checkAuthorization (context: any, params: any, result: any, next: any) {
     if (params.parentId && params.id) {
       throw errors.invalidRequestStructure('Do not mix "parentId" and "id" parameter in request');
     }
@@ -46,7 +46,7 @@ export default async function (api) {
     }
     return next();
   }
-  async function findAccessibleStreams (context, params, result, next) {
+  async function findAccessibleStreams (context: any, params: any, result: any, next: any) {
     let streamId = params.id || params.parentId || '*';
     let storeId = params.storeId; // might me null
     if (storeId == null) {
@@ -114,7 +114,7 @@ export default async function (api) {
     result.streams = streams;
     next();
   }
-  async function includeDeletionsIfRequested (context, params, result, next) {
+  async function includeDeletionsIfRequested (context: any, params: any, result: any, next: any) {
     if (params.includeDeletionsSince == null) {
       return next();
     }
@@ -140,11 +140,11 @@ export default async function (api) {
     applyPrerequisitesForCreation,
     createStream);
 
-  function applyDefaultsForCreation (context, params, result, next) {
+  function applyDefaultsForCreation (context: any, params: any, result: any, next: any) {
     params.parentId ??= null;
     next();
   }
-  async function applyPrerequisitesForCreation (context, params, result, next) {
+  async function applyPrerequisitesForCreation (context: any, params: any, result: any, next: any) {
     if (!(await context.access.canCreateChildOnStream(params.parentId))) {
       return process.nextTick(next.bind(null, errors.forbidden()));
     }
@@ -179,7 +179,7 @@ export default async function (api) {
     context.initTrackingProperties(params);
     next();
   }
-  async function createStream (context, params, result, next) {
+  async function createStream (context: any, params: any, result: any, next: any) {
     try {
       const newStream = await mall.streams.create(context.user.id, params);
       result.stream = newStream;
@@ -195,7 +195,7 @@ export default async function (api) {
   }
   // UPDATE
   api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), commonFns.catchForbiddenUpdate(streamSchema('update'), updatesSettings.ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
-  async function applyPrerequisitesForUpdate (context, params, result, next) {
+  async function applyPrerequisitesForUpdate (context: any, params: any, result: any, next: any) {
     if (params?.update?.parentId === params.id) {
       return next(errors.invalidOperation('The provided "parentId" is the same as the stream\'s "id".', params.update));
     }
@@ -240,7 +240,7 @@ export default async function (api) {
     context.updateTrackingProperties(params.update);
     next();
   }
-  async function updateStream (context, params, result, next) {
+  async function updateStream (context: any, params: any, result: any, next: any) {
     try {
       const updateData = structuredClone(params.update);
       updateData.id = params.id;
@@ -257,7 +257,7 @@ export default async function (api) {
   }
   // DELETION
   api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), verifyStreamExistenceAndPermissions, deleteStream);
-  async function verifyStreamExistenceAndPermissions (context, params, result, next) {
+  async function verifyStreamExistenceAndPermissions (context: any, params: any, result: any, next: any) {
     params.mergeEventsWithParent ??= null;
     context.stream = await context.streamForStreamId(params.id);
     if (context.stream == null) {
@@ -268,7 +268,7 @@ export default async function (api) {
     }
     next();
   }
-  function deleteStream (context, params, result, next) {
+  function deleteStream (context: any, params: any, result: any, next: any) {
     if (context.stream.trashed == null) {
       // move to trash
       flagAsTrashed(context, params, result, next);
@@ -277,7 +277,7 @@ export default async function (api) {
       deleteWithData(context, params, result, next);
     }
   }
-  async function flagAsTrashed (context, params, result, next) {
+  async function flagAsTrashed (context: any, params: any, result: any, next: any) {
     const updatedData: any = { trashed: true };
     context.updateTrackingProperties(updatedData);
     updatedData.id = params.id;
@@ -293,7 +293,7 @@ export default async function (api) {
       return next(errors.unexpectedError(err));
     }
   }
-  async function deleteWithData (context, params, result, next) {
+  async function deleteWithData (context: any, params: any, result: any, next: any) {
     const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(params.id);
     // Load stream and chlidren (context.stream does not have expanded children tree)
     const streamToDeleteSingleArray = await mall.streams.get(context.user.id, {
@@ -308,7 +308,7 @@ export default async function (api) {
     // keep stream and children to delete in next step
     context.streamToDeleteAndDescendantIds = streamAndDescendantIds;
     const parentId = streamToDelete.parentId;
-    const cleanDescendantIds = streamAndDescendantIds.map((s) => storeDataUtils.parseStoreIdAndStoreItemId(s)[1]);
+    const cleanDescendantIds = streamAndDescendantIds.map((s: any) => storeDataUtils.parseStoreIdAndStoreItemId(s)[1]);
     // check if root stream and linked events exist
     if (params.mergeEventsWithParent === true && parentId == null) {
       return next(errors.invalidOperation('Deleting a root stream with mergeEventsWithParent=true is rejected ' +
@@ -344,7 +344,7 @@ export default async function (api) {
         await mall.events.updateMany(context.user.id, query, {
           addStreams: [parentId],
           removeStreams: streamAndDescendantIds
-        }, function (event) {
+        }, function (event: any) {
           if (event == null) return;
           updatedEventsStream.add({ action: 'mergedToParent', id: event.id });
         });
@@ -352,7 +352,7 @@ export default async function (api) {
         // case  mergeEventsWithParent = false
         const eventsStream = await mall.events.getStreamedWithParamsByStore(context.user.id, { [storeId]: { streams: [{ any: cleanDescendantIds }] } });
         for await (const event of eventsStream) {
-          const remaningStreamsIds = event.streamIds.filter(id => !streamAndDescendantIds.includes(id));
+          const remaningStreamsIds = event.streamIds.filter((id: any) => !streamAndDescendantIds.includes(id));
           if (remaningStreamsIds.length === 0) { // no more streams deleted event
             await mall.events.delete(context.user.id, event);
             updatedEventsStream.add({ action: 'deleted', id: event.id });
@@ -381,13 +381,13 @@ export default async function (api) {
 };
 
 class ItemsStream extends Readable {
-  buffer;
+  buffer: any[];
   constructor () {
     super({ objectMode: true });
     this.buffer = [];
   }
 
-  add (item) { this.push(item); }
+  add (item: any) { this.push(item); }
 
   _read () {
     let push = true;
