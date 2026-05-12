@@ -1,5 +1,12 @@
 # Changelog - API Changes
 
+## `accesses.create` — managed shared expiry now capped by parent (Plan 66 Phase B, BREAKING)
+
+- **BREAKING** When an `app` access creates a `shared` access scoped under it, the new shared's `expires` (resolved from `expireAfter` if provided) now cannot exceed the managing app's `expires`. Violations return `invalid-operation` with `data: { parentExpires, requestedExpires }`. This was previously allowed and would silently produce a shared access that outlived its managing parent — confusing audit and breaking the symmetry with `accesses.update`'s chain rules.
+- **Edge case unchanged**: when the managing access has no `expires` (e.g. typical personal-issued app accesses), no cap applies. Practically this means the vast majority of integrations — which create accesses with `expireAfter` under a personal token — are unaffected.
+- **What to change**: integrations that issue shared accesses with a longer lifetime than the managing app must instead extend the managing app's expiry first (or reissue both).
+- **Why now**: Plan 66 introduces `accesses.update` with the same chain rule, and applying it only on update would have produced asymmetric behavior. Retrofitting `create` is the consistency call.
+
 ## High-frequency series — in-process dispatch from the public port
 
 - **CHANGE** `POST /<user>/events/<id>/series` and `POST /<user>/series/batch` are now reachable on the **same public port** as the rest of the API (typically `:443` or `http.port`), routed in-process to the HFS worker on `:4000` by a dispatcher in front of api-server. Previously these endpoints only worked if (a) clients reached port `:4000` directly, or (b) an external reverse-proxy (nginx etc.) routed them. Setting `cluster.hfsWorkers: 1` is sufficient — no extra ingress required.

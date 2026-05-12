@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## Access versioning — business primitives (Plan 66 Phase B)
+
+Internal-only utilities that the upcoming `accesses.update` (Phase C) will consume. No behavior change today besides the Rule D retrofit on `accesses.create` (see `CHANGELOG-v2.md`).
+
+- **NEW** `components/business/src/accesses/refs.ts` — `parseAccessRef(ref)` and `serializeAccessRef({ base, serial })`. Wire format is bare cuid when no serial, `<base>:<serial>` otherwise; separator is `:` (URL-safe, never appears inside a cuid/cuid2 id). Throws on malformed input.
+- **NEW** pubsub constant `ACCESS_UPDATED = 'access-updated'` (`components/messages/src/constants.ts` + `index.ts`). Payload shape (set when Phase C fires it): `{ accessId: '<base>:<serial>', serial: number }`. Companion to the existing `USERNAME_BASED_ACCESSES_CHANGED` event so fine-grained subscribers can act on a specific update without refetching.
+- **NEW** `AccessLogic.canUpdateAccess(target)` — encodes the §3 caller-vs-target matrix from the plan: no self-update (parses both ids so a future composite ref still matches the caller's bare base), personal-immutable, personal-can-update-non-personal, app-can-update-only-shared-it-manages (chain match by `base` via `parseAccessRef(target.createdBy).base === this.id`), shared-cannot-update-anything. `canUpdateAccess` is the gate; chain-rule application (A/B/C/D on changes) is enforced by the call path in Phase C.
+
 ## Access versioning — storage primitives (Plan 66 Phase A)
 
 Lays the schema and storage-layer plumbing for the upcoming `accesses.update` revival. No API surface change yet (the wire-format composite id `<base>:<serial>` and the revived method land in later phases). Both `baseStorage` engines (PostgreSQL, MongoDB) get the same treatment; engines that don't store accesses (sqlite, rqlite, filesystem, influxdb) are untouched.

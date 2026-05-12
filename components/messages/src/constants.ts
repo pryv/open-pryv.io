@@ -19,6 +19,9 @@ const USERNAME_BASED_EVENTS_CHANGED = 'events-changed';
 const USERNAME_BASED_STREAMS_CHANGED = 'streams-changed';
 const USERNAME_BASED_ACCESSES_CHANGED = 'accesses-changed';
 const USERNAME_BASED_ACCOUNT_CHANGED = 'account-changed';
+// Plan 66: fine-grained companion to USERNAME_BASED_ACCESSES_CHANGED.
+// Payload: { accessId: '<base>:<serial>', serial: number }
+const ACCESS_UPDATED = 'access-updated';
 // pubsub working mode
 const TRANSPORT_MODE_ALL = 'all'; // all messages matching are serialized
 const TRANSPORT_MODE_KEY = 'key'; // subscriptions and emit are bound to a key (eg username)
@@ -39,6 +42,7 @@ export {
   USERNAME_BASED_STREAMS_CHANGED,
   USERNAME_BASED_ACCESSES_CHANGED,
   USERNAME_BASED_ACCOUNT_CHANGED,
+  ACCESS_UPDATED,
   TRANSPORT_MODE_ALL,
   TRANSPORT_MODE_KEY,
   TRANSPORT_MODE_NONE,

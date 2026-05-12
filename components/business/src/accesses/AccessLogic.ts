@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 
 const { deepMerge } = require('utils');
 const accountStreams = require('business/src/system-streams/index.ts');
+const { parseAccessRef } = require('./refs.ts');
 
 const { getConfigSync } = require('@pryv/boiler');
 const { storeDataUtils, getMall } = require('mall');
@@ -286,6 +287,33 @@ class AccessLogic {
 
     // App token can delete the one they created
     return this.id === access.createdBy;
+  }
+
+  // Plan 66: Whether the current access can update the given target access.
+  // Encodes the §3 matrix (no self-update, personal-immutable, app can only
+  // update shared accesses it manages). Does NOT check whether the proposed
+  // changes are valid — that's the chain-rules check at apply time (Phase C).
+  // Chain match is by `base` (`parseAccessRef(target.createdBy).base === this.id`),
+  // not by composite id.
+  async canUpdateAccess (target: any): Promise<boolean> {
+    if (target == null) return false;
+    // No self-update — mutation always flows top-down from a parent.
+    // Parse the target id so a future composite-form ref still matches the
+    // caller's bare-base `this.id`.
+    if (typeof target.id !== 'string') return false;
+    if (parseAccessRef(target.id).base === this.id) return false;
+    // Personal accesses are fully immutable via this method.
+    if (target.type === 'personal') return false;
+    // Owner identity — personal accesses can update any non-personal access
+    // they own (subject to chain rules applied at write time).
+    if (this.isPersonal()) return true;
+    // Shared accesses cannot update anything.
+    if (this.isShared()) return false;
+    // App accesses can update only shared accesses they directly manage.
+    if (target.type !== 'shared') return false;
+    if (typeof target.createdBy !== 'string') return false;
+    const parentBase = parseAccessRef(target.createdBy).base;
+    return parentBase === this.id;
   }
 
   // Whether the current access can create the given access.

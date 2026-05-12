@@ -162,6 +162,16 @@ export default async function produceAccessesApiMethods (api: any) {
     if (expireAfter != null) {
       if (expireAfter >= 0) { params.expires = timestamp.now() + expireAfter; } else { return next(errors.invalidParametersFormat('expireAfter cannot be negative.')); }
     }
+    // Plan 66 Rule D: a managed shared access cannot outlive its managing
+    // app's expiry. Retrofitted on create for consistency with the update
+    // path (BREAKING — see CHANGELOG-v2.md). Parent with `expires: null`
+    // imposes no constraint.
+    if (access.expires != null && params.expires != null && params.expires > access.expires) {
+      return next(errors.invalidOperation(
+        'New access cannot expire later than the managing access.',
+        { parentExpires: access.expires, requestedExpires: params.expires }
+      ));
+    }
     context.initTrackingProperties(params);
     return next();
   }
