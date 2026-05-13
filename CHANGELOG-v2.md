@@ -1,5 +1,11 @@
 # Changelog - API Changes
 
+## Audit + socket.io for versioned accesses (Plan 66 Phase E)
+
+- **NEW** every audit row written under a **versioned** access (one whose `serial` is non-null) now carries **two** access-stream ids: the bare `access-<base>` (unchanged shape) AND the composite `access-<base>:<serial>` (specific contract version). Audit queries by `streamIds: ['access-<base>']` keep returning every record across all versions — fully backwards-compatible. New version-specific queries can target `access-<base>:<K>` directly. Never-updated accesses keep emitting only the bare streamId, so this is a no-op until `accesses.update` is first invoked.
+- **NEW socket.io event** `accessUpdated` — fired on the user's socket.io namespace right after a successful `accesses.update`, alongside the existing coarse-grained `accessesChanged` event. The new event carries a structured payload `{ type: 'access-updated', accessId: '<base>:<serial>', serial }` so fine-grained subscribers can react to a specific update without refetching. The legacy `accessesChanged` event continues to fire (arg-less) for any access change — existing SDK consumers keep working unchanged.
+- **Why the dual emission**: Plan 66 §7.1 — coarse-grained event for backwards compat, fine-grained event with serial for new consumers that want to act on the specific update. Token-scoped notification (broadcast to the shared-access recipient on a separate device) remains out of scope; backlogged at `XXX-Backlog/SCOPED-NOTIFICATION.md`.
+
 ## `accesses.getOne` + composite-id wire format applied (Plan 66 Phase D)
 
 - **NEW** `GET /accesses/:id` → `accesses.getOne`. Returns the access identified by the path id. The id can be either bare `<base>` (returns the current head) or composite `<base>:<serial>`:

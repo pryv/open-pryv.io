@@ -131,14 +131,28 @@ export default Audit;
 export { Audit };
 function buildDefaultEvent (context: any) {
   const time = timestamp.now();
+  // Plan 66 Q-A2=b: when the caller's access has been versioned (serial
+  // non-null), emit BOTH `access-<base>` and `access-<base>:<serial>`
+  // streamIds. Old queries by bare access reference keep matching every
+  // historical record; new queries can be version-specific. Costs ~30
+  // bytes per audit row on versioned-access activity, no schema change.
+  const accessBaseId = context.access.id;
+  const accessSerial = context.access != null && context.access.serial != null
+    ? context.access.serial
+    : null;
+  const streamIds: string[] = [
+    CONSTANTS.ACCESS_STREAM_ID_PREFIX + accessBaseId
+  ];
+  if (accessSerial != null) {
+    streamIds.push(CONSTANTS.ACCESS_STREAM_ID_PREFIX + accessBaseId + ':' + accessSerial);
+  }
+  streamIds.push(CONSTANTS.ACTION_STREAM_ID_PREFIX + context.methodId);
+
   const event: any = {
     id: cuid(),
     createdBy: 'system',
     modifiedBy: 'system',
-    streamIds: [
-      CONSTANTS.ACCESS_STREAM_ID_PREFIX + context.access.id,
-      CONSTANTS.ACTION_STREAM_ID_PREFIX + context.methodId
-    ],
+    streamIds,
     time,
     endTime: time,
     created: time,

@@ -594,8 +594,15 @@ export default async function produceAccessesApiMethods (api: any) {
   }
 
   function emitUpdateNotifications (context: any, params: any, result: any, next: any) {
+    // Coarse-grained event — existing subscribers refetch on any access
+    // change. String payload matches the legacy create/delete shape so
+    // `Manager.pubsubMessageToSocket` translates it to `accessesChanged`.
     pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
-    pubsub.notifications.emit(context.user.username, pubsub.ACCESS_UPDATED, {
+    // Fine-grained event — payload is a structured `{ type, … }` object
+    // so socket.io can forward both the event name (via type) and the
+    // data fields (accessId, serial) to subscribers.
+    pubsub.notifications.emit(context.user.username, {
+      type: pubsub.ACCESS_UPDATED,
       accessId: result.__plan66.compositeId,
       serial: result.__plan66.serial
     });

@@ -1,5 +1,12 @@
 # Changelog - Internal (no API impact)
 
+## Audit + socket.io plumbing for versioned accesses (Plan 66 Phase E)
+
+- **CHANGE** `audit/src/Audit.ts:buildDefaultEvent` — reads `context.access.serial` (set by `AccessLogic`'s `deepMerge(this, access)` from the storage row). When non-null, the event's `streamIds` array now carries both `access-<base>` and `access-<base>:<serial>` followed by the existing `action-<methodId>`. When null, behaviour is identical to before (single `access-<base>` entry). Cost: ~30 bytes per audit row on versioned-access activity. No schema change.
+- **CHANGE** `api-server/src/socket-io/Manager.ts:messageFromPubSub` — handles both legacy string payloads (event-name only, used by `eventsChanged` / `accessesChanged` / `streamsChanged`) and the new structured object payloads (`{ type, …data }`). For structured payloads, looks up the socket event name by `payload.type` and forwards the entire payload as the socket.io message argument. Backwards-compatible: existing listeners that subscribe to `'accessesChanged'` keep receiving arg-less calls.
+- **CHANGE** `messageMap[pubsub.ACCESS_UPDATED] = 'accessUpdated'` added — without this entry the structured payload would log `XXXXXXX Unknown structured payload` and silently drop.
+- **CHANGE** `methods/accesses.ts:emitUpdateNotifications` — restructures the second emission so the payload is the entire structured object (`{ type, accessId, serial }`) rather than a 3rd arg to `pubsub.emit` (which only takes `(eventName, payload)` and would silently drop the data). The first emission stays as a string `USERNAME_BASED_ACCESSES_CHANGED` for the legacy `accessesChanged` socket event.
+
 ## Access versioning — read API + composite-id serialization (Plan 66 Phase D)
 
 Internal plumbing for the new `accesses.getOne` and the composite-id wire format (see `CHANGELOG-v2.md`).

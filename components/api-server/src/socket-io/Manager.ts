@@ -161,6 +161,20 @@ class NamespaceContext {
   }
 
   messageFromPubSub (payload: any) {
+    // Structured payloads (Plan 66 onwards) carry both an event type
+    // and data fields — forward the entire payload alongside the socket
+    // event name. Legacy string payloads stay arg-less for back-compat
+    // with existing SDK consumers (eventsChanged / accessesChanged /
+    // streamsChanged listeners called without args today).
+    if (payload != null && typeof payload === 'object' && typeof payload.type === 'string') {
+      const message = messageMap[payload.type];
+      if (message != null) {
+        this.socketNs.emit(message, payload);
+      } else {
+        console.log('XXXXXXX Unknown structured payload', payload);
+      }
+      return;
+    }
     const message = pubsubMessageToSocket(payload);
     if (message != null) {
       this.socketNs.emit(message);
@@ -297,6 +311,7 @@ const messageMap: any = {};
 messageMap[pubsub.USERNAME_BASED_EVENTS_CHANGED] = 'eventsChanged';
 messageMap[pubsub.USERNAME_BASED_ACCESSES_CHANGED] = 'accessesChanged';
 messageMap[pubsub.USERNAME_BASED_STREAMS_CHANGED] = 'streamsChanged';
+messageMap[pubsub.ACCESS_UPDATED] = 'accessUpdated';
 function pubsubMessageToSocket (payload: any) {
   const key = typeof payload === 'object' ? JSON.stringify(payload) : payload;
   return messageMap[key];
