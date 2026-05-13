@@ -103,5 +103,6 @@ export function composeWireAccess (row: any, historyOfBase?: string): any {
   delete out.serial;
   delete out.createdBySerial;
   delete out.modifiedBySerial;
+  delete out.headId;
   return out;
 }

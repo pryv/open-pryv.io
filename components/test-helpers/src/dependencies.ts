@@ -47,6 +47,20 @@ const dependencies = {
     this.storage.user.webhooks = storageLayer.webhooks;
     this.storage.sessions = storageLayer.sessions;
     this.storage.passwordResetRequests = storageLayer.passwordResetRequests;
+    // Plan 32 framework / Plan 66: production runs migrations in
+    // `bin/master.js` before forking workers. The test harness calls
+    // `storages.init()` directly without going through master, so we
+    // run the migration runner ourselves to bring the test DB up to
+    // the same schema shape as a deployed server (e.g. Plan 66's
+    // `head_id`-aware unique-token index).
+    try {
+      const { createMigrationRunner } = require('storages/interfaces/migrations/index.ts');
+      const runner = await createMigrationRunner();
+      await runner.runAll();
+    } catch (err) {
+      // Some test contexts use engines that don't register the
+      // migrations capability — proceed without crashing.
+    }
   }
 };
 export default dependencies;

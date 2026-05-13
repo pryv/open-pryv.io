@@ -1,5 +1,17 @@
 # Changelog - Internal (no API impact)
 
+## Access versioning — tests + storage hardening (Plan 66 Phase F)
+
+The `[ACUP]` test family validates Plan 66 end-to-end and uncovered several storage-path issues that needed fixing.
+
+- **NEW** `components/api-server/test/accesses-update.test.js` — 17 tests across 7 sub-describes covering: composite-id bare-vs-versioned semantics, 409 stale-resource on update/delete, canUpdateAccess matrix (personal immutable, no self-update, app-can-update-managed-shared), Rule A/B/D (shared scope ⊆ managing app, narrowing parent rejects with `offendingChildren`, expiry chain on update + create), soft-deleted → unknownResource, accesses.getOne with current head / obsolete composite / unknown id / `?includeHistory=true`, pubsub coarse + fine-grained notifications, and `checkApp` head-only semantics.
+- **CHANGE** `storages/engines/postgresql/src/user/BaseStoragePG.ts:DEFAULT_COLUMN_MAP` — added `createdBySerial → created_by_serial` and `modifiedBySerial → modified_by_serial`. Without these, PG lowercased the unmapped camelCase identifier and raised `column "modifiedbyserial" does not exist` on the first `accesses.update`.
+- **CHANGE** `snapshotHead` rewrites on both engines — route the history-row insert through the standard `insertOne` path so `applyDefaults`'s integrity-recompute fires against the snapshot row's actual fields. The original approach copied the head's integrity hash verbatim, which never matched the snapshot row's (fresh `_id` + new `headId`) shape and the periodic `integrity-final-check` rejected every snapshot. Side effect: `snapshotHead` is now callback-based to fit BaseStorage's existing callback API.
+- **CHANGE** dropped the storage-layer `headId` strip (PG `AccessesPG.rowToItem` `delete item.headId` + Mongo `stripHeadId` converter). The integrity hash was including `headId` at insert and the strip at re-read made every recompute miss. The strip moved to `composeWireAccess` (api-server seam) so the hash is consistent inside storage AND `headId` still never appears on the wire.
+- **CHANGE** `composeWireAccess` now also strips `headId`, alongside the internal serial fields.
+- **CHANGE** `components/test-helpers/src/dependencies.ts:init` runs the Plan 32 migration runner so the test DB matches the deployed shape. `bin/master.js` calls it in production; the test harness used to skip it, leaving the unique-token index without the new `head_id IS NULL` predicate and causing Plan 66's first `accesses.update` to hit a duplicate-token violation.
+- **CHANGE** `components/api-server/test/migrations-runner-seq.test.js:beforeEach` resets each engine's `schema_migrations` tracking state before every test. The Phase F migration-runner invocation in `dependencies.init` would otherwise leave the tracker at v1 and trip [MR01]'s "fresh engines report v0" assertion.
+
 ## Audit + socket.io plumbing for versioned accesses (Plan 66 Phase E)
 
 - **CHANGE** `audit/src/Audit.ts:buildDefaultEvent` — reads `context.access.serial` (set by `AccessLogic`'s `deepMerge(this, access)` from the storage row). When non-null, the event's `streamIds` array now carries both `access-<base>` and `access-<base>:<serial>` followed by the existing `action-<methodId>`. When null, behaviour is identical to before (single `access-<base>` entry). Cost: ~30 bytes per audit row on versioned-access activity. No schema change.

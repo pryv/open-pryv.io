@@ -29,12 +29,11 @@ function setHeadIdNullIfMissing (access: any) {
   return access;
 }
 
-// Plan 66: `headId` is an internal storage marker — never surface it on
-// the wire. History rows are reached via dedicated history queries.
-function stripHeadId (access: any) {
-  if (access != null) delete access.headId;
-  return access;
-}
+// Plan 66 note: `headId` stays on the storage item so the integrity
+// hash (computed at insert time including headId) round-trips
+// consistently with the read-time recompute. The api-server layer
+// strips `headId` via `composeWireAccess` before responding to the
+// client.
 
 const indexes = [
   {
@@ -97,7 +96,7 @@ class Accesses extends BaseStorage {
           return res;
         }
       ],
-      itemFromDB: [converters.deletionFromDB, stripHeadId],
+      itemFromDB: [converters.deletionFromDB],
       queryToDB: [converters.idInOrClause]
     });
 
@@ -223,26 +222,29 @@ class Accesses extends BaseStorage {
 
   /**
    * Plan 66: snapshot the current live head document into a history doc.
-   * Reads the head doc identified by `id`, clones every field, replaces
-   * `_id` with a freshly-minted cuid and sets `headId` to the original
-   * base. The unique-token partial filter (deleted: null && headId: null)
-   * excludes the new history row, so duplicating the token is safe.
+   * Reads via findOne (camelCase item), clones, replaces `id` with a
+   * freshly-minted cuid, sets `headId` to the original base, drops the
+   * integrity hash so insertOne's `addIntegrity` recomputes against
+   * the snapshot row's fields. Goes through the standard insertOne so
+   * the partial-filter-unique-index sees the new doc with headId set.
    *
    * Caller is expected to mutate the head doc immediately after this
    * call to bump `serial`.
    */
-  async snapshotHead (userOrUserId: any, baseId: string): Promise<void> {
-    await this.database.ensureConnect();
-    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-    const coll = this.database.db.collection('accesses');
-    const head = await coll.findOne({ userId, _id: baseId, headId: null });
-    if (head == null) {
-      throw new Error('snapshotHead: no live head doc for access id ' + JSON.stringify(baseId));
-    }
-    const snapshot: any = Object.assign({}, head);
-    snapshot._id = generateId();
-    snapshot.headId = baseId;
-    await coll.insertOne(snapshot);
+  snapshotHead (userOrUserId: any, baseId: string, callback: (err: any) => void): void {
+    const that = this;
+    this.findOne(userOrUserId, { id: baseId }, null, function (err: any, head: any) {
+      if (err) return callback(err);
+      if (head == null) return callback(new Error('snapshotHead: no live head doc for access id ' + JSON.stringify(baseId)));
+      const snapshot = Object.assign({}, head);
+      snapshot.id = generateId();
+      snapshot.headId = baseId;
+      delete snapshot.integrity;
+      delete snapshot.apiEndpoint;
+      that.insertOne(userOrUserId, snapshot, function (err2: any) {
+        callback(err2 || null);
+      });
+    });
   }
 
   /** Inserts an array of accesses; each item must have a valid id and data already. For tests only. */

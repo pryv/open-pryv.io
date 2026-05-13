@@ -48,7 +48,14 @@ describe('[MIGRUN] MigrationRunner', () => {
     assert.ok(capabilities.length > 0, 'expected at least one migration-capable engine (rqlite)');
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Plan 66 (test-helpers/dependencies.ts:init) runs the production
+    // migration runner during initCore — leaving `schema_migrations`
+    // at the latest applied version. Reset before each test so the
+    // baseline matches the legacy expectation (v0 with no pending).
+    for (const cap of capabilities) {
+      await resetCapability(cap);
+    }
     tmpDirs = new Map();
     for (const cap of capabilities) {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), `migrun-${cap.id}-`));

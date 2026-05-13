@@ -565,7 +565,7 @@ export default async function produceAccessesApiMethods (api: any) {
 
     try {
       // 1. Snapshot current head into history row (frozen state pre-bump).
-      await accessesRepository.snapshotHead(context.user, baseId);
+      await fromCallback((cb: any) => accessesRepository.snapshotHead(context.user, baseId, cb));
       // 2. Apply head update (integrity-aware updateOne handles the hash).
       await fromCallback((cb: any) =>
         accessesRepository.updateOne(context.user, { id: baseId }, update, cb));
