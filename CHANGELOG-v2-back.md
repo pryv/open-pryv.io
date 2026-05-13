@@ -1,5 +1,23 @@
 # Changelog - Internal (no API impact)
 
+## Surface skipped migrations at boot (Plan 69)
+
+A demo deploy on 2026-05-13 hit a ~20 min outage when new code shipped against an unmigrated schema: the operator's `override-config.yml` carried `migrations: { autoRunOnStart: false }` and `bin/master.js` skipped the migration block in total silence — no log line at all. Every API call against the schema-dependent endpoints returned `unexpected-error: column "head_id" does not exist`.
+
+The opt-out itself is intentional (operators want manual review on prod). The bug was the silent skip. master.js now always consults the runner.
+
+- **NEW** `storages/interfaces/migrations/applyOrAnnounce.ts` — small policy helper. With `autoRun=true` it applies pending migrations (current behaviour byte-for-byte). With `autoRun=false` and pending migrations, it logs a top-line WARNING naming the count, the affected engine count, and a remediation hint (`Run \`node bin/migrate.js up\` to apply.`), followed by per-engine WARNING lines listing the pending filenames and current version. With `autoRun=false` and nothing pending, a single info line confirms the runner was consulted.
+- **CHANGE** `bin/master.js` — replace the inline migration block with a single `applyOrAnnounce` call. Adds a `warn(msg)` closure mirroring the existing `log(msg)` so warnings hit both the boiler logger (`logger.warn`) and stdout (`console.warn`) with a `[master] WARNING:` prefix.
+- **NEW** `components/api-server/test/migrations-skip-warn-seq.test.js` — `[MIGSKIP]` describe block. Five pure unit tests (`[MS01]`–`[MS05]`) against fake runner + fake logger cover the run-applied / no-pending / skipped-no-pending / skipped-one-pending / skipped-many-pending-across-engines cases. Pin the exact info/warn line counts and message templates so the deploy-warning contract can't regress silently.
+
+Behaviour matrix:
+
+| autoRunOnStart | pending migrations | log level | shape                                              |
+|----------------|---------------------|-----------|----------------------------------------------------|
+| true (default) | any                 | info      | unchanged from previous releases                   |
+| false          | none                | info      | 1 info line: `Migrations skipped …; no pending …`  |
+| false          | ≥ 1                 | warn      | WARNING summary + per-engine WARNING line per row  |
+
 ## Access versioning — tests + storage hardening (Plan 66 Phase F)
 
 The `[ACUP]` test family validates Plan 66 end-to-end and uncovered several storage-path issues that needed fixing.

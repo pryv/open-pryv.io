@@ -17,7 +17,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { MigrationRunner, discoverMigrations, createMigrationRunner } = require('./MigrationRunner.ts');
+const { applyOrAnnounce } = require('./applyOrAnnounce.ts');
 
 export { MigrationRunner,
   discoverMigrations,
-  createMigrationRunner };
+  createMigrationRunner,
+  applyOrAnnounce };

@@ -79,6 +79,7 @@ if (cluster.isPrimary) {
     const config = await getConfig();
     const logger = getLogger('master');
     const log = (msg) => { logger.info(msg); console.log(`[master] ${msg}`); };
+    const warn = (msg) => { logger.warn(msg); console.warn(`[master] WARNING: ${msg}`); };
 
     // Start rqlited — rqlite is the only supported platform engine, master.js owns the lifecycle.
     // When `storages.engines.rqlite.external` is true, skip spawning and connect to an
@@ -118,21 +119,18 @@ if (cluster.isPrimary) {
     // Each migration-capable engine (see storages/interfaces/migrations/) gets
     // its pending up() calls applied in filename order; version bumps persist
     // in that engine's schema_migrations tracking row/table.
+    //
+    // When `migrations.autoRunOnStart` is false the runner is still consulted
+    // via `status()` so a loud WARNING surfaces any pending migrations — the
+    // silent-skip footgun took down a demo deploy on 2026-05-13 (Plan 69).
     const autoRunMigrations = config.get('migrations:autoRunOnStart') ?? true;
-    if (autoRunMigrations) {
-      log('Running pending schema migrations...');
-      const { createMigrationRunner } = require('../storages/interfaces/migrations/index.ts');
-      const runner = await createMigrationRunner({ logger: getLogger('migrations') });
-      const applied = await runner.runAll();
-      if (applied.length === 0) {
-        log('No pending migrations.');
-      } else {
-        for (const m of applied) {
-          log(`  ${m.engineId}: ${m.filename} (→ v${m.toVersion}, ${m.durationMs}ms)`);
-        }
-        log(`Applied ${applied.length} migration(s).`);
-      }
-    }
+    const { createMigrationRunner, applyOrAnnounce } = require('../storages/interfaces/migrations/index.ts');
+    const migrationRunner = await createMigrationRunner({ logger: getLogger('migrations') });
+    await applyOrAnnounce({
+      runner: migrationRunner,
+      logger: { info: log, warn },
+      autoRun: autoRunMigrations
+    });
 
     // --- Mail template seed ---
     // First-boot bootstrap: when `services.email.method === 'in-process'` and
