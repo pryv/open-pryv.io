@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const slug = require('../../src/cmc/slug.ts');
+const slug = require('../src/slug.ts');
 
 describe('[CMCSLUG] cmc/slug', () => {
   describe('[CMCSLUG-CP] counterpartySlug()', () => {

@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const V = require('../../src/cmc/validators.ts');
+const V = require('../src/validators.ts');
 
 function expectValid (eventType, content) {
   const r = V.validate(eventType, content);
@@ -59,7 +59,7 @@ const VALID_REQUEST = {
 describe('[CMCVAL] cmc/validators', () => {
   describe('[CMCVAL-DISP] dispatcher', () => {
     it('[V01] isKnownEventType true for every event type in the catalogue', () => {
-      const C = require('../../src/cmc/constants.ts');
+      const C = require('../src/constants.ts');
       for (const t of [
         ...C.EVENT_TYPES_LIFECYCLE,
         ...C.EVENT_TYPES_CHAT,

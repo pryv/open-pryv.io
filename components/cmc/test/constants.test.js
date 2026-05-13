@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const C = require('../../src/cmc/constants.ts');
+const C = require('../src/constants.ts');
 
 describe('[CMCCONST] cmc/constants', () => {
   describe('[CMCCONST-NS] namespace classification', () => {
