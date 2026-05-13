@@ -17,10 +17,18 @@ const require = createRequire(import.meta.url);
 
 const constants = require('./constants.ts');
 const slug = require('./slug.ts');
+const validators = require('./validators.ts');
+const hooks = require('./hooks.ts');
 
-export { constants, slug };
+export { constants, slug, validators, hooks };
 
-// Re-export constants flat for convenience: `require('business/src/cmc').NS_INBOX`.
+// Re-export hook factories at the top level for api-server integration.
+export const {
+  createCmcContentValidationHook,
+  createStreamCreateReservedRootHook,
+} = hooks;
+
+// Re-export constants flat for convenience: `require('cmc').NS_INBOX`.
 export const {
   NS,
   NS_INBOX,
