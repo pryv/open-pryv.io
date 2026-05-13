@@ -8,44 +8,52 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * Plan 68 — Cross-account Messaging & Consent (CMC) plugin.
- *
- * Public entry point. Re-exports namespace + event-type constants,
- * slug helpers, and (as later phases land) write-hook factories,
- * validators, and orchestration services.
+ * CMC plugin — public entry point. Re-exports namespace constants, slug
+ * helpers, content validators, write-hook factories, auto-provisioning.
  */
 
 const constants = require('./constants.ts');
 const slug = require('./slug.ts');
 const validators = require('./validators.ts');
 const hooks = require('./hooks.ts');
+const provisioning = require('./provisioning.ts');
+const outbound = require('./outbound.ts');
 
-export { constants, slug, validators, hooks };
+export { constants, slug, validators, hooks, provisioning, outbound };
 
-// Re-export hook factories at the top level for api-server integration.
+// Hook factories at top-level for api-server integration.
 export const {
   createCmcContentValidationHook,
   createStreamCreateReservedRootHook,
 } = hooks;
 
-// Re-export constants flat for convenience: `require('cmc').NS_INBOX`.
+// Provisioning at top-level for users/repository.ts integration.
+export const {
+  provisionUserStreams,
+  RESERVED_TREE,
+} = provisioning;
+
+// Flat constants re-exports for convenience.
 export const {
   NS,
   NS_INBOX,
-  NS_CHATS,
-  NS_COLLECTORS,
   NS_APPS,
   NS_INTERNAL,
   NS_INTERNAL_RETRIES,
   RESERVED_PARENT_STREAM_IDS,
   USER_CREATABLE_PARENT_STREAM_ID,
-  chatStreamIdFor,
-  collectorStreamIdFor,
+  APP_RESERVED_SEGMENTS,
+  chatsParentUnder,
+  chatStreamUnder,
+  collectorsParentUnder,
+  collectorStreamUnder,
   offerStreamIdFor,
   responsesStreamIdFor,
   isCmcStreamId,
-  isPluginManagedStreamId,
+  isAppNestedPluginStream,
   isUserCreatableStreamId,
+  isPluginManagedStreamId,
+  getAppCode,
   ET_REQUEST,
   ET_ACCEPT,
   ET_REFUSE,

@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * Plan 68 Phase C — middleware factory tests.
+ * CMC plugin — middleware factory tests.
  *
  * [CMCHOOK] suite covers the two write-hooks the CMC plugin contributes:
  * - createCmcContentValidationHook   → events.create chain
@@ -63,7 +63,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const mw = createCmcContentValidationHook({ errors: factory });
       const ctx = {
         newEvent: {
-          streamIds: [':_cmc:apps:stormm:study-A'],
+          streamIds: [':_cmc:apps:my-app:study-A'],
           type: 'note/txt',
           content: 'just a note app-side metadata',
         },
@@ -72,7 +72,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       assert.equal(err, undefined);
       assert.deepEqual(ctx.cmc, {
         isCmcEvent: true,
-        streamIds: [':_cmc:apps:stormm:study-A'],
+        streamIds: [':_cmc:apps:my-app:study-A'],
       });
     });
 
@@ -81,13 +81,13 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const mw = createCmcContentValidationHook({ errors: factory });
       const ctx = {
         newEvent: {
-          streamIds: [':_cmc:apps:stormm:study-A'],
+          streamIds: [':_cmc:apps:my-app:study-A'],
           type: 'cmc/request-v1',
           content: {
             to: null,
             capabilityRequested: true,
             request: {
-              title: { en: 'STORMM' },
+              title: { en: 'Example' },
               description: { en: 'symptom tracking' },
               consent: { en: 'I agree' },
               permissions: [{ streamId: 'fertility', level: 'read' }],
@@ -123,7 +123,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const mw = createCmcContentValidationHook({ errors: factory });
       const ctx = {
         newEvent: {
-          streamIds: [':_cmc:chats:jane--pryv-me'],
+          streamIds: [':_cmc:apps:my-app:chats:alice--example-com'],
           type: 'cmc/chat-v1',
           content: { content: '' }, // empty content — invalid
         },
@@ -163,13 +163,11 @@ describe('[CMCHOOK] cmc/hooks', () => {
       assert.equal(err.details.streamId, ':_cmc:');
     });
 
-    it('[CS03] rejects creating reserved parents (:_cmc:inbox, :_cmc:chats, :_cmc:collectors, :_cmc:apps, :_cmc:_internal, :_cmc:_internal:retries)', async () => {
+    it('[CS03] rejects creating reserved parents (:_cmc:inbox, :_cmc:apps, :_cmc:_internal, :_cmc:_internal:retries)', async () => {
       const { factory } = fakeErrors();
       const mw = createStreamCreateReservedRootHook({ errors: factory });
       const reservedIds = [
         ':_cmc:inbox',
-        ':_cmc:chats',
-        ':_cmc:collectors',
         ':_cmc:apps',
         ':_cmc:_internal',
         ':_cmc:_internal:retries',
@@ -182,23 +180,33 @@ describe('[CMCHOOK] cmc/hooks', () => {
       }
     });
 
-    it('[CS04] allows creates under :_cmc:apps (user-creatable)', async () => {
+    it('[CS04] allows creates under :_cmc:apps:<app-code> outside plugin-reserved segments', async () => {
       const { factory } = fakeErrors();
       const mw = createStreamCreateReservedRootHook({ errors: factory });
-      for (const id of [':_cmc:apps:stormm', ':_cmc:apps:stormm:study-A', ':_cmc:apps:patient:incoming']) {
+      for (const id of [
+        ':_cmc:apps:my-app',
+        ':_cmc:apps:my-app:study-A',
+        ':_cmc:apps:my-app:study-A:notes',
+        ':_cmc:apps:patient:incoming',
+      ]) {
         const err = await runMiddleware(mw, {}, { id }, {});
         assert.equal(err, undefined, 'expected passthrough for ' + id);
       }
     });
 
-    it('[CS05] rejects creates under plugin-managed regions outside :_cmc:apps', async () => {
+    it('[CS05] rejects creates of plugin-reserved sub-segments (chats / collectors) under :_cmc:apps:', async () => {
       const { factory } = fakeErrors();
       const mw = createStreamCreateReservedRootHook({ errors: factory });
       const blocked = [
-        ':_cmc:chats:jane--pryv-me',          // plugin auto-creates these
-        ':_cmc:collectors:dr-smith--datasafe-dev--stormm',
-        ':_cmc:_internal:offer:abc123',       // plugin per-capability
-        ':_cmc:inbox:something',               // any user-attempt under inbox
+        // The parents themselves (plugin auto-creates)
+        ':_cmc:apps:my-app:chats',
+        ':_cmc:apps:my-app:collectors',
+        ':_cmc:apps:my-app:study-A:chats',
+        ':_cmc:apps:my-app:study-A:collectors',
+        // And children of those parents
+        ':_cmc:apps:my-app:chats:alice--example-com',
+        ':_cmc:apps:my-app:study-A:chats:alice--example-com',
+        ':_cmc:apps:my-app:study-A:collectors:bob--other-org',
       ];
       for (const id of blocked) {
         const err = await runMiddleware(mw, {}, { id }, {});
@@ -207,7 +215,21 @@ describe('[CMCHOOK] cmc/hooks', () => {
       }
     });
 
-    it('[CS06] handles { update: {...} } wrapper used by streams.update flows', async () => {
+    it('[CS06] rejects creates inside :_cmc:_internal:* (plugin-internal region)', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamCreateReservedRootHook({ errors: factory });
+      for (const id of [
+        ':_cmc:_internal:offer:abc',
+        ':_cmc:_internal:responses:abc',
+        ':_cmc:_internal:foo',
+      ]) {
+        const err = await runMiddleware(mw, {}, { id }, {});
+        assert.ok(err instanceof Error, 'expected reject for ' + id);
+        assert.equal(err.details.id, 'cmc-reserved-stream');
+      }
+    });
+
+    it('[CS07] handles { update: {...} } wrapper used by streams.update flows', async () => {
       const { factory } = fakeErrors();
       const mw = createStreamCreateReservedRootHook({ errors: factory });
       const err = await runMiddleware(mw, {}, { update: { id: ':_cmc:inbox' } }, {});
@@ -215,7 +237,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       assert.equal(err.details.id, 'cmc-reserved-stream');
     });
 
-    it('[CS07] passes through when no id is given (defensive)', async () => {
+    it('[CS08] passes through when no id is given (defensive)', async () => {
       const { factory } = fakeErrors();
       const mw = createStreamCreateReservedRootHook({ errors: factory });
       const err = await runMiddleware(mw, {}, {}, {});

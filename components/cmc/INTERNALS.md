@@ -118,28 +118,28 @@ sequenceDiagram
 
 # 3. Acceptance — bidirectional access pair creation
 
-The most intricate flow. Patient writes `cmc/accept-v1`; patient's plugin orchestrates with the doctor's plugin to provision:
+The most intricate flow. User writes `cmc/accept-v1`; patient's plugin orchestrates with the provider's plugin to provision:
 
-1. Data-grant access on the patient's account (carrying the doctor's stored apiEndpoint as `clientData.cmc.counterparty`).
-2. Back-channel access on the doctor's account (carrying the patient's data-grant apiEndpoint as `clientData.cmc.counterparty`).
+1. Data-grant access on the user's account (carrying the provider's stored apiEndpoint as `clientData.cmc.counterparty`).
+2. Back-channel access on the provider's account (carrying the user's data-grant apiEndpoint as `clientData.cmc.counterparty`).
 3. Auto-created anchor streams `:_cmc:chats:<slug>` + `:_cmc:collectors:<slug>` on **both** sides (so chat + system flows can start immediately).
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant DoctorApp
-    participant CoreA as Core-A<br/>(datasafe.dev)<br/>+ Storage-A
+    participant CoreA as Core-A<br/>(example.com)<br/>+ Storage-A
     participant CoreB as Core-B<br/>(pryv.me)<br/>+ Storage-B
     participant PatientApp
 
     PatientApp->>CoreB: events.create cmc/accept-v1<br/>content.capabilityUrl
     CoreB->>CoreA: events.get :_cmc:_internal:offer<br/>(via capabilityUrl, recursive expand → :_cmc:_internal:offer:<capId>)
     CoreA-->>CoreB: request event (permissions, features, requesterMeta)
-    CoreB->>CoreB: accesses.create data-grant<br/>permissions = offer.permissions<br/>clientData.cmc = {role:'counterparty',<br/>counterparty:{username:'dr-smith',host:'datasafe.dev'}}<br/>(persisted in Storage-B accesses table)
-    CoreB->>CoreB: streams.create :_cmc:chats:dr-smith--datasafe-dev<br/>streams.create :_cmc:collectors:dr-smith--datasafe-dev--stormm-doctor-dashboard<br/>(persisted in Storage-B streams table)
+    CoreB->>CoreB: accesses.create data-grant<br/>permissions = offer.permissions<br/>clientData.cmc = {role:'counterparty',<br/>counterparty:{username:'alice',host:'example.com'}}<br/>(persisted in Storage-B accesses table)
+    CoreB->>CoreB: streams.create :_cmc:chats:alice--example-com<br/>streams.create :_cmc:collectors:alice--example-com--example-app<br/>(persisted in Storage-B streams table)
     CoreB->>CoreA: events.create cmc/accept-v1 in :_cmc:_internal:responses:<capId><br/>(via capabilityUrl)<br/>content.grantedAccess.apiEndpoint = data-grant.apiEndpoint
-    CoreA->>CoreA: accesses.create back-channel<br/>permissions = create-only on :_cmc:inbox<br/>+ rights on :_cmc:chats:jane--pryv-me<br/>+ rights on :_cmc:collectors:jane--pryv-me--stormm...<br/>clientData.cmc.counterparty.apiEndpoint = <data-grant apiEndpoint><br/>(persisted in Storage-A accesses table)
-    CoreA->>CoreA: streams.create :_cmc:chats:jane--pryv-me<br/>streams.create :_cmc:collectors:jane--pryv-me--stormm-doctor-dashboard
+    CoreA->>CoreA: accesses.create back-channel<br/>permissions = create-only on :_cmc:inbox<br/>+ rights on :_cmc:chats:alice--example-com<br/>+ rights on :_cmc:collectors:alice--example-com--my-app...<br/>clientData.cmc.counterparty.apiEndpoint = <data-grant apiEndpoint><br/>(persisted in Storage-A accesses table)
+    CoreA->>CoreA: streams.create :_cmc:chats:alice--example-com<br/>streams.create :_cmc:collectors:alice--example-com--example-app
     CoreA->>CoreA: accesses.delete capability (single-use consumed)
     CoreA-->>CoreB: response carries back-channel.apiEndpoint
     CoreB->>CoreB: events.update data-grant access<br/>clientData.cmc.counterparty.backChannelApiEndpoint=<...>
@@ -151,9 +151,9 @@ sequenceDiagram
 
 All persistence happens in the **per-user accesses/streams/events tables** of each core's standard storage (PG/Mongo). No rqlite, no separate engine.
 
-**Atomicity worry:** if step 6 (capability delete) crashes after the back-channel access is created (step 4) but before the response is sent (step 9), the patient retries and the request fails with `capability-already-consumed`. Recovery: operator-side cleanup script (backlog) reads back-channel accesses created without a paired data-grant and prunes. v1 ships with the race surfaced as an error; pruning is operational.
+**Atomicity worry:** if step 6 (capability delete) crashes after the back-channel access is created (step 4) but before the response is sent (step 9), the user.retries and the request fails with `capability-already-consumed`. Recovery: operator-side cleanup script (backlog) reads back-channel accesses created without a paired data-grant and prunes. v1 ships with the race surfaced as an error; pruning is operational.
 
-**Anchor stream creation idempotence:** `streams.create` is upsert-semantics in the plugin (catches `stream-already-exists` and continues). Two simultaneous accepts from the same patient against two different doctors won't collide on the patient's `:_cmc:chats:`/`:_cmc:collectors:` parents.
+**Anchor stream creation idempotence:** `streams.create` is upsert-semantics in the plugin (catches `stream-already-exists` and continues). Two simultaneous accepts from the same user.against two different doctors won't collide on the user's `:_cmc:chats:`/`:_cmc:collectors:` parents.
 
 ---
 
@@ -292,11 +292,11 @@ sequenceDiagram
     participant Plugin
     participant Storage as Storage<br/>(per-user PG/Mongo)
 
-    App->>APIServer: events.create cmc/chat-v1<br/>streamIds: [:_cmc:chats:jane--pryv-me]
+    App->>APIServer: events.create cmc/chat-v1<br/>streamIds: [:_cmc:chats:alice--example-com]
     APIServer->>Storage: persist trigger
     APIServer->>Plugin: post-create hook
-    Plugin->>Plugin: parse slug → (username='jane', host='pryv.me')
-    Plugin->>APIServer: accesses.get filtered by<br/>clientData.cmc.role='counterparty'<br/>+ counterparty.username='jane'<br/>+ counterparty.host='pryv.me'
+    Plugin->>Plugin: parse slug → (username='alice', host='pryv.me')
+    Plugin->>APIServer: accesses.get filtered by<br/>clientData.cmc.role='counterparty'<br/>+ counterparty.username='alice'<br/>+ counterparty.host='pryv.me'
     APIServer->>Storage: indexed lookup
     Storage-->>Plugin: candidate accesses (>=1 — multiple if many collector-relationships)
     Plugin->>Plugin: pick any access<br/>(chat is user-pair-scoped, all share)
@@ -326,7 +326,7 @@ sequenceDiagram
     participant Storage as Storage<br/>(per-user PG/Mongo)
     participant Memory as Memory<br/>(per-worker in-process)
 
-    App->>Plugin: events.create cmc/system-alert-v1<br/>:_cmc:collectors:jane--pryv-me--stormm...
+    App->>Plugin: events.create cmc/system-alert-v1<br/>:_cmc:collectors:alice--example-com--my-app...
     Plugin->>Plugin: parse collector-slug
     Plugin->>Storage: SELECT back-channel access for this collector
     Storage-->>Plugin: access + counterparty.apiEndpoint
@@ -363,7 +363,7 @@ sequenceDiagram
     participant APIServer as APIServer-A
     participant Peer as Plugin-B<br/>(via HTTPS)
 
-    CollectorApp->>Plugin: events.create cmc/system-scope-request-v1<br/>:_cmc:collectors:jane--pryv-me--stormm...<br/>content.newPermissions=[...]
+    CollectorApp->>Plugin: events.create cmc/system-scope-request-v1<br/>:_cmc:collectors:alice--example-com--my-app...<br/>content.newPermissions=[...]
     Plugin->>Plugin: resolve back-channel access from collector-slug
     Plugin->>APIServer: accesses.get <collector's-app-access>
     APIServer-->>Plugin: app-access record
@@ -372,7 +372,7 @@ sequenceDiagram
         Plugin->>APIServer: events.update trigger<br/>status='failed'<br/>failure.reason='scope-update-offending-children'<br/>failure.detail=[<offending streamIds>]
         APIServer-->>CollectorApp: socket.io push (failure)
     end
-    Plugin->>Peer: POST /events :_cmc:collectors:dr-smith...<br/>type: cmc/system-scope-request-v1<br/>content.from server-stamped on receipt
+    Plugin->>Peer: POST /events :_cmc:collectors:alice...<br/>type: cmc/system-scope-request-v1<br/>content.from server-stamped on receipt
     Peer-->>Plugin: ok
     Plugin->>APIServer: events.update trigger status='delivered'
 ```
@@ -400,7 +400,7 @@ sequenceDiagram
     APIServer->>Storage: composite-id bumps<br/>'abc123' → 'abc123:1'
     APIServer-->>Plugin: updated access
     Plugin->>Plugin: clear cls flag
-    Plugin->>Peer: POST /events :_cmc:collectors:jane...<br/>type: cmc/system-scope-update-v1<br/>content.source='response-to-request'<br/>content.newAccessId='abc123:1'
+    Plugin->>Peer: POST /events :_cmc:collectors:alice...<br/>type: cmc/system-scope-update-v1<br/>content.source='response-to-request'<br/>content.newAccessId='abc123:1'
     Peer-->>Plugin: ok
     Plugin->>APIServer: events.update trigger status='completed'<br/>newAccessId='abc123:1'
     APIServer-->>UserApp: socket.io push + accessUpdated event
@@ -455,14 +455,14 @@ sequenceDiagram
 
 # 11. Slug computation
 
-Deterministic. Helpers ship in `lib-js` / `hds-lib`. The plugin uses the same code for stream-id construction so client + server agree.
+Deterministic. Helpers ship in `lib-js` / `legacy-shim`. The plugin uses the same code for stream-id construction so client + server agree.
 
 ```mermaid
 flowchart LR
-    A[username: 'dr-smith'<br/>host: 'datasafe.dev']
-    A --> B[counterpartySlug<br/>= 'dr-smith--datasafe-dev']
-    A --> C[+ appId: 'stormm-doctor-dashboard']
-    C --> D[collectorSlug<br/>= 'dr-smith--datasafe-dev--stormm-doctor-dashboard']
+    A[username: 'alice'<br/>host: 'example.com']
+    A --> B[counterpartySlug<br/>= 'alice--example-com']
+    A --> C[+ appId: 'example-app']
+    C --> D[collectorSlug<br/>= 'alice--example-com--example-app']
 
     E[Inverse:<br/>parseCollectorSlug input]
     E --> F[Split on '--']
@@ -541,7 +541,7 @@ Full end-to-end across two independent open-pryv.io platforms with different ope
 sequenceDiagram
     autonumber
     participant DApp as DoctorApp
-    participant DCore as Core-A<br/>(datasafe.dev)
+    participant DCore as Core-A<br/>(example.com)
     participant PCore as Core-B<br/>(pryv.me)
     participant PApp as PatientApp
 
@@ -561,12 +561,12 @@ sequenceDiagram
 
     DApp->>DCore: events.create cmc/chat-v1
     DCore->>PCore: HTTPS: events.create :_cmc:chats:<doctor-slug>
-    PCore-->>PApp: socket.io :_cmc:chats:dr-smith--datasafe-dev
+    PCore-->>PApp: socket.io :_cmc:chats:alice--example-com
 
     PApp->>PCore: accesses.update <data-grant>
     PCore->>PCore: post-hook fires
     PCore->>DCore: HTTPS: events.create :_cmc:collectors:<patient-slug><br/>type: cmc/system-scope-update-v1<br/>content.source='post-hook'
-    DCore-->>DApp: socket.io :_cmc:collectors:jane--pryv-me + accessUpdated
+    DCore-->>DApp: socket.io :_cmc:collectors:alice--example-com + accessUpdated
 ```
 
 **TLS:** each plugin's outbound HTTPS uses standard public-CA-validated TLS to the peer's domain. No mTLS, no shared cluster CA. The access token in the `apiEndpoint` URL is the auth.

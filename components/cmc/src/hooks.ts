@@ -95,11 +95,15 @@ function createCmcContentValidationHook (deps: Deps): Middleware {
  * Behaviour:
  * - If the target stream-id isn't under `:_cmc:`, passthrough.
  * - If the target is exactly one of the plugin-managed reserved parents
- *   (`:_cmc:`, `:_cmc:inbox`, `:_cmc:chats`, `:_cmc:collectors`, `:_cmc:apps`,
- *   `:_cmc:_internal`, `:_cmc:_internal:retries`), reject — these are
- *   auto-provisioned by the CMC plugin on user creation.
- * - If the target is under `:_cmc:apps` (user-creatable region), passthrough.
- * - Otherwise (any other `:_cmc:*` location: under chats/, collectors/, _internal/),
+ *   (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`, `:_cmc:_internal`,
+ *   `:_cmc:_internal:retries`), reject — these are auto-provisioned by
+ *   the CMC plugin on user creation.
+ * - If the target is at or beneath a plugin-managed sub-segment
+ *   (`chats` / `collectors`) anywhere under `:_cmc:apps:<app-code>:...`,
+ *   reject — the plugin auto-creates these at acceptance time.
+ * - If the target is otherwise under `:_cmc:apps:` (user-creatable region),
+ *   passthrough.
+ * - Otherwise (any other `:_cmc:*` location, e.g. `:_cmc:_internal:*`),
  *   reject — user code may not create plugin-managed streams.
  */
 function createStreamCreateReservedRootHook (deps: Deps): Middleware {

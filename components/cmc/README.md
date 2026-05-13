@@ -41,7 +41,7 @@ The three event-type families (requests, chat, system — the latter folding in 
 
 ## Why this matters
 
-`hds-lib-js appTemplates` reimplements an ad-hoc cross-account workflow on top of plain Pryv primitives, with `clientData.hdsCollector.*` as an untyped discovery contract, per-Collector stream trees as state machines, `create-only` access permissions as message-queue tokens, and polling for catch-up. The pattern works within one operator's deployment but doesn't scale to **cross-platform** scenarios where the doctor and patient are on separate open-pryv.io instances run by different operators — the design assumes shared trust at points where there is none.
+`the legacy collector-app template pattern` reimplements an ad-hoc cross-account workflow on top of plain Pryv primitives, with `clientData.cmcCollector.*` as an untyped discovery contract, per-Collector stream trees as state machines, `create-only` access permissions as message-queue tokens, and polling for catch-up. The pattern works within one operator's deployment but doesn't scale to **cross-platform** scenarios where the provider and user.are on separate open-pryv.io instances run by different operators — the design assumes shared trust at points where there is none.
 
 Promoting the workflow to the platform via `:_cmc:` and leaning entirely on Pryv's existing `accesses.*` primitive as the federation fabric:
 
@@ -66,7 +66,7 @@ And it does this **without changing the API surface** that clients consume. `lib
 | Capability URLs | **Standard Pryv `apiEndpoint` URLs.** Server mints a single-event-scoped shared access on the requester's account; the access's apiEndpoint IS the capability URL. No new endpoint, no opaque token store. |
 | App scoping for the requester | Standard stream hierarchy — apps create their own `:_cmc:apps:<app-id>:<scope>` sub-trees via `streams.create({parentId: ':_cmc:apps'})` (and nested children with the matching parentId). Optional access-level enforcement via `clientData.cmc.appScope`. |
 | Operator opt-in surface | The plugin manifest is itself the toggle (plugin loaded or not). No separate config flag. |
-| Helpers in `hds-lib` | Allowed. Old `Collector` / `CollectorClient` classes proxy to the new primitives during HDS migration. |
+| Helpers in `legacy-shim` | Allowed. Old `Collector` / `CollectorClient` classes proxy to the new primitives during legacy-shim migration. |
 | Scope-update constraint | Covers all of the composite-id `accesses.update` surface area: widening, narrowing, removing permissions; expiry chain changes. Server pre-validates the permission-chain rules when the collector writes `cmc/system-scope-request-v1`; the user's `cmc/system-scope-update-v1` (or a direct `accesses.update` call through the post-hook) triggers a plugin-internal `accesses.update`. |
 
 ## Relationship to future OAuth2 / app-accounts work
@@ -78,7 +78,7 @@ CMC and the future OAuth2 / app-accounts work sit at different layers:
 
 CMC's protocol works without that future federation layer because every interaction is a direct Pryv API call through a per-pair shared access — the access token IS the auth. But one feature is gated on it:
 
-**Directed cross-platform invites** (`to: 'jane@example.com'` where Jane is on a different platform) cannot be auto-routed without a federation channel. CMC v1 supports directed invites only **same-platform**; cross-platform directed invites degrade to capability-URL-only (the requester publishes the request, hands the URL to Jane via email/QR/etc.). When signed inter-platform requests + a well-known invite-webhook endpoint ship, CMC can fold directed cross-platform routing in as a follow-on.
+**Directed cross-platform invites** (`to: 'alice@example.com'` where Alice is on a different platform) cannot be auto-routed without a federation channel. CMC v1 supports directed invites only **same-platform**; cross-platform directed invites degrade to capability-URL-only (the requester publishes the request, hands the URL to Alice via email/QR/etc.). When signed inter-platform requests + a well-known invite-webhook endpoint ship, CMC can fold directed cross-platform routing in as a follow-on.
 
 The capability access mechanism here is also the natural store for future OAuth2 authorization codes — both are single-use, TTL-bounded, opaque-token-equivalent constructs.
 
@@ -91,7 +91,7 @@ The capability access mechanism here is also the natural store for future OAuth2
 1. **Stream-id-namespace ownership** — reserve the `:_cmc:` prefix with the mall dispatcher so writes to `:_cmc:*` route through CMC's hooks.
 2. **Validation + orchestration hooks** — pre/post hooks on `events.create` (for `cmc/*` types), `accesses.update` (for the counterparty post-hook), and stream-creation under `:_cmc:` (reserved-root enforcement + anchor stream auto-creation idempotence).
 3. **Outbound HTTPS client** — federated cross-platform / cross-core delivery using stored counterparty `apiEndpoint`s. No special data-path auth lane; standard access-token HTTPS.
-4. **Helpers** — slug computation, schema validators, status-projection helpers (shipped in `lib-js` / `hds-lib`).
+4. **Helpers** — slug computation, schema validators, status-projection helpers (shipped in `lib-js` / `legacy-shim`).
 
 | Data | Lives in |
 |---|---|
@@ -133,12 +133,12 @@ The `:_cmc:` namespace has three plugin-managed regions plus user-creatable scop
 - **One-shot lifecycle events** stay in flat `:_cmc:inbox` because they don't have a stable per-counterparty home (e.g. an incoming `cmc/request-v1` from a stranger you don't yet have a relationship with).
 
 **Slug conventions:**
-- `<counterparty-slug>` = `<username>--<host-slug>` where `host-slug` replaces `.` with `-`. Examples: `dr-smith--datasafe-dev`, `jane--pryv-me`, `bob--my-host-example-org`.
-- `<collector-slug>` = `<counterparty-slug>--<app-slug>` where `app-slug` slugifies the `requesterMeta.appId` from the original `cmc/request-v1`. Example: `dr-smith--datasafe-dev--stormm-doctor-dashboard`.
+- `<counterparty-slug>` = `<username>--<host-slug>` where `host-slug` replaces `.` with `-`. Examples: `alice--example-com`, `alice--example-com`, `bob--my-host-example-org`.
+- `<collector-slug>` = `<counterparty-slug>--<app-slug>` where `app-slug` slugifies the `requesterMeta.appId` from the original `cmc/request-v1`. Example: `alice--example-com--example-app`.
 - Double-hyphen (`--`) is the load-bearing separator; usernames and host-slugs use single hyphens so `--` is unambiguous.
-- Helpers `pryv.cmc.counterpartySlug({username, host})` and `pryv.cmc.collectorSlug({username, host, appId})` ship in `lib-js` / `hds-lib`.
+- Helpers `pryv.cmc.counterpartySlug({username, host})` and `pryv.cmc.collectorSlug({username, host, appId})` ship in `lib-js` / `legacy-shim`.
 
-**Cross-platform identity in slugs is required.** `jane@pryv.me` and `jane@datasafe.dev` are different people; the host is part of the slug.
+**Cross-platform identity in slugs is required.** `alice@example.com` and `alice@example.com` are different people; the host is part of the slug.
 
 *State projection across all scopes (`:_cmc:state`) deferred to v2 — trigger events carry their own status in `content.status`.*
 
@@ -270,7 +270,7 @@ Every successful `:_cmc:inbox` write (whether by in-process plugin routing for s
 
 Output: `IMPLEMENTERS-GUIDE.md`.
 
-A standalone document written from an API-consumer's perspective. The reader is an app/bridge developer building on open-pryv.io. The doc walks through every flow with full JSON for every API call, then provides reference sections on event-type schemas, capability accesses, socket subscription, error catalogue, and migration from the HDS Collector pattern. Includes a dedicated section on cross-platform federation showing that the same protocol works between independent operators.
+A standalone document written from an API-consumer's perspective. The reader is an app/bridge developer building on open-pryv.io. The doc walks through every flow with full JSON for every API call, then provides reference sections on event-type schemas, capability accesses, socket subscription, error catalogue, and migration from the legacy "Collector" pattern. Includes a dedicated section on cross-platform federation showing that the same protocol works between independent operators.
 
 **Exit:** Pierre review. Any wire-shape change in later phases must update this document.
 
@@ -357,28 +357,28 @@ Output: short spec docs alongside this README (or expanded sections of this READ
 
 *(`:_cmc:state` cross-scope projection deferred to v2 — apps query their own trigger streams for status in v1.)*
 
-### Phase I — hds-lib helpers + backwards-compat shims
+### Phase I — legacy-shim helpers + backwards-compat shims
 
-(In `hds-lib-js ` — user-driven; this plan documents the surface.)
+(In `the legacy client library ` — user-driven; this plan documents the surface.)
 
 1. `Connection.cmcSend(type, content, options?)` — convenience for `events.create({streamIds: [<scope>], type, content})`.
 2. `Connection.cmcSubscribe(handler)` — monitor wrapper for `:_cmc:inbox`.
 3. `Collector` / `CollectorClient` proxy classes — route to `:_cmc:` underneath.
 
-**Exit:** HDS can adopt without rewriting consumer apps.
+**Exit:** legacy can adopt without rewriting consumer apps.
 
 ### Phase J — Test matrix + deploy + cross-platform e2e + public docs
 
 1. Full PG + Mongo matrix green. Plugin tests live under `components/cmc/test/`. No new conformance matrix — `:_cmc:*` events / accesses / streams pass through the existing per-user-storage conformance.
 2. Deploy to `dev-pryv2-single` (single-core single-platform), validate.
 3. Deploy to pryv.me `core-use1` + `core-euc1`, validate cross-core via the standard HTTPS path.
-4. **Cross-platform e2e**: stand up a second open-pryv.io instance on a different domain (e.g. dev-deploy could add `dev-cmc-peer.datasafe.dev`); run a request → accept → chat → scope-update → revoke flow with users on both platforms. Different `dnsLess` topologies on each side ideally.
+4. **Cross-platform e2e**: stand up a second open-pryv.io instance on a different domain (e.g. dev-deploy could add `dev-cmc-peer.example.com`); run a request → accept → chat → scope-update → revoke flow with users on both platforms. Different `dnsLess` topologies on each side ideally.
 5. `lib-js` conformance against deployed infra unchanged (no API surface drift).
 6. **Public-docs hand-off.** This is the moment the customer-facing chain catches up with the implementation:
    - `CHANGELOG-v2.md` (API-facing) + `CHANGELOG-v2-back.md` (internal) entries written.
    - **dev-site dedicated CMC section** — a new top-level page on `pryv.github.io` that links into the canonical [IMPLEMENTERS-GUIDE.md](IMPLEMENTERS-GUIDE.md) in this component (or republishes its content with a stable URL). Pattern matches how the v2 topology rewrite and the Let's Encrypt integration (LE integration) added customer-resources pages.
    - **Documentation chain** — every public entry-point that references CMC (customer-resources sidebar, API reference, change-log, "What's new" page) gets a link to the component's `IMPLEMENTERS-GUIDE.md`. No stale stale plan-tracking references in public docs.
-   - `lib-js` README + `hds-lib` README cross-link to `components/cmc/IMPLEMENTERS-GUIDE.md` as the canonical wire-shape doc.
+   - `lib-js` README + `legacy-shim` README cross-link to `components/cmc/IMPLEMENTERS-GUIDE.md` as the canonical wire-shape doc.
 
 **Exit:** Production deploy. Cross-platform interop demonstrated. Public-doc chain refreshed; this component is discoverable from the dev-site landing page.
 
@@ -392,7 +392,7 @@ Output: short spec docs alongside this README (or expanded sections of this READ
 - **State projection cost.** Maintaining `:_cmc:state` materialized off outbox/inbox is O(events) on write. For high-volume operators, benchmark before Phase H ships.
 - **Cross-platform directed invites.** Out of scope for v1. Backlog item depending on future OAuth2 / app-accounts work federated invite webhook.
 - **Capability access visibility.** Operators may want audit visibility. Plugin should expose capability accesses to operator audit but hide from regular `accesses.get`.
-- **Existing HDS data.** Legacy compat shim covers runtime; data migration deferred.
+- **Existing legacy data.** Legacy compat shim covers runtime; data migration deferred.
 
 ## Out of scope
 
@@ -402,7 +402,7 @@ Output: short spec docs alongside this README (or expanded sections of this READ
 - OAuth2 / signatures / operator-side global revoke — future OAuth2 / app-accounts work.
 - E2E encryption of message payloads — backlog.
 - Group / many-to-many messaging — operator concern (fan-out N events).
-- Cross-platform data migration of existing HDS Collector data — legacy shim handles runtime.
+- Cross-platform data migration of existing legacy "Collector" data — legacy shim handles runtime.
 
 ## Future development scoping — mTLS / cluster CA stays out of the data path
 
@@ -465,7 +465,7 @@ CMC does not add to this list.
 3. **Capability TTL default.** 7 days proposed. **Align with future OAuth2 token TTL default.**
 4. **Quota numbers.** Per-source per-recipient inbox limit: 100 events/min proposed.
 5. **System-messaging opt-in granularity.** All-or-nothing vs per-level (info/warning/critical)?
-6. **Legacy shim removal date.** Proposed: removed in a follow-on cycle after CMC ships and HDS consumer apps are migrated.
+6. **Legacy shim removal date.** Proposed: removed in a follow-on cycle after CMC ships and consumer apps are migrated.
 7. **`:_cmc:state` semantics across multiple apps.** Filter by app at read time vs server-projected per-app?
 8. **Future OAuth2 capability-token unification.** Use CMC's capability access mechanism for OAuth2 authorization codes too? Same single-use, TTL-bounded, opaque-token-equivalent.
 9. **Back-channel apiEndpoint delivery mechanism.** Plugin appends a follow-up event to `:_cmc:_internal:offer:<capId>` (capability connection re-read)? Or `events.create` response carries it server-stamped?
@@ -481,9 +481,14 @@ CMC does not add to this list.
 - [ ] Phase B spec docs written + reviewed
 - [ ] composite-id `accesses.update` floor confirmed deployed on dev infra
 - [ ] Future OAuth2 / app-accounts work cross-referenced once Phase B closes
-- [ ] HDS team aware (co-coordinated plan for hds-lib helpers)
+- [ ] client-lib team aware (co-coordinated plan for legacy-shim helpers)
 - [ ] Hidden-streams-as-baseStorage primitive landed (preferred prerequisite) OR explicit decision to ship CMC-specific filter middleware as interim debt
 - [ ] Scoped-notification refactor landed (optional optimization — CMC works correctly under coarse notifications via lib-js client-side filtering even without it)
 - [ ] dev-site dedicated CMC section drafted (see Phase J item 6)
 - [ ] Cross-platform test infrastructure spec (second open-pryv.io instance — dev-deploy YAML)
 - [ ] Doc workflow: every change to design or behaviour applies here (README + IMPLEMENTERS-GUIDE + INTERNALS) first.
+
+
+# License
+
+[BSD-3-Clause](LICENSE)

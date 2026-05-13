@@ -46,14 +46,14 @@ const VALID_REQUEST = {
   to: null,
   capabilityRequested: true,
   request: {
-    title: { en: 'STORMM consent' },
-    description: { en: 'Share fertility + symptom data for 3 months.' },
+    title: { en: 'example consent' },
+    description: { en: 'share fertility + symptom data for 3 months' },
     consent: { en: 'I agree.' },
     permissions: VALID_PERMS,
     features: { chat: true, systemMessaging: false },
     expiresAt: 1736294400,
   },
-  requesterMeta: { displayName: 'Dr. Smith — STORMM', appId: 'stormm-doctor-dashboard' },
+  requesterMeta: { displayName: 'Dr. Smith — Example', appId: 'example-app' },
 };
 
 describe('[CMCVAL] cmc/validators', () => {
@@ -104,7 +104,7 @@ describe('[CMCVAL] cmc/validators', () => {
     it('[VR05] rejects localizable text given as plain string', () => {
       const bad = {
         ...VALID_REQUEST,
-        request: { ...VALID_REQUEST.request, title: 'STORMM consent' },
+        request: { ...VALID_REQUEST.request, title: 'example consent' },
       };
       expectInvalid('cmc/request-v1', bad, 'title');
     });
@@ -120,14 +120,14 @@ describe('[CMCVAL] cmc/validators', () => {
 
   describe('[CMCVAL-ACC] cmc/accept-v1', () => {
     it('[VA01] accepts a minimal accept', () => {
-      expectValid('cmc/accept-v1', { capabilityUrl: 'https://AbC@datasafe.dev/' });
+      expectValid('cmc/accept-v1', { capabilityUrl: 'https://AbC@example.com/' });
     });
 
     it('[VA02] accepts extra + accessName', () => {
       expectValid('cmc/accept-v1', {
-        capabilityUrl: 'https://AbC@datasafe.dev/',
+        capabilityUrl: 'https://AbC@example.com/',
         extra: { chat: true },
-        accessName: 'STORMM by Dr. Smith',
+        accessName: 'Example access',
       });
     });
 
@@ -139,7 +139,7 @@ describe('[CMCVAL] cmc/validators', () => {
   describe('[CMCVAL-REF] cmc/refuse-v1', () => {
     it('[VF01] accepts refuse with localizable reason', () => {
       expectValid('cmc/refuse-v1', {
-        capabilityUrl: 'https://AbC@datasafe.dev/',
+        capabilityUrl: 'https://AbC@example.com/',
         reason: { en: 'Not at this time.' },
       });
     });

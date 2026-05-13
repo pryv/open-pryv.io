@@ -4,7 +4,7 @@
 
 ## Elevator pitch
 
-If you're building anything where **one Pryv user needs to ask another for data access** — a clinician asking a patient to share symptoms, a researcher inviting participants to a study, a partner service onboarding new users, an operator pushing alerts to a population — this primitive is for you.
+If you're building anything where **one Pryv user needs to ask another for data access** — a clinician asking a user.to share symptoms, a researcher inviting participants to a study, a partner service onboarding new users, an operator pushing alerts to a population — this primitive is for you.
 
 It replaces the "create a shared access, write a request event on a public stream, hand the apiEndpoint over via QR code, poll an inbox stream for the response" pattern that most Pryv-based apps end up reinventing. Pryv now ships that workflow natively, exposed through one reserved stream plus event types you write in your own organizational streams. **No new API methods**.
 
@@ -22,7 +22,7 @@ The same protocol works across **independent open-pryv.io platforms** with diffe
 | Permission change = `accesses.delete` + `accesses.create` + chain `previousAccessIds` for audit | Write a `cmc/system-scope-request-v1` (collector side) or `cmc/system-scope-update-v1` (user side), or just call `accesses.update` directly — the plugin's post-hook auto-notifies the counterparty. Audit history preserved by composite-id versioning. |
 | Hand off invite as `https://<token>@<host>` (the token is in the URL — leakage = compromise) | Hand off the capability access's apiEndpoint — single-event scoped, TTL-bounded, single-use. |
 | Each acceptance: N×`streams.create` + `accesses.create`, no transaction | Plugin provisions atomically when it processes `cmc/accept-v1`. |
-| Untyped `clientData.hdsCollector.{public,inbox}.streamId` discovery contract | Typed event-type schemas validated server-side. |
+| Untyped `clientData.cmcCollector.{public,inbox}.streamId` discovery contract | Typed event-type schemas validated server-side. |
 | App tracks and coordinates two writes (one local, one on counterparty's account) per action | One write per action on the user's own platform. Plugin handles the rest. |
 | Cross-platform doesn't work | Cross-platform is a first-class supported case. |
 
@@ -35,19 +35,19 @@ The `:_cmc:` namespace has **four plugin-managed regions** plus user-creatable s
 | **`:_cmc:inbox`** | server (always present) | One-shot lifecycle events delivered to you: `cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1`. **Plugin-internal-write-only** — apps never write here. |
 | **`:_cmc:chats:<counterparty-slug>`** | plugin (auto-created on first chat) | All `cmc/chat-v1` events — both sent and received — for one specific counterparty. One thread per user-pair, no matter how many collector relationships connect you. |
 | **`:_cmc:collectors:<collector-slug>`** | plugin (auto-created at acceptance) | The system channel for one specific collector-relationship: `cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1`. A study's reminders don't bleed into clinical-care alerts from the same doctor. |
-| **`:_cmc:apps:<anything-you-create>`** | you via `streams.create({parentId: ':_cmc:apps'})` (and deeper) | Your own organizational scopes for one-shot lifecycle triggers (publish requests, accept invites, revoke). Nest as deep as you like — `:_cmc:apps:stormm:study-A`, `:_cmc:apps:patient:incoming`, etc. The plugin doesn't reserve names under `:_cmc:apps`. |
+| **`:_cmc:apps:<anything-you-create>`** | you via `streams.create({parentId: ':_cmc:apps'})` (and deeper) | Your own organizational scopes for one-shot lifecycle triggers (publish requests, accept invites, revoke). Nest as deep as you like — `:_cmc:apps:my-app:study-A`, `:_cmc:apps:patient:incoming`, etc. The plugin doesn't reserve names under `:_cmc:apps`. |
 
 The parent streams `:_cmc:`, `:_cmc:inbox`, `:_cmc:chats`, `:_cmc:collectors`, and `:_cmc:apps` always exist (plugin-managed); you can't `streams.create` / `update` / `delete` them directly. You read children recursively via `events.get({streamIds: [':_cmc:chats']})` etc. The only place you can `streams.create` under `:_cmc:` is inside `:_cmc:apps`.
 
 ### Slug conventions
 
-Cross-platform identity is required in the slug — `jane@pryv.me` and `jane@datasafe.dev` are different people:
+Cross-platform identity is required in the slug — `alice@example.com` and `alice@example.com` are different people:
 
 - **`<counterparty-slug>`** = `<username>--<host-slug>` where `host-slug` replaces `.` with `-`. Double-hyphen (`--`) is the load-bearing separator; usernames and host-slugs use single hyphens so `--` is unambiguous.
-  - Examples: `dr-smith--datasafe-dev`, `jane--pryv-me`, `bob--my-host-example-org`.
+  - Examples: `alice--example-com`, `alice--example-com`, `bob--my-host-example-org`.
 - **`<collector-slug>`** = `<counterparty-slug>--<app-slug>` where `app-slug` slugifies the `requesterMeta.appId` from the original `cmc/request-v1`.
-  - Example: `dr-smith--datasafe-dev--stormm-doctor-dashboard`.
-- Helpers `pryv.cmc.counterpartySlug({username, host})` and `pryv.cmc.collectorSlug({username, host, appId})` ship in `lib-js` / `hds-lib`.
+  - Example: `alice--example-com--example-app`.
+- Helpers `pryv.cmc.counterpartySlug({username, host})` and `pryv.cmc.collectorSlug({username, host, appId})` ship in `lib-js` / `legacy-shim`.
 
 ### Where to write each event type
 
@@ -55,7 +55,7 @@ The plugin dispatches based on event type AND target stream:
 
 | Event family | App writes to | Why anchored there |
 |---|---|---|
-| **Lifecycle** (`cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1`) | A user-managed `:_cmc:apps:*` stream you create (e.g. `:_cmc:apps:stormm:study-A`). | One-shot — at request time you might not yet have a stable per-counterparty home (an open invite to nobody-in-particular). |
+| **Lifecycle** (`cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1`) | A user-managed `:_cmc:apps:*` stream you create (e.g. `:_cmc:apps:my-app:study-A`). | One-shot — at request time you might not yet have a stable per-counterparty home (an open invite to nobody-in-particular). |
 | **Chat** (`cmc/chat-v1`) | The anchored `:_cmc:chats:<counterparty-slug>` stream. | One thread per user-pair; sent and received chat events live in the same stream on each side. |
 | **System** (`cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1`) | The anchored `:_cmc:collectors:<collector-slug>` stream. | System messages and scope-change history live where the collector-relationship itself lives. |
 
@@ -94,15 +94,15 @@ After this, both plugins hold each other's apiEndpoints and have the credentials
 
 ---
 
-# Walkthrough 1 — Doctor asks Patient for data access
+# Walkthrough 1 — Provider asks User for data access
 
-The doctor's account on Platform A (`datasafe.dev`). The patient's account is on Platform B — could be the same platform, could be a different one (`pryv.me`, `university.edu`, anywhere — the protocol doesn't care).
+The doctor's account on Platform A (`example.com`). The patient's account is on Platform B — could be the same platform, could be a different one (`pryv.me`, `university.edu`, anywhere — the protocol doesn't care).
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant DoctorApp
-    participant PlatformA as Platform A<br/>(datasafe.dev)
+    participant PlatformA as Platform A<br/>(example.com)
     participant PlatformB as Platform B<br/>(pryv.me)
     participant PatientApp
 
@@ -116,21 +116,21 @@ sequenceDiagram
     DoctorApp->>PlatformB: events.get fertility via grantedAccess.apiEndpoint
 ```
 
-## Step 1 — Doctor creates an organizational scope (once per study)
+## Step 1 — Provider creates an organizational scope (once per study)
 
 ```js
-// Doctor's app, authenticated as the doctor on Platform A.
+// Doctor's app, authenticated as the provider on Platform A.
 // Create the app root, then the per-study scope under it.
 await doctorConnection.api([
   { method: 'streams.create', params: {
-      id: ':_cmc:apps:stormm',
+      id: ':_cmc:apps:my-app',
       parentId: ':_cmc:apps',
-      name: 'STORMM'
+      name: 'My App'
   }},
   { method: 'streams.create', params: {
-      id: ':_cmc:apps:stormm:study-A',
-      parentId: ':_cmc:apps:stormm',
-      name: 'STORMM Study A',
+      id: ':_cmc:apps:my-app:study-A',
+      parentId: ':_cmc:apps:my-app',
+      name: 'Example Study',
       clientData: { cmc: { kind: 'collector' } }
   }}
 ]);
@@ -138,22 +138,22 @@ await doctorConnection.api([
 
 Plain `streams.create`. The doctor's app organizes its collectors however it likes under `:_cmc:apps:`.
 
-## Step 2 — Doctor publishes the request
+## Step 2 — Provider publishes the request
 
 ```js
 const result = await doctorConnection.api([
   {
     method: 'events.create',
     params: {
-      streamIds: [':_cmc:apps:stormm:study-A'],
+      streamIds: [':_cmc:apps:my-app:study-A'],
       type: 'cmc/request-v1',
       content: {
         to: null,                          // open invite — anyone with the capability URL claims
         capabilityRequested: true,
         request: {
-          title:       { en: 'STORMM symptom-tracking consent' },
+          title:       { en: 'Example consent' },
           description: { en: 'Share fertility + symptom data for 3 months.' },
-          consent:     { en: 'I agree to share data with Dr. Smith for the STORMM study.' },
+          consent:     { en: 'I agree to share data with Provider A for the example study.' },
           permissions: [
             { streamId: 'fertility', level: 'read' },
             { streamId: 'symptom',   level: 'read' }
@@ -162,9 +162,9 @@ const result = await doctorConnection.api([
           expiresAt: 1736294400
         },
         requesterMeta: {
-          displayName: 'Dr. Smith — STORMM Study',
-          appId:       'stormm-doctor-dashboard',
-          appUrl:      'https://stormm.example.org'
+          displayName: 'Provider A study',
+          appId:       'example-app',
+          appUrl:      'https://my-app.example.org'
         }
       }
     }
@@ -173,7 +173,7 @@ const result = await doctorConnection.api([
 
 const requestEvent = result[0].event;
 // Plugin processed synchronously; event content now contains:
-// requestEvent.content.capabilityUrl       → 'https://AbC...Xyz@datasafe.dev/'
+// requestEvent.content.capabilityUrl       → 'https://AbC...Xyz@example.com/'
 // requestEvent.content.capabilityExpiresAt → 1735776000
 // requestEvent.content.status              → 'pending'
 ```
@@ -187,10 +187,10 @@ The doctor's app encodes the URL into a QR code, email, deep-link — whatever t
 
 ## Step 3 — Patient's app receives the URL and reads the offer
 
-The patient receives the URL on their device. Their app opens it as a plain Pryv connection to read the offer content (so the consent UI can display it):
+The user.receives the URL on their device. Their app opens it as a plain Pryv connection to read the offer content (so the consent UI can display it):
 
 ```js
-const cap = new pryv.Connection('https://AbC...Xyz@datasafe.dev/');
+const cap = new pryv.Connection('https://AbC...Xyz@example.com/');
 
 // Read the offer
 const [{ events }] = await cap.api([
@@ -200,12 +200,12 @@ const offer = events[0];
 
 // Verify sender identity (good UX)
 const accessInfo = await cap.accessInfo();
-// accessInfo.user.username = 'dr-smith' on datasafe.dev
+// accessInfo.user.username = 'alice' on example.com
 ```
 
 The patient's app renders the consent screen.
 
-## Step 4 — Patient accepts (single write on patient's own platform)
+## Step 4 — User accepts (single write on patient's own platform)
 
 ```js
 await patientConnection.api([
@@ -215,7 +215,7 @@ await patientConnection.api([
       streamIds: [':_cmc:apps:patient:incoming'],
       type: 'cmc/accept-v1',
       content: {
-        capabilityUrl: 'https://AbC...Xyz@datasafe.dev/',
+        capabilityUrl: 'https://AbC...Xyz@example.com/',
         extra: { chat: true }                  // optional opt-ins for features the request offered
       }
     }
@@ -223,7 +223,7 @@ await patientConnection.api([
 ]);
 ```
 
-That's the patient's only call. Everything else is server-orchestrated by the patient's plugin:
+That's the user's only call. Everything else is server-orchestrated by the user's plugin:
 
 1. Reads the offer through the capability connection.
 2. Creates the local data-grant access with permissions derived from the offer (default name derived from `requesterMeta.appId` + requester username — override with `content.accessName` if you want).
@@ -234,7 +234,7 @@ That's the patient's only call. Everything else is server-orchestrated by the pa
 
 If anything fails (network, capability consumed by someone else, request expired), the trigger's `content.status` becomes `'failed'` with `content.failure.reason`. The local data-grant access is rolled back if the remote acceptance call fails.
 
-## Step 5 — Doctor sees the acceptance
+## Step 5 — Provider sees the acceptance
 
 Doctor's plugin (when it processed the remote accept) also wrote a local copy into doctor's `:_cmc:inbox`:
 
@@ -242,11 +242,11 @@ Doctor's plugin (when it processed the remote accept) also wrote a local copy in
 const monitor = await doctorConnection.monitor();
 monitor.subscribe(':_cmc:inbox', (event) => {
   if (event.type === 'cmc/accept-v1') {
-    // event.content.from               = { username: 'patient-jane', host: 'pryv.me' }
+    // event.content.from               = { username: 'patient-alice', host: 'pryv.me' }
     // event.content.grantedAccess      = { apiEndpoint: 'https://xYz...PqR@pryv.me/' }
     // event.content.backChannelAccessId = 'def456'  (on doctor's account)
-    const patient = new pryv.Connection(event.content.grantedAccess.apiEndpoint);
-    const data = await patient.api([
+    const user.= new pryv.Connection(event.content.grantedAccess.apiEndpoint);
+    const data = await user.api([
       { method: 'events.get', params: { streamIds: ['fertility'], limit: 100 } }
     ]);
   }
@@ -263,7 +263,7 @@ await patientConnection.api([
       streamIds: [':_cmc:apps:patient:incoming'],
       type: 'cmc/refuse-v1',
       content: {
-        capabilityUrl: 'https://AbC...Xyz@datasafe.dev/',
+        capabilityUrl: 'https://AbC...Xyz@example.com/',
         reason: { en: 'Not at this time.' }
       }
   }}
@@ -277,7 +277,7 @@ Patient's plugin delivers refuse via capability. No accesses created.
 Either party writes a single event on their own platform:
 
 ```js
-// Patient revokes
+// User revokes
 await patientConnection.api([
   { method: 'events.create', params: {
       streamIds: [':_cmc:apps:patient:revokes'],
@@ -306,7 +306,7 @@ The trigger event content IS the state record. Read your own outgoing actions fr
 ```js
 const requests = await doctorConnection.api([
   { method: 'events.get', params: {
-      streamIds: [':_cmc:apps:stormm:study-A'],
+      streamIds: [':_cmc:apps:my-app:study-A'],
       types: ['cmc/request-v1'],
       limit: 100
   }}
@@ -324,7 +324,7 @@ Subscribe to your trigger streams via the standard socket.io monitor to see stat
 
 ---
 
-# Walkthrough 2 — Doctor and patient chat
+# Walkthrough 2 — Provider and user.chat
 
 Chat is anchored **per user-pair**: there's one stream on each side, `:_cmc:chats:<counterparty-slug>`, holding both sent and received `cmc/chat-v1` events for that one counterparty. The plugin creates these streams automatically the first time chat happens between the two parties (typically at acceptance time, since both sides have a slug as soon as the access pair exists).
 
@@ -336,42 +336,42 @@ sequenceDiagram
     participant PlatformB as Platform B
     participant PatientApp
 
-    DoctorApp->>PlatformA: events.create cmc/chat-v1<br/>:_cmc:chats:jane--pryv-me
+    DoctorApp->>PlatformA: events.create cmc/chat-v1<br/>:_cmc:chats:alice--example-com
     Note over PlatformA,PlatformB: server-orchestrated delivery
-    PlatformB-->>PatientApp: socket.io push<br/>:_cmc:chats:dr-smith--datasafe-dev
-    PatientApp->>PlatformB: events.create cmc/chat-v1<br/>:_cmc:chats:dr-smith--datasafe-dev
-    PlatformA-->>DoctorApp: socket.io push<br/>:_cmc:chats:jane--pryv-me
+    PlatformB-->>PatientApp: socket.io push<br/>:_cmc:chats:alice--example-com
+    PatientApp->>PlatformB: events.create cmc/chat-v1<br/>:_cmc:chats:alice--example-com
+    PlatformA-->>DoctorApp: socket.io push<br/>:_cmc:chats:alice--example-com
 ```
 
 Each party writes a single event into their own per-counterparty chat stream. The plugin delivers to the matching stream on the other side.
 
 ```js
-// Doctor on datasafe.dev chats with patient Jane on pryv.me.
-// Doctor's slug for Jane: 'jane--pryv-me'.
-// Jane's slug for the doctor: 'dr-smith--datasafe-dev'.
+// Provider on example.com chats with user.Alice on pryv.me.
+// Doctor's slug for Alice: 'alice--example-com'.
+// Alice's slug for the provider: 'alice--example-com'.
 
-// Doctor sends
+// Provider sends
 await doctorConnection.api([
   { method: 'events.create', params: {
-      streamIds: [':_cmc:chats:jane--pryv-me'],
+      streamIds: [':_cmc:chats:alice--example-com'],
       type: 'cmc/chat-v1',
       content: { content: 'How are you feeling today?' }
   }}
 ]);
-// Doctor's plugin resolves the access pair for counterparty jane@pryv.me,
+// Doctor's plugin resolves the access pair for counterparty alice@example.com,
 // reads the back-channel access's stored counterparty apiEndpoint,
-// delivers the chat to Jane's :_cmc:chats:dr-smith--datasafe-dev stream.
+// delivers the chat to Alice's :_cmc:chats:alice--example-com stream.
 
-// Patient sends
+// User sends
 await patientConnection.api([
   { method: 'events.create', params: {
-      streamIds: [':_cmc:chats:dr-smith--datasafe-dev'],
+      streamIds: [':_cmc:chats:alice--example-com'],
       type: 'cmc/chat-v1',
       content: { content: 'Better, thanks. Slight headache yesterday.' }
   }}
 ]);
 // Patient's plugin does the symmetric resolution and delivers to
-// doctor's :_cmc:chats:jane--pryv-me stream.
+// doctor's :_cmc:chats:alice--example-com stream.
 ```
 
 **Sent and received chat events live in the same stream on each side.** Reading the full conversation history is just an `events.get` on one stream — no need to fan out across multiple stream ids:
@@ -379,7 +379,7 @@ await patientConnection.api([
 ```js
 const history = await doctorConnection.api([
   { method: 'events.get', params: {
-      streamIds: [':_cmc:chats:jane--pryv-me'],
+      streamIds: [':_cmc:chats:alice--example-com'],
       types: ['cmc/chat-v1'],
       sortAscending: true,
       limit: 500
@@ -392,7 +392,7 @@ const history = await doctorConnection.api([
 Subscribing to chat with one counterparty:
 
 ```js
-monitor.subscribe(':_cmc:chats:jane--pryv-me', (event) => { /* render */ });
+monitor.subscribe(':_cmc:chats:alice--example-com', (event) => { /* render */ });
 ```
 
 Subscribing to all chat activity across all counterparties (recursive):
@@ -403,14 +403,14 @@ monitor.subscribe(':_cmc:chats', (event) => {
 });
 ```
 
-The plugin uses `lib-js` / `hds-lib` helpers to compute slugs deterministically so apps don't roll their own:
+The plugin uses `lib-js` / `legacy-shim` helpers to compute slugs deterministically so apps don't roll their own:
 
 ```js
-const slug = pryv.cmc.counterpartySlug({ username: 'jane', host: 'pryv.me' });
-// → 'jane--pryv-me'
+const slug = pryv.cmc.counterpartySlug({ username: 'alice', host: 'pryv.me' });
+// → 'alice--example-com'
 ```
 
-**Multiple collectors with the same counterparty share one chat stream.** If Dr. Smith runs both the STORMM study and a clinical-care relationship with Jane, both relationships' chat events land in `:_cmc:chats:jane--pryv-me` (and on Jane's side in `:_cmc:chats:dr-smith--datasafe-dev`). The plugin picks any access in the pair to carry the delivery; the receiving plugin resolves back to the same per-counterparty stream regardless of which access was used. System-level distinctions (which study? which collector?) belong on `:_cmc:collectors:<collector-slug>`, not in chat.
+**Multiple collectors with the same counterparty share one chat stream.** If Provider A runs both the example study and a clinical-care relationship with Alice, both relationships' chat events land in `:_cmc:chats:alice--example-com` (and on Alice's side in `:_cmc:chats:alice--example-com`). The plugin picks any access in the pair to carry the delivery; the receiving plugin resolves back to the same per-counterparty stream regardless of which access was used. System-level distinctions (which study? which collector?) belong on `:_cmc:collectors:<collector-slug>`, not in chat.
 
 ---
 
@@ -418,10 +418,10 @@ const slug = pryv.cmc.counterpartySlug({ username: 'jane', host: 'pryv.me' });
 
 The system channel is anchored **per collector-relationship**: `:_cmc:collectors:<collector-slug>` on each side. All four system event types share that one stream so a study's reminders don't bleed into clinical-care alerts from the same doctor, and scope-change history lives where the relationship itself lives. The plugin auto-creates `:_cmc:collectors:<collector-slug>` at acceptance time, before any system messages can flow.
 
-Using the running example: Dr. Smith (`dr-smith@datasafe.dev`) running the STORMM study (`appId: 'stormm-doctor-dashboard'`) and patient Jane (`jane@pryv.me`).
+Using the running example: Provider A (`alice@example.com`) running the example study (`appId: 'example-app'`) and user.Alice (`alice@example.com`).
 
-- Doctor's collector-slug for Jane: `jane--pryv-me--stormm-doctor-dashboard`.
-- Jane's collector-slug for Dr. Smith's STORMM relationship: `dr-smith--datasafe-dev--stormm-doctor-dashboard`.
+- Doctor's collector-slug for Alice: `alice--example-com--example-app`.
+- Alice's collector-slug for Provider A's relationship: `alice--example-com--example-app`.
 
 Each party writes to their own per-collector stream; the plugin delivers to the matching stream on the other side.
 
@@ -435,18 +435,18 @@ sequenceDiagram
     participant PlatformB as Platform B
     participant PatientApp
 
-    DoctorApp->>PlatformA: events.create cmc/system-alert-v1<br/>:_cmc:collectors:jane--pryv-me--stormm...
+    DoctorApp->>PlatformA: events.create cmc/system-alert-v1<br/>:_cmc:collectors:alice--example-com--my-app...
     Note over PlatformA,PlatformB: features.systemMessaging check<br/>+ rate-limit + delivery
-    PlatformB-->>PatientApp: socket.io push :_cmc:collectors:dr-smith...
+    PlatformB-->>PatientApp: socket.io push :_cmc:collectors:alice...
     PatientApp->>PlatformB: events.create cmc/system-ack-v1
-    PlatformA-->>DoctorApp: socket.io push :_cmc:collectors:jane...
+    PlatformA-->>DoctorApp: socket.io push :_cmc:collectors:alice...
 ```
 
 ```js
-// Dr. Smith writes a single event on their own platform
+// Provider A writes a single event on their own platform
 await doctorConnection.api([
   { method: 'events.create', params: {
-      streamIds: [':_cmc:collectors:jane--pryv-me--stormm-doctor-dashboard'],
+      streamIds: [':_cmc:collectors:alice--example-com--example-app'],
       type: 'cmc/system-alert-v1',
       content: {
         level: 'info',                       // 'info' | 'warning' | 'critical'
@@ -464,14 +464,14 @@ Doctor's plugin:
 1. Resolves the access pair for this collector-relationship from the stream id.
 2. Verifies the participant's data-grant access (locally) has `clientData.cmc.features.systemMessaging: true`. If not, fails the trigger with `system-messaging-not-permitted`.
 3. Enforces rate-limit for this participant.
-4. Delivers the alert to Jane's `:_cmc:collectors:dr-smith--datasafe-dev--stormm-doctor-dashboard` stream via the stored apiEndpoint.
+4. Delivers the alert to Alice's `:_cmc:collectors:alice--example-com--example-app` stream via the stored apiEndpoint.
 
 Jane's app sees the alert via socket.io and prompts the user to ack:
 
 ```js
 await patientConnection.api([
   { method: 'events.create', params: {
-      streamIds: [':_cmc:collectors:dr-smith--datasafe-dev--stormm-doctor-dashboard'],
+      streamIds: [':_cmc:collectors:alice--example-com--example-app'],
       type: 'cmc/system-ack-v1',
       content: {
         alertEventId: '<inbox event id>',
@@ -481,11 +481,11 @@ await patientConnection.api([
 ]);
 ```
 
-Jane's plugin delivers the ack to the doctor's matching collector stream.
+Jane's plugin delivers the ack to the provider's matching collector stream.
 
 ## 3b — Collector proposes a scope change
 
-Dr. Smith wants to widen the access to also include `nutrition`. The collector writes a `cmc/system-scope-request-v1` on the same collector stream:
+Provider A wants to widen the access to also include `nutrition`. The collector writes a `cmc/system-scope-request-v1` on the same collector stream:
 
 ```mermaid
 sequenceDiagram
@@ -498,18 +498,18 @@ sequenceDiagram
     DoctorApp->>PlatformA: events.create cmc/system-scope-request-v1
     Note over PlatformA: permission-chain rules<br/>pre-validated locally
     PlatformA-->>DoctorApp: trigger status='delivered'
-    PlatformA->>PlatformB: deliver to :_cmc:collectors:dr-smith...
+    PlatformA->>PlatformB: deliver to :_cmc:collectors:alice...
     PlatformB-->>PatientApp: socket.io push (proposal)
     PatientApp->>PlatformB: events.create cmc/system-scope-update-v1<br/>(accept: true)
     Note over PlatformB: accesses.update<br/>composite-id bumps
-    PlatformB->>PlatformA: deliver to :_cmc:collectors:jane...
+    PlatformB->>PlatformA: deliver to :_cmc:collectors:alice...
     PlatformA-->>DoctorApp: socket.io push (acceptance + accessUpdated)
 ```
 
 ```js
 await doctorConnection.api([
   { method: 'events.create', params: {
-      streamIds: [':_cmc:collectors:jane--pryv-me--stormm-doctor-dashboard'],
+      streamIds: [':_cmc:collectors:alice--example-com--example-app'],
       type: 'cmc/system-scope-request-v1',
       content: {
         newPermissions: [
@@ -525,20 +525,20 @@ await doctorConnection.api([
 
 Doctor's plugin:
 
-1. Resolves the access pair from the collector slug. The collector's back-channel access points at Jane's data-grant.
-2. **Pre-validates permission-chain rules locally** against the doctor's app-access — the doctor must hold manage rights on the underlying data-grant; the new permissions must be ⊆ the doctor's own app permissions.
-3. If invalid: updates trigger with `status: 'failed', failure: { reason: 'scope-update-offending-children', detail: [...] }`. Jane never sees a failed request — the doctor sees the error immediately.
-4. If valid: delivers `cmc/system-scope-request-v1` to Jane's `:_cmc:collectors:dr-smith--datasafe-dev--stormm-doctor-dashboard` via Jane's data-grant apiEndpoint.
-5. Updates trigger with `status: 'delivered'`. Final status `completed` lands when Jane responds.
+1. Resolves the access pair from the collector slug. The collector's back-channel access points at Alice's data-grant.
+2. **Pre-validates permission-chain rules locally** against the provider's app-access — the provider must hold manage rights on the underlying data-grant; the new permissions must be ⊆ the provider's own app permissions.
+3. If invalid: updates trigger with `status: 'failed', failure: { reason: 'scope-update-offending-children', detail: [...] }`. Alice never sees a failed request — the provider sees the error immediately.
+4. If valid: delivers `cmc/system-scope-request-v1` to Alice's `:_cmc:collectors:alice--example-com--example-app` via Alice's data-grant apiEndpoint.
+5. Updates trigger with `status: 'delivered'`. Final status `completed` lands when Alice responds.
 
-Jane's app sees the request via socket.io on `:_cmc:collectors:dr-smith--datasafe-dev--stormm-doctor-dashboard` and prompts: "Dr. Smith would like to also access: nutrition. [Accept] [Refuse]".
+Jane's app sees the request via socket.io on `:_cmc:collectors:alice--example-com--example-app` and prompts: "Provider A would like to also access: nutrition. [Accept] [Refuse]".
 
 ## 3c — User accepts the scope change
 
 ```js
 await patientConnection.api([
   { method: 'events.create', params: {
-      streamIds: [':_cmc:collectors:dr-smith--datasafe-dev--stormm-doctor-dashboard'],
+      streamIds: [':_cmc:collectors:alice--example-com--example-app'],
       type: 'cmc/system-scope-update-v1',
       content: {
         scopeRequestEventId: '<inbox event id from 3b>',
@@ -552,11 +552,11 @@ Jane's plugin:
 
 1. Reads the incoming `cmc/system-scope-request-v1` event from the same collector stream to identify the access + new permissions.
 2. Calls `accesses.update` on the local data-grant access with the new permissions. Composite serial bumps (e.g. `abc123` → `abc123:1`).
-3. Delivers `cmc/system-scope-update-v1` (`accept: true`) to the doctor's `:_cmc:collectors:jane--pryv-me--stormm-doctor-dashboard` via the stored back-channel apiEndpoint.
-4. Doctor's plugin (on receipt) emits `accessUpdated` socket event locally so the doctor's app sees the new composite-id and refreshed permissions.
-5. Jane's plugin updates her trigger with `status: 'completed', newAccessId: 'abc123:1'`.
+3. Delivers `cmc/system-scope-update-v1` (`accept: true`) to the provider's `:_cmc:collectors:alice--example-com--example-app` via the stored back-channel apiEndpoint.
+4. Doctor's plugin (on receipt) emits `accessUpdated` socket event locally so the provider's app sees the new composite-id and refreshed permissions.
+5. Alice's plugin updates her trigger with `status: 'completed', newAccessId: 'abc123:1'`.
 
-**To refuse**: `accept: false`. Jane's plugin skips the local `accesses.update` and delivers the refusal — the doctor's app gets the negative response on the same collector stream.
+**To refuse**: `accept: false`. Alice's plugin skips the local `accesses.update` and delivers the refusal — the provider's app gets the negative response on the same collector stream.
 
 `cmc/system-scope-update-v1` events can also be **user-initiated** without responding to a collector's request — see Walkthrough 4.
 
@@ -577,12 +577,12 @@ sequenceDiagram
     PatientApp->>PlatformB: accesses.update<br/>(new permissions)
     Note over PlatformB: post-hook detects<br/>clientData.cmc.role: 'counterparty'
     PlatformB->>PlatformA: deliver cmc/system-scope-update-v1<br/>(source: 'post-hook')
-    PlatformA-->>DoctorApp: socket.io push :_cmc:collectors:jane...<br/>+ accessUpdated locally
+    PlatformA-->>DoctorApp: socket.io push :_cmc:collectors:alice...<br/>+ accessUpdated locally
 ```
 
 ## Step 1 — User updates the access through the standard Pryv API
 
-Jane decides to also share her sleep data with Dr. Smith's STORMM study, without waiting for the doctor to ask. Her app (or even the Pryv admin UI — any client holding manage rights) calls `accesses.update` against the data-grant access:
+Jane decides to also share her sleep data with Provider A's example study, without waiting for the provider to ask. Her app (or even the Pryv admin UI — any client holding manage rights) calls `accesses.update` against the data-grant access:
 
 ```js
 await patientConnection.api([
@@ -609,20 +609,20 @@ The plugin runs a post-hook on every successful `accesses.update`. When the upda
 
 1. Reads the stored counterparty `apiEndpoint` and `collector-slug` from `clientData.cmc` on the access.
 2. Reads the new permissions from the freshly-updated access.
-3. Writes (in-process, on behalf of the user) a `cmc/system-scope-update-v1` event to Jane's own `:_cmc:collectors:dr-smith--datasafe-dev--stormm-doctor-dashboard` stream — this becomes the user-side audit record.
-4. Delivers `cmc/system-scope-update-v1` (`source: 'user-initiated'`) to Dr. Smith's `:_cmc:collectors:jane--pryv-me--stormm-doctor-dashboard` via the stored back-channel apiEndpoint.
+3. Writes (in-process, on behalf of the user) a `cmc/system-scope-update-v1` event to Alice's own `:_cmc:collectors:alice--example-com--example-app` stream — this becomes the user-side audit record.
+4. Delivers `cmc/system-scope-update-v1` (`source: 'user-initiated'`) to Provider A's `:_cmc:collectors:alice--example-com--example-app` via the stored back-channel apiEndpoint.
 
-Dr. Smith's plugin, on receipt:
+Provider A's plugin, on receipt:
 
-1. Emits `accessUpdated` socket event locally so the doctor's app sees the new composite-id and refreshed permissions.
-2. The event lands in the doctor's `:_cmc:collectors:jane--pryv-me--stormm-doctor-dashboard` stream alongside any prior scope-request / alert history.
+1. Emits `accessUpdated` socket event locally so the provider's app sees the new composite-id and refreshed permissions.
+2. The event lands in the provider's `:_cmc:collectors:alice--example-com--example-app` stream alongside any prior scope-request / alert history.
 
 The doctor's app, subscribed to `:_cmc:collectors` (recursive), sees the user-initiated change land:
 
 ```js
 monitor.subscribe(':_cmc:collectors', (event) => {
   if (event.type === 'cmc/system-scope-update-v1') {
-    // event.content.from           = { username: 'jane', host: 'pryv.me' }
+    // event.content.from           = { username: 'alice', host: 'pryv.me' }
     // event.content.source         = 'user-initiated'  (vs 'response-to-request')
     // event.content.newPermissions = [..., { streamId: 'sleep', level: 'read' }]
     // event.content.newAccessId    = 'abc123:2'
@@ -638,7 +638,7 @@ End result: a user-initiated change goes through the post-hook (one notification
 
 ## Why this matters
 
-The `accesses.update` post-hook means **every** scope change on a CMC counterparty access surfaces on the collector-relationship's system channel — whether the user typed in the Pryv admin UI, wrote a `cmc/system-scope-update-v1` trigger directly, or accepted a `cmc/system-scope-request-v1`. The collector's app has one place to watch for "what's the current permission set on Jane's data-grant?" and it stays accurate through any user-side change path.
+The `accesses.update` post-hook means **every** scope change on a CMC counterparty access surfaces on the collector-relationship's system channel — whether the user typed in the Pryv admin UI, wrote a `cmc/system-scope-update-v1` trigger directly, or accepted a `cmc/system-scope-request-v1`. The collector's app has one place to watch for "what's the current permission set on Alice's data-grant?" and it stays accurate through any user-side change path.
 
 ---
 
@@ -656,9 +656,9 @@ The walkthroughs above work **identically** whether the parties are on:
 
 ## The one limitation: directed cross-platform invites
 
-If the doctor writes `cmc/request-v1` with `to: 'jane@pryv.me'` while sitting on `datasafe.dev`:
+If the provider writes `cmc/request-v1` with `to: 'alice@example.com'` while sitting on `example.com`:
 
-- The plugin on `datasafe.dev` can mint the capability access (local action) but cannot push a notification into Jane's `:_cmc:inbox` on `pryv.me` — no access pair exists yet, so the plugin has no apiEndpoint to deliver to.
+- The plugin on `example.com` can mint the capability access (local action) but cannot push a notification into Alice's `:_cmc:inbox` on `pryv.me` — no access pair exists yet, so the plugin has no apiEndpoint to deliver to.
 - The capability URL is still minted. Hand-off via email/QR/operator-specific channel is required.
 
 **Same-platform directed invites** (where the recipient is local) DO auto-deliver because the plugin can write in-process. The capability URL still works as a fallback.
@@ -673,7 +673,7 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
 
 | Event family | Trigger location | Delivery location on counterparty |
 |---|---|---|
-| **Lifecycle** (`cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1`) | Any user-managed `:_cmc:apps:*` stream you've created (e.g. `:_cmc:apps:stormm:study-A`). | Counterparty's `:_cmc:inbox`. |
+| **Lifecycle** (`cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1`) | Any user-managed `:_cmc:apps:*` stream you've created (e.g. `:_cmc:apps:my-app:study-A`). | Counterparty's `:_cmc:inbox`. |
 | **Chat** (`cmc/chat-v1`) | Your own `:_cmc:chats:<counterparty-slug>` (plugin auto-creates at acceptance). | Counterparty's `:_cmc:chats:<your-slug>`. |
 | **System** (`cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1`) | Your own `:_cmc:collectors:<collector-slug>` (plugin auto-creates at acceptance). | Counterparty's `:_cmc:collectors:<your-slug>`. |
 
@@ -930,12 +930,12 @@ Examples:
 
 | `(username, host)` | Counterparty slug |
 |---|---|
-| `('dr-smith', 'datasafe.dev')` | `dr-smith--datasafe-dev` |
-| `('jane', 'pryv.me')` | `jane--pryv-me` |
+| `('alice', 'example.com')` | `alice--example-com` |
+| `('alice', 'pryv.me')` | `alice--example-com` |
 | `('bob', 'my-host.example.org')` | `bob--my-host-example-org` |
 | `('alice-smith', 'sub.example.com')` | `alice-smith--sub-example-com` |
 
-**The load-bearing separator is `--`.** Usernames and host-slugs use single hyphens; the double-hyphen is reserved as the delimiter. Splitting `dr-smith--datasafe-dev` on `--` deterministically yields `('dr-smith', 'datasafe-dev')`, then converting `host-slug` back to `host` by replacing `-` with `.` only at the host-slug position (not in the username) requires knowing the DNS suffix structure — which is why apps should always use the helper rather than parse by hand.
+**The load-bearing separator is `--`.** Usernames and host-slugs use single hyphens; the double-hyphen is reserved as the delimiter. Splitting `alice--example-com` on `--` deterministically yields `('alice', 'example-com')`, then converting `host-slug` back to `host` by replacing `-` with `.` only at the host-slug position (not in the username) requires knowing the DNS suffix structure — which is why apps should always use the helper rather than parse by hand.
 
 ## Collector slug
 
@@ -948,37 +948,37 @@ Examples:
 
 | `(username, host, appId)` | Collector slug |
 |---|---|
-| `('dr-smith', 'datasafe.dev', 'stormm-doctor-dashboard')` | `dr-smith--datasafe-dev--stormm-doctor-dashboard` |
-| `('jane', 'pryv.me', 'fitness.app')` | `jane--pryv-me--fitness-app` |
+| `('alice', 'example.com', 'example-app')` | `alice--example-com--example-app` |
+| `('alice', 'pryv.me', 'fitness.app')` | `alice--example-com--fitness-app` |
 | `('research-coord', 'university.edu', 'study/v2')` | `research-coord--university-edu--study-v2` |
 
 The `app-slug` is sourced from `requesterMeta.appId` on the original `cmc/request-v1`. It's fixed at acceptance and survives scope changes — the relationship's identity doesn't change just because the permissions did.
 
 ## Helpers
 
-`lib-js` and `hds-lib` ship deterministic helpers; apps should never roll their own:
+`lib-js` and `legacy-shim` ship deterministic helpers; apps should never roll their own:
 
 ```js
 import { cmc } from 'pryv';
 
-const counterparty = cmc.counterpartySlug({ username: 'jane', host: 'pryv.me' });
-// → 'jane--pryv-me'
+const counterparty = cmc.counterpartySlug({ username: 'alice', host: 'pryv.me' });
+// → 'alice--example-com'
 
 const collector = cmc.collectorSlug({
-  username: 'jane',
+  username: 'alice',
   host: 'pryv.me',
-  appId: 'stormm-doctor-dashboard'
+  appId: 'example-app'
 });
-// → 'jane--pryv-me--stormm-doctor-dashboard'
+// → 'alice--example-com--example-app'
 
 // And the inverse:
-const parsed = cmc.parseCollectorSlug('jane--pryv-me--stormm-doctor-dashboard');
-// → { username: 'jane', host: 'pryv.me', appId: 'stormm-doctor-dashboard' }
+const parsed = cmc.parseCollectorSlug('alice--example-com--example-app');
+// → { username: 'alice', host: 'pryv.me', appId: 'example-app' }
 ```
 
 ## Why the host is in every slug
 
-`jane@pryv.me` and `jane@datasafe.dev` are **different people**. Cross-platform federation means there's no shared user namespace; the slug must disambiguate by host so the same username on two platforms doesn't collide. Same logic for the operator/collector side — different operators running the same `appId` are different collectors.
+`alice@example.com` and `alice@example.com` are **different people**. Cross-platform federation means there's no shared user namespace; the slug must disambiguate by host so the same username on two platforms doesn't collide. Same logic for the operator/collector side — different operators running the same `appId` are different collectors.
 
 ## Stability
 
@@ -1085,14 +1085,14 @@ monitor.subscribe(':_cmc:inbox', (event) => {
 
 // Region 2 — Chat with every counterparty (recursive)
 monitor.subscribe(':_cmc:chats', (event) => {
-  // event.streamIds[0] identifies the counterparty stream, e.g. ':_cmc:chats:jane--pryv-me'
+  // event.streamIds[0] identifies the counterparty stream, e.g. ':_cmc:chats:alice--example-com'
   // event.content.from set ⇒ incoming; absent ⇒ your own outgoing
   // event.type === 'cmc/chat-v1'
 });
 
 // Region 3 — System channel across every collector-relationship (recursive)
 monitor.subscribe(':_cmc:collectors', (event) => {
-  // event.streamIds[0] identifies the collector-relationship, e.g. ':_cmc:collectors:dr-smith--datasafe-dev--stormm-doctor-dashboard'
+  // event.streamIds[0] identifies the collector-relationship, e.g. ':_cmc:collectors:alice--example-com--example-app'
   // event.type ∈ { 'cmc/system-alert-v1', 'cmc/system-ack-v1',
   //                'cmc/system-scope-request-v1', 'cmc/system-scope-update-v1' }
   // event.content.source on scope-updates: 'response-to-request' | 'user-initiated' | 'post-hook'
@@ -1110,8 +1110,8 @@ monitor.subscribe(':_cmc:apps:your-app', (event) => {
 Subscribe to a single counterparty / collector stream when the UI is scoped that way:
 
 ```js
-monitor.subscribe(':_cmc:chats:jane--pryv-me', renderChatMessage);
-monitor.subscribe(':_cmc:collectors:jane--pryv-me--stormm-doctor-dashboard', renderSystemMessage);
+monitor.subscribe(':_cmc:chats:alice--example-com', renderChatMessage);
+monitor.subscribe(':_cmc:collectors:alice--example-com--example-app', renderSystemMessage);
 ```
 
 The same callback runs whether the counterparty is on your same core, your same cluster, or a foreign platform — the plugin abstracts the difference. Your app doesn't branch on topology.
@@ -1141,12 +1141,12 @@ The same callback runs whether the counterparty is on your same core, your same 
 
 ---
 
-# Migration from the HDS Collector pattern
+# Migration from the legacy "Collector" pattern
 
-| HDS Collector | `:_cmc:` equivalent |
+| legacy "Collector" | `:_cmc:` equivalent |
 |---|---|
 | `streams.create` 7 sub-streams per Collector | One `streams.create({parentId: ':_cmc:apps'})` per organizational scope; chat + system streams are plugin-managed (auto-created at acceptance). |
-| Manual `accesses.create type='shared' clientData.hdsCollector` for sharing URL | Plugin mints capability access automatically; URL in `cmc/request-v1` trigger event. |
+| Manual `accesses.create type='shared' clientData.cmcCollector` for sharing URL | Plugin mints capability access automatically; URL in `cmc/request-v1` trigger event. |
 | `events.create type='request/collector-v1'` in `-public` stream | `events.create type='cmc/request-v1'` in your user-managed `:_cmc:apps:*` scope stream. |
 | `events.create type='invite/collector-v1'` per invite | Each `cmc/request-v1` is one invite. |
 | Hand off `(apiEndpoint, eventId)` out-of-band | Hand off `capabilityUrl` (standard apiEndpoint). |
@@ -1161,7 +1161,7 @@ The same callback runs whether the counterparty is on your same core, your same 
 | Per-collector scope-change tracking via untyped client data | All scope changes (collector-proposed, user-responded, user-initiated, raw `accesses.update` post-hook) land as `cmc/system-scope-update-v1` events on `:_cmc:collectors:<collector-slug>` with `content.source` telling the app which path it came from. |
 | Two writes per action (local + counterparty's account) | One write per action on your own platform. Plugin handles cross-platform delivery. |
 
-`hds-lib` ships a thin shim that proxies the old `Collector` / `CollectorClient` API onto `:_cmc:` so existing apps don't need a wholesale rewrite.
+`legacy-shim` ships a thin shim that proxies the old `Collector` / `CollectorClient` API onto `:_cmc:` so existing apps don't need a wholesale rewrite.
 
 ---
 

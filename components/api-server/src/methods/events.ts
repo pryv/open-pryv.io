@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const utils = require('utils');
 const errors = require('errors').factory;
+const cmc = require('cmc');
 const fs = require('fs');
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/eventsMethods.ts');
@@ -165,6 +166,7 @@ export default async function (api: any) {
 
   // -------------------------------------------------------------------- CREATE
 
+  const cmcContentValidationHook = cmc.createCmcContentValidationHook({ errors });
   api.register(
     'events.create',
     commonFns.getParamsValidation(methodsSchema.create.params),
@@ -172,6 +174,7 @@ export default async function (api: any) {
     applyPrerequisitesForCreation,
     validateEventContentAndCoerce,
     verifyCanCreateEventsOnStream,
+    cmcContentValidationHook,
     detectAccountStream,
     validateAccountStreamForCreate,
     validateAccountStreamContent,

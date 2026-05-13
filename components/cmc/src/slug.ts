@@ -6,24 +6,22 @@
  */
 
 /**
- * Plan 68 — CMC slug helpers.
+ * CMC plugin — counterparty slug helpers.
  *
  *   counterpartySlug = <username> '--' <host-slug>
  *   host-slug        = <host with '.' replaced by '-'>
- *   collectorSlug    = <counterpartySlug> '--' <app-slug>
- *   app-slug         = lowercase <appId> with '.' and '/' replaced by '-'
  *
  * The load-bearing separator is `--`. Usernames and host-slugs use single
- * hyphens; the double-hyphen is reserved as the delimiter. See
- * _plans/68-cmc-datastore-atwork/IMPLEMENTERS-GUIDE.md "Reference — Slug
- * conventions" for examples and stability notes.
+ * hyphens; the double-hyphen is reserved as the delimiter so the slug
+ * round-trips deterministically.
+ *
+ * No collector slug — the app-code and request scope live in the stream
+ * PATH (`:_cmc:apps:<app-code>:<...>:chats:<counterparty-slug>` etc.),
+ * not in the slug. This is what enables app-level and per-request-scoped
+ * access permissions via natural prefix matching. See README.md.
  */
 
 const SEPARATOR = '--';
-
-// Pryv stream-ids are reasonably restrictive; mirror Pryv's existing
-// validation rule: lowercase letters, digits, and `-` only. We additionally
-// allow `:` in stream-ids elsewhere, but a slug never contains `:`.
 const SLUG_PIECE_RE = /^[a-z0-9-]+$/;
 
 function assertNonEmpty (label: string, value: unknown): string {
@@ -44,16 +42,6 @@ function unslugifyHostHint (hostSlug: string): string {
   // original host should store it alongside the slug. Use this only as
   // a display fallback.
   return hostSlug.replace(/-/g, '.');
-}
-
-function slugifyAppId (appId: string): string {
-  assertNonEmpty('appId', appId);
-  // Lowercase + replace dots and slashes with single hyphens. Collapse
-  // any resulting `--` because `--` is the delimiter.
-  return appId
-    .toLowerCase()
-    .replace(/[./]/g, '-')
-    .replace(/--+/g, '-');
 }
 
 function assertSlugPiece (label: string, value: string): void {
@@ -77,59 +65,25 @@ function counterpartySlug (params: { username: string; host: string }): string {
   return username + SEPARATOR + hostSlug;
 }
 
-function collectorSlug (params: { username: string; host: string; appId: string }): string {
-  const base = counterpartySlug({ username: params.username, host: params.host });
-  const appSlug = slugifyAppId(params.appId);
-  assertSlugPiece('app-slug', appSlug);
-  return base + SEPARATOR + appSlug;
-}
-
-/**
- * Split a slug by `--` separator. Returns the array of pieces (2 for
- * counterparty, 3 for collector). Throws if the slug shape is invalid.
- */
-function splitSlug (slug: string): string[] {
+function parseCounterpartySlug (slug: string): { username: string; hostSlug: string } {
   assertNonEmpty('slug', slug);
   const pieces = slug.split(SEPARATOR);
-  for (const piece of pieces) {
-    assertSlugPiece('slug piece', piece);
-  }
-  return pieces;
-}
-
-function parseCounterpartySlug (slug: string): { username: string; hostSlug: string } {
-  const pieces = splitSlug(slug);
   if (pieces.length !== 2) {
     throw new Error(
       'cmc-slug: counterparty slug "' + slug + '" must have exactly 2 ' +
       'double-hyphen-separated pieces, got ' + pieces.length
     );
   }
-  return { username: pieces[0], hostSlug: pieces[1] };
-}
-
-function parseCollectorSlug (slug: string): {
-  username: string;
-  hostSlug: string;
-  appSlug: string;
-} {
-  const pieces = splitSlug(slug);
-  if (pieces.length !== 3) {
-    throw new Error(
-      'cmc-slug: collector slug "' + slug + '" must have exactly 3 ' +
-      'double-hyphen-separated pieces, got ' + pieces.length
-    );
+  for (const piece of pieces) {
+    assertSlugPiece('slug piece', piece);
   }
-  return { username: pieces[0], hostSlug: pieces[1], appSlug: pieces[2] };
+  return { username: pieces[0], hostSlug: pieces[1] };
 }
 
 export {
   SEPARATOR,
   slugifyHost,
   unslugifyHostHint,
-  slugifyAppId,
   counterpartySlug,
-  collectorSlug,
   parseCounterpartySlug,
-  parseCollectorSlug,
 };
