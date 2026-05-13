@@ -30,7 +30,7 @@ const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
 
 const { integrity } = require('business');
-const { parseAccessRef, serializeAccessRef } = require('business/src/accesses/refs.ts');
+const { parseAccessRef, serializeAccessRef, composeWireAccess } = require('business/src/accesses/refs.ts');
 const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
 
 type Permission = {
@@ -75,11 +75,13 @@ export default async function produceAccessesApiMethods (api: any) {
       if (excludeExpired(params)) {
         accesses = accesses.filter((a: any) => !isAccessExpired(a));
       }
-      // Add apiEndpoint
-      for (let i = 0; i < accesses.length; i++) {
-        accesses[i].apiEndpoint = ApiEndpoint.build(context.user.username, accesses[i].token);
-      }
-      result.accesses = accesses;
+      // Plan 66: compose wire-format ids + strip internal serial fields,
+      // then attach apiEndpoint.
+      result.accesses = accesses.map((a: any) => {
+        const wire = composeWireAccess(a);
+        wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
+        return wire;
+      });
       next();
     } catch (err) {
       return next(errors.unexpectedError(err));
@@ -102,11 +104,90 @@ export default async function produceAccessesApiMethods (api: any) {
     }
     try {
       const deletions = await fromCallback((cb: any) => accessesRepository.findDeletions(context.user, query, { projection: { calls: 0 } }, cb));
-      result.accessDeletions = deletions;
+      result.accessDeletions = (deletions || []).map((d: any) => composeWireAccess(d));
       next();
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
+  }
+
+  // GET ONE (Plan 66)
+
+  api.register(
+    'accesses.getOne',
+    commonFns.basicAccessAuthorizationCheck,
+    commonFns.getParamsValidation(methodsSchema.getOne.params),
+    findOneAccess
+  );
+
+  async function findOneAccess (context: any, params: any, result: any, next: any) {
+    let ref;
+    try {
+      ref = parseAccessRef(params.id);
+    } catch (e: any) {
+      return next(errors.unknownResource('access', params.id));
+    }
+    const accessesRepository = storageLayer.accesses;
+    let head: any;
+    try {
+      head = await fromCallback((cb: any) =>
+        accessesRepository.findOne(context.user, { id: ref.base }, dbFindOptions, cb));
+    } catch (err) {
+      return next(errors.unexpectedError(err));
+    }
+    if (head == null) return next(errors.unknownResource('access', params.id));
+    // Visibility — app callers can only see accesses they manage.
+    if (!context.access.canListAnyAccess()) {
+      const createdByBase = typeof head.createdBy === 'string'
+        ? parseAccessRef(head.createdBy).base
+        : null;
+      const isOwn = head.id === context.access.id;
+      const isManaged = createdByBase === context.access.id;
+      if (!isOwn && !isManaged) {
+        return next(errors.unknownResource('access', params.id));
+      }
+    }
+    const currentSerial = head.serial == null ? null : head.serial;
+    const wantsSpecific = ref.serial != null;
+    const specificMatchesHead = wantsSpecific && currentSerial != null && ref.serial === currentSerial;
+    if (!wantsSpecific || specificMatchesHead) {
+      // Current head — return as-is.
+      const wire = composeWireAccess(head);
+      wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
+      result.access = wire;
+    } else if (currentSerial != null && ref.serial < currentSerial) {
+      // Obsolete composite — historical row, with a `current` hint pointing
+      // at the live head's composite id (Q-pivot=a, GitHub-commit-by-sha-style).
+      let history: any[] = [];
+      try {
+        history = await accessesRepository.findHistory(context.user, ref.base);
+      } catch (err) {
+        return next(errors.unexpectedError(err));
+      }
+      const snapshot = (history || []).find((h: any) => (h.serial ?? null) === ref.serial);
+      if (snapshot == null) return next(errors.unknownResource('access', params.id));
+      const wire = composeWireAccess(snapshot, ref.base);
+      wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
+      result.access = wire;
+      result.current = serializeAccessRef({ base: ref.base, serial: currentSerial });
+    } else {
+      // Requested a serial > head's current (never existed) or the head
+      // was never updated and a serial was provided.
+      return next(errors.unknownResource('access', params.id));
+    }
+    if (params.includeHistory) {
+      try {
+        const history = await accessesRepository.findHistory(context.user, ref.base);
+        result.history = (history || []).map((h: any) => {
+          const wire = composeWireAccess(h, ref.base);
+          wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
+          return wire;
+        });
+      } catch (err) {
+        return next(errors.unexpectedError(err));
+      }
+    }
+    next();
   }
 
   // CREATION
@@ -308,8 +389,9 @@ export default async function produceAccessesApiMethods (api: any) {
         // Any other error
         return next(errors.unexpectedError(err));
       }
-      result.access = newAccess;
-      result.access.apiEndpoint = ApiEndpoint.build(context.user.username, result.access.token);
+      const wire = composeWireAccess(newAccess);
+      wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
+      result.access = wire;
       pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
       next();
     });
@@ -493,12 +575,12 @@ export default async function produceAccessesApiMethods (api: any) {
       if (newHead == null) {
         return next(errors.unexpectedError(new Error('head row missing after update')));
       }
-      // 4. Compose wire-form id + api endpoint.
-      const compositeId = serializeAccessRef({ base: baseId, serial: newSerial });
-      newHead.id = compositeId;
-      newHead.apiEndpoint = ApiEndpoint.build(context.user.username, newHead.token);
-      result.access = newHead;
-      result.__plan66 = { baseId, serial: newSerial, compositeId };
+      // 4. Compose wire-form access (composite id + createdBy/modifiedBy
+      // refs, internal serial fields stripped).
+      const wire = composeWireAccess(newHead);
+      wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
+      result.access = wire;
+      result.__plan66 = { baseId, serial: newSerial, compositeId: wire.id };
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
@@ -642,11 +724,11 @@ export default async function produceAccessesApiMethods (api: any) {
       if (err != null) { return next(errors.unexpectedError(err)); }
       // Do we have a match?
       if (accessMatches(access, params.requestedPermissions, params.clientData)) {
-        result.matchingAccess = access;
+        result.matchingAccess = composeWireAccess(access);
         return next();
       }
       // No, we don't have a match. Return other information:
-      if (access != null) { result.mismatchingAccess = access; }
+      if (access != null) { result.mismatchingAccess = composeWireAccess(access); }
       checkPermissions(context, params.requestedPermissions, function (err: any, checkedPermissions: any, checkError: any) {
         if (err != null) { return next(err); }
         result.checkedPermissions = checkedPermissions;

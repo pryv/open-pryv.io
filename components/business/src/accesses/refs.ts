@@ -64,3 +64,44 @@ export function serializeAccessRef (ref: AccessRef): string {
   }
   return ref.base + ':' + ref.serial;
 }
+
+/**
+ * `createdBy` / `modifiedBy` are stored either as the bare access id
+ * (`<base>`) or as access-id-plus-caller (`<base> <callerId>`). The
+ * space-separator survives the composite rewrite — splice the
+ * `:<serial>` into the access-id part and keep the callerId tail.
+ */
+function composeStoredRef (storedRef: string | undefined | null, serial: number | null | undefined): string | undefined | null {
+  if (storedRef == null) return storedRef;
+  if (serial == null) return storedRef;
+  const spaceIdx = storedRef.indexOf(' ');
+  if (spaceIdx === -1) return storedRef + ':' + serial;
+  return storedRef.slice(0, spaceIdx) + ':' + serial + storedRef.slice(spaceIdx);
+}
+
+/**
+ * Plan 66: rewrite an access storage row into the wire-format access
+ * object. Composes the composite `id` / `createdBy` / `modifiedBy`
+ * when a corresponding serial is set, and strips the internal `serial`
+ * + `*BySerial` fields so the response stays inside the API schema's
+ * `additionalProperties: false` whitelist. Pass `historyOfBase` when
+ * surfacing a history row — the wire `id` then encodes the FROZEN
+ * serial of that row (e.g. `<base>:2`) rather than the storage's
+ * fresh history-row id.
+ */
+export function composeWireAccess (row: any, historyOfBase?: string): any {
+  if (row == null) return row;
+  const out: any = Object.assign({}, row);
+  const baseId = historyOfBase != null ? historyOfBase : row.id;
+  out.id = serializeAccessRef({ base: baseId, serial: row.serial ?? null });
+  if (row.createdBy != null) {
+    out.createdBy = composeStoredRef(row.createdBy, row.createdBySerial ?? null);
+  }
+  if (row.modifiedBy != null) {
+    out.modifiedBy = composeStoredRef(row.modifiedBy, row.modifiedBySerial ?? null);
+  }
+  delete out.serial;
+  delete out.createdBySerial;
+  delete out.modifiedBySerial;
+  return out;
+}

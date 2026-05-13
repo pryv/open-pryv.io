@@ -23,6 +23,7 @@ const ALL_METHODS = [
   'mfa.deactivate',
   'mfa.recover',
   'accesses.get',
+  'accesses.getOne',
   'accesses.create',
   'accesses.update',
   'accesses.delete',

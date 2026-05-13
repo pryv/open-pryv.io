@@ -246,6 +246,7 @@ class AccessLogic {
       case 'accesses.checkApp':
         return this.isPersonal();
       case 'accesses.get':
+      case 'accesses.getOne':
       case 'accesses.create':
       case 'accesses.update':
         return !this.isShared();

@@ -205,6 +205,23 @@ class Accesses extends BaseStorage {
   }
 
   /**
+   * Plan 66: return the chronological history docs for a base id. Each
+   * doc is a frozen pre-update snapshot; `serial` is the value that
+   * doc was at before the update that produced the next version.
+   * Sorted by `modified` ascending so caller iterates oldest-first.
+   */
+  async findHistory (userOrUserId: any, baseId: string): Promise<any[]> {
+    await this.database.ensureConnect();
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    const coll = this.database.db.collection('accesses');
+    const docs = await coll.find({ userId, headId: baseId }).sort({ modified: 1 }).toArray();
+    return docs.map((d: any) => {
+      const out = this.applyItemFromDB(d);
+      return out;
+    }).filter((x: any) => x != null);
+  }
+
+  /**
    * Plan 66: snapshot the current live head document into a history doc.
    * Reads the head doc identified by `id`, clones every field, replaces
    * `_id` with a freshly-minted cuid and sets `headId` to the original

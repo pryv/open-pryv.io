@@ -1,5 +1,20 @@
 # Changelog - Internal (no API impact)
 
+## Access versioning — read API + composite-id serialization (Plan 66 Phase D)
+
+Internal plumbing for the new `accesses.getOne` and the composite-id wire format (see `CHANGELOG-v2.md`).
+
+- **NEW** `composeWireAccess(row, historyOfBase?)` in `business/src/accesses/refs.ts`. Takes a storage row and emits the wire-format access object: composes the composite `id` / `createdBy` / `modifiedBy` from the row's bare `<col>` + sibling `<col>Serial` columns, and strips the now-redundant `serial` / `createdBySerial` / `modifiedBySerial` fields so the response stays inside the schema's `additionalProperties: false` whitelist. When `historyOfBase` is passed (history-row case), the wire `id` uses that base instead of the storage's fresh history-row id — so `<base>:<serial>` always means "this version of base."
+- **NEW** `composeStoredRef(storedRef, serial)` helper inside `refs.ts`. Handles the `<base> <callerId>` tracking-author format: splices the `:<serial>` into the access-id slice and preserves the space-separated caller tail. (MethodContext.ts already parses callerId from the first space, so this round-trips cleanly.)
+- **NEW storage** `Accesses.findHistory(userOrUserId, baseId)` on both engines. Returns history rows where `headId === baseId`, sorted by `modified` ASC (oldest first). PG uses `WHERE user_id = $1 AND head_id = $2`; Mongo uses `{ userId, headId: baseId }.sort({ modified: 1 })`. Each engine's existing `rowToItem` / `applyItemFromDB` pipeline strips `headId` before returning — the caller (composeWireAccess) gets the base from the query parameter.
+- **NEW** `accesses.getOne` method handler `findOneAccess` in `methods/accesses.ts`. Parses composite id, looks up the head by base, applies visibility check (app callers see only self + their managed shareds, by base), then either (a) returns the head when bare/serial matches, (b) returns the historical snapshot + `current` hint when serial < head's, or (c) `unknownResource` for never-existed serials. `?includeHistory=true` appends the full chronological history.
+- **NEW** `methodsSchema.getOne` entry — `params: { id, includeHistory? }`, `result: { access, current?, history?: [...] }`.
+- **NEW route** `GET /accesses/:id` → `accesses.getOne`, with `tryCoerceStringValues` on `includeHistory` so the boolean comes through correctly from query string.
+- **`AccessLogic.can('accesses.getOne')`** — added to the switch, returns `!isShared()` (same gate as `accesses.get`).
+- **`accesses.getOne` registered in audit `ALL_METHODS`** (`audit/src/ApiMethods.ts`) — without it, `API.register` throws at boot and every api-server test that initializes the API crashes in the `before all` hook. (First Phase D test run had 298 failures from this single oversight.)
+- **`composeWireAccess` applied to**: `accesses.get` (list), `accesses.get` deletions, `accesses.create` result, `accesses.update` result (replacing the ad-hoc id rewrite from Phase C), `accesses.checkApp` (matching + mismatching). Audit-driven and storage-driven internals continue to operate on the raw `(base, serial)` columns — composition is purely a presentation-layer concern.
+- **Phase C's `snapshotAndApplyUpdate`** rewritten to delegate id composition to `composeWireAccess` instead of building the composite string in-place. Behaviour identical; less duplication.
+
 ## Access versioning — update handler + storage snapshot (Plan 66 Phase C)
 
 Wire-up for the revived `accesses.update` (see `CHANGELOG-v2.md`). Internal-only plumbing notes:

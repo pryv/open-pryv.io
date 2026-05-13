@@ -39,6 +39,26 @@ const __ex_get = {
     })
   };
 export { __ex_get as get };
+const __ex_getOne = {
+    params: object({
+      id: string(),
+      includeHistory: boolean()
+    }, {
+      id: 'accesses.getOne',
+      required: ['id']
+    }),
+    result: object({
+      access: access(Action.READ),
+      current: string(),
+      history: {
+        type: 'array',
+        items: access(Action.READ)
+      }
+    }, {
+      required: ['access']
+    })
+  };
+export { __ex_getOne as getOne };
 const __ex_create = {
     params: access(Action.CREATE),
     result: object({

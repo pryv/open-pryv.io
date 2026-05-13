@@ -136,6 +136,21 @@ class AccessesPG extends BaseStoragePG {
   }
 
   /**
+   * Plan 66: return the chronological history rows for a base id. Each
+   * row is a frozen pre-update snapshot; `serial` is the value that
+   * row was at before the update that produced the next version.
+   * Sorted by `modified` ascending so caller iterates oldest-first.
+   */
+  async findHistory (userOrUserId: any, baseId: string): Promise<any[]> {
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    const res = await this.db.query(
+      'SELECT * FROM accesses WHERE user_id = $1 AND head_id = $2 ORDER BY modified ASC',
+      [userId, baseId]
+    );
+    return res.rows.map((r: any) => this.rowToItem(r)).filter((x: any) => x != null);
+  }
+
+  /**
    * Plan 66: snapshot the current live head row into a history row.
    * Reads the head row identified by `id`, clones every column, replaces
    * `id` with a freshly-minted cuid and sets `head_id` to the original

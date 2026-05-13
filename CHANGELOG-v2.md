@@ -1,5 +1,16 @@
 # Changelog - API Changes
 
+## `accesses.getOne` + composite-id wire format applied (Plan 66 Phase D)
+
+- **NEW** `GET /accesses/:id` → `accesses.getOne`. Returns the access identified by the path id. The id can be either bare `<base>` (returns the current head) or composite `<base>:<serial>`:
+  - composite matching current serial → current head.
+  - composite for an older serial → the historical snapshot row + a `current: '<base>:<currentSerial>'` hint pointing at the live head. Mirrors GitHub's `GET /repos/X/Y/commits/<sha>` behaviour for ref-by-version.
+  - composite for a serial that never existed (or bare on a versioned access whose serial doesn't match) → `404 unknown-resource`.
+- **NEW** `accesses.getOne ?includeHistory=true` — opt-in flag (default `false`, mirrors `events.getOne`). When set, the response includes a `history: [...]` array of every historical snapshot in chronological order (oldest first). Each history entry uses the composite id of the frozen version. The list endpoint `accesses.get` does NOT take this flag today (singular case covers the typical "audit this access" use case; list-side support is intentionally deferred).
+- **Composite wire format now consistently applied.** Every `accesses.*` response (get, getOne, create, update, checkApp, accessDeletions) now serialises `id`, `createdBy`, and `modifiedBy` using the new composite format when a corresponding `serial` exists in storage. Never-updated accesses still serialise as bare cuids — fully backwards-compatible. The previously-internal `serial` / `createdBySerial` / `modifiedBySerial` fields are kept off the wire (stripped at the api-server seam to stay within the schema's `additionalProperties: false` whitelist).
+- **App visibility on `getOne`:** an `app` caller can fetch only its own access (self) or shareds it directly manages (chain match by `base`). Other accesses return `unknown-resource` — no info leak via differentiated error.
+- **`accesses.checkApp` unchanged in semantics**: still matches against current heads only (no opt-in for historical matching). Plan 66 Q12.3=a — the whole point of revoking/narrowing is the app loses scope, not that it can silently re-claim it.
+
 ## `accesses.update` is back — versioned, chain-checked, composite-id (Plan 66 Phase C)
 
 - **NEW** `PUT /accesses/:id` — `accesses.update` is no longer a `goneResource` stub. It mutates the head row, snapshots the prior state into history (single-collection `headId` shape), and bumps the access's `serial`. The returned access carries the new wire-format composite id `<base>:<serial>` (or bare `<base>` when never updated).
