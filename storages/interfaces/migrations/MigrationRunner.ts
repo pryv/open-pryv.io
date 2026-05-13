@@ -70,11 +70,15 @@ class MigrationRunner {
   constructor (engines: MigrationCapableEngine[], { logger }: RunnerOptions = {}) {
     this.engines = engines;
     const noop = (): void => {};
+    // Bind to the original logger instance — boiler's logger relies on
+    // `this` inside `info()` / `warn()` / etc. Pulling the methods off
+    // the object without binding loses `this` (TypeError:
+    // this.log is not a function on first migration).
     this.logger = {
-      info: logger?.info ?? noop,
-      warn: logger?.warn ?? noop,
-      error: logger?.error ?? noop,
-      debug: logger?.debug ?? noop
+      info: logger?.info?.bind(logger) ?? noop,
+      warn: logger?.warn?.bind(logger) ?? noop,
+      error: logger?.error?.bind(logger) ?? noop,
+      debug: logger?.debug?.bind(logger) ?? noop
     };
   }
 
