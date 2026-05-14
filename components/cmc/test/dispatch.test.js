@@ -102,19 +102,15 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.equal(r.reason, 'request-handled-elsewhere');
     });
 
-    it('[CD03] returns delivered for unimplemented types (scope-*)', async () => {
-      for (const type of [
-        'cmc/system-scope-request-v1',
-        'cmc/system-scope-update-v1',
-      ]) {
-        const r = await dispatch({
-          userId: 'u1',
-          event: { id: 'e1', type, content: {} },
-          deps: makeDeps({}),
-        });
-        assert.equal(r.handled, false);
-        assert.equal(r.status, 'delivered');
-      }
+    it('[CD03] returns skipped for unknown cmc/* event types', async () => {
+      const r = await dispatch({
+        userId: 'u1',
+        event: { id: 'e1', type: 'cmc/never-defined-v9', content: {} },
+        deps: makeDeps({}),
+      });
+      assert.equal(r.handled, false);
+      assert.equal(r.status, 'skipped');
+      assert.equal(r.reason, 'unknown-cmc-event');
     });
   });
 

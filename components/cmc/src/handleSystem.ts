@@ -169,6 +169,13 @@ async function findAccessForCollector (params: {
  * that differs is the type field carried into the peer body, so the
  * handler accepts it as a parameter.
  */
+const SYSTEM_EVENT_TYPES = new Set([
+  C.ET_SYSTEM_ALERT,
+  C.ET_SYSTEM_ACK,
+  C.ET_SYSTEM_SCOPE_REQUEST,
+  C.ET_SYSTEM_SCOPE_UPDATE,
+]);
+
 async function handleSystemEvent (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: any; streamIds?: string[] };
@@ -183,7 +190,7 @@ async function handleSystemEvent (params: {
 }): Promise<SystemHandlerResult> {
   const { userId, triggerEvent, selfIdentity, deps } = params;
 
-  if (triggerEvent.type !== C.ET_SYSTEM_ALERT && triggerEvent.type !== C.ET_SYSTEM_ACK) {
+  if (!SYSTEM_EVENT_TYPES.has(triggerEvent.type)) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: triggerEvent.type } };
   }
 
@@ -313,12 +320,65 @@ async function handleSystemAck (params: {
   return handleSystemEvent(params);
 }
 
+/**
+ * Handle a `cmc/system-scope-request-v1` trigger.
+ *
+ * Issued when the LOCAL side wants to request additional permissions on
+ * an existing data-grant the peer holds. The content carries the requested
+ * permissions diff; this handler delivers it via the system channel.
+ *
+ * Peer-side application of the change (approval, applying the
+ * accesses.update) happens on the peer when they receive
+ * cmc/system-scope-update-v1 from us — that's a separate trigger
+ * issued AFTER local consent.
+ */
+async function handleSystemScopeRequest (params: {
+  userId: string;
+  triggerEvent: { id?: string; type: string; content: any; streamIds?: string[] };
+  selfIdentity: Counterparty;
+  deps: any;
+}): Promise<SystemHandlerResult> {
+  if (params.triggerEvent.type !== C.ET_SYSTEM_SCOPE_REQUEST) {
+    return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
+  }
+  return handleSystemEvent(params);
+}
+
+/**
+ * Handle a `cmc/system-scope-update-v1` trigger.
+ *
+ * Issued AFTER the local accesses.update post-hook fires (Phase G slice 3)
+ * to inform the peer that an access they hold has had its permissions
+ * adjusted. Content typically carries:
+ *   - the new permissions
+ *   - the new compositeId/version (Plan 66 composite-id versioning)
+ *   - optional reason / human-readable message
+ *
+ * The peer uses this to know their existing data-grant has new scope
+ * AND to reconcile the composite-id chain if they cached the previous
+ * version.
+ */
+async function handleSystemScopeUpdate (params: {
+  userId: string;
+  triggerEvent: { id?: string; type: string; content: any; streamIds?: string[] };
+  selfIdentity: Counterparty;
+  deps: any;
+}): Promise<SystemHandlerResult> {
+  if (params.triggerEvent.type !== C.ET_SYSTEM_SCOPE_UPDATE) {
+    return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
+  }
+  return handleSystemEvent(params);
+}
+
 export {
   COLLECTOR_STREAM_ID_RE,
+  SYSTEM_EVENT_TYPES,
   parseCollectorStreamId,
   findAccessForCollector,
   deliverSystemToPeer,
   handleSystemEvent,
   handleSystemAlert,
   handleSystemAck,
+  handleSystemScopeRequest,
+  handleSystemScopeUpdate,
 };

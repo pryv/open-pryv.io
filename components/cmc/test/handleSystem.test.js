@@ -19,6 +19,8 @@ const {
   parseCollectorStreamId,
   handleSystemAlert,
   handleSystemAck,
+  handleSystemScopeRequest,
+  handleSystemScopeUpdate,
   handleSystemEvent,
   deliverSystemToPeer,
   COLLECTOR_STREAM_ID_RE,
@@ -413,6 +415,85 @@ describe('[CMCHS] cmc/handleSystem', () => {
       const r = await handleSystemEvent({
         userId: 'u1',
         triggerEvent: { type: 'cmc/chat-v1', content: {}, streamIds: [] },
+        selfIdentity: SELF,
+        deps: { mall: fakeMall([]), fetch: fakeFetch({}).fetch },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-handler-wrong-type');
+    });
+  });
+
+  describe('[CMCHS-SC] scope-request + scope-update handlers', () => {
+    const SCOPE_REQUEST_TRIGGER = {
+      id: 'evt-sr',
+      type: 'cmc/system-scope-request-v1',
+      streamIds: [':_cmc:apps:my-app:collectors:provider-a--provider-example-org'],
+      content: {
+        requestedPermissions: [{ streamId: 'fertility', level: 'read' }],
+        reason: 'extending study to include fertility tracking',
+      },
+    };
+
+    const SCOPE_UPDATE_TRIGGER = {
+      id: 'evt-su',
+      type: 'cmc/system-scope-update-v1',
+      streamIds: [':_cmc:apps:my-app:collectors:provider-a--provider-example-org'],
+      content: {
+        permissions: [{ streamId: 'fertility', level: 'read' }],
+        compositeId: 'acc-back-channel:v2',
+        previousCompositeId: 'acc-back-channel:v1',
+      },
+    };
+
+    it('[HS22] handleSystemScopeRequest delivers cmc/system-scope-request-v1 to peer', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r-sr' } } });
+      const r = await handleSystemScopeRequest({
+        userId: 'u1',
+        triggerEvent: SCOPE_REQUEST_TRIGGER,
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(r.eventType, 'cmc/system-scope-request-v1');
+      const sent = JSON.parse(calls[0].init.body);
+      assert.equal(sent.type, 'cmc/system-scope-request-v1');
+      assert.deepEqual(sent.content.from, SELF);
+      assert.deepEqual(sent.content.requestedPermissions, [{ streamId: 'fertility', level: 'read' }]);
+      assert.equal(sent.content.reason, 'extending study to include fertility tracking');
+    });
+
+    it('[HS23] handleSystemScopeUpdate delivers cmc/system-scope-update-v1 with compositeId chain', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r-su' } } });
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1',
+        triggerEvent: SCOPE_UPDATE_TRIGGER,
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      const sent = JSON.parse(calls[0].init.body);
+      assert.equal(sent.type, 'cmc/system-scope-update-v1');
+      assert.equal(sent.content.compositeId, 'acc-back-channel:v2');
+      assert.equal(sent.content.previousCompositeId, 'acc-back-channel:v1');
+    });
+
+    it('[HS24] handleSystemScopeRequest rejects mismatched trigger type', async () => {
+      const r = await handleSystemScopeRequest({
+        userId: 'u1',
+        triggerEvent: { ...SCOPE_UPDATE_TRIGGER },
+        selfIdentity: SELF,
+        deps: { mall: fakeMall([]), fetch: fakeFetch({}).fetch },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-handler-wrong-type');
+    });
+
+    it('[HS25] handleSystemScopeUpdate rejects mismatched trigger type', async () => {
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1',
+        triggerEvent: { ...SCOPE_REQUEST_TRIGGER },
         selfIdentity: SELF,
         deps: { mall: fakeMall([]), fetch: fakeFetch({}).fetch },
       });

@@ -149,11 +149,15 @@ async function dispatch (params: {
         });
         break;
       case C.ET_SYSTEM_SCOPE_REQUEST:
+        result = await handleSystemMod.handleSystemScopeRequest({
+          userId, triggerEvent: event, selfIdentity, deps,
+        });
+        break;
       case C.ET_SYSTEM_SCOPE_UPDATE:
-        // Handlers for these land in later phases; for now skip without
-        // touching the trigger's 'delivered' status (which serves as
-        // signal-to-operator that the plugin received the event).
-        return { handled: false, eventType: event.type, status: 'delivered', reason: 'handler-not-yet-implemented' };
+        result = await handleSystemMod.handleSystemScopeUpdate({
+          userId, triggerEvent: event, selfIdentity, deps,
+        });
+        break;
       default:
         return { handled: false, eventType: event.type, status: 'skipped', reason: 'unknown-cmc-event' };
     }
