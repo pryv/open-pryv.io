@@ -182,6 +182,71 @@ describe('[CMCDISP] cmc/dispatch', () => {
     });
   });
 
+  describe('[CMCDISP-INB] dispatch routes cmc/accept-v1 on :_cmc:inbox → handleIncomingAccept', () => {
+    it('[CD11] inbox-direction routes to handleIncomingAccept (mints back-channel + provisions anchors)', async () => {
+      const mall = fakeMall();
+      // Stub events.get so handleIncomingAccept's resolveRequestScope
+      // can find the request event by id.
+      mall.events.get = async () => [{
+        id: 'orig-req-1',
+        type: 'cmc/request-v1',
+        streamIds: [':_cmc:apps:my-app:campaign-2026'],
+      }];
+      const { fetch } = fakeFetch({ status: 200, body: {} });
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'evt-incoming-accept',
+          type: 'cmc/accept-v1',
+          streamIds: [':_cmc:inbox'],
+          content: {
+            grantedAccess: { apiEndpoint: 'https://granted-tok@accepter.pryv.me/' },
+            from: { username: 'alice', host: 'pryv.me' },
+            originalEventId: 'orig-req-1',
+          },
+        },
+        deps: makeDeps({ mall, fetch }),
+      });
+      assert.equal(r.handled, true);
+      assert.equal(r.status, 'completed');
+      // Back-channel access minted (mall.accesses.create called once)
+      assert.equal(mall.calls.accessesCreated.length, 1);
+      const acc = mall.calls.accessesCreated[0];
+      assert.equal(acc.clientData.cmc.role, 'counterparty');
+      assert.equal(acc.clientData.cmc.appCode, 'my-app');
+      // Trigger's content gets the backChannelAccessId stamped on completion
+      const completedUpdate = mall.calls.eventsUpdated.find((u) => u.update.content.status === 'completed');
+      assert.ok(completedUpdate != null);
+      assert.equal(completedUpdate.update.content.backChannelAccessId, 'acc-1');
+      assert.ok(Array.isArray(completedUpdate.update.content.anchorStreamIds));
+    });
+
+    it('[CD12] app-stream direction still routes to handleAccept', async () => {
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'evt-local-accept',
+          type: 'cmc/accept-v1',
+          streamIds: [':_cmc:apps:my-app:campaign-2026'],
+          content: { capabilityUrl: 'https://Tok@example.com/' },
+        },
+        deps: makeDeps({ mall, fetch }),
+      });
+      assert.equal(r.status, 'completed');
+      // handleAccept ran (data-grant created, NOT a back-channel)
+      assert.equal(mall.calls.accessesCreated.length, 1);
+      // dataGrantAccessId field (handleAccept shape) — confirms routing.
+      const completedUpdate = mall.calls.eventsUpdated.find((u) => u.update.content.status === 'completed');
+      assert.ok(completedUpdate != null);
+      assert.equal(completedUpdate.update.content.dataGrantAccessId, 'acc-1');
+    });
+  });
+
   describe('[CMCDISP-R] dispatch routes cmc/refuse-v1 → handleRefuse', () => {
     it('[CD07] happy path: refuse completes', async () => {
       const mall = fakeMall();

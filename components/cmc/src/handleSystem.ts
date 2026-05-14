@@ -35,6 +35,7 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const outbound = require('./outbound.ts');
+const accessesUpdateHookMod = require('./accessesUpdateHook.ts');
 
 // Matches the trailing :collectors:<counterparty-slug> portion of a
 // system-channel stream-id. Captures (1) the prefix (app scope), (2) the
@@ -367,6 +368,32 @@ async function handleSystemScopeUpdate (params: {
   if (params.triggerEvent.type !== C.ET_SYSTEM_SCOPE_UPDATE) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
   }
+
+  // Local-apply branch: when the trigger carries an accessId + newPermissions,
+  // apply the change to the local data-grant access BEFORE delivering the
+  // notification to the peer. The accesses.update is wrapped in
+  // runWithSuppression so the post-hook does NOT also fire — this handler
+  // is the authoritative notifier for the change.
+  const accessId: string | undefined = params.triggerEvent.content?.accessId;
+  const newPermissions: any = params.triggerEvent.content?.newPermissions;
+  if (typeof accessId === 'string' && Array.isArray(newPermissions) &&
+      params.deps?.mall?.accesses?.update != null) {
+    try {
+      await accessesUpdateHookMod.runWithSuppression(async () => {
+        await params.deps.mall.accesses.update(params.userId, {
+          id: accessId,
+          update: { permissions: newPermissions },
+        });
+      });
+    } catch (err: any) {
+      return {
+        ok: false,
+        reason: 'cmc-scope-update-local-apply-failed',
+        detail: { accessId, message: String(err?.message || err) },
+      };
+    }
+  }
+
   return handleSystemEvent(params);
 }
 

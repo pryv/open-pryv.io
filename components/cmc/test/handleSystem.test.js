@@ -28,11 +28,15 @@ const {
 const { RateLimiter } = require('../src/rateLimit.ts');
 
 function fakeMall (accesses) {
-  const calls = { accessesGet: 0 };
+  const calls = { accessesGet: 0, accessesUpdated: [] };
   return {
     calls,
     accesses: {
       async get () { calls.accessesGet += 1; return accesses; },
+      async update (userId, params) {
+        calls.accessesUpdated.push({ userId, ...params });
+        return { id: params.id, ...params.update };
+      },
     },
   };
 }
@@ -499,6 +503,68 @@ describe('[CMCHS] cmc/handleSystem', () => {
       });
       assert.equal(r.ok, false);
       assert.equal(r.reason, 'cmc-handler-wrong-type');
+    });
+
+    it('[HS26] local-apply: trigger with accessId+newPermissions calls accesses.update before peer delivery', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const trigger = {
+        ...SCOPE_UPDATE_TRIGGER,
+        content: {
+          ...SCOPE_UPDATE_TRIGGER.content,
+          accessId: 'acc-data-grant',
+          newPermissions: [{ streamId: 'fertility', level: 'read' }],
+        },
+      };
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1',
+        triggerEvent: trigger,
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      // Local update fired
+      assert.equal(mall.calls.accessesUpdated.length, 1);
+      assert.equal(mall.calls.accessesUpdated[0].id, 'acc-data-grant');
+      assert.deepEqual(mall.calls.accessesUpdated[0].update.permissions, [{ streamId: 'fertility', level: 'read' }]);
+      // Peer delivery still happened
+      assert.equal(calls.length, 1);
+    });
+
+    it('[HS27] local-apply skipped when trigger lacks accessId or newPermissions', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1',
+        triggerEvent: SCOPE_UPDATE_TRIGGER, // no accessId/newPermissions
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(mall.calls.accessesUpdated.length, 0);
+    });
+
+    it('[HS28] local-apply failure surfaces as cmc-scope-update-local-apply-failed', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      mall.accesses.update = async () => { throw new Error('access-update-fail'); };
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const trigger = {
+        ...SCOPE_UPDATE_TRIGGER,
+        content: {
+          ...SCOPE_UPDATE_TRIGGER.content,
+          accessId: 'acc-x',
+          newPermissions: [{ streamId: 'x', level: 'read' }],
+        },
+      };
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1',
+        triggerEvent: trigger,
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-scope-update-local-apply-failed');
+      assert.equal(r.detail.accessId, 'acc-x');
     });
   });
 });

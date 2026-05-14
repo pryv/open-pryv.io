@@ -32,12 +32,13 @@ const handleAcceptMod = require('./handleAccept.ts');
 const handleSystemMod = require('./handleSystem.ts');
 const handleChatMod = require('./handleChat.ts');
 const handleRevokeMod = require('./handleRevoke.ts');
+const handleIncomingAcceptMod = require('./handleIncomingAccept.ts');
 const retryQueueMod = require('./retryQueue.ts');
 
 type SelfIdentity = { username: string; host: string };
 
 type MallLike = {
-  accesses: { create: (userId: string, params: any) => Promise<any>; delete?: (userId: string, params: any) => Promise<any> };
+  accesses: { create: (userId: string, params: any) => Promise<any>; delete?: (userId: string, params: any) => Promise<any>; update?: (userId: string, params: any) => Promise<any> };
   events:   { update: (userId: string, params: any) => Promise<any>; create: (userId: string, params: any) => Promise<any> };
   streams:  { create: (userId: string, params: any) => Promise<any> };
 };
@@ -126,9 +127,24 @@ async function dispatch (params: {
   try {
     switch (event.type) {
       case C.ET_ACCEPT:
-        result = await handleAcceptMod.handleAccept({
-          userId, triggerEvent: event, selfIdentity, deps,
-        });
+        // Direction-aware routing:
+        //   - cmc/accept-v1 written on :_cmc:inbox = peer-delivered (the
+        //     accepter has just POSTed their accept to us via the
+        //     capability URL). Mint the back-channel access + provision
+        //     anchor streams via handleIncomingAccept.
+        //   - cmc/accept-v1 written on a :_cmc:apps:* stream = the LOCAL
+        //     user is accepting an incoming request. handleAccept reads
+        //     the offer via capability + creates the data-grant access +
+        //     delivers the accept back to the peer.
+        if (isOnInbox(event)) {
+          result = await handleIncomingAcceptMod.handleIncomingAccept({
+            userId, acceptEvent: event, selfIdentity, deps,
+          });
+        } else {
+          result = await handleAcceptMod.handleAccept({
+            userId, triggerEvent: event, selfIdentity, deps,
+          });
+        }
         break;
       case C.ET_REFUSE:
         result = await handleAcceptMod.handleRefuse({
@@ -186,6 +202,9 @@ async function dispatch (params: {
       dataGrantAccessId: result?.dataGrantAccessId,
       offerEventId: result?.offerEventId,
       capabilityId: result?.capabilityId,
+      // handleIncomingAccept fields:
+      backChannelAccessId: result?.backChannelAccessId,
+      anchorStreamIds: result?.anchorStreamIds,
     });
     return { handled: true, eventType: event.type, status: 'completed' };
   }
@@ -282,13 +301,17 @@ async function markFailed (
 }
 
 /**
- * Build an events.create post-write middleware that fires the dispatch
- * (without awaiting it). The events.create response returns to the
- * client as `status: 'pending'`; subsequent status transitions happen
- * via this middleware's async fire-and-forget call.
+ * True if the event's streamIds list includes :_cmc:inbox.
  *
- * Errors from dispatch never propagate — they end up as content.status='failed'.
+ * Used by the dispatch loop to disambiguate the cmc/accept-v1 direction:
+ * peer-delivered accepts land on :_cmc:inbox via the inbox write-hook;
+ * locally-initiated accepts live in the user's :_cmc:apps:* scope.
  */
+function isOnInbox (event: any): boolean {
+  const ids = Array.isArray(event?.streamIds) ? event.streamIds : [];
+  return ids.includes(C.NS_INBOX);
+}
+
 /**
  * Build a request-scoped dispatch middleware. `buildPerRequestDeps`
  * (optional) lets the caller overlay or replace deps at middleware-fire

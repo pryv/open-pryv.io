@@ -229,6 +229,24 @@ export default async function (api: any) {
     cmcDispatchMiddleware
   );
 
+  // CMC retry-loop bootstrap. No-op unless `cmc.retryLoop.enabled: true`
+  // is set in config AND we're worker id 1 (or running standalone).
+  // Operator-supplied userIdsProvider — defaults here to the platform's
+  // full user list which is correct for single-shard deployments. Per-
+  // shard / per-recent-activity scoping can be wired later.
+  cmc.startRetryLoopIfEnabled({
+    config,
+    mall,
+    selfIdentityFor: cmcSelfIdentityFor,
+    fetch: globalThis.fetch,
+    rateLimiter: cmcRateLimiter,
+    logger: getLogger('cmc:retry-loop'),
+    userIdsProvider: async () => {
+      const users = await usersRepository.getAllUsersIdAndName();
+      return users.map((u: any) => u.id);
+    },
+  });
+
   function applyPrerequisitesForCreation (context: any, params: any, result: any, next: any) {
     const event = context.newEvent;
     // default time is now
