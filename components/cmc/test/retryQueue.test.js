@@ -41,9 +41,9 @@ function fakeMall () {
       async update (_userId, params) {
         const ev = events.get(params.id);
         if (ev == null) throw new Error('no event ' + params.id);
-        Object.assign(ev, params.update);
-        if (params.update.content != null) {
-          ev.content = { ...params.update.content };
+        Object.assign(ev, params);
+        if (params.content != null) {
+          ev.content = { ...params.content };
         }
         return ev;
       },

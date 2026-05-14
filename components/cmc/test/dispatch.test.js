@@ -134,9 +134,9 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.equal(r.status, 'completed');
       // Mall: 2 events.update — one to 'delivered', one to 'completed'
       assert.equal(mall.calls.eventsUpdated.length, 2);
-      assert.equal(mall.calls.eventsUpdated[0].update.content.status, 'delivered');
-      assert.equal(mall.calls.eventsUpdated[1].update.content.status, 'completed');
-      assert.equal(mall.calls.eventsUpdated[1].update.content.dataGrantAccessId, 'acc-1');
+      assert.equal(mall.calls.eventsUpdated[0].content.status, 'delivered');
+      assert.equal(mall.calls.eventsUpdated[1].content.status, 'completed');
+      assert.equal(mall.calls.eventsUpdated[1].content.dataGrantAccessId, 'acc-1');
     });
 
     it('[CD05] failed delivery → stamps failed with reason + detail', async () => {
@@ -158,8 +158,8 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.equal(r.status, 'failed');
       assert.equal(r.reason, 'cmc-handler-delivery-rejected');
       const updates = mall.calls.eventsUpdated;
-      assert.equal(updates[updates.length - 1].update.content.status, 'failed');
-      assert.equal(updates[updates.length - 1].update.content.failure.reason, 'cmc-handler-delivery-rejected');
+      assert.equal(updates[updates.length - 1].content.status, 'failed');
+      assert.equal(updates[updates.length - 1].content.failure.reason, 'cmc-handler-delivery-rejected');
       // Rollback triggered
       assert.equal(mall.calls.accessesDeleted.length, 1);
     });
@@ -215,10 +215,10 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.equal(acc.clientData.cmc.role, 'counterparty');
       assert.equal(acc.clientData.cmc.appCode, 'my-app');
       // Trigger's content gets the backChannelAccessId stamped on completion
-      const completedUpdate = mall.calls.eventsUpdated.find((u) => u.update.content.status === 'completed');
+      const completedUpdate = mall.calls.eventsUpdated.find((u) => u.content.status === 'completed');
       assert.ok(completedUpdate != null);
-      assert.equal(completedUpdate.update.content.backChannelAccessId, 'acc-1');
-      assert.ok(Array.isArray(completedUpdate.update.content.anchorStreamIds));
+      assert.equal(completedUpdate.content.backChannelAccessId, 'acc-1');
+      assert.ok(Array.isArray(completedUpdate.content.anchorStreamIds));
     });
 
     it('[CD12] app-stream direction still routes to handleAccept', async () => {
@@ -241,9 +241,9 @@ describe('[CMCDISP] cmc/dispatch', () => {
       // handleAccept ran (data-grant created, NOT a back-channel)
       assert.equal(mall.calls.accessesCreated.length, 1);
       // dataGrantAccessId field (handleAccept shape) — confirms routing.
-      const completedUpdate = mall.calls.eventsUpdated.find((u) => u.update.content.status === 'completed');
+      const completedUpdate = mall.calls.eventsUpdated.find((u) => u.content.status === 'completed');
       assert.ok(completedUpdate != null);
-      assert.equal(completedUpdate.update.content.dataGrantAccessId, 'acc-1');
+      assert.equal(completedUpdate.content.dataGrantAccessId, 'acc-1');
     });
   });
 

@@ -188,8 +188,8 @@ async function processRetryEvent (params: {
   // Success path: dispatch returned status='completed' (handler ok).
   if (dispatched.status === 'completed' || dispatched.status === 'delivered') {
     await deps.mall.events.update(userId, {
-      id: retryEvent.id,
-      update: { content: { ...c, status: 'succeeded' } },
+      ...retryEvent,
+      content: { ...c, status: 'succeeded' },
     });
     deps.logger?.debug?.('cmc/retry: succeeded', { retryEventId: retryEvent.id });
     return { outcome: 'succeeded', retryEventId: retryEvent.id };
@@ -199,15 +199,13 @@ async function processRetryEvent (params: {
   const nextAttempts = (c.attempts ?? 1) + 1;
   if (nextAttempts > MAX_ATTEMPTS || !isRetryableReason(dispatched.reason ?? '', dispatched.detail)) {
     await deps.mall.events.update(userId, {
-      id: retryEvent.id,
-      update: {
-        content: {
-          ...c,
-          status: 'failed-permanent',
-          attempts: nextAttempts - 1,   // didn't actually take a new attempt
-          lastFailureReason: dispatched.reason ?? 'unknown',
-          lastFailureDetail: dispatched.detail ?? null,
-        },
+      ...retryEvent,
+      content: {
+        ...c,
+        status: 'failed-permanent',
+        attempts: nextAttempts - 1,   // didn't actually take a new attempt
+        lastFailureReason: dispatched.reason ?? 'unknown',
+        lastFailureDetail: dispatched.detail ?? null,
       },
     });
     deps.logger?.warn?.('cmc/retry: failed-permanent', {
@@ -219,15 +217,13 @@ async function processRetryEvent (params: {
 
   // Reschedule.
   await deps.mall.events.update(userId, {
-    id: retryEvent.id,
-    update: {
-      content: {
-        ...c,
-        attempts: nextAttempts,
-        lastFailureReason: dispatched.reason ?? 'unknown',
-        lastFailureDetail: dispatched.detail ?? null,
-        nextAttemptAfter: nextAttemptAt({ attempts: nextAttempts, now }),
-      },
+    ...retryEvent,
+    content: {
+      ...c,
+      attempts: nextAttempts,
+      lastFailureReason: dispatched.reason ?? 'unknown',
+      lastFailureDetail: dispatched.detail ?? null,
+      nextAttemptAfter: nextAttemptAt({ attempts: nextAttempts, now }),
     },
   });
   deps.logger?.debug?.('cmc/retry: rescheduled', {

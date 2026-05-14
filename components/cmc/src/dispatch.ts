@@ -101,8 +101,8 @@ async function dispatch (params: {
   if (event.id != null && deps.mall.events.update != null) {
     try {
       await deps.mall.events.update(userId, {
-        id: event.id,
-        update: { content: { ...(event.content || {}), status: 'delivered' } },
+        ...event,
+        content: { ...(event.content || {}), status: 'delivered' },
       });
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* notify is best-effort */ }
     } catch (err: any) {
@@ -230,8 +230,8 @@ async function markCompleted (deps: DispatchDeps, userId: string, event: any, ex
       }
     }
     await deps.mall.events.update(userId, {
-      id: event.id,
-      update: { content: { ...(event.content || {}), status: 'completed', ...cleaned } },
+      ...event,
+      content: { ...(event.content || {}), status: 'completed', ...cleaned },
     });
     try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
   } catch (err: any) {
@@ -279,13 +279,11 @@ async function markFailed (
   if (event.id != null && deps.mall.events.update != null) {
     try {
       await deps.mall.events.update(userId, {
-        id: event.id,
-        update: {
-          content: {
-            ...(event.content || {}),
-            status: 'failed',
-            failure: { reason, detail: detail ?? null },
-          },
+        ...event,
+        content: {
+          ...(event.content || {}),
+          status: 'failed',
+          failure: { reason, detail: detail ?? null },
         },
       });
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
