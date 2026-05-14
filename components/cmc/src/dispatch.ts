@@ -57,6 +57,11 @@ type DispatchDeps = {
   // in :_cmc:_internal:retries for later re-dispatch by the retry loop.
   // Disable for tests that don't want the side-effect.
   enqueueRetries?: boolean;
+  // Optional callback fired after each mall.events.update we perform on
+  // the trigger event (status transitions). Lets the api-server emit
+  // pubsub.USERNAME_BASED_EVENTS_CHANGED so the app's socket.io
+  // subscription sees the status flip. No-op if undefined.
+  notifyEventChanged?: (userId: string, event: any) => void;
 };
 
 type DispatchResult = {
@@ -98,6 +103,7 @@ async function dispatch (params: {
         id: event.id,
         update: { content: { ...(event.content || {}), status: 'delivered' } },
       });
+      try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* notify is best-effort */ }
     } catch (err: any) {
       deps.logger?.warn('cmc/dispatch: failed to mark trigger as delivered', {
         eventId: event.id,
@@ -208,6 +214,7 @@ async function markCompleted (deps: DispatchDeps, userId: string, event: any, ex
       id: event.id,
       update: { content: { ...(event.content || {}), status: 'completed', ...cleaned } },
     });
+    try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
   } catch (err: any) {
     deps.logger?.warn('cmc/dispatch: failed to mark trigger as completed', {
       eventId: event.id,
@@ -262,6 +269,7 @@ async function markFailed (
           },
         },
       });
+      try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
     } catch (err: any) {
       deps.logger?.warn('cmc/dispatch: failed to mark trigger as failed', {
         eventId: event.id,
@@ -281,16 +289,28 @@ async function markFailed (
  *
  * Errors from dispatch never propagate — they end up as content.status='failed'.
  */
-function createDispatchMiddleware (deps: DispatchDeps): (context: any, params: any, result: any, next: any) => void {
+/**
+ * Build a request-scoped dispatch middleware. `buildPerRequestDeps`
+ * (optional) lets the caller overlay or replace deps at middleware-fire
+ * time — used to bind a per-request `notifyEventChanged` to the live
+ * pubsub username (which is only known after auth resolves).
+ */
+function createDispatchMiddleware (
+  deps: DispatchDeps,
+  buildPerRequestDeps?: (context: any) => Partial<DispatchDeps>
+): (context: any, params: any, result: any, next: any) => void {
   return function cmcDispatchMiddleware (context: any, _params: any, result: any, next: any) {
     // Read the event back from the result (api-server convention).
     const event = result?.event;
     const userId = context?.user?.id;
     if (event != null && userId != null && typeof event.type === 'string' && event.type.startsWith('cmc/')) {
+      const requestDeps: DispatchDeps = buildPerRequestDeps != null
+        ? { ...deps, ...buildPerRequestDeps(context) }
+        : deps;
       // Fire-and-forget. Errors are captured inside dispatch.
       // eslint-disable-next-line @typescript-eslint/no-floating-promises
       Promise.resolve()
-        .then(() => dispatch({ userId, event, deps }))
+        .then(() => dispatch({ userId, event, deps: requestDeps }))
         .catch((err) => {
           deps.logger?.warn('cmc/dispatch: unexpected uncaught error', {
             error: String(err?.message || err),

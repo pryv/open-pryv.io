@@ -233,6 +233,31 @@ describe('[CMCDISP] cmc/dispatch', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
       assert.equal(mall.calls.eventsUpdated.length, 0);
     });
+
+    it('[CD10] notifyEventChanged fires per status-flip (delivered + completed)', async () => {
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 201, body: {} }, // refuse delivery (no offer-read needed)
+      ]);
+      const notifies = [];
+      const baseDeps = makeDeps({ mall, fetch });
+      const mw = createDispatchMiddleware(baseDeps, (_ctx) => ({
+        notifyEventChanged: (userId, event) => notifies.push({ userId, eventId: event.id }),
+      }));
+      mw(
+        { user: { id: 'u1', username: 'alice' } },
+        {},
+        { event: { id: 'evt-refuse', type: 'cmc/refuse-v1', content: { capabilityUrl: 'https://Tok@example.com/' } } },
+        () => {}
+      );
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      // delivered + completed → 2 notifies
+      assert.equal(notifies.length >= 2, true);
+      for (const n of notifies) {
+        assert.equal(n.userId, 'u1');
+        assert.equal(n.eventId, 'evt-refuse');
+      }
+    });
   });
 });
 

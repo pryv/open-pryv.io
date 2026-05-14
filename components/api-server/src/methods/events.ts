@@ -194,6 +194,19 @@ export default async function (api: any) {
     rateLimiter: cmcRateLimiter,
     logger: cmcDispatchLogger,
     selfIdentityFor: cmcSelfIdentityFor,
+  }, (context: any) => {
+    // Per-request: bind a notifyEventChanged that fires pubsub for THIS
+    // user. The dispatch loop's fire-and-forget events.update calls
+    // bypass the request chain, so without this the app's socket.io
+    // subscription wouldn't see status transitions.
+    const username = context?.user?.username;
+    return {
+      notifyEventChanged: (_userId: string, _event: any) => {
+        if (username != null) {
+          pubsub.notifications.emit(username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
+        }
+      },
+    };
   });
   api.register(
     'events.create',

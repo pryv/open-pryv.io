@@ -33,16 +33,18 @@ const retryQueue = require('./retryQueue.ts');
 const handleIncomingAccept = require('./handleIncomingAccept.ts');
 const anchorStreams = require('./anchorStreams.ts');
 const accessesUpdateHook = require('./accessesUpdateHook.ts');
+const retryScheduler = require('./retryScheduler.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
   outbound, capability, acceptOrchestration, handleAccept, dispatch,
   chatOrchestration, capabilityMintHook, inboxWriteHook, rateLimit,
   handleSystem, handleChat, handleRevoke, retryQueue, handleIncomingAccept,
-  anchorStreams, accessesUpdateHook,
+  anchorStreams, accessesUpdateHook, retryScheduler,
 };
 
 export const { createAccessesUpdatePostHook, runWithSuppression } = accessesUpdateHook;
+export const { RetryScheduler } = retryScheduler;
 
 export const { RateLimiter } = rateLimit;
 
