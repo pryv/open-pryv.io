@@ -20,10 +20,11 @@ const provisioning = require('./provisioning.ts');
 const outbound = require('./outbound.ts');
 const capability = require('./capability.ts');
 const acceptOrchestration = require('./acceptOrchestration.ts');
+const handleAccept = require('./handleAccept.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
-  outbound, capability, acceptOrchestration,
+  outbound, capability, acceptOrchestration, handleAccept,
 };
 
 // Hook factories at top-level for api-server integration.
