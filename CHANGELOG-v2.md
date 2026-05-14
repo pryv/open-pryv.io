@@ -1,5 +1,28 @@
 # Changelog - API Changes
 
+## Cross-account Messaging & Consent (CMC plugin)
+
+**Public-facing namespace addition.** The api-server now reserves the `:_cmc:` stream-id namespace for the Cross-account Messaging & Consent plugin. Reserved roots auto-create on-demand at first use; per-app and per-counterparty sub-streams are auto-created by the plugin at acceptance time.
+
+- **NEW reserved namespace** `:_cmc:` — five auto-managed parents:
+  - `:_cmc:` (root), `:_cmc:inbox` (one-shot lifecycle, cross-app), `:_cmc:apps` (user-creatable app scopes), `:_cmc:_internal` (plugin-managed), `:_cmc:_internal:retries` (retry queue events).
+  - Apps freely create their own app-scope sub-trees under `:_cmc:apps:<app-code>:[<user-path>:]`. The plugin auto-creates `chats` and `collectors` segments below the trigger's stream at acceptance — these names are reserved as plugin-managed.
+- **NEW event types** (validated by the api-server's CMC content-validation hook):
+  - Lifecycle: `cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1`.
+  - Chat: `cmc/chat-v1` (per user-pair stream under the app scope).
+  - System channel: `cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1`.
+- **NEW events.create write-hooks**:
+  - `cmc-content-validation` — validates `content` against the per-type schema.
+  - `cmc-capability-mint` — on `cmc/request-v1`, mints a single-use capability access + per-capability offer / responses streams, stamps `content.capabilityUrl` + `content.capabilityExpiresAt` + `status: 'pending'`.
+  - `cmc-inbox-write` — for writes on `:_cmc:inbox` only: validates the access's `clientData.cmc.role === 'counterparty'`, restricts to lifecycle event types, and **server-stamps `content.from` from the access's stored counterparty identity** (unforgeable — any client-supplied `content.from` is overwritten).
+  - `cmc-dispatch` — fire-and-forget orchestration loop that fires post-create for every `cmc/*` event: type-routes to the right handler, performs local state changes + outbound HTTPS delivery to the peer, updates the trigger event's `content.status` (`pending → delivered → completed | failed`), and pushes `pubsub.USERNAME_BASED_EVENTS_CHANGED` so the app's socket.io subscription sees every status flip.
+- **NEW accesses.update post-hook** — auto-notifies CMC counterparties when a scope-changed access is detected. Writes a local audit event under the user's collectors stream + delivers `cmc/system-scope-update-v1` to the peer via the access's stored apiEndpoint. The hook is suppressed when the update is initiated by a CMC handler (AsyncLocalStorage-based, runWithSuppression).
+- **Federation**: cross-platform AND cross-core deliveries take the standard HTTPS path with the access token in the apiEndpoint URL. No mTLS, no shared CA, no federation auth needed.
+- **Retry queue**: zero new storage primitive — retry events live in `:_cmc:_internal:retries` with exponential backoff (1s → 5s → 25s → 125s → 600s cap, max 6 attempts) before being marked `failed-permanent` for operator review.
+- **Backwards-compat**: nothing legacy is changed; deployments that don't use CMC see the namespace as inert. No migration required.
+
+See `components/cmc/README.md` for the canonical design, `IMPLEMENTERS-GUIDE.md` for app integration, and `INTERNALS.md` for the orchestration flow diagrams.
+
 ## Audit + socket.io for versioned accesses (Plan 66 Phase E)
 
 - **NEW** every audit row written under a **versioned** access (one whose `serial` is non-null) now carries **two** access-stream ids: the bare `access-<base>` (unchanged shape) AND the composite `access-<base>:<serial>` (specific contract version). Audit queries by `streamIds: ['access-<base>']` keep returning every record across all versions — fully backwards-compatible. New version-specific queries can target `access-<base>:<K>` directly. Never-updated accesses keep emitting only the bare streamId, so this is a no-op until `accesses.update` is first invoked.
