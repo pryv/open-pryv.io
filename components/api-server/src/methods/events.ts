@@ -167,6 +167,10 @@ export default async function (api: any) {
   // -------------------------------------------------------------------- CREATE
 
   const cmcContentValidationHook = cmc.createCmcContentValidationHook({ errors });
+  const cmcEnsureReservedParentsHook = cmc.createEnsureReservedParentsHook({
+    mall,
+    logger: getLogger('cmc:ensure-reserved-parents'),
+  });
   const cmcCapabilityMintHook = cmc.createCapabilityMintHook({
     mall,
     errors,
@@ -214,6 +218,11 @@ export default async function (api: any) {
     normalizeStreamIdAndStreamIds,
     applyPrerequisitesForCreation,
     validateEventContentAndCoerce,
+    // Auto-provision the five reserved :_cmc:* parents on first CMC op
+    // for users who pre-date the CMC deploy. Idempotent. Must fire
+    // BEFORE verifyCanCreateEventsOnStream so the stream check finds
+    // the just-created reserved tree.
+    cmcEnsureReservedParentsHook,
     verifyCanCreateEventsOnStream,
     cmcContentValidationHook,
     cmcCapabilityMintHook,

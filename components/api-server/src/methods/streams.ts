@@ -135,9 +135,14 @@ export default async function (api: any) {
   }
   // CREATION
   const cmcStreamCreateHook = cmc.createStreamCreateReservedRootHook({ errors });
+  const cmcEnsureReservedParentsHook = cmc.createEnsureReservedParentsHook({
+    mall,
+    logger: getLogger('cmc:ensure-reserved-parents'),
+  });
   api.register(
     'streams.create',
     commonFns.getParamsValidation(methodsSchema.create.params),
+    cmcEnsureReservedParentsHook,
     cmcStreamCreateHook,
     applyDefaultsForCreation,
     applyPrerequisitesForCreation,

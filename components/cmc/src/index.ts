@@ -59,6 +59,7 @@ export const { createDispatchMiddleware } = dispatch;
 export const {
   createCmcContentValidationHook,
   createStreamCreateReservedRootHook,
+  createEnsureReservedParentsHook,
 } = hooks;
 
 // Provisioning at top-level for users/repository.ts integration.

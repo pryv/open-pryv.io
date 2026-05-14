@@ -20,6 +20,7 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 const validators = require('./validators.ts');
+const provisioning = require('./provisioning.ts');
 
 type ErrorFactory = {
   invalidOperation: (message: string, details?: any) => any;
@@ -137,7 +138,77 @@ function createStreamCreateReservedRootHook (deps: Deps): Middleware {
   };
 }
 
+/**
+ * events.create / streams.create lazy auto-provision hook.
+ *
+ * Existing user accounts that pre-date the CMC deploy don't have the
+ * five reserved parents (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`,
+ * `:_cmc:_internal`, `:_cmc:_internal:retries`). User-creation-time
+ * provisioning is currently disabled per the AC04 workaround, so we
+ * provision lazily — on the first :_cmc:* operation for that user.
+ *
+ * This middleware MUST fire BEFORE any code path that depends on the
+ * parents existing (verifyCanCreateEventsOnStream, parent-id resolution
+ * in streams.create, etc.). Idempotent: subsequent CMC operations on
+ * the same user catch `item-already-exists` and no-op.
+ *
+ * Gating:
+ *   - events.create: trigger if streamIds contain a `:_cmc:*` id OR
+ *     event.type starts with 'cmc/'.
+ *   - streams.create: trigger if the new stream's id starts with `:_cmc:`.
+ *
+ * Failure is non-fatal (logged) — the downstream call will surface a
+ * clearer "parent not found" error if provisioning truly didn't take.
+ */
+type ProvisionDeps = {
+  mall: { streams: { create: (userId: string, params: any) => Promise<any> } };
+  logger?: { debug: Function; warn: Function };
+};
+
+function createEnsureReservedParentsHook (deps: ProvisionDeps): Middleware {
+  return async function cmcEnsureReservedParents (context, _params, _result, next) {
+    const userId: string | undefined = context?.user?.id;
+    if (userId == null) return next();
+
+    let shouldEnsure = false;
+    const newEvent = context.newEvent;
+    if (newEvent != null) {
+      const streamIds: string[] = Array.isArray(newEvent.streamIds) ? newEvent.streamIds : [];
+      if (streamIds.some((id: string) => typeof id === 'string' && C.isCmcStreamId(id))) {
+        shouldEnsure = true;
+      } else if (typeof newEvent.type === 'string' && newEvent.type.startsWith('cmc/')) {
+        shouldEnsure = true;
+      }
+    }
+    // streams.create case: caller supplies the new stream payload via
+    // _params (events.ts uses context.newEvent; streams.ts uses params).
+    if (!shouldEnsure && _params != null && typeof _params === 'object') {
+      const targetId: unknown = _params.id ?? _params.update?.id;
+      if (typeof targetId === 'string' && C.isCmcStreamId(targetId)) {
+        shouldEnsure = true;
+      }
+    }
+
+    if (!shouldEnsure) return next();
+
+    try {
+      await provisioning.provisionUserStreams({
+        mall: deps.mall,
+        userId,
+        logger: deps.logger,
+      });
+    } catch (err: any) {
+      deps.logger?.warn?.('cmc/ensureReservedParents: failed (continuing)', {
+        userId,
+        error: String(err?.message || err),
+      });
+    }
+    next();
+  };
+}
+
 export {
   createCmcContentValidationHook,
   createStreamCreateReservedRootHook,
+  createEnsureReservedParentsHook,
 };

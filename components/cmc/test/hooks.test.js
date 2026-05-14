@@ -22,6 +22,7 @@ const assert = require('node:assert/strict');
 const {
   createCmcContentValidationHook,
   createStreamCreateReservedRootHook,
+  createEnsureReservedParentsHook,
 } = require('../src/hooks.ts');
 
 function fakeErrors () {
@@ -242,6 +243,119 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const mw = createStreamCreateReservedRootHook({ errors: factory });
       const err = await runMiddleware(mw, {}, {}, {});
       assert.equal(err, undefined);
+    });
+  });
+
+  describe('[CMCHOOK-PR] createEnsureReservedParentsHook', () => {
+    function fakeMall (opts = {}) {
+      const calls = { streamsCreated: [] };
+      return {
+        calls,
+        streams: {
+          async create (_userId, params) {
+            calls.streamsCreated.push(params);
+            if (opts.alreadyExistAll) {
+              const e = new Error('item-already-exists');
+              e.id = 'item-already-exists';
+              throw e;
+            }
+            if (opts.throwOn === params.id) {
+              throw new Error('boom-' + params.id);
+            }
+            return { id: params.id };
+          },
+        },
+      };
+    }
+
+    it('[CH-PR01] passes through when no user.id in context', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureReservedParentsHook({ mall });
+      const err = await runMiddleware(mw, {}, {}, {});
+      assert.equal(err, undefined);
+      assert.equal(mall.calls.streamsCreated.length, 0);
+    });
+
+    it('[CH-PR02] passes through when event is not CMC-related', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureReservedParentsHook({ mall });
+      const ctx = {
+        user: { id: 'u1' },
+        newEvent: { streamIds: ['fertility'], type: 'note/txt' },
+      };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      assert.equal(err, undefined);
+      assert.equal(mall.calls.streamsCreated.length, 0);
+    });
+
+    it('[CH-PR03] provisions reserved parents when event streamIds reference :_cmc:*', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureReservedParentsHook({ mall });
+      const ctx = {
+        user: { id: 'u1' },
+        newEvent: { streamIds: [':_cmc:apps:my-app:campaign-2026'], type: 'cmc/request-v1' },
+      };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      assert.equal(err, undefined);
+      // 5 reserved parents auto-created
+      assert.equal(mall.calls.streamsCreated.length, 5);
+      const ids = mall.calls.streamsCreated.map((s) => s.id);
+      assert.deepEqual(ids, [
+        ':_cmc:',
+        ':_cmc:inbox',
+        ':_cmc:apps',
+        ':_cmc:_internal',
+        ':_cmc:_internal:retries',
+      ]);
+    });
+
+    it('[CH-PR04] provisions when event.type is cmc/* even if streamIds is empty', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureReservedParentsHook({ mall });
+      const ctx = { user: { id: 'u1' }, newEvent: { streamIds: [], type: 'cmc/chat-v1' } };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      assert.equal(err, undefined);
+      assert.equal(mall.calls.streamsCreated.length, 5);
+    });
+
+    it('[CH-PR05] provisions on streams.create with :_cmc:* params.id', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureReservedParentsHook({ mall });
+      const ctx = { user: { id: 'u1' } };
+      const err = await runMiddleware(mw, ctx, { id: ':_cmc:apps:my-app' }, {});
+      assert.equal(err, undefined);
+      assert.equal(mall.calls.streamsCreated.length, 5);
+    });
+
+    it('[CH-PR06] idempotent: item-already-exists is swallowed; middleware continues', async () => {
+      const mall = fakeMall({ alreadyExistAll: true });
+      const mw = createEnsureReservedParentsHook({ mall });
+      const ctx = {
+        user: { id: 'u1' },
+        newEvent: { streamIds: [':_cmc:inbox'], type: 'cmc/accept-v1' },
+      };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      assert.equal(err, undefined);
+      // 5 attempts; all "already exist" — middleware treats as success
+      assert.equal(mall.calls.streamsCreated.length, 5);
+    });
+
+    it('[CH-PR07] non-fatal: unexpected provisioning failure logs + continues', async () => {
+      const mall = fakeMall({ throwOn: ':_cmc:apps' });
+      const warns = [];
+      const mw = createEnsureReservedParentsHook({
+        mall,
+        logger: { debug: () => {}, warn: (msg) => warns.push(msg) },
+      });
+      const ctx = {
+        user: { id: 'u1' },
+        newEvent: { streamIds: [':_cmc:apps:foo'], type: 'cmc/request-v1' },
+      };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      // Middleware itself doesn't fail
+      assert.equal(err, undefined);
+      // At least one warning was logged (provisionUserStreams + our catch)
+      assert.ok(warns.length >= 1, 'expected at least one warn; got ' + warns.length);
     });
   });
 });
