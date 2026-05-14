@@ -26,9 +26,12 @@ The plugin watches every `cmc/*` event write that lands on a stream under `:_cmc
 
 | Region | Event-type prefix the plugin handles |
 |---|---|
-| `:_cmc:apps:*` | `cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1` |
-| `:_cmc:chats:<slug>` | `cmc/chat-v1` |
-| `:_cmc:collectors:<slug>` | `cmc/system-*-v1` |
+| `:_cmc:inbox` | `cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1` (one-shot lifecycle) |
+| `:_cmc:apps:<app>:[<path>:]chats:<slug>` | `cmc/chat-v1` |
+| `:_cmc:apps:<app>:[<path>:]collectors:<slug>` | `cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1` |
+| `:_cmc:_internal:retries` | `cmc/retry-v1` (plugin-managed; loop consumer) |
+
+**Why nest under `:_cmc:apps:<app-code>:[<path>:]`** — an app's access can be scoped to all of its data (`:_cmc:apps:<app-code>:*`) or more granularly to a single per-request sub-tree (`:_cmc:apps:<app-code>:<request-slug>:*`). Chats / collectors lifetime under whichever stream the trigger event was written to is a natural permission prefix-match.
 
 The trigger event's `content.status` is the visible state-machine. Apps subscribe to the trigger's home stream to see status updates land.
 
@@ -118,42 +121,44 @@ sequenceDiagram
 
 # 3. Acceptance — bidirectional access pair creation
 
-The most intricate flow. User writes `cmc/accept-v1`; patient's plugin orchestrates with the provider's plugin to provision:
+The most intricate flow. The accepting user writes `cmc/accept-v1`; their plugin orchestrates with the requester's plugin to provision:
 
-1. Data-grant access on the user's account (carrying the provider's stored apiEndpoint as `clientData.cmc.counterparty`).
-2. Back-channel access on the provider's account (carrying the user's data-grant apiEndpoint as `clientData.cmc.counterparty`).
-3. Auto-created anchor streams `:_cmc:chats:<slug>` + `:_cmc:collectors:<slug>` on **both** sides (so chat + system flows can start immediately).
+1. Data-grant access on the accepter's account (carrying the requester's identity in `clientData.cmc.counterparty`).
+2. Back-channel access on the requester's account (carrying the accepter's data-grant apiEndpoint in `clientData.cmc.counterparty.apiEndpoint`).
+3. Auto-created anchor streams under the app scope on **both** sides (so chat + system flows can start immediately):
+   - `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`
+   - `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>`
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant DoctorApp
+    participant RequesterApp
     participant CoreA as Core-A<br/>(example.com)<br/>+ Storage-A
     participant CoreB as Core-B<br/>(pryv.me)<br/>+ Storage-B
-    participant PatientApp
+    participant AccepterApp
 
-    PatientApp->>CoreB: events.create cmc/accept-v1<br/>content.capabilityUrl
-    CoreB->>CoreA: events.get :_cmc:_internal:offer<br/>(via capabilityUrl, recursive expand → :_cmc:_internal:offer:<capId>)
+    AccepterApp->>CoreB: events.create cmc/accept-v1<br/>content.capabilityUrl
+    CoreB->>CoreA: events.get :_cmc:_internal:offer:<capId><br/>(via capabilityUrl)
     CoreA-->>CoreB: request event (permissions, features, requesterMeta)
-    CoreB->>CoreB: accesses.create data-grant<br/>permissions = offer.permissions<br/>clientData.cmc = {role:'counterparty',<br/>counterparty:{username:'alice',host:'example.com'}}<br/>(persisted in Storage-B accesses table)
-    CoreB->>CoreB: streams.create :_cmc:chats:alice--example-com<br/>streams.create :_cmc:collectors:alice--example-com--example-app<br/>(persisted in Storage-B streams table)
+    CoreB->>CoreB: accesses.create data-grant<br/>permissions = offer.permissions<br/>clientData.cmc = {role:'counterparty',<br/>counterparty:{username:'provider-a',host:'example.com'}}<br/>(persisted in Storage-B accesses table)
+    CoreB->>CoreB: streams.create :_cmc:apps:my-app:chats:provider-a--example-com<br/>streams.create :_cmc:apps:my-app:collectors:provider-a--example-com<br/>(persisted in Storage-B streams table)
     CoreB->>CoreA: events.create cmc/accept-v1 in :_cmc:_internal:responses:<capId><br/>(via capabilityUrl)<br/>content.grantedAccess.apiEndpoint = data-grant.apiEndpoint
-    CoreA->>CoreA: accesses.create back-channel<br/>permissions = create-only on :_cmc:inbox<br/>+ rights on :_cmc:chats:alice--example-com<br/>+ rights on :_cmc:collectors:alice--example-com--my-app...<br/>clientData.cmc.counterparty.apiEndpoint = <data-grant apiEndpoint><br/>(persisted in Storage-A accesses table)
-    CoreA->>CoreA: streams.create :_cmc:chats:alice--example-com<br/>streams.create :_cmc:collectors:alice--example-com--example-app
+    CoreA->>CoreA: accesses.create back-channel<br/>permissions = create-only on :_cmc:inbox<br/>+ rights on :_cmc:apps:my-app:chats:alice--pryv-me<br/>+ rights on :_cmc:apps:my-app:collectors:alice--pryv-me<br/>clientData.cmc.counterparty.apiEndpoint = <data-grant apiEndpoint><br/>(persisted in Storage-A accesses table)
+    CoreA->>CoreA: streams.create :_cmc:apps:my-app:chats:alice--pryv-me<br/>streams.create :_cmc:apps:my-app:collectors:alice--pryv-me
     CoreA->>CoreA: accesses.delete capability (single-use consumed)
     CoreA-->>CoreB: response carries back-channel.apiEndpoint
     CoreB->>CoreB: events.update data-grant access<br/>clientData.cmc.counterparty.backChannelApiEndpoint=<...>
-    CoreA->>CoreA: events.create cmc/accept-v1 in doctor's :_cmc:inbox<br/>(server-side delivery, persisted in Storage-A)
-    CoreA-->>DoctorApp: socket.io push :_cmc:inbox
+    CoreA->>CoreA: events.create cmc/accept-v1 in requester's :_cmc:inbox<br/>(server-side delivery, persisted in Storage-A)
+    CoreA-->>RequesterApp: socket.io push :_cmc:inbox
     CoreB->>CoreB: events.update trigger<br/>status='completed'<br/>dataGrantAccessId, backChannelAccessId
-    CoreB-->>PatientApp: socket.io push (trigger status)
+    CoreB-->>AccepterApp: socket.io push (trigger status)
 ```
 
 All persistence happens in the **per-user accesses/streams/events tables** of each core's standard storage (PG/Mongo). No rqlite, no separate engine.
 
-**Atomicity worry:** if step 6 (capability delete) crashes after the back-channel access is created (step 4) but before the response is sent (step 9), the user.retries and the request fails with `capability-already-consumed`. Recovery: operator-side cleanup script (backlog) reads back-channel accesses created without a paired data-grant and prunes. v1 ships with the race surfaced as an error; pruning is operational.
+**Atomicity worry:** if step 9 (capability delete) crashes after the back-channel access is created (step 7) but before the response is sent (step 10), the accepter retries and the request fails with `capability-already-consumed`. Recovery: operator-side cleanup script (backlog) reads back-channel accesses created without a paired data-grant and prunes. v1 ships with the race surfaced as an error; pruning is operational.
 
-**Anchor stream creation idempotence:** `streams.create` is upsert-semantics in the plugin (catches `stream-already-exists` and continues). Two simultaneous accepts from the same user.against two different doctors won't collide on the user's `:_cmc:chats:`/`:_cmc:collectors:` parents.
+**Anchor stream creation idempotence:** `streams.create` is upsert-semantics in the plugin (catches `stream-already-exists` and continues). Two simultaneous accepts from the same user against two different counterparties won't collide on the user's `:_cmc:apps:<app-code>:[<path>:]chats:` / `collectors:` parents.
 
 ---
 

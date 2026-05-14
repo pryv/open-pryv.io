@@ -175,6 +175,26 @@ export default async function (api: any) {
     logger: getLogger('cmc:capability-mint'),
   });
   const cmcInboxWriteHook = cmc.createInboxWriteHook({ errors });
+  const cmcRateLimiter = new cmc.rateLimit.RateLimiter();
+  const cmcDispatchLogger = getLogger('cmc:dispatch');
+  const cmcSelfIdentityFor = async (userId: string) => {
+    // username: pull from the users repository (cached behind the scenes).
+    // host: take dns.domain when configured; fall back to service.name or
+    //   'localhost' for dev. The host MUST match what counterparties see
+    //   on the URL bar / apiEndpoint — same as `/service/info`'s register.
+    const user = await usersRepository.getUserById(userId);
+    const username = user?.username || 'unknown';
+    const host = config.get('dns:domain') || (config.get('service:name') || 'localhost');
+    return { username, host };
+  };
+  const cmcDispatchMiddleware = cmc.createDispatchMiddleware({
+    mall,
+    fetch: globalThis.fetch,
+    timeoutMs: 15_000,
+    rateLimiter: cmcRateLimiter,
+    logger: cmcDispatchLogger,
+    selfIdentityFor: cmcSelfIdentityFor,
+  });
   api.register(
     'events.create',
     commonFns.getParamsValidation(methodsSchema.create.params),
@@ -192,7 +212,8 @@ export default async function (api: any) {
     handleSeries,
     createEvent,
     addIntegrityToContext,
-    notify
+    notify,
+    cmcDispatchMiddleware
   );
 
   function applyPrerequisitesForCreation (context: any, params: any, result: any, next: any) {

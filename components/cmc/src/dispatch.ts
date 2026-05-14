@@ -32,6 +32,7 @@ const handleAcceptMod = require('./handleAccept.ts');
 const handleSystemMod = require('./handleSystem.ts');
 const handleChatMod = require('./handleChat.ts');
 const handleRevokeMod = require('./handleRevoke.ts');
+const retryQueueMod = require('./retryQueue.ts');
 
 type SelfIdentity = { username: string; host: string };
 
@@ -52,6 +53,10 @@ type DispatchDeps = {
   timeoutMs?: number;
   logger?: { debug: Function; warn: Function; info?: Function };
   selfIdentityFor: (userId: string) => Promise<SelfIdentity> | SelfIdentity;
+  // When true (default), retryable handler failures are auto-enqueued
+  // in :_cmc:_internal:retries for later re-dispatch by the retry loop.
+  // Disable for tests that don't want the side-effect.
+  enqueueRetries?: boolean;
 };
 
 type DispatchResult = {
@@ -219,6 +224,32 @@ async function markFailed (
   reason: string,
   detail?: any
 ): Promise<DispatchResult> {
+  // Auto-enqueue a retry for retryable failures (default on; tests opt out
+  // by setting enqueueRetries=false).
+  const shouldQueue = deps.enqueueRetries !== false &&
+    retryQueueMod.isRetryableReason(reason, detail) &&
+    deps.mall.events.create != null;
+  if (shouldQueue) {
+    try {
+      await retryQueueMod.enqueueRetry({
+        userId,
+        trigger: event,
+        failureReason: reason,
+        failureDetail: detail,
+        deps: {
+          mall: deps.mall,
+          dispatch: dispatch as any,
+          dispatchDeps: deps,
+          logger: deps.logger,
+        },
+      });
+    } catch (err: any) {
+      deps.logger?.warn('cmc/dispatch: failed to enqueue retry', {
+        eventId: event.id,
+        error: String(err?.message || err),
+      });
+    }
+  }
   if (event.id != null && deps.mall.events.update != null) {
     try {
       await deps.mall.events.update(userId, {
