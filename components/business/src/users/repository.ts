@@ -252,16 +252,18 @@ class UsersRepository {
         await this.setUserPassword(user.id, user.password, user.accessId);
       }
     });
-    // TODO: re-enable CMC reserved-parent auto-provisioning on user creation
-    // once the order-dependent regression in account-seq.test.js [AC04 6041]
-    // is understood. The provision function is `cmc.provisionUserStreams`
-    // and lives in components/cmc/src/provisioning.ts — it works correctly
-    // when called directly (unit-tested), but enabling it here causes a
-    // 403 on subsequent change-password in account-seq when AC01-AC03 run
-    // first. Until then, CMC integration tests that need the reserved
-    // parents are marked `it.skip`; provisioning will land via a lazy
-    // path (first :_cmc:* write) in a follow-up.
-    if (cmc != null && cmcLogger != null) { /* placeholder for future provision call */ }
+    // TODO: re-enable CMC reserved-parent auto-provisioning here once the
+    // order-dependent regression in account-seq.test.js [AC04 6041] is
+    // understood. Direct experiment confirmed: ANY mall.streams.create
+    // call at this point breaks AC04 in a state-dependent way (passes in
+    // isolation; fails when AC01-AC03 run first). Cause not yet
+    // identified — appears unrelated to the CMC-specific stream IDs (the
+    // same failure occurs when creating a regular non-:_cmc:* stream).
+    // Provision function lives in components/cmc/src/provisioning.ts;
+    // currently called only by CMC integration tests via direct
+    // `await cmc.provisionUserStreams({...})` (see cmc-ns.test.js .skip
+    // blocks). Long-term plan: lazy provisioning on first :_cmc:* write.
+    if (cmc != null && cmcLogger != null) { /* placeholder */ }
     return user;
   }
 
