@@ -23,6 +23,8 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 const ao = require('./acceptOrchestration.ts');
+const slugMod = require('./slug.ts');
+const anchors = require('./anchorStreams.ts');
 
 type MallLike = {
   accesses: {
@@ -30,6 +32,7 @@ type MallLike = {
     delete?: (userId: string, params: any) => Promise<any>;
   };
   events: { update: (userId: string, params: any) => Promise<any> };
+  streams?: { create: (userId: string, params: any) => Promise<any> };
 };
 
 type OutboundDeps = {
@@ -46,6 +49,7 @@ type AcceptHandlerResult =
       dataGrantApiEndpoint: string;
       offerEventId: string;
       backChannelApiEndpoint: string | null; // filled later when requester returns it
+      anchorStreamIds: string[];             // chats/collectors anchors created on this side
     }
   | {
       ok: false;
@@ -70,7 +74,7 @@ type AcceptHandlerResult =
  */
 async function handleAccept (params: {
   userId: string;
-  triggerEvent: { id?: string; type: string; content: any };
+  triggerEvent: { id?: string; type: string; content: any; streamIds?: string[] };
   selfIdentity: { username: string; host: string };
   deps: { mall: MallLike } & OutboundDeps;
 }): Promise<AcceptHandlerResult> {
@@ -191,6 +195,34 @@ async function handleAccept (params: {
     };
   }
 
+  // 6. Provision the chats/collectors anchor streams on OUR side. Idempotent
+  // and best-effort — if the trigger doesn't carry a recognisable scope or
+  // streams.create isn't available (older mall shape, fakes), we skip and
+  // log. The anchor streams can also be created lazily by the chat /
+  // system write-hooks on first use.
+  const anchorScope = pickScopeFromTrigger(triggerEvent);
+  let anchorStreamIds: string[] = [];
+  if (anchorScope != null && mall.streams?.create != null) {
+    const peerSlug = slugMod.counterpartySlug({
+      username: counterparty.username,
+      host: counterparty.host,
+    });
+    const provisioned = await anchors.provisionAnchorStreams({
+      userId,
+      scopeStreamId: anchorScope,
+      peerSlug,
+      mall: mall as any,
+    });
+    if (provisioned.ok) {
+      anchorStreamIds = provisioned.created;
+    } else {
+      deps.logger?.warn?.('cmc/handleAccept: anchor-stream creation failed (non-fatal)', {
+        streamId: provisioned.failedStreamId,
+        error: provisioned.failureMessage,
+      });
+    }
+  }
+
   return {
     ok: true,
     capabilityId: offer?.content?.capabilityId ?? null,
@@ -198,7 +230,27 @@ async function handleAccept (params: {
     dataGrantApiEndpoint: dataGrantAccess.apiEndpoint,
     offerEventId: offer.id,
     backChannelApiEndpoint: null, // filled in by a follow-up pass when the requester returns it
+    anchorStreamIds,
   };
+}
+
+/**
+ * Pick the FIRST :_cmc:apps:* scope stream-id from the trigger's
+ * streamIds (skipping :_cmc:inbox + other non-scope ids). Returns null
+ * if none can be found.
+ */
+function pickScopeFromTrigger (trigger: { streamIds?: string[] }): string | null {
+  const ids = Array.isArray(trigger.streamIds) ? trigger.streamIds : [];
+  for (const sid of ids) {
+    if (typeof sid === 'string' && sid.startsWith(C.NS_APPS + ':')) {
+      // Strip any chats/collectors/<slug> suffix — we want the app-scope
+      // PARENT, not the per-counterparty leaf.
+      const m = sid.match(/^(:_cmc:apps:[^:]+(?::[^:]+)*?)(?::(?:chats|collectors)(?::[^:]+)?)?$/);
+      if (m != null) return m[1];
+      return sid;
+    }
+  }
+  return null;
 }
 
 /**
@@ -284,4 +336,5 @@ export {
   handleAccept,
   handleRefuse,
   inferCounterparty,
+  pickScopeFromTrigger,
 };

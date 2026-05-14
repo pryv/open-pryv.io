@@ -15,10 +15,10 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const { handleAccept, handleRefuse, inferCounterparty } = require('../src/handleAccept.ts');
+const { handleAccept, handleRefuse, inferCounterparty, pickScopeFromTrigger } = require('../src/handleAccept.ts');
 
 function fakeMall (opts = {}) {
-  const calls = { accessesCreated: [], accessesDeleted: [], eventsUpdated: [] };
+  const calls = { accessesCreated: [], accessesDeleted: [], eventsUpdated: [], streamsCreated: [] };
   return {
     calls,
     accesses: {
@@ -41,6 +41,12 @@ function fakeMall (opts = {}) {
     events: {
       async update (userId, params) {
         calls.eventsUpdated.push({ userId, ...params });
+      },
+    },
+    streams: {
+      async create (userId, params) {
+        calls.streamsCreated.push({ userId, ...params });
+        return { id: params.id };
       },
     },
   };
@@ -321,6 +327,78 @@ describe('[CMCHA] cmc/handleAccept', () => {
 
     it('[HA15] returns null when username can\'t be determined', () => {
       assert.equal(inferCounterparty({ content: {} }, 'https://Tok@example.com/'), null);
+    });
+  });
+
+  describe('[CMCHA-AN] anchor-stream auto-creation at acceptance', () => {
+    it('[HA16] creates 4 anchor streams under the trigger scope on success', async () => {
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: {
+          ...ACCEPT_TRIGGER,
+          streamIds: [':_cmc:apps:my-app:campaign-2026'],
+        },
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(r.anchorStreamIds.length, 4);
+      const created = mall.calls.streamsCreated.map((s) => s.id);
+      assert.ok(created.includes(':_cmc:apps:my-app:campaign-2026:chats'));
+      assert.ok(created.includes(':_cmc:apps:my-app:campaign-2026:collectors'));
+      assert.ok(created.includes(':_cmc:apps:my-app:campaign-2026:chats:provider-a--example-com'));
+      assert.ok(created.includes(':_cmc:apps:my-app:campaign-2026:collectors:provider-a--example-com'));
+    });
+
+    it('[HA17] no anchor streams created when trigger has no :_cmc:apps:* scope', async () => {
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: ACCEPT_TRIGGER, // no streamIds
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.anchorStreamIds, []);
+      assert.equal(mall.calls.streamsCreated.length, 0);
+    });
+  });
+
+  describe('[CMCHA-PS] pickScopeFromTrigger', () => {
+    it('[HA18] picks the first :_cmc:apps:* stream-id', () => {
+      assert.equal(
+        pickScopeFromTrigger({ streamIds: [':_cmc:inbox', ':_cmc:apps:my-app'] }),
+        ':_cmc:apps:my-app'
+      );
+    });
+    it('[HA19] preserves nested path under the app scope', () => {
+      assert.equal(
+        pickScopeFromTrigger({ streamIds: [':_cmc:apps:my-app:campaign-2026'] }),
+        ':_cmc:apps:my-app:campaign-2026'
+      );
+    });
+    it('[HA20] strips :chats / :collectors suffix to yield the parent scope', () => {
+      assert.equal(
+        pickScopeFromTrigger({ streamIds: [':_cmc:apps:my-app:campaign-2026:chats'] }),
+        ':_cmc:apps:my-app:campaign-2026'
+      );
+      assert.equal(
+        pickScopeFromTrigger({ streamIds: [':_cmc:apps:my-app:collectors:alice--example-com'] }),
+        ':_cmc:apps:my-app'
+      );
+    });
+    it('[HA21] returns null when no :_cmc:apps:* is present', () => {
+      assert.equal(pickScopeFromTrigger({ streamIds: [':_cmc:inbox', 'other-stream'] }), null);
+      assert.equal(pickScopeFromTrigger({}), null);
     });
   });
 });

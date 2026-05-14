@@ -49,6 +49,7 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
+const anchors = require('./anchorStreams.ts');
 
 type Counterparty = { username: string; host: string };
 
@@ -141,44 +142,31 @@ async function handleIncomingAccept (params: {
     scopeStreamId = C.NS_APPS + ':' + appCode;
   }
 
-  // Compute the four anchor stream-ids on OUR side. The peer's stream-ids
-  // mirror the same structure on their account (deterministic — both
-  // sides derive from app scope + counterparty slug).
+  // Compute the relevant slugs + stream-ids. The peer's stream-ids
+  // mirror the structure on their account (both sides derive from
+  // app-scope + counterparty slug — deterministic).
   const peerSlug = slugMod.counterpartySlug({ username: counterparty.username, host: counterparty.host });
   const selfSlug = slugMod.counterpartySlug({ username: selfIdentity.username, host: selfIdentity.host });
-  const chatsParent = C.chatsParentUnder(scopeStreamId);
-  const collectorsParent = C.collectorsParentUnder(scopeStreamId);
   const chatStream = C.chatStreamUnder(scopeStreamId, peerSlug);
   const collectorStream = C.collectorStreamUnder(scopeStreamId, peerSlug);
-  const remoteScopeStreamId = scopeStreamId; // peer mirrors structure
-  const remoteChatStreamId = C.chatStreamUnder(remoteScopeStreamId, selfSlug);
-  const remoteCollectorStreamId = C.collectorStreamUnder(remoteScopeStreamId, selfSlug);
+  const remoteChatStreamId = C.chatStreamUnder(scopeStreamId, selfSlug);
+  const remoteCollectorStreamId = C.collectorStreamUnder(scopeStreamId, selfSlug);
 
-  // Provision the four anchor streams. Idempotent: stream-already-exists
-  // is treated as success.
-  const created: string[] = [];
-  for (const sid of [chatsParent, collectorsParent, chatStream, collectorStream]) {
-    const parentId = parentOf(sid);
-    try {
-      await mall.streams.create(userId, {
-        id: sid,
-        name: sid.split(':').pop() ?? sid,
-        parentId,
-      });
-      created.push(sid);
-    } catch (err: any) {
-      const code = err?.id || err?.code || err?.errorId;
-      if (code === 'stream-already-exists' || /already.*exist/i.test(String(err?.message || ''))) {
-        created.push(sid);
-        continue;
-      }
-      return {
-        ok: false,
-        reason: 'cmc-incoming-accept-anchor-stream-create-failed',
-        detail: { streamId: sid, message: String(err?.message || err) },
-      };
-    }
+  // Provision the four anchor streams. Idempotent.
+  const provisioned = await anchors.provisionAnchorStreams({
+    userId,
+    scopeStreamId,
+    peerSlug,
+    mall,
+  });
+  if (!provisioned.ok) {
+    return {
+      ok: false,
+      reason: 'cmc-incoming-accept-anchor-stream-create-failed',
+      detail: { streamId: provisioned.failedStreamId, message: provisioned.failureMessage },
+    };
   }
+  const created = provisioned.created;
 
   // Mint the back-channel access. Permissions:
   //   - create-only on :_cmc:inbox (so the peer can deliver to us)
@@ -257,16 +245,6 @@ async function resolveRequestScope (params: {
     // Lookup failure → fall back.
   }
   return { scopeStreamId: null, appCode: null };
-}
-
-/**
- * Parent stream-id for a given :_cmc:* path. Strips the trailing
- * `:<segment>` to yield the parent.
- */
-function parentOf (streamId: string): string {
-  const idx = streamId.lastIndexOf(':');
-  if (idx <= 0) return streamId;
-  return streamId.substring(0, idx);
 }
 
 export {
