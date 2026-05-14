@@ -30,6 +30,8 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const handleAcceptMod = require('./handleAccept.ts');
 const handleSystemMod = require('./handleSystem.ts');
+const handleChatMod = require('./handleChat.ts');
+const handleRevokeMod = require('./handleRevoke.ts');
 
 type SelfIdentity = { username: string; host: string };
 
@@ -136,8 +138,16 @@ async function dispatch (params: {
           userId, triggerEvent: event, selfIdentity, deps,
         });
         break;
-      case C.ET_REVOKE:
       case C.ET_CHAT:
+        result = await handleChatMod.handleChat({
+          userId, triggerEvent: event, selfIdentity, deps,
+        });
+        break;
+      case C.ET_REVOKE:
+        result = await handleRevokeMod.handleRevoke({
+          userId, triggerEvent: event, selfIdentity, deps,
+        });
+        break;
       case C.ET_SYSTEM_SCOPE_REQUEST:
       case C.ET_SYSTEM_SCOPE_UPDATE:
         // Handlers for these land in later phases; for now skip without

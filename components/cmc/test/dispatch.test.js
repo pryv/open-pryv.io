@@ -102,10 +102,8 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.equal(r.reason, 'request-handled-elsewhere');
     });
 
-    it('[CD03] returns delivered for unimplemented types (chat / revoke / scope-*)', async () => {
+    it('[CD03] returns delivered for unimplemented types (scope-*)', async () => {
       for (const type of [
-        'cmc/chat-v1',
-        'cmc/revoke-v1',
         'cmc/system-scope-request-v1',
         'cmc/system-scope-update-v1',
       ]) {
