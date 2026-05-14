@@ -281,13 +281,13 @@ sequenceDiagram
 
 **`content.from` is unforgeable** — the peer plugin cannot set `content.from` themselves; even if they include it in the body, the receiving plugin overwrites with the access's stored counterparty identity. The access was created by the recipient's plugin at acceptance time (flow 3); its `clientData.cmc.counterparty` is server-internal and not visible to API consumers.
 
-**Chat/collector write-hooks** are analogous but allow a different event-type set per region (Family 2 events on `:_cmc:chats:*`, Family 3 events on `:_cmc:collectors:*`).
+**Chat/collector write-hooks** are analogous but allow a different event-type set per region (Family 2 events on `:_cmc:apps:<app-code>:[<path>:]chats:*`, Family 3 events on `:_cmc:apps:<app-code>:[<path>:]collectors:*`).
 
 ---
 
 # 6. Chat delivery — slug-driven access resolution
 
-App writes `cmc/chat-v1` to `:_cmc:chats:<counterparty-slug>`. The slug encodes the counterparty; the plugin resolves the access pair from local state.
+App writes `cmc/chat-v1` to `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`. The trigger stream-id encodes the app scope + counterparty; the plugin resolves the access pair from local state.
 
 ```mermaid
 sequenceDiagram
@@ -297,25 +297,25 @@ sequenceDiagram
     participant Plugin
     participant Storage as Storage<br/>(per-user PG/Mongo)
 
-    App->>APIServer: events.create cmc/chat-v1<br/>streamIds: [:_cmc:chats:alice--example-com]
+    App->>APIServer: events.create cmc/chat-v1<br/>streamIds: [:_cmc:apps:my-app:chats:alice--pryv-me]
     APIServer->>Storage: persist trigger
     APIServer->>Plugin: post-create hook
-    Plugin->>Plugin: parse slug → (username='alice', host='pryv.me')
-    Plugin->>APIServer: accesses.get filtered by<br/>clientData.cmc.role='counterparty'<br/>+ counterparty.username='alice'<br/>+ counterparty.host='pryv.me'
+    Plugin->>Plugin: parse stream-id → (appCode='my-app', counterparty={username='alice', hostSlug='pryv-me'})
+    Plugin->>APIServer: accesses.get filtered by<br/>clientData.cmc.role='counterparty'<br/>+ counterparty.username='alice'<br/>+ slugifyHost(counterparty.host)='pryv-me'<br/>+ appCode='my-app'
     APIServer->>Storage: indexed lookup
-    Storage-->>Plugin: candidate accesses (>=1 — multiple if many collector-relationships)
-    Plugin->>Plugin: pick any access<br/>(chat is user-pair-scoped, all share)
-    Plugin->>Plugin: read counterparty.apiEndpoint<br/>(back-channel if we are requester,<br/>data-grant if we are recipient)
-    Plugin->>Plugin: outbound: POST /events to peer<br/>streamIds: [:_cmc:chats:<our-slug>]<br/>type: cmc/chat-v1
-    Plugin->>APIServer: events.update trigger status='delivered'
+    Storage-->>Plugin: matching access (one per app per counterparty)
+    Plugin->>Plugin: read counterparty.apiEndpoint + remoteChatStreamId<br/>(stamped onto the access at acceptance time)
+    Plugin->>Plugin: rate-limit check<br/>(per-worker sliding window)
+    Plugin->>Plugin: outbound POST /events to peer<br/>streamIds: [<remoteChatStreamId>]<br/>type: cmc/chat-v1<br/>content.from server-stamped
+    Plugin->>APIServer: events.update trigger status='completed'
     APIServer-->>App: socket.io push (status)
 ```
 
 **Index requirement:** Phase B `DATA-RESIDENCY.md` must specify a B-tree index on `accesses.clientData.cmc.counterparty.{username, host}` (PG path) / equivalent on Mongo. Without it, the slug-resolution lookup degrades to a full-table scan per chat write.
 
-**Multiple-collectors-same-counterparty:** the plugin picks any pair; the receiving plugin resolves to the same `:_cmc:chats:<sender-slug>` stream regardless. This is why chat is "per user-pair, not per collector."
+**Per-app scoping:** matching on `clientData.cmc.appCode` means the user can have multiple counterparty-accesses to the same person across different apps (one per app) without cross-talk. The trigger's app-scope is canonical; the matched access carries the corresponding remote stream-id.
 
-**Pre-acceptance edge case:** if the user types into `:_cmc:chats:<slug>` before the access pair exists (impossible if the plugin auto-creates streams at acceptance, but possible if the user manually `streams.create`s a chat stream), the trigger fails with `cmc-no-counterparty-access`.
+**Pre-acceptance edge case:** if the user writes into `:_cmc:apps:<app>:chats:<slug>` before the access pair exists (impossible if the plugin auto-creates the streams at acceptance, but possible if the user manually `streams.create`s a chat stream), the trigger fails with `cmc-chat-counterparty-access-not-found`.
 
 ---
 
@@ -331,21 +331,17 @@ sequenceDiagram
     participant Storage as Storage<br/>(per-user PG/Mongo)
     participant Memory as Memory<br/>(per-worker in-process)
 
-    App->>Plugin: events.create cmc/system-alert-v1<br/>:_cmc:collectors:alice--example-com--my-app...
-    Plugin->>Plugin: parse collector-slug
-    Plugin->>Storage: SELECT back-channel access for this collector
-    Storage-->>Plugin: access + counterparty.apiEndpoint
-    Plugin->>Plugin: read access.clientData.cmc.features.systemMessaging
-    alt not opted-in
-        Plugin->>App: events.update trigger status='failed'<br/>reason='system-messaging-not-permitted'
-    end
+    App->>Plugin: events.create cmc/system-alert-v1<br/>:_cmc:apps:my-app:collectors:alice--pryv-me
+    Plugin->>Plugin: parse trigger stream-id<br/>→ (appCode='my-app', counterparty={username='alice', hostSlug='pryv-me'})
+    Plugin->>Storage: SELECT counterparty access for (appCode, counterparty)
+    Storage-->>Plugin: access + counterparty.apiEndpoint + remoteCollectorStreamId
     Plugin->>Memory: sliding-window check (source, recipient)
     alt over limit
-        Plugin->>App: events.update trigger status='failed'<br/>reason='cmc-quota-exceeded'
+        Plugin->>App: events.update trigger status='failed'<br/>reason='cmc-system-rate-limited'
     end
     Plugin->>Memory: increment counter
-    Plugin->>Plugin: outbound deliver to peer's :_cmc:collectors:<our-slug>
-    Plugin->>App: events.update trigger status='delivered'
+    Plugin->>Plugin: outbound POST /events to peer<br/>streamIds: [<remoteCollectorStreamId>]<br/>content.from server-stamped
+    Plugin->>App: events.update trigger status='completed'
 ```
 
 **Quota** (open question 4 in PLAN): 100 events/min per source per recipient proposed.
@@ -368,18 +364,18 @@ sequenceDiagram
     participant APIServer as APIServer-A
     participant Peer as Plugin-B<br/>(via HTTPS)
 
-    CollectorApp->>Plugin: events.create cmc/system-scope-request-v1<br/>:_cmc:collectors:alice--example-com--my-app...<br/>content.newPermissions=[...]
-    Plugin->>Plugin: resolve back-channel access from collector-slug
+    CollectorApp->>Plugin: events.create cmc/system-scope-request-v1<br/>:_cmc:apps:my-app:collectors:alice--pryv-me<br/>content.requestedPermissions=[...]
+    Plugin->>Plugin: resolve counterparty access from trigger stream-id
     Plugin->>APIServer: accesses.get <collector's-app-access>
     APIServer-->>Plugin: app-access record
-    Plugin->>Plugin: permission-chain rule pre-validation:<br/>1. app-access carries manage rights on underlying data-grant?<br/>2. newPermissions ⊆ app-access.permissions?
+    Plugin->>Plugin: permission-chain rule pre-validation:<br/>1. app-access carries manage rights on underlying data-grant?<br/>2. requestedPermissions ⊆ app-access.permissions?
     alt validation fails
         Plugin->>APIServer: events.update trigger<br/>status='failed'<br/>failure.reason='scope-update-offending-children'<br/>failure.detail=[<offending streamIds>]
         APIServer-->>CollectorApp: socket.io push (failure)
     end
-    Plugin->>Peer: POST /events :_cmc:collectors:alice...<br/>type: cmc/system-scope-request-v1<br/>content.from server-stamped on receipt
+    Plugin->>Peer: POST /events <peer's collectors stream-id><br/>type: cmc/system-scope-request-v1<br/>content.from server-stamped on receipt
     Peer-->>Plugin: ok
-    Plugin->>APIServer: events.update trigger status='delivered'
+    Plugin->>APIServer: events.update trigger status='completed'
 ```
 
 **Why pre-validate on the collector side:** invalid scope requests are caught before bothering the user. The user's plugin re-validates on receipt as defense-in-depth, but the common case is the collector's app catches its own mistakes.
@@ -405,7 +401,7 @@ sequenceDiagram
     APIServer->>Storage: composite-id bumps<br/>'abc123' → 'abc123:1'
     APIServer-->>Plugin: updated access
     Plugin->>Plugin: clear cls flag
-    Plugin->>Peer: POST /events :_cmc:collectors:alice...<br/>type: cmc/system-scope-update-v1<br/>content.source='response-to-request'<br/>content.newAccessId='abc123:1'
+    Plugin->>Peer: POST /events <peer's collectors stream-id><br/>type: cmc/system-scope-update-v1<br/>content.source='response-to-request'<br/>content.newAccessId='abc123:1'
     Peer-->>Plugin: ok
     Plugin->>APIServer: events.update trigger status='completed'<br/>newAccessId='abc123:1'
     APIServer-->>UserApp: socket.io push + accessUpdated event
@@ -442,7 +438,7 @@ sequenceDiagram
             Plugin-->>PostHook: skip (not our concern)
         end
         Plugin->>Plugin: derive collector-slug from access.clientData
-        Plugin->>APIServer: events.create cmc/system-scope-update-v1<br/>streamIds: [:_cmc:collectors:<my-slug>]<br/>content.source='post-hook'<br/>content.newPermissions, content.previousPermissions, content.newAccessId
+        Plugin->>APIServer: events.create cmc/system-scope-update-v1<br/>streamIds: [<our collectors stream-id for this counterparty>]<br/>content.source='post-hook'<br/>content.newPermissions, content.previousPermissions, content.newAccessId
         APIServer->>Storage: persist (user-side audit record)
         Plugin->>Plugin: deliver same event to peer via stored apiEndpoint
         Plugin-->>PostHook: done
@@ -460,26 +456,24 @@ sequenceDiagram
 
 # 11. Slug computation
 
-Deterministic. Helpers ship in `lib-js` / `legacy-shim`. The plugin uses the same code for stream-id construction so client + server agree.
+Deterministic. Helpers ship in `lib-js` (Phase I) and the plugin uses the same code for stream-id construction so client + server agree.
 
 ```mermaid
 flowchart LR
-    A[username: 'alice'<br/>host: 'example.com']
-    A --> B[counterpartySlug<br/>= 'alice--example-com']
-    A --> C[+ appId: 'example-app']
-    C --> D[collectorSlug<br/>= 'alice--example-com--example-app']
-
-    E[Inverse:<br/>parseCollectorSlug input]
-    E --> F[Split on '--']
-    F --> G{3 segments?}
-    G -- yes --> H[username, host-slug, app-slug]
-    H --> I[host = host-slug with '-' → '.' at host-slug position]
+    A[username: 'alice'<br/>host: 'pryv.me']
+    A --> B[counterpartySlug<br/>= 'alice--pryv-me']
+    C[appCode lives in stream PATH<br/>:_cmc:apps:&lt;app&gt;:&lt;...&gt;:chats:&lt;slug&gt;<br/>not in the slug itself]
+    D[Inverse:<br/>parseCounterpartySlug input]
+    D --> E[Split on '--']
+    E --> F{2 segments?}
+    F -- yes --> G[username, host-slug]
 ```
 
-**Edge cases to enforce (Phase B):**
-- Username containing `--` is rejected at registration time (the user-validation rule extension).
+**Why app-code is in the stream PATH, not the slug** — this is what lets the user's access be scoped at the `:_cmc:apps:<app-code>:*` level (whole-app) OR at `:_cmc:apps:<app-code>:<request-slug>:*` (per-request) via natural prefix matching. Putting the app-code into the slug would break that.
+
+**Edge cases to enforce:**
+- Username containing `--` is rejected at registration time (user-validation rule).
 - Host components containing `--` is impossible (DNS doesn't allow consecutive hyphens in labels).
-- `appId` containing `--` is allowed but the slugifier replaces `--` with `-` before joining (`my--app` → `my-app--... ` else `parseCollectorSlug` would mis-split).
 - Slugs are stable for the lifetime of the relationship (see IMPLEMENTERS-GUIDE.md "Stability" section).
 
 ---
@@ -511,7 +505,7 @@ sequenceDiagram
 
 # 13. Revoke teardown — dual `accesses.delete`
 
-Either party writes `cmc/revoke-v1`. Their plugin deletes their local access and instructs the peer to delete its half. The anchor streams (`:_cmc:chats:`, `:_cmc:collectors:`) are **left in place** so history is preserved; future re-engagement starts a fresh request → accept cycle and the existing streams get reused.
+Either party writes `cmc/revoke-v1`. Their plugin deletes their local access and instructs the peer to delete its half. The anchor streams (`:_cmc:apps:<app-code>:[<path>:]chats:*`, `:_cmc:apps:<app-code>:[<path>:]collectors:*`) are **left in place** so history is preserved; future re-engagement starts a fresh request → accept cycle and the existing streams get reused.
 
 ```mermaid
 sequenceDiagram
@@ -545,33 +539,33 @@ Full end-to-end across two independent open-pryv.io platforms with different ope
 ```mermaid
 sequenceDiagram
     autonumber
-    participant DApp as DoctorApp
-    participant DCore as Core-A<br/>(example.com)
-    participant PCore as Core-B<br/>(pryv.me)
-    participant PApp as PatientApp
+    participant RApp as RequesterApp
+    participant RCore as Core-A<br/>(example.com)
+    participant ACore as Core-B<br/>(pryv.me)
+    participant AApp as AccepterApp
 
-    Note over DCore,PCore: NO shared CA<br/>NO shared user namespace<br/>NO federation auth
-    DApp->>DCore: events.create cmc/request-v1<br/>(capabilityRequested: true)
-    DCore-->>DApp: capabilityUrl
-    Note over DApp,PApp: out-of-band hand-off
-    PApp->>DCore: events.get :_cmc:_internal:offer via capabilityUrl<br/>(standard HTTPS, capability access token)
-    PApp->>PCore: events.create cmc/accept-v1
-    PCore->>DCore: HTTPS: events.create :_cmc:_internal:responses:<capId><br/>(via capability — flow 3 dance)
-    DCore->>PCore: HTTPS: events.create response with back-channel
-    DCore-->>DApp: socket.io :_cmc:inbox
+    Note over RCore,ACore: NO shared CA<br/>NO shared user namespace<br/>NO federation auth
+    RApp->>RCore: events.create cmc/request-v1<br/>(capabilityRequested: true)
+    RCore-->>RApp: capabilityUrl
+    Note over RApp,AApp: out-of-band hand-off
+    AApp->>RCore: events.get :_cmc:_internal:offer:<capId> via capabilityUrl<br/>(standard HTTPS, capability access token)
+    AApp->>ACore: events.create cmc/accept-v1
+    ACore->>RCore: HTTPS: events.create :_cmc:_internal:responses:<capId><br/>(via capability — flow 3 dance)
+    RCore->>ACore: HTTPS: events.create response with back-channel
+    RCore-->>RApp: socket.io :_cmc:inbox
 
     rect rgb(245, 245, 235)
-    Note over DApp,PApp: post-acceptance: bidirectional access pair held<br/>by each plugin in their respective per-user Storage (PG/Mongo)
+    Note over RApp,AApp: post-acceptance: bidirectional access pair held<br/>by each plugin in their respective per-user Storage (PG/Mongo)
     end
 
-    DApp->>DCore: events.create cmc/chat-v1
-    DCore->>PCore: HTTPS: events.create :_cmc:chats:<doctor-slug>
-    PCore-->>PApp: socket.io :_cmc:chats:alice--example-com
+    RApp->>RCore: events.create cmc/chat-v1<br/>:_cmc:apps:my-app:chats:<accepter-slug>
+    RCore->>ACore: HTTPS: events.create at <accepter's chats stream-id>
+    ACore-->>AApp: socket.io :_cmc:apps:my-app:chats:<requester-slug>
 
-    PApp->>PCore: accesses.update <data-grant>
-    PCore->>PCore: post-hook fires
-    PCore->>DCore: HTTPS: events.create :_cmc:collectors:<patient-slug><br/>type: cmc/system-scope-update-v1<br/>content.source='post-hook'
-    DCore-->>DApp: socket.io :_cmc:collectors:alice--example-com + accessUpdated
+    AApp->>ACore: accesses.update <data-grant>
+    ACore->>ACore: post-hook fires
+    ACore->>RCore: HTTPS: events.create at <requester's collectors stream-id><br/>type: cmc/system-scope-update-v1<br/>content.source='post-hook'
+    RCore-->>RApp: socket.io :_cmc:apps:my-app:collectors:<accepter-slug> + accessUpdated
 ```
 
 **TLS:** each plugin's outbound HTTPS uses standard public-CA-validated TLS to the peer's domain. No mTLS, no shared cluster CA. The access token in the `apiEndpoint` URL is the auth.
@@ -617,5 +611,5 @@ Open questions deliberately left for Phase B (not blockers for this doc):
 - **future federated invite-webhook**: cross-platform directed invite auto-routing. CMC v1 falls back to capability-URL hand-off for cross-platform directed.
 - **E2E encryption** of chat / system payloads. Plugin terminates TLS but content lives in plaintext on both platforms' per-user storage. Backlog.
 - **Group / many-to-many** broadcast. Apps fan out N individual triggers.
-- **Cross-scope state projection** (`:_cmc:state` summary across all `:_cmc:apps:*` + `:_cmc:chats` + `:_cmc:collectors`). v2.
+- **Cross-scope state projection** (`:_cmc:state` summary across all `:_cmc:apps:*` regions). v2.
 - **Username / host migration**: would require slug-rename atomic transaction. Out of v1.

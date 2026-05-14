@@ -28,26 +28,25 @@ The same protocol works across **independent open-pryv.io platforms** with diffe
 
 ## Mental model
 
-The `:_cmc:` namespace has **four plugin-managed regions** plus user-creatable sub-streams under one of them (`:_cmc:apps`). Each region anchors a different kind of conversation, so when you write or read you know exactly where to look:
+The `:_cmc:` namespace has **two plugin-managed top-level regions** plus user-creatable sub-streams under `:_cmc:apps`. The chat and system anchors live nested **under whichever app-scope stream the trigger was written to**, so an app's access scoped at `:_cmc:apps:<app-code>:*` (whole app) or `:_cmc:apps:<app-code>:<request-slug>:*` (per-request) automatically covers the matching chat/system streams by prefix-match:
 
 | Region | Created by | Holds |
 |---|---|---|
 | **`:_cmc:inbox`** | server (always present) | One-shot lifecycle events delivered to you: `cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1`. **Plugin-internal-write-only** — apps never write here. |
-| **`:_cmc:chats:<counterparty-slug>`** | plugin (auto-created on first chat) | All `cmc/chat-v1` events — both sent and received — for one specific counterparty. One thread per user-pair, no matter how many collector relationships connect you. |
-| **`:_cmc:collectors:<collector-slug>`** | plugin (auto-created at acceptance) | The system channel for one specific collector-relationship: `cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1`. A study's reminders don't bleed into clinical-care alerts from the same doctor. |
-| **`:_cmc:apps:<anything-you-create>`** | you via `streams.create({parentId: ':_cmc:apps'})` (and deeper) | Your own organizational scopes for one-shot lifecycle triggers (publish requests, accept invites, revoke). Nest as deep as you like — `:_cmc:apps:my-app:study-A`, `:_cmc:apps:patient:incoming`, etc. The plugin doesn't reserve names under `:_cmc:apps`. |
+| **`:_cmc:apps:<anything-you-create>`** | you via `streams.create({parentId: ':_cmc:apps'})` (and deeper) | Your own organizational scopes for one-shot lifecycle triggers (publish requests, accept invites, revoke). Nest as deep as you like — `:_cmc:apps:my-app:study-A`, `:_cmc:apps:patient:incoming`, etc. The plugin doesn't reserve names under `:_cmc:apps` (except for the auto-created `chats` / `collectors` sub-segments below). |
+| **`:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`** | plugin (auto-created on first chat) | All `cmc/chat-v1` events — both sent and received — for one specific counterparty under this app/path. One thread per user-pair per app-scope. |
+| **`:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>`** | plugin (auto-created at acceptance) | The system channel for one specific collector-relationship: `cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1`. A study's reminders don't bleed into clinical-care alerts from the same doctor. |
 
-The parent streams `:_cmc:`, `:_cmc:inbox`, `:_cmc:chats`, `:_cmc:collectors`, and `:_cmc:apps` always exist (plugin-managed); you can't `streams.create` / `update` / `delete` them directly. You read children recursively via `events.get({streamIds: [':_cmc:chats']})` etc. The only place you can `streams.create` under `:_cmc:` is inside `:_cmc:apps`.
+The parent streams `:_cmc:`, `:_cmc:inbox`, and `:_cmc:apps` always exist (plugin-managed); you can't `streams.create` / `update` / `delete` them directly. The `chats` / `collectors` sub-segments anywhere under `:_cmc:apps:<app-code>:...` are also plugin-managed (auto-created on demand). The only place you can `streams.create` under `:_cmc:` is inside `:_cmc:apps` (and not inside the plugin-reserved `chats` / `collectors` sub-segments).
 
 ### Slug conventions
 
-Cross-platform identity is required in the slug — `alice@example.com` and `alice@example.com` are different people:
+Cross-platform identity is required in the slug — `alice` on `example.com` and `alice` on another host are different people:
 
 - **`<counterparty-slug>`** = `<username>--<host-slug>` where `host-slug` replaces `.` with `-`. Double-hyphen (`--`) is the load-bearing separator; usernames and host-slugs use single hyphens so `--` is unambiguous.
-  - Examples: `alice--example-com`, `alice--example-com`, `bob--my-host-example-org`.
-- **`<collector-slug>`** = `<counterparty-slug>--<app-slug>` where `app-slug` slugifies the `requesterMeta.appId` from the original `cmc/request-v1`.
-  - Example: `alice--example-com--example-app`.
-- Helpers `pryv.cmc.counterpartySlug({username, host})` and `pryv.cmc.collectorSlug({username, host, appId})` ship in `lib-js` / `legacy-shim`.
+  - Examples: `alice--example-com`, `bob--my-host-example-org`.
+- The same `<counterparty-slug>` shape is used both for chat (`:chats:<counterparty-slug>`) and for system/collector relationships (`:collectors:<counterparty-slug>`) — the app-code and any per-request scoping live in the stream PATH, not in the slug.
+- Helper `pryv.cmc.counterpartySlug({username, host})` ships in `lib-js` / `legacy-shim`.
 
 ### Where to write each event type
 
@@ -56,18 +55,18 @@ The plugin dispatches based on event type AND target stream:
 | Event family | App writes to | Why anchored there |
 |---|---|---|
 | **Lifecycle** (`cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1`) | A user-managed `:_cmc:apps:*` stream you create (e.g. `:_cmc:apps:my-app:study-A`). | One-shot — at request time you might not yet have a stable per-counterparty home (an open invite to nobody-in-particular). |
-| **Chat** (`cmc/chat-v1`) | The anchored `:_cmc:chats:<counterparty-slug>` stream. | One thread per user-pair; sent and received chat events live in the same stream on each side. |
-| **System** (`cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1`) | The anchored `:_cmc:collectors:<collector-slug>` stream. | System messages and scope-change history live where the collector-relationship itself lives. |
+| **Chat** (`cmc/chat-v1`) | The anchored `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` stream (nested under whichever app-scope stream the original request/accept was written to). | One thread per user-pair per app-scope; sent and received chat events live in the same stream on each side. |
+| **System** (`cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1`) | The anchored `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream (same nesting as chat). | System messages and scope-change history live where the collector-relationship itself lives. |
 
-The plugin reads each `cmc/*` write as an **action trigger**, performs the local state change, and (if the action affects a counterparty) delivers the corresponding event to the counterparty's matching anchored stream (`:_cmc:inbox` for lifecycle, `:_cmc:chats:<your-slug>` for chat, `:_cmc:collectors:<your-slug>` for system) via stored apiEndpoints. The plugin updates the trigger event's `content.status` as orchestration progresses — your app subscribes via socket.io to see status updates land.
+The plugin reads each `cmc/*` write as an **action trigger**, performs the local state change, and (if the action affects a counterparty) delivers the corresponding event to the counterparty's matching anchored stream (`:_cmc:inbox` for lifecycle, `:_cmc:apps:<their-app>:[<their-path>:]chats:<your-slug>` for chat, `:_cmc:apps:<their-app>:[<their-path>:]collectors:<your-slug>` for system) via stored apiEndpoints. The plugin updates the trigger event's `content.status` as orchestration progresses — your app subscribes via socket.io to see status updates land.
 
 Three event-type families:
 
 | Family | Action event types | Anchor (each side) | What they do |
 |---|---|---|---|
 | **Requests** | `cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1` | Trigger: user-managed `:_cmc:apps:*`. Delivered: `:_cmc:inbox`. | Ask another user for data access; recipient accepts/refuses; either party later revokes. |
-| **Chat** | `cmc/chat-v1` | `:_cmc:chats:<counterparty-slug>` on each side. | Bi-directional messaging between two parties holding an access pair. |
-| **System** | `cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1` | `:_cmc:collectors:<collector-slug>` on each side. | Operator alerts + acks; collector-proposed scope changes; user-side scope updates. Recipient must have opted in to system alerts. |
+| **Chat** | `cmc/chat-v1` | `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` on each side. | Bi-directional messaging between two parties holding an access pair. |
+| **System** | `cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1` | `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` on each side. | Operator alerts + acks; collector-proposed scope changes; user-side scope updates. Recipient must have opted in to system alerts. |
 
 The plugin distinguishes incoming vs outgoing by `content.from`:
 
@@ -326,7 +325,7 @@ Subscribe to your trigger streams via the standard socket.io monitor to see stat
 
 # Walkthrough 2 — Provider and user.chat
 
-Chat is anchored **per user-pair**: there's one stream on each side, `:_cmc:chats:<counterparty-slug>`, holding both sent and received `cmc/chat-v1` events for that one counterparty. The plugin creates these streams automatically the first time chat happens between the two parties (typically at acceptance time, since both sides have a slug as soon as the access pair exists).
+Chat is anchored **per user-pair per app-scope**: there's one stream on each side, `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`, nested under whichever app-scope stream the original request/accept was written to, holding both sent and received `cmc/chat-v1` events for that one counterparty. The plugin creates these streams automatically the first time chat happens between the two parties (typically at acceptance time, since both sides have a slug as soon as the access pair exists).
 
 ```mermaid
 sequenceDiagram
@@ -336,42 +335,43 @@ sequenceDiagram
     participant PlatformB as Platform B
     participant PatientApp
 
-    DoctorApp->>PlatformA: events.create cmc/chat-v1<br/>:_cmc:chats:alice--example-com
+    DoctorApp->>PlatformA: events.create cmc/chat-v1<br/>:_cmc:apps:my-app:study-A:chats:alice--pryv-me
     Note over PlatformA,PlatformB: server-orchestrated delivery
-    PlatformB-->>PatientApp: socket.io push<br/>:_cmc:chats:alice--example-com
-    PatientApp->>PlatformB: events.create cmc/chat-v1<br/>:_cmc:chats:alice--example-com
-    PlatformA-->>DoctorApp: socket.io push<br/>:_cmc:chats:alice--example-com
+    PlatformB-->>PatientApp: socket.io push<br/>:_cmc:apps:patient:incoming:chats:doctor--example-com
+    PatientApp->>PlatformB: events.create cmc/chat-v1<br/>:_cmc:apps:patient:incoming:chats:doctor--example-com
+    PlatformA-->>DoctorApp: socket.io push<br/>:_cmc:apps:my-app:study-A:chats:alice--pryv-me
 ```
 
 Each party writes a single event into their own per-counterparty chat stream. The plugin delivers to the matching stream on the other side.
 
 ```js
 // Provider on example.com chats with user.Alice on pryv.me.
-// Doctor's slug for Alice: 'alice--example-com'.
-// Alice's slug for the provider: 'alice--example-com'.
+// Doctor's slug for Alice: 'alice--pryv-me'.
+// Alice's slug for the provider: 'doctor--example-com'.
 
 // Provider sends
 await doctorConnection.api([
   { method: 'events.create', params: {
-      streamIds: [':_cmc:chats:alice--example-com'],
+      streamIds: [':_cmc:apps:my-app:study-A:chats:alice--pryv-me'],
       type: 'cmc/chat-v1',
       content: { content: 'How are you feeling today?' }
   }}
 ]);
-// Doctor's plugin resolves the access pair for counterparty alice@example.com,
+// Doctor's plugin resolves the access pair for counterparty alice on pryv.me,
 // reads the back-channel access's stored counterparty apiEndpoint,
-// delivers the chat to Alice's :_cmc:chats:alice--example-com stream.
+// delivers the chat to Alice's matching :chats:doctor--example-com stream
+// nested under whichever app-scope stream Alice's accept was written to.
 
 // User sends
 await patientConnection.api([
   { method: 'events.create', params: {
-      streamIds: [':_cmc:chats:alice--example-com'],
+      streamIds: [':_cmc:apps:patient:incoming:chats:doctor--example-com'],
       type: 'cmc/chat-v1',
       content: { content: 'Better, thanks. Slight headache yesterday.' }
   }}
 ]);
 // Patient's plugin does the symmetric resolution and delivers to
-// doctor's :_cmc:chats:alice--example-com stream.
+// doctor's :_cmc:apps:my-app:study-A:chats:alice--pryv-me stream.
 ```
 
 **Sent and received chat events live in the same stream on each side.** Reading the full conversation history is just an `events.get` on one stream — no need to fan out across multiple stream ids:
@@ -379,7 +379,7 @@ await patientConnection.api([
 ```js
 const history = await doctorConnection.api([
   { method: 'events.get', params: {
-      streamIds: [':_cmc:chats:alice--example-com'],
+      streamIds: [':_cmc:apps:my-app:study-A:chats:alice--pryv-me'],
       types: ['cmc/chat-v1'],
       sortAscending: true,
       limit: 500
@@ -392,14 +392,14 @@ const history = await doctorConnection.api([
 Subscribing to chat with one counterparty:
 
 ```js
-monitor.subscribe(':_cmc:chats:alice--example-com', (event) => { /* render */ });
+monitor.subscribe(':_cmc:apps:my-app:study-A:chats:alice--pryv-me', (event) => { /* render */ });
 ```
 
-Subscribing to all chat activity across all counterparties (recursive):
+Subscribing to all chat activity for one app-scope (recursive — picks up all counterparties and nested per-request scopes):
 
 ```js
-monitor.subscribe(':_cmc:chats', (event) => {
-  // event.streamIds[0] tells you which counterparty
+monitor.subscribe(':_cmc:apps:my-app', (event) => {
+  // event.streamIds tells you which sub-stream (chat, collector, lifecycle, etc.)
 });
 ```
 
@@ -407,23 +407,23 @@ The plugin uses `lib-js` / `legacy-shim` helpers to compute slugs deterministica
 
 ```js
 const slug = pryv.cmc.counterpartySlug({ username: 'alice', host: 'pryv.me' });
-// → 'alice--example-com'
+// → 'alice--pryv-me'
 ```
 
-**Multiple collectors with the same counterparty share one chat stream.** If Provider A runs both the example study and a clinical-care relationship with Alice, both relationships' chat events land in `:_cmc:chats:alice--example-com` (and on Alice's side in `:_cmc:chats:alice--example-com`). The plugin picks any access in the pair to carry the delivery; the receiving plugin resolves back to the same per-counterparty stream regardless of which access was used. System-level distinctions (which study? which collector?) belong on `:_cmc:collectors:<collector-slug>`, not in chat.
+**Different app-scopes with the same counterparty get independent chat streams.** If Provider A runs both the example study (`:_cmc:apps:my-app:study-A`) and a separate clinical-care relationship (`:_cmc:apps:my-app:clinical`) with Alice, each relationship's chat events live under its own scope path: `:_cmc:apps:my-app:study-A:chats:alice--pryv-me` and `:_cmc:apps:my-app:clinical:chats:alice--pryv-me`. This falls out naturally from the per-request access scoping — an access scoped to one sub-tree only sees the chat under that sub-tree. System-level distinctions (which study? which collector?) similarly live on each scope's own `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream.
 
 ---
 
 # Walkthrough 3 — The system channel (alerts, acks, scope-request, scope-update)
 
-The system channel is anchored **per collector-relationship**: `:_cmc:collectors:<collector-slug>` on each side. All four system event types share that one stream so a study's reminders don't bleed into clinical-care alerts from the same doctor, and scope-change history lives where the relationship itself lives. The plugin auto-creates `:_cmc:collectors:<collector-slug>` at acceptance time, before any system messages can flow.
+The system channel is anchored **per collector-relationship**: `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` on each side. All four system event types share that one stream so a study's reminders don't bleed into clinical-care alerts from the same doctor, and scope-change history lives where the relationship itself lives. The plugin auto-creates the collector stream at acceptance time, before any system messages can flow.
 
-Using the running example: Provider A (`alice@example.com`) running the example study (`appId: 'example-app'`) and user.Alice (`alice@example.com`).
+Using the running example: Provider A (`doctor` on `example.com`) running the example study under app-scope `:_cmc:apps:my-app:study-A`, and user Alice (`alice` on `pryv.me`) who accepted under her own app-scope `:_cmc:apps:patient:incoming`.
 
-- Doctor's collector-slug for Alice: `alice--example-com--example-app`.
-- Alice's collector-slug for Provider A's relationship: `alice--example-com--example-app`.
+- Doctor's collector stream for Alice: `:_cmc:apps:my-app:study-A:collectors:alice--pryv-me`.
+- Alice's collector stream for the provider relationship: `:_cmc:apps:patient:incoming:collectors:doctor--example-com`.
 
-Each party writes to their own per-collector stream; the plugin delivers to the matching stream on the other side.
+Each party writes to their own per-collector stream; the plugin delivers to the matching stream on the other side. App scoping for the relationship lives in the stream PATH (`my-app:study-A`, `patient:incoming`); the slug at the leaf is just the counterparty.
 
 ## 3a — Operator pushes an alert; participant acks
 
@@ -435,18 +435,18 @@ sequenceDiagram
     participant PlatformB as Platform B
     participant PatientApp
 
-    DoctorApp->>PlatformA: events.create cmc/system-alert-v1<br/>:_cmc:collectors:alice--example-com--my-app...
+    DoctorApp->>PlatformA: events.create cmc/system-alert-v1<br/>:_cmc:apps:my-app:study-A:collectors:alice--pryv-me
     Note over PlatformA,PlatformB: features.systemMessaging check<br/>+ rate-limit + delivery
-    PlatformB-->>PatientApp: socket.io push :_cmc:collectors:alice...
+    PlatformB-->>PatientApp: socket.io push<br/>:_cmc:apps:patient:incoming:collectors:doctor--example-com
     PatientApp->>PlatformB: events.create cmc/system-ack-v1
-    PlatformA-->>DoctorApp: socket.io push :_cmc:collectors:alice...
+    PlatformA-->>DoctorApp: socket.io push<br/>:_cmc:apps:my-app:study-A:collectors:alice--pryv-me
 ```
 
 ```js
 // Provider A writes a single event on their own platform
 await doctorConnection.api([
   { method: 'events.create', params: {
-      streamIds: [':_cmc:collectors:alice--example-com--example-app'],
+      streamIds: [':_cmc:apps:my-app:study-A:collectors:alice--pryv-me'],
       type: 'cmc/system-alert-v1',
       content: {
         level: 'info',                       // 'info' | 'warning' | 'critical'
@@ -464,14 +464,14 @@ Doctor's plugin:
 1. Resolves the access pair for this collector-relationship from the stream id.
 2. Verifies the participant's data-grant access (locally) has `clientData.cmc.features.systemMessaging: true`. If not, fails the trigger with `system-messaging-not-permitted`.
 3. Enforces rate-limit for this participant.
-4. Delivers the alert to Alice's `:_cmc:collectors:alice--example-com--example-app` stream via the stored apiEndpoint.
+4. Delivers the alert to Alice's `:_cmc:apps:patient:incoming:collectors:doctor--example-com` stream via the stored apiEndpoint.
 
 Jane's app sees the alert via socket.io and prompts the user to ack:
 
 ```js
 await patientConnection.api([
   { method: 'events.create', params: {
-      streamIds: [':_cmc:collectors:alice--example-com--example-app'],
+      streamIds: [':_cmc:apps:patient:incoming:collectors:doctor--example-com'],
       type: 'cmc/system-ack-v1',
       content: {
         alertEventId: '<inbox event id>',
@@ -498,18 +498,18 @@ sequenceDiagram
     DoctorApp->>PlatformA: events.create cmc/system-scope-request-v1
     Note over PlatformA: permission-chain rules<br/>pre-validated locally
     PlatformA-->>DoctorApp: trigger status='delivered'
-    PlatformA->>PlatformB: deliver to :_cmc:collectors:alice...
+    PlatformA->>PlatformB: deliver to :_cmc:apps:patient:incoming:collectors:doctor--example-com
     PlatformB-->>PatientApp: socket.io push (proposal)
     PatientApp->>PlatformB: events.create cmc/system-scope-update-v1<br/>(accept: true)
     Note over PlatformB: accesses.update<br/>composite-id bumps
-    PlatformB->>PlatformA: deliver to :_cmc:collectors:alice...
+    PlatformB->>PlatformA: deliver to :_cmc:apps:my-app:study-A:collectors:alice--pryv-me
     PlatformA-->>DoctorApp: socket.io push (acceptance + accessUpdated)
 ```
 
 ```js
 await doctorConnection.api([
   { method: 'events.create', params: {
-      streamIds: [':_cmc:collectors:alice--example-com--example-app'],
+      streamIds: [':_cmc:apps:my-app:study-A:collectors:alice--pryv-me'],
       type: 'cmc/system-scope-request-v1',
       content: {
         newPermissions: [
@@ -525,20 +525,20 @@ await doctorConnection.api([
 
 Doctor's plugin:
 
-1. Resolves the access pair from the collector slug. The collector's back-channel access points at Alice's data-grant.
+1. Resolves the access pair from the collector stream id. The collector's back-channel access points at Alice's data-grant.
 2. **Pre-validates permission-chain rules locally** against the provider's app-access — the provider must hold manage rights on the underlying data-grant; the new permissions must be ⊆ the provider's own app permissions.
 3. If invalid: updates trigger with `status: 'failed', failure: { reason: 'scope-update-offending-children', detail: [...] }`. Alice never sees a failed request — the provider sees the error immediately.
-4. If valid: delivers `cmc/system-scope-request-v1` to Alice's `:_cmc:collectors:alice--example-com--example-app` via Alice's data-grant apiEndpoint.
+4. If valid: delivers `cmc/system-scope-request-v1` to Alice's `:_cmc:apps:patient:incoming:collectors:doctor--example-com` via Alice's data-grant apiEndpoint.
 5. Updates trigger with `status: 'delivered'`. Final status `completed` lands when Alice responds.
 
-Jane's app sees the request via socket.io on `:_cmc:collectors:alice--example-com--example-app` and prompts: "Provider A would like to also access: nutrition. [Accept] [Refuse]".
+Jane's app sees the request via socket.io on `:_cmc:apps:patient:incoming:collectors:doctor--example-com` and prompts: "Provider A would like to also access: nutrition. [Accept] [Refuse]".
 
 ## 3c — User accepts the scope change
 
 ```js
 await patientConnection.api([
   { method: 'events.create', params: {
-      streamIds: [':_cmc:collectors:alice--example-com--example-app'],
+      streamIds: [':_cmc:apps:patient:incoming:collectors:doctor--example-com'],
       type: 'cmc/system-scope-update-v1',
       content: {
         scopeRequestEventId: '<inbox event id from 3b>',
@@ -552,7 +552,7 @@ Jane's plugin:
 
 1. Reads the incoming `cmc/system-scope-request-v1` event from the same collector stream to identify the access + new permissions.
 2. Calls `accesses.update` on the local data-grant access with the new permissions. Composite serial bumps (e.g. `abc123` → `abc123:1`).
-3. Delivers `cmc/system-scope-update-v1` (`accept: true`) to the provider's `:_cmc:collectors:alice--example-com--example-app` via the stored back-channel apiEndpoint.
+3. Delivers `cmc/system-scope-update-v1` (`accept: true`) to the provider's `:_cmc:apps:my-app:study-A:collectors:alice--pryv-me` via the stored back-channel apiEndpoint.
 4. Doctor's plugin (on receipt) emits `accessUpdated` socket event locally so the provider's app sees the new composite-id and refreshed permissions.
 5. Alice's plugin updates her trigger with `status: 'completed', newAccessId: 'abc123:1'`.
 
@@ -577,7 +577,7 @@ sequenceDiagram
     PatientApp->>PlatformB: accesses.update<br/>(new permissions)
     Note over PlatformB: post-hook detects<br/>clientData.cmc.role: 'counterparty'
     PlatformB->>PlatformA: deliver cmc/system-scope-update-v1<br/>(source: 'post-hook')
-    PlatformA-->>DoctorApp: socket.io push :_cmc:collectors:alice...<br/>+ accessUpdated locally
+    PlatformA-->>DoctorApp: socket.io push<br/>:_cmc:apps:my-app:study-A:collectors:alice--pryv-me<br/>+ accessUpdated locally
 ```
 
 ## Step 1 — User updates the access through the standard Pryv API
@@ -607,20 +607,20 @@ This is plain `accesses.update`. The user's app didn't touch any `cmc/*` event t
 
 The plugin runs a post-hook on every successful `accesses.update`. When the updated access carries `clientData.cmc.role: 'counterparty'`, the post-hook:
 
-1. Reads the stored counterparty `apiEndpoint` and `collector-slug` from `clientData.cmc` on the access.
+1. Reads the stored counterparty `apiEndpoint` and collector-stream-id from `clientData.cmc` on the access.
 2. Reads the new permissions from the freshly-updated access.
-3. Writes (in-process, on behalf of the user) a `cmc/system-scope-update-v1` event to Alice's own `:_cmc:collectors:alice--example-com--example-app` stream — this becomes the user-side audit record.
-4. Delivers `cmc/system-scope-update-v1` (`source: 'user-initiated'`) to Provider A's `:_cmc:collectors:alice--example-com--example-app` via the stored back-channel apiEndpoint.
+3. Writes (in-process, on behalf of the user) a `cmc/system-scope-update-v1` event to Alice's own `:_cmc:apps:patient:incoming:collectors:doctor--example-com` stream — this becomes the user-side audit record.
+4. Delivers `cmc/system-scope-update-v1` (`source: 'user-initiated'`) to Provider A's `:_cmc:apps:my-app:study-A:collectors:alice--pryv-me` via the stored back-channel apiEndpoint.
 
 Provider A's plugin, on receipt:
 
 1. Emits `accessUpdated` socket event locally so the provider's app sees the new composite-id and refreshed permissions.
-2. The event lands in the provider's `:_cmc:collectors:alice--example-com--example-app` stream alongside any prior scope-request / alert history.
+2. The event lands in the provider's `:_cmc:apps:my-app:study-A:collectors:alice--pryv-me` stream alongside any prior scope-request / alert history.
 
-The doctor's app, subscribed to `:_cmc:collectors` (recursive), sees the user-initiated change land:
+The doctor's app, subscribed to its app-scope `:_cmc:apps:my-app` (recursive), sees the user-initiated change land:
 
 ```js
-monitor.subscribe(':_cmc:collectors', (event) => {
+monitor.subscribe(':_cmc:apps:my-app', (event) => {
   if (event.type === 'cmc/system-scope-update-v1') {
     // event.content.from           = { username: 'alice', host: 'pryv.me' }
     // event.content.source         = 'user-initiated'  (vs 'response-to-request')
@@ -674,8 +674,8 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
 | Event family | Trigger location | Delivery location on counterparty |
 |---|---|---|
 | **Lifecycle** (`cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1`) | Any user-managed `:_cmc:apps:*` stream you've created (e.g. `:_cmc:apps:my-app:study-A`). | Counterparty's `:_cmc:inbox`. |
-| **Chat** (`cmc/chat-v1`) | Your own `:_cmc:chats:<counterparty-slug>` (plugin auto-creates at acceptance). | Counterparty's `:_cmc:chats:<your-slug>`. |
-| **System** (`cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1`) | Your own `:_cmc:collectors:<collector-slug>` (plugin auto-creates at acceptance). | Counterparty's `:_cmc:collectors:<your-slug>`. |
+| **Chat** (`cmc/chat-v1`) | Your own `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` (plugin auto-creates at acceptance, nested under whichever app-scope stream the original request/accept was written to). | Counterparty's matching `:_cmc:apps:<their-app>:[<their-path>:]chats:<your-slug>`. |
+| **System** (`cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1`) | Your own `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` (same nesting as chat). | Counterparty's matching `:_cmc:apps:<their-app>:[<their-path>:]collectors:<your-slug>`. |
 
 **Triggers** (events you write to your own streams):
 - `content.from` is absent — you're the actor.
@@ -779,33 +779,36 @@ Everything else (permissions on the data-grant, the back-channel apiEndpoint sto
 }
 ```
 
-## Family 2 — Chat (anchored at `:_cmc:chats:<counterparty-slug>`)
+## Family 2 — Chat (anchored at `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`)
 
-Sent and received chat events live in the same per-counterparty stream on each side. The stream id itself encodes the counterparty; no per-event `counterpartyAccessId` is needed.
+Sent and received chat events live in the same per-counterparty stream on each side, nested under whichever app-scope stream the trigger was written to. The stream id encodes both the app-scope and the counterparty; no per-event `counterpartyAccessId` is needed.
 
 ### `cmc/chat-v1`
 
 ```ts
-// App writes to its own :_cmc:chats:<counterparty-slug> stream
+// App writes to its own :_cmc:apps:my-app:chats:<counterparty-slug> stream
+// (or a deeper per-request scope, e.g. :_cmc:apps:my-app:study-A:chats:<counterparty-slug>)
 {
   content: string                              // markdown, ≤ 10 KB
 }
 
-// On counterparty's :_cmc:chats:<your-slug> stream (server-stamped on delivery)
+// On counterparty's matching :_cmc:apps:<their-app>:chats:<your-slug> stream
+// (server-stamped on delivery)
 {
   from: { username, host },
   content: string
 }
 ```
 
-## Family 3 — System messages, incl. scope-update (anchored at `:_cmc:collectors:<collector-slug>`)
+## Family 3 — System messages, incl. scope-update (anchored at `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>`)
 
-The four system event types share one stream per collector-relationship. The stream id encodes the collector-relationship (counterparty + app), so no per-event `counterpartyAccessId` is needed.
+The four system event types share one stream per collector-relationship, nested under whichever app-scope stream the trigger was written to. The stream id encodes both the app-scope and the counterparty, so no per-event `counterpartyAccessId` is needed.
 
 ### `cmc/system-alert-v1`
 
 ```ts
-// App writes to its own :_cmc:collectors:<collector-slug> stream
+// App writes to its own :_cmc:apps:my-app:collectors:<counterparty-slug> stream
+// (or a deeper per-request scope)
 {
   level: 'info' | 'warning' | 'critical',
   title: LocalizableText,
@@ -814,7 +817,7 @@ The four system event types share one stream per collector-relationship. The str
   ackId?:       string
 }
 
-// On counterparty's :_cmc:collectors:<your-slug> stream
+// On counterparty's matching :_cmc:apps:<their-app>:collectors:<your-slug> stream
 {
   from: { username, host },
   level: 'info' | 'warning' | 'critical',
@@ -834,7 +837,7 @@ The four system event types share one stream per collector-relationship. The str
   ackId: string
 }
 
-// On counterparty's :_cmc:collectors:<your-slug> stream
+// On counterparty's matching :_cmc:apps:<their-app>:collectors:<your-slug> stream
 {
   from: { username, host },
   alertEventId: string,
@@ -854,7 +857,7 @@ The collector → user proposal to widen/narrow/change scope on the data-grant a
   message?: LocalizableText
 }
 
-// On user's :_cmc:collectors:<collector-slug> stream
+// On user's matching :_cmc:apps:<their-app>:collectors:<counterparty-slug> stream
 {
   from: { username, host },
   accessId: string,                            // composite-id of the data-grant on user's account
@@ -877,7 +880,8 @@ The user-side scope change. Triggered three ways: (1) user writes a `cmc/system-
   newPermissions?:      Permission[]           // present for self-initiated changes
 }
 
-// On collector's :_cmc:collectors:<user-slug> stream (also written locally on user's matching stream)
+// On collector's matching :_cmc:apps:<their-app>:collectors:<user-slug> stream
+// (also written locally on user's matching stream)
 {
   from:           { username, host },
   source:         'response-to-request' | 'user-initiated' | 'post-hook',
@@ -917,7 +921,9 @@ Cross-scope projection (`:_cmc:state` summary) is **deferred to v2** — apps th
 
 # Reference — Slug conventions
 
-Slugs identify a counterparty or a collector-relationship in a stream-id. They have to round-trip from `(username, host)` deterministically, be safe inside a Pryv stream-id (allowed character set), and stay unambiguous when split back into their components.
+Slugs identify a counterparty in a stream-id. They have to round-trip from `(username, host)` deterministically, be safe inside a Pryv stream-id (allowed character set), and stay unambiguous when split back into their components.
+
+The **same `<counterparty-slug>` shape is used for both chat (`:chats:<counterparty-slug>`) and collector (`:collectors:<counterparty-slug>`) streams.** There is no separate "collector slug" — the per-app scoping that used to live in the slug now lives in the stream PATH (`:_cmc:apps:<app-code>:[<path>:]...`).
 
 ## Counterparty slug
 
@@ -931,54 +937,42 @@ Examples:
 | `(username, host)` | Counterparty slug |
 |---|---|
 | `('alice', 'example.com')` | `alice--example-com` |
-| `('alice', 'pryv.me')` | `alice--example-com` |
+| `('alice', 'pryv.me')` | `alice--pryv-me` |
 | `('bob', 'my-host.example.org')` | `bob--my-host-example-org` |
 | `('alice-smith', 'sub.example.com')` | `alice-smith--sub-example-com` |
 
 **The load-bearing separator is `--`.** Usernames and host-slugs use single hyphens; the double-hyphen is reserved as the delimiter. Splitting `alice--example-com` on `--` deterministically yields `('alice', 'example-com')`, then converting `host-slug` back to `host` by replacing `-` with `.` only at the host-slug position (not in the username) requires knowing the DNS suffix structure — which is why apps should always use the helper rather than parse by hand.
 
-## Collector slug
+## App-scope in the path, not the slug
 
-```
-<collector-slug> := <counterparty-slug> '--' <app-slug>
-<app-slug>       := slugified requesterMeta.appId (lowercase, '.' and '/' → '-')
-```
+A collector-relationship is uniquely identified by the **(app-scope path, counterparty)** pair, not by a single composite slug. The same counterparty under two different app-scopes is two distinct relationships:
 
-Examples:
-
-| `(username, host, appId)` | Collector slug |
+| Stream id | Meaning |
 |---|---|
-| `('alice', 'example.com', 'example-app')` | `alice--example-com--example-app` |
-| `('alice', 'pryv.me', 'fitness.app')` | `alice--example-com--fitness-app` |
-| `('research-coord', 'university.edu', 'study/v2')` | `research-coord--university-edu--study-v2` |
+| `:_cmc:apps:my-app:collectors:alice--pryv-me` | the relationship between this app (whole `my-app` scope) and Alice on pryv.me |
+| `:_cmc:apps:my-app:study-A:collectors:alice--pryv-me` | a more granular relationship under `my-app`'s `study-A` sub-tree with the same Alice |
+| `:_cmc:apps:other-app:collectors:alice--pryv-me` | a different app's relationship with the same Alice — independent |
 
-The `app-slug` is sourced from `requesterMeta.appId` on the original `cmc/request-v1`. It's fixed at acceptance and survives scope changes — the relationship's identity doesn't change just because the permissions did.
+The app's access can be scoped at `:_cmc:apps:<app-code>:*` to cover the whole app, or at `:_cmc:apps:<app-code>:<request-slug>:*` to cover one specific cross-account relationship. Either way the chat/collectors streams are picked up by simple prefix-match.
 
 ## Helpers
 
-`lib-js` and `legacy-shim` ship deterministic helpers; apps should never roll their own:
+`lib-js` and `legacy-shim` ship the deterministic slug helper; apps should never roll their own:
 
 ```js
 import { cmc } from 'pryv';
 
 const counterparty = cmc.counterpartySlug({ username: 'alice', host: 'pryv.me' });
-// → 'alice--example-com'
-
-const collector = cmc.collectorSlug({
-  username: 'alice',
-  host: 'pryv.me',
-  appId: 'example-app'
-});
-// → 'alice--example-com--example-app'
+// → 'alice--pryv-me'
 
 // And the inverse:
-const parsed = cmc.parseCollectorSlug('alice--example-com--example-app');
-// → { username: 'alice', host: 'pryv.me', appId: 'example-app' }
+const parsed = cmc.parseCounterpartySlug('alice--pryv-me');
+// → { username: 'alice', host: 'pryv.me' }
 ```
 
 ## Why the host is in every slug
 
-`alice@example.com` and `alice@example.com` are **different people**. Cross-platform federation means there's no shared user namespace; the slug must disambiguate by host so the same username on two platforms doesn't collide. Same logic for the operator/collector side — different operators running the same `appId` are different collectors.
+`alice` on `example.com` and `alice` on another host are **different people**. Cross-platform federation means there's no shared user namespace; the slug must disambiguate by host so the same username on two platforms doesn't collide.
 
 ## Stability
 
@@ -986,9 +980,9 @@ Slugs are **stable for the lifetime of the relationship**:
 
 - Username changes are not supported by CMC v1 (would orphan all per-counterparty streams). If the platform ever supports username changes, the plugin must rename anchored streams atomically.
 - Host migrations (a platform moving from `old.example.com` to `new.example.com`) are an operator concern; out of scope for v1.
-- `appId` changes by the requester app would also orphan collector streams; treat `appId` in `requesterMeta` as immutable across a relationship's lifetime.
+- An app changing its `<app-code>` segment in the stream PATH would also orphan all chat/collector streams under the old code; treat the app-code at the root of `:_cmc:apps:<app-code>` as immutable across a relationship's lifetime.
 
-If any of these change in practice, the existing relationship is preserved on the old slug and a new `cmc/request-v1` cycle is the path forward.
+If any of these change in practice, the existing relationship is preserved on the old slug/path and a new `cmc/request-v1` cycle is the path forward.
 
 ---
 
@@ -1083,35 +1077,39 @@ monitor.subscribe(':_cmc:inbox', (event) => {
   // event.type ∈ { 'cmc/request-v1', 'cmc/accept-v1', 'cmc/refuse-v1', 'cmc/revoke-v1' }
 });
 
-// Region 2 — Chat with every counterparty (recursive)
-monitor.subscribe(':_cmc:chats', (event) => {
-  // event.streamIds[0] identifies the counterparty stream, e.g. ':_cmc:chats:alice--example-com'
+// Region 2 — All app-scope activity (recursive, covers chat + collectors + lifecycle triggers
+// for one app — and per-request nested scopes underneath)
+monitor.subscribe(':_cmc:apps:my-app', (event) => {
+  // event.streamIds[0] tells you which sub-stream, e.g.:
+  //   ':_cmc:apps:my-app:study-A:chats:alice--pryv-me'
+  //   ':_cmc:apps:my-app:study-A:collectors:alice--pryv-me'
+  //   ':_cmc:apps:my-app:study-A' (your own lifecycle trigger status update)
+  // event.type ∈ { 'cmc/chat-v1', 'cmc/system-*-v1', 'cmc/request-v1', ... }
+});
+
+// Or narrow to one feature class by subscribing to the nested chats / collectors parent
+// (these live under a specific app-scope path, NOT at the top of :_cmc:):
+monitor.subscribe(':_cmc:apps:my-app:study-A:chats', (event) => {
+  // event.streamIds[0] identifies the counterparty stream,
+  // e.g. ':_cmc:apps:my-app:study-A:chats:alice--pryv-me'
   // event.content.from set ⇒ incoming; absent ⇒ your own outgoing
   // event.type === 'cmc/chat-v1'
 });
 
-// Region 3 — System channel across every collector-relationship (recursive)
-monitor.subscribe(':_cmc:collectors', (event) => {
-  // event.streamIds[0] identifies the collector-relationship, e.g. ':_cmc:collectors:alice--example-com--example-app'
+monitor.subscribe(':_cmc:apps:my-app:study-A:collectors', (event) => {
+  // event.streamIds[0] identifies the collector-relationship,
+  // e.g. ':_cmc:apps:my-app:study-A:collectors:alice--pryv-me'
   // event.type ∈ { 'cmc/system-alert-v1', 'cmc/system-ack-v1',
   //                'cmc/system-scope-request-v1', 'cmc/system-scope-update-v1' }
   // event.content.source on scope-updates: 'response-to-request' | 'user-initiated' | 'post-hook'
-});
-
-// Status updates on your own outgoing one-shot triggers (lifecycle actions)
-// — fires when the plugin updates content.status as orchestration progresses.
-monitor.subscribe(':_cmc:apps:your-app', (event) => {
-  if (event.content.status === 'completed' || event.content.status === 'failed') {
-    // Your action finished; update UI accordingly.
-  }
 });
 ```
 
 Subscribe to a single counterparty / collector stream when the UI is scoped that way:
 
 ```js
-monitor.subscribe(':_cmc:chats:alice--example-com', renderChatMessage);
-monitor.subscribe(':_cmc:collectors:alice--example-com--example-app', renderSystemMessage);
+monitor.subscribe(':_cmc:apps:my-app:study-A:chats:alice--pryv-me', renderChatMessage);
+monitor.subscribe(':_cmc:apps:my-app:study-A:collectors:alice--pryv-me', renderSystemMessage);
 ```
 
 The same callback runs whether the counterparty is on your same core, your same cluster, or a foreign platform — the plugin abstracts the difference. Your app doesn't branch on topology.
@@ -1123,7 +1121,7 @@ The same callback runs whether the counterparty is on your same core, your same 
 | Error id | Where surfaced | Meaning | Action |
 |---|---|---|---|
 | `cmc-plugin-not-installed` | trigger create | Operator hasn't installed the CMC plugin (the `:_cmc:` namespace isn't registered with the mall dispatcher on this core). | Fall back to legacy flow. |
-| `reserved-stream` | trigger create | Tried to mutate one of the plugin-managed parents (`:_cmc:` / `:_cmc:inbox` / `:_cmc:chats` / `:_cmc:collectors` / `:_cmc:apps`), or tried to `streams.create` directly under `:_cmc:` outside `:_cmc:apps`. | Create user streams under `:_cmc:apps` (`streams.create({parentId: ':_cmc:apps'})`); use the plugin-managed `:_cmc:chats:<slug>` / `:_cmc:collectors:<slug>` streams that the plugin auto-creates at acceptance. |
+| `reserved-stream` | trigger create | Tried to mutate one of the plugin-managed parents (`:_cmc:` / `:_cmc:inbox` / `:_cmc:apps` / `:_cmc:_internal`), or tried to create a stream whose path uses a plugin-reserved sub-segment (`chats` or `collectors`) under `:_cmc:apps:<app-code>:...`, or tried to `streams.create` directly under `:_cmc:` outside `:_cmc:apps`. | Create user streams under `:_cmc:apps` (`streams.create({parentId: ':_cmc:apps'})`); use the plugin-managed `:_cmc:apps:<app-code>:[<path>:]chats:<slug>` / `:_cmc:apps:<app-code>:[<path>:]collectors:<slug>` streams that the plugin auto-creates at acceptance. |
 | `invalid-event-type` | trigger create | `type` not a known `cmc/*`. | Fix spelling. |
 | `event-validation-failed` | trigger create | Content schema mismatch. | Fix payload. |
 | `cmc-not-counterparty` | inbox delivery (plugin internal) | Plugin rejected an inbound write — actor isn't a counterparty access. Shouldn't be visible to apps unless your access lost its counterparty marker. | Check `clientData.cmc.role` on the access. |
@@ -1154,11 +1152,11 @@ The same callback runs whether the counterparty is on your same core, your same 
 | `events.create type='response/collector-v1'` via shared access to requester's inbox | App writes `cmc/accept-v1` to its OWN user-managed `:_cmc:apps:*` stream. Plugin orchestrates delivery; counterparty sees it on `:_cmc:inbox`. |
 | `Collector.checkInbox()` polling | Subscribe to `:_cmc:inbox` via socket.io (lifecycle only). |
 | Manual archive of inbox events | Server-managed. |
-| `acceptUpdate()` = `accesses.delete` + `accesses.create` + `previousAccessIds[]` | App writes `cmc/system-scope-update-v1` to `:_cmc:collectors:<collector-slug>`. Plugin uses `accesses.update`. |
-| `request/access-update-v1` polling | Push via `:_cmc:collectors` socket (recursive). |
-| `chat-<username>` / `chat-<username>-in` per-pair streams | One stream per user-pair: `:_cmc:chats:<counterparty-slug>` holds both sent and received `cmc/chat-v1` events on each side. Plugin auto-creates. |
-| `app-system-out` / `app-system-in` per-account streams | One stream per collector-relationship: `:_cmc:collectors:<collector-slug>` holds all four system event types (alerts, acks, scope-request, scope-update) on each side. Plugin auto-creates. |
-| Per-collector scope-change tracking via untyped client data | All scope changes (collector-proposed, user-responded, user-initiated, raw `accesses.update` post-hook) land as `cmc/system-scope-update-v1` events on `:_cmc:collectors:<collector-slug>` with `content.source` telling the app which path it came from. |
+| `acceptUpdate()` = `accesses.delete` + `accesses.create` + `previousAccessIds[]` | App writes `cmc/system-scope-update-v1` to `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>`. Plugin uses `accesses.update`. |
+| `request/access-update-v1` polling | Push via `:_cmc:apps:<app-code>` socket (recursive — picks up all nested chats/collectors/lifecycle activity for the app). |
+| `chat-<username>` / `chat-<username>-in` per-pair streams | One stream per user-pair per app-scope: `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` holds both sent and received `cmc/chat-v1` events on each side. Plugin auto-creates. |
+| `app-system-out` / `app-system-in` per-account streams | One stream per collector-relationship under the app-scope: `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` holds all four system event types (alerts, acks, scope-request, scope-update) on each side. Plugin auto-creates. |
+| Per-collector scope-change tracking via untyped client data | All scope changes (collector-proposed, user-responded, user-initiated, raw `accesses.update` post-hook) land as `cmc/system-scope-update-v1` events on `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` with `content.source` telling the app which path it came from. |
 | Two writes per action (local + counterparty's account) | One write per action on your own platform. Plugin handles cross-platform delivery. |
 
 `legacy-shim` ships a thin shim that proxies the old `Collector` / `CollectorClient` API onto `:_cmc:` so existing apps don't need a wholesale rewrite.
@@ -1184,8 +1182,8 @@ The same callback runs whether the counterparty is on your same core, your same 
 4. **Trigger event status visibility window.** Lifecycle trigger events stay in the user-managed `:_cmc:apps:*` stream forever? Or plugin auto-archives `completed` triggers after some time?
 5. **Capability access visibility.** Hidden from `accesses.get` by default; operator-overridable.
 6. **Cross-platform revocation atomicity.** Two `accesses.delete` calls across two platforms; if the remote fails, local already succeeded. Plugin queues retry; eventually consistent. Acceptable?
-7. **Anchor stream auto-creation policy.** `:_cmc:chats:<slug>` and `:_cmc:collectors:<slug>` are plugin-auto-created at acceptance. Should the plugin offer an opt-out (e.g., for collectors that won't ever use chat)? Default-on is the current lock.
+7. **Anchor stream auto-creation policy.** `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` and `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` are plugin-auto-created at acceptance. Should the plugin offer an opt-out (e.g., for collectors that won't ever use chat)? Default-on is the current lock.
 8. **`accesses.update` post-hook double-fire suppression mechanism.** Cls flag, request-scoped marker, or distinguished caller identity? Affects how easily an app developer can accidentally trip it.
 9. **App-scope enforcement.** Default off (cooperative) vs default on (when `clientData.cmc.appScope` set).
-10. **Cross-scope state projection at scale.** A v2 summary stream across all `:_cmc:chats` + `:_cmc:collectors` events for "all my outgoing actions" queries; benchmark for 10k+ counterparties before shipping.
+10. **Cross-scope state projection at scale.** A v2 summary stream aggregating across all `:_cmc:apps:*` chat + collector activity for "all my outgoing actions" queries; benchmark for 10k+ counterparties before shipping.
 11. **Plugin outbound HTTP egress policy.** Operator firewalls; allow-list of known peer platforms or open-egress?

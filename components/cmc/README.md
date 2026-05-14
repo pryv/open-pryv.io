@@ -10,7 +10,7 @@
 1. **Plugin, not storage engine** — CMC lives at `components/cmc/`; all state in standard per-user main storage (PG / Mongo).
 2. **Zero new storage primitives** — retry queue is a hidden companion stream `:_cmc:_internal:retries`; rate-limit is per-worker in-memory.
 3. **`:_cmc:apps:` user namespace** — user-creatable streams pack under one plugin-managed parent.
-4. **Three-region stream model** — `:_cmc:inbox` (one-shot lifecycle) / `:_cmc:chats:<counterparty-slug>` (per user-pair) / `:_cmc:collectors:<collector-slug>` (per collector-relationship).
+4. **Three-region stream model** — `:_cmc:inbox` (one-shot lifecycle) / `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` (per user-pair, nested under the app/path the trigger was written to) / `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` (per collector-relationship, same nesting).
 5. **System family absorbs scope-update** — `cmc/system-scope-request-v1` + `cmc/system-scope-update-v1` flow on the system channel; `accesses.update` post-hook auto-notifies the counterparty for user-initiated scope changes.
 
 Cross-core mTLS optimization deliberately omitted; see "Future development scoping" sections below.
@@ -97,7 +97,7 @@ The capability access mechanism here is also the natural store for future OAuth2
 |---|---|
 | `:_cmc:*` events (request, accept, refuse, revoke, chat, system-*) | Per-user main storage's standard events table |
 | Capability access, data-grant access, back-channel access | Per-user main storage's standard accesses table |
-| `:_cmc:inbox` / `:_cmc:chats:<slug>` / `:_cmc:collectors:<slug>` / `:_cmc:apps:<...>` stream definitions | Per-user main storage's standard streams table |
+| `:_cmc:inbox` / `:_cmc:apps:<app-code>:[<path>:]chats:<slug>` / `:_cmc:apps:<app-code>:[<path>:]collectors:<slug>` / `:_cmc:apps:<...>` stream definitions | Per-user main storage's standard streams table |
 | Slug → access lookup | Same accesses table, indexed on `clientData.cmc.counterparty.{username, host}` |
 | **Retry queue** for pending outbound deliveries | **Hidden companion stream `:_cmc:_internal:retries`** in per-user main storage. Each pending delivery = one event with `content.{apiEndpoint, payload, attempts, nextAttemptAt}`. Standard `events.create` / `events.update` / `events.delete` for queue management. |
 | **Rate-limit counters** | **Per-worker in-memory** sliding window. N× drift on N-worker cores is accepted for v1; `cluster_kv` (master-held in-process, same-core cross-worker primitive) is the fallback if drift matters in practice. |
@@ -116,16 +116,18 @@ The `:_cmc:` namespace has three plugin-managed regions plus user-creatable scop
 |---|---|---|---|
 | `:_cmc:` | server (always present) | no (reserved root) | namespace parent |
 | `:_cmc:inbox` | server (always present) | no (plugin-internal writes) | one-shot lifecycle events: `cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1` |
-| `:_cmc:chats` | plugin (auto-created) | no (parent) | parent of per-counterparty chat sub-streams |
-| `:_cmc:chats:<counterparty-slug>` | plugin (auto-created on first chat) | apps may write `cmc/chat-v1` triggers here | bidirectional chat with that counterparty: `cmc/chat-v1` (both sent and received) |
-| `:_cmc:collectors` | plugin (auto-created) | no (parent) | parent of per-collector-relationship sub-streams |
-| `:_cmc:collectors:<collector-slug>` | plugin (auto-created at acceptance) | apps may write `cmc/system-*-v1` triggers here | per-collector-relationship system channel: alerts, acks, scope-requests, scope-updates |
 | `:_cmc:apps` | server (always present) | no (parent) | parent of user-creatable app scopes |
-| `:_cmc:apps:<anything-you-create>` | user via `streams.create({parentId: ':_cmc:apps'})` (or deeper) | yes | user's organizational scopes for one-shot lifecycle triggers (publish requests, accept invites, revoke). Apps namespace their sub-trees here. |
+| `:_cmc:apps:<anything-you-create>` | user via `streams.create({parentId: ':_cmc:apps'})` (or deeper) | yes | user's organizational scopes for one-shot lifecycle triggers (publish requests, accept invites, revoke). Apps namespace their sub-trees here. App access can be scoped to `:_cmc:apps:<app-code>:*` (whole app) or `:_cmc:apps:<app-code>:<request-slug>:*` (per-request). |
+| `:_cmc:apps:<app-code>:[<path>:]chats` | plugin (auto-created) | no (parent) | parent of per-counterparty chat sub-streams, nested under whichever app-scope stream the trigger was written to |
+| `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` | plugin (auto-created on first chat) | apps may write `cmc/chat-v1` triggers here | bidirectional chat with that counterparty: `cmc/chat-v1` (both sent and received) |
+| `:_cmc:apps:<app-code>:[<path>:]collectors` | plugin (auto-created) | no (parent) | parent of per-collector-relationship sub-streams, nested under whichever app-scope stream the trigger was written to |
+| `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` | plugin (auto-created at acceptance) | apps may write `cmc/system-*-v1` triggers here | per-collector-relationship system channel: alerts, acks, scope-requests, scope-updates |
 | `:_cmc:_internal` | server (always present) | no (parent) | parent of plugin-internal hidden streams |
 | `:_cmc:_internal:retries` | plugin (always present) | plugin-internal | retry queue for pending outbound deliveries (one event per pending delivery). Hidden from regular `events.get` / `streams.get` via `isShown: false`. |
 | `:_cmc:_internal:offer:<capId>` | plugin (per capability) | plugin-internal | per-capability single-event stream — bears the request event the capability access reads via `:_cmc:_internal:offer` parent (recursive expand). GC'd with the capability access. Not hidden — capability access permissions provide the scoping. |
 | `:_cmc:_internal:responses:<capId>` | plugin (per capability) | plugin-internal | per-capability single-write stream — receives the one accept/refuse event written through the capability connection. GC'd with the capability access. Not hidden — capability access permissions provide the scoping. |
+
+**Where `<path>` comes from:** the `chats` and `collectors` sub-segments live directly under whichever stream the trigger was written to. If the app writes a `cmc/request-v1` to `:_cmc:apps:my-app`, chat/collector streams hang off `:_cmc:apps:my-app:chats:*` / `:_cmc:apps:my-app:collectors:*`. If it writes to `:_cmc:apps:my-app:study-A`, they hang off `:_cmc:apps:my-app:study-A:chats:*` / `:_cmc:apps:my-app:study-A:collectors:*`. This lets the app's access be scoped at the app level OR at a per-request sub-tree by simple prefix-match.
 
 **Anchoring rationale (locked):**
 - **Chat is anchored per user-pair** — one thread per counterparty regardless of how many collector relationships exist between you. Matches messaging-app intuition.
@@ -133,10 +135,9 @@ The `:_cmc:` namespace has three plugin-managed regions plus user-creatable scop
 - **One-shot lifecycle events** stay in flat `:_cmc:inbox` because they don't have a stable per-counterparty home (e.g. an incoming `cmc/request-v1` from a stranger you don't yet have a relationship with).
 
 **Slug conventions:**
-- `<counterparty-slug>` = `<username>--<host-slug>` where `host-slug` replaces `.` with `-`. Examples: `alice--example-com`, `alice--example-com`, `bob--my-host-example-org`.
-- `<collector-slug>` = `<counterparty-slug>--<app-slug>` where `app-slug` slugifies the `requesterMeta.appId` from the original `cmc/request-v1`. Example: `alice--example-com--example-app`.
+- `<counterparty-slug>` = `<username>--<host-slug>` where `host-slug` replaces `.` with `-`. Examples: `alice--example-com`, `bob--my-host-example-org`. Same slug shape is used both for chat (`:chats:<counterparty-slug>`) and for system/collector relationships (`:collectors:<counterparty-slug>`) — the app-code and any per-request scoping live in the stream PATH, not in the slug.
 - Double-hyphen (`--`) is the load-bearing separator; usernames and host-slugs use single hyphens so `--` is unambiguous.
-- Helpers `pryv.cmc.counterpartySlug({username, host})` and `pryv.cmc.collectorSlug({username, host, appId})` ship in `lib-js` / `legacy-shim`.
+- Helper `pryv.cmc.counterpartySlug({username, host})` ships in `lib-js` / `legacy-shim`.
 
 **Cross-platform identity in slugs is required.** `alice@example.com` and `alice@example.com` are different people; the host is part of the slug.
 
@@ -146,7 +147,7 @@ The `:_cmc:` namespace has three plugin-managed regions plus user-creatable scop
 
 ### Event-type families and the plugin-as-orchestrator model
 
-**Apps always write to their own platform.** A user-initiated action is a single `events.create` on a stream under `:_cmc:` — either a user-managed `:_cmc:apps:*` scope stream (lifecycle triggers) or a plugin-managed `:_cmc:chats:<slug>` / `:_cmc:collectors:<slug>` stream (chat + system triggers). The plugin reads the write, performs the local state change, and (if the action affects a counterparty) makes the outbound API call to the counterparty's platform using stored apiEndpoints. The plugin updates the original trigger event's content with `status: 'pending' | 'completed' | 'failed'` as orchestration progresses; the app reads back via socket.io subscription on the relevant stream.
+**Apps always write to their own platform.** A user-initiated action is a single `events.create` on a stream under `:_cmc:` — either a user-managed `:_cmc:apps:*` scope stream (lifecycle triggers) or a plugin-managed `:_cmc:apps:<app-code>:[<path>:]chats:<slug>` / `:_cmc:apps:<app-code>:[<path>:]collectors:<slug>` stream (chat + system triggers). The plugin reads the write, performs the local state change, and (if the action affects a counterparty) makes the outbound API call to the counterparty's platform using stored apiEndpoints. The plugin updates the original trigger event's content with `status: 'pending' | 'completed' | 'failed'` as orchestration progresses; the app reads back via socket.io subscription on the relevant stream.
 
 Counterparty events arrive in the recipient's `:_cmc:inbox` only because the **sender's plugin** wrote them via the stored apiEndpoint — never by the sender's app directly. The receiving plugin's write-hook on `:_cmc:inbox` validates that the actor carries `clientData.cmc.role: 'counterparty'`, stamps `content.from` from the access's stored counterparty identity, and fires socket.io push.
 
@@ -157,26 +158,26 @@ All event types live under the `cmc/*` namespace and are validated by the plugin
 | Event type | App writes to | Plugin orchestration |
 |---|---|---|
 | `cmc/request-v1` | requester's own user-managed `:_cmc:apps:*` scope stream | Mints capability access on requester's account. If `to:` set and recipient local same-platform, also writes a notification copy into recipient's `:_cmc:inbox` (in-process). For cross-platform directed: no auto-routing (capability URL hand-off only). |
-| `cmc/accept-v1` | recipient's own user-managed `:_cmc:apps:*` scope stream, content carries the capability URL | Plugin: reads offer via capability connection; creates local data-grant access on recipient's account with permissions from the offer; uses capability connection to deliver accept event (with grantedAccess apiEndpoint) to requester's platform; receives back-channel apiEndpoint in response; stores it in `clientData.cmc.counterparty` of the data-grant. Plugin also auto-creates `:_cmc:chats:<counterparty-slug>` + `:_cmc:collectors:<collector-slug>` on the recipient's account. |
+| `cmc/accept-v1` | recipient's own user-managed `:_cmc:apps:*` scope stream, content carries the capability URL | Plugin: reads offer via capability connection; creates local data-grant access on recipient's account with permissions from the offer; uses capability connection to deliver accept event (with grantedAccess apiEndpoint) to requester's platform; receives back-channel apiEndpoint in response; stores it in `clientData.cmc.counterparty` of the data-grant. Plugin also auto-creates `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` + `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` on the recipient's account, nested under whichever app-scope stream the recipient wrote the accept trigger to. |
 | `cmc/refuse-v1` | recipient's own user-managed `:_cmc:apps:*` scope stream, content carries capability URL | Plugin: delivers refuse via capability connection; capability is consumed. |
 | `cmc/revoke-v1` | either party's own user-managed `:_cmc:apps:*` scope stream, content carries `accessId` | Plugin: `accesses.delete` locally on the access; uses stored counterparty apiEndpoint to deliver `cmc/revoke-v1` to the other party's `:_cmc:inbox`; receiving plugin `accesses.delete`s its half of the pair. |
 
 Delivered counterparties of `cmc/request-v1` (when same-platform directed) / `cmc/accept-v1` / `cmc/refuse-v1` / `cmc/revoke-v1` land in the recipient's `:_cmc:inbox` — the one-shot lifecycle channel.
 
-**Family 2 — Chat (anchored per user-pair at `:_cmc:chats:<counterparty-slug>`):**
+**Family 2 — Chat (anchored per user-pair under the app/path scope at `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`):**
 
 | Event type | App writes to | Plugin orchestration |
 |---|---|---|
-| `cmc/chat-v1` | sender's `:_cmc:chats:<counterparty-slug>` stream (plugin auto-creates on first chat) | Plugin resolves the relevant access pair from the counterparty slug, delivers chat event to recipient's `:_cmc:chats:<counterparty-slug>` stream via stored apiEndpoint. Sent and received chat events live in the same per-counterparty stream on each side — one thread per user-pair regardless of how many collector relationships connect you. |
+| `cmc/chat-v1` | sender's `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` stream (plugin auto-creates on first chat) | Plugin resolves the relevant access pair from the counterparty slug, delivers chat event to recipient's matching `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` stream via stored apiEndpoint. Sent and received chat events live in the same per-counterparty stream on each side — one thread per user-pair per app-scope. |
 
-**Family 3 — System messages, incl. scope-update (anchored per collector-relationship at `:_cmc:collectors:<collector-slug>`):**
+**Family 3 — System messages, incl. scope-update (anchored per collector-relationship under the app/path scope at `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>`):**
 
 | Event type | App writes to | Plugin orchestration |
 |---|---|---|
-| `cmc/system-alert-v1` | operator's `:_cmc:collectors:<collector-slug>` stream | Plugin verifies the participant access has `features.systemMessaging: true`; delivers alert to participant's `:_cmc:collectors:<collector-slug>` stream via stored data-grant apiEndpoint; enforces per-participant rate limits. |
-| `cmc/system-ack-v1` | participant's `:_cmc:collectors:<collector-slug>` stream | Plugin delivers ack to operator's `:_cmc:collectors:<collector-slug>` stream via stored back-channel apiEndpoint. |
-| `cmc/system-scope-request-v1` | collector's `:_cmc:collectors:<collector-slug>` stream (collector → user proposes scope change) | Plugin pre-validates permission-chain rules locally (collector must hold manage rights on the underlying data-grant; new permissions must be ⊆ collector's own app permissions); delivers the ask to user's `:_cmc:collectors:<collector-slug>` stream via stored data-grant apiEndpoint. User can `cmc/system-scope-update-v1` to accept (or simply ignore to refuse). |
-| `cmc/system-scope-update-v1` | user's `:_cmc:collectors:<collector-slug>` stream (responds to a request OR self-initiated change) | Plugin calls `accesses.update` locally on the data-grant access; delivers the update to collector's `:_cmc:collectors:<collector-slug>` stream via stored back-channel apiEndpoint; receiving plugin emits `accessUpdated` socket event locally. |
+| `cmc/system-alert-v1` | operator's `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream | Plugin verifies the participant access has `features.systemMessaging: true`; delivers alert to participant's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream via stored data-grant apiEndpoint; enforces per-participant rate limits. |
+| `cmc/system-ack-v1` | participant's `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream | Plugin delivers ack to operator's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream via stored back-channel apiEndpoint. |
+| `cmc/system-scope-request-v1` | collector's `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream (collector → user proposes scope change) | Plugin pre-validates permission-chain rules locally (collector must hold manage rights on the underlying data-grant; new permissions must be ⊆ collector's own app permissions); delivers the ask to user's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream via stored data-grant apiEndpoint. User can `cmc/system-scope-update-v1` to accept (or simply ignore to refuse). |
+| `cmc/system-scope-update-v1` | user's `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream (responds to a request OR self-initiated change) | Plugin calls `accesses.update` locally on the data-grant access; delivers the update to collector's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream via stored back-channel apiEndpoint; receiving plugin emits `accessUpdated` socket event locally. |
 
 The four system event types share one stream per collector-relationship so a study's reminders don't bleed into clinical-care alerts from the same doctor, and scope-change history lives where the relationship itself lives.
 
@@ -185,8 +186,8 @@ The four system event types share one stream per collector-relationship so a stu
 A user can change scope on a CMC counterparty access through the standard Pryv API — `accesses.update` with a fresh permissions array. The plugin's post-hook on `accesses.update`:
 
 1. Detects the updated access carries `clientData.cmc.role: 'counterparty'`.
-2. Reads the stored counterparty apiEndpoint + collector-slug from the access's `clientData.cmc`.
-3. Auto-fires `cmc/system-scope-update-v1` to the counterparty's `:_cmc:collectors:<collector-slug>` stream so the counterparty's app is notified.
+2. Reads the stored counterparty apiEndpoint + collector-stream-id from the access's `clientData.cmc`.
+3. Auto-fires `cmc/system-scope-update-v1` to the counterparty's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream so the counterparty's app is notified.
 
 The user gets the standard `accesses.update` composite-id surface for scope changes without needing to write a CMC trigger event; the collector still hears about it on the same system channel as if the user had used `cmc/system-scope-update-v1` directly.
 
@@ -292,8 +293,8 @@ Output: short spec docs alongside this README (or expanded sections of this READ
 ### Phase C — Plugin skeleton & namespace registration
 
 1. Create `components/business/src/cmc/` (NOT `storages/datastores/` — CMC is a plugin, not a storage engine) with: plugin manifest, namespace-registration helper, write-hook registration, schema-validators directory, slug helpers, type-script source. No new storage engine, no new mall routing target — `:_cmc:*` events / accesses / streams use the existing per-user PG/Mongo storage paths.
-2. Register `:_cmc:` prefix with mall dispatcher for **write-hook routing only**. Reserve the four plugin-managed parent regions (`:_cmc:inbox`, `:_cmc:chats`, `:_cmc:collectors`, `:_cmc:apps`) so they auto-exist on every user account. Allow user `streams.create({parentId: ':_cmc:apps'})` for everything user-creatable. Reject `streams.create` directly under `:_cmc:` outside `:_cmc:apps`.
-3. Auto-provision the four reserved parent streams on user creation (system-stream-style — they always exist).
+2. Register `:_cmc:` prefix with mall dispatcher for **write-hook routing only**. Reserve the five plugin-managed parent regions (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`, `:_cmc:_internal`, `:_cmc:_internal:retries`) so they auto-exist on every user account. Allow user `streams.create({parentId: ':_cmc:apps'})` for everything user-creatable. Reject `streams.create` directly under `:_cmc:` outside `:_cmc:apps`. The `chats` / `collectors` sub-segments are plugin-reserved at any depth under `:_cmc:apps:<app-code>:...` and auto-created on demand by the plugin (user code may not create them).
+3. Auto-provision the five reserved parent streams on user creation (system-stream-style — they always exist).
 4. Wire into the API server hook chain (after access auth, before storage write). No `storages.init()` participation — the plugin doesn't own storage.
 5. Test: `[CMCNS]` namespace registration + reserved-root rejection + auto-provisioning + `:_cmc:apps` sub-stream creation (10–12 tests).
 
@@ -301,7 +302,7 @@ Output: short spec docs alongside this README (or expanded sections of this READ
 
 ### Phase D — Plugin orchestration framework + capability + accept/refuse
 
-1. Implement the **trigger-event dispatch loop**: plugin watches `cmc/*` writes across all `:_cmc:` regions (user-managed `:_cmc:apps:*` for lifecycle, plugin-managed `:_cmc:chats:*` / `:_cmc:collectors:*` for chat + system); dispatches to per-type orchestration handlers; updates trigger event content with `status` lifecycle.
+1. Implement the **trigger-event dispatch loop**: plugin watches `cmc/*` writes across all `:_cmc:` regions (user-managed `:_cmc:apps:*` for lifecycle, plugin-managed `:_cmc:apps:<app-code>:[<path>:]chats:*` / `:_cmc:apps:<app-code>:[<path>:]collectors:*` for chat + system); dispatches to per-type orchestration handlers; updates trigger event content with `status` lifecycle.
 2. Implement the plugin's **outbound HTTPS client** for making Pryv API calls to counterparty apiEndpoints. Includes timeout + audit logging. **Retry queue:** hidden companion stream `:_cmc:_internal:retries` in per-user main storage; one event per pending delivery with `content.{apiEndpoint, payload, attempts, nextAttemptAt}`. Queue management via standard `events.create` / `events.update` / `events.delete`. Survives core restart; pending deliveries wait for home core to recover (no cross-core failover in v1 — same semantics as the user's other queued work).
 3. Implement capability access minting on `cmc/request-v1` triggers with `capabilityRequested: true`. Materialize per-capability streams `:_cmc:_internal:offer:<capId>` (with the single request event) and `:_cmc:_internal:responses:<capId>` (empty, awaiting single accept/refuse). Grant the capability access `read` + `create-only` on those two streams.
 4. Implement `cmc/accept-v1` / `cmc/refuse-v1` orchestration:
@@ -326,20 +327,20 @@ Output: short spec docs alongside this README (or expanded sections of this READ
 
 ### Phase F — Chat + revoke + auto-anchor streams
 
-1. Implement `:_cmc:chats` parent + per-counterparty `:_cmc:chats:<counterparty-slug>` auto-creation hook in accept orchestration (so the anchor stream exists before the first chat write).
-2. Implement `cmc/chat-v1` orchestration: plugin resolves access pair from counterparty slug + delivers chat to counterparty's `:_cmc:chats:<counterparty-slug>` via stored apiEndpoint.
+1. Implement per-app/path `:chats` parent + per-counterparty `:chats:<counterparty-slug>` auto-creation hook (nested under whichever `:_cmc:apps:<app-code>:[<path>:]` scope stream the trigger was written to) in accept orchestration (so the anchor stream exists before the first chat write).
+2. Implement `cmc/chat-v1` orchestration: plugin resolves access pair from counterparty slug + delivers chat to counterparty's matching `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` via stored apiEndpoint.
 3. Implement `cmc/revoke-v1` orchestration: plugin `accesses.delete`s locally + delivers `cmc/revoke-v1` to counterparty's `:_cmc:inbox`; receiving plugin `accesses.delete`s its half and the anchor streams are left in place (history preserved).
 4. Quota / rate-limit per-source per-recipient on outbound deliveries. **Per-worker in-memory** sliding window. N× drift on N-worker cores accepted for v1; `cluster_kv` (master-held in-process) is the fallback if drift matters in practice.
 5. Test: `[CMCCHAT]` (8 tests, incl. per-counterparty stream auto-create idempotence), `[CMCREVOKE]` (8 tests), `[CMCRATE]` (4 tests).
 
-**Exit:** Chat works as one trigger on the sender's `:_cmc:chats:<counterparty-slug>`; revoke is a single trigger that tears down both halves of the access pair.
+**Exit:** Chat works as one trigger on the sender's `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`; revoke is a single trigger that tears down both halves of the access pair.
 
 ### Phase G — System channel (alerts + acks + scope-request + scope-update)
 
-1. Implement `:_cmc:collectors` parent + per-collector `:_cmc:collectors:<collector-slug>` auto-creation in accept orchestration (so the anchor stream exists at acceptance, before any system messages can flow).
-2. Implement `cmc/system-alert-v1` / `cmc/system-ack-v1` orchestrations: plugin delivers to counterparty's `:_cmc:collectors:<collector-slug>` via stored apiEndpoint.
-3. Implement `cmc/system-scope-request-v1` orchestration (collector side): plugin pre-validates permission-chain rules locally + delivers ask to user's `:_cmc:collectors:<collector-slug>` via stored data-grant apiEndpoint.
-4. Implement `cmc/system-scope-update-v1` orchestration (user side, both response-to-request AND self-initiated): plugin calls `accesses.update` locally on the data-grant access + delivers the update to collector's `:_cmc:collectors:<collector-slug>` via stored back-channel apiEndpoint. Receiving plugin emits `accessUpdated` socket event locally.
+1. Implement per-app/path `:collectors` parent + per-counterparty `:collectors:<counterparty-slug>` auto-creation (nested under whichever `:_cmc:apps:<app-code>:[<path>:]` scope stream the trigger was written to) in accept orchestration (so the anchor stream exists at acceptance, before any system messages can flow).
+2. Implement `cmc/system-alert-v1` / `cmc/system-ack-v1` orchestrations: plugin delivers to counterparty's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` via stored apiEndpoint.
+3. Implement `cmc/system-scope-request-v1` orchestration (collector side): plugin pre-validates permission-chain rules locally + delivers ask to user's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` via stored data-grant apiEndpoint.
+4. Implement `cmc/system-scope-update-v1` orchestration (user side, both response-to-request AND self-initiated): plugin calls `accesses.update` locally on the data-grant access + delivers the update to collector's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` via stored back-channel apiEndpoint. Receiving plugin emits `accessUpdated` socket event locally.
 5. Implement `accesses.update` post-hook: detect counterparty accesses + auto-fire `cmc/system-scope-update-v1` notification to the counterparty's collector stream. Implement double-fire suppression so the CMC trigger handler's own `accesses.update` call doesn't trigger a redundant notification.
 6. Enforce opt-in: counterparty access must carry `clientData.cmc.features.systemMessaging: true`.
 7. Operator-specific quota; critical alerts higher allowance.
