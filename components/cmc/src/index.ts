@@ -21,11 +21,14 @@ const outbound = require('./outbound.ts');
 const capability = require('./capability.ts');
 const acceptOrchestration = require('./acceptOrchestration.ts');
 const handleAccept = require('./handleAccept.ts');
+const dispatch = require('./dispatch.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
-  outbound, capability, acceptOrchestration, handleAccept,
+  outbound, capability, acceptOrchestration, handleAccept, dispatch,
 };
+
+export const { createDispatchMiddleware } = dispatch;
 
 // Hook factories at top-level for api-server integration.
 export const {
