@@ -75,7 +75,10 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       assert.equal(offer.id, 'evt-offer');
       assert.equal(calls.length, 1);
       assert.ok(calls[0].url.includes('events'));
-      assert.ok(calls[0].url.includes(encodeURIComponent(':_cmc:_internal:offer')));
+      // We query by event type — capability access permissions limit
+      // the response to the single offer event the access can see.
+      assert.ok(calls[0].url.includes('types'));
+      assert.ok(calls[0].url.includes(encodeURIComponent('cmc/request-v1')));
       assert.equal(calls[0].init.method, 'GET');
       assert.equal(calls[0].init.headers.authorization, 'Tok');
     });
