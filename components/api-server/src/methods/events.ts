@@ -62,12 +62,17 @@ export default async function (api: any) {
   // but CMC handlers were written against a `mall.accesses.{create,get,
   // update,delete}` shape. The adapter bridges the two and sets
   // apiEndpoint on create-results so outbound delivery has its target URL.
+  const cache = require('cache').default;
   const cmcMallAccessesAdapter = cmc.createMallAccessesAdapter({
     storageAccesses: storageLayer.accesses,
     apiEndpointBuild: ApiEndpoint.build.bind(ApiEndpoint),
     resolveUsername: async (userId: string) => {
       const u = await usersRepository.getUserById(userId);
       return u?.username;
+    },
+    invalidateAccessCache: (userId: string, accessId: string) => {
+      const cached = cache.getAccessLogicForId(userId, accessId);
+      if (cached != null) cache.unsetAccessLogic(userId, cached);
     },
     logger: getLogger('cmc:mall-accesses-adapter'),
   });

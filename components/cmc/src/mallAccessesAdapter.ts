@@ -54,6 +54,15 @@ type AdapterDeps = {
   apiEndpointBuild: ApiEndpointBuilder;
   resolveUsername: (userId: string) => Promise<string | undefined> | string | undefined;
   tokenGen?: () => string;
+  /**
+   * Best-effort cache invalidation: called by update/delete after the
+   * storage write succeeds. The api-server wires this to clear the
+   * per-user access-logic cache (`cache.unsetAccessLogic` after a
+   * `cache.getAccessLogicForId` lookup) so subsequent token-auth
+   * resolutions on the updated access see fresh permissions. No-op
+   * when undefined (e.g. unit tests).
+   */
+  invalidateAccessCache?: (userId: string, accessId: string) => void | Promise<void>;
   logger?: { debug: Function; warn: Function };
 };
 
@@ -130,6 +139,18 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
       const update: any = { ...params.update, modified: Date.now() / 1000 };
       await fromCallback((cb: any) =>
         storageAccesses.updateOne!({ id: userId }, { id: params.id }, update, cb));
+      // Cache invalidation — without this the per-user access-logic
+      // cache keeps stale permissions and subsequent token-auth
+      // resolutions on the updated access miss the new scope until
+      // the cache TTL expires. Best-effort; failure logged but not
+      // fatal.
+      try {
+        await deps.invalidateAccessCache?.(userId, params.id);
+      } catch (err: any) {
+        deps.logger?.warn?.('cmc/mall-accesses-adapter: cache invalidation failed (update)', {
+          userId, accessId: params.id, error: String(err?.message || err),
+        });
+      }
       // Re-read the updated access for the caller. Best-effort.
       if (storageAccesses.findOne != null) {
         const after: any = await fromCallback((cb: any) =>
@@ -143,7 +164,9 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
     },
 
     /**
-     * Delete an access. Storage layer removes the row.
+     * Delete an access. Storage layer removes the row + access cache
+     * is invalidated so a subsequent token-auth resolution doesn't
+     * resurrect the access from cache.
      */
     async delete (userId: string, params: any): Promise<any> {
       if (storageAccesses.removeOne == null) {
@@ -151,6 +174,13 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
       }
       await fromCallback((cb: any) =>
         storageAccesses.removeOne!({ id: userId }, { id: params.id }, cb));
+      try {
+        await deps.invalidateAccessCache?.(userId, params.id);
+      } catch (err: any) {
+        deps.logger?.warn?.('cmc/mall-accesses-adapter: cache invalidation failed (delete)', {
+          userId, accessId: params.id, error: String(err?.message || err),
+        });
+      }
       return { id: params.id };
     },
   };
