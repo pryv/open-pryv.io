@@ -31,6 +31,8 @@ const { TypeRepository, isSeriesType } = require('business').types;
 
 const { getLogger, getConfig } = require('@pryv/boiler');
 const { getPlatform } = require('platform');
+const { getStorageLayer } = require('storage');
+const { ApiEndpoint } = require('utils');
 
 const { pubsub } = require('messages');
 
@@ -53,6 +55,32 @@ export default async function (api: any) {
   const usersRepository = await getUsersRepository();
   const mall = await getMall();
   const platform = await getPlatform();
+  const storageLayer = await getStorageLayer();
+
+  // CMC: build a `mall.accesses` adapter backed by storageLayer.accesses.
+  // The Mall doesn't expose accesses — they live in a separate storage —
+  // but CMC handlers were written against a `mall.accesses.{create,get,
+  // update,delete}` shape. The adapter bridges the two and sets
+  // apiEndpoint on create-results so outbound delivery has its target URL.
+  const cmcMallAccessesAdapter = cmc.createMallAccessesAdapter({
+    storageAccesses: storageLayer.accesses,
+    apiEndpointBuild: ApiEndpoint.build.bind(ApiEndpoint),
+    resolveUsername: async (userId: string) => {
+      const u = await usersRepository.getUserById(userId);
+      return u?.username;
+    },
+    logger: getLogger('cmc:mall-accesses-adapter'),
+  });
+  // Compose a mall-with-accesses for the CMC modules' deps so they
+  // see `mall.accesses.{create,get,update,delete}` alongside the real
+  // `mall.streams` + `mall.events`. Mall uses class-instance getters
+  // for streams/events so Object.assign would drop them — use a
+  // forwarding object literal instead.
+  const mallForCmc: any = {
+    get streams () { return mall.streams; },
+    get events () { return mall.events; },
+    accesses: cmcMallAccessesAdapter,
+  };
   await eventsGetUtils.init();
 
   // Initialise the project version as soon as we can.
@@ -172,7 +200,7 @@ export default async function (api: any) {
     logger: getLogger('cmc:ensure-reserved-parents'),
   });
   const cmcCapabilityMintHook = cmc.createCapabilityMintHook({
-    mall,
+    mall: mallForCmc,
     errors,
     // Match Pryv's existing opaque-id style (base64url, 22 chars).
     idGen: () => require('crypto').randomBytes(16).toString('base64url'),
@@ -192,7 +220,7 @@ export default async function (api: any) {
     return { username, host };
   };
   const cmcDispatchMiddleware = cmc.createDispatchMiddleware({
-    mall,
+    mall: mallForCmc,
     fetch: globalThis.fetch,
     timeoutMs: 15_000,
     rateLimiter: cmcRateLimiter,
@@ -245,7 +273,7 @@ export default async function (api: any) {
   // shard / per-recent-activity scoping can be wired later.
   cmc.startRetryLoopIfEnabled({
     config,
-    mall,
+    mall: mallForCmc,
     selfIdentityFor: cmcSelfIdentityFor,
     fetch: globalThis.fetch,
     rateLimiter: cmcRateLimiter,

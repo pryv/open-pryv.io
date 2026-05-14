@@ -106,7 +106,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
     });
   });
 
-  describe.skip('[CMCNS-APPS] :_cmc:apps:<app-code> sub-stream creation (BLOCKED on auto-provisioning)', function () {
+  describe('[CMCNS-APPS] :_cmc:apps:<app-code> sub-stream creation (lazy auto-provision)', function () {
     it('[CN05] allows creating :_cmc:apps:my-app under :_cmc:apps', async function () {
       const res = await coreRequest
         .post(basePath)
@@ -149,7 +149,18 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
     });
   });
 
-  describe.skip('[CMCNS-EV] events.create write-hook validation (BLOCKED: needs :_cmc:apps:my-app stream to exist; provisioning regression)', function () {
+  describe('[CMCNS-EV] events.create write-hook validation', function () {
+    before(async function () {
+      // CN10/CN11 need `:_cmc:apps:my-app` to exist. The lazy auto-provision
+      // creates the five reserved parents up to `:_cmc:apps`; user-app
+      // scopes are user-creatable beneath that.
+      await coreRequest
+        .post(basePath)
+        .set('Authorization', token)
+        .send({ id: ':_cmc:apps:my-app', parentId: ':_cmc:apps', name: 'My App' })
+        .catch(() => {}); // idempotent — ignore if already exists
+    });
+
     it('[CN08] rejects unknown cmc/* event type (validates BEFORE storage)', async function () {
       const res = await coreRequest
         .post(eventsPath)
@@ -178,7 +189,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
       assert.ok(Array.isArray(res.body?.error?.data?.errors));
     });
 
-    it.skip('[CN10] accepts a fully-formed cmc/request-v1 (BLOCKED: needs :_cmc:apps:my-app stream to exist)', async function () {
+    it('[CN10] accepts a fully-formed cmc/request-v1 (lazy provision + mall.accesses adapter)', async function () {
       const res = await coreRequest
         .post(eventsPath)
         .set('Authorization', token)
@@ -200,7 +211,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
       assert.strictEqual(res.body?.event?.type, 'cmc/request-v1');
     });
 
-    it.skip('[CN11] allows app-defined event types on :_cmc:apps:* streams (BLOCKED: needs stream to exist)', async function () {
+    it('[CN11] allows app-defined event types on :_cmc:apps:* streams', async function () {
       const res = await coreRequest
         .post(eventsPath)
         .set('Authorization', token)

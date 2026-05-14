@@ -35,6 +35,7 @@ const anchorStreams = require('./anchorStreams.ts');
 const accessesUpdateHook = require('./accessesUpdateHook.ts');
 const retryScheduler = require('./retryScheduler.ts');
 const bootRetryLoop = require('./bootRetryLoop.ts');
+const mallAccessesAdapter = require('./mallAccessesAdapter.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
@@ -42,11 +43,13 @@ export {
   chatOrchestration, capabilityMintHook, inboxWriteHook, rateLimit,
   handleSystem, handleChat, handleRevoke, retryQueue, handleIncomingAccept,
   anchorStreams, accessesUpdateHook, retryScheduler, bootRetryLoop,
+  mallAccessesAdapter,
 };
 
 export const { createAccessesUpdatePostHook, runWithSuppression } = accessesUpdateHook;
 export const { RetryScheduler } = retryScheduler;
 export const { startRetryLoopIfEnabled } = bootRetryLoop;
+export const { createMallAccessesAdapter } = mallAccessesAdapter;
 
 export const { RateLimiter } = rateLimit;
 

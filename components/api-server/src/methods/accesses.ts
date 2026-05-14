@@ -401,6 +401,9 @@ export default async function produceAccessesApiMethods (api: any) {
 
   // UPDATE
 
+  // Adapter so the post-hook can write a local audit event into the
+  // collectors stream when an access is updated externally (the hook
+  // only uses mall.events.create).
   const cmcAccessesUpdateHook = cmc.createAccessesUpdatePostHook({
     mall,
     fetch: globalThis.fetch,
