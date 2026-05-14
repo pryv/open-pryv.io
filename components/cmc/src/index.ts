@@ -22,10 +22,12 @@ const capability = require('./capability.ts');
 const acceptOrchestration = require('./acceptOrchestration.ts');
 const handleAccept = require('./handleAccept.ts');
 const dispatch = require('./dispatch.ts');
+const chatOrchestration = require('./chatOrchestration.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
   outbound, capability, acceptOrchestration, handleAccept, dispatch,
+  chatOrchestration,
 };
 
 export const { createDispatchMiddleware } = dispatch;
