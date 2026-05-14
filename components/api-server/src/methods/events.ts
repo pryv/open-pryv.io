@@ -167,6 +167,13 @@ export default async function (api: any) {
   // -------------------------------------------------------------------- CREATE
 
   const cmcContentValidationHook = cmc.createCmcContentValidationHook({ errors });
+  const cmcCapabilityMintHook = cmc.createCapabilityMintHook({
+    mall,
+    errors,
+    // Match Pryv's existing opaque-id style (base64url, 22 chars).
+    idGen: () => require('crypto').randomBytes(16).toString('base64url'),
+    logger: getLogger('cmc:capability-mint'),
+  });
   api.register(
     'events.create',
     commonFns.getParamsValidation(methodsSchema.create.params),
@@ -175,6 +182,7 @@ export default async function (api: any) {
     validateEventContentAndCoerce,
     verifyCanCreateEventsOnStream,
     cmcContentValidationHook,
+    cmcCapabilityMintHook,
     detectAccountStream,
     validateAccountStreamForCreate,
     validateAccountStreamContent,

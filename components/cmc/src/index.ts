@@ -23,12 +23,15 @@ const acceptOrchestration = require('./acceptOrchestration.ts');
 const handleAccept = require('./handleAccept.ts');
 const dispatch = require('./dispatch.ts');
 const chatOrchestration = require('./chatOrchestration.ts');
+const capabilityMintHook = require('./capabilityMintHook.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
   outbound, capability, acceptOrchestration, handleAccept, dispatch,
-  chatOrchestration,
+  chatOrchestration, capabilityMintHook,
 };
+
+export const { createCapabilityMintHook } = capabilityMintHook;
 
 export const { createDispatchMiddleware } = dispatch;
 
