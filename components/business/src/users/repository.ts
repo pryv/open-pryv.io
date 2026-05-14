@@ -255,14 +255,28 @@ class UsersRepository {
     // TODO: re-enable CMC reserved-parent auto-provisioning here once the
     // order-dependent regression in account-seq.test.js [AC04 6041] is
     // understood. Direct experiment confirmed: ANY mall.streams.create
-    // call at this point breaks AC04 in a state-dependent way (passes in
-    // isolation; fails when AC01-AC03 run first). Cause not yet
-    // identified — appears unrelated to the CMC-specific stream IDs (the
-    // same failure occurs when creating a regular non-:_cmc:* stream).
-    // Provision function lives in components/cmc/src/provisioning.ts;
-    // currently called only by CMC integration tests via direct
-    // `await cmc.provisionUserStreams({...})` (see cmc-ns.test.js .skip
-    // blocks). Long-term plan: lazy provisioning on first :_cmc:* write.
+    // at this point breaks AC04 in a state-dependent way (passes in
+    // isolation; fails when AC01-AC03 run first).
+    //
+    // Debug findings (Phase H follow-up):
+    //  - The 403 surfaces as `invalid-access-token: Cannot find access
+    //    from token` from the request.login() personal-access token.
+    //  - request.login is called ONCE in the outer before(). Each
+    //    AC0X resetUsers cycle drops + re-inserts users, but the access
+    //    storage is untouched, so the token stays valid across cycles
+    //    UNLESS provisioning runs. Provisioning's mall.streams.create
+    //    calls somehow invalidate that access row by the time AC04
+    //    fires (hypothesis: integrity/serial cross-table side effect
+    //    when streams are tagged with accessId — not yet pinpointed).
+    //  - AC04 in isolation passes WITH provisioning enabled — the bug
+    //    only manifests cumulative across prior AC02/AC03 cycles.
+    //
+    // Workaround: provisioning runs no-op; the chats/collectors anchor
+    // streams are now created LAZILY at acceptance time by
+    // handleAccept + handleIncomingAccept (Phase F slice 3), so the
+    // operational impact is contained to the five reserved parents,
+    // which the plugin similarly creates on-demand on first :_cmc:*
+    // write. Keep this TODO open for follow-up.
     if (cmc != null && cmcLogger != null) { /* placeholder */ }
     return user;
   }
