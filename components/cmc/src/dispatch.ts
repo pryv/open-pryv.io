@@ -29,6 +29,7 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 const handleAcceptMod = require('./handleAccept.ts');
+const handleSystemMod = require('./handleSystem.ts');
 
 type SelfIdentity = { username: string; host: string };
 
@@ -125,10 +126,18 @@ async function dispatch (params: {
         // request triggers are handled separately by a capability-mint
         // middleware (Phase D slice 2). Dispatch loop is a no-op here.
         return { handled: false, eventType: event.type, status: 'skipped', reason: 'request-handled-elsewhere' };
+      case C.ET_SYSTEM_ALERT:
+        result = await handleSystemMod.handleSystemAlert({
+          userId, triggerEvent: event, selfIdentity, deps,
+        });
+        break;
+      case C.ET_SYSTEM_ACK:
+        result = await handleSystemMod.handleSystemAck({
+          userId, triggerEvent: event, selfIdentity, deps,
+        });
+        break;
       case C.ET_REVOKE:
       case C.ET_CHAT:
-      case C.ET_SYSTEM_ALERT:
-      case C.ET_SYSTEM_ACK:
       case C.ET_SYSTEM_SCOPE_REQUEST:
       case C.ET_SYSTEM_SCOPE_UPDATE:
         // Handlers for these land in later phases; for now skip without
