@@ -25,12 +25,15 @@ const dispatch = require('./dispatch.ts');
 const chatOrchestration = require('./chatOrchestration.ts');
 const capabilityMintHook = require('./capabilityMintHook.ts');
 const inboxWriteHook = require('./inboxWriteHook.ts');
+const rateLimit = require('./rateLimit.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
   outbound, capability, acceptOrchestration, handleAccept, dispatch,
-  chatOrchestration, capabilityMintHook, inboxWriteHook,
+  chatOrchestration, capabilityMintHook, inboxWriteHook, rateLimit,
 };
+
+export const { RateLimiter } = rateLimit;
 
 export const { createCapabilityMintHook } = capabilityMintHook;
 export const { createInboxWriteHook } = inboxWriteHook;
