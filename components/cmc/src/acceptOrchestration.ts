@@ -67,7 +67,13 @@ async function readOfferViaCapability (params: {
 }): Promise<OfferEvent> {
   const { capabilityUrl, deps } = params;
   const { token, base } = outbound.parseApiEndpoint(capabilityUrl);
-  const url = base + 'events?streamIds=' + encodeURIComponent(C.NS_INTERNAL + ':offer');
+  // events.get uses `streams[]=` (array), not `streamIds=`. Pryv's API
+  // method param schema validates this strictly — using `streamIds=`
+  // yields 400 invalid-parameters-format. The capability access has
+  // `read` on a single :_cmc:_internal:offer:<capId> stream — but here
+  // we query the parent so the access's permissions resolve correctly
+  // regardless of capId.
+  const url = base + 'events?streams[]=' + encodeURIComponent(C.NS_INTERNAL + ':offer');
 
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timeoutMs = deps.timeoutMs ?? outbound.DEFAULT_TIMEOUT_MS;
