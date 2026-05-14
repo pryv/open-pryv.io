@@ -174,6 +174,7 @@ export default async function (api: any) {
     idGen: () => require('crypto').randomBytes(16).toString('base64url'),
     logger: getLogger('cmc:capability-mint'),
   });
+  const cmcInboxWriteHook = cmc.createInboxWriteHook({ errors });
   api.register(
     'events.create',
     commonFns.getParamsValidation(methodsSchema.create.params),
@@ -183,6 +184,7 @@ export default async function (api: any) {
     verifyCanCreateEventsOnStream,
     cmcContentValidationHook,
     cmcCapabilityMintHook,
+    cmcInboxWriteHook,
     detectAccountStream,
     validateAccountStreamForCreate,
     validateAccountStreamContent,
