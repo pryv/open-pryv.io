@@ -204,13 +204,6 @@ export default async function (api: any) {
     mall,
     logger: getLogger('cmc:ensure-reserved-parents'),
   });
-  const cmcCapabilityMintHook = cmc.createCapabilityMintHook({
-    mall: mallForCmc,
-    errors,
-    // Match Pryv's existing opaque-id style (base64url, 22 chars).
-    idGen: () => require('crypto').randomBytes(16).toString('base64url'),
-    logger: getLogger('cmc:capability-mint'),
-  });
   const cmcInboxWriteHook = cmc.createInboxWriteHook({ errors });
   const cmcRateLimiter = new cmc.rateLimit.RateLimiter();
   const cmcDispatchLogger = getLogger('cmc:dispatch');
@@ -241,6 +234,17 @@ export default async function (api: any) {
     if (host == null || host === '') host = 'localhost';
     return { username, host };
   };
+  // capabilityMintHook needs cmcSelfIdentityFor to stamp the canonical
+  // requester host on the offer event (so accepter's inferCounterparty
+  // doesn't fall back to the per-user URL hostname). Wired AFTER
+  // cmcSelfIdentityFor is declared.
+  const cmcCapabilityMintHook = cmc.createCapabilityMintHook({
+    mall: mallForCmc,
+    errors,
+    idGen: () => require('crypto').randomBytes(16).toString('base64url'),
+    logger: getLogger('cmc:capability-mint'),
+    selfIdentityFor: cmcSelfIdentityFor,
+  });
   const cmcDispatchMiddleware = cmc.createDispatchMiddleware({
     mall: mallForCmc,
     fetch: globalThis.fetch,

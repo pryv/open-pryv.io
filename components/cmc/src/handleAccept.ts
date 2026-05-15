@@ -401,21 +401,41 @@ async function handleRefuse (params: {
 function inferCounterparty (offer: any, capabilityUrl: string): { username: string; host: string } | null {
   const meta = offer?.content?.requesterMeta;
   let username: string | null = null;
-  if (typeof meta?.username === 'string' && meta.username.length > 0) {
+  // Prefer the canonical username stamped by the requester's plugin
+  // at capability mint (offer.content.requesterUsername). Fall back to
+  // app-supplied requesterMeta.username, then meta.from.username.
+  const stampedUsername = offer?.content?.requesterUsername;
+  if (typeof stampedUsername === 'string' && stampedUsername.length > 0) {
+    username = stampedUsername;
+  } else if (typeof meta?.username === 'string' && meta.username.length > 0) {
     username = meta.username;
   } else if (typeof meta?.from?.username === 'string') {
     username = meta.from.username;
   }
   if (username == null) return null;
 
-  let host: string;
-  try {
-    const u = new URL(capabilityUrl);
-    host = u.hostname;
-    if (u.port) host += ':' + u.port;
-  } catch (_e) {
-    return null;
+  // Prefer the canonical requester host stamped by the requester's
+  // plugin at capability mint (offer.content.requesterHost). Falling
+  // back to the capability URL's hostname is wrong in subdomain-style
+  // deployments: e.g. https://<token>@<username>.pryv.me/ → hostname
+  // = '<username>.pryv.me', which produces a slug different from the
+  // requester's selfIdentity slug (`pryv.me`). Both sides must agree
+  // on the same slug for chat / system delivery to land in matching
+  // streams.
+  let host: string | null = null;
+  const stampedHost = offer?.content?.requesterHost;
+  if (typeof stampedHost === 'string' && stampedHost.length > 0) {
+    host = stampedHost;
+  } else {
+    try {
+      const u = new URL(capabilityUrl);
+      host = u.hostname;
+      if (u.port) host += ':' + u.port;
+    } catch (_e) {
+      return null;
+    }
   }
+  if (host == null) return null;
   return { username, host };
 }
 

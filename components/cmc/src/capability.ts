@@ -92,8 +92,17 @@ async function mintCapability (params: {
   triggerEvent: RequestEventLike;
   ttlSeconds?: number;
   deps: MintDeps;
+  // Optional: when present, the requester's CANONICAL identity is
+  // stamped on the offer event content (`requesterUsername`,
+  // `requesterHost`). The accepter's handleAccept prefers these over
+  // the capability URL's hostname, which in subdomain-style
+  // deployments (e.g. https://<username>.pryv.me/) bakes the username
+  // into the host and gives a different slug on each side. Pass the
+  // selfIdentity result here when wiring the hook.
+  requesterIdentity?: { username: string; host: string };
 }): Promise<MintResult> {
   const { userId, triggerEvent, deps } = params;
+  const requesterIdentity = params.requesterIdentity;
   const ttlSeconds = params.ttlSeconds ?? DEFAULT_TTL_SECONDS;
   const idGen = deps.idGen ?? defaultIdGen;
   const now = deps.now ?? defaultNow;
@@ -154,6 +163,17 @@ async function mintCapability (params: {
     if (typeof sid === 'string' && sid.startsWith(C.NS_APPS + ':')) {
       offerContent.originStreamId = sid;
       break;
+    }
+  }
+  // Stamp canonical requester identity (when supplied by the caller).
+  // The accepter's handleAccept prefers requesterHost over the
+  // capability URL hostname — see inferCounterparty.
+  if (requesterIdentity != null) {
+    if (typeof requesterIdentity.username === 'string' && requesterIdentity.username.length > 0) {
+      offerContent.requesterUsername = requesterIdentity.username;
+    }
+    if (typeof requesterIdentity.host === 'string' && requesterIdentity.host.length > 0) {
+      offerContent.requesterHost = requesterIdentity.host;
     }
   }
 

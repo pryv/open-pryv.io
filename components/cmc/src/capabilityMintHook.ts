@@ -46,6 +46,14 @@ type Deps = {
   now?: () => number;
   serviceUrlBase?: string;
   logger?: { debug: Function; warn: Function };
+  // Optional: when present, the resolved {username, host} is stamped on
+  // the offer event as content.requesterHost so the accepter's
+  // handleAccept can compute the counterparty's CANONICAL host (e.g.
+  // `pryv.me` in a federated subdomain-style deployment) instead of
+  // the per-user URL hostname (`<username>.pryv.me`). Without this,
+  // both sides compute different slugs for the same identity and
+  // chat / system delivery 4xx with `unknown-referenced-resource`.
+  selfIdentityFor?: (userId: string) => Promise<{ username: string; host: string }> | { username: string; host: string };
 };
 
 type Middleware = (context: any, params: any, result: any, next: any) => any | Promise<any>;
@@ -69,6 +77,15 @@ function createCapabilityMintHook (deps: Deps): Middleware {
       ));
     }
 
+    let requesterIdentity: { username: string; host: string } | null = null;
+    if (typeof deps.selfIdentityFor === 'function') {
+      try {
+        requesterIdentity = await Promise.resolve(deps.selfIdentityFor(userId));
+      } catch (_e) {
+        requesterIdentity = null;
+      }
+    }
+
     try {
       const result = await capabilityMod.mintCapability({
         userId,
@@ -79,6 +96,7 @@ function createCapabilityMintHook (deps: Deps): Middleware {
           now: deps.now,
           serviceUrlBase: deps.serviceUrlBase,
         },
+        requesterIdentity: requesterIdentity ?? undefined,
       });
 
       // Stamp the trigger's content BEFORE createEvent persists it, so
