@@ -350,7 +350,10 @@ async function handleIncomingAccept (params: {
     backChannelAccessId: access.id,
     backChannelApiEndpoint: (access as any).apiEndpoint,
     anchorStreamIds: created,
-    appCode,
+    // appCode is guaranteed non-null by the scope-resolution branches
+    // above (the fallback sets it to 'unknown'), but TS narrowing
+    // doesn't carry through the multiple if-chains. Coerce to string.
+    appCode: appCode as string,
     counterparty,
   };
 }

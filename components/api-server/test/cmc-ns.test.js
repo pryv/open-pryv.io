@@ -161,20 +161,35 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
         .catch(() => {}); // idempotent — ignore if already exists
     });
 
-    it('[CN08] rejects unknown cmc/* event type (validates BEFORE storage)', async function () {
+    it('[CN08] passes through unrecognised types under shared classes (post class/format rename)', async function () {
+      // After the Plan 68 rename to class/format-style names, the CMC
+      // plugin's class namespaces (consent, message, notification) are
+      // shared with potentially app-defined formats. We no longer
+      // claim every event in those classes — only the exact set of
+      // CMC-known types is intercepted for content validation. An
+      // unrecognised type under a `:_cmc:apps:*` stream passes through
+      // and is persisted (the app may be using its own custom format).
       const res = await coreRequest
         .post(eventsPath)
         .set('Authorization', token)
         .send({
           streamIds: [':_cmc:apps:my-app'],
-          type: 'cmc/nonsense-v1',
-          content: {},
+          type: 'consent/something-app-defined',
+          content: { hello: 'world' },
         });
-      assert.strictEqual(res.status, 400);
-      assert.strictEqual(res.body?.error?.data?.id, 'cmc-unknown-event-type');
+      assert.strictEqual(res.status, 201);
+      assert.strictEqual(res.body?.event?.type, 'consent/something-app-defined');
     });
 
     it('[CN09] rejects consent/request-cmc with missing required fields', async function () {
+      // Since `consent/request-cmc` is published in the canonical
+      // pryv/data-types directory, the api-server's upstream JSON-schema
+      // validator (z-schema, fed by `service.eventTypes`) fires BEFORE
+      // the CMC content validator. Errors land as
+      // `invalid-parameters-format` with the JSON-schema validation
+      // detail in `error.data` (an array of schema-violation entries).
+      // The CMC validator (`cmc-invalid-event-content`) remains as
+      // defense-in-depth for cases the upstream schema can't express.
       const res = await coreRequest
         .post(eventsPath)
         .set('Authorization', token)
@@ -184,9 +199,15 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
           content: { to: null },
         });
       assert.strictEqual(res.status, 400);
-      assert.strictEqual(res.body?.error?.data?.id, 'cmc-invalid-event-content');
-      assert.strictEqual(res.body?.error?.data?.eventType, 'consent/request-cmc');
-      assert.ok(Array.isArray(res.body?.error?.data?.errors));
+      assert.strictEqual(res.body?.error?.id, 'invalid-parameters-format');
+      assert.ok(Array.isArray(res.body?.error?.data),
+        'expected error.data to be the array of JSON-schema violations');
+      // At least one violation should mention the missing `request` field.
+      const hasRequestViolation = res.body.error.data.some((e) =>
+        Array.isArray(e.params) && e.params.includes('request'));
+      assert.ok(hasRequestViolation,
+        'expected a violation about the missing `request` field; got ' +
+        JSON.stringify(res.body.error.data));
     });
 
     it('[CN10] accepts a fully-formed consent/request-cmc (lazy provision + mall.accesses adapter)', async function () {

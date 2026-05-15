@@ -35,7 +35,10 @@ const outbound = require('./outbound.ts');
 
 // One process-wide suppression context. CMC handlers enter via
 // runWithSuppression(); the post-hook reads via isSuppressed().
-const suppressionStorage = new AsyncLocalStorage<{ suppressed: boolean }>();
+// `AsyncLocalStorage` is loaded via require() (CJS interop) so TS
+// sees it as untyped — cast to `any` to attach a typed-store shape
+// inline. Functional behaviour identical; build-time only.
+const suppressionStorage: any = new (AsyncLocalStorage as any)();
 
 function isSuppressed (): boolean {
   return suppressionStorage.getStore()?.suppressed === true;
