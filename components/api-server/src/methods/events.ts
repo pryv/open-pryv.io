@@ -216,12 +216,29 @@ export default async function (api: any) {
   const cmcDispatchLogger = getLogger('cmc:dispatch');
   const cmcSelfIdentityFor = async (userId: string) => {
     // username: pull from the users repository (cached behind the scenes).
-    // host: take dns.domain when configured; fall back to service.name or
-    //   'localhost' for dev. The host MUST match what counterparties see
-    //   on the URL bar / apiEndpoint — same as `/service/info`'s register.
+    // host: the canonical hostname clients see when calling this api.
+    // Priority:
+    //   1. dns.domain (multi-core deploys serve from <id>.<domain>; the
+    //      bare domain is the counterparty-facing identity).
+    //   2. URL host extracted from service.api or service.register —
+    //      a real URL with a hostname (and optional port).
+    //   3. 'localhost' as last-resort dev fallback.
+    // service.name is a HUMAN LABEL ("Local Dev", "Health Data Safe")
+    // — NEVER use it as a host; the slug builder will reject anything
+    // with spaces.
     const user = await usersRepository.getUserById(userId);
     const username = user?.username || 'unknown';
-    const host = config.get('dns:domain') || (config.get('service:name') || 'localhost');
+    let host = config.get('dns:domain');
+    if (host == null || host === '') {
+      const apiUrl = config.get('service:api') || config.get('service:register');
+      if (typeof apiUrl === 'string' && apiUrl.length > 0) {
+        try {
+          const u = new URL(apiUrl.replace('{username}', 'x'));
+          host = u.host;
+        } catch (_e) { /* fall through to localhost */ }
+      }
+    }
+    if (host == null || host === '') host = 'localhost';
     return { username, host };
   };
   const cmcDispatchMiddleware = cmc.createDispatchMiddleware({

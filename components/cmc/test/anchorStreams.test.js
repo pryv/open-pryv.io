@@ -38,7 +38,7 @@ function fakeMall (opts = {}) {
 }
 
 describe('[CMCAN] cmc/anchorStreams', () => {
-  it('[AN01] creates 4 streams: chats parent + chat leaf + collectors parent + collector leaf', async () => {
+  it('[AN01] creates the 4 anchor streams + walks scope ancestors that don\'t exist yet', async () => {
     const mall = fakeMall();
     const r = await provisionAnchorStreams({
       userId: 'u1',
@@ -47,9 +47,16 @@ describe('[CMCAN] cmc/anchorStreams', () => {
       mall,
     });
     assert.equal(r.ok, true);
+    // 4 anchor streams in the result (scope ancestors are ensured but not
+    // counted in the returned set — they belong to the user's app, not the
+    // peer-anchor leaves).
     assert.equal(r.created.length, 4);
     const ids = mall.calls.streamsCreated.map((s) => s.id);
+    // Scope ancestors are walked first (under :_cmc:apps): the bare app
+    // parent + the per-request scope. Then the four anchor streams.
     assert.deepEqual(ids, [
+      ':_cmc:apps:my-app',
+      ':_cmc:apps:my-app:campaign-2026',
       ':_cmc:apps:my-app:campaign-2026:chats',
       ':_cmc:apps:my-app:campaign-2026:collectors',
       ':_cmc:apps:my-app:campaign-2026:chats:alice--pryv-me',

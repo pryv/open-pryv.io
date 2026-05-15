@@ -140,27 +140,36 @@ function permissionsFromOffer (offerEvent: OfferEvent): Permission[] {
 
 /**
  * Build the access-create payload for the recipient's local data-grant.
- * The access has read/contribute/etc. on the offer's permissions and
- * carries the counterparty identity in clientData.cmc.role='counterparty'.
+ * The access has read/contribute/etc. on the offer's permissions PLUS
+ * contribute on the anchor chat + collector streams (so the requester
+ * can POST chat / system messages to us via this same apiEndpoint —
+ * the data-grant is also the messaging channel from the requester's side).
+ * Carries the counterparty identity in clientData.cmc.role='counterparty'.
  *
- * The recipient's plugin will store the requester's back-channel apiEndpoint
- * on this access in a follow-up step (so chats / system messages can be
- * delivered in the reverse direction).
+ * `extraPermissions` (e.g. our anchor streams) are appended to the base
+ * permissions — caller is responsible for ensuring the streams exist
+ * (handleAccept provisions them before calling accesses.create when it
+ * has the scope; if not, the callers fall back to lazy creation).
  */
 function buildDataGrantPayload (params: {
   offerEvent: OfferEvent;
   counterparty: { username: string; host: string };
   accessName?: string;
   features?: { chat?: boolean; systemMessaging?: boolean };
+  extraPermissions?: Permission[];
 }): any {
-  const { offerEvent, counterparty, accessName, features } = params;
+  const { offerEvent, counterparty, accessName, features, extraPermissions } = params;
   const meta = offerEvent?.content?.requesterMeta ?? {};
   const computedName = accessName ??
     ('cmc:' + (meta.appId || 'app') + ':' + counterparty.username + '@' + counterparty.host);
+  const basePerms = permissionsFromOffer(offerEvent);
+  const allPerms = Array.isArray(extraPermissions) && extraPermissions.length > 0
+    ? basePerms.concat(extraPermissions)
+    : basePerms;
   return {
     type: 'shared',
     name: computedName,
-    permissions: permissionsFromOffer(offerEvent),
+    permissions: allPerms,
     clientData: {
       cmc: {
         role: 'counterparty',
@@ -182,21 +191,40 @@ function buildDataGrantPayload (params: {
  */
 async function deliverAcceptViaCapability (params: {
   capabilityUrl: string;
+  capabilityId: string;
   dataGrantApiEndpoint: string;
   counterparty: { username: string; host: string };
   features?: { chat?: boolean; systemMessaging?: boolean };
+  // Carry the requester's app-code (from offer.requesterMeta.appId),
+  // the per-request origin streamId (from offer.originStreamId), and
+  // the offer-event id back so the requester's handleIncomingAccept
+  // can mint the back-channel access exactly scoped to the original
+  // app + per-request sub-path. Without these the back-channel falls
+  // back to bare :_cmc:apps:<app-code> and chat / system handlers
+  // that target per-request streams can't resolve it.
+  requesterAppCode?: string;
+  requesterOriginStreamId?: string;
+  offerEventId?: string;
   deps: CapabilityDeps;
 }): Promise<{ ok: boolean; response: any }> {
+  // The capability access has create-only on the per-capability
+  // responses stream — :_cmc:_internal:responses:<capId>, not the
+  // parent. Build the leaf id from capabilityId (carried in the
+  // offer event's content).
+  const responsesStreamId = C.responsesStreamIdFor(params.capabilityId);
   const r = await outbound.postToPeer({
     apiEndpoint: params.capabilityUrl,
     path: 'events',
     body: {
-      streamIds: [C.NS_INTERNAL + ':responses'],
+      streamIds: [responsesStreamId],
       type: C.ET_ACCEPT,
       content: {
         from: params.counterparty,
         grantedAccess: { apiEndpoint: params.dataGrantApiEndpoint },
         features: params.features ?? null,
+        requesterAppCode: params.requesterAppCode ?? null,
+        requesterOriginStreamId: params.requesterOriginStreamId ?? null,
+        originalEventId: params.offerEventId ?? null,
       },
     },
     deps: params.deps,
@@ -210,15 +238,17 @@ async function deliverAcceptViaCapability (params: {
  */
 async function deliverRefuseViaCapability (params: {
   capabilityUrl: string;
+  capabilityId: string;
   counterparty: { username: string; host: string };
   reason?: any;
   deps: CapabilityDeps;
 }): Promise<{ ok: boolean; response: any }> {
+  const responsesStreamId = C.responsesStreamIdFor(params.capabilityId);
   const r = await outbound.postToPeer({
     apiEndpoint: params.capabilityUrl,
     path: 'events',
     body: {
-      streamIds: [C.NS_INTERNAL + ':responses'],
+      streamIds: [responsesStreamId],
       type: C.ET_REFUSE,
       content: {
         from: params.counterparty,

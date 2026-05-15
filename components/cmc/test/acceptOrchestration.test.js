@@ -186,10 +186,11 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
   });
 
   describe('[CMCAO-DA] deliverAcceptViaCapability', () => {
-    it('[AO10] POSTs cmc/accept-v1 to the responses stream with grantedAccess.apiEndpoint', async () => {
+    it('[AO10] POSTs cmc/accept-v1 to the per-capability responses stream with grantedAccess.apiEndpoint', async () => {
       const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r1' } } });
       const r = await deliverAcceptViaCapability({
         capabilityUrl: 'https://Tok@example.com/',
+        capabilityId: 'cap-xyz',
         dataGrantApiEndpoint: 'https://X@recipient.example.com/',
         counterparty: { username: 'alice', host: 'example.com' },
         deps: { fetch },
@@ -197,7 +198,7 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       assert.equal(r.ok, true);
       assert.equal(calls.length, 1);
       const sent = JSON.parse(calls[0].init.body);
-      assert.deepEqual(sent.streamIds, [':_cmc:_internal:responses']);
+      assert.deepEqual(sent.streamIds, [':_cmc:_internal:responses:cap-xyz']);
       assert.equal(sent.type, 'cmc/accept-v1');
       assert.equal(sent.content.grantedAccess.apiEndpoint, 'https://X@recipient.example.com/');
       assert.deepEqual(sent.content.from, { username: 'alice', host: 'example.com' });
@@ -207,6 +208,7 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       const { fetch } = fakeFetch({ status: 400, body: { error: 'bad' } });
       const r = await deliverAcceptViaCapability({
         capabilityUrl: 'https://Tok@example.com/',
+        capabilityId: 'cap-xyz',
         dataGrantApiEndpoint: 'https://X@recipient.example.com/',
         counterparty: { username: 'alice', host: 'example.com' },
         deps: { fetch },
@@ -217,16 +219,18 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
   });
 
   describe('[CMCAO-DR] deliverRefuseViaCapability', () => {
-    it('[AO12] POSTs cmc/refuse-v1 to the responses stream with optional reason', async () => {
+    it('[AO12] POSTs cmc/refuse-v1 to the per-capability responses stream with optional reason', async () => {
       const { fetch, calls } = fakeFetch({ status: 201, body: {} });
       const r = await deliverRefuseViaCapability({
         capabilityUrl: 'https://Tok@example.com/',
+        capabilityId: 'cap-xyz',
         counterparty: { username: 'alice', host: 'example.com' },
         reason: { en: 'Not at this time.' },
         deps: { fetch },
       });
       assert.equal(r.ok, true);
       const sent = JSON.parse(calls[0].init.body);
+      assert.deepEqual(sent.streamIds, [':_cmc:_internal:responses:cap-xyz']);
       assert.equal(sent.type, 'cmc/refuse-v1');
       assert.deepEqual(sent.content.reason, { en: 'Not at this time.' });
     });
@@ -235,6 +239,7 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       const { fetch, calls } = fakeFetch({ status: 201, body: {} });
       await deliverRefuseViaCapability({
         capabilityUrl: 'https://Tok@example.com/',
+        capabilityId: 'cap-xyz',
         counterparty: { username: 'alice', host: 'example.com' },
         deps: { fetch },
       });

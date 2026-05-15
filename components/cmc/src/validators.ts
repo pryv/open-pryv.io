@@ -155,8 +155,30 @@ function validateAccept (content: any): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
-  if (typeof content.capabilityUrl !== 'string' || content.capabilityUrl.length === 0) {
-    errors.push('content.capabilityUrl: required, must be a non-empty string');
+  // cmc/accept-v1 has TWO shapes:
+  //   A. LOCAL TRIGGER  — written by the accepter's app to their own
+  //      :_cmc:apps:<app>:* stream to start the accept flow. Required:
+  //      capabilityUrl. Optional: accessName, extra.
+  //   B. PEER-DELIVERED — written by the accepter's plugin to the
+  //      requester's :_cmc:_internal:responses:<capId> stream (via
+  //      capability) AND/OR to the requester's :_cmc:inbox (via the
+  //      requester's back-channel after accepting). Required:
+  //      grantedAccess.apiEndpoint (or content.from for the inbox case).
+  //
+  // The shape is disambiguated by which fields are present. Strict
+  // schema would split this into two event types — kept as one for v1
+  // wire-compat. Either shape passes; arbitrary extras outside the
+  // two field-sets pass too (the dispatch ignores them).
+  const hasCapabilityUrl = typeof content.capabilityUrl === 'string' && content.capabilityUrl.length > 0;
+  const hasGrantedAccess = isPlainObject(content.grantedAccess) &&
+    typeof content.grantedAccess.apiEndpoint === 'string' &&
+    content.grantedAccess.apiEndpoint.length > 0;
+  const hasFromOnly = isPlainObject(content.from) &&
+    typeof content.from.username === 'string' &&
+    typeof content.from.host === 'string';
+
+  if (!hasCapabilityUrl && !hasGrantedAccess && !hasFromOnly) {
+    errors.push('content: must carry either capabilityUrl (local trigger) OR grantedAccess.apiEndpoint (peer-delivered)');
   }
 
   if (content.extra != null) {
@@ -301,6 +323,24 @@ function validateSystemScopeUpdate (content: any): ValidationResult {
 
 // --- Dispatcher ---
 
+function validateBackChannel (content: any): ValidationResult {
+  if (content == null || typeof content !== 'object') {
+    return fail('content: must be an object');
+  }
+  const errors: string[] = [];
+  if (content.from == null || typeof content.from.username !== 'string' ||
+      typeof content.from.host !== 'string') {
+    errors.push('content.from.{username,host}: required strings');
+  }
+  if (typeof content.apiEndpoint !== 'string' || content.apiEndpoint.length === 0) {
+    errors.push('content.apiEndpoint: required non-empty string');
+  }
+  // remoteChatStreamId / remoteCollectorStreamId / appCode are optional
+  // (older requesters may not send them; the receiver tolerates absence
+  // and falls back to whatever was already on the data-grant access).
+  return errors.length === 0 ? ok() : fail(...errors);
+}
+
 const VALIDATORS: { [k: string]: (content: any) => ValidationResult } = {
   [C.ET_REQUEST]: validateRequest,
   [C.ET_ACCEPT]: validateAccept,
@@ -311,6 +351,7 @@ const VALIDATORS: { [k: string]: (content: any) => ValidationResult } = {
   [C.ET_SYSTEM_ACK]: validateSystemAck,
   [C.ET_SYSTEM_SCOPE_REQUEST]: validateSystemScopeRequest,
   [C.ET_SYSTEM_SCOPE_UPDATE]: validateSystemScopeUpdate,
+  [C.ET_BACK_CHANNEL]: validateBackChannel,
 };
 
 function isKnownEventType (eventType: string): boolean {
@@ -336,4 +377,5 @@ export {
   validateSystemAck,
   validateSystemScopeRequest,
   validateSystemScopeUpdate,
+  validateBackChannel,
 };

@@ -44,12 +44,18 @@
  */
 
 // --- Reserved root + plugin-managed parent stream-ids ---
+//
+// All :_cmc:* identifiers compose from NS. If the namespace is ever
+// rebranded (e.g. to ':_xchg:' or similar), changing NS alone updates
+// every constant + every helper that builds a stream-id, and every
+// classification predicate / regex below picks up the new prefix
+// automatically.
 
 const NS = ':_cmc:';
-const NS_INBOX = ':_cmc:inbox';
-const NS_APPS = ':_cmc:apps';
-const NS_INTERNAL = ':_cmc:_internal';
-const NS_INTERNAL_RETRIES = ':_cmc:_internal:retries';
+const NS_INBOX = NS + 'inbox';
+const NS_APPS = NS + 'apps';
+const NS_INTERNAL = NS + '_internal';
+const NS_INTERNAL_RETRIES = NS_INTERNAL + ':retries';
 
 // The five parents auto-provisioned on every user account.
 const RESERVED_PARENT_STREAM_IDS = [
@@ -165,8 +171,16 @@ const ET_SYSTEM_ACK = 'cmc/system-ack-v1';
 const ET_SYSTEM_SCOPE_REQUEST = 'cmc/system-scope-request-v1';
 const ET_SYSTEM_SCOPE_UPDATE = 'cmc/system-scope-update-v1';
 const ET_RETRY = 'cmc/retry-v1';
+// Back-channel info delivery (requester → accepter, post-acceptance).
+// After the requester mints the back-channel access (handleIncomingAccept),
+// they POST one of these to the accepter's :_cmc:inbox via the data-grant
+// URL (which now carries inbox create-only). The accepter's plugin updates
+// the data-grant access's clientData.cmc.counterparty with the requester's
+// apiEndpoint + remote stream-ids so future chat / system deliveries from
+// the accepter to the requester resolve cleanly.
+const ET_BACK_CHANNEL = 'cmc/back-channel-v1';
 
-const EVENT_TYPES_LIFECYCLE = [ET_REQUEST, ET_ACCEPT, ET_REFUSE, ET_REVOKE];
+const EVENT_TYPES_LIFECYCLE = [ET_REQUEST, ET_ACCEPT, ET_REFUSE, ET_REVOKE, ET_BACK_CHANNEL];
 const EVENT_TYPES_CHAT = [ET_CHAT];
 const EVENT_TYPES_SYSTEM = [
   ET_SYSTEM_ALERT,
@@ -219,6 +233,7 @@ export {
   ET_SYSTEM_SCOPE_REQUEST,
   ET_SYSTEM_SCOPE_UPDATE,
   ET_RETRY,
+  ET_BACK_CHANNEL,
   EVENT_TYPES_LIFECYCLE,
   EVENT_TYPES_CHAT,
   EVENT_TYPES_SYSTEM,

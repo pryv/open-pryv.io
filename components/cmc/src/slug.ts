@@ -33,7 +33,11 @@ function assertNonEmpty (label: string, value: unknown): string {
 
 function slugifyHost (host: string): string {
   assertNonEmpty('host', host);
-  return host.toLowerCase().replace(/\./g, '-');
+  // Strip trailing port (`:3000`) — port doesn't affect cross-account
+  // identity. Two users on the same hostname are the same platform
+  // regardless of which port their api endpoint listens on.
+  const hostNoPort = host.replace(/:\d+$/, '');
+  return hostNoPort.toLowerCase().replace(/\./g, '-');
 }
 
 function unslugifyHostHint (hostSlug: string): string {

@@ -33,13 +33,19 @@ const handleSystemMod = require('./handleSystem.ts');
 const handleChatMod = require('./handleChat.ts');
 const handleRevokeMod = require('./handleRevoke.ts');
 const handleIncomingAcceptMod = require('./handleIncomingAccept.ts');
+const handleIncomingBackChannelMod = require('./handleIncomingBackChannel.ts');
 const retryQueueMod = require('./retryQueue.ts');
 
 type SelfIdentity = { username: string; host: string };
 
 type MallLike = {
-  accesses: { create: (userId: string, params: any) => Promise<any>; delete?: (userId: string, params: any) => Promise<any>; update?: (userId: string, params: any) => Promise<any> };
-  events:   { update: (userId: string, params: any) => Promise<any>; create: (userId: string, params: any) => Promise<any> };
+  accesses: {
+    create: (userId: string, params: any) => Promise<any>;
+    delete?: (userId: string, params: any) => Promise<any>;
+    update?: (userId: string, params: any) => Promise<any>;
+    get?: (userId: string, params?: any) => Promise<any[]>;
+  };
+  events:   { update: (userId: string, params: any) => Promise<any>; create: (userId: string, params: any) => Promise<any>; get?: (userId: string, params?: any) => Promise<any[]> };
   streams:  { create: (userId: string, params: any) => Promise<any> };
 };
 
@@ -149,6 +155,15 @@ async function dispatch (params: {
       case C.ET_REFUSE:
         result = await handleAcceptMod.handleRefuse({
           userId, triggerEvent: event, selfIdentity, deps,
+        });
+        break;
+      case C.ET_BACK_CHANNEL:
+        // Back-channel info delivered by the requester to the accepter's
+        // :_cmc:inbox. Updates the data-grant access with the requester's
+        // back-channel apiEndpoint + remote stream-ids so future chat /
+        // system deliveries from accepter to requester can resolve.
+        result = await handleIncomingBackChannelMod.handleIncomingBackChannel({
+          userId, event, deps,
         });
         break;
       case C.ET_REQUEST:
@@ -299,15 +314,28 @@ async function markFailed (
 }
 
 /**
- * True if the event's streamIds list includes :_cmc:inbox.
+ * True if the event's streamIds list includes :_cmc:inbox OR is on a
+ * per-capability responses stream (`:_cmc:_internal:responses:*`).
  *
- * Used by the dispatch loop to disambiguate the cmc/accept-v1 direction:
- * peer-delivered accepts land on :_cmc:inbox via the inbox write-hook;
- * locally-initiated accepts live in the user's :_cmc:apps:* scope.
+ * Both are peer-delivered events from the requester's perspective:
+ *   - `:_cmc:inbox` is the standard one-shot lifecycle delivery
+ *     (used for peer-pushed events post-acceptance, e.g. revoke).
+ *   - `:_cmc:_internal:responses:<capId>` is where the accepter's
+ *     plugin posts cmc/accept-v1 via the capability connection
+ *     during the initial handshake (per INTERNALS.md flow 3).
+ *
+ * Both route to handleIncomingAccept on the requester side, which
+ * mints the back-channel access + provisions anchor streams + mirrors
+ * a copy to :_cmc:inbox so the requester's app sees the accept via
+ * standard inbox subscription.
  */
 function isOnInbox (event: any): boolean {
   const ids = Array.isArray(event?.streamIds) ? event.streamIds : [];
-  return ids.includes(C.NS_INBOX);
+  if (ids.includes(C.NS_INBOX)) return true;
+  for (const id of ids) {
+    if (typeof id === 'string' && id.startsWith(C.NS_INTERNAL + ':responses:')) return true;
+  }
+  return false;
 }
 
 /**
@@ -316,28 +344,61 @@ function isOnInbox (event: any): boolean {
  * time — used to bind a per-request `notifyEventChanged` to the live
  * pubsub username (which is only known after auth resolves).
  */
+// Event types whose handlers MUST run synchronously inside the
+// events.create chain (i.e. before next() is called) — without this,
+// the response would race the side-effect.
+//
+// ET_BACK_CHANNEL: the requester's handleIncomingAccept POSTs this to
+// the accepter's :_cmc:inbox; the response from that POST signals to
+// the requester that the data-grant access has been updated. If we
+// dispatch fire-and-forget, the response returns BEFORE the update
+// commits, and any chat / system delivery the accepter triggers
+// immediately afterwards finds the data-grant without an apiEndpoint
+// (`cmc-chat-no-remote-apiendpoint`).
+const SYNC_DISPATCH_TYPES = new Set<string>([
+  'cmc/back-channel-v1',
+]);
+
 function createDispatchMiddleware (
   deps: DispatchDeps,
   buildPerRequestDeps?: (context: any) => Partial<DispatchDeps>
-): (context: any, params: any, result: any, next: any) => void {
+): (context: any, params: any, result: any, next: any) => any {
   return function cmcDispatchMiddleware (context: any, _params: any, result: any, next: any) {
     // Read the event back from the result (api-server convention).
     const event = result?.event;
     const userId = context?.user?.id;
-    if (event != null && userId != null && typeof event.type === 'string' && event.type.startsWith('cmc/')) {
-      const requestDeps: DispatchDeps = buildPerRequestDeps != null
-        ? { ...deps, ...buildPerRequestDeps(context) }
-        : deps;
-      // Fire-and-forget. Errors are captured inside dispatch.
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      Promise.resolve()
-        .then(() => dispatch({ userId, event, deps: requestDeps }))
-        .catch((err) => {
-          deps.logger?.warn('cmc/dispatch: unexpected uncaught error', {
+    if (event == null || userId == null || typeof event.type !== 'string' || !event.type.startsWith('cmc/')) {
+      return next();
+    }
+    const requestDeps: DispatchDeps = buildPerRequestDeps != null
+      ? { ...deps, ...buildPerRequestDeps(context) }
+      : deps;
+    if (SYNC_DISPATCH_TYPES.has(event.type)) {
+      // Synchronous dispatch — await before returning so the response
+      // reflects the side-effect.
+      dispatch({ userId, event, deps: requestDeps })
+        .then(() => next())
+        .catch((err: any) => {
+          deps.logger?.warn('cmc/dispatch: sync handler failed', {
+            type: event.type,
             error: String(err?.message || err),
           });
+          // Don't propagate as an events.create failure — the event was
+          // persisted; the side-effect failed and is logged. The retry
+          // loop / operator can re-process from the trigger event.
+          next();
         });
+      return;
     }
+    // Default: fire-and-forget. Errors captured inside dispatch.
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    Promise.resolve()
+      .then(() => dispatch({ userId, event, deps: requestDeps }))
+      .catch((err) => {
+        deps.logger?.warn('cmc/dispatch: unexpected uncaught error', {
+          error: String(err?.message || err),
+        });
+      });
     next();
   };
 }

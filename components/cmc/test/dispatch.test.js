@@ -250,7 +250,12 @@ describe('[CMCDISP] cmc/dispatch', () => {
   describe('[CMCDISP-R] dispatch routes cmc/refuse-v1 → handleRefuse', () => {
     it('[CD07] happy path: refuse completes', async () => {
       const mall = fakeMall();
-      const { fetch } = fakeFetch({ status: 201, body: {} });
+      // handleRefuse now reads the offer first for capabilityId,
+      // then POSTs the refuse — so two fetch responses.
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: {} },
+      ]);
       const r = await dispatch({
         userId: 'u1',
         event: {

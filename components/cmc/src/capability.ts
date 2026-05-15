@@ -45,6 +45,7 @@ type RequestEventLike = {
   id?: string;
   type: string;       // 'cmc/request-v1'
   content: any;
+  streamIds?: string[];
 };
 
 type MintResult = {
@@ -129,6 +130,11 @@ async function mintCapability (params: {
   // recipient can read it via the capability connection.
   // We strip fields the recipient shouldn't see (capabilityRequested
   // is the requester's intent flag, not part of the offer).
+  // We STAMP capabilityId on the offer so the accepter can recover
+  // it for the responses-stream-id computation — without this, the
+  // accepter has the capabilityUrl (which carries only the token) but
+  // not the capId, and can't build :_cmc:_internal:responses:<capId>
+  // to POST the accept response into.
   const offerContent: any = { ...(triggerEvent.content || {}) };
   delete offerContent.capabilityRequested;
   delete offerContent.capabilityUrl;
@@ -136,6 +142,20 @@ async function mintCapability (params: {
   delete offerContent.capabilityAccessId;
   delete offerContent.status;
   delete offerContent.failure;
+  offerContent.capabilityId = capabilityId;
+  // Stamp the requester's app-scope stream-id so the accepter can pass
+  // it back in the cmc/accept-v1 delivery — preserving per-request
+  // scoping (e.g. :_cmc:apps:my-app:study-1 vs bare :_cmc:apps:my-app).
+  // Without this, handleIncomingAccept on the requester side falls back
+  // to bare :_cmc:apps:<app-code> and chat/system handlers that target
+  // a per-request scope can't find the back-channel access.
+  const triggerStreamIds: any[] = Array.isArray(triggerEvent.streamIds) ? triggerEvent.streamIds : [];
+  for (const sid of triggerStreamIds) {
+    if (typeof sid === 'string' && sid.startsWith(C.NS_APPS + ':')) {
+      offerContent.originStreamId = sid;
+      break;
+    }
+  }
 
   await deps.mall.events.create(userId, {
     streamIds: [offerStreamId],

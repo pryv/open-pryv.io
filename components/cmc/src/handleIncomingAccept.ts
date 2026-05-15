@@ -75,7 +75,11 @@ type IncomingAcceptResult =
     };
 
 type MallLike = {
-  accesses: { create: (userId: string, params: any) => Promise<any> };
+  accesses: {
+    create: (userId: string, params: any) => Promise<any>;
+    update?: (userId: string, params: any) => Promise<any>;
+    get?: (userId: string, params?: any) => Promise<any[]>;
+  };
   events: {
     get: (userId: string, params?: any) => Promise<any[]>;
     update?: (userId: string, params: any) => Promise<any>;
@@ -101,6 +105,8 @@ async function handleIncomingAccept (params: {
   deps: {
     mall: MallLike;
     logger?: { debug: Function; warn: Function };
+    fetch?: (url: string, init?: any) => Promise<any>;
+    timeoutMs?: number;
   };
 }): Promise<IncomingAcceptResult> {
   const { userId, acceptEvent, selfIdentity, deps } = params;
@@ -127,19 +133,43 @@ async function handleIncomingAccept (params: {
   // anchor the chat/collectors streams.
   let scopeStreamId: string | null = null;
   let appCode: string | null = null;
-  try {
-    const lookup = await resolveRequestScope({ userId, acceptEvent, mall });
-    scopeStreamId = lookup.scopeStreamId;
-    appCode = lookup.appCode;
-  } catch (err: any) {
-    return { ok: false, reason: 'cmc-incoming-accept-scope-lookup-failed', detail: { message: String(err?.message || err) } };
+  // Priority order (most authoritative first):
+  //   1. acceptEvent.content.requesterAppCode — set by the accepter's
+  //      handleAccept from offer.requesterMeta.appId. Reliable because
+  //      the accepter read the offer and stamped this on the delivery.
+  //   2. resolveRequestScope — looks up the original request event by
+  //      id in the requester's own store. May fail if the original
+  //      event was pruned or never had an id we can match.
+  //   3. Fall back to 'unknown' — back-channel access still gets
+  //      created; chat/system handlers won't match it but the
+  //      handshake itself is recorded.
+  const fromAcceptContent = acceptEvent.content?.requesterAppCode;
+  const originStreamFromAccept = acceptEvent.content?.requesterOriginStreamId;
+  if (typeof originStreamFromAccept === 'string' && originStreamFromAccept.length > 0 &&
+      originStreamFromAccept.startsWith(C.NS_APPS + ':')) {
+    // Most authoritative: the accepter passed back the requester's
+    // per-request streamId (e.g. :_cmc:apps:my-app:study-1). Anchors
+    // land exactly here, so chat/system triggers in the same scope
+    // resolve cleanly.
+    scopeStreamId = originStreamFromAccept;
+    appCode = C.getAppCode(originStreamFromAccept) ?? null;
   }
-  if (scopeStreamId == null || appCode == null) {
-    // Fall back to a minimal valid scope so we can still mint a back-channel
-    // access. The accepter's mirror will use whatever appCode they were
-    // configured with — they don't read ours.
-    appCode = 'unknown';
+  if (scopeStreamId == null && typeof fromAcceptContent === 'string' && fromAcceptContent.length > 0) {
+    appCode = fromAcceptContent;
     scopeStreamId = C.NS_APPS + ':' + appCode;
+  }
+  if (scopeStreamId == null) {
+    try {
+      const lookup = await resolveRequestScope({ userId, acceptEvent, mall });
+      scopeStreamId = lookup.scopeStreamId;
+      appCode = lookup.appCode;
+    } catch (err: any) {
+      return { ok: false, reason: 'cmc-incoming-accept-scope-lookup-failed', detail: { message: String(err?.message || err) } };
+    }
+    if (scopeStreamId == null || appCode == null) {
+      appCode = 'unknown';
+      scopeStreamId = C.NS_APPS + ':' + appCode;
+    }
   }
 
   // Compute the relevant slugs + stream-ids. The peer's stream-ids
@@ -172,36 +202,147 @@ async function handleIncomingAccept (params: {
   //   - create-only on :_cmc:inbox (so the peer can deliver to us)
   //   - read/contribute on chats + collectors anchor streams (so the
   //     peer can deliver chat + system messages targeted to our slug)
-  let access: AccessLike;
-  try {
-    access = await mall.accesses.create(userId, {
-      type: 'shared',
-      name: 'cmc-back-channel-' + peerSlug,
-      permissions: [
-        { streamId: C.NS_INBOX, level: 'create-only' },
-        { streamId: chatStream, level: 'contribute' },
-        { streamId: collectorStream, level: 'contribute' },
-      ],
-      clientData: {
-        cmc: {
-          role: 'counterparty',
-          appCode,
-          counterparty: {
-            username: counterparty.username,
-            host: counterparty.host,
-            apiEndpoint: grantedApiEndpoint,
-            remoteChatStreamId,
-            remoteCollectorStreamId,
-          },
+  //
+  // Name disambiguator: appCode + peerSlug (separated by `--`) so two
+  // distinct apps with the same counterparty don't collide. If a stale
+  // access with the same name exists (e.g. from a re-delivery or a
+  // previous run that minted under different scope rules), update it
+  // in-place rather than failing the whole handshake — re-delivery is a
+  // legitimate retry path and the access's clientData + permissions
+  // must reflect the LATEST acceptance.
+  const accessName = 'cmc-back-channel-' + appCode + '--' + peerSlug;
+  const accessParams = {
+    type: 'shared',
+    name: accessName,
+    permissions: [
+      { streamId: C.NS_INBOX, level: 'create-only' },
+      { streamId: chatStream, level: 'contribute' },
+      { streamId: collectorStream, level: 'contribute' },
+    ],
+    clientData: {
+      cmc: {
+        role: 'counterparty',
+        appCode,
+        counterparty: {
+          username: counterparty.username,
+          host: counterparty.host,
+          apiEndpoint: grantedApiEndpoint,
+          remoteChatStreamId,
+          remoteCollectorStreamId,
         },
       },
-    });
+    },
+  };
+  let access: AccessLike;
+  try {
+    access = await mall.accesses.create(userId, accessParams);
   } catch (err: any) {
-    return {
-      ok: false,
-      reason: 'cmc-incoming-accept-back-channel-create-failed',
-      detail: { message: String(err?.message || err) },
-    };
+    // Duplicate name (re-delivery / re-run) — look up the existing access
+    // and update its clientData + permissions to reflect the latest
+    // handshake state. This makes re-delivery idempotent and lets us heal
+    // accesses that were minted under earlier (buggy) scope rules.
+    const msg = String(err?.message || err);
+    const isDuplicate = err?.id === 'item-already-exists' ||
+      err?.id === 'duplicate-key' ||
+      /duplicate key|already exists|item-already-exists/i.test(msg);
+    if (!isDuplicate) {
+      return {
+        ok: false,
+        reason: 'cmc-incoming-accept-back-channel-create-failed',
+        detail: { message: msg },
+      };
+    }
+    const existing = await findAccessByName({ mall, userId, name: accessName });
+    if (existing == null) {
+      return {
+        ok: false,
+        reason: 'cmc-incoming-accept-back-channel-duplicate-but-not-found',
+        detail: { name: accessName },
+      };
+    }
+    if (typeof (mall.accesses as any).update === 'function') {
+      try {
+        const updated = await (mall.accesses as any).update(userId, {
+          id: existing.id,
+          update: {
+            permissions: accessParams.permissions,
+            clientData: accessParams.clientData,
+          },
+        });
+        access = updated ?? existing;
+      } catch (uerr: any) {
+        // Partial healing — at least surface the existing access id so the
+        // chat/system handlers can still find it; permissions might be
+        // stale but the resolver matches on (appCode, counterparty) which
+        // we just refreshed in-memory below if update succeeded.
+        deps.logger?.warn?.('cmc/handleIncomingAccept: existing back-channel access update failed', {
+          accessId: existing.id,
+          error: String(uerr?.message || uerr),
+        });
+        access = existing;
+      }
+    } else {
+      access = existing;
+    }
+  }
+
+  // Mirror the accept to :_cmc:inbox so the requester's app sees it via
+  // standard inbox subscription (per INTERNALS.md flow 3 step 11). The
+  // accept event itself lives in :_cmc:_internal:responses:<capId>; the
+  // mirror is a copy on :_cmc:inbox that carries the same content
+  // (grantedAccess.apiEndpoint + from + features). Best-effort — the
+  // back-channel access is already created so the app can be notified
+  // separately even if this mirror fails (e.g. inbox stream not yet
+  // provisioned and lazy-provision didn't run on this code path).
+  if (acceptEvent.streamIds?.includes(C.NS_INBOX) !== true && deps.mall.events != null) {
+    try {
+      await (deps.mall as any).events.create(userId, {
+        streamIds: [C.NS_INBOX],
+        type: C.ET_ACCEPT,
+        content: { ...(acceptEvent.content || {}) },
+      });
+    } catch (err: any) {
+      deps.logger?.warn?.('cmc/handleIncomingAccept: inbox mirror failed (non-fatal)', {
+        error: String(err?.message || err),
+      });
+    }
+  }
+
+  // Deliver back-channel info to the peer (accepter). The peer's
+  // data-grant access carries `:_cmc:inbox` create-only specifically
+  // for this — we POST a `cmc/back-channel-v1` event there containing
+  // our back-channel apiEndpoint + remote stream-ids. The peer's
+  // dispatch routes it to handleIncomingBackChannel, which updates the
+  // data-grant access's clientData.cmc.counterparty so the peer's chat
+  // / system handlers can find an apiEndpoint to POST to when sending
+  // back to us. Best-effort — if delivery fails, the peer can't send
+  // chat/system to us, but the data-grant for read access is intact and
+  // the operator can retry.
+  if (typeof (deps as any).fetch === 'function' && (access as any).apiEndpoint != null) {
+    const outbound = require('./outbound.ts');
+    try {
+      await outbound.postToPeer({
+        apiEndpoint: grantedApiEndpoint,
+        path: 'events',
+        body: {
+          streamIds: [C.NS_INBOX],
+          type: C.ET_BACK_CHANNEL,
+          content: {
+            from: { username: selfIdentity.username, host: selfIdentity.host },
+            apiEndpoint: (access as any).apiEndpoint,
+            remoteChatStreamId: chatStream,
+            remoteCollectorStreamId: collectorStream,
+            appCode,
+          },
+        },
+        deps: { fetch: (deps as any).fetch, timeoutMs: (deps as any).timeoutMs, logger: deps.logger },
+      });
+    } catch (err: any) {
+      deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel info delivery failed (non-fatal)', {
+        peerApiEndpoint: grantedApiEndpoint,
+        error: String(err?.message || err),
+      });
+    }
   }
 
   return {
@@ -247,7 +388,31 @@ async function resolveRequestScope (params: {
   return { scopeStreamId: null, appCode: null };
 }
 
+/**
+ * Look up an access by its `name` field. Returns null if not found or if
+ * the mall doesn't expose an accesses.get method.
+ */
+async function findAccessByName (params: {
+  mall: MallLike;
+  userId: string;
+  name: string;
+}): Promise<AccessLike | null> {
+  const { mall, userId, name } = params;
+  if (typeof mall.accesses.get !== 'function') return null;
+  try {
+    const list = await mall.accesses.get(userId, {});
+    const arr: any[] = Array.isArray(list) ? list : (list as any)?.accesses ?? [];
+    for (const a of arr) {
+      if (a?.name === name) return a;
+    }
+  } catch (_e) {
+    return null;
+  }
+  return null;
+}
+
 export {
   handleIncomingAccept,
   resolveRequestScope,
+  findAccessByName,
 };

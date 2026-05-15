@@ -279,7 +279,13 @@ describe('[CMCHA] cmc/handleAccept', () => {
 
   describe('[CMCHA-RF] handleRefuse', () => {
     it('[HA11] delivers cmc/refuse-v1 with reason; returns ok', async () => {
-      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      // handleRefuse reads the offer first (to recover capabilityId
+      // for the per-capability responses streamId) — so fakeFetch
+      // returns two responses: offer GET + refuse POST.
+      const { fetch, calls } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } }, // offer read
+        { status: 201, body: {} },                          // refuse POST
+      ]);
       const r = await handleRefuse({
         userId: 'u1',
         triggerEvent: REFUSE_TRIGGER,
@@ -287,13 +293,19 @@ describe('[CMCHA] cmc/handleAccept', () => {
         deps: { fetch },
       });
       assert.equal(r.ok, true);
-      const sent = JSON.parse(calls[0].init.body);
+      // Last call is the POST.
+      const sent = JSON.parse(calls[calls.length - 1].init.body);
       assert.equal(sent.type, 'cmc/refuse-v1');
       assert.deepEqual(sent.content.reason, { en: 'no thanks' });
+      assert.deepEqual(sent.streamIds, [':_cmc:_internal:responses:cap-xyz']);
     });
 
     it('[HA12] surfaces non-2xx delivery as failure', async () => {
-      const { fetch } = fakeFetch({ status: 500, body: { error: 'down' } });
+      // Offer read succeeds; refuse POST returns 500.
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 500, body: { error: 'down' } },
+      ]);
       const r = await handleRefuse({
         userId: 'u1',
         triggerEvent: REFUSE_TRIGGER,

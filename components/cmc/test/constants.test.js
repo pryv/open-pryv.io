@@ -137,9 +137,10 @@ describe('[CMCCONST] cmc/constants', () => {
   });
 
   describe('[CMCCONST-ET] event-type catalogues', () => {
-    it('[CE01] lifecycle family has 4 event types', () => {
+    it('[CE01] lifecycle family has 5 event types (incl. back-channel post-acceptance handshake)', () => {
       assert.deepEqual(new Set(C.EVENT_TYPES_LIFECYCLE), new Set([
         'cmc/request-v1', 'cmc/accept-v1', 'cmc/refuse-v1', 'cmc/revoke-v1',
+        'cmc/back-channel-v1',
       ]));
     });
 
@@ -154,11 +155,12 @@ describe('[CMCCONST] cmc/constants', () => {
       ]));
     });
 
-    it('[CE04] ALL_EVENT_TYPES is the union (incl. internal retry-v1) with no duplicates', () => {
+    it('[CE04] ALL_EVENT_TYPES is the union (incl. internal retry-v1 + back-channel) with no duplicates', () => {
       const set = new Set(C.ALL_EVENT_TYPES);
       assert.equal(set.size, C.ALL_EVENT_TYPES.length);
-      assert.equal(set.size, 4 + 1 + 4 + 1);
+      assert.equal(set.size, 5 + 1 + 4 + 1);
       assert.ok(set.has('cmc/retry-v1'));
+      assert.ok(set.has('cmc/back-channel-v1'));
     });
   });
 

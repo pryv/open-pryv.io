@@ -113,14 +113,58 @@ async function handleAccept (params: {
     return { ok: false, reason: 'cmc-handler-counterparty-unknown' };
   }
 
-  // 2. Build the data-grant payload.
+  // 2a. Provision our anchor streams BEFORE creating the data-grant
+  // access — the access carries contribute permissions on those streams
+  // (so the counterparty can POST chat / system messages to us via the
+  // same data-grant apiEndpoint), and access creation requires the
+  // referenced streams to exist.
+  const anchorScope = pickScopeFromOfferOrTrigger(offer, triggerEvent);
+  let preCreatedAnchorIds: string[] = [];
+  let chatStream: string | null = null;
+  let collectorStream: string | null = null;
+  if (anchorScope != null && mall.streams?.create != null) {
+    const peerSlug = slugMod.counterpartySlug({
+      username: counterparty.username,
+      host: counterparty.host,
+    });
+    const provisioned = await anchors.provisionAnchorStreams({
+      userId,
+      scopeStreamId: anchorScope,
+      peerSlug,
+      mall: mall as any,
+    });
+    if (provisioned.ok) {
+      preCreatedAnchorIds = provisioned.created;
+      chatStream = C.chatStreamUnder(anchorScope, peerSlug);
+      collectorStream = C.collectorStreamUnder(anchorScope, peerSlug);
+    } else {
+      deps.logger?.warn?.('cmc/handleAccept: anchor-stream creation failed (non-fatal)', {
+        streamId: provisioned.failedStreamId,
+        error: provisioned.failureMessage,
+      });
+    }
+  }
+
+  // 2b. Build the data-grant payload — include contribute on our anchor
+  // streams so the peer can deliver chats / system events back to us,
+  // PLUS create-only on :_cmc:inbox so the peer can POST a follow-up
+  // `cmc/back-channel-v1` event carrying their back-channel apiEndpoint
+  // (handleIncomingAccept on the peer side does this right after they
+  // mint the back-channel access; without inbox-create here, that
+  // delivery 403s and we never learn the peer's apiEndpoint).
   let dataGrantPayload: any;
   try {
+    const extraPermissions: any[] = [
+      { streamId: C.NS_INBOX, level: 'create-only' },
+    ];
+    if (chatStream != null) extraPermissions.push({ streamId: chatStream, level: 'contribute' });
+    if (collectorStream != null) extraPermissions.push({ streamId: collectorStream, level: 'contribute' });
     dataGrantPayload = ao.buildDataGrantPayload({
       offerEvent: offer,
       counterparty,
       accessName,
       features,
+      extraPermissions: extraPermissions.length > 0 ? extraPermissions : undefined,
     });
   } catch (err: any) {
     return {
@@ -149,13 +193,35 @@ async function handleAccept (params: {
   }
 
   // 4. Deliver the accept response back to the requester via capability.
+  const capabilityId: string | null = offer?.content?.capabilityId ?? null;
+  if (typeof capabilityId !== 'string' || capabilityId.length === 0) {
+    return {
+      ok: false,
+      reason: 'cmc-handler-offer-missing-capability-id',
+      detail: { offerEventId: offer?.id },
+    };
+  }
+  // Include the requester's appCode + their original trigger
+  // streamId in the delivered accept so the requester's
+  // handleIncomingAccept can mint the back-channel access scoped
+  // exactly under their per-request stream — preserving any user-
+  // chosen sub-path (e.g. :_cmc:apps:my-app:study-1 vs the bare app
+  // root). Without this, the back-channel anchors at the bare
+  // :_cmc:apps:<app-code> and chat/system handlers can't match the
+  // per-request scope the app uses.
+  const requesterAppCode: string | undefined = offer?.content?.requesterMeta?.appId;
+  const originStreamId: string | undefined = offer?.content?.originStreamId;
   let delivery: any;
   try {
     delivery = await ao.deliverAcceptViaCapability({
       capabilityUrl,
+      capabilityId,
       dataGrantApiEndpoint: dataGrantAccess.apiEndpoint,
       counterparty: selfIdentity,
       features,
+      requesterAppCode,
+      requesterOriginStreamId: originStreamId,
+      offerEventId: offer?.id,
       deps,
     });
   } catch (err: any) {
@@ -195,33 +261,8 @@ async function handleAccept (params: {
     };
   }
 
-  // 6. Provision the chats/collectors anchor streams on OUR side. Idempotent
-  // and best-effort — if the trigger doesn't carry a recognisable scope or
-  // streams.create isn't available (older mall shape, fakes), we skip and
-  // log. The anchor streams can also be created lazily by the chat /
-  // system write-hooks on first use.
-  const anchorScope = pickScopeFromTrigger(triggerEvent);
-  let anchorStreamIds: string[] = [];
-  if (anchorScope != null && mall.streams?.create != null) {
-    const peerSlug = slugMod.counterpartySlug({
-      username: counterparty.username,
-      host: counterparty.host,
-    });
-    const provisioned = await anchors.provisionAnchorStreams({
-      userId,
-      scopeStreamId: anchorScope,
-      peerSlug,
-      mall: mall as any,
-    });
-    if (provisioned.ok) {
-      anchorStreamIds = provisioned.created;
-    } else {
-      deps.logger?.warn?.('cmc/handleAccept: anchor-stream creation failed (non-fatal)', {
-        streamId: provisioned.failedStreamId,
-        error: provisioned.failureMessage,
-      });
-    }
-  }
+  // Anchor streams already provisioned at step 2a (so they could be
+  // referenced in the data-grant access permissions).
 
   return {
     ok: true,
@@ -230,7 +271,7 @@ async function handleAccept (params: {
     dataGrantApiEndpoint: dataGrantAccess.apiEndpoint,
     offerEventId: offer.id,
     backChannelApiEndpoint: null, // filled in by a follow-up pass when the requester returns it
-    anchorStreamIds,
+    anchorStreamIds: preCreatedAnchorIds,
   };
 }
 
@@ -254,6 +295,28 @@ function pickScopeFromTrigger (trigger: { streamIds?: string[] }): string | null
 }
 
 /**
+ * Pick the anchor scope, preferring the requester's per-request streamId
+ * stamped on the offer (`offer.content.originStreamId` set by capability
+ * mint). Falls back to the local trigger streamId via pickScopeFromTrigger.
+ *
+ * Why: the accepter typically writes their `cmc/accept-v1` on the bare
+ * `:_cmc:apps:<app>` parent (they don't know the requester's per-request
+ * sub-path). The anchor streams must mirror the REQUESTER's per-request
+ * scope (e.g. `:_cmc:apps:my-app:study-1`) so chat / system deliveries
+ * land in matching streams on both sides — the dispatcher resolves the
+ * counterparty access by walking the trigger streamId, and that
+ * resolution requires the local provisioned streams to share the
+ * remote's path structure.
+ */
+function pickScopeFromOfferOrTrigger (offer: any, trigger: { streamIds?: string[] }): string | null {
+  const fromOffer = offer?.content?.originStreamId;
+  if (typeof fromOffer === 'string' && fromOffer.startsWith(C.NS_APPS + ':')) {
+    return fromOffer;
+  }
+  return pickScopeFromTrigger(trigger);
+}
+
+/**
  * Handle a `cmc/refuse-v1` trigger event. No data-grant created; just
  * deliver the refusal to the requester via the capability connection.
  */
@@ -273,10 +336,34 @@ async function handleRefuse (params: {
     return { ok: false, reason: 'cmc-handler-missing-capability-url' };
   }
 
+  // Read the offer first to recover capabilityId (we need it to build
+  // the responses streamId — the capability access has create-only on
+  // :_cmc:_internal:responses:<capId>, not the parent).
+  let capabilityId: string;
+  try {
+    const offer = await ao.readOfferViaCapability({ capabilityUrl, deps });
+    const cid = offer?.content?.capabilityId;
+    if (typeof cid !== 'string' || cid.length === 0) {
+      return {
+        ok: false,
+        reason: 'cmc-handler-offer-missing-capability-id',
+        detail: { offerEventId: offer?.id },
+      };
+    }
+    capabilityId = cid;
+  } catch (err: any) {
+    return {
+      ok: false,
+      reason: err?.id || 'cmc-handler-offer-read-failed',
+      detail: { message: String(err?.message || err) },
+    };
+  }
+
   let delivery: any;
   try {
     delivery = await ao.deliverRefuseViaCapability({
       capabilityUrl,
+      capabilityId,
       counterparty: selfIdentity,
       reason: triggerEvent.content?.reason,
       deps,
@@ -337,4 +424,5 @@ export {
   handleRefuse,
   inferCounterparty,
   pickScopeFromTrigger,
+  pickScopeFromOfferOrTrigger,
 };
