@@ -32,6 +32,8 @@ const { getStorageLayer } = require('storage');
 const { integrity } = require('business');
 const { parseAccessRef, serializeAccessRef, composeWireAccess } = require('business/src/accesses/refs.ts');
 const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
+const cmc = require('cmc');
+const { getLogger } = require('@pryv/boiler');
 
 type Permission = {
   streamId: string;
@@ -399,6 +401,16 @@ export default async function produceAccessesApiMethods (api: any) {
 
   // UPDATE
 
+  // Adapter so the post-hook can write a local audit event into the
+  // collectors stream when an access is updated externally (the hook
+  // only uses mall.events.create).
+  const cmcAccessesUpdateHook = cmc.createAccessesUpdatePostHook({
+    mall,
+    fetch: globalThis.fetch,
+    timeoutMs: 15_000,
+    logger: getLogger('cmc:accesses-update-hook'),
+  });
+
   api.register(
     'accesses.update',
     commonFns.basicAccessAuthorizationCheck,
@@ -406,8 +418,30 @@ export default async function produceAccessesApiMethods (api: any) {
     loadAccessForUpdate,
     enforceUpdateChainRules,
     snapshotAndApplyUpdate,
-    emitUpdateNotifications
+    emitUpdateNotifications,
+    cmcAccessesUpdatePostHookMiddleware
   );
+
+  /**
+   * Fire-and-forget invocation of the CMC accesses.update post-hook.
+   * The hook handles its own filtering (skips non-CMC accesses + skips
+   * when called inside runWithSuppression). Errors are caught inside
+   * the hook so we don't propagate to events.create's caller.
+   */
+  function cmcAccessesUpdatePostHookMiddleware (context: any, params: any, result: any, next: any) {
+    const before = params.targetAccess;
+    const after = result?.access;
+    if (after != null && context?.user?.id != null) {
+      Promise.resolve()
+        .then(() => cmcAccessesUpdateHook(context.user.id, before, after))
+        .catch((err: any) => {
+          getLogger('cmc:accesses-update-hook').warn('cmc/accessesUpdateHook: uncaught error', {
+            error: String(err?.message || err),
+          });
+        });
+    }
+    next();
+  }
 
   async function loadAccessForUpdate (context: any, params: any, result: any, next: any) {
     // Plan 66: composite-id parse + conflict-check. The wire-form `id` is

@@ -1,5 +1,35 @@
 # Changelog - Internal (no API impact)
 
+## CMC plugin component — internals (Plan 68)
+
+The `:_cmc:` namespace + write-hooks + orchestration handlers ship as a new top-level component `components/cmc/`. The plugin is loaded by the api-server like other components (event-content validation, capability-mint, inbox write-hook, dispatch middleware) plus a post-hook on `accesses.update`. No new storage engine — the entire plugin runs on standard per-user storage (PostgreSQL / MongoDB) + the existing pubsub layer.
+
+- **NEW component** `components/cmc/` with module surface:
+  - `src/constants.ts` — namespace + event-type constants; reserved-parent tree; classification predicates (`isCmcStreamId`, `isAppNestedPluginStream`, `getAppCode`); stream-id builders.
+  - `src/slug.ts` — `counterpartySlug` + `parseCounterpartySlug` (load-bearing `--` separator).
+  - `src/validators.ts` — hand-rolled per-type content schemas for the 9 cmc/* event types.
+  - `src/hooks.ts` — content-validation hook + reserved-root rejection hook.
+  - `src/inboxWriteHook.ts` — `:_cmc:inbox` write-hook (role check + content.from stamping).
+  - `src/capability.ts` — single-use capability access mint + GC (creates real per-capability offer/responses streams + a shared access; cleaned up on consumption or TTL).
+  - `src/capabilityMintHook.ts` — fires on `consent/request-cmc` events.create.
+  - `src/outbound.ts` — federated HTTPS client (postToPeer + DeliverResult discriminated union; classify network/timeout/4xx/5xx).
+  - `src/acceptOrchestration.ts` — read offer via capability, build data-grant payload, deliver accept-via-capability.
+  - `src/anchorStreams.ts` — shared `provisionAnchorStreams` used by both sides at acceptance time.
+  - `src/handleAccept.ts` — accepter-side: creates data-grant + provisions anchors + delivers accept via capability + rollback on 4xx.
+  - `src/handleRefuse.ts` — accepter-side refuse delivery.
+  - `src/handleIncomingAccept.ts` — requester-side: mints back-channel access + provisions anchors when a consent/accept-cmc lands on the requester's `:_cmc:inbox`.
+  - `src/handleChat.ts`, `src/handleSystem.ts`, `src/handleRevoke.ts` — per-type orchestration handlers.
+  - `src/dispatch.ts` — `dispatch(...)` type-router + `createDispatchMiddleware` (fire-and-forget). Auto-enqueues retryable failures.
+  - `src/accessesUpdateHook.ts` — `createAccessesUpdatePostHook(deps)` + `runWithSuppression(fn)` (AsyncLocalStorage-backed double-fire suppression).
+  - `src/rateLimit.ts` — per-worker sliding-window rate limiter (100 events / 60s window per (source, recipient) pair).
+  - `src/retryQueue.ts` — events-in-`:_cmc:_internal:retries` retry mechanism with exponential backoff + reason-based retryability classifier.
+  - `src/retryScheduler.ts` — `RetryScheduler` class wrapping the loop on an interval; operator-supplied `userIdsProvider`.
+- **NEW mall routing** — `:_cmc:*` stream-ids route to `LOCAL_STORE_ID` passthrough (mirrors `:_system:*` precedent). Patched in `components/mall/src/helpers/storeDataUtils.ts`.
+- **NEW api-server wiring** — `components/api-server/src/methods/events.ts` registers the three CMC write-hooks before `createEvent` + the dispatch middleware after `notify`. `components/api-server/src/methods/accesses.ts` registers `cmcAccessesUpdatePostHook` after `emitUpdateNotifications`. Both are fire-and-forget.
+- **NEW slugify-skip** — `events.ts` and `streams.ts` skip slug normalization for ids starting with `:_cmc:` (otherwise colons would be munged and the path-style namespace destroyed).
+- **TEST COVERAGE** — 285 cmc unit tests across `components/cmc/test/`; api-server matrix at 1018 passing / 14 pending / 0 failing (PG default).
+- **Known follow-up**: reserved-parent auto-provisioning at user-creation time is currently no-op due to a state-dependent regression in `account-seq.test.js [AC04 6041]` (cumulative AC0X cycles + provisioning invalidate the test's stored personal-access token). Workaround: lazy creation at first `:_cmc:*` write + at acceptance time (handleAccept + handleIncomingAccept use `provisionAnchorStreams`). Documented as TODO in `business/src/users/repository.ts`.
+
 ## Surface skipped migrations at boot (Plan 69)
 
 A demo deploy on 2026-05-13 hit a ~20 min outage when new code shipped against an unmigrated schema: the operator's `override-config.yml` carried `migrations: { autoRunOnStart: false }` and `bin/master.js` skipped the migration block in total silence — no log line at all. Every API call against the schema-dependent endpoints returned `unexpected-error: column "head_id" does not exist`.

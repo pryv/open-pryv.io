@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
+const cmc = require('cmc');
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/streamsMethods.ts');
 const streamSchema = require('../schema/stream.ts').default;
@@ -133,9 +134,16 @@ export default async function (api: any) {
     return next();
   }
   // CREATION
+  const cmcStreamCreateHook = cmc.createStreamCreateReservedRootHook({ errors });
+  const cmcEnsureReservedParentsHook = cmc.createEnsureReservedParentsHook({
+    mall,
+    logger: getLogger('cmc:ensure-reserved-parents'),
+  });
   api.register(
     'streams.create',
     commonFns.getParamsValidation(methodsSchema.create.params),
+    cmcEnsureReservedParentsHook,
+    cmcStreamCreateHook,
     applyDefaultsForCreation,
     applyPrerequisitesForCreation,
     createStream);
@@ -170,7 +178,13 @@ export default async function (api: any) {
 
     if (params.id) {
       const [storeId, streamId] = storeDataUtils.parseStoreIdAndStoreItemId(params.id);
-      const slugId = slugify(streamId);
+      // Skip slugify for path-style namespaces where colons inside the id
+      // are load-bearing (e.g. :_cmc:apps:stormm:study-A). The slug package
+      // strips all colons, which would munge the user-facing path. Today only
+      // CMC needs this; if more plugins adopt :path:style: IDs, generalize
+      // via a registry instead of more special-cases.
+      const isPathStyleId = streamId.startsWith(':_cmc:');
+      const slugId = isPathStyleId ? streamId : slugify(streamId);
       if (string.isReservedId(streamId) || string.isReservedId(slugId)) {
         return process.nextTick(next.bind(null, errors.invalidItemId('The specified id "' + params.id + '" is not allowed.')));
       }

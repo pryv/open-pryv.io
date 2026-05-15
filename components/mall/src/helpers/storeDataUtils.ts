@@ -46,6 +46,13 @@ function parseStoreIdAndStoreItemId (fullItemId: any) {
   // System streams route to the account store (passthrough — prefixed IDs preserved)
   if (storeId === 'system' || storeId === '_system') return [ACCOUNT_STORE_ID, fullItemId];
 
+  // CMC plugin streams route to the local store (passthrough — prefixed IDs preserved).
+  // CMC is a plugin (not a storage engine — see components/cmc/README.md "Design pillars");
+  // its :_cmc:* events / accesses / streams live alongside the user's other data in main
+  // storage. Special-cased here so the same routing-by-prefix pattern that ships :_system:
+  // also covers :_cmc: without forcing CMC to register its own storage backend.
+  if (storeId === '_cmc') return [LOCAL_STORE_ID, fullItemId];
+
   let storeItemId;
   if (endMarkerIndex === (fullItemId.length - 1)) { // ':storeId:', i.e. pseudo-stream representing store root
     storeItemId = '*';

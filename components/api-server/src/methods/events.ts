@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const utils = require('utils');
 const errors = require('errors').factory;
+const cmc = require('cmc');
 const fs = require('fs');
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/eventsMethods.ts');
@@ -30,6 +31,8 @@ const { TypeRepository, isSeriesType } = require('business').types;
 
 const { getLogger, getConfig } = require('@pryv/boiler');
 const { getPlatform } = require('platform');
+const { getStorageLayer } = require('storage');
+const { ApiEndpoint } = require('utils');
 
 const { pubsub } = require('messages');
 
@@ -52,6 +55,37 @@ export default async function (api: any) {
   const usersRepository = await getUsersRepository();
   const mall = await getMall();
   const platform = await getPlatform();
+  const storageLayer = await getStorageLayer();
+
+  // CMC: build a `mall.accesses` adapter backed by storageLayer.accesses.
+  // The Mall doesn't expose accesses — they live in a separate storage —
+  // but CMC handlers were written against a `mall.accesses.{create,get,
+  // update,delete}` shape. The adapter bridges the two and sets
+  // apiEndpoint on create-results so outbound delivery has its target URL.
+  const cache = require('cache').default;
+  const cmcMallAccessesAdapter = cmc.createMallAccessesAdapter({
+    storageAccesses: storageLayer.accesses,
+    apiEndpointBuild: ApiEndpoint.build.bind(ApiEndpoint),
+    resolveUsername: async (userId: string) => {
+      const u = await usersRepository.getUserById(userId);
+      return u?.username;
+    },
+    invalidateAccessCache: (userId: string, accessId: string) => {
+      const cached = cache.getAccessLogicForId(userId, accessId);
+      if (cached != null) cache.unsetAccessLogic(userId, cached);
+    },
+    logger: getLogger('cmc:mall-accesses-adapter'),
+  });
+  // Compose a mall-with-accesses for the CMC modules' deps so they
+  // see `mall.accesses.{create,get,update,delete}` alongside the real
+  // `mall.streams` + `mall.events`. Mall uses class-instance getters
+  // for streams/events so Object.assign would drop them — use a
+  // forwarding object literal instead.
+  const mallForCmc: any = {
+    get streams () { return mall.streams; },
+    get events () { return mall.events; },
+    accesses: cmcMallAccessesAdapter,
+  };
   await eventsGetUtils.init();
 
   // Initialise the project version as soon as we can.
@@ -165,13 +199,88 @@ export default async function (api: any) {
 
   // -------------------------------------------------------------------- CREATE
 
+  const cmcContentValidationHook = cmc.createCmcContentValidationHook({ errors });
+  const cmcEnsureReservedParentsHook = cmc.createEnsureReservedParentsHook({
+    mall,
+    logger: getLogger('cmc:ensure-reserved-parents'),
+  });
+  const cmcInboxWriteHook = cmc.createInboxWriteHook({ errors });
+  const cmcRateLimiter = new cmc.rateLimit.RateLimiter();
+  const cmcDispatchLogger = getLogger('cmc:dispatch');
+  const cmcSelfIdentityFor = async (userId: string) => {
+    // username: pull from the users repository (cached behind the scenes).
+    // host: the canonical hostname clients see when calling this api.
+    // Priority:
+    //   1. dns.domain (multi-core deploys serve from <id>.<domain>; the
+    //      bare domain is the counterparty-facing identity).
+    //   2. URL host extracted from service.api or service.register —
+    //      a real URL with a hostname (and optional port).
+    //   3. 'localhost' as last-resort dev fallback.
+    // service.name is a HUMAN LABEL ("Local Dev", "Health Data Safe")
+    // — NEVER use it as a host; the slug builder will reject anything
+    // with spaces.
+    const user = await usersRepository.getUserById(userId);
+    const username = user?.username || 'unknown';
+    let host = config.get('dns:domain');
+    if (host == null || host === '') {
+      const apiUrl = config.get('service:api') || config.get('service:register');
+      if (typeof apiUrl === 'string' && apiUrl.length > 0) {
+        try {
+          const u = new URL(apiUrl.replace('{username}', 'x'));
+          host = u.host;
+        } catch (_e) { /* fall through to localhost */ }
+      }
+    }
+    if (host == null || host === '') host = 'localhost';
+    return { username, host };
+  };
+  // capabilityMintHook needs cmcSelfIdentityFor to stamp the canonical
+  // requester host on the offer event (so accepter's inferCounterparty
+  // doesn't fall back to the per-user URL hostname). Wired AFTER
+  // cmcSelfIdentityFor is declared.
+  const cmcCapabilityMintHook = cmc.createCapabilityMintHook({
+    mall: mallForCmc,
+    errors,
+    idGen: () => require('crypto').randomBytes(16).toString('base64url'),
+    logger: getLogger('cmc:capability-mint'),
+    selfIdentityFor: cmcSelfIdentityFor,
+  });
+  const cmcDispatchMiddleware = cmc.createDispatchMiddleware({
+    mall: mallForCmc,
+    fetch: globalThis.fetch,
+    timeoutMs: 15_000,
+    rateLimiter: cmcRateLimiter,
+    logger: cmcDispatchLogger,
+    selfIdentityFor: cmcSelfIdentityFor,
+  }, (context: any) => {
+    // Per-request: bind a notifyEventChanged that fires pubsub for THIS
+    // user. The dispatch loop's fire-and-forget events.update calls
+    // bypass the request chain, so without this the app's socket.io
+    // subscription wouldn't see status transitions.
+    const username = context?.user?.username;
+    return {
+      notifyEventChanged: (_userId: string, _event: any) => {
+        if (username != null) {
+          pubsub.notifications.emit(username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
+        }
+      },
+    };
+  });
   api.register(
     'events.create',
     commonFns.getParamsValidation(methodsSchema.create.params),
     normalizeStreamIdAndStreamIds,
     applyPrerequisitesForCreation,
     validateEventContentAndCoerce,
+    // Auto-provision the five reserved :_cmc:* parents on first CMC op
+    // for users who pre-date the CMC deploy. Idempotent. Must fire
+    // BEFORE verifyCanCreateEventsOnStream so the stream check finds
+    // the just-created reserved tree.
+    cmcEnsureReservedParentsHook,
     verifyCanCreateEventsOnStream,
+    cmcContentValidationHook,
+    cmcCapabilityMintHook,
+    cmcInboxWriteHook,
     detectAccountStream,
     validateAccountStreamForCreate,
     validateAccountStreamContent,
@@ -179,8 +288,27 @@ export default async function (api: any) {
     handleSeries,
     createEvent,
     addIntegrityToContext,
-    notify
+    notify,
+    cmcDispatchMiddleware
   );
+
+  // CMC retry-loop bootstrap. No-op unless `cmc.retryLoop.enabled: true`
+  // is set in config AND we're worker id 1 (or running standalone).
+  // Operator-supplied userIdsProvider — defaults here to the platform's
+  // full user list which is correct for single-shard deployments. Per-
+  // shard / per-recent-activity scoping can be wired later.
+  cmc.startRetryLoopIfEnabled({
+    config,
+    mall: mallForCmc,
+    selfIdentityFor: cmcSelfIdentityFor,
+    fetch: globalThis.fetch,
+    rateLimiter: cmcRateLimiter,
+    logger: getLogger('cmc:retry-loop'),
+    userIdsProvider: async () => {
+      const users = await usersRepository.getAllUsersIdAndName();
+      return users.map((u: any) => u.id);
+    },
+  });
 
   function applyPrerequisitesForCreation (context: any, params: any, result: any, next: any) {
     const event = context.newEvent;
