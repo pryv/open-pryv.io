@@ -77,13 +77,13 @@ describe('[CMCHOOK] cmc/hooks', () => {
       });
     });
 
-    it('[CH03] validates a well-formed cmc/request-v1 and records eventType', async () => {
+    it('[CH03] validates a well-formed consent/request-cmc and records eventType', async () => {
       const { factory, captured } = fakeErrors();
       const mw = createCmcContentValidationHook({ errors: factory });
       const ctx = {
         newEvent: {
           streamIds: [':_cmc:apps:my-app:study-A'],
-          type: 'cmc/request-v1',
+          type: 'consent/request-cmc',
           content: {
             to: null,
             capabilityRequested: true,
@@ -100,39 +100,43 @@ describe('[CMCHOOK] cmc/hooks', () => {
       assert.equal(err, undefined);
       assert.equal(captured.length, 0);
       assert.equal(ctx.cmc.isCmcEvent, true);
-      assert.equal(ctx.cmc.eventType, 'cmc/request-v1');
+      assert.equal(ctx.cmc.eventType, 'consent/request-cmc');
     });
 
-    it('[CH04] rejects an unknown cmc/* event type with cmc-unknown-event-type', async () => {
+    it('[CH04] passes through unrecognised types under shared classes (no longer rejects)', async () => {
+      // After the rename to class/format-style names, the CMC plugin
+      // shares its class namespaces (consent, message, notification)
+      // with potentially app-defined formats. We can't claim every
+      // event in those classes — only the exact set of CMC-known
+      // types triggers content validation. Other types pass through.
       const { factory, captured } = fakeErrors();
       const mw = createCmcContentValidationHook({ errors: factory });
       const ctx = {
         newEvent: {
           streamIds: [':_cmc:apps:foo'],
-          type: 'cmc/nonsense-v1',
+          type: 'consent/something-app-defined',
           content: {},
         },
       };
       const err = await runMiddleware(mw, ctx, {}, {});
-      assert.ok(err instanceof Error);
-      assert.equal(err.details.id, 'cmc-unknown-event-type');
-      assert.equal(captured.length, 1);
+      assert.equal(err, undefined);
+      assert.equal(captured.length, 0);
     });
 
-    it('[CH05] rejects malformed cmc/chat-v1 with cmc-invalid-event-content + errors list', async () => {
+    it('[CH05] rejects malformed message/chat-cmc with cmc-invalid-event-content + errors list', async () => {
       const { factory } = fakeErrors();
       const mw = createCmcContentValidationHook({ errors: factory });
       const ctx = {
         newEvent: {
           streamIds: [':_cmc:apps:my-app:chats:alice--example-com'],
-          type: 'cmc/chat-v1',
+          type: 'message/chat-cmc',
           content: { content: '' }, // empty content — invalid
         },
       };
       const err = await runMiddleware(mw, ctx, {}, {});
       assert.ok(err instanceof Error);
       assert.equal(err.details.id, 'cmc-invalid-event-content');
-      assert.equal(err.details.eventType, 'cmc/chat-v1');
+      assert.equal(err.details.eventType, 'message/chat-cmc');
       assert.ok(Array.isArray(err.details.errors));
       assert.ok(err.details.errors[0].includes('content.content'));
     });
@@ -293,7 +297,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const mw = createEnsureReservedParentsHook({ mall });
       const ctx = {
         user: { id: 'u1' },
-        newEvent: { streamIds: [':_cmc:apps:my-app:campaign-2026'], type: 'cmc/request-v1' },
+        newEvent: { streamIds: [':_cmc:apps:my-app:campaign-2026'], type: 'consent/request-cmc' },
       };
       const err = await runMiddleware(mw, ctx, {}, {});
       assert.equal(err, undefined);
@@ -309,10 +313,10 @@ describe('[CMCHOOK] cmc/hooks', () => {
       ]);
     });
 
-    it('[CH-PR04] provisions when event.type is cmc/* even if streamIds is empty', async () => {
+    it('[CH-PR04] provisions when event.type is a known CMC type even if streamIds is empty', async () => {
       const mall = fakeMall();
       const mw = createEnsureReservedParentsHook({ mall });
-      const ctx = { user: { id: 'u1' }, newEvent: { streamIds: [], type: 'cmc/chat-v1' } };
+      const ctx = { user: { id: 'u1' }, newEvent: { streamIds: [], type: 'message/chat-cmc' } };
       const err = await runMiddleware(mw, ctx, {}, {});
       assert.equal(err, undefined);
       assert.equal(mall.calls.streamsCreated.length, 5);
@@ -332,7 +336,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const mw = createEnsureReservedParentsHook({ mall });
       const ctx = {
         user: { id: 'u1' },
-        newEvent: { streamIds: [':_cmc:inbox'], type: 'cmc/accept-v1' },
+        newEvent: { streamIds: [':_cmc:inbox'], type: 'consent/accept-cmc' },
       };
       const err = await runMiddleware(mw, ctx, {}, {});
       assert.equal(err, undefined);
@@ -349,7 +353,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
       });
       const ctx = {
         user: { id: 'u1' },
-        newEvent: { streamIds: [':_cmc:apps:foo'], type: 'cmc/request-v1' },
+        newEvent: { streamIds: [':_cmc:apps:foo'], type: 'consent/request-cmc' },
       };
       const err = await runMiddleware(mw, ctx, {}, {});
       // Middleware itself doesn't fail

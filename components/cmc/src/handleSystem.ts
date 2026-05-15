@@ -23,7 +23,7 @@ const require = createRequire(import.meta.url);
  *      clientData.cmc.counterparty.remoteCollectorStreamId (filled at
  *      acceptance time — Phase E slice 2). For now, callers may pass it
  *      explicitly via the access.
- *   4. POST `cmc/system-alert-v1` or `cmc/system-ack-v1` to the peer.
+ *   4. POST `notification/alert-cmc` or `notification/ack-cmc` to the peer.
  *
  * Rate-limiting: system messages flow through the per-(source,recipient)
  * sliding window before the outbound POST. This is intentional: alerts can
@@ -107,7 +107,7 @@ type SystemHandlerResult =
 type DeliverSystemParams = {
   remoteApiEndpoint: string;
   remoteCollectorStreamId: string;
-  eventType: string; // cmc/system-alert-v1 or cmc/system-ack-v1
+  eventType: string; // notification/alert-cmc or notification/ack-cmc
   payload: any;
   selfIdentity: Counterparty;
   deps: OutboundDeps;
@@ -163,7 +163,7 @@ async function findAccessForCollector (params: {
 }
 
 /**
- * Shared dispatch core for cmc/system-alert-v1 + cmc/system-ack-v1.
+ * Shared dispatch core for notification/alert-cmc + notification/ack-cmc.
  *
  * Both event types share the same routing: pull counterparty access,
  * apply rate-limit, deliver to peer's collectors stream. The only thing
@@ -288,7 +288,7 @@ async function handleSystemEvent (params: {
 }
 
 /**
- * Handle a `cmc/system-alert-v1` trigger.
+ * Handle a `notification/alert-cmc` trigger.
  *
  * Thin wrapper around handleSystemEvent — kept distinct so the dispatch
  * switch is one-handler-per-event-type and future divergence (e.g. alert
@@ -307,7 +307,7 @@ async function handleSystemAlert (params: {
 }
 
 /**
- * Handle a `cmc/system-ack-v1` trigger.
+ * Handle a `notification/ack-cmc` trigger.
  */
 async function handleSystemAck (params: {
   userId: string;
@@ -322,7 +322,7 @@ async function handleSystemAck (params: {
 }
 
 /**
- * Handle a `cmc/system-scope-request-v1` trigger.
+ * Handle a `consent/scope-request-cmc` trigger.
  *
  * Issued when the LOCAL side wants to request additional permissions on
  * an existing data-grant the peer holds. The content carries the requested
@@ -330,7 +330,7 @@ async function handleSystemAck (params: {
  *
  * Peer-side application of the change (approval, applying the
  * accesses.update) happens on the peer when they receive
- * cmc/system-scope-update-v1 from us — that's a separate trigger
+ * consent/scope-update-cmc from us — that's a separate trigger
  * issued AFTER local consent.
  */
 async function handleSystemScopeRequest (params: {
@@ -346,7 +346,7 @@ async function handleSystemScopeRequest (params: {
 }
 
 /**
- * Handle a `cmc/system-scope-update-v1` trigger.
+ * Handle a `consent/scope-update-cmc` trigger.
  *
  * Issued AFTER the local accesses.update post-hook fires (Phase G slice 3)
  * to inform the peer that an access they hold has had its permissions

@@ -10,14 +10,14 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — accept / refuse orchestration primitives.
  *
- * When an app writes `cmc/accept-v1` to its scope stream on the recipient's
+ * When an app writes `consent/accept-cmc` to its scope stream on the recipient's
  * platform, the plugin needs to:
  *
  *   1. Open the capability connection (URL is in the trigger's content).
  *   2. Read the offer event via `events.get(:_cmc:_internal:offer)`.
  *   3. Create the local data-grant access on the recipient's account with
  *      permissions from the offer + clientData.cmc.role='counterparty'.
- *   4. Deliver `cmc/accept-v1` to the requester's responses stream via
+ *   4. Deliver `consent/accept-cmc` to the requester's responses stream via
  *      the capability connection, carrying the data-grant's apiEndpoint.
  *   5. Receive back-channel apiEndpoint from the requester (via offer-stream
  *      follow-up event OR events.create response).
@@ -72,7 +72,7 @@ async function readOfferViaCapability (params: {
   // <capId> from the capabilityUrl alone. Query events.get without a
   // streams filter — the access's permissions limit the response to
   // the one event that lives on the only stream this token can read.
-  // types filter narrows to cmc/request-v1 in case the offer stream
+  // types filter narrows to consent/request-cmc in case the offer stream
   // ever holds more than one event in future revisions.
   const url = base + 'events?types[]=' + encodeURIComponent(C.ET_REQUEST);
 
@@ -185,7 +185,7 @@ function buildDataGrantPayload (params: {
 }
 
 /**
- * POST a `cmc/accept-v1` event into the requester's responses stream via
+ * POST a `consent/accept-cmc` event into the requester's responses stream via
  * the capability connection. Carries the recipient's data-grant apiEndpoint
  * so the requester's plugin can mint the back-channel access pointing at it.
  */
@@ -233,7 +233,7 @@ async function deliverAcceptViaCapability (params: {
 }
 
 /**
- * POST a `cmc/refuse-v1` event into the requester's responses stream via
+ * POST a `consent/refuse-cmc` event into the requester's responses stream via
  * the capability connection. No data-grant created on the recipient side.
  */
 async function deliverRefuseViaCapability (params: {

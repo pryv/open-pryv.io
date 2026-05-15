@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — handleRevoke tests.
  *
- * [CMCHR] covers cmc/revoke-v1 handling: pre-acceptance (via capability URL)
+ * [CMCHR] covers consent/revoke-cmc handling: pre-acceptance (via capability URL)
  * and acceptance-time (dual accesses.delete + peer notify).
  */
 
@@ -145,7 +145,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
         userId: 'u1',
         triggerEvent: {
           id: 'evt-revoke',
-          type: 'cmc/revoke-v1',
+          type: 'consent/revoke-cmc',
           streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
           content: { reason: 'study ended' },
         },
@@ -158,7 +158,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       // Outbound POST: revoke notification to peer
       assert.equal(calls.length, 1);
       const sent = JSON.parse(calls[0].init.body);
-      assert.equal(sent.type, 'cmc/revoke-v1');
+      assert.equal(sent.type, 'consent/revoke-cmc');
       assert.deepEqual(sent.streamIds, [':_cmc:inbox']);
       assert.deepEqual(sent.content.from, SELF);
       assert.equal(sent.content.reason, 'study ended');
@@ -170,7 +170,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       const r = await handleRevoke({
         userId: 'u1',
         triggerEvent: {
-          type: 'cmc/revoke-v1',
+          type: 'consent/revoke-cmc',
           streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
           content: {},
         },
@@ -187,7 +187,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       const r = await handleRevoke({
         userId: 'u1',
         triggerEvent: {
-          type: 'cmc/revoke-v1',
+          type: 'consent/revoke-cmc',
           streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
           content: {},
         },
@@ -205,7 +205,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       const r = await handleRevoke({
         userId: 'u1',
         triggerEvent: {
-          type: 'cmc/revoke-v1',
+          type: 'consent/revoke-cmc',
           streamIds: [':_cmc:apps:my-app:collectors:provider-a--provider-example-org'],
           content: {},
         },
@@ -224,7 +224,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       const r = await handleRevoke({
         userId: 'u1',
         triggerEvent: {
-          type: 'cmc/revoke-v1',
+          type: 'consent/revoke-cmc',
           streamIds: [':_cmc:inbox'],
           content: {
             capabilityUrl: 'https://cap-tok@provider.example.org/',
@@ -248,7 +248,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       const r = await handleRevoke({
         userId: 'u1',
         triggerEvent: {
-          type: 'cmc/revoke-v1',
+          type: 'consent/revoke-cmc',
           streamIds: [':_cmc:inbox'],
           content: {
             capabilityUrl: 'https://cap-tok@provider.example.org/',
@@ -267,7 +267,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
     it('[HR15] rejects wrong trigger type', async () => {
       const r = await handleRevoke({
         userId: 'u1',
-        triggerEvent: { type: 'cmc/chat-v1', content: {}, streamIds: [] },
+        triggerEvent: { type: 'message/chat-cmc', content: {}, streamIds: [] },
         selfIdentity: SELF,
         deps: { mall: fakeMall([]), fetch: fakeFetch({}).fetch },
       });
@@ -278,7 +278,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
     it('[HR16] surfaces missing counterparty when no streamIds and no content.counterparty', async () => {
       const r = await handleRevoke({
         userId: 'u1',
-        triggerEvent: { type: 'cmc/revoke-v1', content: {}, streamIds: ['some-other-stream'] },
+        triggerEvent: { type: 'consent/revoke-cmc', content: {}, streamIds: ['some-other-stream'] },
         selfIdentity: SELF,
         deps: { mall: fakeMall([]), fetch: fakeFetch({}).fetch },
       });
@@ -290,7 +290,7 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       const r = await handleRevoke({
         userId: 'u1',
         triggerEvent: {
-          type: 'cmc/revoke-v1',
+          type: 'consent/revoke-cmc',
           streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
           content: {},
         },

@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — handleIncomingAccept tests.
  *
- * [CMCIA] covers the requester-side flow when a `cmc/accept-v1` lands
+ * [CMCIA] covers the requester-side flow when a `consent/accept-cmc` lands
  * on :_cmc:inbox: anchor-stream auto-creation + back-channel access mint.
  */
 
@@ -60,7 +60,7 @@ const SELF = { username: 'requester', host: 'example.com' };
 
 const ACCEPT_FROM_INBOX = {
   id: 'evt-accept-in',
-  type: 'cmc/accept-v1',
+  type: 'consent/accept-cmc',
   streamIds: [':_cmc:inbox'],
   content: {
     grantedAccess: { apiEndpoint: 'https://granted-tok@accepter.pryv.me/' },
@@ -71,7 +71,7 @@ const ACCEPT_FROM_INBOX = {
 
 const ORIGINAL_REQUEST_EVENT = {
   id: 'orig-req-1',
-  type: 'cmc/request-v1',
+  type: 'consent/request-cmc',
   streamIds: [':_cmc:apps:my-app:campaign-2026'],
   content: { request: {} },
 };
@@ -152,7 +152,7 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
     it('[IA04] rejects wrong trigger type', async () => {
       const r = await handleIncomingAccept({
         userId: 'u1',
-        acceptEvent: { type: 'cmc/chat-v1', content: {}, streamIds: [':_cmc:inbox'] },
+        acceptEvent: { type: 'message/chat-cmc', content: {}, streamIds: [':_cmc:inbox'] },
         selfIdentity: SELF,
         deps: { mall: fakeMall() },
       });

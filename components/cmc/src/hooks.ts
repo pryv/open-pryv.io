@@ -59,7 +59,11 @@ function createCmcContentValidationHook (deps: Deps): Middleware {
     context.cmc.streamIds = cmcStreamIds;
 
     const type: unknown = event.type;
-    const isCmcType = typeof type === 'string' && type.startsWith('cmc/');
+    // Recognise CMC types via the centralised set rather than a single
+    // prefix check — after the rename to class/format-style names, types
+    // span four classes (consent/*, message/chat-cmc, notification/cmc-*,
+    // cmc-internal/*) so a `startsWith('cmc/')` would miss most of them.
+    const isCmcType = C.isCmcEventType(type);
     if (isCmcType) {
       context.cmc.eventType = type;
     }
@@ -67,15 +71,19 @@ function createCmcContentValidationHook (deps: Deps): Middleware {
     if (!isCmcType) {
       // App-defined type in a :_cmc:* stream — pass through. Useful for app
       // organizational metadata under :_cmc:apps:* (e.g. a 'collector/metadata'
-      // event the app uses for its own purposes).
+      // event the app uses for its own purposes). After the class/format
+      // rename the CMC types share their class namespaces (consent, message,
+      // notification) with potentially app-defined formats; we no longer
+      // try to claim every event in those classes — only the exact set of
+      // CMC-known types is intercepted for content validation.
       return next();
     }
 
     if (!validators.isKnownEventType(type)) {
-      return next(deps.errors.invalidOperation(
-        'CMC event type "' + type + '" is not a recognised cmc/* type',
-        { id: 'cmc-unknown-event-type', eventType: type }
-      ));
+      // Edge: a CMC-known type with no registered validator (e.g. ET_RETRY,
+      // which is plugin-internal). Pass through — no app-side validation
+      // applies.
+      return next();
     }
 
     const validation = validators.validate(type as string, event.content);
@@ -176,7 +184,7 @@ function createEnsureReservedParentsHook (deps: ProvisionDeps): Middleware {
       const streamIds: string[] = Array.isArray(newEvent.streamIds) ? newEvent.streamIds : [];
       if (streamIds.some((id: string) => typeof id === 'string' && C.isCmcStreamId(id))) {
         shouldEnsure = true;
-      } else if (typeof newEvent.type === 'string' && newEvent.type.startsWith('cmc/')) {
+      } else if (C.isCmcEventType(newEvent.type)) {
         shouldEnsure = true;
       }
     }

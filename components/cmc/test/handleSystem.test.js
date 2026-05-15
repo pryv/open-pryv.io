@@ -82,14 +82,14 @@ const COUNTERPARTY_ACCESS = {
 
 const ALERT_TRIGGER = {
   id: 'evt-alert',
-  type: 'cmc/system-alert-v1',
+  type: 'notification/alert-cmc',
   streamIds: [':_cmc:apps:my-app:collectors:provider-a--provider-example-org'],
   content: { code: 'peer-down', detail: 'no heartbeat for 5m' },
 };
 
 const ACK_TRIGGER = {
   id: 'evt-ack',
-  type: 'cmc/system-ack-v1',
+  type: 'notification/ack-cmc',
   streamIds: [':_cmc:apps:my-app:collectors:provider-a--provider-example-org'],
   content: { ackOf: 'evt-prev-alert' },
 };
@@ -132,21 +132,21 @@ describe('[CMCHS] cmc/handleSystem', () => {
         deps: { mall, fetch },
       });
       assert.equal(r.ok, true);
-      assert.equal(r.eventType, 'cmc/system-alert-v1');
+      assert.equal(r.eventType, 'notification/alert-cmc');
       assert.equal(r.remoteEventId, 'remote-evt-1');
       // Outbound: posted to peer's collectors stream
       assert.equal(calls.length, 1);
       assert.equal(calls[0].url, 'https://provider.example.org/events');
       assert.equal(calls[0].init.headers.authorization, 'peer-tok');
       const sent = JSON.parse(calls[0].init.body);
-      assert.equal(sent.type, 'cmc/system-alert-v1');
+      assert.equal(sent.type, 'notification/alert-cmc');
       assert.deepEqual(sent.streamIds, [':_cmc:apps:my-app:collectors:alice--example-com']);
       assert.deepEqual(sent.content.from, SELF);
       assert.equal(sent.content.code, 'peer-down');
       assert.equal(sent.content.detail, 'no heartbeat for 5m');
     });
 
-    it('[HS06] handleSystemAck delivers cmc/system-ack-v1 to peer', async () => {
+    it('[HS06] handleSystemAck delivers notification/ack-cmc to peer', async () => {
       const mall = fakeMall([COUNTERPARTY_ACCESS]);
       const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'remote-evt-2' } } });
       const r = await handleSystemAck({
@@ -157,7 +157,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
       });
       assert.equal(r.ok, true);
       const sent = JSON.parse(calls[0].init.body);
-      assert.equal(sent.type, 'cmc/system-ack-v1');
+      assert.equal(sent.type, 'notification/ack-cmc');
       assert.equal(sent.content.ackOf, 'evt-prev-alert');
     });
   });
@@ -390,14 +390,14 @@ describe('[CMCHS] cmc/handleSystem', () => {
       await deliverSystemToPeer({
         remoteApiEndpoint: 'https://t@peer.example.com/',
         remoteCollectorStreamId: ':_cmc:apps:p:collectors:me--my-host',
-        eventType: 'cmc/system-alert-v1',
+        eventType: 'notification/alert-cmc',
         payload: { code: 'x' },
         selfIdentity: { username: 'me', host: 'my.host' },
         deps: { fetch },
       });
       assert.equal(calls.length, 1);
       const sent = JSON.parse(calls[0].init.body);
-      assert.equal(sent.type, 'cmc/system-alert-v1');
+      assert.equal(sent.type, 'notification/alert-cmc');
       assert.equal(sent.content.code, 'x');
       assert.deepEqual(sent.content.from, { username: 'me', host: 'my.host' });
     });
@@ -418,7 +418,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
     it('[HS21] handleSystemEvent rejects non-system trigger types', async () => {
       const r = await handleSystemEvent({
         userId: 'u1',
-        triggerEvent: { type: 'cmc/chat-v1', content: {}, streamIds: [] },
+        triggerEvent: { type: 'message/chat-cmc', content: {}, streamIds: [] },
         selfIdentity: SELF,
         deps: { mall: fakeMall([]), fetch: fakeFetch({}).fetch },
       });
@@ -430,7 +430,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
   describe('[CMCHS-SC] scope-request + scope-update handlers', () => {
     const SCOPE_REQUEST_TRIGGER = {
       id: 'evt-sr',
-      type: 'cmc/system-scope-request-v1',
+      type: 'consent/scope-request-cmc',
       streamIds: [':_cmc:apps:my-app:collectors:provider-a--provider-example-org'],
       content: {
         requestedPermissions: [{ streamId: 'fertility', level: 'read' }],
@@ -440,7 +440,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
 
     const SCOPE_UPDATE_TRIGGER = {
       id: 'evt-su',
-      type: 'cmc/system-scope-update-v1',
+      type: 'consent/scope-update-cmc',
       streamIds: [':_cmc:apps:my-app:collectors:provider-a--provider-example-org'],
       content: {
         permissions: [{ streamId: 'fertility', level: 'read' }],
@@ -449,7 +449,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
       },
     };
 
-    it('[HS22] handleSystemScopeRequest delivers cmc/system-scope-request-v1 to peer', async () => {
+    it('[HS22] handleSystemScopeRequest delivers consent/scope-request-cmc to peer', async () => {
       const mall = fakeMall([COUNTERPARTY_ACCESS]);
       const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r-sr' } } });
       const r = await handleSystemScopeRequest({
@@ -459,15 +459,15 @@ describe('[CMCHS] cmc/handleSystem', () => {
         deps: { mall, fetch },
       });
       assert.equal(r.ok, true);
-      assert.equal(r.eventType, 'cmc/system-scope-request-v1');
+      assert.equal(r.eventType, 'consent/scope-request-cmc');
       const sent = JSON.parse(calls[0].init.body);
-      assert.equal(sent.type, 'cmc/system-scope-request-v1');
+      assert.equal(sent.type, 'consent/scope-request-cmc');
       assert.deepEqual(sent.content.from, SELF);
       assert.deepEqual(sent.content.requestedPermissions, [{ streamId: 'fertility', level: 'read' }]);
       assert.equal(sent.content.reason, 'extending study to include fertility tracking');
     });
 
-    it('[HS23] handleSystemScopeUpdate delivers cmc/system-scope-update-v1 with compositeId chain', async () => {
+    it('[HS23] handleSystemScopeUpdate delivers consent/scope-update-cmc with compositeId chain', async () => {
       const mall = fakeMall([COUNTERPARTY_ACCESS]);
       const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r-su' } } });
       const r = await handleSystemScopeUpdate({
@@ -478,7 +478,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
       });
       assert.equal(r.ok, true);
       const sent = JSON.parse(calls[0].init.body);
-      assert.equal(sent.type, 'cmc/system-scope-update-v1');
+      assert.equal(sent.type, 'consent/scope-update-cmc');
       assert.equal(sent.content.compositeId, 'acc-back-channel:v2');
       assert.equal(sent.content.previousCompositeId, 'acc-back-channel:v1');
     });

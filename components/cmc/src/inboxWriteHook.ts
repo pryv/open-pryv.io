@@ -19,7 +19,7 @@ const require = createRequire(import.meta.url);
  *     write directly into :_cmc:inbox — only counterparty-tagged shared
  *     accesses can.)
  *   - The event type MUST be one of the lifecycle family
- *     (cmc/request-v1, cmc/accept-v1, cmc/refuse-v1, cmc/revoke-v1).
+ *     (consent/request-cmc, consent/accept-cmc, consent/refuse-cmc, consent/revoke-cmc).
  *     Other types: reject with `cmc-event-type-not-allowed`.
  *   - On success, stamp `content.from` server-side from the access's
  *     stored counterparty identity (`clientData.cmc.counterparty`), so

@@ -76,18 +76,18 @@ describe('[CMCVAL] cmc/validators', () => {
     });
   });
 
-  describe('[CMCVAL-REQ] cmc/request-v1', () => {
+  describe('[CMCVAL-REQ] consent/request-cmc', () => {
     it('[VR01] accepts a fully-formed open-invite request', () => {
-      expectValid('cmc/request-v1', VALID_REQUEST);
+      expectValid('consent/request-cmc', VALID_REQUEST);
     });
 
     it('[VR02] accepts a directed invite with `to`', () => {
-      expectValid('cmc/request-v1', { ...VALID_REQUEST, to: 'jane' });
+      expectValid('consent/request-cmc', { ...VALID_REQUEST, to: 'jane' });
     });
 
     it('[VR03] rejects missing request.permissions', () => {
       const bad = { ...VALID_REQUEST, request: { ...VALID_REQUEST.request, permissions: undefined } };
-      expectInvalid('cmc/request-v1', bad, 'permissions');
+      expectInvalid('consent/request-cmc', bad, 'permissions');
     });
 
     it('[VR04] rejects request.permissions with unknown level', () => {
@@ -98,7 +98,7 @@ describe('[CMCVAL] cmc/validators', () => {
           permissions: [{ streamId: 'x', level: 'admin' }],
         },
       };
-      expectInvalid('cmc/request-v1', bad, 'level');
+      expectInvalid('consent/request-cmc', bad, 'level');
     });
 
     it('[VR05] rejects localizable text given as plain string', () => {
@@ -106,7 +106,7 @@ describe('[CMCVAL] cmc/validators', () => {
         ...VALID_REQUEST,
         request: { ...VALID_REQUEST.request, title: 'example consent' },
       };
-      expectInvalid('cmc/request-v1', bad, 'title');
+      expectInvalid('consent/request-cmc', bad, 'title');
     });
 
     it('[VR06] rejects non-boolean features.chat', () => {
@@ -114,17 +114,17 @@ describe('[CMCVAL] cmc/validators', () => {
         ...VALID_REQUEST,
         request: { ...VALID_REQUEST.request, features: { chat: 'yes' } },
       };
-      expectInvalid('cmc/request-v1', bad, 'features.chat');
+      expectInvalid('consent/request-cmc', bad, 'features.chat');
     });
   });
 
-  describe('[CMCVAL-ACC] cmc/accept-v1', () => {
+  describe('[CMCVAL-ACC] consent/accept-cmc', () => {
     it('[VA01] accepts a minimal accept', () => {
-      expectValid('cmc/accept-v1', { capabilityUrl: 'https://AbC@example.com/' });
+      expectValid('consent/accept-cmc', { capabilityUrl: 'https://AbC@example.com/' });
     });
 
     it('[VA02] accepts extra + accessName', () => {
-      expectValid('cmc/accept-v1', {
+      expectValid('consent/accept-cmc', {
         capabilityUrl: 'https://AbC@example.com/',
         extra: { chat: true },
         accessName: 'Example access',
@@ -132,51 +132,51 @@ describe('[CMCVAL] cmc/validators', () => {
     });
 
     it('[VA03] rejects missing capabilityUrl', () => {
-      expectInvalid('cmc/accept-v1', {}, 'capabilityUrl');
+      expectInvalid('consent/accept-cmc', {}, 'capabilityUrl');
     });
   });
 
-  describe('[CMCVAL-REF] cmc/refuse-v1', () => {
+  describe('[CMCVAL-REF] consent/refuse-cmc', () => {
     it('[VF01] accepts refuse with localizable reason', () => {
-      expectValid('cmc/refuse-v1', {
+      expectValid('consent/refuse-cmc', {
         capabilityUrl: 'https://AbC@example.com/',
         reason: { en: 'Not at this time.' },
       });
     });
 
     it('[VF02] rejects refuse without capabilityUrl', () => {
-      expectInvalid('cmc/refuse-v1', { reason: { en: 'no' } }, 'capabilityUrl');
+      expectInvalid('consent/refuse-cmc', { reason: { en: 'no' } }, 'capabilityUrl');
     });
   });
 
-  describe('[CMCVAL-REV] cmc/revoke-v1', () => {
+  describe('[CMCVAL-REV] consent/revoke-cmc', () => {
     it('[VRK01] accepts revoke with accessId', () => {
-      expectValid('cmc/revoke-v1', { accessId: 'abc123' });
+      expectValid('consent/revoke-cmc', { accessId: 'abc123' });
     });
 
     it('[VRK02] rejects revoke without accessId', () => {
-      expectInvalid('cmc/revoke-v1', {}, 'accessId');
+      expectInvalid('consent/revoke-cmc', {}, 'accessId');
     });
   });
 
-  describe('[CMCVAL-CHA] cmc/chat-v1', () => {
+  describe('[CMCVAL-CHA] message/chat-cmc', () => {
     it('[VC01] accepts short chat message', () => {
-      expectValid('cmc/chat-v1', { content: 'Hello!' });
+      expectValid('message/chat-cmc', { content: 'Hello!' });
     });
 
     it('[VC02] rejects empty content', () => {
-      expectInvalid('cmc/chat-v1', { content: '' }, 'content');
+      expectInvalid('message/chat-cmc', { content: '' }, 'content');
     });
 
     it('[VC03] rejects > 10 KB content', () => {
       const big = 'x'.repeat(10 * 1024 + 1);
-      expectInvalid('cmc/chat-v1', { content: big }, '10 KB');
+      expectInvalid('message/chat-cmc', { content: big }, '10 KB');
     });
   });
 
-  describe('[CMCVAL-SYS] cmc/system-alert-v1 + cmc/system-ack-v1', () => {
+  describe('[CMCVAL-SYS] notification/alert-cmc + notification/ack-cmc', () => {
     it('[VS01] accepts info alert with ackRequired', () => {
-      expectValid('cmc/system-alert-v1', {
+      expectValid('notification/alert-cmc', {
         level: 'info',
         title: { en: 'Daily check-in' },
         body: { en: 'Complete today\'s questionnaire.' },
@@ -187,24 +187,24 @@ describe('[CMCVAL] cmc/validators', () => {
 
     it('[VS02] rejects alert with invalid level', () => {
       expectInvalid(
-        'cmc/system-alert-v1',
+        'notification/alert-cmc',
         { level: 'urgent', title: { en: 'x' }, body: { en: 'x' } },
         'level'
       );
     });
 
     it('[VS03] accepts ack with alertEventId + ackId', () => {
-      expectValid('cmc/system-ack-v1', { alertEventId: 'evt123', ackId: 'daily-2026-05-13' });
+      expectValid('notification/ack-cmc', { alertEventId: 'evt123', ackId: 'daily-2026-05-13' });
     });
 
     it('[VS04] rejects ack missing ackId', () => {
-      expectInvalid('cmc/system-ack-v1', { alertEventId: 'evt123' }, 'ackId');
+      expectInvalid('notification/ack-cmc', { alertEventId: 'evt123' }, 'ackId');
     });
   });
 
   describe('[CMCVAL-SCO] system-scope-request + system-scope-update', () => {
     it('[VC04] accepts scope-request with newPermissions + message', () => {
-      expectValid('cmc/system-scope-request-v1', {
+      expectValid('consent/scope-request-cmc', {
         newPermissions: [{ streamId: 'nutrition', level: 'read' }],
         message: { en: 'Could I also see your nutrition log?' },
       });
@@ -212,27 +212,27 @@ describe('[CMCVAL] cmc/validators', () => {
 
     it('[VC05] rejects scope-request with empty permissions array', () => {
       expectInvalid(
-        'cmc/system-scope-request-v1',
+        'consent/scope-request-cmc',
         { newPermissions: [] },
         'newPermissions'
       );
     });
 
     it('[VC06] accepts scope-update as response (scopeRequestEventId + accept)', () => {
-      expectValid('cmc/system-scope-update-v1', {
+      expectValid('consent/scope-update-cmc', {
         scopeRequestEventId: 'evt-req-123',
         accept: true,
       });
     });
 
     it('[VC07] accepts scope-update as self-initiated (newPermissions only)', () => {
-      expectValid('cmc/system-scope-update-v1', {
+      expectValid('consent/scope-update-cmc', {
         newPermissions: [{ streamId: 'sleep', level: 'read' }],
       });
     });
 
     it('[VC08] rejects scope-update with neither request-ref nor newPermissions', () => {
-      expectInvalid('cmc/system-scope-update-v1', { accept: true }, 'scopeRequestEventId');
+      expectInvalid('consent/scope-update-cmc', { accept: true }, 'scopeRequestEventId');
     });
   });
 });

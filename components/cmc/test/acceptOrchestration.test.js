@@ -45,7 +45,7 @@ function fakeFetch (responses) {
 
 const VALID_OFFER = {
   id: 'evt-offer',
-  type: 'cmc/request-v1',
+  type: 'consent/request-cmc',
   content: {
     to: null,
     request: {
@@ -78,7 +78,7 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       // We query by event type — capability access permissions limit
       // the response to the single offer event the access can see.
       assert.ok(calls[0].url.includes('types'));
-      assert.ok(calls[0].url.includes(encodeURIComponent('cmc/request-v1')));
+      assert.ok(calls[0].url.includes(encodeURIComponent('consent/request-cmc')));
       assert.equal(calls[0].init.method, 'GET');
       assert.equal(calls[0].init.headers.authorization, 'Tok');
     });
@@ -131,13 +131,13 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
 
     it('[AO06] throws cmc-offer-empty-permissions when permissions missing or empty', () => {
       assert.throws(
-        () => permissionsFromOffer({ id: 'x', type: 'cmc/request-v1', content: {} }),
+        () => permissionsFromOffer({ id: 'x', type: 'consent/request-cmc', content: {} }),
         (err) => err.id === 'cmc-offer-empty-permissions'
       );
       assert.throws(
         () => permissionsFromOffer({
           id: 'x',
-          type: 'cmc/request-v1',
+          type: 'consent/request-cmc',
           content: { request: { permissions: [] } },
         }),
         (err) => err.id === 'cmc-offer-empty-permissions'
@@ -186,7 +186,7 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
   });
 
   describe('[CMCAO-DA] deliverAcceptViaCapability', () => {
-    it('[AO10] POSTs cmc/accept-v1 to the per-capability responses stream with grantedAccess.apiEndpoint', async () => {
+    it('[AO10] POSTs consent/accept-cmc to the per-capability responses stream with grantedAccess.apiEndpoint', async () => {
       const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r1' } } });
       const r = await deliverAcceptViaCapability({
         capabilityUrl: 'https://Tok@example.com/',
@@ -199,7 +199,7 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       assert.equal(calls.length, 1);
       const sent = JSON.parse(calls[0].init.body);
       assert.deepEqual(sent.streamIds, [':_cmc:_internal:responses:cap-xyz']);
-      assert.equal(sent.type, 'cmc/accept-v1');
+      assert.equal(sent.type, 'consent/accept-cmc');
       assert.equal(sent.content.grantedAccess.apiEndpoint, 'https://X@recipient.example.com/');
       assert.deepEqual(sent.content.from, { username: 'alice', host: 'example.com' });
     });
@@ -219,7 +219,7 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
   });
 
   describe('[CMCAO-DR] deliverRefuseViaCapability', () => {
-    it('[AO12] POSTs cmc/refuse-v1 to the per-capability responses stream with optional reason', async () => {
+    it('[AO12] POSTs consent/refuse-cmc to the per-capability responses stream with optional reason', async () => {
       const { fetch, calls } = fakeFetch({ status: 201, body: {} });
       const r = await deliverRefuseViaCapability({
         capabilityUrl: 'https://Tok@example.com/',
@@ -231,7 +231,7 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       assert.equal(r.ok, true);
       const sent = JSON.parse(calls[0].init.body);
       assert.deepEqual(sent.streamIds, [':_cmc:_internal:responses:cap-xyz']);
-      assert.equal(sent.type, 'cmc/refuse-v1');
+      assert.equal(sent.type, 'consent/refuse-cmc');
       assert.deepEqual(sent.content.reason, { en: 'Not at this time.' });
     });
 

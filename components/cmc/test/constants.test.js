@@ -139,19 +139,19 @@ describe('[CMCCONST] cmc/constants', () => {
   describe('[CMCCONST-ET] event-type catalogues', () => {
     it('[CE01] lifecycle family has 5 event types (incl. back-channel post-acceptance handshake)', () => {
       assert.deepEqual(new Set(C.EVENT_TYPES_LIFECYCLE), new Set([
-        'cmc/request-v1', 'cmc/accept-v1', 'cmc/refuse-v1', 'cmc/revoke-v1',
-        'cmc/back-channel-v1',
+        'consent/request-cmc', 'consent/accept-cmc', 'consent/refuse-cmc', 'consent/revoke-cmc',
+        'consent/back-channel-cmc',
       ]));
     });
 
     it('[CE02] chat family has 1 event type', () => {
-      assert.deepEqual(C.EVENT_TYPES_CHAT, ['cmc/chat-v1']);
+      assert.deepEqual(C.EVENT_TYPES_CHAT, ['message/chat-cmc']);
     });
 
     it('[CE03] system family has 4 event types', () => {
       assert.deepEqual(new Set(C.EVENT_TYPES_SYSTEM), new Set([
-        'cmc/system-alert-v1', 'cmc/system-ack-v1',
-        'cmc/system-scope-request-v1', 'cmc/system-scope-update-v1',
+        'notification/alert-cmc', 'notification/ack-cmc',
+        'consent/scope-request-cmc', 'consent/scope-update-cmc',
       ]));
     });
 
@@ -159,8 +159,8 @@ describe('[CMCCONST] cmc/constants', () => {
       const set = new Set(C.ALL_EVENT_TYPES);
       assert.equal(set.size, C.ALL_EVENT_TYPES.length);
       assert.equal(set.size, 5 + 1 + 4 + 1);
-      assert.ok(set.has('cmc/retry-v1'));
-      assert.ok(set.has('cmc/back-channel-v1'));
+      assert.ok(set.has('cmc-internal/retry-cmc'));
+      assert.ok(set.has('consent/back-channel-cmc'));
     });
   });
 

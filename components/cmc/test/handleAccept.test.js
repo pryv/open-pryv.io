@@ -73,7 +73,7 @@ function fakeFetch (responses) {
 
 const VALID_OFFER = {
   id: 'evt-offer',
-  type: 'cmc/request-v1',
+  type: 'consent/request-cmc',
   content: {
     request: {
       title: { en: 'Example' },
@@ -88,13 +88,13 @@ const VALID_OFFER = {
 
 const ACCEPT_TRIGGER = {
   id: 'evt-accept',
-  type: 'cmc/accept-v1',
+  type: 'consent/accept-cmc',
   content: { capabilityUrl: 'https://Tok@example.com/', extra: { chat: true } },
 };
 
 const REFUSE_TRIGGER = {
   id: 'evt-refuse',
-  type: 'cmc/refuse-v1',
+  type: 'consent/refuse-cmc',
   content: { capabilityUrl: 'https://Tok@example.com/', reason: { en: 'no thanks' } },
 };
 
@@ -130,7 +130,7 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(calls[0].init.method, 'GET');
       assert.equal(calls[1].init.method, 'POST');
       const sentBody = JSON.parse(calls[1].init.body);
-      assert.equal(sentBody.type, 'cmc/accept-v1');
+      assert.equal(sentBody.type, 'consent/accept-cmc');
       assert.equal(sentBody.content.grantedAccess.apiEndpoint, 'https://tok-grant@recipient.example.com/');
       assert.deepEqual(sentBody.content.from, { username: 'alice', host: 'recipient.example.com' });
     });
@@ -140,7 +140,7 @@ describe('[CMCHA] cmc/handleAccept', () => {
     it('[HA02] rejects wrong trigger type', async () => {
       const r = await handleAccept({
         userId: 'u1',
-        triggerEvent: { type: 'cmc/chat-v1', content: {} },
+        triggerEvent: { type: 'message/chat-cmc', content: {} },
         selfIdentity: { username: 'alice', host: 'recipient.example.com' },
         deps: { mall: fakeMall(), fetch: fakeFetch({}).fetch },
       });
@@ -151,7 +151,7 @@ describe('[CMCHA] cmc/handleAccept', () => {
     it('[HA03] rejects when capabilityUrl is missing', async () => {
       const r = await handleAccept({
         userId: 'u1',
-        triggerEvent: { id: 'x', type: 'cmc/accept-v1', content: {} },
+        triggerEvent: { id: 'x', type: 'consent/accept-cmc', content: {} },
         selfIdentity: { username: 'alice', host: 'recipient.example.com' },
         deps: { mall: fakeMall(), fetch: fakeFetch({}).fetch },
       });
@@ -278,7 +278,7 @@ describe('[CMCHA] cmc/handleAccept', () => {
   });
 
   describe('[CMCHA-RF] handleRefuse', () => {
-    it('[HA11] delivers cmc/refuse-v1 with reason; returns ok', async () => {
+    it('[HA11] delivers consent/refuse-cmc with reason; returns ok', async () => {
       // handleRefuse reads the offer first (to recover capabilityId
       // for the per-capability responses streamId) — so fakeFetch
       // returns two responses: offer GET + refuse POST.
@@ -295,7 +295,7 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(r.ok, true);
       // Last call is the POST.
       const sent = JSON.parse(calls[calls.length - 1].init.body);
-      assert.equal(sent.type, 'cmc/refuse-v1');
+      assert.equal(sent.type, 'consent/refuse-cmc');
       assert.deepEqual(sent.content.reason, { en: 'no thanks' });
       assert.deepEqual(sent.streamIds, [':_cmc:_internal:responses:cap-xyz']);
     });
@@ -319,7 +319,7 @@ describe('[CMCHA] cmc/handleAccept', () => {
     it('[HA13] rejects wrong trigger type', async () => {
       const r = await handleRefuse({
         userId: 'u1',
-        triggerEvent: { type: 'cmc/accept-v1', content: {} },
+        triggerEvent: { type: 'consent/accept-cmc', content: {} },
         selfIdentity: { username: 'alice', host: 'recipient.example.com' },
         deps: { fetch: fakeFetch({}).fetch },
       });

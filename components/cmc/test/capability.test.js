@@ -62,7 +62,7 @@ function fakeMall () {
 
 const VALID_REQUEST_TRIGGER = {
   id: 'evt-trigger-1',
-  type: 'cmc/request-v1',
+  type: 'consent/request-cmc',
   content: {
     to: null,
     capabilityRequested: true,
@@ -102,7 +102,7 @@ describe('[CMCCAP] cmc/capability', () => {
       // Offer event populated
       assert.equal(mall.calls.eventsCreated.length, 1);
       assert.deepEqual(mall.calls.eventsCreated[0].streamIds, [':_cmc:_internal:offer:cap123']);
-      assert.equal(mall.calls.eventsCreated[0].type, 'cmc/request-v1');
+      assert.equal(mall.calls.eventsCreated[0].type, 'consent/request-cmc');
       // Access shape
       assert.equal(mall.calls.accessesCreated.length, 1);
       const acc = mall.calls.accessesCreated[0];
@@ -158,15 +158,15 @@ describe('[CMCCAP] cmc/capability', () => {
       assert.equal(mall.calls.accessesCreated[0].expires, 1060);
     });
 
-    it('[CC04] rejects when triggerEvent is not cmc/request-v1', async () => {
+    it('[CC04] rejects when triggerEvent is not consent/request-cmc', async () => {
       const mall = fakeMall();
       await assert.rejects(
         mintCapability({
           userId: 'u1',
-          triggerEvent: { type: 'cmc/chat-v1', content: {} },
+          triggerEvent: { type: 'message/chat-cmc', content: {} },
           deps: { mall },
         }),
-        /must be cmc\/request-v1/
+        /must be consent\/request-cmc/
       );
       assert.equal(mall.calls.streamsCreated.length, 0);
       assert.equal(mall.calls.accessesCreated.length, 0);

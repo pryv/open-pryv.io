@@ -18,7 +18,7 @@ const require = createRequire(import.meta.url);
  *   - If the suppression flag is set (this update was triggered by a
  *     CMC handler that's already going to deliver the notification),
  *     skip to avoid double-fire.
- *   - Otherwise: auto-deliver a `cmc/system-scope-update-v1` event to
+ *   - Otherwise: auto-deliver a `consent/scope-update-cmc` event to
  *     the peer via the access's stored apiEndpoint AND write a local
  *     audit event under the user's collectors stream so the user's
  *     app sees the change in real time.

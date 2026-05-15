@@ -9,10 +9,10 @@ const require = createRequire(import.meta.url);
 
 /**
  * CMC plugin — events.create middleware that mints a capability access
- * for `cmc/request-v1` triggers with `capabilityRequested: true`.
+ * for `consent/request-cmc` triggers with `capabilityRequested: true`.
  *
  * Runs synchronously inside the events.create chain BEFORE `createEvent`:
- *   - if the trigger is cmc/request-v1 + capabilityRequested === true,
+ *   - if the trigger is consent/request-cmc + capabilityRequested === true,
  *     calls capability.mintCapability (which creates 2 streams + offer
  *     event + shared access via direct mall calls);
  *   - stamps context.newEvent.content with capabilityUrl +
@@ -51,7 +51,7 @@ type Deps = {
 type Middleware = (context: any, params: any, result: any, next: any) => any | Promise<any>;
 
 /**
- * Returns a middleware that fires for cmc/request-v1 events with
+ * Returns a middleware that fires for consent/request-cmc events with
  * capabilityRequested:true on context.newEvent. Other events passthrough.
  */
 function createCapabilityMintHook (deps: Deps): Middleware {

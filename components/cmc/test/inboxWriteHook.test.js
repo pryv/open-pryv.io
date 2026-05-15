@@ -66,7 +66,7 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
     const errors = fakeErrors();
     const mw = createInboxWriteHook({ errors: errors.factory });
     const ctx = {
-      newEvent: { streamIds: [':_cmc:inbox'], type: 'cmc/accept-v1', content: {} },
+      newEvent: { streamIds: [':_cmc:inbox'], type: 'consent/accept-cmc', content: {} },
       access: { clientData: { cmc: { role: 'capability' } } },
     };
     const err = await runMiddleware(mw, ctx, {}, {});
@@ -78,7 +78,7 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
     const errors = fakeErrors();
     const mw = createInboxWriteHook({ errors: errors.factory });
     const ctx = {
-      newEvent: { streamIds: [':_cmc:inbox'], type: 'cmc/accept-v1', content: {} },
+      newEvent: { streamIds: [':_cmc:inbox'], type: 'consent/accept-cmc', content: {} },
       access: { clientData: {} },
     };
     const err = await runMiddleware(mw, ctx, {}, {});
@@ -89,7 +89,7 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
   it('[CI04] rejects inbox write with non-lifecycle event type', async () => {
     const errors = fakeErrors();
     const mw = createInboxWriteHook({ errors: errors.factory });
-    for (const type of ['cmc/chat-v1', 'cmc/system-alert-v1', 'note/txt']) {
+    for (const type of ['message/chat-cmc', 'notification/alert-cmc', 'note/txt']) {
       const ctx = {
         newEvent: { streamIds: [':_cmc:inbox'], type, content: {} },
         access: COUNTERPARTY_ACCESS,
@@ -104,7 +104,7 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
   it('[CI05] accepts each lifecycle event type (request/accept/refuse/revoke)', async () => {
     const errors = fakeErrors();
     const mw = createInboxWriteHook({ errors: errors.factory });
-    for (const type of ['cmc/request-v1', 'cmc/accept-v1', 'cmc/refuse-v1', 'cmc/revoke-v1']) {
+    for (const type of ['consent/request-cmc', 'consent/accept-cmc', 'consent/refuse-cmc', 'consent/revoke-cmc']) {
       const ctx = {
         newEvent: { streamIds: [':_cmc:inbox'], type, content: {} },
         access: COUNTERPARTY_ACCESS,
@@ -118,7 +118,7 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
     const errors = fakeErrors();
     const mw = createInboxWriteHook({ errors: errors.factory });
     const ctx = {
-      newEvent: { streamIds: [':_cmc:inbox'], type: 'cmc/accept-v1', content: { grantedAccess: { apiEndpoint: 'X' } } },
+      newEvent: { streamIds: [':_cmc:inbox'], type: 'consent/accept-cmc', content: { grantedAccess: { apiEndpoint: 'X' } } },
       access: COUNTERPARTY_ACCESS,
     };
     const err = await runMiddleware(mw, ctx, {}, {});
@@ -138,7 +138,7 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
     const ctx = {
       newEvent: {
         streamIds: [':_cmc:inbox'],
-        type: 'cmc/accept-v1',
+        type: 'consent/accept-cmc',
         content: { from: { username: 'evil', host: 'attacker.example' } },
       },
       access: COUNTERPARTY_ACCESS,
@@ -152,7 +152,7 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
     const errors = fakeErrors();
     const mw = createInboxWriteHook({ errors: errors.factory });
     const ctx = {
-      newEvent: { streamIds: [':_cmc:inbox'], type: 'cmc/accept-v1', content: {} },
+      newEvent: { streamIds: [':_cmc:inbox'], type: 'consent/accept-cmc', content: {} },
       access: { clientData: { cmc: { role: 'counterparty', counterparty: { username: 'alice' } } } }, // no host
     };
     const err = await runMiddleware(mw, ctx, {}, {});
@@ -166,7 +166,7 @@ describe('[CMCINBOX] cmc/inboxWriteHook', () => {
     const ctx = {
       newEvent: {
         streamIds: ['some-other-stream', ':_cmc:inbox'],
-        type: 'cmc/refuse-v1',
+        type: 'consent/refuse-cmc',
         content: {},
       },
       access: COUNTERPARTY_ACCESS,

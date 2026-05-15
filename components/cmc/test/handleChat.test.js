@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — handleChat tests.
  *
- * [CMCHC] covers the cmc/chat-v1 trigger pipeline: parse chat stream-id,
+ * [CMCHC] covers the message/chat-cmc trigger pipeline: parse chat stream-id,
  * resolve counterparty-access, apply rate-limit, deliver to peer.
  */
 
@@ -66,14 +66,14 @@ const COUNTERPARTY_ACCESS = {
 
 const CHAT_TRIGGER = {
   id: 'evt-chat',
-  type: 'cmc/chat-v1',
+  type: 'message/chat-cmc',
   streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
   content: { content: 'hello there' },
 };
 
 describe('[CMCHC] cmc/handleChat', () => {
   describe('[CMCHC-OK] handleChat happy path', () => {
-    it('[HC01] resolves counterparty-access and POSTs cmc/chat-v1 to peer', async () => {
+    it('[HC01] resolves counterparty-access and POSTs message/chat-cmc to peer', async () => {
       const mall = fakeMall([COUNTERPARTY_ACCESS]);
       const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r1' } } });
       const r = await handleChat({
@@ -83,13 +83,13 @@ describe('[CMCHC] cmc/handleChat', () => {
         deps: { mall, fetch },
       });
       assert.equal(r.ok, true);
-      assert.equal(r.eventType, 'cmc/chat-v1');
+      assert.equal(r.eventType, 'message/chat-cmc');
       assert.equal(r.remoteEventId, 'r1');
       assert.equal(calls.length, 1);
       assert.equal(calls[0].url, 'https://provider.example.org/events');
       assert.equal(calls[0].init.headers.authorization, 'peer-tok');
       const sent = JSON.parse(calls[0].init.body);
-      assert.equal(sent.type, 'cmc/chat-v1');
+      assert.equal(sent.type, 'message/chat-cmc');
       assert.deepEqual(sent.streamIds, [':_cmc:apps:my-app:chats:alice--example-com']);
       assert.equal(sent.content.content, 'hello there');
       assert.deepEqual(sent.content.from, SELF);
@@ -100,7 +100,7 @@ describe('[CMCHC] cmc/handleChat', () => {
     it('[HC02] rejects wrong trigger type', async () => {
       const r = await handleChat({
         userId: 'u1',
-        triggerEvent: { type: 'cmc/system-alert-v1', content: {}, streamIds: [] },
+        triggerEvent: { type: 'notification/alert-cmc', content: {}, streamIds: [] },
         selfIdentity: SELF,
         deps: { mall: fakeMall([]), fetch: fakeFetch({}).fetch },
       });

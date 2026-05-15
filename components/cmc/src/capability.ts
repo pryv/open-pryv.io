@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — capability access mint + GC.
  *
- * When a `cmc/request-v1` is written with `capabilityRequested: true`, the
+ * When a `consent/request-cmc` is written with `capabilityRequested: true`, the
  * plugin creates a `shared` access scoped to two real per-capability
  * streams under `:_cmc:_internal:`:
  *
@@ -43,7 +43,7 @@ type MintDeps = {
 
 type RequestEventLike = {
   id?: string;
-  type: string;       // 'cmc/request-v1'
+  type: string;       // 'consent/request-cmc'
   content: any;
   streamIds?: string[];
 };
@@ -74,7 +74,7 @@ function defaultNow (): number {
 }
 
 /**
- * Mint a capability access for the given `cmc/request-v1` trigger.
+ * Mint a capability access for the given `consent/request-cmc` trigger.
  *
  * Side effects (all via deps.mall):
  *   1. streams.create offer + responses streams under :_cmc:_internal:
@@ -144,7 +144,7 @@ async function mintCapability (params: {
   delete offerContent.failure;
   offerContent.capabilityId = capabilityId;
   // Stamp the requester's app-scope stream-id so the accepter can pass
-  // it back in the cmc/accept-v1 delivery — preserving per-request
+  // it back in the consent/accept-cmc delivery — preserving per-request
   // scoping (e.g. :_cmc:apps:my-app:study-1 vs bare :_cmc:apps:my-app).
   // Without this, handleIncomingAccept on the requester side falls back
   // to bare :_cmc:apps:<app-code> and chat/system handlers that target

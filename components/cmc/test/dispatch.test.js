@@ -65,7 +65,7 @@ function fakeFetch (responses) {
 const SELF = { username: 'alice', host: 'recipient.example.com' };
 const VALID_OFFER = {
   id: 'evt-offer',
-  type: 'cmc/request-v1',
+  type: 'consent/request-cmc',
   content: {
     request: {
       title: { en: 'Example' },
@@ -91,10 +91,10 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.equal(r.reason, 'not-cmc-event');
     });
 
-    it('[CD02] skips cmc/request-v1 (handled by capability-mint hook elsewhere)', async () => {
+    it('[CD02] skips consent/request-cmc (handled by capability-mint hook elsewhere)', async () => {
       const r = await dispatch({
         userId: 'u1',
-        event: { id: 'e1', type: 'cmc/request-v1', content: { capabilityRequested: true } },
+        event: { id: 'e1', type: 'consent/request-cmc', content: { capabilityRequested: true } },
         deps: makeDeps({}),
       });
       assert.equal(r.handled, false);
@@ -102,19 +102,24 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.equal(r.reason, 'request-handled-elsewhere');
     });
 
-    it('[CD03] returns skipped for unknown cmc/* event types', async () => {
+    it('[CD03] returns skipped for non-CMC event types', async () => {
+      // After the class/format rename, types are looked up against the
+      // exact ALL_EVENT_TYPES set (not by prefix), so any unrecognised
+      // type lands in the same "not-cmc-event" branch — including
+      // app-defined types under our shared classes (`consent/foo`,
+      // `notification/bar`).
       const r = await dispatch({
         userId: 'u1',
-        event: { id: 'e1', type: 'cmc/never-defined-v9', content: {} },
+        event: { id: 'e1', type: 'consent/never-defined-v9', content: {} },
         deps: makeDeps({}),
       });
       assert.equal(r.handled, false);
       assert.equal(r.status, 'skipped');
-      assert.equal(r.reason, 'unknown-cmc-event');
+      assert.equal(r.reason, 'not-cmc-event');
     });
   });
 
-  describe('[CMCDISP-A] dispatch routes cmc/accept-v1 → handleAccept', () => {
+  describe('[CMCDISP-A] dispatch routes consent/accept-cmc → handleAccept', () => {
     it('[CD04] happy path: stamps delivered then completed', async () => {
       const mall = fakeMall();
       const { fetch } = fakeFetch([
@@ -125,7 +130,7 @@ describe('[CMCDISP] cmc/dispatch', () => {
         userId: 'u1',
         event: {
           id: 'evt-accept',
-          type: 'cmc/accept-v1',
+          type: 'consent/accept-cmc',
           content: { capabilityUrl: 'https://Tok@example.com/' },
         },
         deps: makeDeps({ mall, fetch }),
@@ -149,7 +154,7 @@ describe('[CMCDISP] cmc/dispatch', () => {
         userId: 'u1',
         event: {
           id: 'evt-accept',
-          type: 'cmc/accept-v1',
+          type: 'consent/accept-cmc',
           content: { capabilityUrl: 'https://Tok@example.com/' },
         },
         deps: makeDeps({ mall, fetch }),
@@ -172,7 +177,7 @@ describe('[CMCDISP] cmc/dispatch', () => {
         userId: 'u1',
         event: {
           id: 'evt-accept',
-          type: 'cmc/accept-v1',
+          type: 'consent/accept-cmc',
           content: { capabilityUrl: 'https://Tok@example.com/' },
         },
         deps: makeDeps({ mall, fetch }),
@@ -182,14 +187,14 @@ describe('[CMCDISP] cmc/dispatch', () => {
     });
   });
 
-  describe('[CMCDISP-INB] dispatch routes cmc/accept-v1 on :_cmc:inbox → handleIncomingAccept', () => {
+  describe('[CMCDISP-INB] dispatch routes consent/accept-cmc on :_cmc:inbox → handleIncomingAccept', () => {
     it('[CD11] inbox-direction routes to handleIncomingAccept (mints back-channel + provisions anchors)', async () => {
       const mall = fakeMall();
       // Stub events.get so handleIncomingAccept's resolveRequestScope
       // can find the request event by id.
       mall.events.get = async () => [{
         id: 'orig-req-1',
-        type: 'cmc/request-v1',
+        type: 'consent/request-cmc',
         streamIds: [':_cmc:apps:my-app:campaign-2026'],
       }];
       const { fetch } = fakeFetch({ status: 200, body: {} });
@@ -197,7 +202,7 @@ describe('[CMCDISP] cmc/dispatch', () => {
         userId: 'u1',
         event: {
           id: 'evt-incoming-accept',
-          type: 'cmc/accept-v1',
+          type: 'consent/accept-cmc',
           streamIds: [':_cmc:inbox'],
           content: {
             grantedAccess: { apiEndpoint: 'https://granted-tok@accepter.pryv.me/' },
@@ -231,7 +236,7 @@ describe('[CMCDISP] cmc/dispatch', () => {
         userId: 'u1',
         event: {
           id: 'evt-local-accept',
-          type: 'cmc/accept-v1',
+          type: 'consent/accept-cmc',
           streamIds: [':_cmc:apps:my-app:campaign-2026'],
           content: { capabilityUrl: 'https://Tok@example.com/' },
         },
@@ -247,7 +252,7 @@ describe('[CMCDISP] cmc/dispatch', () => {
     });
   });
 
-  describe('[CMCDISP-R] dispatch routes cmc/refuse-v1 → handleRefuse', () => {
+  describe('[CMCDISP-R] dispatch routes consent/refuse-cmc → handleRefuse', () => {
     it('[CD07] happy path: refuse completes', async () => {
       const mall = fakeMall();
       // handleRefuse now reads the offer first for capabilityId,
@@ -260,7 +265,7 @@ describe('[CMCDISP] cmc/dispatch', () => {
         userId: 'u1',
         event: {
           id: 'evt-refuse',
-          type: 'cmc/refuse-v1',
+          type: 'consent/refuse-cmc',
           content: { capabilityUrl: 'https://Tok@example.com/', reason: { en: 'no' } },
         },
         deps: makeDeps({ mall, fetch }),
@@ -278,7 +283,7 @@ describe('[CMCDISP] cmc/dispatch', () => {
       mw(
         { user: { id: 'u1' } },
         {},
-        { event: { id: 'evt-refuse', type: 'cmc/refuse-v1', content: { capabilityUrl: 'https://Tok@example.com/' } } },
+        { event: { id: 'evt-refuse', type: 'consent/refuse-cmc', content: { capabilityUrl: 'https://Tok@example.com/' } } },
         () => { nextCalled = true; }
       );
       assert.equal(nextCalled, true);
@@ -317,7 +322,7 @@ describe('[CMCDISP] cmc/dispatch', () => {
       mw(
         { user: { id: 'u1', username: 'alice' } },
         {},
-        { event: { id: 'evt-refuse', type: 'cmc/refuse-v1', content: { capabilityUrl: 'https://Tok@example.com/' } } },
+        { event: { id: 'evt-refuse', type: 'consent/refuse-cmc', content: { capabilityUrl: 'https://Tok@example.com/' } } },
         () => {}
       );
       await new Promise((resolve) => setTimeout(resolve, 15));

@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — handleRevoke entry point.
  *
- * Triggered by `cmc/revoke-v1` written to:
+ * Triggered by `consent/revoke-cmc` written to:
  *
  *   :_cmc:inbox                              (one-shot, before acceptance)
  *   :_cmc:apps:<app-code>:[<path>:]chats:<slug>      (after acceptance)
@@ -25,7 +25,7 @@ const require = createRequire(import.meta.url);
  *      counterparty identity).
  *   3. Delete the data-grant access locally (revokes peer's read into
  *      our data immediately).
- *   4. Deliver `cmc/revoke-v1` to the peer via the counterparty-access's
+ *   4. Deliver `consent/revoke-cmc` to the peer via the counterparty-access's
  *      stored apiEndpoint so they delete their half too.
  *   5. Delete our counterparty-access (we no longer trust the peer's
  *      back-channel either).
@@ -80,7 +80,7 @@ type RevokeHandlerResult =
     };
 
 /**
- * Handle a `cmc/revoke-v1` trigger event.
+ * Handle a `consent/revoke-cmc` trigger event.
  *
  * Inputs (on triggerEvent.content):
  *   - counterparty: { username, host }   — required for inbox revokes

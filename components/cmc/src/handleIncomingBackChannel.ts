@@ -8,14 +8,14 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * CMC plugin — accepter-side handler for `cmc/back-channel-v1` events
+ * CMC plugin — accepter-side handler for `consent/back-channel-cmc` events
  * arriving on the accepter's `:_cmc:inbox`.
  *
  * Context: handleAccept on the accepter creates the data-grant access
  * with `clientData.cmc.counterparty = {username, host}` but no
  * apiEndpoint / remote stream-ids — the requester hasn't minted the
  * back-channel yet. After handleIncomingAccept on the requester mints
- * it, the requester POSTs `cmc/back-channel-v1` to the accepter's inbox
+ * it, the requester POSTs `consent/back-channel-cmc` to the accepter's inbox
  * via the data-grant URL (which carries `:_cmc:inbox` create-only
  * specifically for this handshake step). This handler picks that event
  * up, finds the matching data-grant access (by counterparty username +

@@ -58,7 +58,7 @@ function fakeMall () {
 function makeTrigger () {
   return {
     id: 'orig-1',
-    type: 'cmc/accept-v1',
+    type: 'consent/accept-cmc',
     streamIds: [':_cmc:inbox'],
     content: { capabilityUrl: 'https://t@peer.example.com/' },
   };
@@ -106,12 +106,12 @@ describe('[CMCRQ] cmc/retryQueue', () => {
         deps: { mall, dispatch: async () => ({}), dispatchDeps: {}, now: () => now },
       });
       assert.notEqual(ev, null);
-      assert.equal(ev.type, 'cmc/retry-v1');
+      assert.equal(ev.type, 'cmc-internal/retry-cmc');
       assert.deepEqual(ev.streamIds, [':_cmc:_internal:retries']);
       assert.equal(ev.content.attempts, 1);
       assert.equal(ev.content.status, 'pending');
       assert.equal(ev.content.originalEventId, 'orig-1');
-      assert.equal(ev.content.originalType, 'cmc/accept-v1');
+      assert.equal(ev.content.originalType, 'consent/accept-cmc');
       assert.equal(ev.content.nextAttemptAfter, now + BACKOFF_BASE_MS);
     });
     it('[RQ06] returns null + does NOT enqueue when reason is non-retryable', async () => {
@@ -144,7 +144,7 @@ describe('[CMCRQ] cmc/retryQueue', () => {
         id: 'r-1',
         content: {
           originalEventId: 'orig-1',
-          originalType: 'cmc/accept-v1',
+          originalType: 'consent/accept-cmc',
           originalStreamIds: [':_cmc:inbox'],
           originalContent: { capabilityUrl: 'https://t@peer.example.com/' },
           attempts: 1,
@@ -253,10 +253,10 @@ describe('[CMCRQ] cmc/retryQueue', () => {
     it('[RQ14] processes all due pending events; non-pending counted as skipped', async () => {
       const mall = fakeMall();
       // Set up 3 pending events (2 due + 1 not yet due) + 1 already-succeeded.
-      mall._events.set('r-1', { id: 'r-1', content: { originalEventId: 'a', originalType: 'cmc/chat-v1', attempts: 1, nextAttemptAfter: 0, status: 'pending' } });
-      mall._events.set('r-2', { id: 'r-2', content: { originalEventId: 'b', originalType: 'cmc/chat-v1', attempts: 1, nextAttemptAfter: 0, status: 'pending' } });
-      mall._events.set('r-3', { id: 'r-3', content: { originalEventId: 'c', originalType: 'cmc/chat-v1', attempts: 1, nextAttemptAfter: 10_000_000, status: 'pending' } });
-      mall._events.set('r-4', { id: 'r-4', content: { originalEventId: 'd', originalType: 'cmc/chat-v1', attempts: 1, nextAttemptAfter: 0, status: 'succeeded' } });
+      mall._events.set('r-1', { id: 'r-1', content: { originalEventId: 'a', originalType: 'message/chat-cmc', attempts: 1, nextAttemptAfter: 0, status: 'pending' } });
+      mall._events.set('r-2', { id: 'r-2', content: { originalEventId: 'b', originalType: 'message/chat-cmc', attempts: 1, nextAttemptAfter: 0, status: 'pending' } });
+      mall._events.set('r-3', { id: 'r-3', content: { originalEventId: 'c', originalType: 'message/chat-cmc', attempts: 1, nextAttemptAfter: 10_000_000, status: 'pending' } });
+      mall._events.set('r-4', { id: 'r-4', content: { originalEventId: 'd', originalType: 'message/chat-cmc', attempts: 1, nextAttemptAfter: 0, status: 'succeeded' } });
 
       let calls = 0;
       const dispatch = async ({ event }) => {
@@ -283,8 +283,8 @@ describe('[CMCRQ] cmc/retryQueue', () => {
 
     it('[RQ15] swallows handler exceptions in the loop (no event crashes whole pass)', async () => {
       const mall = fakeMall();
-      mall._events.set('r-1', { id: 'r-1', content: { originalEventId: 'a', originalType: 'cmc/chat-v1', attempts: 1, nextAttemptAfter: 0, status: 'pending' } });
-      mall._events.set('r-2', { id: 'r-2', content: { originalEventId: 'b', originalType: 'cmc/chat-v1', attempts: 1, nextAttemptAfter: 0, status: 'pending' } });
+      mall._events.set('r-1', { id: 'r-1', content: { originalEventId: 'a', originalType: 'message/chat-cmc', attempts: 1, nextAttemptAfter: 0, status: 'pending' } });
+      mall._events.set('r-2', { id: 'r-2', content: { originalEventId: 'b', originalType: 'message/chat-cmc', attempts: 1, nextAttemptAfter: 0, status: 'pending' } });
       const dispatch = async ({ event }) => {
         if (event.id === 'a') throw new Error('boom');
         return { handled: true, status: 'completed' };

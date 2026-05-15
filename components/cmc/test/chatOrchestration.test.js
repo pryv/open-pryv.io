@@ -152,7 +152,7 @@ describe('[CMCCO] cmc/chatOrchestration', () => {
   });
 
   describe('[CMCCO-DC] deliverChatToPeer', () => {
-    it('[CO10] POSTs cmc/chat-v1 to the remote chat stream with content + from', async () => {
+    it('[CO10] POSTs message/chat-cmc to the remote chat stream with content + from', async () => {
       const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r1' } } });
       const r = await deliverChatToPeer({
         remoteApiEndpoint: 'https://Tok@peer.example/',
@@ -165,7 +165,7 @@ describe('[CMCCO] cmc/chatOrchestration', () => {
       assert.equal(calls[0].init.method, 'POST');
       const sent = JSON.parse(calls[0].init.body);
       assert.deepEqual(sent.streamIds, [':_cmc:apps:peer-app:chats:alice--my-host']);
-      assert.equal(sent.type, 'cmc/chat-v1');
+      assert.equal(sent.type, 'message/chat-cmc');
       assert.equal(sent.content.content, 'Hello!');
       assert.deepEqual(sent.content.from, { username: 'alice', host: 'my-host.example' });
     });

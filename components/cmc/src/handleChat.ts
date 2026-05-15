@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — handleChat entry point.
  *
- * Triggered when an app writes `cmc/chat-v1` to its OWN per-counterparty
+ * Triggered when an app writes `message/chat-cmc` to its OWN per-counterparty
  * chat stream:
  *
  *   :_cmc:apps:<app-code>:[<user-path>:]chats:<counterparty-slug>
@@ -22,7 +22,7 @@ const require = createRequire(import.meta.url);
  *   3. Reads remote apiEndpoint + remoteChatStreamId off the access's
  *      clientData.cmc.counterparty (stamped at acceptance time).
  *   4. Applies the per-worker rate-limit (defensive, not strict).
- *   5. POSTs cmc/chat-v1 to the peer's chats stream via outbound.
+ *   5. POSTs message/chat-cmc to the peer's chats stream via outbound.
  *
  * Same shape as handleSystemEvent. Kept separate so future divergence
  * (e.g. chats may need local read-receipt sentinels; system messages
@@ -68,7 +68,7 @@ type ChatHandlerResult =
     };
 
 /**
- * Handle a `cmc/chat-v1` trigger event.
+ * Handle a `message/chat-cmc` trigger event.
  */
 async function handleChat (params: {
   userId: string;

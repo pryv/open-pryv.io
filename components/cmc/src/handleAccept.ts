@@ -10,8 +10,8 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — handleAccept / handleRefuse entry points.
  *
- * These are the orchestration loop's response to `cmc/accept-v1` and
- * `cmc/refuse-v1` triggers. They wire the primitives in
+ * These are the orchestration loop's response to `consent/accept-cmc` and
+ * `consent/refuse-cmc` triggers. They wire the primitives in
  * acceptOrchestration.ts together with the local mall + status updates
  * on the trigger event.
  *
@@ -58,13 +58,13 @@ type AcceptHandlerResult =
     };
 
 /**
- * Handle a `cmc/accept-v1` trigger event.
+ * Handle a `consent/accept-cmc` trigger event.
  *
  * Steps (matching INTERNALS.md flow 3):
  *   1. Read offer via the capability connection.
  *   2. Build the data-grant payload.
  *   3. Create the local data-grant access via mall.accesses.create.
- *   4. Deliver `cmc/accept-v1` to the requester's responses stream via
+ *   4. Deliver `consent/accept-cmc` to the requester's responses stream via
  *      the capability connection, carrying data-grant.apiEndpoint.
  *   5. On 4xx delivery failure, roll back the data-grant access (so we
  *      don't leak a half-formed access pair).
@@ -148,7 +148,7 @@ async function handleAccept (params: {
   // 2b. Build the data-grant payload — include contribute on our anchor
   // streams so the peer can deliver chats / system events back to us,
   // PLUS create-only on :_cmc:inbox so the peer can POST a follow-up
-  // `cmc/back-channel-v1` event carrying their back-channel apiEndpoint
+  // `consent/back-channel-cmc` event carrying their back-channel apiEndpoint
   // (handleIncomingAccept on the peer side does this right after they
   // mint the back-channel access; without inbox-create here, that
   // delivery 403s and we never learn the peer's apiEndpoint).
@@ -299,7 +299,7 @@ function pickScopeFromTrigger (trigger: { streamIds?: string[] }): string | null
  * stamped on the offer (`offer.content.originStreamId` set by capability
  * mint). Falls back to the local trigger streamId via pickScopeFromTrigger.
  *
- * Why: the accepter typically writes their `cmc/accept-v1` on the bare
+ * Why: the accepter typically writes their `consent/accept-cmc` on the bare
  * `:_cmc:apps:<app>` parent (they don't know the requester's per-request
  * sub-path). The anchor streams must mirror the REQUESTER's per-request
  * scope (e.g. `:_cmc:apps:my-app:study-1`) so chat / system deliveries
@@ -317,7 +317,7 @@ function pickScopeFromOfferOrTrigger (offer: any, trigger: { streamIds?: string[
 }
 
 /**
- * Handle a `cmc/refuse-v1` trigger event. No data-grant created; just
+ * Handle a `consent/refuse-cmc` trigger event. No data-grant created; just
  * deliver the refusal to the requester via the capability connection.
  */
 async function handleRefuse (params: {

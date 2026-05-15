@@ -161,16 +161,16 @@ function getAppCode (streamId: string): string | null {
 
 // --- Event-type constants ---
 
-const ET_REQUEST = 'cmc/request-v1';
-const ET_ACCEPT = 'cmc/accept-v1';
-const ET_REFUSE = 'cmc/refuse-v1';
-const ET_REVOKE = 'cmc/revoke-v1';
-const ET_CHAT = 'cmc/chat-v1';
-const ET_SYSTEM_ALERT = 'cmc/system-alert-v1';
-const ET_SYSTEM_ACK = 'cmc/system-ack-v1';
-const ET_SYSTEM_SCOPE_REQUEST = 'cmc/system-scope-request-v1';
-const ET_SYSTEM_SCOPE_UPDATE = 'cmc/system-scope-update-v1';
-const ET_RETRY = 'cmc/retry-v1';
+const ET_REQUEST = 'consent/request-cmc';
+const ET_ACCEPT = 'consent/accept-cmc';
+const ET_REFUSE = 'consent/refuse-cmc';
+const ET_REVOKE = 'consent/revoke-cmc';
+const ET_CHAT = 'message/chat-cmc';
+const ET_SYSTEM_ALERT = 'notification/alert-cmc';
+const ET_SYSTEM_ACK = 'notification/ack-cmc';
+const ET_SYSTEM_SCOPE_REQUEST = 'consent/scope-request-cmc';
+const ET_SYSTEM_SCOPE_UPDATE = 'consent/scope-update-cmc';
+const ET_RETRY = 'cmc-internal/retry-cmc';
 // Back-channel info delivery (requester → accepter, post-acceptance).
 // After the requester mints the back-channel access (handleIncomingAccept),
 // they POST one of these to the accepter's :_cmc:inbox via the data-grant
@@ -178,7 +178,7 @@ const ET_RETRY = 'cmc/retry-v1';
 // the data-grant access's clientData.cmc.counterparty with the requester's
 // apiEndpoint + remote stream-ids so future chat / system deliveries from
 // the accepter to the requester resolve cleanly.
-const ET_BACK_CHANNEL = 'cmc/back-channel-v1';
+const ET_BACK_CHANNEL = 'consent/back-channel-cmc';
 
 const EVENT_TYPES_LIFECYCLE = [ET_REQUEST, ET_ACCEPT, ET_REFUSE, ET_REVOKE, ET_BACK_CHANNEL];
 const EVENT_TYPES_CHAT = [ET_CHAT];
@@ -195,6 +195,22 @@ const ALL_EVENT_TYPES = [
   ...EVENT_TYPES_SYSTEM,
   ET_RETRY,
 ];
+
+const ALL_EVENT_TYPES_SET = new Set(ALL_EVENT_TYPES);
+
+/**
+ * True if the given event type is one that the CMC plugin owns
+ * (and therefore should be intercepted by the dispatch / hooks).
+ *
+ * Since the rename to class/format-style types (`consent/*`,
+ * `message/chat-cmc`, `notification/cmc-*`, `cmc-internal/retry-cmc`),
+ * a single `startsWith('cmc/')` no longer works — the types span
+ * four classes. Centralised here so callers don't have to know the
+ * full list.
+ */
+function isCmcEventType (eventType: any): boolean {
+  return typeof eventType === 'string' && ALL_EVENT_TYPES_SET.has(eventType);
+}
 
 export {
   // namespaces (reserved roots)
@@ -238,4 +254,5 @@ export {
   EVENT_TYPES_CHAT,
   EVENT_TYPES_SYSTEM,
   ALL_EVENT_TYPES,
+  isCmcEventType,
 };

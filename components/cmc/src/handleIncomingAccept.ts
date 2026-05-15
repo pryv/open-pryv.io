@@ -8,9 +8,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * CMC plugin — requester-side incoming `cmc/accept-v1` handler.
+ * CMC plugin — requester-side incoming `consent/accept-cmc` handler.
  *
- * When the accepter posts a `cmc/accept-v1` event back to the requester's
+ * When the accepter posts a `consent/accept-cmc` event back to the requester's
  * platform via the capability URL, the event lands on the requester's
  * `:_cmc:inbox` (after going through inboxWriteHook's counterparty
  * validation + content.from stamping). The requester needs to provision
@@ -90,7 +90,7 @@ type MallLike = {
 type SelfIdentity = { username: string; host: string };
 
 /**
- * Process an incoming `cmc/accept-v1` event after it has been persisted
+ * Process an incoming `consent/accept-cmc` event after it has been persisted
  * in the requester's :_cmc:inbox. Provisions the back-channel access +
  * anchor streams.
  *
@@ -310,7 +310,7 @@ async function handleIncomingAccept (params: {
 
   // Deliver back-channel info to the peer (accepter). The peer's
   // data-grant access carries `:_cmc:inbox` create-only specifically
-  // for this — we POST a `cmc/back-channel-v1` event there containing
+  // for this — we POST a `consent/back-channel-cmc` event there containing
   // our back-channel apiEndpoint + remote stream-ids. The peer's
   // dispatch routes it to handleIncomingBackChannel, which updates the
   // data-grant access's clientData.cmc.counterparty so the peer's chat

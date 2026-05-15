@@ -155,7 +155,7 @@ function validateAccept (content: any): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
-  // cmc/accept-v1 has TWO shapes:
+  // consent/accept-cmc has TWO shapes:
   //   A. LOCAL TRIGGER  — written by the accepter's app to their own
   //      :_cmc:apps:<app>:* stream to start the accept flow. Required:
   //      capabilityUrl. Optional: accessName, extra.

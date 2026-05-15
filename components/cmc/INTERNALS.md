@@ -26,10 +26,10 @@ The plugin watches every `cmc/*` event write that lands on a stream under `:_cmc
 
 | Region | Event-type prefix the plugin handles |
 |---|---|
-| `:_cmc:inbox` | `cmc/request-v1`, `cmc/accept-v1`, `cmc/refuse-v1`, `cmc/revoke-v1` (one-shot lifecycle) |
-| `:_cmc:apps:<app>:[<path>:]chats:<slug>` | `cmc/chat-v1` |
-| `:_cmc:apps:<app>:[<path>:]collectors:<slug>` | `cmc/system-alert-v1`, `cmc/system-ack-v1`, `cmc/system-scope-request-v1`, `cmc/system-scope-update-v1` |
-| `:_cmc:_internal:retries` | `cmc/retry-v1` (plugin-managed; loop consumer) |
+| `:_cmc:inbox` | `consent/request-cmc`, `consent/accept-cmc`, `consent/refuse-cmc`, `consent/revoke-cmc` (one-shot lifecycle) |
+| `:_cmc:apps:<app>:[<path>:]chats:<slug>` | `message/chat-cmc` |
+| `:_cmc:apps:<app>:[<path>:]collectors:<slug>` | `notification/alert-cmc`, `notification/ack-cmc`, `consent/scope-request-cmc`, `consent/scope-update-cmc` |
+| `:_cmc:_internal:retries` | `cmc-internal/retry-cmc` (plugin-managed; loop consumer) |
 
 **Why nest under `:_cmc:apps:<app-code>:[<path>:]`** — an app's access can be scoped to all of its data (`:_cmc:apps:<app-code>:*`) or more granularly to a single per-request sub-tree (`:_cmc:apps:<app-code>:<request-slug>:*`). Chats / collectors lifetime under whichever stream the trigger event was written to is a natural permission prefix-match.
 
@@ -77,7 +77,7 @@ The Plugin and APIServer are typically the same process (workers). The split in 
 
 # 2. Capability access mint + lifecycle
 
-When `cmc/request-v1` is written with `capabilityRequested: true`, the plugin creates a `shared` access scoped to **exactly one event** (the request) via two **real per-capability streams** under the hidden `:_cmc:_internal:` parent:
+When `consent/request-cmc` is written with `capabilityRequested: true`, the plugin creates a `shared` access scoped to **exactly one event** (the request) via two **real per-capability streams** under the hidden `:_cmc:_internal:` parent:
 
 - `:_cmc:_internal:offer:<capId>` — the plugin pre-populates with the one request event (read).
 - `:_cmc:_internal:responses:<capId>` — empty at mint, accepts exactly one accept/refuse (create-only).
@@ -92,7 +92,7 @@ sequenceDiagram
     participant Plugin as Plugin-A
     participant Storage as Storage-A<br/>(per-user PG/Mongo)
 
-    App->>APIServer: events.create cmc/request-v1<br/>capabilityRequested: true
+    App->>APIServer: events.create consent/request-cmc<br/>capabilityRequested: true
     APIServer->>Plugin: trigger dispatch
     Plugin->>APIServer: streams.create :_cmc:_internal:offer:<capId><br/>+ streams.create :_cmc:_internal:responses:<capId>
     APIServer->>Storage: persist streams
@@ -113,7 +113,7 @@ sequenceDiagram
     APIServer->>Storage: remove access + both per-capability streams
 ```
 
-**Single-use enforcement under concurrency** (open question, tested via `[CMCRACE]`): two `cmc/accept-v1` arriving in parallel against the same capability — first-write-wins on `:_cmc:_internal:responses:<capId>`. The plugin enforces "exactly one event ever in this stream" via a write-hook that checks the stream's event count before persisting (queries via standard `events.get` with `limit: 1`). The losing accept rolls back its local data-grant access (atomic dual-write — see flow 3).
+**Single-use enforcement under concurrency** (open question, tested via `[CMCRACE]`): two `consent/accept-cmc` arriving in parallel against the same capability — first-write-wins on `:_cmc:_internal:responses:<capId>`. The plugin enforces "exactly one event ever in this stream" via a write-hook that checks the stream's event count before persisting (queries via standard `events.get` with `limit: 1`). The losing accept rolls back its local data-grant access (atomic dual-write — see flow 3).
 
 **Visibility:** capability accesses are filtered out of `accesses.get` by default via `clientData.cmc.kind: 'capability'`. Operator audit can opt-in via a query parameter (open question 5).
 
@@ -121,7 +121,7 @@ sequenceDiagram
 
 # 3. Acceptance — bidirectional access pair creation
 
-The most intricate flow. The accepting user writes `cmc/accept-v1`; their plugin orchestrates with the requester's plugin to provision:
+The most intricate flow. The accepting user writes `consent/accept-cmc`; their plugin orchestrates with the requester's plugin to provision:
 
 1. Data-grant access on the accepter's account (carrying the requester's identity in `clientData.cmc.counterparty`).
 2. Back-channel access on the requester's account (carrying the accepter's data-grant apiEndpoint in `clientData.cmc.counterparty.apiEndpoint`).
@@ -137,18 +137,18 @@ sequenceDiagram
     participant CoreB as Core-B<br/>(pryv.me)<br/>+ Storage-B
     participant AccepterApp
 
-    AccepterApp->>CoreB: events.create cmc/accept-v1<br/>content.capabilityUrl
+    AccepterApp->>CoreB: events.create consent/accept-cmc<br/>content.capabilityUrl
     CoreB->>CoreA: events.get :_cmc:_internal:offer:<capId><br/>(via capabilityUrl)
     CoreA-->>CoreB: request event (permissions, features, requesterMeta)
     CoreB->>CoreB: accesses.create data-grant<br/>permissions = offer.permissions<br/>clientData.cmc = {role:'counterparty',<br/>counterparty:{username:'provider-a',host:'example.com'}}<br/>(persisted in Storage-B accesses table)
     CoreB->>CoreB: streams.create :_cmc:apps:my-app:chats:provider-a--example-com<br/>streams.create :_cmc:apps:my-app:collectors:provider-a--example-com<br/>(persisted in Storage-B streams table)
-    CoreB->>CoreA: events.create cmc/accept-v1 in :_cmc:_internal:responses:<capId><br/>(via capabilityUrl)<br/>content.grantedAccess.apiEndpoint = data-grant.apiEndpoint
+    CoreB->>CoreA: events.create consent/accept-cmc in :_cmc:_internal:responses:<capId><br/>(via capabilityUrl)<br/>content.grantedAccess.apiEndpoint = data-grant.apiEndpoint
     CoreA->>CoreA: accesses.create back-channel<br/>permissions = create-only on :_cmc:inbox<br/>+ rights on :_cmc:apps:my-app:chats:alice--pryv-me<br/>+ rights on :_cmc:apps:my-app:collectors:alice--pryv-me<br/>clientData.cmc.counterparty.apiEndpoint = <data-grant apiEndpoint><br/>(persisted in Storage-A accesses table)
     CoreA->>CoreA: streams.create :_cmc:apps:my-app:chats:alice--pryv-me<br/>streams.create :_cmc:apps:my-app:collectors:alice--pryv-me
     CoreA->>CoreA: accesses.delete capability (single-use consumed)
     CoreA-->>CoreB: response carries back-channel.apiEndpoint
     CoreB->>CoreB: events.update data-grant access<br/>clientData.cmc.counterparty.backChannelApiEndpoint=<...>
-    CoreA->>CoreA: events.create cmc/accept-v1 in requester's :_cmc:inbox<br/>(server-side delivery, persisted in Storage-A)
+    CoreA->>CoreA: events.create consent/accept-cmc in requester's :_cmc:inbox<br/>(server-side delivery, persisted in Storage-A)
     CoreA-->>RequesterApp: socket.io push :_cmc:inbox
     CoreB->>CoreB: events.update trigger<br/>status='completed'<br/>dataGrantAccessId, backChannelAccessId
     CoreB-->>AccepterApp: socket.io push (trigger status)
@@ -173,7 +173,7 @@ Each pending delivery is one event:
 ```ts
 {
   streamIds: [':_cmc:_internal:retries'],
-  type: 'cmc/retry-v1',
+  type: 'cmc-internal/retry-cmc',
   content: {
     apiEndpoint:    string,    // counterparty's stored apiEndpoint
     payload:        object,    // the body to POST
@@ -258,7 +258,7 @@ sequenceDiagram
     participant Storage as Storage-B<br/>(per-user PG/Mongo)
     participant App as RecipientApp
 
-    PeerPlugin->>APIServer: POST /events<br/>streamIds:[:_cmc:inbox]<br/>type: cmc/accept-v1<br/>Authorization: <back-channel access token>
+    PeerPlugin->>APIServer: POST /events<br/>streamIds:[:_cmc:inbox]<br/>type: consent/accept-cmc<br/>Authorization: <back-channel access token>
     APIServer->>Storage: resolve access from token<br/>(standard auth path)
     Storage-->>APIServer: access record
     APIServer->>Plugin: pre-create hook fires<br/>(carries access record)
@@ -287,7 +287,7 @@ sequenceDiagram
 
 # 6. Chat delivery — slug-driven access resolution
 
-App writes `cmc/chat-v1` to `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`. The trigger stream-id encodes the app scope + counterparty; the plugin resolves the access pair from local state.
+App writes `message/chat-cmc` to `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`. The trigger stream-id encodes the app scope + counterparty; the plugin resolves the access pair from local state.
 
 ```mermaid
 sequenceDiagram
@@ -297,7 +297,7 @@ sequenceDiagram
     participant Plugin
     participant Storage as Storage<br/>(per-user PG/Mongo)
 
-    App->>APIServer: events.create cmc/chat-v1<br/>streamIds: [:_cmc:apps:my-app:chats:alice--pryv-me]
+    App->>APIServer: events.create message/chat-cmc<br/>streamIds: [:_cmc:apps:my-app:chats:alice--pryv-me]
     APIServer->>Storage: persist trigger
     APIServer->>Plugin: post-create hook
     Plugin->>Plugin: parse stream-id → (appCode='my-app', counterparty={username='alice', hostSlug='pryv-me'})
@@ -306,7 +306,7 @@ sequenceDiagram
     Storage-->>Plugin: matching access (one per app per counterparty)
     Plugin->>Plugin: read counterparty.apiEndpoint + remoteChatStreamId<br/>(stamped onto the access at acceptance time)
     Plugin->>Plugin: rate-limit check<br/>(per-worker sliding window)
-    Plugin->>Plugin: outbound POST /events to peer<br/>streamIds: [<remoteChatStreamId>]<br/>type: cmc/chat-v1<br/>content.from server-stamped
+    Plugin->>Plugin: outbound POST /events to peer<br/>streamIds: [<remoteChatStreamId>]<br/>type: message/chat-cmc<br/>content.from server-stamped
     Plugin->>APIServer: events.update trigger status='completed'
     APIServer-->>App: socket.io push (status)
 ```
@@ -331,7 +331,7 @@ sequenceDiagram
     participant Storage as Storage<br/>(per-user PG/Mongo)
     participant Memory as Memory<br/>(per-worker in-process)
 
-    App->>Plugin: events.create cmc/system-alert-v1<br/>:_cmc:apps:my-app:collectors:alice--pryv-me
+    App->>Plugin: events.create notification/alert-cmc<br/>:_cmc:apps:my-app:collectors:alice--pryv-me
     Plugin->>Plugin: parse trigger stream-id<br/>→ (appCode='my-app', counterparty={username='alice', hostSlug='pryv-me'})
     Plugin->>Storage: SELECT counterparty access for (appCode, counterparty)
     Storage-->>Plugin: access + counterparty.apiEndpoint + remoteCollectorStreamId
@@ -350,7 +350,7 @@ sequenceDiagram
 
 **Known v1 drift:** counters are not shared across workers on the same core. On an N-worker core, a recipient can briefly receive up to N× the configured limit. **Acceptable for v1** — the quota is defensive against abuse, not a strict guarantee. If drift becomes a real problem, `cluster_kv` (master-held in-process, same-core cross-worker — NOT a cross-core primitive) is the upgrade path. Cross-core drift is out of scope by the "no cross-core state in CMC" principle (README.md "Future development scoping").
 
-**Critical-level allowance:** `cmc/system-alert-v1` with `level: 'critical'` may bypass the standard quota (higher tier). Open question 5 in PLAN — per-level vs all-or-nothing opt-in.
+**Critical-level allowance:** `notification/alert-cmc` with `level: 'critical'` may bypass the standard quota (higher tier). Open question 5 in PLAN — per-level vs all-or-nothing opt-in.
 
 ---
 
@@ -364,7 +364,7 @@ sequenceDiagram
     participant APIServer as APIServer-A
     participant Peer as Plugin-B<br/>(via HTTPS)
 
-    CollectorApp->>Plugin: events.create cmc/system-scope-request-v1<br/>:_cmc:apps:my-app:collectors:alice--pryv-me<br/>content.requestedPermissions=[...]
+    CollectorApp->>Plugin: events.create consent/scope-request-cmc<br/>:_cmc:apps:my-app:collectors:alice--pryv-me<br/>content.requestedPermissions=[...]
     Plugin->>Plugin: resolve counterparty access from trigger stream-id
     Plugin->>APIServer: accesses.get <collector's-app-access>
     APIServer-->>Plugin: app-access record
@@ -373,7 +373,7 @@ sequenceDiagram
         Plugin->>APIServer: events.update trigger<br/>status='failed'<br/>failure.reason='scope-update-offending-children'<br/>failure.detail=[<offending streamIds>]
         APIServer-->>CollectorApp: socket.io push (failure)
     end
-    Plugin->>Peer: POST /events <peer's collectors stream-id><br/>type: cmc/system-scope-request-v1<br/>content.from server-stamped on receipt
+    Plugin->>Peer: POST /events <peer's collectors stream-id><br/>type: consent/scope-request-cmc<br/>content.from server-stamped on receipt
     Peer-->>Plugin: ok
     Plugin->>APIServer: events.update trigger status='completed'
 ```
@@ -393,7 +393,7 @@ sequenceDiagram
     participant Storage as Storage-B<br/>(per-user PG/Mongo)
     participant Peer as Plugin-A
 
-    UserApp->>Plugin: events.create cmc/system-scope-update-v1<br/>content.scopeRequestEventId<br/>content.accept=true
+    UserApp->>Plugin: events.create consent/scope-update-cmc<br/>content.scopeRequestEventId<br/>content.accept=true
     Plugin->>APIServer: events.get scopeRequestEventId<br/>(reads the pending request)
     APIServer-->>Plugin: scope-request event<br/>(newPermissions, accessId)
     Plugin->>Plugin: set cls.context.cmcInternalUpdate = true<br/>(double-fire suppression — see flow 10)
@@ -401,13 +401,13 @@ sequenceDiagram
     APIServer->>Storage: composite-id bumps<br/>'abc123' → 'abc123:1'
     APIServer-->>Plugin: updated access
     Plugin->>Plugin: clear cls flag
-    Plugin->>Peer: POST /events <peer's collectors stream-id><br/>type: cmc/system-scope-update-v1<br/>content.source='response-to-request'<br/>content.newAccessId='abc123:1'
+    Plugin->>Peer: POST /events <peer's collectors stream-id><br/>type: consent/scope-update-cmc<br/>content.source='response-to-request'<br/>content.newAccessId='abc123:1'
     Peer-->>Plugin: ok
     Plugin->>APIServer: events.update trigger status='completed'<br/>newAccessId='abc123:1'
     APIServer-->>UserApp: socket.io push + accessUpdated event
 ```
 
-**Refusal path** (`accept: false`): plugin skips steps 4–7 entirely; delivers a `cmc/system-scope-update-v1` with `content.accept=false` and `refusalDetails` set. No local `accesses.update` runs → no post-hook fire → no double-notification.
+**Refusal path** (`accept: false`): plugin skips steps 4–7 entirely; delivers a `consent/scope-update-cmc` with `content.accept=false` and `refusalDetails` set. No local `accesses.update` runs → no post-hook fire → no double-notification.
 
 ---
 
@@ -438,7 +438,7 @@ sequenceDiagram
             Plugin-->>PostHook: skip (not our concern)
         end
         Plugin->>Plugin: derive collector-slug from access.clientData
-        Plugin->>APIServer: events.create cmc/system-scope-update-v1<br/>streamIds: [<our collectors stream-id for this counterparty>]<br/>content.source='post-hook'<br/>content.newPermissions, content.previousPermissions, content.newAccessId
+        Plugin->>APIServer: events.create consent/scope-update-cmc<br/>streamIds: [<our collectors stream-id for this counterparty>]<br/>content.source='post-hook'<br/>content.newPermissions, content.previousPermissions, content.newAccessId
         APIServer->>Storage: persist (user-side audit record)
         Plugin->>Plugin: deliver same event to peer via stored apiEndpoint
         Plugin-->>PostHook: done
@@ -505,7 +505,7 @@ sequenceDiagram
 
 # 13. Revoke teardown — dual `accesses.delete`
 
-Either party writes `cmc/revoke-v1`. Their plugin deletes their local access and instructs the peer to delete its half. The anchor streams (`:_cmc:apps:<app-code>:[<path>:]chats:*`, `:_cmc:apps:<app-code>:[<path>:]collectors:*`) are **left in place** so history is preserved; future re-engagement starts a fresh request → accept cycle and the existing streams get reused.
+Either party writes `consent/revoke-cmc`. Their plugin deletes their local access and instructs the peer to delete its half. The anchor streams (`:_cmc:apps:<app-code>:[<path>:]chats:*`, `:_cmc:apps:<app-code>:[<path>:]collectors:*`) are **left in place** so history is preserved; future re-engagement starts a fresh request → accept cycle and the existing streams get reused.
 
 ```mermaid
 sequenceDiagram
@@ -515,11 +515,11 @@ sequenceDiagram
     participant APIServer
     participant Peer as PeerPlugin<br/>(via HTTPS)
 
-    App->>Plugin: events.create cmc/revoke-v1<br/>content.accessId
+    App->>Plugin: events.create consent/revoke-cmc<br/>content.accessId
     Plugin->>APIServer: accesses.get <accessId><br/>(read counterparty.apiEndpoint)
     APIServer-->>Plugin: access record
     Plugin->>APIServer: accesses.delete <accessId>
-    Plugin->>Peer: POST /events :_cmc:inbox<br/>type: cmc/revoke-v1
+    Plugin->>Peer: POST /events :_cmc:inbox<br/>type: consent/revoke-cmc
     Peer->>Peer: find local half of pair<br/>(via my-side accessId in payload<br/>or counterparty identity)
     Peer->>Peer: accesses.delete <local-half>
     Peer-->>Plugin: ok
@@ -545,11 +545,11 @@ sequenceDiagram
     participant AApp as AccepterApp
 
     Note over RCore,ACore: NO shared CA<br/>NO shared user namespace<br/>NO federation auth
-    RApp->>RCore: events.create cmc/request-v1<br/>(capabilityRequested: true)
+    RApp->>RCore: events.create consent/request-cmc<br/>(capabilityRequested: true)
     RCore-->>RApp: capabilityUrl
     Note over RApp,AApp: out-of-band hand-off
     AApp->>RCore: events.get :_cmc:_internal:offer:<capId> via capabilityUrl<br/>(standard HTTPS, capability access token)
-    AApp->>ACore: events.create cmc/accept-v1
+    AApp->>ACore: events.create consent/accept-cmc
     ACore->>RCore: HTTPS: events.create :_cmc:_internal:responses:<capId><br/>(via capability — flow 3 dance)
     RCore->>ACore: HTTPS: events.create response with back-channel
     RCore-->>RApp: socket.io :_cmc:inbox
@@ -558,13 +558,13 @@ sequenceDiagram
     Note over RApp,AApp: post-acceptance: bidirectional access pair held<br/>by each plugin in their respective per-user Storage (PG/Mongo)
     end
 
-    RApp->>RCore: events.create cmc/chat-v1<br/>:_cmc:apps:my-app:chats:<accepter-slug>
+    RApp->>RCore: events.create message/chat-cmc<br/>:_cmc:apps:my-app:chats:<accepter-slug>
     RCore->>ACore: HTTPS: events.create at <accepter's chats stream-id>
     ACore-->>AApp: socket.io :_cmc:apps:my-app:chats:<requester-slug>
 
     AApp->>ACore: accesses.update <data-grant>
     ACore->>ACore: post-hook fires
-    ACore->>RCore: HTTPS: events.create at <requester's collectors stream-id><br/>type: cmc/system-scope-update-v1<br/>content.source='post-hook'
+    ACore->>RCore: HTTPS: events.create at <requester's collectors stream-id><br/>type: consent/scope-update-cmc<br/>content.source='post-hook'
     RCore-->>RApp: socket.io :_cmc:apps:my-app:collectors:<accepter-slug> + accessUpdated
 ```
 

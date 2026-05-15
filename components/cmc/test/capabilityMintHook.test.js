@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
  * CMC plugin — capabilityMintHook tests.
  *
  * [CMCMINT] covers the events.create middleware that mints the
- * capability access for cmc/request-v1 + capabilityRequested:true.
+ * capability access for consent/request-cmc + capabilityRequested:true.
  */
 
 const assert = require('node:assert/strict');
@@ -73,23 +73,23 @@ const VALID_REQUEST_CONTENT = {
 };
 
 describe('[CMCMINT] cmc/capabilityMintHook', () => {
-  it('[CM01] passes through non-cmc/request-v1 events', async () => {
+  it('[CM01] passes through non-consent/request-cmc events', async () => {
     const errors = fakeErrors();
     const mall = fakeMall();
     const mw = createCapabilityMintHook({ mall, errors: errors.factory });
-    const ctx = { newEvent: { type: 'cmc/chat-v1', content: { content: 'hi' } }, user: { id: 'u1' } };
+    const ctx = { newEvent: { type: 'message/chat-cmc', content: { content: 'hi' } }, user: { id: 'u1' } };
     const err = await runMiddleware(mw, ctx, {}, {});
     assert.equal(err, undefined);
     assert.equal(mall.calls.accessesCreated.length, 0);
     assert.equal(ctx.newEvent.content.content, 'hi');
   });
 
-  it('[CM02] passes through cmc/request-v1 events WITHOUT capabilityRequested:true', async () => {
+  it('[CM02] passes through consent/request-cmc events WITHOUT capabilityRequested:true', async () => {
     const errors = fakeErrors();
     const mall = fakeMall();
     const mw = createCapabilityMintHook({ mall, errors: errors.factory });
     const ctx = {
-      newEvent: { type: 'cmc/request-v1', content: { ...VALID_REQUEST_CONTENT, capabilityRequested: false } },
+      newEvent: { type: 'consent/request-cmc', content: { ...VALID_REQUEST_CONTENT, capabilityRequested: false } },
       user: { id: 'u1' },
     };
     const err = await runMiddleware(mw, ctx, {}, {});
@@ -98,7 +98,7 @@ describe('[CMCMINT] cmc/capabilityMintHook', () => {
     assert.equal(ctx.newEvent.content.capabilityUrl, undefined);
   });
 
-  it('[CM03] mints capability for cmc/request-v1 + capabilityRequested:true; stamps content', async () => {
+  it('[CM03] mints capability for consent/request-cmc + capabilityRequested:true; stamps content', async () => {
     const errors = fakeErrors();
     const mall = fakeMall();
     const mw = createCapabilityMintHook({
@@ -108,7 +108,7 @@ describe('[CMCMINT] cmc/capabilityMintHook', () => {
       now: () => 1000,
     });
     const ctx = {
-      newEvent: { type: 'cmc/request-v1', content: { ...VALID_REQUEST_CONTENT } },
+      newEvent: { type: 'consent/request-cmc', content: { ...VALID_REQUEST_CONTENT } },
       user: { id: 'u1' },
     };
     const err = await runMiddleware(mw, ctx, {}, {});
@@ -137,7 +137,7 @@ describe('[CMCMINT] cmc/capabilityMintHook', () => {
     const mw = createCapabilityMintHook({ mall, errors: errors.factory, idGen: () => 'capY' });
     const ctx = {
       newEvent: {
-        type: 'cmc/request-v1',
+        type: 'consent/request-cmc',
         content: { ...VALID_REQUEST_CONTENT, customField: 'preserved' },
       },
       user: { id: 'u1' },
@@ -154,7 +154,7 @@ describe('[CMCMINT] cmc/capabilityMintHook', () => {
     mall.accesses.create = async () => { throw new Error('mall-down'); };
     const mw = createCapabilityMintHook({ mall, errors: errors.factory });
     const ctx = {
-      newEvent: { type: 'cmc/request-v1', content: { ...VALID_REQUEST_CONTENT } },
+      newEvent: { type: 'consent/request-cmc', content: { ...VALID_REQUEST_CONTENT } },
       user: { id: 'u1' },
     };
     const err = await runMiddleware(mw, ctx, {}, {});
@@ -168,7 +168,7 @@ describe('[CMCMINT] cmc/capabilityMintHook', () => {
     const mall = fakeMall();
     const mw = createCapabilityMintHook({ mall, errors: errors.factory });
     const ctx = {
-      newEvent: { type: 'cmc/request-v1', content: { ...VALID_REQUEST_CONTENT } },
+      newEvent: { type: 'consent/request-cmc', content: { ...VALID_REQUEST_CONTENT } },
       // no user
     };
     const err = await runMiddleware(mw, ctx, {}, {});

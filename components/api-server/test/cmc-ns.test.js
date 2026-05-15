@@ -174,28 +174,28 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
       assert.strictEqual(res.body?.error?.data?.id, 'cmc-unknown-event-type');
     });
 
-    it('[CN09] rejects cmc/request-v1 with missing required fields', async function () {
+    it('[CN09] rejects consent/request-cmc with missing required fields', async function () {
       const res = await coreRequest
         .post(eventsPath)
         .set('Authorization', token)
         .send({
           streamIds: [':_cmc:apps:my-app'],
-          type: 'cmc/request-v1',
+          type: 'consent/request-cmc',
           content: { to: null },
         });
       assert.strictEqual(res.status, 400);
       assert.strictEqual(res.body?.error?.data?.id, 'cmc-invalid-event-content');
-      assert.strictEqual(res.body?.error?.data?.eventType, 'cmc/request-v1');
+      assert.strictEqual(res.body?.error?.data?.eventType, 'consent/request-cmc');
       assert.ok(Array.isArray(res.body?.error?.data?.errors));
     });
 
-    it('[CN10] accepts a fully-formed cmc/request-v1 (lazy provision + mall.accesses adapter)', async function () {
+    it('[CN10] accepts a fully-formed consent/request-cmc (lazy provision + mall.accesses adapter)', async function () {
       const res = await coreRequest
         .post(eventsPath)
         .set('Authorization', token)
         .send({
           streamIds: [':_cmc:apps:my-app'],
-          type: 'cmc/request-v1',
+          type: 'consent/request-cmc',
           content: {
             to: null,
             capabilityRequested: true,
@@ -208,7 +208,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
           },
         });
       assert.strictEqual(res.status, 201, JSON.stringify(res.body));
-      assert.strictEqual(res.body?.event?.type, 'cmc/request-v1');
+      assert.strictEqual(res.body?.event?.type, 'consent/request-cmc');
     });
 
     it('[CN11] allows app-defined event types on :_cmc:apps:* streams', async function () {

@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — handleIncomingBackChannel tests.
  *
- * [CMCBC] covers the accepter-side handler for `cmc/back-channel-v1`
+ * [CMCBC] covers the accepter-side handler for `consent/back-channel-cmc`
  * events arriving on `:_cmc:inbox`. The handler updates the data-grant
  * access's clientData with the requester's apiEndpoint + remote
  * stream-ids so accepter-side chat / system handlers can resolve a
@@ -56,7 +56,7 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     const r = await handleIncomingBackChannel({
       userId: 'u1',
       event: {
-        type: 'cmc/back-channel-v1',
+        type: 'consent/back-channel-cmc',
         content: {
           from: { username: 'alice', host: 'pryv.me' },
           apiEndpoint: 'https://tok@pryv.me/alice/',
@@ -98,7 +98,7 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     const r = await handleIncomingBackChannel({
       userId: 'u1',
       event: {
-        type: 'cmc/back-channel-v1',
+        type: 'consent/back-channel-cmc',
         content: {
           // from carries the same host with a port — slugifyHost strips it
           from: { username: 'alice', host: 'pryv.me:443' },
@@ -138,7 +138,7 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     const r = await handleIncomingBackChannel({
       userId: 'u1',
       event: {
-        type: 'cmc/back-channel-v1',
+        type: 'consent/back-channel-cmc',
         content: {
           from: { username: 'alice', host: 'pryv.me' },
           apiEndpoint: 'https://tok@pryv.me/alice/',
@@ -155,7 +155,7 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     const r = await handleIncomingBackChannel({
       userId: 'u1',
       event: {
-        type: 'cmc/back-channel-v1',
+        type: 'consent/back-channel-cmc',
         content: {
           from: { username: 'unknown', host: 'pryv.me' },
           apiEndpoint: 'https://tok@pryv.me/alice/',
@@ -170,7 +170,7 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
   it('[BC05] returns ok:false when content.from is missing', async () => {
     const r = await handleIncomingBackChannel({
       userId: 'u1',
-      event: { type: 'cmc/back-channel-v1', content: { apiEndpoint: 'x' } },
+      event: { type: 'consent/back-channel-cmc', content: { apiEndpoint: 'x' } },
       deps: { mall: fakeMall([]) },
     });
     assert.equal(r.ok, false);
@@ -181,7 +181,7 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     const r = await handleIncomingBackChannel({
       userId: 'u1',
       event: {
-        type: 'cmc/back-channel-v1',
+        type: 'consent/back-channel-cmc',
         content: { from: { username: 'alice', host: 'pryv.me' } },
       },
       deps: { mall: fakeMall([]) },
@@ -193,7 +193,7 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
   it('[BC07] rejects non-back-channel event types', async () => {
     const r = await handleIncomingBackChannel({
       userId: 'u1',
-      event: { type: 'cmc/accept-v1', content: {} },
+      event: { type: 'consent/accept-cmc', content: {} },
       deps: { mall: fakeMall([]) },
     });
     assert.equal(r.ok, false);

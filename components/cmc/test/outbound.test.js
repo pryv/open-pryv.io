@@ -87,7 +87,7 @@ describe('[CMCOUT] cmc/outbound', () => {
       const r = await postToPeer({
         apiEndpoint: 'https://Tok@example.com/',
         path: 'events',
-        body: { type: 'cmc/chat-v1', content: { content: 'hi' } },
+        body: { type: 'message/chat-cmc', content: { content: 'hi' } },
         deps: { fetch },
       });
       assert.deepEqual(r, { ok: true, status: 201, body: { event: { id: 'e1' } } });
@@ -141,11 +141,11 @@ describe('[CMCOUT] cmc/outbound', () => {
       await postToPeer({
         apiEndpoint: 'https://Tok@example.com/',
         path: 'events',
-        body: { type: 'cmc/request-v1', content: { foo: 'bar' } },
+        body: { type: 'consent/request-cmc', content: { foo: 'bar' } },
         deps: { fetch },
       });
       const sentBody = JSON.parse(calls[0].init.body);
-      assert.deepEqual(sentBody, { type: 'cmc/request-v1', content: { foo: 'bar' } });
+      assert.deepEqual(sentBody, { type: 'consent/request-cmc', content: { foo: 'bar' } });
     });
 
     it('[CO11] uses DEFAULT_TIMEOUT_MS unless overridden', async () => {

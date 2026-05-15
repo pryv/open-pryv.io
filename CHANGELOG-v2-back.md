@@ -11,13 +11,13 @@ The `:_cmc:` namespace + write-hooks + orchestration handlers ship as a new top-
   - `src/hooks.ts` — content-validation hook + reserved-root rejection hook.
   - `src/inboxWriteHook.ts` — `:_cmc:inbox` write-hook (role check + content.from stamping).
   - `src/capability.ts` — single-use capability access mint + GC (creates real per-capability offer/responses streams + a shared access; cleaned up on consumption or TTL).
-  - `src/capabilityMintHook.ts` — fires on `cmc/request-v1` events.create.
+  - `src/capabilityMintHook.ts` — fires on `consent/request-cmc` events.create.
   - `src/outbound.ts` — federated HTTPS client (postToPeer + DeliverResult discriminated union; classify network/timeout/4xx/5xx).
   - `src/acceptOrchestration.ts` — read offer via capability, build data-grant payload, deliver accept-via-capability.
   - `src/anchorStreams.ts` — shared `provisionAnchorStreams` used by both sides at acceptance time.
   - `src/handleAccept.ts` — accepter-side: creates data-grant + provisions anchors + delivers accept via capability + rollback on 4xx.
   - `src/handleRefuse.ts` — accepter-side refuse delivery.
-  - `src/handleIncomingAccept.ts` — requester-side: mints back-channel access + provisions anchors when a cmc/accept-v1 lands on the requester's `:_cmc:inbox`.
+  - `src/handleIncomingAccept.ts` — requester-side: mints back-channel access + provisions anchors when a consent/accept-cmc lands on the requester's `:_cmc:inbox`.
   - `src/handleChat.ts`, `src/handleSystem.ts`, `src/handleRevoke.ts` — per-type orchestration handlers.
   - `src/dispatch.ts` — `dispatch(...)` type-router + `createDispatchMiddleware` (fire-and-forget). Auto-enqueues retryable failures.
   - `src/accessesUpdateHook.ts` — `createAccessesUpdatePostHook(deps)` + `runWithSuppression(fn)` (AsyncLocalStorage-backed double-fire suppression).

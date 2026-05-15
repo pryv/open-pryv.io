@@ -97,7 +97,7 @@ async function dispatch (params: {
   if (typeof event?.type !== 'string') {
     return { handled: false, eventType: null, status: 'skipped', reason: 'no-event-type' };
   }
-  if (!event.type.startsWith('cmc/')) {
+  if (!C.isCmcEventType(event.type)) {
     return { handled: false, eventType: event.type, status: 'skipped', reason: 'not-cmc-event' };
   }
 
@@ -134,11 +134,11 @@ async function dispatch (params: {
     switch (event.type) {
       case C.ET_ACCEPT:
         // Direction-aware routing:
-        //   - cmc/accept-v1 written on :_cmc:inbox = peer-delivered (the
+        //   - consent/accept-cmc written on :_cmc:inbox = peer-delivered (the
         //     accepter has just POSTed their accept to us via the
         //     capability URL). Mint the back-channel access + provision
         //     anchor streams via handleIncomingAccept.
-        //   - cmc/accept-v1 written on a :_cmc:apps:* stream = the LOCAL
+        //   - consent/accept-cmc written on a :_cmc:apps:* stream = the LOCAL
         //     user is accepting an incoming request. handleAccept reads
         //     the offer via capability + creates the data-grant access +
         //     delivers the accept back to the peer.
@@ -321,7 +321,7 @@ async function markFailed (
  *   - `:_cmc:inbox` is the standard one-shot lifecycle delivery
  *     (used for peer-pushed events post-acceptance, e.g. revoke).
  *   - `:_cmc:_internal:responses:<capId>` is where the accepter's
- *     plugin posts cmc/accept-v1 via the capability connection
+ *     plugin posts consent/accept-cmc via the capability connection
  *     during the initial handshake (per INTERNALS.md flow 3).
  *
  * Both route to handleIncomingAccept on the requester side, which
@@ -356,7 +356,7 @@ function isOnInbox (event: any): boolean {
 // immediately afterwards finds the data-grant without an apiEndpoint
 // (`cmc-chat-no-remote-apiendpoint`).
 const SYNC_DISPATCH_TYPES = new Set<string>([
-  'cmc/back-channel-v1',
+  'consent/back-channel-cmc',
 ]);
 
 function createDispatchMiddleware (
@@ -367,7 +367,7 @@ function createDispatchMiddleware (
     // Read the event back from the result (api-server convention).
     const event = result?.event;
     const userId = context?.user?.id;
-    if (event == null || userId == null || typeof event.type !== 'string' || !event.type.startsWith('cmc/')) {
+    if (event == null || userId == null || !C.isCmcEventType(event.type)) {
       return next();
     }
     const requestDeps: DispatchDeps = buildPerRequestDeps != null

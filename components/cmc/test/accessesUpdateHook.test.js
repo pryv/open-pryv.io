@@ -89,12 +89,12 @@ describe('[CMCAU] cmc/accessesUpdateHook', () => {
       assert.deepEqual(mall.calls.eventsCreated[0].streamIds, [
         ':_cmc:apps:my-app:collectors:alice--pryv-me',
       ]);
-      assert.equal(mall.calls.eventsCreated[0].type, 'cmc/system-scope-update-v1');
+      assert.equal(mall.calls.eventsCreated[0].type, 'consent/scope-update-cmc');
       // Outbound POST to peer's :_cmc:inbox
       assert.equal(calls.length, 1);
       assert.equal(calls[0].url, 'https://pryv.me/events');
       const sent = JSON.parse(calls[0].init.body);
-      assert.equal(sent.type, 'cmc/system-scope-update-v1');
+      assert.equal(sent.type, 'consent/scope-update-cmc');
       assert.deepEqual(sent.streamIds, [':_cmc:inbox']);
       assert.equal(sent.content.source, 'post-hook');
       assert.deepEqual(sent.content.newPermissions, [{ streamId: 'x', level: 'read' }]);

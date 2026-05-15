@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
  * retry). The event content carries:
  *
  *   - originalEventId      : the trigger event we're re-attempting
- *   - originalType         : the cmc/* event type (e.g. cmc/accept-v1)
+ *   - originalType         : the cmc/* event type (e.g. consent/accept-cmc)
  *   - originalStreamIds    : original streamIds (for re-dispatch context)
  *   - originalContent      : original trigger content (so dispatch can
  *                            re-run with the same payload even if the

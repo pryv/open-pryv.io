@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — chat orchestration primitives.
  *
- * Chat trigger: an app writes `cmc/chat-v1` to its OWN per-counterparty
+ * Chat trigger: an app writes `message/chat-cmc` to its OWN per-counterparty
  * chat stream:
  *
  *   :_cmc:apps:<app-code>:[<user-path>:]chats:<counterparty-slug>
@@ -21,7 +21,7 @@ const require = createRequire(import.meta.url);
  *      (filtered by clientData.cmc.role='counterparty' + counterparty.{username,host}).
  *   3. Read the remote chat stream-id + remote apiEndpoint from the access's
  *      clientData.cmc.counterparty.{remoteChatStreamId, apiEndpoint}.
- *   4. POST `cmc/chat-v1` to the remote chat stream via outbound.postToPeer.
+ *   4. POST `message/chat-cmc` to the remote chat stream via outbound.postToPeer.
  *
  * This module exposes those steps as separate primitives. The full
  * handleChat loop (which runs from the dispatch middleware) wires them
@@ -140,7 +140,7 @@ type DeliverChatParams = {
 };
 
 /**
- * POST a `cmc/chat-v1` event to the counterparty's chat stream via the
+ * POST a `message/chat-cmc` event to the counterparty's chat stream via the
  * stored back-channel apiEndpoint.
  *
  * Returns outbound.postToPeer's discriminated-union result.
