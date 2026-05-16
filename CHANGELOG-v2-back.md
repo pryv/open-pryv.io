@@ -1,5 +1,35 @@
 # Changelog - Internal (no API impact)
 
+## docs(cmc): fix wrong Monitor API in IMPLEMENTERS-GUIDE + README
+
+The CMC docs (since Plan 68 first published IMPLEMENTERS-GUIDE.md in
+commit `02b6d94`) used a `monitor.subscribe(streamId, callback)` API
+that doesn't exist on `@pryv/monitor`. The actual Monitor API is:
+
+```js
+const monitor = new pryv.Monitor(connection, { streams: [...] });
+monitor.on('event', (event) => { ... });
+await monitor.start();
+```
+
+Key semantic differences callers must understand (and the prior docs
+hid):
+
+- **Scope is fixed at construction.** You can't add/remove streams
+  after `start()` — to watch a different scope, construct another
+  Monitor (each shares the underlying socket.io connection via the
+  `@pryv/socket.io` add-on).
+- **One `'event'` callback per Monitor.** Branch on `event.type` /
+  `event.streamIds[0]` inside the callback.
+
+This commit sweeps all 14 occurrences in IMPLEMENTERS-GUIDE.md + 1
+in README.md and replaces them with the correct pattern. The
+"bridge multi-tenant subscription" section gets a more accurate
+representation: one Monitor with a broad scope routes by streamId,
+OR two Monitors share the same underlying socket — either way it's
+one WebSocket per bridge backend. Pure docs; zero behavior change;
+zero code change in CMC itself.
+
 ## docs(cmc): bridge multi-tenant subscription = standard one-socket pattern
 
 HANDOVER Q6 asked whether bridges managing thousands of patients

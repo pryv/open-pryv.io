@@ -270,18 +270,21 @@ Phase 2 lands.
 Doctor's plugin (when it processed the remote accept) also wrote a local copy into doctor's `:_cmc:inbox`:
 
 ```js
-const monitor = await doctorConnection.monitor();
-monitor.subscribe(':_cmc:inbox', (event) => {
+// The Pryv Monitor's scope is fixed at construction; one callback fires
+// for every event that matches. Branch on event.type / event.streamIds.
+const monitor = new pryv.Monitor(doctorConnection, { streams: [':_cmc:inbox'] });
+monitor.on('event', async (event) => {
   if (event.type === 'consent/accept-cmc') {
     // event.content.from               = { username: 'patient-alice', host: 'pryv.me' }
     // event.content.grantedAccess      = { apiEndpoint: 'https://xYz...PqR@pryv.me/' }
     // event.content.backChannelAccessId = 'def456'  (on doctor's account)
-    const user.= new pryv.Connection(event.content.grantedAccess.apiEndpoint);
-    const data = await user.api([
+    const user_ = new pryv.Connection(event.content.grantedAccess.apiEndpoint);
+    const data = await user_.api([
       { method: 'events.get', params: { streamIds: ['fertility'], limit: 100 } }
     ]);
   }
 });
+await monitor.start();
 ```
 
 Three writes total (doctor's request trigger, patient's accept trigger, doctor's inbox arrival from server-side delivery), one socket.io push on each side, the capability access auto-consumed.
@@ -424,15 +427,21 @@ const history = await doctorConnection.api([
 Subscribing to chat with one counterparty:
 
 ```js
-monitor.subscribe(':_cmc:apps:my-app:study-A:chats:alice--pryv-me', (event) => { /* render */ });
+const monitor = new pryv.Monitor(connection, {
+  streams: [':_cmc:apps:my-app:study-A:chats:alice--pryv-me']
+});
+monitor.on('event', (event) => { /* render */ });
+await monitor.start();
 ```
 
 Subscribing to all chat activity for one app-scope (recursive — picks up all counterparties and nested per-request scopes):
 
 ```js
-monitor.subscribe(':_cmc:apps:my-app', (event) => {
+const monitor = new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app'] });
+monitor.on('event', (event) => {
   // event.streamIds tells you which sub-stream (chat, collector, lifecycle, etc.)
 });
+await monitor.start();
 ```
 
 The plugin uses `lib-js` / `legacy-shim` helpers to compute slugs deterministically so apps don't roll their own:
@@ -649,10 +658,11 @@ Provider A's plugin, on receipt:
 1. Emits `accessUpdated` socket event locally so the provider's app sees the new composite-id and refreshed permissions.
 2. The event lands in the provider's `:_cmc:apps:my-app:study-A:collectors:alice--pryv-me` stream alongside any prior scope-request / alert history.
 
-The doctor's app, subscribed to its app-scope `:_cmc:apps:my-app` (recursive), sees the user-initiated change land:
+The doctor's app, monitoring its app-scope `:_cmc:apps:my-app` (recursive), sees the user-initiated change land:
 
 ```js
-monitor.subscribe(':_cmc:apps:my-app', (event) => {
+const monitor = new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app'] });
+monitor.on('event', (event) => {
   if (event.type === 'consent/scope-update-cmc') {
     // event.content.from           = { username: 'alice', host: 'pryv.me' }
     // event.content.source         = 'user-initiated'  (vs 'response-to-request')
@@ -660,6 +670,7 @@ monitor.subscribe(':_cmc:apps:my-app', (event) => {
     // event.content.newAccessId    = 'abc123:2'
   }
 });
+await monitor.start();
 ```
 
 ## Double-fire suppression
@@ -1095,7 +1106,7 @@ When you write a `cmc/<action>-v1` event to your own `:_cmc:*` scope stream:
 1. Returns immediately. Event content shows `status: 'pending'`.
 2. Plugin processes asynchronously: local state change + outbound HTTPS to counterparty.
 3. Plugin updates the same event's `content.status` as orchestration progresses (`pending` → `delivered` → `completed`, or `failed`).
-4. App subscribes via `monitor.subscribe(':_cmc:apps:my-app:...', handler)` to receive status updates.
+4. App watches via `new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app:...'] })` + `monitor.on('event', handler)` to receive status updates.
 
 If the outbound delivery fails (timeout, peer unreachable, peer 4xx/5xx), the plugin queues for retry (rqlite-persisted: `cmc-pending-deliveries/<deliveryId>`). On terminal failure, sets `status: 'failed'` with reason.
 
@@ -1205,8 +1216,8 @@ doctor subscribes to `:_cmc:inbox` and reacts to incoming
 `consent/accept-cmc` / `consent/refuse-cmc` events:
 
 ```js
-const monitor = await doctorConnection.monitor();
-monitor.subscribe(':_cmc:inbox', (event) => {
+const monitor = new pryv.Monitor(doctorConnection, { streams: [':_cmc:inbox'] });
+monitor.on('event', (event) => {
   if (event.type === 'consent/accept-cmc') {
     // event.content.from = { username, host }       — who accepted
     // event.content.capabilityId                    — match against the doctor's invite
@@ -1216,6 +1227,7 @@ monitor.subscribe(':_cmc:inbox', (event) => {
     updateDashboardRow(event.content.capabilityId, 'refused');
   }
 });
+await monitor.start();
 ```
 
 Use Path 1 to render the dashboard initial state; use Path 2 to keep
@@ -1277,20 +1289,31 @@ tuning.
 
 # Reference — Socket.io subscription
 
-Standard Pryv monitor. Three subscription targets cover all three plugin-managed regions; an additional one on your own user-managed `:_cmc:apps:*` streams covers trigger status updates:
+CMC uses the standard Pryv [`@pryv/monitor`](https://github.com/pryv/lib-js)
+add-on. A `Monitor` has a **fixed `eventsGetScope` set at construction**;
+it emits one `'event'` callback for every matched event. Branch on
+`event.type` / `event.streamIds[0]` inside the callback. You can not add
+or remove streams after `monitor.start()` — to watch a different scope,
+construct another `Monitor` (each shares the underlying socket.io
+connection via the `pryv-socket.io` add-on).
 
 ```js
-const monitor = await connection.monitor();
+const pryv = require('pryv');
+require('@pryv/monitor')(pryv);
+require('@pryv/socket.io')(pryv); // optional: live socket.io transport
 
 // Region 1 — One-shot lifecycle (requests, accepts, refusals, revocations)
-monitor.subscribe(':_cmc:inbox', (event) => {
+const inboxMonitor = new pryv.Monitor(connection, { streams: [':_cmc:inbox'] });
+inboxMonitor.on('event', (event) => {
   // event.content.from = { username, host }  ← server-stamped, trustworthy
   // event.type ∈ { 'consent/request-cmc', 'consent/accept-cmc', 'consent/refuse-cmc', 'consent/revoke-cmc' }
 });
+await inboxMonitor.start();
 
 // Region 2 — All app-scope activity (recursive, covers chat + collectors + lifecycle triggers
 // for one app — and per-request nested scopes underneath)
-monitor.subscribe(':_cmc:apps:my-app', (event) => {
+const appMonitor = new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app'] });
+appMonitor.on('event', (event) => {
   // event.streamIds[0] tells you which sub-stream, e.g.:
   //   ':_cmc:apps:my-app:study-A:chats:alice--pryv-me'
   //   ':_cmc:apps:my-app:study-A:collectors:alice--pryv-me'
@@ -1298,30 +1321,38 @@ monitor.subscribe(':_cmc:apps:my-app', (event) => {
   // event.type ∈ { 'consent/request-cmc', 'consent/accept-cmc', 'message/chat-cmc',
   //                'notification/alert-cmc', ... }
 });
+await appMonitor.start();
 
-// Or narrow to one feature class by subscribing to the nested chats / collectors parent
+// Or narrow to one feature class by watching the nested chats / collectors parent
 // (these live under a specific app-scope path, NOT at the top of :_cmc:):
-monitor.subscribe(':_cmc:apps:my-app:study-A:chats', (event) => {
+const chatsMonitor = new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app:study-A:chats'] });
+chatsMonitor.on('event', (event) => {
   // event.streamIds[0] identifies the counterparty stream,
   // e.g. ':_cmc:apps:my-app:study-A:chats:alice--pryv-me'
   // event.content.from set ⇒ incoming; absent ⇒ your own outgoing
   // event.type === 'message/chat-cmc'
 });
+await chatsMonitor.start();
 
-monitor.subscribe(':_cmc:apps:my-app:study-A:collectors', (event) => {
+const collectorsMonitor = new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app:study-A:collectors'] });
+collectorsMonitor.on('event', (event) => {
   // event.streamIds[0] identifies the collector-relationship,
   // e.g. ':_cmc:apps:my-app:study-A:collectors:alice--pryv-me'
   // event.type ∈ { 'notification/alert-cmc', 'notification/ack-cmc',
   //                'consent/scope-request-cmc', 'consent/scope-update-cmc' }
   // event.content.source on scope-updates: 'response-to-request' | 'user-initiated' | 'post-hook'
 });
+await collectorsMonitor.start();
 ```
 
-Subscribe to a single counterparty / collector stream when the UI is scoped that way:
+Watch a single counterparty / collector stream when the UI is scoped that way:
 
 ```js
-monitor.subscribe(':_cmc:apps:my-app:study-A:chats:alice--pryv-me', renderChatMessage);
-monitor.subscribe(':_cmc:apps:my-app:study-A:collectors:alice--pryv-me', renderSystemMessage);
+const oneChatMonitor = new pryv.Monitor(connection, {
+  streams: [':_cmc:apps:my-app:study-A:chats:alice--pryv-me']
+});
+oneChatMonitor.on('event', renderChatMessage);
+await oneChatMonitor.start();
 ```
 
 The same callback runs whether the counterparty is on your same core, your same cluster, or a foreign platform — the plugin abstracts the difference. Your app doesn't branch on topology.
@@ -1335,14 +1366,25 @@ A common misread of CMC's scaling story: "my bridge has 1000 patients, do I need
 - Patient writes `consent/revoke-cmc` → patient's plugin POSTs to your `:_cmc:inbox`. Lands on YOUR inbox.
 - Patient accepts your initial invite → arrives on YOUR `:_cmc:inbox`.
 
-So a bridge backend opens **ONE WebSocket on its own token**, subscribes to `:_cmc:inbox` + the relevant `:_cmc:apps:<bridge-app>` parents, and receives push for every event from every counterparty over that single connection. The counterparty slug in the streamId identifies which patient. Scaling to thousands of counterparties = scaling the bridge's own event-firehose, not opening N connections.
+So a bridge backend opens **ONE socket.io connection on its own token**, instantiates a Monitor (or two) on its OWN account scoped to the relevant CMC streams, and receives push for every event from every counterparty over that single connection. The counterparty slug in the streamId identifies which patient. Scaling to thousands of counterparties = scaling the bridge's own event-firehose, not opening N connections.
 
 ```js
 // bridge.js — ONE socket, all patients
 const bridge = new pryv.Connection('https://<bridge-token>@<host>/');
-const monitor = await bridge.monitor();
-monitor.subscribe(':_cmc:inbox', (e) => routeLifecycleEvent(e));
-monitor.subscribe(':_cmc:apps:bridge-app', (e) => routeAppEvent(e));
+
+// Either one broad Monitor that routes by event.streamIds[0]...
+const all = new pryv.Monitor(bridge, {
+  streams: [':_cmc:inbox', ':_cmc:apps:bridge-app']
+});
+all.on('event', (e) => {
+  if (e.streamIds.includes(':_cmc:inbox')) return routeLifecycleEvent(e);
+  return routeAppEvent(e);
+});
+await all.start();
+
+// ...or two Monitors (still one underlying socket via @pryv/socket.io):
+//   const lifecycle = new pryv.Monitor(bridge, { streams: [':_cmc:inbox'] });
+//   const appEvents = new pryv.Monitor(bridge, { streams: [':_cmc:apps:bridge-app'] });
 ```
 
 What CMC does NOT solve here: if the bridge needs to read patient data streams (e.g. each patient's `:vitals` series), it does open one read connection per data-grant, and per-data-grant socket.io subscription would be N connections. That's a Pryv API surface concern, not a CMC concern — the data-grant pattern is how Pryv expresses per-relationship data access.
