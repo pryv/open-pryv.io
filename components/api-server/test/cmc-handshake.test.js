@@ -33,28 +33,47 @@ const require = createRequire(import.meta.url);
 const supertest = require('supertest');
 const C = require('cmc');
 
-// Tests run with override-config.yml's `service.api: http://127.0.0.1:3000/{username}/`
-// (path-based username routing). The capability URL the api-server stamps on
-// minted accesses therefore has host `127.0.0.1:3000` and the username in
-// the path. The shim matches that host exactly and forwards path + query.
-const TEST_API_HOSTS = new Set(['127.0.0.1:3000', 'localhost:3000']);
+// The fetch shim recognises URLs that target the in-process api-server.
+// `service.api` may be either path-based (`http://127.0.0.1:3000/{username}/`,
+// when override-config.yml is in effect) or subdomain-style
+// (`https://{username}.pryv.me/`, from test/service-info.json when the
+// boiler test path skips override-config). Match both: exact-host for the
+// path-based form, *.pryv.me for the subdomain-style form. The matcher
+// returns either null (passthrough) or the supertest `/{username}/<rest>`
+// path to use.
 const POLL_INTERVAL_MS = 100;
 const POLL_TIMEOUT_MS = 10_000;
 
 function sleep (ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
+function resolveSupertestPath (u) {
+  // Path-based test override-config: host is 127.0.0.1:3000, username
+  // already in pathname.
+  if (u.host === '127.0.0.1:3000' || u.host === 'localhost:3000') {
+    return u.pathname + (u.search || '');
+  }
+  // Subdomain-style canonical test service-info: host is <user>.pryv.me;
+  // synthesize `/<user>` prefix.
+  if (u.host.endsWith('.pryv.me')) {
+    const subdomain = u.host.slice(0, -('.pryv.me'.length));
+    if (subdomain.length > 0 && !subdomain.includes('.')) {
+      return '/' + subdomain + u.pathname + (u.search || '');
+    }
+  }
+  return null;
+}
+
 /**
- * Build a fetch shim that routes URLs whose host matches the in-process
- * api-server (127.0.0.1:3000 by default) through the supertest agent.
- * Other URLs (rqlite at :4001, pryv.github.io for data-types) pass
- * through to the original fetch.
+ * Build a fetch shim that routes URLs targeting the in-process api-server
+ * through the supertest agent. Other URLs (rqlite at :4001,
+ * pryv.github.io for data-types) pass through to the original fetch.
  */
 function buildFetchShim (originalFetch, app) {
   return async function shim (url, init) {
     let u;
     try { u = new URL(url); } catch (_e) { return originalFetch(url, init); }
-    if (!TEST_API_HOSTS.has(u.host)) return originalFetch(url, init);
-    const path = u.pathname + (u.search || '');
+    const path = resolveSupertestPath(u);
+    if (path == null) return originalFetch(url, init);
     const method = (init && init.method ? init.method : 'GET').toLowerCase();
     const headers = (init && init.headers) || {};
 
@@ -251,10 +270,11 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       // in handleAccept.ts: bob's anchor reads `offer.content.originStreamId`
       // (stamped by capability mint to alice's trigger stream) rather than
       // falling back to bob's bare app-scope.
-      // Test override-config has `service.api: http://127.0.0.1:3000/{username}/`
-      // so cmcSelfIdentityFor returns host '127.0.0.1:3000' for all users.
-      // slugifyHost strips the port → '127-0-0-1'.
-      const TEST_HOST = '127.0.0.1:3000';
+      // With override-config skipped, test/service-info.json wins:
+      //   service.api: 'https://{username}.pryv.me/'
+      // cmcSelfIdentityFor substitutes 'x' for {username} → host 'x.pryv.me'
+      // for ALL users (same canonical host on both sides, as it should be).
+      const TEST_HOST = 'x.pryv.me';
       const aliceSlug = C.slug.counterpartySlug({ username: alice.username, host: TEST_HOST });
       const bobSlug = C.slug.counterpartySlug({ username: bob.username, host: TEST_HOST });
       const sharedScope = ':_cmc:apps:my-app:study-1';
