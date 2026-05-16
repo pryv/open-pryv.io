@@ -1,5 +1,61 @@
 # Changelog - Internal (no API impact)
 
+## CMC capability lifecycle — Phase 1 (single-use state machine)
+
+Builds on the typed error-id catalogue: introduces a real two-state
+lifecycle on the capability access (`open` → `consumed` /
+`invalidated`) so re-clicks on an already-accepted single-use invite
+are rejected at events.create time with a typed `cmc-capability-consumed`
+error.id instead of silently re-running `handleIncomingAccept` (and
+relying on the bug #12 duplicate-name fix to avoid a duplicate
+back-channel mint).
+
+- **API surface** — `consent/request-cmc.content.capability.mode`
+  (optional, default `'single-use'`): `'single-use'` enforces the
+  state-flip, `'open-link'` mints with mode set but state stays
+  `'open'` until Phase 2 lands (lifecycle enforcement for open-link
+  is the [backlog plan](https://github.com/pryv/macroPryv/tree/main/_plans/XX-cmc-capability-open-link-later)).
+- **`components/cmc/src/errorIds.ts`** — rename `CAPABILITY_UNKNOWN`
+  → `CAPABILITY_INVALID` (BC: the prior name only existed on the
+  Plan 68 reopen branch, never on master). New constants
+  `CAPABILITY_CONSUMED` + `CAPABILITY_INVALIDATED`. `cmc-capability-invalid`
+  covers "never existed + expired past TTL"; `cmc-capability-consumed`
+  is the new state-flip rejection.
+- **`components/cmc/src/capability.ts`** — `mintCapability` accepts
+  an optional `mode` param (defaults to reading
+  `triggerEvent.content.capability.mode` if present, else
+  `'single-use'`) and stamps `clientData.cmc.capability = { mode,
+  state: 'open', stateChangedAt }` on the access. Two new exports:
+  `findCapabilityAccess(userId, capabilityId)` and
+  `markCapabilityConsumed(userId, capabilityId)`. The pre-existing
+  legacy `singleUse: true` advisory flag is preserved.
+- **`components/cmc/src/capabilityResponseHook.ts`** (new) —
+  events.create middleware that gates writes to
+  `:_cmc:_internal:responses:<capId>` by the capability access's
+  state. `'consumed'` → typed error `cmc-capability-consumed`;
+  `'invalidated'` → `cmc-capability-invalidated`. Legacy capabilities
+  (minted before this lifecycle field existed) and `'open'` state
+  pass through.
+- **`components/cmc/src/handleIncomingAccept.ts`** — after a
+  successful accept-arrives flow (back-channel access minted), calls
+  `markCapabilityConsumed` to flip state. Open-link mode capabilities
+  skip the flip (state stays `'open'`). Best-effort; the back-channel
+  is already minted so the relationship is established even if the
+  state-flip fails (only the next re-click would mint a duplicate
+  back-channel — same as today's behaviour).
+- **`components/api-server/src/methods/events.ts`** — wires the new
+  hook into the events.create chain right after
+  `cmcInboxWriteHook`, before the persist step.
+- **IMPLEMENTERS-GUIDE.md** — Error id catalogue updated; the gaps
+  list narrows (the formerly-distinct `cmc-capability-stale` is
+  collapsed into `cmc-capability-invalid`; tombstone-based finer
+  discrimination is the explicit backlog work).
+- **Tests**: `[CMCCAP-LF]` 7 new in `capability.test.js` covering
+  mint-time field stamps, find/markConsumed primitive, idempotency.
+  `[CMCCRH]` 6 new in `capabilityResponseHook.test.js` covering
+  passthrough + rejection paths. cmc total 312 → 325 (+13).
+  CMCHS handshake 3/0 unchanged.
+
 ## boiler: skip `override-config.yml` under `NODE_ENV=test`
 
 `config/override-config.yml` is `.gitignore`d and intended only for

@@ -1106,7 +1106,9 @@ ships as `cmc.CmcErrorIds` in the plugin and as `pryv.cmc.errorIds` in
 
 | Constant | Value | When it fires |
 |---|---|---|
-| `CAPABILITY_UNKNOWN` | `cmc-capability-unknown` | The capability URL fails authentication (HTTP 401). Today this collapses three runtime cases — token never existed, token expired (post-TTL, plugin-GC'd), token already consumed (single-use after first accept/refuse). The plugin does NOT currently keep tombstones to distinguish stale vs unknown vs already-accepted; the [`07-recapture`](https://github.com/pryv/macroPryv/blob/main/_plans/68-cmc-datastore-atwork/tests/07-recapture.js) HANDOVER probe decides whether tombstones are worth adding for finer outcomes. |
+| `CAPABILITY_INVALID` | `cmc-capability-invalid` | The capability URL fails authentication (HTTP 401). Covers "token never existed" + "token expired past TTL" — auth middleware can't tell those apart. Distinct from `CAPABILITY_CONSUMED`: that one fires when the access still exists but the plugin's responses-stream write-hook caught a re-click after the capability state flipped to `'consumed'`. |
+| `CAPABILITY_CONSUMED` | `cmc-capability-consumed` | The capability was already accepted/refused in single-use mode. The plugin's response-stream write-hook detected `clientData.cmc.capability.state === 'consumed'` and rejected the re-click. Patient-side UX: "you already accepted this invite." |
+| `CAPABILITY_INVALIDATED` | `cmc-capability-invalidated` | The capability (the LINK / join channel) was explicitly invalidated by the requester. **Open-link mode use case** — Phase 2 work (see [backlog plan](https://github.com/pryv/macroPryv/tree/main/_plans/XX-cmc-capability-open-link-later) once written). Already-established relationships (data-grant + back-channel pairs minted BEFORE invalidation) are unaffected. |
 | `CAPABILITY_TIMEOUT` | `cmc-capability-timeout` | Capability fetch took longer than the configured timeout (default 15s). |
 | `CAPABILITY_EMPTY` | `cmc-capability-empty` | Capability resolved but the offer stream was empty. Protocol invariant violation — investigate. |
 | `CAPABILITY_MULTIPLE_OFFERS` | `cmc-capability-multiple-offers` | Capability resolved but the offer stream held more than one event. Protocol invariant violation. |
@@ -1130,8 +1132,13 @@ ships as `cmc.CmcErrorIds` in the plugin and as `pryv.cmc.errorIds` in
 | `CHAT_NO_REMOTE_CHAT_STREAM` | `cmc-chat-no-remote-chat-stream` | Same, for `remoteChatStreamId`. |
 | `CHAT_RATE_LIMITED` | `cmc-chat-rate-limited` | Rate limiter blocked delivery (100/60s per `(source, recipient)` by default). |
 
-**Gaps under discussion** (HANDOVER follow-up): `cmc-capability-stale` (TTL-expired specifically), `cmc-capability-already-accepted`
-(re-click on consumed capability), `cmc-handshake-refused`, `cmc-handshake-revoked` — these all require either capability tombstones or a richer access-state machine; see [HANDOVER-RESPONSE.md](https://github.com/pryv/macroPryv/blob/main/_plans/68-cmc-datastore-atwork/HANDOVER-RESPONSE.md) for the design discussion.
+**Gaps under discussion** (HANDOVER follow-up):
+
+- `cmc-capability-stale` (TTL-expired specifically — today `CAPABILITY_INVALID` collapses this with "never existed") — requires capability tombstones to distinguish stale from unknown. Open as backlog.
+- `cmc-handshake-refused` / `cmc-handshake-revoked` — both require richer access-state tracking; the current `CAPABILITY_CONSUMED` covers the "accepted" case but doesn't carry the original outcome (accepted vs refused). Worth revisiting only if a real client needs the distinction.
+- `cmc-capability-already-accepted-by-you` — open-link mode same-patient re-click discrimination. Phase 2 of the capability lifecycle work.
+
+See [HANDOVER-RESPONSE.md](https://github.com/pryv/macroPryv/blob/main/_plans/68-cmc-datastore-atwork/HANDOVER-RESPONSE.md) for the full design discussion.
 
 ---
 

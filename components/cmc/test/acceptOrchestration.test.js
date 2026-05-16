@@ -121,14 +121,14 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       );
     });
 
-    it('[AO04B] stamps typed error.id `cmc-capability-unknown` on 401 (covers never-existed / expired / already-consumed cases)', async () => {
+    it('[AO04B] stamps typed error.id `cmc-capability-invalid` on 401 (covers never-existed + expired-past-TTL; consumed is a distinct state caught earlier)', async () => {
       const { fetch } = fakeFetch({ status: 401, body: { error: { id: 'invalid-access-token' } } });
       await assert.rejects(
         readOfferViaCapability({
           capabilityUrl: 'https://StaleTok@example.com/',
           deps: { fetch },
         }),
-        (err) => err.id === 'cmc-capability-unknown' && err.status === 401
+        (err) => err.id === 'cmc-capability-invalid' && err.status === 401
       );
     });
   });

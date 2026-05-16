@@ -205,6 +205,7 @@ export default async function (api: any) {
     logger: getLogger('cmc:ensure-reserved-parents'),
   });
   const cmcInboxWriteHook = cmc.createInboxWriteHook({ errors });
+  const cmcCapabilityResponseHook = cmc.createCapabilityResponseHook({ errors });
   const cmcRateLimiter = new cmc.rateLimit.RateLimiter();
   const cmcDispatchLogger = getLogger('cmc:dispatch');
   const cmcSelfIdentityFor = async (userId: string) => {
@@ -281,6 +282,7 @@ export default async function (api: any) {
     cmcContentValidationHook,
     cmcCapabilityMintHook,
     cmcInboxWriteHook,
+    cmcCapabilityResponseHook,
     detectAccountStream,
     validateAccountStreamForCreate,
     validateAccountStreamContent,

@@ -25,14 +25,30 @@
 
 const CmcErrorIds = {
   // --- Capability lifecycle ---
-  // The capability URL/access could not be authenticated against. Covers
-  // three runtime cases that look identical from the client: token never
-  // existed, token expired (past TTL — the plugin GCs expired
-  // capabilities), token already consumed (single-use). The plugin does
-  // not currently keep tombstones to distinguish these — the
-  // [`07-recapture` HANDOVER probe](https://github.com/pryv/macroPryv/blob/main/_plans/68-cmc-datastore-atwork/tests/07-recapture.js)
-  // will decide whether tombstones are worth adding for finer outcomes.
-  CAPABILITY_UNKNOWN: 'cmc-capability-unknown',
+  // The capability URL/access could not be authenticated. Covers
+  // "token never existed" + "token expired (past TTL)" — both look
+  // identical at the auth middleware (401) and the plugin can't
+  // distinguish them without tombstones (out of scope; see
+  // HANDOVER-RESPONSE.md).
+  CAPABILITY_INVALID: 'cmc-capability-invalid',
+  // The capability was already accepted/refused (single-use mode only —
+  // open-link mode does not transition to 'consumed' on accept; see
+  // `_plans/XX-cmc-capability-open-link-later/PLAN.md`). Distinct from
+  // INVALID: the access still exists, the write-hook detected
+  // `clientData.cmc.capability.state === 'consumed'` and rejected the
+  // re-click. Lets the patient app show "you already accepted this
+  // invite" instead of the generic "invite no longer valid".
+  CAPABILITY_CONSUMED: 'cmc-capability-consumed',
+  // The capability (the LINK / join mechanism) was explicitly
+  // invalidated by the requester. Open-link mode use case: "stop
+  // accepting NEW patients via this link." Already-established
+  // relationships (data-grant + back-channel pairs minted before
+  // invalidation) are UNTOUCHED — they continue to work for chat /
+  // system / revoke. Per-relationship revocation uses the existing
+  // `consent/revoke-cmc` event, NOT this error.
+  // State will be added by the open-link Phase 2 plan; the error.id
+  // is enumerated here so the catalogue is stable.
+  CAPABILITY_INVALIDATED: 'cmc-capability-invalidated',
   // Capability fetch timed out (network / peer down).
   CAPABILITY_TIMEOUT: 'cmc-capability-timeout',
   // Capability resolved but the offer stream was empty — should not happen

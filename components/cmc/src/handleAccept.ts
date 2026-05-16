@@ -25,6 +25,7 @@ const C = require('./constants.ts');
 const ao = require('./acceptOrchestration.ts');
 const slugMod = require('./slug.ts');
 const anchors = require('./anchorStreams.ts');
+const { CmcErrorIds } = require('./errorIds.ts');
 
 type MallLike = {
   accesses: {

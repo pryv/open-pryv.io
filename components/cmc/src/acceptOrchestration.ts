@@ -94,15 +94,14 @@ async function readOfferViaCapability (params: {
       const err: any = new Error('cmc/accept: capability events.get failed: ' + res.status);
       err.status = res.status;
       err.body = body;
-      // 401 covers all three runtime cases that collapse to "the
-      // capability access can't be authenticated": never existed,
-      // expired (GC'd post-TTL), already consumed (single-use). Surface
-      // a stable typed id so the patient app's UX can match cleanly
-      // instead of parsing the English error.message. Discrimination
-      // between never-existed vs stale vs already-consumed needs
-      // tombstones — tracked in HANDOVER BLOCK-2 follow-up.
+      // 401 covers "never existed" + "expired past TTL" (auth
+      // middleware can't tell them apart, and the plugin doesn't keep
+      // tombstones). The newly-introduced single-use `consumed` state
+      // is NOT hit here — that case has the access still present but
+      // its CMC state flipped, and is caught by the responses-stream
+      // write-hook (emits CAPABILITY_CONSUMED via a 4xx with that id).
       if (res.status === 401) {
-        err.id = CmcErrorIds.CAPABILITY_UNKNOWN;
+        err.id = CmcErrorIds.CAPABILITY_INVALID;
       }
       throw err;
     }
