@@ -1326,6 +1326,27 @@ monitor.subscribe(':_cmc:apps:my-app:study-A:collectors:alice--pryv-me', renderS
 
 The same callback runs whether the counterparty is on your same core, your same cluster, or a foreign platform — the plugin abstracts the difference. Your app doesn't branch on topology.
 
+## Bridge / multi-tenant subscription: one connection, N counterparties
+
+A common misread of CMC's scaling story: "my bridge has 1000 patients, do I need 1000 socket.io connections?" **No.** All CMC traffic originated by a counterparty lands on YOUR account's streams, not on theirs:
+
+- Patient writes `message/chat-cmc` → patient's plugin POSTs to your account's `:_cmc:apps:<your-app>:chats:<patient-slug>`. Lands on YOUR stream.
+- Patient writes `notification/ack-cmc` → similar; lands on YOUR collectors stream.
+- Patient writes `consent/revoke-cmc` → patient's plugin POSTs to your `:_cmc:inbox`. Lands on YOUR inbox.
+- Patient accepts your initial invite → arrives on YOUR `:_cmc:inbox`.
+
+So a bridge backend opens **ONE WebSocket on its own token**, subscribes to `:_cmc:inbox` + the relevant `:_cmc:apps:<bridge-app>` parents, and receives push for every event from every counterparty over that single connection. The counterparty slug in the streamId identifies which patient. Scaling to thousands of counterparties = scaling the bridge's own event-firehose, not opening N connections.
+
+```js
+// bridge.js — ONE socket, all patients
+const bridge = new pryv.Connection('https://<bridge-token>@<host>/');
+const monitor = await bridge.monitor();
+monitor.subscribe(':_cmc:inbox', (e) => routeLifecycleEvent(e));
+monitor.subscribe(':_cmc:apps:bridge-app', (e) => routeAppEvent(e));
+```
+
+What CMC does NOT solve here: if the bridge needs to read patient data streams (e.g. each patient's `:vitals` series), it does open one read connection per data-grant, and per-data-grant socket.io subscription would be N connections. That's a Pryv API surface concern, not a CMC concern — the data-grant pattern is how Pryv expresses per-relationship data access.
+
 ---
 
 # Reference — Error catalogue

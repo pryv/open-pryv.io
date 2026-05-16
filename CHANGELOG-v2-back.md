@@ -1,5 +1,32 @@
 # Changelog - Internal (no API impact)
 
+## docs(cmc): bridge multi-tenant subscription = standard one-socket pattern
+
+HANDOVER Q6 asked whether bridges managing thousands of patients
+need a new multi-tenant socket.io push channel ("inboxArrived") to
+avoid opening N WebSocket connections. After working through it: the
+concern is a misread of CMC's data direction. CMC traffic from a
+counterparty lands on YOUR streams, not on theirs:
+
+- Patient sends chat-cmc → arrives on bridge's `:_cmc:apps:bridge-app:chats:<patient-slug>`.
+- Patient sends notification/ack → arrives on bridge's collectors stream.
+- Patient writes revoke / accept → arrives on bridge's `:_cmc:inbox`.
+
+So the bridge opens ONE socket.io connection on its OWN token, with
+the SAME standard `monitor.subscribe(':_cmc:inbox', ...)` pattern
+already documented, and receives push for every event from every
+patient over that single connection. The counterparty slug in the
+streamId identifies the patient. No new socket.io channel needed,
+no new auth model.
+
+The only N-connection concern is reading patient DATA streams (e.g.
+real-time vitals push per data-grant) — that's a Pryv API surface
+question outside CMC's scope.
+
+Added a "Bridge / multi-tenant subscription" section to
+IMPLEMENTERS-GUIDE.md's Socket.io reference making this explicit.
+Zero code change. Closes HANDOVER Q6.
+
 ## docs(cmc): "no new HTTP route namespace" pinned as a design pillar
 
 HANDOVER Q5 asked whether the doctor's "did patient X click my
