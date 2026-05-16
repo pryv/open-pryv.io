@@ -865,8 +865,8 @@ The four system event types share one stream per collector-relationship, nested 
 ```ts
 // App writes
 {
-  alertEventId: string,
-  ackId: string
+  alertEventId: string,    // the Pryv event-row id of the alert being acked (server-stamped at events.create)
+  ackId: string            // the application-defined logical id the alert author set on `notification/alert-cmc.content.ackId`
 }
 
 // On counterparty's matching :_cmc:apps:<their-app>:collectors:<your-slug> stream
@@ -876,6 +876,17 @@ The four system event types share one stream per collector-relationship, nested 
   ackId: string
 }
 ```
+
+**Why both?** `alertEventId` is the concrete event-row pointer
+(unique per Pryv event, server-stamped). `ackId` is the author-chosen
+logical id from `notification/alert-cmc.content.ackId` — it lets the
+alert author treat retried-as-same-logical alerts as one (e.g.
+`'med-reminder-2026-05-15-08:00'` on both copies if the doctor's
+client retries after a network hiccup), and group acks by campaign
+on the author dashboard. The schema requires both because the
+plugin doesn't keep a mapping (event-id → ackId) on the author
+side; the patient's ack carries both so the author's app can
+correlate by whichever id it indexed on.
 
 ### `consent/scope-request-cmc`
 
