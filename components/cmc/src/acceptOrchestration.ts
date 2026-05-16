@@ -35,6 +35,7 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 const outbound = require('./outbound.ts');
+const { CmcErrorIds } = require('./errorIds.ts');
 
 type Permission = { streamId: string; level: string };
 
@@ -93,20 +94,30 @@ async function readOfferViaCapability (params: {
       const err: any = new Error('cmc/accept: capability events.get failed: ' + res.status);
       err.status = res.status;
       err.body = body;
+      // 401 covers all three runtime cases that collapse to "the
+      // capability access can't be authenticated": never existed,
+      // expired (GC'd post-TTL), already consumed (single-use). Surface
+      // a stable typed id so the patient app's UX can match cleanly
+      // instead of parsing the English error.message. Discrimination
+      // between never-existed vs stale vs already-consumed needs
+      // tombstones — tracked in HANDOVER BLOCK-2 follow-up.
+      if (res.status === 401) {
+        err.id = CmcErrorIds.CAPABILITY_UNKNOWN;
+      }
       throw err;
     }
     const body = await safeJson(res);
     const events = body?.events ?? [];
     if (events.length === 0) {
       const err: any = new Error('cmc/accept: capability returned no offer events');
-      err.id = 'cmc-capability-empty';
+      err.id = CmcErrorIds.CAPABILITY_EMPTY;
       throw err;
     }
     if (events.length > 1) {
       const err: any = new Error(
         'cmc/accept: capability returned ' + events.length + ' offer events; expected 1'
       );
-      err.id = 'cmc-capability-multiple-offers';
+      err.id = CmcErrorIds.CAPABILITY_MULTIPLE_OFFERS;
       throw err;
     }
     return events[0];
@@ -114,7 +125,7 @@ async function readOfferViaCapability (params: {
     if (timer != null) clearTimeout(timer);
     if (err?.name === 'AbortError') {
       const t: any = new Error('cmc/accept: capability events.get timed out');
-      t.id = 'cmc-capability-timeout';
+      t.id = CmcErrorIds.CAPABILITY_TIMEOUT;
       throw t;
     }
     throw err;
@@ -131,7 +142,7 @@ function permissionsFromOffer (offerEvent: OfferEvent): Permission[] {
   const perms = offerEvent?.content?.request?.permissions;
   if (!Array.isArray(perms) || perms.length === 0) {
     const err: any = new Error('cmc/accept: offer has no permissions');
-    err.id = 'cmc-offer-empty-permissions';
+    err.id = CmcErrorIds.OFFER_EMPTY_PERMISSIONS;
     throw err;
   }
   // Pass-through; the access-creation API validates further.

@@ -1096,6 +1096,45 @@ If the outbound delivery fails (timeout, peer unreachable, peer 4xx/5xx), the pl
 
 ---
 
+# Reference — Error id catalogue
+
+When a trigger transitions to `status: 'failed'`, `content.failure.reason`
+carries a stable kebab-case error id. Match on the **string value** (not
+the English `error.message`) to drive per-outcome UX. The full enumeration
+ships as `cmc.CmcErrorIds` in the plugin and as `pryv.cmc.errorIds` in
+[lib-js](https://github.com/pryv/lib-js).
+
+| Constant | Value | When it fires |
+|---|---|---|
+| `CAPABILITY_UNKNOWN` | `cmc-capability-unknown` | The capability URL fails authentication (HTTP 401). Today this collapses three runtime cases — token never existed, token expired (post-TTL, plugin-GC'd), token already consumed (single-use after first accept/refuse). The plugin does NOT currently keep tombstones to distinguish stale vs unknown vs already-accepted; the [`07-recapture`](https://github.com/pryv/macroPryv/blob/main/_plans/68-cmc-datastore-atwork/tests/07-recapture.js) HANDOVER probe decides whether tombstones are worth adding for finer outcomes. |
+| `CAPABILITY_TIMEOUT` | `cmc-capability-timeout` | Capability fetch took longer than the configured timeout (default 15s). |
+| `CAPABILITY_EMPTY` | `cmc-capability-empty` | Capability resolved but the offer stream was empty. Protocol invariant violation — investigate. |
+| `CAPABILITY_MULTIPLE_OFFERS` | `cmc-capability-multiple-offers` | Capability resolved but the offer stream held more than one event. Protocol invariant violation. |
+| `HANDLER_MISSING_CAPABILITY_URL` | `cmc-handler-missing-capability-url` | The `consent/accept-cmc` (or `consent/refuse-cmc`) trigger event omitted `capabilityUrl`. |
+| `HANDLER_OFFER_MISSING_CAPABILITY_ID` | `cmc-handler-offer-missing-capability-id` | The offer event lacked the server-stamped `capabilityId`. |
+| `OFFER_EMPTY_PERMISSIONS` | `cmc-offer-empty-permissions` | The offer carried no `request.permissions` array. |
+| `HANDLER_WRONG_TYPE` | `cmc-handler-wrong-type` | Dispatch invoked a handler with a trigger whose `.type` doesn't match (defensive — should be unreachable). |
+| `HANDLER_THREW` | `cmc-handler-threw` | The handler threw an unexpected exception not classified above. |
+| `HANDLER_OFFER_READ_FAILED` | `cmc-handler-offer-read-failed` | `readOfferViaCapability` threw without a more specific id. |
+| `HANDLER_COUNTERPARTY_UNKNOWN` | `cmc-handler-counterparty-unknown` | The offer didn't carry enough info to derive `{username, host}`. With bug #18's identity stamping in place this is unreachable in practice. |
+| `HANDLER_DATA_GRANT_CREATE_FAILED` | `cmc-handler-data-grant-create-failed` | `mall.accesses.create` rejected the payload. |
+| `HANDLER_DATA_GRANT_NO_APIENDPOINT` | `cmc-handler-data-grant-no-apiendpoint` | The created access lacks `apiEndpoint`. Wiring bug — surface for ops. |
+| `HANDLER_BUILD_DATA_GRANT_FAILED` | `cmc-handler-build-data-grant-failed` | Building the data-grant payload threw before the access call. |
+| `BACK_CHANNEL_CREATE_FAILED` | `cmc-back-channel-create-failed` | Back-channel access mint failed on the requester's side (`handleIncomingAccept`). |
+| `HANDLER_DELIVERY_THREW` | `cmc-handler-delivery-threw` | The outbound fetch to the peer threw an exception (network, DNS). |
+| `HANDLER_DELIVERY_REJECTED` | `cmc-handler-delivery-rejected` | Peer returned a non-retryable 4xx (excluding 401 on the capability, which becomes `CAPABILITY_UNKNOWN`). |
+| `HANDLER_DELIVERY_FAILED` | `cmc-handler-delivery-failed` | Peer returned 5xx, a timeout, or a network error — retryable. |
+| `CHAT_STREAM_NOT_CHAT` | `cmc-chat-stream-not-chat` | The chat trigger's streamId doesn't parse as a chats sub-stream under `:_cmc:apps:<app>`. |
+| `CHAT_COUNTERPARTY_ACCESS_NOT_FOUND` | `cmc-chat-counterparty-access-not-found` | No counterparty-role access matched the parsed slug. |
+| `CHAT_NO_REMOTE_APIENDPOINT` | `cmc-chat-no-remote-apiendpoint` | Counterparty access lacks `apiEndpoint` on `clientData.cmc.counterparty`. Typically the two-phase access materialization hasn't finished — see Step 4 "Two-phase access materialization". |
+| `CHAT_NO_REMOTE_CHAT_STREAM` | `cmc-chat-no-remote-chat-stream` | Same, for `remoteChatStreamId`. |
+| `CHAT_RATE_LIMITED` | `cmc-chat-rate-limited` | Rate limiter blocked delivery (100/60s per `(source, recipient)` by default). |
+
+**Gaps under discussion** (HANDOVER follow-up): `cmc-capability-stale` (TTL-expired specifically), `cmc-capability-already-accepted`
+(re-click on consumed capability), `cmc-handshake-refused`, `cmc-handshake-revoked` — these all require either capability tombstones or a richer access-state machine; see [HANDOVER-RESPONSE.md](https://github.com/pryv/macroPryv/blob/main/_plans/68-cmc-datastore-atwork/HANDOVER-RESPONSE.md) for the design discussion.
+
+---
+
 # Reference — Socket.io subscription
 
 Standard Pryv monitor. Three subscription targets cover all three plugin-managed regions; an additional one on your own user-managed `:_cmc:apps:*` streams covers trigger status updates:

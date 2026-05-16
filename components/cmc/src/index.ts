@@ -36,6 +36,7 @@ const accessesUpdateHook = require('./accessesUpdateHook.ts');
 const retryScheduler = require('./retryScheduler.ts');
 const bootRetryLoop = require('./bootRetryLoop.ts');
 const mallAccessesAdapter = require('./mallAccessesAdapter.ts');
+const errorIds = require('./errorIds.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
@@ -43,8 +44,9 @@ export {
   chatOrchestration, capabilityMintHook, inboxWriteHook, rateLimit,
   handleSystem, handleChat, handleRevoke, retryQueue, handleIncomingAccept,
   anchorStreams, accessesUpdateHook, retryScheduler, bootRetryLoop,
-  mallAccessesAdapter,
+  mallAccessesAdapter, errorIds,
 };
+export const CmcErrorIds = errorIds.CmcErrorIds;
 
 export const { createAccessesUpdatePostHook, runWithSuppression } = accessesUpdateHook;
 export const { RetryScheduler } = retryScheduler;

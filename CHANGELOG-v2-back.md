@@ -26,6 +26,41 @@ local development; CI never saw it because the file isn't committed.
   `SpawnContext` inherit `NODE_ENV=test` and therefore get the
   default skip without each spawn-target having to know about it.
 
+## CMC typed error-id catalogue (HANDOVER BLOCK-1)
+
+Surfaces the stable kebab-case `error.id` strings the plugin emits via
+`content.failure.reason` on failed trigger events as a single
+authoritative catalogue. hds-macro Plan 59 Phase 5a's per-outcome UX
+can now pattern-match on these constants instead of parsing English
+`error.message`.
+
+- **New** `components/cmc/src/errorIds.ts` — `CmcErrorIds` constants
+  object (`as const`) enumerating 22 stable ids across capability
+  lifecycle, trigger content, handler routing, counterparty
+  resolution, access mint, outbound delivery, and chat/system
+  handler outcomes. Type-export `CmcErrorId` for TS consumers.
+- **New** typed detection: `readOfferViaCapability` in
+  `acceptOrchestration.ts` now stamps `CmcErrorIds.CAPABILITY_UNKNOWN`
+  (`cmc-capability-unknown`) on HTTP 401 responses. Previously these
+  collapsed into the generic `cmc-handler-offer-read-failed`. Covers
+  three runtime cases that look identical from the client today —
+  token never existed, token expired (past TTL, plugin-GC'd), token
+  already consumed. Finer discrimination (`cmc-capability-stale`,
+  `cmc-capability-already-accepted`) requires capability tombstones
+  — design call deferred pending the [07-recapture probe](https://github.com/pryv/macroPryv/blob/main/_plans/68-cmc-datastore-atwork/tests/07-recapture.js) outcome.
+- **No rename** of existing reasons. Pre-existing `cmc-handler-*`
+  strings in `handleAccept.ts` stay as-is for back-compat with any
+  client matching on `content.failure.reason`. `errorIds.ts` exposes
+  them under semantic names but value-strings are unchanged.
+- **Exported via `cmc` index**: `cmc.CmcErrorIds` + the namespace
+  `cmc.errorIds` (matches the existing `cmc.constants` / `cmc.slug`
+  pattern).
+- **Documented**: IMPLEMENTERS-GUIDE.md gains a new "Reference —
+  Error id catalogue" section listing every id, when it fires, and
+  the gaps that need a design call.
+- **Test**: `[AO04B]` asserts the 401 → `cmc-capability-unknown` mapping.
+  cmc 311 → 312 (+1).
+
 ## Plan 68 reopen — CMC test surface hardening
 
 Follow-up to the Plan 68 TEST-GAP-DEBRIEF: Plan 68 shipped with
