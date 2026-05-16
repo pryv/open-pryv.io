@@ -184,6 +184,20 @@ The plugin saw the `consent/request-cmc` trigger and:
 
 The doctor's app encodes the URL into a QR code, email, deep-link — whatever the operator uses for hand-off.
 
+**Capability TTL.** The capability access expires automatically. The
+default lifetime is **7 days** and is currently hardcoded in
+[`components/cmc/src/capability.ts`](src/capability.ts)
+(`DEFAULT_TTL_SECONDS`). The exact expiry timestamp is stamped on the
+trigger event as `content.capabilityExpiresAt` (Unix seconds), so a
+sender app can display it on the invite UI. Recipient apps should
+check it before opening the URL — a stale URL returns a structured
+`invalid-access-token` from the api-server's auth middleware. There
+is no operator-facing config knob to override the default today; if
+your platform needs longer-lived invites (e.g. patient flows where
+the doctor sends an invite weeks before the patient checks email),
+open a feature request — the knob is a one-config-key change once
+prioritised.
+
 ## Step 3 — Patient's app receives the URL and reads the offer
 
 The user.receives the URL on their device. Their app opens it as a plain Pryv connection to read the offer content (so the consent UI can display it):
@@ -232,6 +246,24 @@ That's the user's only call. Everything else is server-orchestrated by the user'
 6. Patient's plugin updates the trigger event's `content.status`: `'pending'` → `'completed'` (or `'failed'`).
 
 If anything fails (network, capability consumed by someone else, request expired), the trigger's `content.status` becomes `'failed'` with `content.failure.reason`. The local data-grant access is rolled back if the remote acceptance call fails.
+
+**Two-phase access materialization (timing the client should expect).**
+Steps 2 and 5 above happen in separate transactions, so the data-grant
+access goes through TWO states observable from the patient's side:
+
+| State | `clientData.cmc.role` | `counterparty.apiEndpoint` | `counterparty.remoteChatStreamId` |
+|---|---|---|---|
+| **Phase 1** — right after step 2 (sync w.r.t. the accept events.create response) | `'data-grant'` | absent | absent |
+| **Phase 2** — after step 5 (typically ~50-200 ms later, when the requester's plugin POSTs back `consent/back-channel-cmc` to the patient's `:_cmc:inbox`) | `'data-grant'` | present | present |
+
+Naive client code that polls `accesses.get` and waits only for the
+access to exist will see chat/collectors stream-ids as `null` during
+Phase 1 and then suddenly populated. If your app intends to send chat
+or system messages back to the requester right after acceptance, wait
+for `counterparty.remoteChatStreamId` to be populated — not just the
+access itself. The simplest signal is the trigger event's
+`content.status` transition to `'completed'`, which only fires after
+Phase 2 lands.
 
 ## Step 5 — Provider sees the acceptance
 
