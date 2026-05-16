@@ -157,8 +157,14 @@ function buildDataGrantPayload (params: {
   accessName?: string;
   features?: { chat?: boolean; systemMessaging?: boolean };
   extraPermissions?: Permission[];
+  // The id of the local `consent/accept-cmc` event that triggered this
+  // data-grant. Stamped on `clientData.cmc.acceptEventId` so client
+  // code can find the resulting access by the event id it just wrote,
+  // instead of disambiguating by accessName (which collides across
+  // re-runs from the same app/counterparty pair).
+  acceptEventId?: string;
 }): any {
-  const { offerEvent, counterparty, accessName, features, extraPermissions } = params;
+  const { offerEvent, counterparty, accessName, features, extraPermissions, acceptEventId } = params;
   const meta = offerEvent?.content?.requesterMeta ?? {};
   const computedName = accessName ??
     ('cmc:' + (meta.appId || 'app') + ':' + counterparty.username + '@' + counterparty.host);
@@ -175,6 +181,7 @@ function buildDataGrantPayload (params: {
         role: 'counterparty',
         counterparty,
         offerEventId: offerEvent.id,
+        acceptEventId: acceptEventId ?? null,
         // The back-channel apiEndpoint is added by the orchestration loop
         // after the requester's plugin returns it.
         backChannelApiEndpoint: null,

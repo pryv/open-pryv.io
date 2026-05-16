@@ -185,6 +185,23 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       });
       assert.deepEqual(payload.clientData.cmc.features, { chat: true, systemMessaging: false });
     });
+
+    it('[AO09B] stamps acceptEventId on clientData when provided (clients look up the access by the event id they wrote)', () => {
+      const payload = buildDataGrantPayload({
+        offerEvent: VALID_OFFER,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+        acceptEventId: 'evt-accept-abc123',
+      });
+      assert.equal(payload.clientData.cmc.acceptEventId, 'evt-accept-abc123');
+    });
+
+    it('[AO09C] defaults acceptEventId to null when omitted (back-compat for callers that don\'t pass it yet)', () => {
+      const payload = buildDataGrantPayload({
+        offerEvent: VALID_OFFER,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+      });
+      assert.equal(payload.clientData.cmc.acceptEventId, null);
+    });
   });
 
   describe('[CMCAO-DA] deliverAcceptViaCapability', () => {

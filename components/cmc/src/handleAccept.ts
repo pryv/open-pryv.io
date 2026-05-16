@@ -165,6 +165,7 @@ async function handleAccept (params: {
       accessName,
       features,
       extraPermissions: extraPermissions.length > 0 ? extraPermissions : undefined,
+      acceptEventId: triggerEvent?.id,
     });
   } catch (err: any) {
     return {
