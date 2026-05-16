@@ -1,5 +1,30 @@
 # Changelog - Internal (no API impact)
 
+## CMC scope-update auto-merges CMC-machinery permissions
+
+`handleSystemScopeUpdate`'s local-apply branch (the path that
+synchronously updates the local data-grant before delivering the
+peer notification) previously wrote `newPermissions` verbatim. If the
+caller's `newPermissions` omitted the CMC-machinery streams
+(`:_cmc:inbox` create-only, the per-peer `:_cmc:apps:*:chats:<slug>`
+and `collectors:<slug>` contribute permissions), those plugin-owned
+permissions silently disappeared — and chat / system delivery from
+this peer broke until the next handshake.
+
+Auto-merge now reads the current access via `mall.accesses.get`,
+identifies the existing `:_cmc:*` permissions as machinery, filters
+the caller's `newPermissions` to user-facing only, and overlays the
+machinery back. Caller can include `:_cmc:*` perms — they're
+filtered out; the plugin owns those.
+
+- `components/cmc/src/handleSystem.ts` — local-apply branch updated.
+  ~20 lines change.
+- `[HS28a]` + `[HS28b]` tests cover both the auto-merge happy path
+  and the caller-supplied-CMC-perm filtering.
+- IMPLEMENTERS-GUIDE.md scope-update section gains a paragraph
+  documenting the auto-merge contract.
+- cmc 325 → 327 (+2).
+
 ## CMC capability lifecycle — Phase 1 (single-use state machine)
 
 Builds on the typed error-id catalogue: introduces a real two-state

@@ -938,6 +938,8 @@ The user-side scope change. Triggered three ways: (1) user writes a `consent/sco
 
 `source` tells the collector's app whether the change came from accepting their proposal, from a user-initiated CMC trigger, or from a raw `accesses.update` call (post-hook).
 
+**`newPermissions` is the user-facing permission set only.** The plugin auto-merges the CMC-internal machinery permissions (`:_cmc:inbox`, the per-peer `:_cmc:apps:*:chats:<slug>` and `collectors:<slug>` streams) back from the access's current permissions before applying the update. You don't need to include them; if you do, your `:_cmc:*` entries are filtered out and the access's existing machinery survives (the plugin owns these — they're how chat / system delivery keeps working). Forgetting them used to silently break the back-channel; this auto-merge is what now prevents that.
+
 ## State as trigger-event content
 
 There's no separate `:_cmc:state` stream in v1. Every action's state lives on the trigger event you wrote, in `content.status` + related fields. The plugin updates these fields as orchestration progresses.

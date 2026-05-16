@@ -374,15 +374,41 @@ async function handleSystemScopeUpdate (params: {
   // notification to the peer. The accesses.update is wrapped in
   // runWithSuppression so the post-hook does NOT also fire — this handler
   // is the authoritative notifier for the change.
+  //
+  // AUTO-MERGE CMC MACHINERY: the plugin owns the `:_cmc:inbox` create-only
+  // and the per-peer `:_cmc:apps:*:chats:<slug>` / `collectors:<slug>`
+  // contribute permissions on each counterparty data-grant. The caller
+  // writing `consent/scope-update-cmc` typically passes only the
+  // USER-FACING perm set; if we wrote `newPermissions` verbatim, the
+  // machinery perms would be dropped and the back-channel would go silent.
+  // We preserve them by reading the access's current permissions, keeping
+  // every `:_cmc:*`-stream permission as-is, and overlaying the caller's
+  // non-machinery perms on top. Callers CAN include CMC perms explicitly
+  // — they're filtered out and replaced with whatever the access actually
+  // has (the plugin owns these; user input is informational only).
   const accessId: string | undefined = params.triggerEvent.content?.accessId;
   const newPermissions: any = params.triggerEvent.content?.newPermissions;
   if (typeof accessId === 'string' && Array.isArray(newPermissions) &&
       params.deps?.mall?.accesses?.update != null) {
     try {
+      let mergedPerms = newPermissions;
+      if (params.deps?.mall?.accesses?.get != null) {
+        const accessList = await params.deps.mall.accesses.get(params.userId, {});
+        const acc = Array.isArray(accessList)
+          ? accessList.find((a: any) => a?.id === accessId)
+          : null;
+        if (acc != null && Array.isArray(acc.permissions)) {
+          const isCmcMachinery = (p: any) =>
+            typeof p?.streamId === 'string' && p.streamId.startsWith(':_cmc:');
+          const machinery = acc.permissions.filter(isCmcMachinery);
+          const userFacing = newPermissions.filter((p: any) => !isCmcMachinery(p));
+          mergedPerms = [...userFacing, ...machinery];
+        }
+      }
       await accessesUpdateHookMod.runWithSuppression(async () => {
         await params.deps.mall.accesses.update(params.userId, {
           id: accessId,
-          update: { permissions: newPermissions },
+          update: { permissions: mergedPerms },
         });
       });
     } catch (err: any) {
