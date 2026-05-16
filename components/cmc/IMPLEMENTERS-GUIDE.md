@@ -184,6 +184,20 @@ The plugin saw the `consent/request-cmc` trigger and:
 
 The doctor's app encodes the URL into a QR code, email, deep-link — whatever the operator uses for hand-off.
 
+**Capability TTL.** The capability access expires automatically. The
+default lifetime is **7 days** and is currently hardcoded in
+[`components/cmc/src/capability.ts`](src/capability.ts)
+(`DEFAULT_TTL_SECONDS`). The exact expiry timestamp is stamped on the
+trigger event as `content.capabilityExpiresAt` (Unix seconds), so a
+sender app can display it on the invite UI. Recipient apps should
+check it before opening the URL — a stale URL returns a structured
+`invalid-access-token` from the api-server's auth middleware. There
+is no operator-facing config knob to override the default today; if
+your platform needs longer-lived invites (e.g. patient flows where
+the doctor sends an invite weeks before the patient checks email),
+open a feature request — the knob is a one-config-key change once
+prioritised.
+
 ## Step 3 — Patient's app receives the URL and reads the offer
 
 The user.receives the URL on their device. Their app opens it as a plain Pryv connection to read the offer content (so the consent UI can display it):
@@ -233,23 +247,44 @@ That's the user's only call. Everything else is server-orchestrated by the user'
 
 If anything fails (network, capability consumed by someone else, request expired), the trigger's `content.status` becomes `'failed'` with `content.failure.reason`. The local data-grant access is rolled back if the remote acceptance call fails.
 
+**Two-phase access materialization (timing the client should expect).**
+Steps 2 and 5 above happen in separate transactions, so the data-grant
+access goes through TWO states observable from the patient's side:
+
+| State | `clientData.cmc.role` | `counterparty.apiEndpoint` | `counterparty.remoteChatStreamId` |
+|---|---|---|---|
+| **Phase 1** — right after step 2 (sync w.r.t. the accept events.create response) | `'data-grant'` | absent | absent |
+| **Phase 2** — after step 5 (typically ~50-200 ms later, when the requester's plugin POSTs back `consent/back-channel-cmc` to the patient's `:_cmc:inbox`) | `'data-grant'` | present | present |
+
+Naive client code that polls `accesses.get` and waits only for the
+access to exist will see chat/collectors stream-ids as `null` during
+Phase 1 and then suddenly populated. If your app intends to send chat
+or system messages back to the requester right after acceptance, wait
+for `counterparty.remoteChatStreamId` to be populated — not just the
+access itself. The simplest signal is the trigger event's
+`content.status` transition to `'completed'`, which only fires after
+Phase 2 lands.
+
 ## Step 5 — Provider sees the acceptance
 
 Doctor's plugin (when it processed the remote accept) also wrote a local copy into doctor's `:_cmc:inbox`:
 
 ```js
-const monitor = await doctorConnection.monitor();
-monitor.subscribe(':_cmc:inbox', (event) => {
+// The Pryv Monitor's scope is fixed at construction; one callback fires
+// for every event that matches. Branch on event.type / event.streamIds.
+const monitor = new pryv.Monitor(doctorConnection, { streams: [':_cmc:inbox'] });
+monitor.on('event', async (event) => {
   if (event.type === 'consent/accept-cmc') {
     // event.content.from               = { username: 'patient-alice', host: 'pryv.me' }
     // event.content.grantedAccess      = { apiEndpoint: 'https://xYz...PqR@pryv.me/' }
     // event.content.backChannelAccessId = 'def456'  (on doctor's account)
-    const user.= new pryv.Connection(event.content.grantedAccess.apiEndpoint);
-    const data = await user.api([
+    const user_ = new pryv.Connection(event.content.grantedAccess.apiEndpoint);
+    const data = await user_.api([
       { method: 'events.get', params: { streamIds: ['fertility'], limit: 100 } }
     ]);
   }
 });
+await monitor.start();
 ```
 
 Three writes total (doctor's request trigger, patient's accept trigger, doctor's inbox arrival from server-side delivery), one socket.io push on each side, the capability access auto-consumed.
@@ -392,15 +427,21 @@ const history = await doctorConnection.api([
 Subscribing to chat with one counterparty:
 
 ```js
-monitor.subscribe(':_cmc:apps:my-app:study-A:chats:alice--pryv-me', (event) => { /* render */ });
+const monitor = new pryv.Monitor(connection, {
+  streams: [':_cmc:apps:my-app:study-A:chats:alice--pryv-me']
+});
+monitor.on('event', (event) => { /* render */ });
+await monitor.start();
 ```
 
 Subscribing to all chat activity for one app-scope (recursive — picks up all counterparties and nested per-request scopes):
 
 ```js
-monitor.subscribe(':_cmc:apps:my-app', (event) => {
+const monitor = new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app'] });
+monitor.on('event', (event) => {
   // event.streamIds tells you which sub-stream (chat, collector, lifecycle, etc.)
 });
+await monitor.start();
 ```
 
 The plugin uses `lib-js` / `legacy-shim` helpers to compute slugs deterministically so apps don't roll their own:
@@ -617,10 +658,11 @@ Provider A's plugin, on receipt:
 1. Emits `accessUpdated` socket event locally so the provider's app sees the new composite-id and refreshed permissions.
 2. The event lands in the provider's `:_cmc:apps:my-app:study-A:collectors:alice--pryv-me` stream alongside any prior scope-request / alert history.
 
-The doctor's app, subscribed to its app-scope `:_cmc:apps:my-app` (recursive), sees the user-initiated change land:
+The doctor's app, monitoring its app-scope `:_cmc:apps:my-app` (recursive), sees the user-initiated change land:
 
 ```js
-monitor.subscribe(':_cmc:apps:my-app', (event) => {
+const monitor = new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app'] });
+monitor.on('event', (event) => {
   if (event.type === 'consent/scope-update-cmc') {
     // event.content.from           = { username: 'alice', host: 'pryv.me' }
     // event.content.source         = 'user-initiated'  (vs 'response-to-request')
@@ -628,6 +670,7 @@ monitor.subscribe(':_cmc:apps:my-app', (event) => {
     // event.content.newAccessId    = 'abc123:2'
   }
 });
+await monitor.start();
 ```
 
 ## Double-fire suppression
@@ -833,8 +876,8 @@ The four system event types share one stream per collector-relationship, nested 
 ```ts
 // App writes
 {
-  alertEventId: string,
-  ackId: string
+  alertEventId: string,    // the Pryv event-row id of the alert being acked (server-stamped at events.create)
+  ackId: string            // the application-defined logical id the alert author set on `notification/alert-cmc.content.ackId`
 }
 
 // On counterparty's matching :_cmc:apps:<their-app>:collectors:<your-slug> stream
@@ -844,6 +887,17 @@ The four system event types share one stream per collector-relationship, nested 
   ackId: string
 }
 ```
+
+**Why both?** `alertEventId` is the concrete event-row pointer
+(unique per Pryv event, server-stamped). `ackId` is the author-chosen
+logical id from `notification/alert-cmc.content.ackId` — it lets the
+alert author treat retried-as-same-logical alerts as one (e.g.
+`'med-reminder-2026-05-15-08:00'` on both copies if the doctor's
+client retries after a network hiccup), and group acks by campaign
+on the author dashboard. The schema requires both because the
+plugin doesn't keep a mapping (event-id → ackId) on the author
+side; the patient's ack carries both so the author's app can
+correlate by whichever id it indexed on.
 
 ### `consent/scope-request-cmc`
 
@@ -894,6 +948,8 @@ The user-side scope change. Triggered three ways: (1) user writes a `consent/sco
 ```
 
 `source` tells the collector's app whether the change came from accepting their proposal, from a user-initiated CMC trigger, or from a raw `accesses.update` call (post-hook).
+
+**`newPermissions` is the user-facing permission set only.** The plugin auto-merges the CMC-internal machinery permissions (`:_cmc:inbox`, the per-peer `:_cmc:apps:*:chats:<slug>` and `collectors:<slug>` streams) back from the access's current permissions before applying the update. You don't need to include them; if you do, your `:_cmc:*` entries are filtered out and the access's existing machinery survives (the plugin owns these — they're how chat / system delivery keeps working). Forgetting them used to silently break the back-channel; this auto-merge is what now prevents that.
 
 ## State as trigger-event content
 
@@ -1050,7 +1106,7 @@ When you write a `cmc/<action>-v1` event to your own `:_cmc:*` scope stream:
 1. Returns immediately. Event content shows `status: 'pending'`.
 2. Plugin processes asynchronously: local state change + outbound HTTPS to counterparty.
 3. Plugin updates the same event's `content.status` as orchestration progresses (`pending` → `delivered` → `completed`, or `failed`).
-4. App subscribes via `monitor.subscribe(':_cmc:apps:my-app:...', handler)` to receive status updates.
+4. App watches via `new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app:...'] })` + `monitor.on('event', handler)` to receive status updates.
 
 If the outbound delivery fails (timeout, peer unreachable, peer 4xx/5xx), the plugin queues for retry (rqlite-persisted: `cmc-pending-deliveries/<deliveryId>`). On terminal failure, sets `status: 'failed'` with reason.
 
@@ -1064,22 +1120,200 @@ If the outbound delivery fails (timeout, peer unreachable, peer 4xx/5xx), the pl
 
 ---
 
-# Reference — Socket.io subscription
+# Reference — Error id catalogue
 
-Standard Pryv monitor. Three subscription targets cover all three plugin-managed regions; an additional one on your own user-managed `:_cmc:apps:*` streams covers trigger status updates:
+When a trigger transitions to `status: 'failed'`, `content.failure.reason`
+carries a stable kebab-case error id. Match on the **string value** (not
+the English `error.message`) to drive per-outcome UX. The full enumeration
+ships as `cmc.CmcErrorIds` in the plugin and as `pryv.cmc.errorIds` in
+[lib-js](https://github.com/pryv/lib-js).
+
+| Constant | Value | When it fires |
+|---|---|---|
+| `CAPABILITY_INVALID` | `cmc-capability-invalid` | The capability URL fails authentication (HTTP 401). Covers "token never existed" + "token expired past TTL" — auth middleware can't tell those apart. Distinct from `CAPABILITY_CONSUMED`: that one fires when the access still exists but the plugin's responses-stream write-hook caught a re-click after the capability state flipped to `'consumed'`. |
+| `CAPABILITY_CONSUMED` | `cmc-capability-consumed` | The capability was already accepted/refused in single-use mode. The plugin's response-stream write-hook detected `clientData.cmc.capability.state === 'consumed'` and rejected the re-click. Patient-side UX: "you already accepted this invite." |
+| `CAPABILITY_INVALIDATED` | `cmc-capability-invalidated` | The capability (the LINK / join channel) was explicitly invalidated by the requester. **Open-link mode use case** — Phase 2 work (see [backlog plan](https://github.com/pryv/macroPryv/tree/main/_plans/XX-cmc-capability-open-link-later) once written). Already-established relationships (data-grant + back-channel pairs minted BEFORE invalidation) are unaffected. |
+| `CAPABILITY_TIMEOUT` | `cmc-capability-timeout` | Capability fetch took longer than the configured timeout (default 15s). |
+| `CAPABILITY_EMPTY` | `cmc-capability-empty` | Capability resolved but the offer stream was empty. Protocol invariant violation — investigate. |
+| `CAPABILITY_MULTIPLE_OFFERS` | `cmc-capability-multiple-offers` | Capability resolved but the offer stream held more than one event. Protocol invariant violation. |
+| `HANDLER_MISSING_CAPABILITY_URL` | `cmc-handler-missing-capability-url` | The `consent/accept-cmc` (or `consent/refuse-cmc`) trigger event omitted `capabilityUrl`. |
+| `HANDLER_OFFER_MISSING_CAPABILITY_ID` | `cmc-handler-offer-missing-capability-id` | The offer event lacked the server-stamped `capabilityId`. |
+| `OFFER_EMPTY_PERMISSIONS` | `cmc-offer-empty-permissions` | The offer carried no `request.permissions` array. |
+| `HANDLER_WRONG_TYPE` | `cmc-handler-wrong-type` | Dispatch invoked a handler with a trigger whose `.type` doesn't match (defensive — should be unreachable). |
+| `HANDLER_THREW` | `cmc-handler-threw` | The handler threw an unexpected exception not classified above. |
+| `HANDLER_OFFER_READ_FAILED` | `cmc-handler-offer-read-failed` | `readOfferViaCapability` threw without a more specific id. |
+| `HANDLER_COUNTERPARTY_UNKNOWN` | `cmc-handler-counterparty-unknown` | The offer didn't carry enough info to derive `{username, host}`. With bug #18's identity stamping in place this is unreachable in practice. |
+| `HANDLER_DATA_GRANT_CREATE_FAILED` | `cmc-handler-data-grant-create-failed` | `mall.accesses.create` rejected the payload. |
+| `HANDLER_DATA_GRANT_NO_APIENDPOINT` | `cmc-handler-data-grant-no-apiendpoint` | The created access lacks `apiEndpoint`. Wiring bug — surface for ops. |
+| `HANDLER_BUILD_DATA_GRANT_FAILED` | `cmc-handler-build-data-grant-failed` | Building the data-grant payload threw before the access call. |
+| `BACK_CHANNEL_CREATE_FAILED` | `cmc-back-channel-create-failed` | Back-channel access mint failed on the requester's side (`handleIncomingAccept`). |
+| `HANDLER_DELIVERY_THREW` | `cmc-handler-delivery-threw` | The outbound fetch to the peer threw an exception (network, DNS). |
+| `HANDLER_DELIVERY_REJECTED` | `cmc-handler-delivery-rejected` | Peer returned a non-retryable 4xx (excluding 401 on the capability, which becomes `CAPABILITY_UNKNOWN`). |
+| `HANDLER_DELIVERY_FAILED` | `cmc-handler-delivery-failed` | Peer returned 5xx, a timeout, or a network error — retryable. |
+| `CHAT_STREAM_NOT_CHAT` | `cmc-chat-stream-not-chat` | The chat trigger's streamId doesn't parse as a chats sub-stream under `:_cmc:apps:<app>`. |
+| `CHAT_COUNTERPARTY_ACCESS_NOT_FOUND` | `cmc-chat-counterparty-access-not-found` | No counterparty-role access matched the parsed slug. |
+| `CHAT_NO_REMOTE_APIENDPOINT` | `cmc-chat-no-remote-apiendpoint` | Counterparty access lacks `apiEndpoint` on `clientData.cmc.counterparty`. Typically the two-phase access materialization hasn't finished — see Step 4 "Two-phase access materialization". |
+| `CHAT_NO_REMOTE_CHAT_STREAM` | `cmc-chat-no-remote-chat-stream` | Same, for `remoteChatStreamId`. |
+| `CHAT_RATE_LIMITED` | `cmc-chat-rate-limited` | Rate limiter blocked delivery (100/60s per `(source, recipient)` by default). Primarily a defensive abuse backstop; the structural loop-avoidance happens at dispatch via `event.createdBy` → counterparty-access detection (see "Loop avoidance" section below), so seeing this id under normal traffic indicates real abuse or quota exhaustion, not a runaway. |
+
+**Gaps under discussion** (HANDOVER follow-up):
+
+- `cmc-capability-stale` (TTL-expired specifically — today `CAPABILITY_INVALID` collapses this with "never existed") — requires capability tombstones to distinguish stale from unknown. Open as backlog.
+- `cmc-handshake-refused` / `cmc-handshake-revoked` — both require richer access-state tracking; the current `CAPABILITY_CONSUMED` covers the "accepted" case but doesn't carry the original outcome (accepted vs refused). Worth revisiting only if a real client needs the distinction.
+- `cmc-capability-already-accepted-by-you` — open-link mode same-patient re-click discrimination. Phase 2 of the capability lifecycle work.
+
+See [HANDOVER-RESPONSE.md](https://github.com/pryv/macroPryv/blob/main/_plans/68-cmc-datastore-atwork/HANDOVER-RESPONSE.md) for the full design discussion.
+
+---
+
+# Reference — "Did the patient click my invite yet?"
+
+The doctor's app wants to display the state of every outstanding
+invite without polling the inbox continuously. Two complementary
+query paths cover the common cases — no dedicated `/cmc/*` API:
+
+**Path 1 — query the capability accesses directly (best for dashboards).**
+The Q1 Phase 1 lifecycle stamps the capability state on the access:
 
 ```js
-const monitor = await connection.monitor();
+const { accesses } = (await doctorConnection.api([
+  { method: 'accesses.get', params: {} }
+]))[0];
+
+const capabilityAccesses = accesses.filter((a) =>
+  a?.clientData?.cmc?.kind === 'capability'
+);
+
+// Each capability access carries:
+//   - clientData.cmc.capabilityId
+//   - clientData.cmc.requestEventId  // the doctor's original request event id
+//   - clientData.cmc.capability.mode       // 'single-use' | 'open-link'
+//   - clientData.cmc.capability.state      // 'open' | 'consumed' | 'invalidated'
+//   - clientData.cmc.capability.stateChangedAt
+//   - access.expires                       // post-TTL the access auth-fails
+
+// Build dashboard rows:
+for (const cap of capabilityAccesses) {
+  const requestEventId = cap.clientData.cmc.requestEventId;
+  const state = cap.clientData.cmc.capability?.state ?? 'open';
+  const expiresAt = cap.expires;
+  // state === 'open'         → invite is still claimable
+  // state === 'consumed'     → single-use accepted (look at inbox for the accept-cmc to see who)
+  // state === 'invalidated'  → doctor invalidated the link (open-link mode, Phase 2)
+  // (state === 'open' && Date.now()/1000 > expiresAt) → expired, will auth-fail
+}
+```
+
+One round-trip; doctor can render an entire dashboard's worth of
+invite states from this. Cardinality: one access per minted
+capability. For doctors with thousands of outstanding invites, the
+response carries thousands of small rows — well within a single
+`accesses.get` page.
+
+**Path 2 — watch `:_cmc:inbox` over socket.io (best for real-time UX).**
+For "patient X just clicked, light up the row green NOW", the
+doctor subscribes to `:_cmc:inbox` and reacts to incoming
+`consent/accept-cmc` / `consent/refuse-cmc` events:
+
+```js
+const monitor = new pryv.Monitor(doctorConnection, { streams: [':_cmc:inbox'] });
+monitor.on('event', (event) => {
+  if (event.type === 'consent/accept-cmc') {
+    // event.content.from = { username, host }       — who accepted
+    // event.content.capabilityId                    — match against the doctor's invite
+    // event.content.grantedAccess.apiEndpoint       — the doctor's data-grant
+    updateDashboardRow(event.content.capabilityId, 'accepted');
+  } else if (event.type === 'consent/refuse-cmc') {
+    updateDashboardRow(event.content.capabilityId, 'refused');
+  }
+});
+await monitor.start();
+```
+
+Use Path 1 to render the dashboard initial state; use Path 2 to keep
+it live. Neither requires a dedicated `/cmc/capability/<id>/status`
+endpoint — both work today with the standard Pryv API surface.
+
+> **Design constraint: CMC introduces no new HTTP route namespace.**
+> All CMC behaviour is reachable via the existing Pryv API surfaces
+> (`events.*`, `streams.*`, `accesses.*`, socket.io monitor). A
+> `/cmc/*` top-level namespace is **explicitly out of scope** and
+> not a candidate solution for any current or future CMC use case
+> — if a query feels like it wants a CMC-specific endpoint, the
+> right answer is either (a) a clientData filter on the existing
+> resource, (b) a richer query on the trigger event, or (c) a
+> socket.io subscription pattern. This keeps the plugin a true
+> plugin (no API-surface ownership) and keeps the architectural
+> footprint stable.
+
+---
+
+# Reference — Loop avoidance
+
+The chat / system / scope-update / revoke handlers POST outbound to
+the peer via the counterparty access stored on the data-grant. Without
+a structural guard, a peer-delivered event would re-trigger the same
+dispatch on the receiving side and POST right back — the classic
+A→B→A→B ping-pong. The defence runs in two layers:
+
+1. **Structural avoidance (dispatch.ts).** Every Pryv event carries
+   `createdBy: <accessId>` server-stamped at events.create. For
+   outbound-loopable types (`message/chat-cmc`, `notification/alert-cmc`,
+   `notification/ack-cmc`, `consent/scope-request-cmc`,
+   `consent/scope-update-cmc`, `consent/revoke-cmc`), the dispatch
+   looks up the access by `createdBy` and skips if its
+   `clientData.cmc.role === 'counterparty'` — i.e., the event arrived
+   on this mall via a peer's POST. No outbound is performed. Returns
+   `{ status: 'skipped', reason: 'cmc-incoming-from-peer' }`.
+
+   Lifecycle handlers (accept / refuse / back-channel / request) are
+   exempt: their dispatch is direction-aware via `isOnInbox`, and
+   the incoming variants (handleIncomingAccept, handleIncomingBackChannel)
+   do real protocol work (mint back-channel, update data-grant).
+
+2. **Defensive rate-limit (rateLimit.ts).** A per-worker sliding
+   window per `(source, recipient)` tuple (100/60s default) catches
+   any leak past the structural guard — broken access wiring, future
+   handler additions that forget the guard, malicious peer spam.
+   Returns `cmc-chat-rate-limited` (or the system equivalent) when
+   tripped. Under normal traffic this id should not appear; treat it
+   as ops signal.
+
+Per-app-code rate-limit override is captured as a separate backlog
+plan (HANDOVER ask) — operationally useful for emergency-collector
+apps that need higher quota than patient-chat apps, but no urgency
+now that the loop-defence concern is decoupled from rate-limiter
+tuning.
+
+---
+
+# Reference — Socket.io subscription
+
+CMC uses the standard Pryv [`@pryv/monitor`](https://github.com/pryv/lib-js)
+add-on. A `Monitor` has a **fixed `eventsGetScope` set at construction**;
+it emits one `'event'` callback for every matched event. Branch on
+`event.type` / `event.streamIds[0]` inside the callback. You can not add
+or remove streams after `monitor.start()` — to watch a different scope,
+construct another `Monitor` (each shares the underlying socket.io
+connection via the `pryv-socket.io` add-on).
+
+```js
+const pryv = require('pryv');
+require('@pryv/monitor')(pryv);
+require('@pryv/socket.io')(pryv); // optional: live socket.io transport
 
 // Region 1 — One-shot lifecycle (requests, accepts, refusals, revocations)
-monitor.subscribe(':_cmc:inbox', (event) => {
+const inboxMonitor = new pryv.Monitor(connection, { streams: [':_cmc:inbox'] });
+inboxMonitor.on('event', (event) => {
   // event.content.from = { username, host }  ← server-stamped, trustworthy
   // event.type ∈ { 'consent/request-cmc', 'consent/accept-cmc', 'consent/refuse-cmc', 'consent/revoke-cmc' }
 });
+await inboxMonitor.start();
 
 // Region 2 — All app-scope activity (recursive, covers chat + collectors + lifecycle triggers
 // for one app — and per-request nested scopes underneath)
-monitor.subscribe(':_cmc:apps:my-app', (event) => {
+const appMonitor = new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app'] });
+appMonitor.on('event', (event) => {
   // event.streamIds[0] tells you which sub-stream, e.g.:
   //   ':_cmc:apps:my-app:study-A:chats:alice--pryv-me'
   //   ':_cmc:apps:my-app:study-A:collectors:alice--pryv-me'
@@ -1087,33 +1321,73 @@ monitor.subscribe(':_cmc:apps:my-app', (event) => {
   // event.type ∈ { 'consent/request-cmc', 'consent/accept-cmc', 'message/chat-cmc',
   //                'notification/alert-cmc', ... }
 });
+await appMonitor.start();
 
-// Or narrow to one feature class by subscribing to the nested chats / collectors parent
+// Or narrow to one feature class by watching the nested chats / collectors parent
 // (these live under a specific app-scope path, NOT at the top of :_cmc:):
-monitor.subscribe(':_cmc:apps:my-app:study-A:chats', (event) => {
+const chatsMonitor = new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app:study-A:chats'] });
+chatsMonitor.on('event', (event) => {
   // event.streamIds[0] identifies the counterparty stream,
   // e.g. ':_cmc:apps:my-app:study-A:chats:alice--pryv-me'
   // event.content.from set ⇒ incoming; absent ⇒ your own outgoing
   // event.type === 'message/chat-cmc'
 });
+await chatsMonitor.start();
 
-monitor.subscribe(':_cmc:apps:my-app:study-A:collectors', (event) => {
+const collectorsMonitor = new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app:study-A:collectors'] });
+collectorsMonitor.on('event', (event) => {
   // event.streamIds[0] identifies the collector-relationship,
   // e.g. ':_cmc:apps:my-app:study-A:collectors:alice--pryv-me'
   // event.type ∈ { 'notification/alert-cmc', 'notification/ack-cmc',
   //                'consent/scope-request-cmc', 'consent/scope-update-cmc' }
   // event.content.source on scope-updates: 'response-to-request' | 'user-initiated' | 'post-hook'
 });
+await collectorsMonitor.start();
 ```
 
-Subscribe to a single counterparty / collector stream when the UI is scoped that way:
+Watch a single counterparty / collector stream when the UI is scoped that way:
 
 ```js
-monitor.subscribe(':_cmc:apps:my-app:study-A:chats:alice--pryv-me', renderChatMessage);
-monitor.subscribe(':_cmc:apps:my-app:study-A:collectors:alice--pryv-me', renderSystemMessage);
+const oneChatMonitor = new pryv.Monitor(connection, {
+  streams: [':_cmc:apps:my-app:study-A:chats:alice--pryv-me']
+});
+oneChatMonitor.on('event', renderChatMessage);
+await oneChatMonitor.start();
 ```
 
 The same callback runs whether the counterparty is on your same core, your same cluster, or a foreign platform — the plugin abstracts the difference. Your app doesn't branch on topology.
+
+## Bridge / multi-tenant subscription: one connection, N counterparties
+
+A common misread of CMC's scaling story: "my bridge has 1000 patients, do I need 1000 socket.io connections?" **No.** All CMC traffic originated by a counterparty lands on YOUR account's streams, not on theirs:
+
+- Patient writes `message/chat-cmc` → patient's plugin POSTs to your account's `:_cmc:apps:<your-app>:chats:<patient-slug>`. Lands on YOUR stream.
+- Patient writes `notification/ack-cmc` → similar; lands on YOUR collectors stream.
+- Patient writes `consent/revoke-cmc` → patient's plugin POSTs to your `:_cmc:inbox`. Lands on YOUR inbox.
+- Patient accepts your initial invite → arrives on YOUR `:_cmc:inbox`.
+
+So a bridge backend opens **ONE socket.io connection on its own token**, instantiates a Monitor (or two) on its OWN account scoped to the relevant CMC streams, and receives push for every event from every counterparty over that single connection. The counterparty slug in the streamId identifies which patient. Scaling to thousands of counterparties = scaling the bridge's own event-firehose, not opening N connections.
+
+```js
+// bridge.js — ONE socket, all patients
+const bridge = new pryv.Connection('https://<bridge-token>@<host>/');
+
+// Either one broad Monitor that routes by event.streamIds[0]...
+const all = new pryv.Monitor(bridge, {
+  streams: [':_cmc:inbox', ':_cmc:apps:bridge-app']
+});
+all.on('event', (e) => {
+  if (e.streamIds.includes(':_cmc:inbox')) return routeLifecycleEvent(e);
+  return routeAppEvent(e);
+});
+await all.start();
+
+// ...or two Monitors (still one underlying socket via @pryv/socket.io):
+//   const lifecycle = new pryv.Monitor(bridge, { streams: [':_cmc:inbox'] });
+//   const appEvents = new pryv.Monitor(bridge, { streams: [':_cmc:apps:bridge-app'] });
+```
+
+What CMC does NOT solve here: if the bridge needs to read patient data streams (e.g. each patient's `:vitals` series), it does open one read connection per data-grant, and per-data-grant socket.io subscription would be N connections. That's a Pryv API surface concern, not a CMC concern — the data-grant pattern is how Pryv expresses per-relationship data access.
 
 ---
 

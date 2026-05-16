@@ -50,6 +50,7 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const anchors = require('./anchorStreams.ts');
+const capabilityMod = require('./capability.ts');
 
 type Counterparty = { username: string; host: string };
 
@@ -340,6 +341,37 @@ async function handleIncomingAccept (params: {
     } catch (err: any) {
       deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel info delivery failed (non-fatal)', {
         peerApiEndpoint: grantedApiEndpoint,
+        error: String(err?.message || err),
+      });
+    }
+  }
+
+  // Phase 1 single-use lifecycle: flip the capability access's
+  // `clientData.cmc.capability.state` from 'open' to 'consumed' so a
+  // subsequent re-click via the same capabilityUrl can be rejected
+  // with `cmc-capability-consumed` by the responses-stream write-hook
+  // (instead of silently re-running this handler and minting a
+  // duplicate back-channel access). Open-link mode skips this step —
+  // capabilities with `mode: 'open-link'` keep state='open' until
+  // explicit invalidation (Phase 2 plan). Best-effort; the back-channel
+  // access is already minted so the relationship is established.
+  const capabilityIdToConsume = acceptEvent?.content?.capabilityId;
+  if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
+    try {
+      const acc = await capabilityMod.findCapabilityAccess({
+        userId, capabilityId: capabilityIdToConsume, deps: { mall },
+      });
+      const capabilityMode = acc?.clientData?.cmc?.capability?.mode;
+      if (capabilityMode === 'single-use' || capabilityMode == null) {
+        // Default 'single-use' for legacy capabilities minted before
+        // this field existed.
+        await capabilityMod.markCapabilityConsumed({
+          userId, capabilityId: capabilityIdToConsume, deps: { mall },
+        });
+      }
+    } catch (err: any) {
+      deps.logger?.warn?.('cmc/handleIncomingAccept: capability state-flip failed (non-fatal)', {
+        capabilityId: capabilityIdToConsume,
         error: String(err?.message || err),
       });
     }

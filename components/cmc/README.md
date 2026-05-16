@@ -9,9 +9,10 @@
 **Design pillars:**
 1. **Plugin, not storage engine** — CMC lives at `components/cmc/`; all state in standard per-user main storage (PG / Mongo).
 2. **Zero new storage primitives** — retry queue is a hidden companion stream `:_cmc:_internal:retries`; rate-limit is per-worker in-memory.
-3. **`:_cmc:apps:` user namespace** — user-creatable streams pack under one plugin-managed parent.
-4. **Three-region stream model** — `:_cmc:inbox` (one-shot lifecycle) / `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` (per user-pair, nested under the app/path the trigger was written to) / `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` (per collector-relationship, same nesting).
-5. **System family absorbs scope-update** — `consent/scope-request-cmc` + `consent/scope-update-cmc` flow on the system channel; `accesses.update` post-hook auto-notifies the counterparty for user-initiated scope changes.
+3. **Zero new HTTP route namespace** — every CMC behaviour is reachable via existing Pryv API surfaces (`events.*`, `streams.*`, `accesses.*`, socket.io monitor). No `/cmc/*` top-level routes. If a use case feels like it wants a CMC-specific endpoint, the right answer is either a `clientData` filter on the existing resource, a richer query on the trigger event, or a socket.io subscription. Keeps the plugin a true plugin (no API-surface ownership).
+4. **`:_cmc:apps:` user namespace** — user-creatable streams pack under one plugin-managed parent.
+5. **Three-region stream model** — `:_cmc:inbox` (one-shot lifecycle) / `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` (per user-pair, nested under the app/path the trigger was written to) / `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` (per collector-relationship, same nesting).
+6. **System family absorbs scope-update** — `consent/scope-request-cmc` + `consent/scope-update-cmc` flow on the system channel; `accesses.update` post-hook auto-notifies the counterparty for user-initiated scope changes.
 
 Cross-core mTLS optimization deliberately omitted; see "Future development scoping" sections below.
 
@@ -263,7 +264,7 @@ Apps query via plain `events.get({streamIds:[':_cmc:state']})`.
 
 ### Socket.io push
 
-Every successful `:_cmc:inbox` write (whether by in-process plugin routing for same-platform same-core directed invites, or by counterparty access writes for everything else) fires a standard socket.io `eventsCreated`. The recipient's app uses `monitor.subscribe(':_cmc:inbox')` — no new socket primitive.
+Every successful `:_cmc:inbox` write (whether by in-process plugin routing for same-platform same-core directed invites, or by counterparty access writes for everything else) fires a standard socket.io `eventsCreated`. The recipient's app uses the standard `@pryv/monitor` add-on — `new pryv.Monitor(connection, { streams: [':_cmc:inbox'] })` + `monitor.on('event', cb)` + `monitor.start()` — no new socket primitive.
 
 ## Phases
 

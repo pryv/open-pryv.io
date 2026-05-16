@@ -23,12 +23,14 @@ const {
   deliverAcceptViaCapability,
   deliverRefuseViaCapability,
 } = require('../src/acceptOrchestration.ts');
+const { assertOutboundUrl } = require('./_fake-assertions.cjs');
 
 function fakeFetch (responses) {
   const calls = [];
   let idx = 0;
   return {
     fetch (url, init) {
+      assertOutboundUrl(url, init);
       calls.push({ url, init });
       const spec = Array.isArray(responses) ? responses[idx++] : responses;
       if (spec instanceof Error) return Promise.reject(spec);
@@ -118,6 +120,17 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
         /capability events.get failed: 403/
       );
     });
+
+    it('[AO04B] stamps typed error.id `cmc-capability-invalid` on 401 (covers never-existed + expired-past-TTL; consumed is a distinct state caught earlier)', async () => {
+      const { fetch } = fakeFetch({ status: 401, body: { error: { id: 'invalid-access-token' } } });
+      await assert.rejects(
+        readOfferViaCapability({
+          capabilityUrl: 'https://StaleTok@example.com/',
+          deps: { fetch },
+        }),
+        (err) => err.id === 'cmc-capability-invalid' && err.status === 401
+      );
+    });
   });
 
   describe('[CMCAO-PF] permissionsFromOffer', () => {
@@ -182,6 +195,23 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
         features: { chat: true, systemMessaging: false },
       });
       assert.deepEqual(payload.clientData.cmc.features, { chat: true, systemMessaging: false });
+    });
+
+    it('[AO09B] stamps acceptEventId on clientData when provided (clients look up the access by the event id they wrote)', () => {
+      const payload = buildDataGrantPayload({
+        offerEvent: VALID_OFFER,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+        acceptEventId: 'evt-accept-abc123',
+      });
+      assert.equal(payload.clientData.cmc.acceptEventId, 'evt-accept-abc123');
+    });
+
+    it('[AO09C] defaults acceptEventId to null when omitted (back-compat for callers that don\'t pass it yet)', () => {
+      const payload = buildDataGrantPayload({
+        offerEvent: VALID_OFFER,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+      });
+      assert.equal(payload.clientData.cmc.acceptEventId, null);
     });
   });
 

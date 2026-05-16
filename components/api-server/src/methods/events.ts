@@ -205,6 +205,7 @@ export default async function (api: any) {
     logger: getLogger('cmc:ensure-reserved-parents'),
   });
   const cmcInboxWriteHook = cmc.createInboxWriteHook({ errors });
+  const cmcCapabilityResponseHook = cmc.createCapabilityResponseHook({ errors });
   const cmcRateLimiter = new cmc.rateLimit.RateLimiter();
   const cmcDispatchLogger = getLogger('cmc:dispatch');
   const cmcSelfIdentityFor = async (userId: string) => {
@@ -247,7 +248,7 @@ export default async function (api: any) {
   });
   const cmcDispatchMiddleware = cmc.createDispatchMiddleware({
     mall: mallForCmc,
-    fetch: globalThis.fetch,
+    fetch: (url: string, init?: any) => globalThis.fetch(url, init),
     timeoutMs: 15_000,
     rateLimiter: cmcRateLimiter,
     logger: cmcDispatchLogger,
@@ -281,6 +282,7 @@ export default async function (api: any) {
     cmcContentValidationHook,
     cmcCapabilityMintHook,
     cmcInboxWriteHook,
+    cmcCapabilityResponseHook,
     detectAccountStream,
     validateAccountStreamForCreate,
     validateAccountStreamContent,
@@ -301,7 +303,7 @@ export default async function (api: any) {
     config,
     mall: mallForCmc,
     selfIdentityFor: cmcSelfIdentityFor,
-    fetch: globalThis.fetch,
+    fetch: (url: string, init?: any) => globalThis.fetch(url, init),
     rateLimiter: cmcRateLimiter,
     logger: getLogger('cmc:retry-loop'),
     userIdsProvider: async () => {

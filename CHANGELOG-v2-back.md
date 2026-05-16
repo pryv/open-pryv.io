@@ -1,5 +1,300 @@
 # Changelog - Internal (no API impact)
 
+## docs(cmc): fix wrong Monitor API in IMPLEMENTERS-GUIDE + README
+
+The CMC docs (since Plan 68 first published IMPLEMENTERS-GUIDE.md in
+commit `02b6d94`) used a `monitor.subscribe(streamId, callback)` API
+that doesn't exist on `@pryv/monitor`. The actual Monitor API is:
+
+```js
+const monitor = new pryv.Monitor(connection, { streams: [...] });
+monitor.on('event', (event) => { ... });
+await monitor.start();
+```
+
+Key semantic differences callers must understand (and the prior docs
+hid):
+
+- **Scope is fixed at construction.** You can't add/remove streams
+  after `start()` — to watch a different scope, construct another
+  Monitor (each shares the underlying socket.io connection via the
+  `@pryv/socket.io` add-on).
+- **One `'event'` callback per Monitor.** Branch on `event.type` /
+  `event.streamIds[0]` inside the callback.
+
+This commit sweeps all 14 occurrences in IMPLEMENTERS-GUIDE.md + 1
+in README.md and replaces them with the correct pattern. The
+"bridge multi-tenant subscription" section gets a more accurate
+representation: one Monitor with a broad scope routes by streamId,
+OR two Monitors share the same underlying socket — either way it's
+one WebSocket per bridge backend. Pure docs; zero behavior change;
+zero code change in CMC itself.
+
+## docs(cmc): bridge multi-tenant subscription = standard one-socket pattern
+
+HANDOVER Q6 asked whether bridges managing thousands of patients
+need a new multi-tenant socket.io push channel ("inboxArrived") to
+avoid opening N WebSocket connections. After working through it: the
+concern is a misread of CMC's data direction. CMC traffic from a
+counterparty lands on YOUR streams, not on theirs:
+
+- Patient sends chat-cmc → arrives on bridge's `:_cmc:apps:bridge-app:chats:<patient-slug>`.
+- Patient sends notification/ack → arrives on bridge's collectors stream.
+- Patient writes revoke / accept → arrives on bridge's `:_cmc:inbox`.
+
+So the bridge opens ONE socket.io connection on its OWN token, with
+the SAME standard `monitor.subscribe(':_cmc:inbox', ...)` pattern
+already documented, and receives push for every event from every
+patient over that single connection. The counterparty slug in the
+streamId identifies the patient. No new socket.io channel needed,
+no new auth model.
+
+The only N-connection concern is reading patient DATA streams (e.g.
+real-time vitals push per data-grant) — that's a Pryv API surface
+question outside CMC's scope.
+
+Added a "Bridge / multi-tenant subscription" section to
+IMPLEMENTERS-GUIDE.md's Socket.io reference making this explicit.
+Zero code change. Closes HANDOVER Q6.
+
+## docs(cmc): "no new HTTP route namespace" pinned as a design pillar
+
+HANDOVER Q5 asked whether the doctor's "did patient X click my
+invite yet?" UX needs a dedicated `GET /cmc/capability/<id>/status`
+endpoint. The answer is no — after the Q1 Phase 1 lifecycle the
+same data lives on the capability access (`clientData.cmc.capability.state`),
+reachable via the existing `accesses.get`. Documented two query
+paths in IMPLEMENTERS-GUIDE.md ("dashboard render" via
+`accesses.get` + "real-time" via socket.io monitor on `:_cmc:inbox`).
+
+Pinned the "**no `/cmc/*` route namespace**" rule as a fourth design
+pillar in `components/cmc/README.md` (alongside "plugin, not storage
+engine" + "zero new storage primitives"). Keeps the plugin a true
+plugin — no API-surface ownership. Future CMC needs go via clientData
+filters, trigger-event queries, or socket.io patterns, never via a
+dedicated `/cmc/*` route.
+
+## CMC dispatch — structural loop avoidance via `event.createdBy`
+
+The chat / system / scope-update / revoke handlers POST outbound to
+the peer via the counterparty access. Without a structural guard, a
+peer-delivered event would re-trigger dispatch on the receiving side
+and POST right back — the classic A→B→A→B ping-pong. Previously the
+rate-limiter (`rateLimit.ts`, 100/60s per `(source, recipient)`) was
+the only thing cutting the loop, at the cost of a defensive ceiling
+that doubles as both abuse defence and runaway-control.
+
+This change splits the concerns:
+
+- **`components/cmc/src/dispatch.ts`** — new `OUTBOUND_LOOPABLE_TYPES`
+  set + `isPeerDeliveredEvent` helper. Before invoking a handler for
+  one of those types, the dispatch resolves `event.createdBy` to its
+  access on this mall; if the access has
+  `clientData.cmc.role === 'counterparty'` the event arrived from a
+  peer's POST → return `{ status: 'skipped', reason: 'cmc-incoming-from-peer' }`,
+  no outbound. The rate-limiter remains as defence-in-depth for
+  abuse / quota.
+- Lifecycle handlers (accept / refuse / back-channel / request) are
+  exempt — their dispatch is direction-aware via `isOnInbox`, and
+  the incoming variants do real protocol work.
+- IMPLEMENTERS-GUIDE.md gains a "Reference — Loop avoidance" section
+  documenting the two-layer defence.
+- `[CMCDISP-LOOP]` test block — 9 new tests: 6 outbound types ×
+  skip-when-counterparty, plus non-counterparty-passes, missing-
+  createdBy-passes, lifecycle-type-exempt.
+
+cmc 327 → 336 (+9). CMCHS handshake 3/3 unchanged (the chat
+round-trip in CN13 now exits cleanly on the peer side instead of
+relying on the rate-limiter to cut the loop).
+
+Per-app-code rate-limit override (the original HANDOVER Q4 ask) is
+captured as a separate backlog plan — operationally useful for
+high-volume collector apps, but no urgency now that loop defence
+sits at the right structural layer.
+
+## CMC scope-update auto-merges CMC-machinery permissions
+
+`handleSystemScopeUpdate`'s local-apply branch (the path that
+synchronously updates the local data-grant before delivering the
+peer notification) previously wrote `newPermissions` verbatim. If the
+caller's `newPermissions` omitted the CMC-machinery streams
+(`:_cmc:inbox` create-only, the per-peer `:_cmc:apps:*:chats:<slug>`
+and `collectors:<slug>` contribute permissions), those plugin-owned
+permissions silently disappeared — and chat / system delivery from
+this peer broke until the next handshake.
+
+Auto-merge now reads the current access via `mall.accesses.get`,
+identifies the existing `:_cmc:*` permissions as machinery, filters
+the caller's `newPermissions` to user-facing only, and overlays the
+machinery back. Caller can include `:_cmc:*` perms — they're
+filtered out; the plugin owns those.
+
+- `components/cmc/src/handleSystem.ts` — local-apply branch updated.
+  ~20 lines change.
+- `[HS28a]` + `[HS28b]` tests cover both the auto-merge happy path
+  and the caller-supplied-CMC-perm filtering.
+- IMPLEMENTERS-GUIDE.md scope-update section gains a paragraph
+  documenting the auto-merge contract.
+- cmc 325 → 327 (+2).
+
+## CMC capability lifecycle — Phase 1 (single-use state machine)
+
+Builds on the typed error-id catalogue: introduces a real two-state
+lifecycle on the capability access (`open` → `consumed` /
+`invalidated`) so re-clicks on an already-accepted single-use invite
+are rejected at events.create time with a typed `cmc-capability-consumed`
+error.id instead of silently re-running `handleIncomingAccept` (and
+relying on the bug #12 duplicate-name fix to avoid a duplicate
+back-channel mint).
+
+- **API surface** — `consent/request-cmc.content.capability.mode`
+  (optional, default `'single-use'`): `'single-use'` enforces the
+  state-flip, `'open-link'` mints with mode set but state stays
+  `'open'` until Phase 2 lands (lifecycle enforcement for open-link
+  is the [backlog plan](https://github.com/pryv/macroPryv/tree/main/_plans/XX-cmc-capability-open-link-later)).
+- **`components/cmc/src/errorIds.ts`** — rename `CAPABILITY_UNKNOWN`
+  → `CAPABILITY_INVALID` (BC: the prior name only existed on the
+  Plan 68 reopen branch, never on master). New constants
+  `CAPABILITY_CONSUMED` + `CAPABILITY_INVALIDATED`. `cmc-capability-invalid`
+  covers "never existed + expired past TTL"; `cmc-capability-consumed`
+  is the new state-flip rejection.
+- **`components/cmc/src/capability.ts`** — `mintCapability` accepts
+  an optional `mode` param (defaults to reading
+  `triggerEvent.content.capability.mode` if present, else
+  `'single-use'`) and stamps `clientData.cmc.capability = { mode,
+  state: 'open', stateChangedAt }` on the access. Two new exports:
+  `findCapabilityAccess(userId, capabilityId)` and
+  `markCapabilityConsumed(userId, capabilityId)`. The pre-existing
+  legacy `singleUse: true` advisory flag is preserved.
+- **`components/cmc/src/capabilityResponseHook.ts`** (new) —
+  events.create middleware that gates writes to
+  `:_cmc:_internal:responses:<capId>` by the capability access's
+  state. `'consumed'` → typed error `cmc-capability-consumed`;
+  `'invalidated'` → `cmc-capability-invalidated`. Legacy capabilities
+  (minted before this lifecycle field existed) and `'open'` state
+  pass through.
+- **`components/cmc/src/handleIncomingAccept.ts`** — after a
+  successful accept-arrives flow (back-channel access minted), calls
+  `markCapabilityConsumed` to flip state. Open-link mode capabilities
+  skip the flip (state stays `'open'`). Best-effort; the back-channel
+  is already minted so the relationship is established even if the
+  state-flip fails (only the next re-click would mint a duplicate
+  back-channel — same as today's behaviour).
+- **`components/api-server/src/methods/events.ts`** — wires the new
+  hook into the events.create chain right after
+  `cmcInboxWriteHook`, before the persist step.
+- **IMPLEMENTERS-GUIDE.md** — Error id catalogue updated; the gaps
+  list narrows (the formerly-distinct `cmc-capability-stale` is
+  collapsed into `cmc-capability-invalid`; tombstone-based finer
+  discrimination is the explicit backlog work).
+- **Tests**: `[CMCCAP-LF]` 7 new in `capability.test.js` covering
+  mint-time field stamps, find/markConsumed primitive, idempotency.
+  `[CMCCRH]` 6 new in `capabilityResponseHook.test.js` covering
+  passthrough + rejection paths. cmc total 312 → 325 (+13).
+  CMCHS handshake 3/0 unchanged.
+
+## boiler: skip `override-config.yml` under `NODE_ENV=test`
+
+`config/override-config.yml` is `.gitignore`d and intended only for
+`NODE_ENV=development node bin/master.js` local iteration. When a developer
+left it on disk, the boiler config loader (priority slot .1, above
+everything else) merged it on top of `test-config.yml` for `just test`
+runs as well, shifting `service.api` / `auth.adminAccessKey` / etc. out
+from under tests that hardcode the canonical test expectations. Three
+tests (`[SVIF] config: serviceInfo`, `[RGRC] register-records-admin`,
+`[SYRO] system route`) plus the MFA-DELETE subroutes broke this way for
+local development; CI never saw it because the file isn't committed.
+
+- `components/boiler/src/index.ts` + `src/config.ts` — new
+  `skipOverrideConfig` option on `boiler.init()`. When `true`, the
+  override-config.yml load is skipped; the rest of the chain (memory →
+  test → argv → env → `${NODE_ENV}-config.yml` → extras → default-config)
+  is unchanged.
+- Default behaviour: `skipOverrideConfig` defaults to `true` under
+  `NODE_ENV === 'test'` and to `false` otherwise. Production and
+  development runs continue to load `override-config.yml`. Callers
+  can still pass `skipOverrideConfig: false` to force-load.
+- `components/test-helpers/src/api-server-tests-config.ts` passes the
+  flag explicitly for documentation; child processes spawned by
+  `SpawnContext` inherit `NODE_ENV=test` and therefore get the
+  default skip without each spawn-target having to know about it.
+
+## CMC typed error-id catalogue (HANDOVER BLOCK-1)
+
+Surfaces the stable kebab-case `error.id` strings the plugin emits via
+`content.failure.reason` on failed trigger events as a single
+authoritative catalogue. hds-macro Plan 59 Phase 5a's per-outcome UX
+can now pattern-match on these constants instead of parsing English
+`error.message`.
+
+- **New** `components/cmc/src/errorIds.ts` — `CmcErrorIds` constants
+  object (`as const`) enumerating 22 stable ids across capability
+  lifecycle, trigger content, handler routing, counterparty
+  resolution, access mint, outbound delivery, and chat/system
+  handler outcomes. Type-export `CmcErrorId` for TS consumers.
+- **New** typed detection: `readOfferViaCapability` in
+  `acceptOrchestration.ts` now stamps `CmcErrorIds.CAPABILITY_UNKNOWN`
+  (`cmc-capability-unknown`) on HTTP 401 responses. Previously these
+  collapsed into the generic `cmc-handler-offer-read-failed`. Covers
+  three runtime cases that look identical from the client today —
+  token never existed, token expired (past TTL, plugin-GC'd), token
+  already consumed. Finer discrimination (`cmc-capability-stale`,
+  `cmc-capability-already-accepted`) requires capability tombstones
+  — design call deferred pending the [07-recapture probe](https://github.com/pryv/macroPryv/blob/main/_plans/68-cmc-datastore-atwork/tests/07-recapture.js) outcome.
+- **No rename** of existing reasons. Pre-existing `cmc-handler-*`
+  strings in `handleAccept.ts` stay as-is for back-compat with any
+  client matching on `content.failure.reason`. `errorIds.ts` exposes
+  them under semantic names but value-strings are unchanged.
+- **Exported via `cmc` index**: `cmc.CmcErrorIds` + the namespace
+  `cmc.errorIds` (matches the existing `cmc.constants` / `cmc.slug`
+  pattern).
+- **Documented**: IMPLEMENTERS-GUIDE.md gains a new "Reference —
+  Error id catalogue" section listing every id, when it fires, and
+  the gaps that need a design call.
+- **Test**: `[AO04B]` asserts the 401 → `cmc-capability-unknown` mapping.
+  cmc 311 → 312 (+1).
+
+## Plan 68 reopen — CMC test surface hardening
+
+Follow-up to the Plan 68 TEST-GAP-DEBRIEF: Plan 68 shipped with
+309 cmc unit tests + 1018 api-server tests but the real-deploy
+validation suite still found 18 production-only code bugs +
+3 fixture issues + 4 CI-only issues. The unit fakes accepted any
+wire shape, and no test exercised the two-user handshake end-to-end.
+This reopen closes the two highest-leverage gaps (debrief Phase 1 +
+Phase 2). Phase 3 (deploy-smoke CI) is parked in the
+`_plans/XXX-Backlog/cmc-acceptance-harness/` backlog.
+
+- **Phase 1 — Unit-test fakes pin the wire contract.** New shared
+  helper `components/cmc/test/_fake-assertions.cjs` exports
+  `assertEventUpdateShape` (rejects `{ id, update: {...} }` — Plan 68
+  bug #1) and `assertOutboundUrl` (whitelists Pryv API paths +
+  permitted query params; rejects `?streamIds=` — bug #2). Wired into
+  every `fakeMall.events.update` site (4 files) and every `fakeFetch`
+  site (7 files; `outbound.test.js` deliberately skipped since it
+  IS the URL builder under test).
+- **Phase 2 — In-process two-user handshake.** New file
+  `components/api-server/test/cmc-handshake.test.js` exercises the
+  full request → accept → back-channel → chat handshake between two
+  real users on the in-process api-server. Three tests: `[CN12]`
+  happy-path handshake; `[CN13]` chat round-trip; `[CN14]` accept
+  re-delivery idempotency (regression for bugs #12 + #13). Transport:
+  a fetch shim that routes URLs whose host matches `127.0.0.1:3000`
+  / `localhost:3000` (the test override-config's `service.api`)
+  through `coreRequest` (the in-process supertest agent); pass-through
+  for any other host (data-types `flat.json`, rqlited at `:4001`).
+- **Supporting change** `components/api-server/src/methods/events.ts` —
+  the cmc plugin deps now capture `globalThis.fetch` lazily via
+  `(url, init) => globalThis.fetch(url, init)` instead of
+  `fetch: globalThis.fetch`, so a test that installs a fetch shim
+  after middleware registration is picked up by the dispatch loop.
+  Production: one extra closure indirection per call. Two call sites
+  tweaked (`cmcDispatchMiddleware` deps + the opt-in
+  `startRetryLoopIfEnabled` deps).
+- **Test counts**: `just test cmc` 309/0 unchanged. `just test
+  api-server` +3 from `[CMCHS]` (baseline preserved at 1018 → 1021
+  combined with the boiler skipOverrideConfig fix above).
+
 ## CMC plugin component — internals (Plan 68)
 
 The `:_cmc:` namespace + write-hooks + orchestration handlers ship as a new top-level component `components/cmc/`. The plugin is loaded by the api-server like other components (event-content validation, capability-mint, inbox write-hook, dispatch middleware) plus a post-hook on `accesses.update`. No new storage engine — the entire plugin runs on standard per-user storage (PostgreSQL / MongoDB) + the existing pubsub layer.

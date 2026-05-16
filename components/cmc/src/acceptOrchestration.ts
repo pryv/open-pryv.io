@@ -35,6 +35,7 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 const outbound = require('./outbound.ts');
+const { CmcErrorIds } = require('./errorIds.ts');
 
 type Permission = { streamId: string; level: string };
 
@@ -93,20 +94,29 @@ async function readOfferViaCapability (params: {
       const err: any = new Error('cmc/accept: capability events.get failed: ' + res.status);
       err.status = res.status;
       err.body = body;
+      // 401 covers "never existed" + "expired past TTL" (auth
+      // middleware can't tell them apart, and the plugin doesn't keep
+      // tombstones). The newly-introduced single-use `consumed` state
+      // is NOT hit here — that case has the access still present but
+      // its CMC state flipped, and is caught by the responses-stream
+      // write-hook (emits CAPABILITY_CONSUMED via a 4xx with that id).
+      if (res.status === 401) {
+        err.id = CmcErrorIds.CAPABILITY_INVALID;
+      }
       throw err;
     }
     const body = await safeJson(res);
     const events = body?.events ?? [];
     if (events.length === 0) {
       const err: any = new Error('cmc/accept: capability returned no offer events');
-      err.id = 'cmc-capability-empty';
+      err.id = CmcErrorIds.CAPABILITY_EMPTY;
       throw err;
     }
     if (events.length > 1) {
       const err: any = new Error(
         'cmc/accept: capability returned ' + events.length + ' offer events; expected 1'
       );
-      err.id = 'cmc-capability-multiple-offers';
+      err.id = CmcErrorIds.CAPABILITY_MULTIPLE_OFFERS;
       throw err;
     }
     return events[0];
@@ -114,7 +124,7 @@ async function readOfferViaCapability (params: {
     if (timer != null) clearTimeout(timer);
     if (err?.name === 'AbortError') {
       const t: any = new Error('cmc/accept: capability events.get timed out');
-      t.id = 'cmc-capability-timeout';
+      t.id = CmcErrorIds.CAPABILITY_TIMEOUT;
       throw t;
     }
     throw err;
@@ -131,7 +141,7 @@ function permissionsFromOffer (offerEvent: OfferEvent): Permission[] {
   const perms = offerEvent?.content?.request?.permissions;
   if (!Array.isArray(perms) || perms.length === 0) {
     const err: any = new Error('cmc/accept: offer has no permissions');
-    err.id = 'cmc-offer-empty-permissions';
+    err.id = CmcErrorIds.OFFER_EMPTY_PERMISSIONS;
     throw err;
   }
   // Pass-through; the access-creation API validates further.
@@ -157,8 +167,14 @@ function buildDataGrantPayload (params: {
   accessName?: string;
   features?: { chat?: boolean; systemMessaging?: boolean };
   extraPermissions?: Permission[];
+  // The id of the local `consent/accept-cmc` event that triggered this
+  // data-grant. Stamped on `clientData.cmc.acceptEventId` so client
+  // code can find the resulting access by the event id it just wrote,
+  // instead of disambiguating by accessName (which collides across
+  // re-runs from the same app/counterparty pair).
+  acceptEventId?: string;
 }): any {
-  const { offerEvent, counterparty, accessName, features, extraPermissions } = params;
+  const { offerEvent, counterparty, accessName, features, extraPermissions, acceptEventId } = params;
   const meta = offerEvent?.content?.requesterMeta ?? {};
   const computedName = accessName ??
     ('cmc:' + (meta.appId || 'app') + ':' + counterparty.username + '@' + counterparty.host);
@@ -175,6 +191,7 @@ function buildDataGrantPayload (params: {
         role: 'counterparty',
         counterparty,
         offerEventId: offerEvent.id,
+        acceptEventId: acceptEventId ?? null,
         // The back-channel apiEndpoint is added by the orchestration loop
         // after the requester's plugin returns it.
         backChannelApiEndpoint: null,

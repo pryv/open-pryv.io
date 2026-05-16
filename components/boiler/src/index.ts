@@ -74,11 +74,22 @@ function init (options: any, fullyLoadedCallback?: any) {
 
   logging.setGlobalName(options.appName);
   configInitCalledWithName = options.appName;
+  // Default `skipOverrideConfig` to true under NODE_ENV=test so a
+  // developer's local config/override-config.yml (gitignored, used for
+  // `NODE_ENV=development node bin/master.js`) does not bleed into any
+  // test process — including child processes spawned by the
+  // test-helpers SpawnContext, which inherit NODE_ENV from the parent.
+  // Callers can still pass `skipOverrideConfig: false` to force the
+  // load if they need it.
+  const skipOverride = options.skipOverrideConfig !== undefined
+    ? options.skipOverrideConfig === true
+    : process.env.NODE_ENV === 'test';
   config.initSync({
     baseConfigDir: options.baseConfigDir,
     baseFilesDir: options.baseFilesDir,
     extras: options.extraConfigs,
-    appName: options.appNameWithoutPostfix
+    appName: options.appNameWithoutPostfix,
+    skipOverrideConfig: skipOverride
   }, logging);
 
   logger = logging.getLogger('boiler');

@@ -31,8 +31,31 @@ type MallLike = {
   streams: { create: (userId: string, params: any) => Promise<any> };
   events:  { create: (userId: string, params: any) => Promise<any> };
   accesses:{ create: (userId: string, params: any) => Promise<any>;
+             update?: (userId: string, params: any) => Promise<any>;
+             get?:    (userId: string, params?: any) => Promise<any[]>;
              delete?: (userId: string, params: any) => Promise<any> };
 };
+
+/**
+ * Capability semantics chosen at mint time.
+ *
+ *   'single-use' — one accept/refuse closes the link. Re-clicks return
+ *                  `cmc-capability-consumed` (state-flip detected by the
+ *                  responses-stream write-hook). This is the default.
+ *
+ *   'open-link'  — multiple accepts allowed until the requester
+ *                  explicitly invalidates the link (Phase 2 plan;
+ *                  open-link writes do NOT transition state to
+ *                  'consumed' on accept; invalidation transitions to
+ *                  'invalidated'). Use case: a doctor publishing a
+ *                  multi-patient study invite.
+ *
+ * Already-established relationships (data-grants + back-channels)
+ * are UNTOUCHED by capability state changes — only the join channel
+ * is affected. Per-relationship revocation uses `consent/revoke-cmc`.
+ */
+type CapabilityMode = 'single-use' | 'open-link';
+type CapabilityState = 'open' | 'consumed' | 'invalidated';
 
 type MintDeps = {
   mall: MallLike;
@@ -91,6 +114,10 @@ async function mintCapability (params: {
   userId: string;
   triggerEvent: RequestEventLike;
   ttlSeconds?: number;
+  // Capability mode (default 'single-use' for back-compat). Read from
+  // `triggerEvent.content.capability.mode` when present; explicit
+  // `params.mode` wins. See type doc above.
+  mode?: CapabilityMode;
   deps: MintDeps;
   // Optional: when present, the requester's CANONICAL identity is
   // stamped on the offer event content (`requesterUsername`,
@@ -104,6 +131,9 @@ async function mintCapability (params: {
   const { userId, triggerEvent, deps } = params;
   const requesterIdentity = params.requesterIdentity;
   const ttlSeconds = params.ttlSeconds ?? DEFAULT_TTL_SECONDS;
+  const triggerCapability = triggerEvent?.content?.capability ?? {};
+  const mode: CapabilityMode = (params.mode ??
+    (triggerCapability.mode === 'open-link' ? 'open-link' : 'single-use'));
   const idGen = deps.idGen ?? defaultIdGen;
   const now = deps.now ?? defaultNow;
 
@@ -196,7 +226,18 @@ async function mintCapability (params: {
         kind: 'capability',
         capabilityId,
         requestEventId: triggerEvent.id ?? null,
-        singleUse: true,
+        // Phase 1 lifecycle: a two-state machine on the access itself.
+        // `state` is 'open' at mint, flips to 'consumed' on the first
+        // successful accept (single-use mode only). Open-link mode
+        // stays 'open' until explicit invalidation (Phase 2).
+        capability: {
+          mode,
+          state: 'open',
+          stateChangedAt: now(),
+        },
+        // Legacy advisory flag — kept for back-compat with anything
+        // that may have grepped for it.
+        singleUse: mode === 'single-use',
       },
     },
     expires: expiresAt,
@@ -246,6 +287,73 @@ async function gcCapability (params: {
   await ignoreNotFound(deleteStream(deps.mall, userId, responsesStreamId));
 }
 
+/**
+ * Find the capability access for a given capabilityId. Used by the
+ * responses-stream write-hook to read the access's state before
+ * letting an accept/refuse pass through.
+ *
+ * Returns null if no matching access exists (the rare case where the
+ * stream-id was forged or the access was deleted out-of-band).
+ */
+async function findCapabilityAccess (params: {
+  userId: string;
+  capabilityId: string;
+  deps: { mall: MallLike };
+}): Promise<any | null> {
+  const { userId, capabilityId, deps } = params;
+  if (deps.mall.accesses?.get == null) return null;
+  const list = await deps.mall.accesses.get(userId, {});
+  for (const acc of (list || [])) {
+    const cmcCd = acc?.clientData?.cmc;
+    if (cmcCd?.kind === 'capability' && cmcCd?.capabilityId === capabilityId) {
+      return acc;
+    }
+  }
+  return null;
+}
+
+/**
+ * Transition a capability access from `state: 'open'` to
+ * `state: 'consumed'`. Called by the responder-side handler after a
+ * successful accept lands (single-use mode). Idempotent — calling on
+ * an already-consumed access is a no-op (no-op write). Open-link mode
+ * callers should NOT call this; their consumption tracking is Phase 2.
+ */
+async function markCapabilityConsumed (params: {
+  userId: string;
+  capabilityId: string;
+  deps: { mall: MallLike; now?: () => number };
+}): Promise<{ ok: boolean; reason?: string }> {
+  const { userId, capabilityId, deps } = params;
+  const acc = await findCapabilityAccess({ userId, capabilityId, deps });
+  if (acc == null) return { ok: false, reason: 'capability-access-not-found' };
+  const cmcCd = acc.clientData?.cmc;
+  if (cmcCd?.capability?.state === 'consumed') {
+    return { ok: true }; // idempotent
+  }
+  if (deps.mall.accesses.update == null) {
+    return { ok: false, reason: 'mall-accesses-update-unavailable' };
+  }
+  const now = deps.now ?? defaultNow;
+  await deps.mall.accesses.update(userId, {
+    id: acc.id,
+    update: {
+      clientData: {
+        ...(acc.clientData || {}),
+        cmc: {
+          ...cmcCd,
+          capability: {
+            ...(cmcCd.capability || {}),
+            state: 'consumed',
+            stateChangedAt: now(),
+          },
+        },
+      },
+    },
+  });
+  return { ok: true };
+}
+
 async function deleteStream (mall: MallLike, userId: string, streamId: string): Promise<any> {
   const m: any = mall.streams;
   if (typeof m.delete === 'function') return m.delete(userId, { id: streamId });
@@ -282,5 +390,8 @@ export {
   DEFAULT_TTL_SECONDS,
   mintCapability,
   gcCapability,
+  findCapabilityAccess,
+  markCapabilityConsumed,
   buildApiEndpoint,
 };
+export type { CapabilityMode, CapabilityState };

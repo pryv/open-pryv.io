@@ -16,6 +16,7 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert/strict');
 const { dispatch, createDispatchMiddleware } = require('../src/dispatch.ts');
+const { assertEventUpdateShape, assertOutboundUrl } = require('./_fake-assertions.cjs');
 
 function fakeMall () {
   const calls = { eventsUpdated: [], accessesCreated: [], accessesDeleted: [] };
@@ -34,7 +35,10 @@ function fakeMall () {
       async delete (userId, params) { calls.accessesDeleted.push({ userId, ...params }); },
     },
     events: {
-      async update (userId, params) { calls.eventsUpdated.push({ userId, ...params }); },
+      async update (userId, params) {
+        assertEventUpdateShape(params);
+        calls.eventsUpdated.push({ userId, ...params });
+      },
       async create () { return { event: { id: 'ne' } }; },
     },
     streams: {
@@ -48,6 +52,7 @@ function fakeFetch (responses) {
   let idx = 0;
   return {
     fetch (url, init) {
+      assertOutboundUrl(url, init);
       calls.push({ url, init });
       const spec = Array.isArray(responses) ? responses[idx++] : responses;
       if (spec instanceof Error) return Promise.reject(spec);
@@ -271,6 +276,112 @@ describe('[CMCDISP] cmc/dispatch', () => {
         deps: makeDeps({ mall, fetch }),
       });
       assert.equal(r.status, 'completed');
+    });
+  });
+
+  describe('[CMCDISP-LOOP] loop-avoidance via createdBy → counterparty access check', () => {
+    function mallWithCounterpartyAccess (accessId) {
+      const m = fakeMall();
+      m.accesses.get = async () => [{
+        id: accessId,
+        clientData: { cmc: { role: 'counterparty' } },
+      }];
+      return m;
+    }
+    function mallWithUserAccess (accessId) {
+      const m = fakeMall();
+      m.accesses.get = async () => [{
+        id: accessId,
+        type: 'app',
+        clientData: {}, // no cmc role
+      }];
+      return m;
+    }
+
+    for (const { type, label } of [
+      { type: 'message/chat-cmc', label: 'chat' },
+      { type: 'notification/alert-cmc', label: 'alert' },
+      { type: 'notification/ack-cmc', label: 'ack' },
+      { type: 'consent/scope-request-cmc', label: 'scope-request' },
+      { type: 'consent/scope-update-cmc', label: 'scope-update' },
+      { type: 'consent/revoke-cmc', label: 'revoke' },
+    ]) {
+      it('[CDL01-' + label + '] skips ' + type + ' when createdBy resolves to a counterparty access', async () => {
+        const mall = mallWithCounterpartyAccess('acc-peer');
+        const r = await dispatch({
+          userId: 'u1',
+          event: {
+            id: 'e-' + label,
+            type,
+            content: { from: { username: 'peer', host: 'peer.example.com' } },
+            streamIds: [':_cmc:apps:my-app:chats:peer--peer-example-com'],
+            createdBy: 'acc-peer',
+          },
+          deps: makeDeps({ mall }),
+        });
+        assert.equal(r.handled, true);
+        assert.equal(r.status, 'skipped');
+        assert.equal(r.reason, 'cmc-incoming-from-peer');
+      });
+    }
+
+    it('[CDL02] does NOT skip when createdBy resolves to a non-counterparty (user-originated) access', async () => {
+      const mall = mallWithUserAccess('acc-app');
+      // We're not really exercising the handler here — just verifying the
+      // dispatch DOES proceed past the loop-avoidance guard. Use a refuse
+      // event with no capabilityUrl so the handler returns ok:false on a
+      // shape error rather than POSTing.
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'e-x',
+          type: 'consent/refuse-cmc',
+          content: {},
+          streamIds: [':_cmc:apps:my-app'],
+          createdBy: 'acc-app',
+        },
+        deps: makeDeps({ mall }),
+      });
+      // Refuse with no capabilityUrl hits the handler's shape check;
+      // dispatch marks failed. The point: status is NOT 'skipped' with
+      // reason 'cmc-incoming-from-peer'.
+      assert.notEqual(r.reason, 'cmc-incoming-from-peer');
+    });
+
+    it('[CDL03] does NOT skip when event lacks createdBy (defensive)', async () => {
+      const mall = fakeMall();
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'e-no-creator',
+          type: 'message/chat-cmc',
+          content: { content: 'hi' },
+          streamIds: [':_cmc:apps:my-app:chats:peer--peer-com'],
+          // no createdBy
+        },
+        deps: makeDeps({ mall }),
+      });
+      // Falls into handleChat which fails on missing access lookup —
+      // point is reason isn't the loop-avoidance one.
+      assert.notEqual(r.reason, 'cmc-incoming-from-peer');
+    });
+
+    it('[CDL04] lifecycle types (accept/refuse/back-channel/request) are exempt from the guard (their dispatch is direction-aware via isOnInbox)', async () => {
+      const mall = mallWithCounterpartyAccess('acc-peer');
+      // ET_REQUEST is handled-elsewhere; ET_BACK_CHANNEL is incoming-only;
+      // ET_ACCEPT routes via isOnInbox. None should hit the loop guard.
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'e-req',
+          type: 'consent/request-cmc',
+          content: {},
+          streamIds: [':_cmc:apps:my-app'],
+          createdBy: 'acc-peer',
+        },
+        deps: makeDeps({ mall }),
+      });
+      assert.equal(r.reason, 'request-handled-elsewhere');
     });
   });
 

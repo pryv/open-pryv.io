@@ -26,6 +26,7 @@ const {
   COLLECTOR_STREAM_ID_RE,
 } = require('../src/handleSystem.ts');
 const { RateLimiter } = require('../src/rateLimit.ts');
+const { assertOutboundUrl } = require('./_fake-assertions.cjs');
 
 function fakeMall (accesses) {
   const calls = { accessesGet: 0, accessesUpdated: [] };
@@ -46,6 +47,7 @@ function fakeFetch (responses) {
   let idx = 0;
   return {
     fetch (url, init) {
+      assertOutboundUrl(url, init);
       calls.push({ url, init });
       const spec = Array.isArray(responses) ? responses[idx++] : responses;
       if (spec instanceof Error) return Promise.reject(spec);
@@ -542,6 +544,90 @@ describe('[CMCHS] cmc/handleSystem', () => {
       });
       assert.equal(r.ok, true);
       assert.equal(mall.calls.accessesUpdated.length, 0);
+    });
+
+    it('[HS28a] auto-merges CMC-machinery permissions back when caller omits them', async () => {
+      // Access with the typical CMC-machinery + one user-facing perm.
+      const accessWithMachinery = {
+        ...COUNTERPARTY_ACCESS,
+        id: 'acc-with-machinery',
+        permissions: [
+          // User-facing
+          { streamId: 'fertility', level: 'read' },
+          // CMC machinery (plugin-owned)
+          { streamId: ':_cmc:inbox', level: 'create-only' },
+          { streamId: ':_cmc:apps:my-app:chats:provider-a--provider-example-org', level: 'contribute' },
+          { streamId: ':_cmc:apps:my-app:collectors:provider-a--provider-example-org', level: 'contribute' },
+        ],
+      };
+      const mall = fakeMall([accessWithMachinery]);
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const trigger = {
+        ...SCOPE_UPDATE_TRIGGER,
+        content: {
+          ...SCOPE_UPDATE_TRIGGER.content,
+          accessId: 'acc-with-machinery',
+          // Caller passes ONLY user-facing perms — omits all :_cmc:* streams.
+          // The plugin should auto-merge the machinery back so chat/system
+          // delivery doesn't break.
+          newPermissions: [
+            { streamId: 'fertility', level: 'read' },
+            { streamId: 'symptom', level: 'read' }, // new user-facing perm
+          ],
+        },
+      };
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1', triggerEvent: trigger, selfIdentity: SELF, deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(mall.calls.accessesUpdated.length, 1);
+      const applied = mall.calls.accessesUpdated[0].update.permissions;
+      // User-facing perms preserved (caller's new shape)
+      const userFacing = applied.filter((p) => !p.streamId.startsWith(':_cmc:'));
+      assert.deepEqual(userFacing, [
+        { streamId: 'fertility', level: 'read' },
+        { streamId: 'symptom', level: 'read' },
+      ]);
+      // Every machinery perm survives
+      const machinery = applied.filter((p) => p.streamId.startsWith(':_cmc:'));
+      assert.equal(machinery.length, 3, 'expected all 3 :_cmc:* machinery perms preserved');
+      assert.ok(machinery.some((p) => p.streamId === ':_cmc:inbox'));
+      assert.ok(machinery.some((p) => p.streamId.endsWith(':chats:provider-a--provider-example-org')));
+      assert.ok(machinery.some((p) => p.streamId.endsWith(':collectors:provider-a--provider-example-org')));
+    });
+
+    it('[HS28b] caller-supplied :_cmc:* perms are filtered out and replaced with the access\'s current machinery (plugin owns it)', async () => {
+      const accessWithMachinery = {
+        ...COUNTERPARTY_ACCESS,
+        id: 'acc-wm-2',
+        permissions: [
+          { streamId: ':_cmc:inbox', level: 'create-only' },
+          { streamId: ':_cmc:apps:my-app:chats:provider-a--provider-example-org', level: 'contribute' },
+        ],
+      };
+      const mall = fakeMall([accessWithMachinery]);
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const trigger = {
+        ...SCOPE_UPDATE_TRIGGER,
+        content: {
+          ...SCOPE_UPDATE_TRIGGER.content,
+          accessId: 'acc-wm-2',
+          newPermissions: [
+            { streamId: 'fertility', level: 'read' },
+            // Caller tries to TIGHTEN the inbox to read — should be ignored
+            { streamId: ':_cmc:inbox', level: 'read' },
+          ],
+        },
+      };
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1', triggerEvent: trigger, selfIdentity: SELF, deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      const applied = mall.calls.accessesUpdated[0].update.permissions;
+      // The caller-supplied :_cmc:inbox perm at 'read' is dropped; the
+      // access's existing 'create-only' is the survivor.
+      const inboxPerm = applied.find((p) => p.streamId === ':_cmc:inbox');
+      assert.deepEqual(inboxPerm, { streamId: ':_cmc:inbox', level: 'create-only' });
     });
 
     it('[HS28] local-apply failure surfaces as cmc-scope-update-local-apply-failed', async () => {

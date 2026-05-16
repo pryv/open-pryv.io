@@ -25,6 +25,7 @@ const C = require('./constants.ts');
 const ao = require('./acceptOrchestration.ts');
 const slugMod = require('./slug.ts');
 const anchors = require('./anchorStreams.ts');
+const { CmcErrorIds } = require('./errorIds.ts');
 
 type MallLike = {
   accesses: {
@@ -165,6 +166,7 @@ async function handleAccept (params: {
       accessName,
       features,
       extraPermissions: extraPermissions.length > 0 ? extraPermissions : undefined,
+      acceptEventId: triggerEvent?.id,
     });
   } catch (err: any) {
     return {
