@@ -1,5 +1,22 @@
 # Changelog - Internal (no API impact)
 
+## docs(cmc): "no new HTTP route namespace" pinned as a design pillar
+
+HANDOVER Q5 asked whether the doctor's "did patient X click my
+invite yet?" UX needs a dedicated `GET /cmc/capability/<id>/status`
+endpoint. The answer is no — after the Q1 Phase 1 lifecycle the
+same data lives on the capability access (`clientData.cmc.capability.state`),
+reachable via the existing `accesses.get`. Documented two query
+paths in IMPLEMENTERS-GUIDE.md ("dashboard render" via
+`accesses.get` + "real-time" via socket.io monitor on `:_cmc:inbox`).
+
+Pinned the "**no `/cmc/*` route namespace**" rule as a fourth design
+pillar in `components/cmc/README.md` (alongside "plugin, not storage
+engine" + "zero new storage primitives"). Keeps the plugin a true
+plugin — no API-surface ownership. Future CMC needs go via clientData
+filters, trigger-event queries, or socket.io patterns, never via a
+dedicated `/cmc/*` route.
+
 ## CMC dispatch — structural loop avoidance via `event.createdBy`
 
 The chat / system / scope-update / revoke handlers POST outbound to

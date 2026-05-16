@@ -1155,6 +1155,87 @@ See [HANDOVER-RESPONSE.md](https://github.com/pryv/macroPryv/blob/main/_plans/68
 
 ---
 
+# Reference — "Did the patient click my invite yet?"
+
+The doctor's app wants to display the state of every outstanding
+invite without polling the inbox continuously. Two complementary
+query paths cover the common cases — no dedicated `/cmc/*` API:
+
+**Path 1 — query the capability accesses directly (best for dashboards).**
+The Q1 Phase 1 lifecycle stamps the capability state on the access:
+
+```js
+const { accesses } = (await doctorConnection.api([
+  { method: 'accesses.get', params: {} }
+]))[0];
+
+const capabilityAccesses = accesses.filter((a) =>
+  a?.clientData?.cmc?.kind === 'capability'
+);
+
+// Each capability access carries:
+//   - clientData.cmc.capabilityId
+//   - clientData.cmc.requestEventId  // the doctor's original request event id
+//   - clientData.cmc.capability.mode       // 'single-use' | 'open-link'
+//   - clientData.cmc.capability.state      // 'open' | 'consumed' | 'invalidated'
+//   - clientData.cmc.capability.stateChangedAt
+//   - access.expires                       // post-TTL the access auth-fails
+
+// Build dashboard rows:
+for (const cap of capabilityAccesses) {
+  const requestEventId = cap.clientData.cmc.requestEventId;
+  const state = cap.clientData.cmc.capability?.state ?? 'open';
+  const expiresAt = cap.expires;
+  // state === 'open'         → invite is still claimable
+  // state === 'consumed'     → single-use accepted (look at inbox for the accept-cmc to see who)
+  // state === 'invalidated'  → doctor invalidated the link (open-link mode, Phase 2)
+  // (state === 'open' && Date.now()/1000 > expiresAt) → expired, will auth-fail
+}
+```
+
+One round-trip; doctor can render an entire dashboard's worth of
+invite states from this. Cardinality: one access per minted
+capability. For doctors with thousands of outstanding invites, the
+response carries thousands of small rows — well within a single
+`accesses.get` page.
+
+**Path 2 — watch `:_cmc:inbox` over socket.io (best for real-time UX).**
+For "patient X just clicked, light up the row green NOW", the
+doctor subscribes to `:_cmc:inbox` and reacts to incoming
+`consent/accept-cmc` / `consent/refuse-cmc` events:
+
+```js
+const monitor = await doctorConnection.monitor();
+monitor.subscribe(':_cmc:inbox', (event) => {
+  if (event.type === 'consent/accept-cmc') {
+    // event.content.from = { username, host }       — who accepted
+    // event.content.capabilityId                    — match against the doctor's invite
+    // event.content.grantedAccess.apiEndpoint       — the doctor's data-grant
+    updateDashboardRow(event.content.capabilityId, 'accepted');
+  } else if (event.type === 'consent/refuse-cmc') {
+    updateDashboardRow(event.content.capabilityId, 'refused');
+  }
+});
+```
+
+Use Path 1 to render the dashboard initial state; use Path 2 to keep
+it live. Neither requires a dedicated `/cmc/capability/<id>/status`
+endpoint — both work today with the standard Pryv API surface.
+
+> **Design constraint: CMC introduces no new HTTP route namespace.**
+> All CMC behaviour is reachable via the existing Pryv API surfaces
+> (`events.*`, `streams.*`, `accesses.*`, socket.io monitor). A
+> `/cmc/*` top-level namespace is **explicitly out of scope** and
+> not a candidate solution for any current or future CMC use case
+> — if a query feels like it wants a CMC-specific endpoint, the
+> right answer is either (a) a clientData filter on the existing
+> resource, (b) a richer query on the trigger event, or (c) a
+> socket.io subscription pattern. This keeps the plugin a true
+> plugin (no API-surface ownership) and keeps the architectural
+> footprint stable.
+
+---
+
 # Reference — Loop avoidance
 
 The chat / system / scope-update / revoke handlers POST outbound to
