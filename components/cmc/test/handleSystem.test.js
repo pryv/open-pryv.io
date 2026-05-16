@@ -26,6 +26,7 @@ const {
   COLLECTOR_STREAM_ID_RE,
 } = require('../src/handleSystem.ts');
 const { RateLimiter } = require('../src/rateLimit.ts');
+const { assertOutboundUrl } = require('./_fake-assertions.cjs');
 
 function fakeMall (accesses) {
   const calls = { accessesGet: 0, accessesUpdated: [] };
@@ -46,6 +47,7 @@ function fakeFetch (responses) {
   let idx = 0;
   return {
     fetch (url, init) {
+      assertOutboundUrl(url, init);
       calls.push({ url, init });
       const spec = Array.isArray(responses) ? responses[idx++] : responses;
       if (spec instanceof Error) return Promise.reject(spec);

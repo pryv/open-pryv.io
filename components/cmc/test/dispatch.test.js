@@ -16,6 +16,7 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert/strict');
 const { dispatch, createDispatchMiddleware } = require('../src/dispatch.ts');
+const { assertEventUpdateShape, assertOutboundUrl } = require('./_fake-assertions.cjs');
 
 function fakeMall () {
   const calls = { eventsUpdated: [], accessesCreated: [], accessesDeleted: [] };
@@ -34,7 +35,10 @@ function fakeMall () {
       async delete (userId, params) { calls.accessesDeleted.push({ userId, ...params }); },
     },
     events: {
-      async update (userId, params) { calls.eventsUpdated.push({ userId, ...params }); },
+      async update (userId, params) {
+        assertEventUpdateShape(params);
+        calls.eventsUpdated.push({ userId, ...params });
+      },
       async create () { return { event: { id: 'ne' } }; },
     },
     streams: {
@@ -48,6 +52,7 @@ function fakeFetch (responses) {
   let idx = 0;
   return {
     fetch (url, init) {
+      assertOutboundUrl(url, init);
       calls.push({ url, init });
       const spec = Array.isArray(responses) ? responses[idx++] : responses;
       if (spec instanceof Error) return Promise.reject(spec);

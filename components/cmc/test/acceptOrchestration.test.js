@@ -23,12 +23,14 @@ const {
   deliverAcceptViaCapability,
   deliverRefuseViaCapability,
 } = require('../src/acceptOrchestration.ts');
+const { assertOutboundUrl } = require('./_fake-assertions.cjs');
 
 function fakeFetch (responses) {
   const calls = [];
   let idx = 0;
   return {
     fetch (url, init) {
+      assertOutboundUrl(url, init);
       calls.push({ url, init });
       const spec = Array.isArray(responses) ? responses[idx++] : responses;
       if (spec instanceof Error) return Promise.reject(spec);

@@ -17,6 +17,7 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
 const { handleChat } = require('../src/handleChat.ts');
 const { RateLimiter } = require('../src/rateLimit.ts');
+const { assertOutboundUrl } = require('./_fake-assertions.cjs');
 
 function fakeMall (accesses) {
   return {
@@ -31,6 +32,7 @@ function fakeFetch (responses) {
   let idx = 0;
   return {
     fetch (url, init) {
+      assertOutboundUrl(url, init);
       calls.push({ url, init });
       const spec = Array.isArray(responses) ? responses[idx++] : responses;
       if (spec instanceof Error) return Promise.reject(spec);

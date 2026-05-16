@@ -26,6 +26,7 @@ const {
   processRetryEvent,
   runRetryLoop,
 } = require('../src/retryQueue.ts');
+const { assertEventUpdateShape } = require('./_fake-assertions.cjs');
 
 function fakeMall () {
   const events = new Map();
@@ -39,6 +40,7 @@ function fakeMall () {
         return ev;
       },
       async update (_userId, params) {
+        assertEventUpdateShape(params);
         const ev = events.get(params.id);
         if (ev == null) throw new Error('no event ' + params.id);
         Object.assign(ev, params);
