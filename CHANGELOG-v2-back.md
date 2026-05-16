@@ -1,5 +1,31 @@
 # Changelog - Internal (no API impact)
 
+## boiler: skip `override-config.yml` under `NODE_ENV=test`
+
+`config/override-config.yml` is `.gitignore`d and intended only for
+`NODE_ENV=development node bin/master.js` local iteration. When a developer
+left it on disk, the boiler config loader (priority slot .1, above
+everything else) merged it on top of `test-config.yml` for `just test`
+runs as well, shifting `service.api` / `auth.adminAccessKey` / etc. out
+from under tests that hardcode the canonical test expectations. Three
+tests (`[SVIF] config: serviceInfo`, `[RGRC] register-records-admin`,
+`[SYRO] system route`) plus the MFA-DELETE subroutes broke this way for
+local development; CI never saw it because the file isn't committed.
+
+- `components/boiler/src/index.ts` + `src/config.ts` — new
+  `skipOverrideConfig` option on `boiler.init()`. When `true`, the
+  override-config.yml load is skipped; the rest of the chain (memory →
+  test → argv → env → `${NODE_ENV}-config.yml` → extras → default-config)
+  is unchanged.
+- Default behaviour: `skipOverrideConfig` defaults to `true` under
+  `NODE_ENV === 'test'` and to `false` otherwise. Production and
+  development runs continue to load `override-config.yml`. Callers
+  can still pass `skipOverrideConfig: false` to force-load.
+- `components/test-helpers/src/api-server-tests-config.ts` passes the
+  flag explicitly for documentation; child processes spawned by
+  `SpawnContext` inherit `NODE_ENV=test` and therefore get the
+  default skip without each spawn-target having to know about it.
+
 ## CMC plugin component — internals (Plan 68)
 
 The `:_cmc:` namespace + write-hooks + orchestration handlers ship as a new top-level component `components/cmc/`. The plugin is loaded by the api-server like other components (event-content validation, capability-mint, inbox write-hook, dispatch middleware) plus a post-hook on `accesses.update`. No new storage engine — the entire plugin runs on standard per-user storage (PostgreSQL / MongoDB) + the existing pubsub layer.

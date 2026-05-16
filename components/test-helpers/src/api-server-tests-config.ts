@@ -16,6 +16,12 @@ require('@pryv/boiler').init({
   appName: 'boiler-tests',
   baseFilesDir: path.resolve(__dirname, '../../../'),
   baseConfigDir: path.resolve(__dirname, '../../../config/'),
+  // Tests must not pick up a developer's local override-config.yml
+  // (gitignored, used by `NODE_ENV=development node bin/master.js`).
+  // Without this flag, presence of override-config.yml shifts service.*
+  // and other values out from under tests that hardcoded the
+  // test-config / service-info expectations.
+  skipOverrideConfig: true,
   extraConfigs: [{
     scope: 'serviceInfo',
     key: 'service',

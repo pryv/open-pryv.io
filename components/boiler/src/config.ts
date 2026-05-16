@@ -13,7 +13,12 @@ const require = createRequire(import.meta.url);
  * Load configuration in the following order (1st prevails)
  *
  * .0 'memory' -> empty, use when doing 'config.set()'
- * .1 'override-file' -> Loaded at from override-config.yml (if present)
+ * .1 'override-file' -> Loaded at from override-config.yml (if present;
+ *                       skipped when `options.skipOverrideConfig: true`,
+ *                       which the test harness sets so a developer's
+ *                       local override-config.yml — gitignored, used by
+ *                       NODE_ENV=development — does not bleed into test
+ *                       expectations)
  * .2 'test' -> empty, used by test to override any other config parameter
  * .3 'argv' -> Loaded from arguments
  * .4 'env' -> Loaded from environement variables
@@ -89,8 +94,14 @@ class Config {
     // 0. memory at top
     store.use('memory');
 
-    // 1. eventual ovverride-config.yml
-    loadFile('override-file', path.resolve(baseConfigDir, 'override-config.yml'));
+    // 1. eventual override-config.yml — skipped when the test harness
+    // requests it (via `skipOverrideConfig: true`) so a developer's
+    // local override-config.yml doesn't poison test expectations.
+    if (options.skipOverrideConfig !== true) {
+      loadFile('override-file', path.resolve(baseConfigDir, 'override-config.yml'));
+    } else {
+      logger.debug('Skipping override-config.yml (skipOverrideConfig: true)');
+    }
 
     // 2. put a 'test' store up in the list that could be overwitten afterward and override other options
     // override 'test' store with store.add('test', {type: 'literal', store: {....}});
