@@ -26,6 +26,47 @@ local development; CI never saw it because the file isn't committed.
   `SpawnContext` inherit `NODE_ENV=test` and therefore get the
   default skip without each spawn-target having to know about it.
 
+## Plan 68 reopen — CMC test surface hardening
+
+Follow-up to the Plan 68 TEST-GAP-DEBRIEF: Plan 68 shipped with
+309 cmc unit tests + 1018 api-server tests but the real-deploy
+validation suite still found 18 production-only code bugs +
+3 fixture issues + 4 CI-only issues. The unit fakes accepted any
+wire shape, and no test exercised the two-user handshake end-to-end.
+This reopen closes the two highest-leverage gaps (debrief Phase 1 +
+Phase 2). Phase 3 (deploy-smoke CI) is parked in the
+`_plans/XXX-Backlog/cmc-acceptance-harness/` backlog.
+
+- **Phase 1 — Unit-test fakes pin the wire contract.** New shared
+  helper `components/cmc/test/_fake-assertions.cjs` exports
+  `assertEventUpdateShape` (rejects `{ id, update: {...} }` — Plan 68
+  bug #1) and `assertOutboundUrl` (whitelists Pryv API paths +
+  permitted query params; rejects `?streamIds=` — bug #2). Wired into
+  every `fakeMall.events.update` site (4 files) and every `fakeFetch`
+  site (7 files; `outbound.test.js` deliberately skipped since it
+  IS the URL builder under test).
+- **Phase 2 — In-process two-user handshake.** New file
+  `components/api-server/test/cmc-handshake.test.js` exercises the
+  full request → accept → back-channel → chat handshake between two
+  real users on the in-process api-server. Three tests: `[CN12]`
+  happy-path handshake; `[CN13]` chat round-trip; `[CN14]` accept
+  re-delivery idempotency (regression for bugs #12 + #13). Transport:
+  a fetch shim that routes URLs whose host matches `127.0.0.1:3000`
+  / `localhost:3000` (the test override-config's `service.api`)
+  through `coreRequest` (the in-process supertest agent); pass-through
+  for any other host (data-types `flat.json`, rqlited at `:4001`).
+- **Supporting change** `components/api-server/src/methods/events.ts` —
+  the cmc plugin deps now capture `globalThis.fetch` lazily via
+  `(url, init) => globalThis.fetch(url, init)` instead of
+  `fetch: globalThis.fetch`, so a test that installs a fetch shim
+  after middleware registration is picked up by the dispatch loop.
+  Production: one extra closure indirection per call. Two call sites
+  tweaked (`cmcDispatchMiddleware` deps + the opt-in
+  `startRetryLoopIfEnabled` deps).
+- **Test counts**: `just test cmc` 309/0 unchanged. `just test
+  api-server` +3 from `[CMCHS]` (baseline preserved at 1018 → 1021
+  combined with the boiler skipOverrideConfig fix above).
+
 ## CMC plugin component — internals (Plan 68)
 
 The `:_cmc:` namespace + write-hooks + orchestration handlers ship as a new top-level component `components/cmc/`. The plugin is loaded by the api-server like other components (event-content validation, capability-mint, inbox write-hook, dispatch middleware) plus a post-hook on `accesses.update`. No new storage engine — the entire plugin runs on standard per-user storage (PostgreSQL / MongoDB) + the existing pubsub layer.

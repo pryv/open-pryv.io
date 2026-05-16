@@ -247,7 +247,7 @@ export default async function (api: any) {
   });
   const cmcDispatchMiddleware = cmc.createDispatchMiddleware({
     mall: mallForCmc,
-    fetch: globalThis.fetch,
+    fetch: (url: string, init?: any) => globalThis.fetch(url, init),
     timeoutMs: 15_000,
     rateLimiter: cmcRateLimiter,
     logger: cmcDispatchLogger,
@@ -301,7 +301,7 @@ export default async function (api: any) {
     config,
     mall: mallForCmc,
     selfIdentityFor: cmcSelfIdentityFor,
-    fetch: globalThis.fetch,
+    fetch: (url: string, init?: any) => globalThis.fetch(url, init),
     rateLimiter: cmcRateLimiter,
     logger: getLogger('cmc:retry-loop'),
     userIdsProvider: async () => {
