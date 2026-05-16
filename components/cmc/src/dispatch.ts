@@ -129,6 +129,35 @@ async function dispatch (params: {
     });
   }
 
+  // Loop avoidance: events created by a counterparty access on this user's
+  // mall are peer-delivered (bob's plugin POSTed via the counterparty
+  // access bob holds on alice's account). Re-dispatching them would re-POST
+  // to bob, which arrives back at alice — the classic chat/system
+  // ping-pong. Skip outbound handler types when `event.createdBy` resolves
+  // to a counterparty-role access on this mall.
+  //
+  // Lifecycle handlers (accept / refuse / back-channel / request) are
+  // exempt: their dispatch path is direction-aware via `isOnInbox` and
+  // the incoming variants do real protocol work (mint back-channel,
+  // update data-grant). Only chat / system / revoke handlers POST
+  // unconditionally back out, so only they need the guard.
+  if (OUTBOUND_LOOPABLE_TYPES.has(event.type)) {
+    const incoming = await isPeerDeliveredEvent(userId, (event as any).createdBy, deps);
+    if (incoming) {
+      // Mark 'completed' (not 'skipped') so the trigger event's status
+      // reflects "we processed this and decided no outbound was needed."
+      // Skip the markCompleted call though — incoming events typically
+      // come from a peer POST and rewriting their status would emit a
+      // pubsub notification on every chat received, which is noisy.
+      return {
+        handled: true,
+        eventType: event.type,
+        status: 'skipped',
+        reason: 'cmc-incoming-from-peer',
+      };
+    }
+  }
+
   let result: any;
   try {
     switch (event.type) {
@@ -358,6 +387,52 @@ function isOnInbox (event: any): boolean {
 const SYNC_DISPATCH_TYPES = new Set<string>([
   'consent/back-channel-cmc',
 ]);
+
+/**
+ * Event types whose handlers ALWAYS POST outbound and would re-trigger on
+ * the peer (creating a ping-pong loop) if dispatched on a peer-delivered
+ * event. Skipped at dispatch time when `event.createdBy` resolves to a
+ * counterparty-role access — see `isPeerDeliveredEvent`.
+ *
+ * Lifecycle types (accept / refuse / back-channel / request) are NOT in
+ * here: their incoming variants do real protocol work (mint back-channel,
+ * update data-grant). Routing for those is direction-aware via
+ * `isOnInbox` already.
+ */
+const OUTBOUND_LOOPABLE_TYPES = new Set<string>([
+  'message/chat-cmc',
+  'notification/alert-cmc',
+  'notification/ack-cmc',
+  'consent/scope-request-cmc',
+  'consent/scope-update-cmc',
+  'consent/revoke-cmc',
+]);
+
+/**
+ * True when the event was created on this mall by a counterparty-role
+ * access (= the peer's plugin POSTed it via the access we hold for them).
+ * False for user-originated events (personal / app / shared accesses), for
+ * events with no `createdBy` (defensive), and when the access lookup
+ * can't run.
+ */
+async function isPeerDeliveredEvent (
+  userId: string,
+  createdBy: string | undefined,
+  deps: DispatchDeps
+): Promise<boolean> {
+  if (typeof createdBy !== 'string' || createdBy.length === 0) return false;
+  const mallAccesses: any = deps.mall.accesses;
+  if (mallAccesses?.get == null) return false;
+  try {
+    const list = await mallAccesses.get(userId, {});
+    const acc = Array.isArray(list)
+      ? list.find((a: any) => a?.id === createdBy)
+      : null;
+    return acc?.clientData?.cmc?.role === 'counterparty';
+  } catch (_e) {
+    return false;
+  }
+}
 
 function createDispatchMiddleware (
   deps: DispatchDeps,

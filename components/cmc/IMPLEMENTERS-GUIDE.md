@@ -1143,7 +1143,7 @@ ships as `cmc.CmcErrorIds` in the plugin and as `pryv.cmc.errorIds` in
 | `CHAT_COUNTERPARTY_ACCESS_NOT_FOUND` | `cmc-chat-counterparty-access-not-found` | No counterparty-role access matched the parsed slug. |
 | `CHAT_NO_REMOTE_APIENDPOINT` | `cmc-chat-no-remote-apiendpoint` | Counterparty access lacks `apiEndpoint` on `clientData.cmc.counterparty`. Typically the two-phase access materialization hasn't finished — see Step 4 "Two-phase access materialization". |
 | `CHAT_NO_REMOTE_CHAT_STREAM` | `cmc-chat-no-remote-chat-stream` | Same, for `remoteChatStreamId`. |
-| `CHAT_RATE_LIMITED` | `cmc-chat-rate-limited` | Rate limiter blocked delivery (100/60s per `(source, recipient)` by default). |
+| `CHAT_RATE_LIMITED` | `cmc-chat-rate-limited` | Rate limiter blocked delivery (100/60s per `(source, recipient)` by default). Primarily a defensive abuse backstop; the structural loop-avoidance happens at dispatch via `event.createdBy` → counterparty-access detection (see "Loop avoidance" section below), so seeing this id under normal traffic indicates real abuse or quota exhaustion, not a runaway. |
 
 **Gaps under discussion** (HANDOVER follow-up):
 
@@ -1152,6 +1152,45 @@ ships as `cmc.CmcErrorIds` in the plugin and as `pryv.cmc.errorIds` in
 - `cmc-capability-already-accepted-by-you` — open-link mode same-patient re-click discrimination. Phase 2 of the capability lifecycle work.
 
 See [HANDOVER-RESPONSE.md](https://github.com/pryv/macroPryv/blob/main/_plans/68-cmc-datastore-atwork/HANDOVER-RESPONSE.md) for the full design discussion.
+
+---
+
+# Reference — Loop avoidance
+
+The chat / system / scope-update / revoke handlers POST outbound to
+the peer via the counterparty access stored on the data-grant. Without
+a structural guard, a peer-delivered event would re-trigger the same
+dispatch on the receiving side and POST right back — the classic
+A→B→A→B ping-pong. The defence runs in two layers:
+
+1. **Structural avoidance (dispatch.ts).** Every Pryv event carries
+   `createdBy: <accessId>` server-stamped at events.create. For
+   outbound-loopable types (`message/chat-cmc`, `notification/alert-cmc`,
+   `notification/ack-cmc`, `consent/scope-request-cmc`,
+   `consent/scope-update-cmc`, `consent/revoke-cmc`), the dispatch
+   looks up the access by `createdBy` and skips if its
+   `clientData.cmc.role === 'counterparty'` — i.e., the event arrived
+   on this mall via a peer's POST. No outbound is performed. Returns
+   `{ status: 'skipped', reason: 'cmc-incoming-from-peer' }`.
+
+   Lifecycle handlers (accept / refuse / back-channel / request) are
+   exempt: their dispatch is direction-aware via `isOnInbox`, and
+   the incoming variants (handleIncomingAccept, handleIncomingBackChannel)
+   do real protocol work (mint back-channel, update data-grant).
+
+2. **Defensive rate-limit (rateLimit.ts).** A per-worker sliding
+   window per `(source, recipient)` tuple (100/60s default) catches
+   any leak past the structural guard — broken access wiring, future
+   handler additions that forget the guard, malicious peer spam.
+   Returns `cmc-chat-rate-limited` (or the system equivalent) when
+   tripped. Under normal traffic this id should not appear; treat it
+   as ops signal.
+
+Per-app-code rate-limit override is captured as a separate backlog
+plan (HANDOVER ask) — operationally useful for emergency-collector
+apps that need higher quota than patient-chat apps, but no urgency
+now that the loop-defence concern is decoupled from rate-limiter
+tuning.
 
 ---
 

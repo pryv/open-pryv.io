@@ -1,5 +1,43 @@
 # Changelog - Internal (no API impact)
 
+## CMC dispatch — structural loop avoidance via `event.createdBy`
+
+The chat / system / scope-update / revoke handlers POST outbound to
+the peer via the counterparty access. Without a structural guard, a
+peer-delivered event would re-trigger dispatch on the receiving side
+and POST right back — the classic A→B→A→B ping-pong. Previously the
+rate-limiter (`rateLimit.ts`, 100/60s per `(source, recipient)`) was
+the only thing cutting the loop, at the cost of a defensive ceiling
+that doubles as both abuse defence and runaway-control.
+
+This change splits the concerns:
+
+- **`components/cmc/src/dispatch.ts`** — new `OUTBOUND_LOOPABLE_TYPES`
+  set + `isPeerDeliveredEvent` helper. Before invoking a handler for
+  one of those types, the dispatch resolves `event.createdBy` to its
+  access on this mall; if the access has
+  `clientData.cmc.role === 'counterparty'` the event arrived from a
+  peer's POST → return `{ status: 'skipped', reason: 'cmc-incoming-from-peer' }`,
+  no outbound. The rate-limiter remains as defence-in-depth for
+  abuse / quota.
+- Lifecycle handlers (accept / refuse / back-channel / request) are
+  exempt — their dispatch is direction-aware via `isOnInbox`, and
+  the incoming variants do real protocol work.
+- IMPLEMENTERS-GUIDE.md gains a "Reference — Loop avoidance" section
+  documenting the two-layer defence.
+- `[CMCDISP-LOOP]` test block — 9 new tests: 6 outbound types ×
+  skip-when-counterparty, plus non-counterparty-passes, missing-
+  createdBy-passes, lifecycle-type-exempt.
+
+cmc 327 → 336 (+9). CMCHS handshake 3/3 unchanged (the chat
+round-trip in CN13 now exits cleanly on the peer side instead of
+relying on the rate-limiter to cut the loop).
+
+Per-app-code rate-limit override (the original HANDOVER Q4 ask) is
+captured as a separate backlog plan — operationally useful for
+high-volume collector apps, but no urgency now that loop defence
+sits at the right structural layer.
+
 ## CMC scope-update auto-merges CMC-machinery permissions
 
 `handleSystemScopeUpdate`'s local-apply branch (the path that
