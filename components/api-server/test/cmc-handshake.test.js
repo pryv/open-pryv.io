@@ -302,7 +302,287 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     });
   });
 
+  // NOTE: CMCHS-IDEMP (CN14) is defined LAST in this file so it doesn't
+  // pollute the CMCHS-EXT / CMCHS-SU describes' back-channel state. The
+  // current handleIncomingBackChannel matcher keys on (peer.username,
+  // peer.host, appCode) and overwrites the FIRST counterparty access
+  // matching when a second back-channel arrives — fine for the CN14
+  // idempotency test, but leaves earlier handshakes' remote-stream
+  // pointers stale, which would break CN15-CN17 / CN18.
+
+  // --- Extended in-process scenarios (ported from _plans/68/tests/) ---
+  //
+  // The CN12-CN14 block above covers the canonical handshake:
+  //   request → accept → back-channel + chat (one-way) + accept re-delivery.
+  // The extended block below covers the bidirectional / post-acceptance
+  // flows the deployed-infra scripts used to validate, but which can be
+  // exercised in-process via the same fetch shim. The KEEP-as-deployed
+  // scenarios (02 cross-cores, 03 cross-infra) remain in _plans/68/tests/.
+  //
+  // These tests establish their OWN fresh handshake (study-ext / study-su)
+  // rather than re-use CN12's. The current back-channel matcher
+  // (handleIncomingBackChannel) keys on (peer.username, peer.host,
+  // appCode) only, so a second handshake with the same peer overwrites
+  // the first's back-channel info — fine for the CN14 re-delivery test
+  // but it leaves earlier study's remote-stream pointers stale. Fresh
+  // handshakes per describe keep each scenario hermetic.
+
+  /**
+   * Run a fresh request → accept handshake for a given study-id, return
+   * the per-peer chat / collector stream-ids on both sides.
+   *
+   * This mirrors what CN12 does, factored out so the extended /
+   * scope-update describes can each get their own clean access pair.
+   */
+  async function runFreshHandshake (studyId) {
+    const triggerStreamId = ':_cmc:apps:my-app:' + studyId;
+    await ensureStream(alice.streamsPath, alice.token, {
+      id: triggerStreamId, parentId: ':_cmc:apps:my-app', name: studyId,
+    });
+    const reqRes = await coreRequest.post(alice.eventsPath)
+      .set('Authorization', alice.token)
+      .send({
+        streamIds: [triggerStreamId],
+        type: 'consent/request-cmc',
+        content: {
+          to: null,
+          capabilityRequested: true,
+          request: {
+            title: { en: studyId },
+            description: { en: 'fresh handshake for in-process test' },
+            consent: { en: 'I consent.' },
+            permissions: [{ streamId: 'fertility', level: 'read' }],
+          },
+          requesterMeta: { username: alice.username, appId: 'my-app' },
+        },
+      });
+    assert.strictEqual(reqRes.status, 201, JSON.stringify(reqRes.body));
+    const capabilityUrl = reqRes.body?.event?.content?.capabilityUrl;
+    assert.ok(typeof capabilityUrl === 'string' && capabilityUrl.length > 0);
+
+    await ensureStream(bob.streamsPath, bob.token, {
+      id: ':_cmc:apps:my-app', parentId: ':_cmc:apps', name: 'My App',
+    });
+    const accRes = await coreRequest.post(bob.eventsPath)
+      .set('Authorization', bob.token)
+      .send({
+        streamIds: [':_cmc:apps:my-app'],
+        type: 'consent/accept-cmc',
+        content: { capabilityUrl, accessName: 'cmc-grant-' + studyId + '-' + Date.now() },
+      });
+    assert.strictEqual(accRes.status, 201, JSON.stringify(accRes.body));
+
+    // Wait until the back-channel-cmc landed on bob's inbox — that's
+    // the marker that bob's data-grant has been updated with alice's
+    // remote streams for THIS study.
+    await pollInboxFor(
+      bob.eventsPath, bob.token, 'consent/back-channel-cmc',
+      (e) => e.content?.from?.username === alice.username &&
+             e.content?.remoteChatStreamId === triggerStreamId + ':chats:' +
+               C.slug.counterpartySlug({ username: bob.username, host: 'x.pryv.me' })
+    );
+
+    const TEST_HOST = 'x.pryv.me';
+    const aliceSlug = C.slug.counterpartySlug({ username: alice.username, host: TEST_HOST });
+    const bobSlug = C.slug.counterpartySlug({ username: bob.username, host: TEST_HOST });
+    return {
+      triggerStreamId,
+      aliceChatStreamId: C.chatStreamUnder(triggerStreamId, bobSlug),
+      bobChatStreamId: C.chatStreamUnder(triggerStreamId, aliceSlug),
+      aliceCollectorStreamId: C.collectorStreamUnder(triggerStreamId, bobSlug),
+      bobCollectorStreamId: C.collectorStreamUnder(triggerStreamId, aliceSlug),
+    };
+  }
+
+  describe('[CMCHS-EXT] bidirectional messaging post-handshake', function () {
+    let h; // handshake handles
+
+    before(async function () {
+      h = await runFreshHandshake('study-ext');
+    });
+
+    it('[CN15] bob posts chat → alice receives it on her chats stream (return direction)', async function () {
+      const text = 'hi back from bob ' + Date.now();
+      const chatRes = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [h.bobChatStreamId],
+          type: 'message/chat-cmc',
+          content: { content: text },
+        });
+      assert.strictEqual(chatRes.status, 201, JSON.stringify(chatRes.body));
+
+      const received = await pollStreamFor(
+        alice.eventsPath, alice.token, h.aliceChatStreamId, 'message/chat-cmc',
+        (e) => e.content?.content === text
+      );
+      assert.equal(received.content.from?.username, bob.username,
+        'received message must carry bob as origin');
+    });
+
+    it('[CN16] alice posts system alert → bob receives it on his collectors stream', async function () {
+      const code = 'ext-alert-' + Date.now();
+      const alertRes = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [h.aliceCollectorStreamId],
+          type: 'notification/alert-cmc',
+          content: {
+            code,
+            level: 'info',
+            title: { en: 'CN16 alert A→B' },
+            body: { en: 'extended messaging integration test' },
+          },
+        });
+      assert.strictEqual(alertRes.status, 201, JSON.stringify(alertRes.body));
+
+      const received = await pollStreamFor(
+        bob.eventsPath, bob.token, h.bobCollectorStreamId, 'notification/alert-cmc',
+        (e) => e.content?.code === code
+      );
+      assert.equal(received.content.from?.username, alice.username,
+        'received alert must carry alice as origin');
+    });
+
+    it('[CN17] bob posts system alert → alice receives it on her collectors stream (return direction)', async function () {
+      const code = 'ext-alert-back-' + Date.now();
+      const alertRes = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [h.bobCollectorStreamId],
+          type: 'notification/alert-cmc',
+          content: {
+            code,
+            level: 'info',
+            title: { en: 'CN17 alert B→A' },
+            body: { en: 'extended messaging return direction' },
+          },
+        });
+      assert.strictEqual(alertRes.status, 201, JSON.stringify(alertRes.body));
+
+      const received = await pollStreamFor(
+        alice.eventsPath, alice.token, h.aliceCollectorStreamId, 'notification/alert-cmc',
+        (e) => e.content?.code === code
+      );
+      assert.equal(received.content.from?.username, bob.username,
+        'received alert must carry bob as origin');
+    });
+  });
+
+  describe('[CMCHS-SU] scope-update local-apply + peer notify', function () {
+    // Unit-level coverage: handleSystemScopeUpdate has [HS22]-[HS28b]
+    // unit tests; accessesUpdateHook has [AU01]-[AU10]. The integration
+    // test here fires the actual events.create → dispatch loop end-to-end
+    // through the api-server + plugin to catch wiring regressions (e.g.
+    // dispatch switch missing the type, or the local-apply suppression
+    // failing to mute the post-hook).
+    //
+    // We establish a FRESH handshake (study-su) so bob's data-grant has
+    // a known starting state — `fertility:read` only.
+
+    let h;
+    let bobDataGrantId; // bob's counterparty access pointing to alice
+
+    /**
+     * Find on `actor`'s mall the access whose clientData.cmc identifies
+     * `peerUsername` as the counterparty AND whose stored remoteChat
+     * stream-id sits under `expectedScope`. Disambiguates between
+     * multiple counterparty accesses to the same peer.
+     */
+    async function findCounterpartyAccessForScope (actor, peerUsername, expectedScope) {
+      const res = await coreRequest.get(actor.accessesPath)
+        .set('Authorization', actor.token);
+      const accesses = res.body?.accesses || [];
+      return accesses.find((a) => {
+        const cmc = a?.clientData?.cmc;
+        if (cmc?.role !== 'counterparty') return false;
+        if (cmc?.counterparty?.username !== peerUsername) return false;
+        const rcs = cmc?.counterparty?.remoteChatStreamId;
+        return typeof rcs === 'string' && rcs.startsWith(expectedScope + ':chats:');
+      });
+    }
+
+    before(async function () {
+      h = await runFreshHandshake('study-su');
+      const dg = await findCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      assert.ok(dg != null,
+        'expected bob to have a counterparty access whose back-channel points to ' + h.triggerStreamId);
+      bobDataGrantId = dg.id;
+    });
+
+    it('[CN18] accepter (bob) widens grant → local access updated + requester (alice) notified', async function () {
+      // Look up the access fresh so we have the latest permissions list
+      // (the auto-merge in handleSystemScopeUpdate uses it as the base
+      // for re-attaching CMC machinery).
+      const dgRes = await coreRequest.get(bob.accessesPath)
+        .set('Authorization', bob.token);
+      const dataGrantBefore = (dgRes.body?.accesses || []).find((a) => a.id === bobDataGrantId);
+      assert.ok(dataGrantBefore != null);
+      const beforeStreamIds = new Set(
+        (dataGrantBefore.permissions || []).map((p) => p.streamId));
+      assert.ok(beforeStreamIds.has('fertility'),
+        'baseline data-grant should permit fertility (from study-su request)');
+      assert.ok(!beforeStreamIds.has('steps'),
+        'baseline data-grant must NOT yet permit steps');
+
+      const newPermissions = [
+        { streamId: 'fertility', level: 'read' },
+        { streamId: 'steps', level: 'read' },
+      ];
+
+      const triggerRes = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [h.bobCollectorStreamId],
+          type: 'consent/scope-update-cmc',
+          content: {
+            accessId: bobDataGrantId,
+            newPermissions,
+            previousPermissions: dataGrantBefore.permissions,
+          },
+        });
+      assert.strictEqual(triggerRes.status, 201, JSON.stringify(triggerRes.body));
+
+      // 1. Local data-grant permissions should reflect the update.
+      //    handleSystemScopeUpdate auto-merges the :_cmc:* machinery
+      //    permissions back in (HS28a/b).
+      const t0 = Date.now();
+      let dataGrantAfter = null;
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const r = await coreRequest.get(bob.accessesPath)
+          .set('Authorization', bob.token);
+        dataGrantAfter = (r.body?.accesses || []).find((a) => a.id === bobDataGrantId);
+        const ids = new Set((dataGrantAfter?.permissions || []).map((p) => p.streamId));
+        if (ids.has('steps')) break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      const afterStreamIds = new Set(
+        (dataGrantAfter?.permissions || []).map((p) => p.streamId));
+      assert.ok(afterStreamIds.has('steps'),
+        'data-grant permissions should now include steps:read — got ' +
+        JSON.stringify(dataGrantAfter?.permissions));
+      assert.ok(afterStreamIds.has('fertility'),
+        'data-grant must still grant fertility:read after widening');
+
+      // 2. Alice should receive a consent/scope-update-cmc notification on
+      //    her collectors stream (handleSystemScopeUpdate routes through
+      //    handleSystemEvent which POSTs to the peer's collectors stream).
+      const peerNotif = await pollStreamFor(
+        alice.eventsPath, alice.token, h.aliceCollectorStreamId,
+        'consent/scope-update-cmc',
+        (e) => Array.isArray(e.content?.newPermissions) &&
+               e.content.newPermissions.some((p) => p.streamId === 'steps')
+      );
+      assert.ok(peerNotif?.id != null,
+        'alice must receive consent/scope-update-cmc carrying the new permissions');
+    });
+  });
+
   describe('[CMCHS-IDEMP] accept re-delivery idempotency', function () {
+    // Defined LAST: this test triggers a second back-channel-cmc to bob
+    // from a different scope, which (per the current matcher) overwrites
+    // an existing data-grant's remote-stream pointers. Earlier describes
+    // (CMCHS-EXT / CMCHS-SU) need a clean back-channel, so they go first.
     it('[CN14] second accept from the same peer for a different scope does not collide on back-channel access name', async function () {
       const triggerStreamId = ':_cmc:apps:my-app:study-2';
       await ensureStream(alice.streamsPath, alice.token, {
