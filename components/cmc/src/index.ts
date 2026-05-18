@@ -25,10 +25,10 @@ const dispatch = require('./dispatch.ts');
 const chatOrchestration = require('./chatOrchestration.ts');
 const capabilityMintHook = require('./capabilityMintHook.ts');
 const inboxWriteHook = require('./inboxWriteHook.ts');
-const rateLimit = require('./rateLimit.ts');
 const handleSystem = require('./handleSystem.ts');
 const handleChat = require('./handleChat.ts');
 const handleRevoke = require('./handleRevoke.ts');
+const handleInvalidateLink = require('./handleInvalidateLink.ts');
 const retryQueue = require('./retryQueue.ts');
 const handleIncomingAccept = require('./handleIncomingAccept.ts');
 const anchorStreams = require('./anchorStreams.ts');
@@ -42,8 +42,8 @@ const capabilityResponseHook = require('./capabilityResponseHook.ts');
 export {
   constants, slug, validators, hooks, provisioning,
   outbound, capability, acceptOrchestration, handleAccept, dispatch,
-  chatOrchestration, capabilityMintHook, inboxWriteHook, rateLimit,
-  handleSystem, handleChat, handleRevoke, retryQueue, handleIncomingAccept,
+  chatOrchestration, capabilityMintHook, inboxWriteHook,
+  handleSystem, handleChat, handleRevoke, handleInvalidateLink, retryQueue, handleIncomingAccept,
   anchorStreams, accessesUpdateHook, retryScheduler, bootRetryLoop,
   mallAccessesAdapter, errorIds, capabilityResponseHook,
 };
@@ -54,8 +54,6 @@ export const { createAccessesUpdatePostHook, runWithSuppression } = accessesUpda
 export const { RetryScheduler } = retryScheduler;
 export const { startRetryLoopIfEnabled } = bootRetryLoop;
 export const { createMallAccessesAdapter } = mallAccessesAdapter;
-
-export const { RateLimiter } = rateLimit;
 
 export const { createCapabilityMintHook } = capabilityMintHook;
 export const { createInboxWriteHook } = inboxWriteHook;
@@ -106,8 +104,10 @@ export const {
   ET_SYSTEM_SCOPE_REQUEST,
   ET_SYSTEM_SCOPE_UPDATE,
   ET_RETRY,
+  ET_INVALIDATE_LINK,
   EVENT_TYPES_LIFECYCLE,
   EVENT_TYPES_CHAT,
   EVENT_TYPES_SYSTEM,
+  EVENT_TYPES_CAPABILITY,
   ALL_EVENT_TYPES,
 } = constants;

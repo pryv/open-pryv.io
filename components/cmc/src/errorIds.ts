@@ -49,6 +49,14 @@ const CmcErrorIds = {
   // State will be added by the open-link Phase 2 plan; the error.id
   // is enumerated here so the catalogue is stable.
   CAPABILITY_INVALIDATED: 'cmc-capability-invalidated',
+  // Open-link mode same-patient re-click. A counterparty whose
+  // `{username, host}` is already in the capability access's
+  // `clientData.cmc.capability.acceptedBy` list tried to accept again
+  // through the same capability URL. The response-stream write-hook
+  // rejects with this id so the patient app can show "you already
+  // accepted this invite" instead of silently re-running the handler
+  // (which would mint a duplicate back-channel).
+  CAPABILITY_ALREADY_ACCEPTED_BY_YOU: 'cmc-capability-already-accepted-by-you',
   // Capability fetch timed out (network / peer down).
   CAPABILITY_TIMEOUT: 'cmc-capability-timeout',
   // Capability resolved but the offer stream was empty — should not happen
@@ -62,6 +70,9 @@ const CmcErrorIds = {
   // --- Trigger-event content shape ---
   // The accept-cmc trigger event's content omitted `capabilityUrl`.
   HANDLER_MISSING_CAPABILITY_URL: 'cmc-handler-missing-capability-url',
+  // The trigger event's content omitted `capabilityId` (used by the
+  // open-link `consent/invalidate-link-cmc` handler).
+  HANDLER_MISSING_CAPABILITY_ID: 'cmc-handler-missing-capability-id',
   // The offer event is missing the server-stamped `capabilityId`.
   HANDLER_OFFER_MISSING_CAPABILITY_ID: 'cmc-handler-offer-missing-capability-id',
   // The offer carries no `request.permissions` array (or it's empty).
@@ -116,8 +127,6 @@ const CmcErrorIds = {
   CHAT_NO_REMOTE_APIENDPOINT: 'cmc-chat-no-remote-apiendpoint',
   // Same as above for the chat stream-id.
   CHAT_NO_REMOTE_CHAT_STREAM: 'cmc-chat-no-remote-chat-stream',
-  // Rate limiter blocked delivery.
-  CHAT_RATE_LIMITED: 'cmc-chat-rate-limited',
 } as const;
 
 type CmcErrorId = (typeof CmcErrorIds)[keyof typeof CmcErrorIds];

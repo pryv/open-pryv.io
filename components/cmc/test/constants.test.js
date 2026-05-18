@@ -155,12 +155,18 @@ describe('[CMCCONST] cmc/constants', () => {
       ]));
     });
 
-    it('[CE04] ALL_EVENT_TYPES is the union (incl. internal retry-v1 + back-channel) with no duplicates', () => {
+    it('[CE04] ALL_EVENT_TYPES is the union (incl. internal retry-v1 + back-channel + invalidate-link) with no duplicates', () => {
       const set = new Set(C.ALL_EVENT_TYPES);
       assert.equal(set.size, C.ALL_EVENT_TYPES.length);
-      assert.equal(set.size, 5 + 1 + 4 + 1);
+      // 5 lifecycle + 1 chat + 4 system + 1 capability + 1 retry
+      assert.equal(set.size, 5 + 1 + 4 + 1 + 1);
       assert.ok(set.has('cmc-internal/retry-cmc'));
       assert.ok(set.has('consent/back-channel-cmc'));
+      assert.ok(set.has('consent/invalidate-link-cmc'));
+    });
+
+    it('[CE05] capability family has 1 event type (consent/invalidate-link-cmc)', () => {
+      assert.deepEqual(C.EVENT_TYPES_CAPABILITY, ['consent/invalidate-link-cmc']);
     });
   });
 

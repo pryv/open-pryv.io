@@ -33,7 +33,6 @@ type BootDeps = {
   mall: any;
   selfIdentityFor: (userId: string) => any;
   fetch: (url: string, init?: any) => Promise<any>;
-  rateLimiter?: any;
   logger?: { debug: Function; warn: Function; info?: Function };
   userIdsProvider?: () => Promise<string[]> | string[];
   // Optional: a cluster worker id check. Defaults to checking the
@@ -87,7 +86,6 @@ function startRetryLoopIfEnabled (deps: BootDeps): any {
     dispatchDeps: {
       mall: deps.mall,
       fetch: deps.fetch,
-      rateLimiter: deps.rateLimiter,
       logger: deps.logger,
       selfIdentityFor: deps.selfIdentityFor,
     },

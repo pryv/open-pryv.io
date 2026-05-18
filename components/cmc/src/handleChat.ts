@@ -21,8 +21,7 @@ const require = createRequire(import.meta.url);
  *      counterparty) pair.
  *   3. Reads remote apiEndpoint + remoteChatStreamId off the access's
  *      clientData.cmc.counterparty (stamped at acceptance time).
- *   4. Applies the per-worker rate-limit (defensive, not strict).
- *   5. POSTs message/chat-cmc to the peer's chats stream via outbound.
+ *   4. POSTs message/chat-cmc to the peer's chats stream via outbound.
  *
  * Same shape as handleSystemEvent. Kept separate so future divergence
  * (e.g. chats may need local read-receipt sentinels; system messages
@@ -39,14 +38,6 @@ type AccessLike = {
   id: string;
   type?: string;
   clientData?: any;
-};
-
-type RateLimiterLike = {
-  checkAndRecord: (params: { source: string; recipient: string }) => {
-    allowed: boolean;
-    retryAfterMs?: number;
-    currentCount: number;
-  };
 };
 
 type OutboundDeps = {
@@ -76,7 +67,6 @@ async function handleChat (params: {
   selfIdentity: Counterparty;
   deps: {
     mall: { accesses: { get: (userId: string, params?: any) => Promise<AccessLike[]> } };
-    rateLimiter?: RateLimiterLike;
     fetch: OutboundDeps['fetch'];
     timeoutMs?: number;
     logger?: { debug: Function; warn: Function };
@@ -130,19 +120,6 @@ async function handleChat (params: {
   }
   if (typeof remoteChatStreamId !== 'string' || remoteChatStreamId.length === 0) {
     return { ok: false, reason: 'cmc-chat-no-remote-chat-stream', detail: { accessId: chosen.id } };
-  }
-
-  // Rate-limit per-(source,recipient). Defensive against runaway chat loops.
-  if (deps.rateLimiter != null) {
-    const recipientKey = cmc.counterparty.username + '@' + cmc.counterparty.host;
-    const sourceKey = selfIdentity.username + '@' + selfIdentity.host;
-    const rl = deps.rateLimiter.checkAndRecord({ source: sourceKey, recipient: recipientKey });
-    if (!rl.allowed) {
-      return { ok: false, reason: 'cmc-chat-rate-limited', detail: {
-        retryAfterMs: rl.retryAfterMs,
-        currentCount: rl.currentCount,
-      } };
-    }
   }
 
   // Body shape mirrors chatOrchestration.deliverChatToPeer but we pass the

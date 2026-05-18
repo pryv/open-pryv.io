@@ -477,7 +477,7 @@ sequenceDiagram
     participant PatientApp
 
     DoctorApp->>PlatformA: events.create notification/alert-cmc<br/>:_cmc:apps:my-app:study-A:collectors:alice--pryv-me
-    Note over PlatformA,PlatformB: features.systemMessaging check<br/>+ rate-limit + delivery
+    Note over PlatformA,PlatformB: features.systemMessaging check<br/>+ delivery
     PlatformB-->>PatientApp: socket.io push<br/>:_cmc:apps:patient:incoming:collectors:doctor--example-com
     PatientApp->>PlatformB: events.create notification/ack-cmc
     PlatformA-->>DoctorApp: socket.io push<br/>:_cmc:apps:my-app:study-A:collectors:alice--pryv-me
@@ -504,8 +504,7 @@ Doctor's plugin:
 
 1. Resolves the access pair for this collector-relationship from the stream id.
 2. Verifies the participant's data-grant access (locally) has `clientData.cmc.features.systemMessaging: true`. If not, fails the trigger with `system-messaging-not-permitted`.
-3. Enforces rate-limit for this participant.
-4. Delivers the alert to Alice's `:_cmc:apps:patient:incoming:collectors:doctor--example-com` stream via the stored apiEndpoint.
+3. Delivers the alert to Alice's `:_cmc:apps:patient:incoming:collectors:doctor--example-com` stream via the stored apiEndpoint.
 
 Jane's app sees the alert via socket.io and prompts the user to ack:
 
@@ -1087,6 +1086,120 @@ Plugin mints a new capability; old one stays deleted.
 
 ---
 
+# Reference — Open-link capability
+
+A capability minted with `mode: 'open-link'` accepts **multiple counterparties** until the requester explicitly invalidates the link. Use this for a doctor publishing a multi-patient study invite, an operator distributing a single QR code to a population, or any "many recipients, one URL" workflow.
+
+Single-use mode (the default) auto-consumes on the first accept and rejects all subsequent re-clicks with `cmc-capability-consumed`. Open-link mode does NOT auto-consume — instead the plugin appends each accepter to `clientData.cmc.capability.acceptedBy` and lets the relationship handshake (data-grant + back-channel) proceed exactly as in single-use mode.
+
+## When to use `mode: 'open-link'`
+
+| Use case | Mode |
+|---|---|
+| One specific patient accepting one specific doctor's invite | `single-use` (default) |
+| One doctor publishing a study invite to a population | `open-link` |
+| Operator alert subscription self-service via QR code | `open-link` |
+| Per-patient e-prescribed referral | `single-use` |
+
+## Minting an open-link capability
+
+```js
+await connection.api([{
+  method: 'events.create',
+  params: {
+    streamIds: [':_cmc:apps:my-app:study-2026'],
+    type: 'consent/request-cmc',
+    content: {
+      to: null,
+      capabilityRequested: true,
+      capability: { mode: 'open-link' },
+      request: {
+        title: { en: 'Study 2026 invitation' },
+        description: { en: '...' },
+        consent: { en: '...' },
+        permissions: [{ streamId: 'symptoms', level: 'read' }]
+      },
+      requesterMeta: { displayName: 'Provider A', appId: 'my-app' }
+    }
+  }
+}]);
+```
+
+The trigger gets `content.capabilityUrl` exactly as in single-use mode — that URL is your multi-patient distribution payload.
+
+## Multi-accept semantics
+
+Each patient who opens the capability URL and writes `consent/accept-cmc` triggers the standard handshake (data-grant on the patient's side, back-channel on the doctor's side). After each successful accept, the doctor's `clientData.cmc.capability.acceptedBy` array on the capability access grows by one entry:
+
+```js
+acceptedBy: [
+  { username: 'alice', host: 'pryv.me',  acceptedAt: 1715000000 },
+  { username: 'bob',   host: 'example.com', acceptedAt: 1715000123 },
+  { username: 'carol', host: 'other.org', acceptedAt: 1715000456 }
+]
+```
+
+The capability access `state` stays `'open'` across all accepts.
+
+## Same-patient re-click
+
+If the same `{ username, host }` tries to accept again via the same capability URL, the responses-stream write-hook detects them in `acceptedBy` and rejects with:
+
+```
+error.id: 'cmc-capability-already-accepted-by-you'
+error.data: { acceptedAt: <unix-seconds> }
+```
+
+Match is case-insensitive on `username` and uses the same host-slugification rule as `counterpartySlug` (so `Alice` at `PRYV.me` matches an existing `alice` at `pryv.me`). Patient-side UX: show "you already accepted this invite, you don't need to act again." NO new back-channel access is minted; the doctor's account is not touched.
+
+## Invalidation (requester-side)
+
+To stop accepting NEW patients via an open-link, the doctor writes:
+
+```js
+await connection.api([{
+  method: 'events.create',
+  params: {
+    streamIds: [':_cmc:apps:my-app:study-2026'],
+    type: 'consent/invalidate-link-cmc',
+    content: {
+      capabilityId: '<the-capability-id-from-the-original-request-event>',
+      reason: { en: 'Recruitment closed' } // optional, advisory only
+    }
+  }
+}]);
+```
+
+The plugin flips `clientData.cmc.capability.state` from `'open'` to `'invalidated'`. The next attempted accept via the same capability URL fails at the write-hook with `cmc-capability-invalidated`.
+
+Invalidate is **idempotent** (calling it on an already-invalidated capability is a no-op success) and **a no-op on single-use capabilities** (single-use auto-consumes on first accept; nothing to invalidate).
+
+## What invalidate does NOT do
+
+Invalidate touches only the capability access. **Already-established data-grant + back-channel relationships** minted from this capability are untouched: alice, bob, and carol from the example above continue to have full bi-directional chat / system / scope-update channels with the doctor. The doctor only stops accepting NEW patients via the link.
+
+For per-relationship teardown — "I want to terminate my relationship with alice specifically" — use the standard `consent/revoke-cmc` event written to the relevant `:chats:alice--pryv-me` or `:collectors:alice--pryv-me` stream.
+
+| To... | Write |
+|---|---|
+| Stop accepting NEW patients via this link | `consent/invalidate-link-cmc` (capabilityId) |
+| Terminate ONE existing relationship | `consent/revoke-cmc` (anchored on the per-counterparty stream) |
+| Terminate ALL relationships from this link | Loop `consent/revoke-cmc` per counterparty (no batch primitive in v1) |
+
+## Inspecting accepters
+
+The doctor's dashboard can enumerate the patients who claimed a capability:
+
+```js
+const cap = capabilityAccesses.find((a) => a.clientData.cmc.capabilityId === 'cap-xyz');
+const accepters = cap?.clientData?.cmc?.capability?.acceptedBy ?? [];
+// Each entry: { username, host, acceptedAt }
+```
+
+Combined with `state` (`'open'` / `'invalidated'`), this gives a one-round-trip view of the open-link lifecycle.
+
+---
+
 # Reference — Counterparty accesses (plugin-internal)
 
 After acceptance, two standard Pryv shared accesses exist (one on each side). They serve as the plugin's outbound-delivery credentials. **You generally don't interact with them from app code.**
@@ -1132,7 +1245,8 @@ ships as `cmc.CmcErrorIds` in the plugin and as `pryv.cmc.errorIds` in
 |---|---|---|
 | `CAPABILITY_INVALID` | `cmc-capability-invalid` | The capability URL fails authentication (HTTP 401). Covers "token never existed" + "token expired past TTL" — auth middleware can't tell those apart. Distinct from `CAPABILITY_CONSUMED`: that one fires when the access still exists but the plugin's responses-stream write-hook caught a re-click after the capability state flipped to `'consumed'`. |
 | `CAPABILITY_CONSUMED` | `cmc-capability-consumed` | The capability was already accepted/refused in single-use mode. The plugin's response-stream write-hook detected `clientData.cmc.capability.state === 'consumed'` and rejected the re-click. Patient-side UX: "you already accepted this invite." |
-| `CAPABILITY_INVALIDATED` | `cmc-capability-invalidated` | The capability (the LINK / join channel) was explicitly invalidated by the requester. **Open-link mode use case** — Phase 2 work (see [backlog plan](https://github.com/pryv/macroPryv/tree/main/_plans/XX-cmc-capability-open-link-later) once written). Already-established relationships (data-grant + back-channel pairs minted BEFORE invalidation) are unaffected. |
+| `CAPABILITY_INVALIDATED` | `cmc-capability-invalidated` | The capability (the LINK / join channel) was explicitly invalidated by the requester via `consent/invalidate-link-cmc`. **Open-link mode** use case — the requester closed the link to new accepters. Already-established relationships (data-grant + back-channel pairs minted BEFORE invalidation) are unaffected; use `consent/revoke-cmc` for per-relationship teardown. See [Open-link capability](#reference--open-link-capability). |
+| `CAPABILITY_ALREADY_ACCEPTED_BY_YOU` | `cmc-capability-already-accepted-by-you` | Open-link mode same-patient re-click. The `{username, host}` from the incoming accept matches an entry in the capability's `acceptedBy` list. Patient-side UX: "you already accepted this invite." `error.data.acceptedAt` carries the original accept's unix-seconds timestamp. |
 | `CAPABILITY_TIMEOUT` | `cmc-capability-timeout` | Capability fetch took longer than the configured timeout (default 15s). |
 | `CAPABILITY_EMPTY` | `cmc-capability-empty` | Capability resolved but the offer stream was empty. Protocol invariant violation — investigate. |
 | `CAPABILITY_MULTIPLE_OFFERS` | `cmc-capability-multiple-offers` | Capability resolved but the offer stream held more than one event. Protocol invariant violation. |
@@ -1154,13 +1268,12 @@ ships as `cmc.CmcErrorIds` in the plugin and as `pryv.cmc.errorIds` in
 | `CHAT_COUNTERPARTY_ACCESS_NOT_FOUND` | `cmc-chat-counterparty-access-not-found` | No counterparty-role access matched the parsed slug. |
 | `CHAT_NO_REMOTE_APIENDPOINT` | `cmc-chat-no-remote-apiendpoint` | Counterparty access lacks `apiEndpoint` on `clientData.cmc.counterparty`. Typically the two-phase access materialization hasn't finished — see Step 4 "Two-phase access materialization". |
 | `CHAT_NO_REMOTE_CHAT_STREAM` | `cmc-chat-no-remote-chat-stream` | Same, for `remoteChatStreamId`. |
-| `CHAT_RATE_LIMITED` | `cmc-chat-rate-limited` | Rate limiter blocked delivery (100/60s per `(source, recipient)` by default). Primarily a defensive abuse backstop; the structural loop-avoidance happens at dispatch via `event.createdBy` → counterparty-access detection (see "Loop avoidance" section below), so seeing this id under normal traffic indicates real abuse or quota exhaustion, not a runaway. |
 
 **Gaps under discussion** (HANDOVER follow-up):
 
 - `cmc-capability-stale` (TTL-expired specifically — today `CAPABILITY_INVALID` collapses this with "never existed") — requires capability tombstones to distinguish stale from unknown. Open as backlog.
 - `cmc-handshake-refused` / `cmc-handshake-revoked` — both require richer access-state tracking; the current `CAPABILITY_CONSUMED` covers the "accepted" case but doesn't carry the original outcome (accepted vs refused). Worth revisiting only if a real client needs the distinction.
-- `cmc-capability-already-accepted-by-you` — open-link mode same-patient re-click discrimination. Phase 2 of the capability lifecycle work.
+- ~~`cmc-capability-already-accepted-by-you`~~ — shipped (open-link mode same-patient re-click discrimination, Phase 2).
 
 See [HANDOVER-RESPONSE.md](https://github.com/pryv/macroPryv/blob/main/_plans/68-cmc-datastore-atwork/HANDOVER-RESPONSE.md) for the full design discussion.
 
@@ -1199,7 +1312,7 @@ for (const cap of capabilityAccesses) {
   const expiresAt = cap.expires;
   // state === 'open'         → invite is still claimable
   // state === 'consumed'     → single-use accepted (look at inbox for the accept-cmc to see who)
-  // state === 'invalidated'  → doctor invalidated the link (open-link mode, Phase 2)
+  // state === 'invalidated'  → doctor invalidated the link (open-link mode; see "Open-link capability")
   // (state === 'open' && Date.now()/1000 > expiresAt) → expired, will auth-fail
 }
 ```
@@ -1254,36 +1367,22 @@ The chat / system / scope-update / revoke handlers POST outbound to
 the peer via the counterparty access stored on the data-grant. Without
 a structural guard, a peer-delivered event would re-trigger the same
 dispatch on the receiving side and POST right back — the classic
-A→B→A→B ping-pong. The defence runs in two layers:
+A→B→A→B ping-pong. The defence is structural:
 
-1. **Structural avoidance (dispatch.ts).** Every Pryv event carries
-   `createdBy: <accessId>` server-stamped at events.create. For
-   outbound-loopable types (`message/chat-cmc`, `notification/alert-cmc`,
-   `notification/ack-cmc`, `consent/scope-request-cmc`,
-   `consent/scope-update-cmc`, `consent/revoke-cmc`), the dispatch
-   looks up the access by `createdBy` and skips if its
-   `clientData.cmc.role === 'counterparty'` — i.e., the event arrived
-   on this mall via a peer's POST. No outbound is performed. Returns
-   `{ status: 'skipped', reason: 'cmc-incoming-from-peer' }`.
+**Structural avoidance (dispatch.ts).** Every Pryv event carries
+`createdBy: <accessId>` server-stamped at events.create. For
+outbound-loopable types (`message/chat-cmc`, `notification/alert-cmc`,
+`notification/ack-cmc`, `consent/scope-request-cmc`,
+`consent/scope-update-cmc`, `consent/revoke-cmc`), the dispatch
+looks up the access by `createdBy` and skips if its
+`clientData.cmc.role === 'counterparty'` — i.e., the event arrived
+on this mall via a peer's POST. No outbound is performed. Returns
+`{ status: 'skipped', reason: 'cmc-incoming-from-peer' }`.
 
-   Lifecycle handlers (accept / refuse / back-channel / request) are
-   exempt: their dispatch is direction-aware via `isOnInbox`, and
-   the incoming variants (handleIncomingAccept, handleIncomingBackChannel)
-   do real protocol work (mint back-channel, update data-grant).
-
-2. **Defensive rate-limit (rateLimit.ts).** A per-worker sliding
-   window per `(source, recipient)` tuple (100/60s default) catches
-   any leak past the structural guard — broken access wiring, future
-   handler additions that forget the guard, malicious peer spam.
-   Returns `cmc-chat-rate-limited` (or the system equivalent) when
-   tripped. Under normal traffic this id should not appear; treat it
-   as ops signal.
-
-Per-app-code rate-limit override is captured as a separate backlog
-plan (HANDOVER ask) — operationally useful for emergency-collector
-apps that need higher quota than patient-chat apps, but no urgency
-now that the loop-defence concern is decoupled from rate-limiter
-tuning.
+Lifecycle handlers (accept / refuse / back-channel / request) are
+exempt: their dispatch is direction-aware via `isOnInbox`, and
+the incoming variants (handleIncomingAccept, handleIncomingBackChannel)
+do real protocol work (mint back-channel, update data-grant).
 
 ---
 
@@ -1408,7 +1507,6 @@ What CMC does NOT solve here: if the bridge needs to read patient data streams (
 | `scope-update-offending-children` | trigger status `failed` (creator side) | permission-chain rule violated locally. | Adjust permissions. |
 | `recipient-not-found` | trigger status `failed` | `to:` username doesn't exist locally. | Use capability URL hand-off. |
 | `system-messaging-not-permitted` | trigger status `failed` | Counterparty's data-grant lacks `features.systemMessaging`. | Re-issue request with the feature. |
-| `cmc-quota-exceeded` | trigger status `failed` | Per-source per-recipient rate limit hit. | Back off. |
 | `cmc-cross-core-delivery-failed` | trigger status `failed` after retry exhaustion | Cross-platform delivery couldn't complete. | Decide whether to retry; surface to user. |
 | `cmc-scope-violation` | trigger create | Access wrote outside its declared `clientData.cmc.appScope`. | Fix app scoping. |
 

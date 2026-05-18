@@ -8,7 +8,7 @@
 
 **Design pillars:**
 1. **Plugin, not storage engine** — CMC lives at `components/cmc/`; all state in standard per-user main storage (PG / Mongo).
-2. **Zero new storage primitives** — retry queue is a hidden companion stream `:_cmc:_internal:retries`; rate-limit is per-worker in-memory.
+2. **Zero new storage primitives** — retry queue is a hidden companion stream `:_cmc:_internal:retries`.
 3. **Zero new HTTP route namespace** — every CMC behaviour is reachable via existing Pryv API surfaces (`events.*`, `streams.*`, `accesses.*`, socket.io monitor). No `/cmc/*` top-level routes. If a use case feels like it wants a CMC-specific endpoint, the right answer is either a `clientData` filter on the existing resource, a richer query on the trigger event, or a socket.io subscription. Keeps the plugin a true plugin (no API-surface ownership).
 4. **`:_cmc:apps:` user namespace** — user-creatable streams pack under one plugin-managed parent.
 5. **Three-region stream model** — `:_cmc:inbox` (one-shot lifecycle) / `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` (per user-pair, nested under the app/path the trigger was written to) / `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` (per collector-relationship, same nesting).
@@ -101,7 +101,6 @@ The capability access mechanism here is also the natural store for future OAuth2
 | `:_cmc:inbox` / `:_cmc:apps:<app-code>:[<path>:]chats:<slug>` / `:_cmc:apps:<app-code>:[<path>:]collectors:<slug>` / `:_cmc:apps:<...>` stream definitions | Per-user main storage's standard streams table |
 | Slug → access lookup | Same accesses table, indexed on `clientData.cmc.counterparty.{username, host}` |
 | **Retry queue** for pending outbound deliveries | **Hidden companion stream `:_cmc:_internal:retries`** in per-user main storage. Each pending delivery = one event with `content.{apiEndpoint, payload, attempts, nextAttemptAt}`. Standard `events.create` / `events.update` / `events.delete` for queue management. |
-| **Rate-limit counters** | **Per-worker in-memory** sliding window. N× drift on N-worker cores is accepted for v1; `cluster_kv` (master-held in-process, same-core cross-worker primitive) is the fallback if drift matters in practice. |
 
 **rqlite / platformDB is NOT part of CMC's design surface at all.** Same scoping principle as the mTLS / cluster-CA discipline below: cross-core platform infrastructure stays out of CMC's vocabulary. If CMC ever needs cross-core resilience (e.g., retry-queue failover when the home core dies), that's a separate plan with its own threat model — not a v1 feature.
 
@@ -162,6 +161,7 @@ All event types live under the `cmc/*` namespace and are validated by the plugin
 | `consent/accept-cmc` | recipient's own user-managed `:_cmc:apps:*` scope stream, content carries the capability URL | Plugin: reads offer via capability connection; creates local data-grant access on recipient's account with permissions from the offer; uses capability connection to deliver accept event (with grantedAccess apiEndpoint) to requester's platform; receives back-channel apiEndpoint in response; stores it in `clientData.cmc.counterparty` of the data-grant. Plugin also auto-creates `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` + `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` on the recipient's account, nested under whichever app-scope stream the recipient wrote the accept trigger to. |
 | `consent/refuse-cmc` | recipient's own user-managed `:_cmc:apps:*` scope stream, content carries capability URL | Plugin: delivers refuse via capability connection; capability is consumed. |
 | `consent/revoke-cmc` | either party's own user-managed `:_cmc:apps:*` scope stream, content carries `accessId` | Plugin: `accesses.delete` locally on the access; uses stored counterparty apiEndpoint to deliver `consent/revoke-cmc` to the other party's `:_cmc:inbox`; receiving plugin `accesses.delete`s its half of the pair. |
+| `consent/invalidate-link-cmc` | requester's own user-managed `:_cmc:apps:*` scope stream, content carries `capabilityId` | Plugin: flips the capability access's `clientData.cmc.capability.state` from `'open'` to `'invalidated'` so further accepts via the capability URL fail with `cmc-capability-invalidated`. Open-link mode only (single-use capabilities auto-consume on first accept; calling this on one is a no-op success). Already-established data-grant + back-channel relationships are NOT touched — use `consent/revoke-cmc` for per-relationship teardown. No outbound delivery; the rejection happens server-side on the next attempted accept. |
 
 Delivered counterparties of `consent/request-cmc` (when same-platform directed) / `consent/accept-cmc` / `consent/refuse-cmc` / `consent/revoke-cmc` land in the recipient's `:_cmc:inbox` — the one-shot lifecycle channel.
 
@@ -175,7 +175,7 @@ Delivered counterparties of `consent/request-cmc` (when same-platform directed) 
 
 | Event type | App writes to | Plugin orchestration |
 |---|---|---|
-| `notification/alert-cmc` | operator's `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream | Plugin verifies the participant access has `features.systemMessaging: true`; delivers alert to participant's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream via stored data-grant apiEndpoint; enforces per-participant rate limits. |
+| `notification/alert-cmc` | operator's `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream | Plugin verifies the participant access has `features.systemMessaging: true`; delivers alert to participant's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream via stored data-grant apiEndpoint. |
 | `notification/ack-cmc` | participant's `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream | Plugin delivers ack to operator's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream via stored back-channel apiEndpoint. |
 | `consent/scope-request-cmc` | collector's `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream (collector → user proposes scope change) | Plugin pre-validates permission-chain rules locally (collector must hold manage rights on the underlying data-grant; new permissions must be ⊆ collector's own app permissions); delivers the ask to user's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream via stored data-grant apiEndpoint. User can `consent/scope-update-cmc` to accept (or simply ignore to refuse). |
 | `consent/scope-update-cmc` | user's `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream (responds to a request OR self-initiated change) | Plugin calls `accesses.update` locally on the data-grant access; delivers the update to collector's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` stream via stored back-channel apiEndpoint; receiving plugin emits `accessUpdated` socket event locally. |
@@ -210,9 +210,10 @@ When a `consent/request-cmc` is written with `capabilityRequested: true`, the pl
 - **Permissions:**
   - `read` on `:_cmc:_internal:offer:<capId>`.
   - `create-only` on `:_cmc:_internal:responses:<capId>`.
-- **`clientData.cmc`:** `{ kind: 'capability', requestEventId: <id>, singleUse: true }`
+- **`clientData.cmc`:** `{ kind: 'capability', requestEventId: <id>, capability: { mode, state, stateChangedAt, [acceptedBy] }, singleUse: <bool> }`
 - **TTL:** operator-configured default (7 days proposed); requester can override per-request.
-- **Auto-deletion:** single-use; plugin deletes the access after the first successful response write.
+- **Mode:** `'single-use'` (default) or `'open-link'`. Single-use auto-consumes on first accept and rejects re-clicks with `cmc-capability-consumed`. Open-link accepts multiple counterparties — each is recorded in `clientData.cmc.capability.acceptedBy` (`[{username, host, acceptedAt}]`); same-counterparty re-clicks are rejected with `cmc-capability-already-accepted-by-you`; the requester writes a `consent/invalidate-link-cmc` event to close the link to new accepters. See the Implementer's Guide section "Open-link capability" for the full semantics.
+- **Auto-deletion:** single-use; plugin deletes the access after the first successful response write. Open-link capabilities stay alive until TTL expiry or explicit invalidation.
 
 The access's `apiEndpoint` IS the capability URL — a standard `pryv.Connection(url)` works against it. Hidden from `accesses.get` by default (filtered by `clientData.cmc.kind: 'capability'`); operators can opt to surface them via a query parameter.
 
@@ -281,7 +282,7 @@ A standalone document written from an API-consumer's perspective. The reader is 
 Output: short spec docs alongside this README (or expanded sections of this README).
 
 1. **`PLUGIN-INTERFACE.md`** — how a plugin reserves a stream-id prefix with the mall dispatcher + registers pre/post write-hooks on `events.create` / `accesses.update` / `streams.create`. **Confirms CMC is NOT a new storage engine** — all state lives in standard per-user storage; the plugin only routes hook execution. Audit existing precedents (system-streams in the system-streams module, observability in the optional observability provider) for the cleanest pattern.
-2. **`DATA-RESIDENCY.md`** — documents (a) the `:_cmc:_internal:*` hidden-stream convention and read-hook filter; (b) the required index on the accesses table's `clientData.cmc.counterparty.{username, host}`; (c) the retry-queue event schema on `:_cmc:_internal:retries`; (d) v1 limitations (home-core failover delays pending retries; per-worker rate-limit drift). Short doc — the decision matrix is gone now that we've locked "zero new storage primitives."
+2. **`DATA-RESIDENCY.md`** — documents (a) the `:_cmc:_internal:*` hidden-stream convention and read-hook filter; (b) the required index on the accesses table's `clientData.cmc.counterparty.{username, host}`; (c) the retry-queue event schema on `:_cmc:_internal:retries`; (d) v1 limitations (home-core failover delays pending retries). Short doc — the decision matrix is gone now that we've locked "zero new storage primitives."
 3. **`EVENT-SCHEMAS.md`** — full JSON Schema for every `cmc/*` event type, split by write-side vs deliver-side.
 4. **`CAPABILITY-ACCESSES.md`** — capability access permission shape; per-capability real streams `:_cmc:_internal:offer:<capId>` (single-event-bearing) + `:_cmc:_internal:responses:<capId>` (single-write); TTL; single-use enforcement; lifecycle (mint + GC with the capability).
 5. **`COUNTERPARTY-ACCESSES.md`** — `clientData.cmc.role: 'counterparty'` permission model on `:_cmc:inbox`, write-hook validation rules, `content.from` stamping.
@@ -331,8 +332,7 @@ Output: short spec docs alongside this README (or expanded sections of this READ
 1. Implement per-app/path `:chats` parent + per-counterparty `:chats:<counterparty-slug>` auto-creation hook (nested under whichever `:_cmc:apps:<app-code>:[<path>:]` scope stream the trigger was written to) in accept orchestration (so the anchor stream exists before the first chat write).
 2. Implement `message/chat-cmc` orchestration: plugin resolves access pair from counterparty slug + delivers chat to counterparty's matching `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` via stored apiEndpoint.
 3. Implement `consent/revoke-cmc` orchestration: plugin `accesses.delete`s locally + delivers `consent/revoke-cmc` to counterparty's `:_cmc:inbox`; receiving plugin `accesses.delete`s its half and the anchor streams are left in place (history preserved).
-4. Quota / rate-limit per-source per-recipient on outbound deliveries. **Per-worker in-memory** sliding window. N× drift on N-worker cores accepted for v1; `cluster_kv` (master-held in-process) is the fallback if drift matters in practice.
-5. Test: `[CMCCHAT]` (8 tests, incl. per-counterparty stream auto-create idempotence), `[CMCREVOKE]` (8 tests), `[CMCRATE]` (4 tests).
+4. Test: `[CMCCHAT]` (8 tests, incl. per-counterparty stream auto-create idempotence), `[CMCREVOKE]` (8 tests).
 
 **Exit:** Chat works as one trigger on the sender's `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`; revoke is a single trigger that tears down both halves of the access pair.
 
@@ -390,7 +390,6 @@ Output: short spec docs alongside this README (or expanded sections of this READ
 - **Capability access lifecycle.** Hidden from `accesses.get` by default? Visible? Discoverable by operator audit?
 - **Back-channel apiEndpoint delivery.** How does the recipient retrieve the back-channel apiEndpoint after writing accept? Proposed: the plugin appends a `cmc/accept-receipt-v1` event to `:_cmc:_internal:offer:<capId>` (readable via the same capability connection). Or: the accept event's `events.create` response includes it server-stamped.
 - **Single-use enforcement under concurrency.** Two patients simultaneously hit an open invite (`to: null`); first-write-wins must be transactional. Tested in `[CMCRACE]`.
-- **`:_cmc:inbox` quota / abuse.** Per-source per-recipient rate-limit is defensive. Operator may want platform-level limits too.
 - **State projection cost.** Maintaining `:_cmc:state` materialized off outbox/inbox is O(events) on write. For high-volume operators, benchmark before Phase H ships.
 - **Cross-platform directed invites.** Out of scope for v1. Backlog item depending on future OAuth2 / app-accounts work federated invite webhook.
 - **Capability access visibility.** Operators may want audit visibility. Plugin should expose capability accesses to operator audit but hide from regular `accesses.get`.
@@ -433,7 +432,7 @@ Anything else proposing mTLS should justify why it can't live in those scopes.
 
 ## Future development scoping — platformDB / cross-core state stays out of CMC's vocabulary
 
-**Principle (locked):** the same discipline applies to platformDB (rqlite) and cluster-state primitives. CMC introduces **zero new storage primitives** and lives entirely in the user's standard main storage. Internal plugin state (retry queue) lives as events in a hidden companion stream (`:_cmc:_internal:retries`) inside main storage, NOT in rqlite. Rate-limit counters live in per-worker memory or — if drift becomes a concern — in `cluster_kv` (master-held in-process, **same-core** cross-worker — NOT a cross-core primitive).
+**Principle (locked):** the same discipline applies to platformDB (rqlite) and cluster-state primitives. CMC introduces **zero new storage primitives** and lives entirely in the user's standard main storage. Internal plugin state (retry queue) lives as events in a hidden companion stream (`:_cmc:_internal:retries`) inside main storage, NOT in rqlite.
 
 **Why this principle:**
 
@@ -445,7 +444,6 @@ Anything else proposing mTLS should justify why it can't live in those scopes.
 **What this leaves on the table (intentionally):**
 
 - Cross-core failover of pending CMC deliveries — out of scope. Pending deliveries wait for home core. Acceptable v1.
-- Strictly accurate cross-core rate-limiting — out of scope. Per-worker memory with N× drift is acceptable; `cluster_kv` is a same-core upgrade path if needed.
 - Any "CMC has a cluster-wide state" feature — out of scope. If we discover a need, it goes in a separate plan.
 
 **Where rqlite / platformDB IS used (current correct scope, untouched by CMC):**

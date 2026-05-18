@@ -179,6 +179,13 @@ const ET_RETRY = 'cmc-internal/retry-cmc';
 // apiEndpoint + remote stream-ids so future chat / system deliveries from
 // the accepter to the requester resolve cleanly.
 const ET_BACK_CHANNEL = 'consent/back-channel-cmc';
+// Per-capability invalidation (open-link mode, Phase 2). The requester
+// writes this to one of their own `:_cmc:apps:*` streams; the plugin
+// flips the capability access state to `'invalidated'` so further
+// accepts are rejected by the responses-stream write-hook. Already
+// established data-grant + back-channel relationships are NOT touched
+// (per-relationship teardown remains `consent/revoke-cmc`).
+const ET_INVALIDATE_LINK = 'consent/invalidate-link-cmc';
 
 const EVENT_TYPES_LIFECYCLE = [ET_REQUEST, ET_ACCEPT, ET_REFUSE, ET_REVOKE, ET_BACK_CHANNEL];
 const EVENT_TYPES_CHAT = [ET_CHAT];
@@ -188,11 +195,17 @@ const EVENT_TYPES_SYSTEM = [
   ET_SYSTEM_SCOPE_REQUEST,
   ET_SYSTEM_SCOPE_UPDATE,
 ];
+// Per-capability lifecycle events (not per-relationship). Today: just
+// `consent/invalidate-link-cmc`. Distinct from EVENT_TYPES_LIFECYCLE
+// which deals with the relationship lifecycle (request/accept/refuse/
+// revoke/back-channel).
+const EVENT_TYPES_CAPABILITY = [ET_INVALIDATE_LINK];
 
 const ALL_EVENT_TYPES = [
   ...EVENT_TYPES_LIFECYCLE,
   ...EVENT_TYPES_CHAT,
   ...EVENT_TYPES_SYSTEM,
+  ...EVENT_TYPES_CAPABILITY,
   ET_RETRY,
 ];
 
@@ -250,9 +263,11 @@ export {
   ET_SYSTEM_SCOPE_UPDATE,
   ET_RETRY,
   ET_BACK_CHANNEL,
+  ET_INVALIDATE_LINK,
   EVENT_TYPES_LIFECYCLE,
   EVENT_TYPES_CHAT,
   EVENT_TYPES_SYSTEM,
+  EVENT_TYPES_CAPABILITY,
   ALL_EVENT_TYPES,
   isCmcEventType,
 };

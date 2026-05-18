@@ -368,6 +368,18 @@ async function handleIncomingAccept (params: {
         await capabilityMod.markCapabilityConsumed({
           userId, capabilityId: capabilityIdToConsume, deps: { mall },
         });
+      } else if (capabilityMode === 'open-link') {
+        // Open-link mode (Phase 2 lifecycle): instead of flipping state
+        // to 'consumed', append the accepter to acceptedBy so a
+        // same-patient re-click can be detected by the response-stream
+        // write-hook. The capability stays open until the requester
+        // explicitly invalidates the link via `consent/invalidate-link-cmc`.
+        await capabilityMod.recordAccepter({
+          userId,
+          capabilityId: capabilityIdToConsume,
+          accepter: counterparty,
+          deps: { mall },
+        });
       }
     } catch (err: any) {
       deps.logger?.warn?.('cmc/handleIncomingAccept: capability state-flip failed (non-fatal)', {

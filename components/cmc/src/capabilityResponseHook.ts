@@ -34,6 +34,7 @@ const require = createRequire(import.meta.url);
  */
 
 const C = require('./constants.ts');
+const slugMod = require('./slug.ts');
 
 type ErrorFactory = {
   invalidOperation: (message: string, details?: any) => any;
@@ -75,6 +76,34 @@ function createCapabilityResponseHook (deps: { errors: ErrorFactory }): Middlewa
         'Capability has been invalidated by the requester; no new accepts allowed',
         { id: CmcErrorIds.CAPABILITY_INVALIDATED, stateChangedAt: capabilityCd.stateChangedAt }
       ));
+    }
+    // Open-link mode same-patient re-click detection: when the access
+    // is still 'open' but the incoming `content.from.{username, host}`
+    // matches an entry in the capability's `acceptedBy` list, reject
+    // with `cmc-capability-already-accepted-by-you`. Lets the patient
+    // app distinguish "I already clicked this" from "this is a fresh
+    // invite still claimable by someone else."
+    if (state === 'open' && capabilityCd.mode === 'open-link') {
+      const acceptedBy: any[] = Array.isArray(capabilityCd.acceptedBy)
+        ? capabilityCd.acceptedBy
+        : [];
+      const from = event?.content?.from;
+      if (acceptedBy.length > 0 && from != null &&
+          typeof from.username === 'string' && from.username.length > 0 &&
+          typeof from.host === 'string' && from.host.length > 0) {
+        const fromKey = from.username.toLowerCase() + '|' + slugMod.slugifyHost(from.host);
+        const match = acceptedBy.find((a: any) =>
+          a != null && typeof a === 'object' &&
+          typeof a.username === 'string' && typeof a.host === 'string' &&
+          (a.username.toLowerCase() + '|' + slugMod.slugifyHost(a.host)) === fromKey
+        );
+        if (match != null) {
+          return next(deps.errors.invalidOperation(
+            'You have already accepted this open-link consent',
+            { id: CmcErrorIds.CAPABILITY_ALREADY_ACCEPTED_BY_YOU, acceptedAt: match.acceptedAt }
+          ));
+        }
+      }
     }
     // 'open' (or any unknown future state): proceed.
     next();

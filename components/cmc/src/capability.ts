@@ -26,6 +26,7 @@ const require = createRequire(import.meta.url);
  */
 
 const C = require('./constants.ts');
+const slug = require('./slug.ts');
 
 type MallLike = {
   streams: { create: (userId: string, params: any) => Promise<any> };
@@ -354,6 +355,114 @@ async function markCapabilityConsumed (params: {
   return { ok: true };
 }
 
+/**
+ * Append an accepter (`{ username, host }`) to the capability access's
+ * `clientData.cmc.capability.acceptedBy` array. Idempotent — if the same
+ * pair is already present (compared by lowercased username + slugified
+ * host) the function is a no-op. Used by open-link mode after each
+ * successful accept on handleIncomingAccept so a same-patient re-click
+ * can be detected by the response-stream write-hook.
+ */
+async function recordAccepter (params: {
+  userId: string;
+  capabilityId: string;
+  accepter: { username: string; host: string };
+  deps: { mall: MallLike; now?: () => number };
+}): Promise<{ ok: boolean; reason?: string; alreadyPresent?: boolean }> {
+  const { userId, capabilityId, accepter, deps } = params;
+  if (accepter == null || typeof accepter.username !== 'string' ||
+      accepter.username.length === 0 || typeof accepter.host !== 'string' ||
+      accepter.host.length === 0) {
+    return { ok: false, reason: 'invalid-accepter' };
+  }
+  const acc = await findCapabilityAccess({ userId, capabilityId, deps });
+  if (acc == null) return { ok: false, reason: 'capability-access-not-found' };
+  const cmcCd = acc.clientData?.cmc;
+  if (deps.mall.accesses.update == null) {
+    return { ok: false, reason: 'mall-accesses-update-unavailable' };
+  }
+  const now = deps.now ?? defaultNow;
+  const incomingKey =
+    accepter.username.toLowerCase() + '|' + slug.slugifyHost(accepter.host);
+  const existing: any[] = Array.isArray(cmcCd?.capability?.acceptedBy)
+    ? cmcCd.capability.acceptedBy
+    : [];
+  for (const a of existing) {
+    if (a == null || typeof a !== 'object') continue;
+    if (typeof a.username !== 'string' || typeof a.host !== 'string') continue;
+    const existingKey = a.username.toLowerCase() + '|' + slug.slugifyHost(a.host);
+    if (existingKey === incomingKey) {
+      return { ok: true, alreadyPresent: true };
+    }
+  }
+  const acceptedAt = now();
+  const updatedList = existing.concat([{
+    username: accepter.username,
+    host: accepter.host,
+    acceptedAt,
+  }]);
+  await deps.mall.accesses.update(userId, {
+    id: acc.id,
+    update: {
+      clientData: {
+        ...(acc.clientData || {}),
+        cmc: {
+          ...cmcCd,
+          capability: {
+            ...(cmcCd?.capability || {}),
+            acceptedBy: updatedList,
+          },
+        },
+      },
+    },
+  });
+  return { ok: true };
+}
+
+/**
+ * Transition a capability access from `state: 'open'` to
+ * `state: 'invalidated'`. Called by handleInvalidateLink when the
+ * requester invalidates their own open-link capability. Idempotent —
+ * already-`'invalidated'` is a no-op success. Already-`'consumed'`
+ * capabilities are also a no-op success (single-use links auto-consume
+ * on first accept; nothing to invalidate).
+ */
+async function markCapabilityInvalidated (params: {
+  userId: string;
+  capabilityId: string;
+  deps: { mall: MallLike; now?: () => number };
+}): Promise<{ ok: boolean; reason?: string }> {
+  const { userId, capabilityId, deps } = params;
+  const acc = await findCapabilityAccess({ userId, capabilityId, deps });
+  if (acc == null) return { ok: false, reason: 'capability-access-not-found' };
+  const cmcCd = acc.clientData?.cmc;
+  const state = cmcCd?.capability?.state;
+  if (state === 'invalidated' || state === 'consumed') {
+    return { ok: true }; // idempotent / no-op
+  }
+  if (deps.mall.accesses.update == null) {
+    return { ok: false, reason: 'mall-accesses-update-unavailable' };
+  }
+  const now = deps.now ?? defaultNow;
+  await deps.mall.accesses.update(userId, {
+    id: acc.id,
+    update: {
+      clientData: {
+        ...(acc.clientData || {}),
+        cmc: {
+          ...cmcCd,
+          capability: {
+            ...(cmcCd?.capability || {}),
+            state: 'invalidated',
+            stateChangedAt: now(),
+          },
+        },
+      },
+    },
+  });
+  return { ok: true };
+}
+
 async function deleteStream (mall: MallLike, userId: string, streamId: string): Promise<any> {
   const m: any = mall.streams;
   if (typeof m.delete === 'function') return m.delete(userId, { id: streamId });
@@ -392,6 +501,8 @@ export {
   gcCapability,
   findCapabilityAccess,
   markCapabilityConsumed,
+  recordAccepter,
+  markCapabilityInvalidated,
   buildApiEndpoint,
 };
 export type { CapabilityMode, CapabilityState };

@@ -107,4 +107,60 @@ describe('[CMCCRH] cmcCapabilityResponseHook', () => {
       done();
     });
   });
+
+  it('[CRH-OLN1] open + mode=open-link + accepter NOT in acceptedBy → proceeds', (done) => {
+    const ctx = makeCtx({
+      event: {
+        streamIds: [':_cmc:_internal:responses:cap-ol-1'],
+        type: 'consent/accept-cmc',
+        content: { from: { username: 'alice', host: 'pryv.me' } },
+      },
+      access: {
+        clientData: {
+          cmc: {
+            capability: {
+              state: 'open',
+              mode: 'open-link',
+              acceptedBy: [
+                { username: 'bob', host: 'example.com', acceptedAt: 1234 },
+              ],
+            },
+          },
+        },
+      },
+    });
+    hook(ctx, {}, {}, (err) => {
+      assert.equal(err, undefined);
+      done();
+    });
+  });
+
+  it('[CRH-OLN2] open + mode=open-link + accepter IS in acceptedBy → rejects cmc-capability-already-accepted-by-you', (done) => {
+    const ctx = makeCtx({
+      event: {
+        streamIds: [':_cmc:_internal:responses:cap-ol-2'],
+        type: 'consent/accept-cmc',
+        content: { from: { username: 'Alice', host: 'PRYV.me' } }, // case-insensitive match
+      },
+      access: {
+        clientData: {
+          cmc: {
+            capability: {
+              state: 'open',
+              mode: 'open-link',
+              acceptedBy: [
+                { username: 'alice', host: 'pryv.me', acceptedAt: 5555 },
+              ],
+            },
+          },
+        },
+      },
+    });
+    hook(ctx, {}, {}, (err) => {
+      assert.ok(err != null);
+      assert.equal(err.id, 'cmc-capability-already-accepted-by-you');
+      assert.equal(err.data.acceptedAt, 5555);
+      done();
+    });
+  });
 });

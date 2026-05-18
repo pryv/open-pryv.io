@@ -206,7 +206,6 @@ export default async function (api: any) {
   });
   const cmcInboxWriteHook = cmc.createInboxWriteHook({ errors });
   const cmcCapabilityResponseHook = cmc.createCapabilityResponseHook({ errors });
-  const cmcRateLimiter = new cmc.rateLimit.RateLimiter();
   const cmcDispatchLogger = getLogger('cmc:dispatch');
   const cmcSelfIdentityFor = async (userId: string) => {
     // username: pull from the users repository (cached behind the scenes).
@@ -250,7 +249,6 @@ export default async function (api: any) {
     mall: mallForCmc,
     fetch: (url: string, init?: any) => globalThis.fetch(url, init),
     timeoutMs: 15_000,
-    rateLimiter: cmcRateLimiter,
     logger: cmcDispatchLogger,
     selfIdentityFor: cmcSelfIdentityFor,
   }, (context: any) => {
@@ -304,7 +302,6 @@ export default async function (api: any) {
     mall: mallForCmc,
     selfIdentityFor: cmcSelfIdentityFor,
     fetch: (url: string, init?: any) => globalThis.fetch(url, init),
-    rateLimiter: cmcRateLimiter,
     logger: getLogger('cmc:retry-loop'),
     userIdsProvider: async () => {
       const users = await usersRepository.getAllUsersIdAndName();

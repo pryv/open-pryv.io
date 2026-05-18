@@ -34,6 +34,7 @@ const handleChatMod = require('./handleChat.ts');
 const handleRevokeMod = require('./handleRevoke.ts');
 const handleIncomingAcceptMod = require('./handleIncomingAccept.ts');
 const handleIncomingBackChannelMod = require('./handleIncomingBackChannel.ts');
+const handleInvalidateLinkMod = require('./handleInvalidateLink.ts');
 const retryQueueMod = require('./retryQueue.ts');
 
 type SelfIdentity = { username: string; host: string };
@@ -227,6 +228,13 @@ async function dispatch (params: {
       case C.ET_SYSTEM_SCOPE_UPDATE:
         result = await handleSystemMod.handleSystemScopeUpdate({
           userId, triggerEvent: event, selfIdentity, deps,
+        });
+        break;
+      case C.ET_INVALIDATE_LINK:
+        // Per-capability lifecycle (open-link mode, Phase 2). Requester
+        // invalidates their own capability locally; no peer delivery.
+        result = await handleInvalidateLinkMod.handleInvalidateLink({
+          userId, triggerEvent: event, deps,
         });
         break;
       default:

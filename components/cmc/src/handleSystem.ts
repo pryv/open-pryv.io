@@ -24,12 +24,6 @@ const require = createRequire(import.meta.url);
  *      acceptance time — Phase E slice 2). For now, callers may pass it
  *      explicitly via the access.
  *   4. POST `notification/alert-cmc` or `notification/ack-cmc` to the peer.
- *
- * Rate-limiting: system messages flow through the per-(source,recipient)
- * sliding window before the outbound POST. This is intentional: alerts can
- * loop (peer-A pings peer-B which pings peer-A) and we want a defensive
- * ceiling. The rate-limiter is per-worker — strict cross-core enforcement
- * isn't a guarantee (see rateLimit.ts header).
  */
 
 const C = require('./constants.ts');
@@ -75,14 +69,6 @@ type AccessLike = {
   id: string;
   type?: string;
   clientData?: any;
-};
-
-type RateLimiterLike = {
-  checkAndRecord: (params: { source: string; recipient: string }) => {
-    allowed: boolean;
-    retryAfterMs?: number;
-    currentCount: number;
-  };
 };
 
 type OutboundDeps = {
@@ -166,9 +152,9 @@ async function findAccessForCollector (params: {
  * Shared dispatch core for notification/alert-cmc + notification/ack-cmc.
  *
  * Both event types share the same routing: pull counterparty access,
- * apply rate-limit, deliver to peer's collectors stream. The only thing
- * that differs is the type field carried into the peer body, so the
- * handler accepts it as a parameter.
+ * deliver to peer's collectors stream. The only thing that differs is
+ * the type field carried into the peer body, so the handler accepts it
+ * as a parameter.
  */
 const SYSTEM_EVENT_TYPES = new Set([
   C.ET_SYSTEM_ALERT,
@@ -183,7 +169,6 @@ async function handleSystemEvent (params: {
   selfIdentity: Counterparty;
   deps: {
     mall: { accesses: { get: (userId: string, params?: any) => Promise<AccessLike[]> } };
-    rateLimiter?: RateLimiterLike;
     fetch: OutboundDeps['fetch'];
     timeoutMs?: number;
     logger?: { debug: Function; warn: Function };
@@ -243,19 +228,6 @@ async function handleSystemEvent (params: {
   }
   if (typeof remoteCollectorStreamId !== 'string' || remoteCollectorStreamId.length === 0) {
     return { ok: false, reason: 'cmc-system-no-remote-collector-stream', detail: { accessId: chosen.id } };
-  }
-
-  // Rate-limit (per-worker sliding window). Source = self, recipient = peer.
-  if (deps.rateLimiter != null) {
-    const recipientKey = cmc.counterparty.username + '@' + cmc.counterparty.host;
-    const sourceKey = selfIdentity.username + '@' + selfIdentity.host;
-    const rl = deps.rateLimiter.checkAndRecord({ source: sourceKey, recipient: recipientKey });
-    if (!rl.allowed) {
-      return { ok: false, reason: 'cmc-system-rate-limited', detail: {
-        retryAfterMs: rl.retryAfterMs,
-        currentCount: rl.currentCount,
-      } };
-    }
   }
 
   let delivery: any;

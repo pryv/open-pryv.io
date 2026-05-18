@@ -8,14 +8,13 @@
 
 **Locked design:** CMC is a plugin (stream-id-namespace owner + orchestration hooks) running inside the API server process — NOT a separate storage engine. All `:_cmc:*` events, accesses, and streams live in the **standard per-user main storage (PG / Mongo)** alongside the user's other data, addressed through the normal `events.*` / `accesses.*` / `streams.*` API paths. The plugin doesn't bypass the API server to talk to storage; it dispatches through the same code paths app developers use.
 
-**CMC introduces zero new storage primitives.** Internal plugin state — the outbound-delivery retry queue (flow 4) — lives as events in a **hidden companion stream `:_cmc:_internal:retries`** inside main storage. Rate-limit counters (flow 7) live in **per-worker in-memory** sliding windows. **rqlite / platformDB / cluster-state primitives are NOT in CMC's design surface at all** — same discipline as the mTLS scoping principle in [README.md](README.md) "Future development scoping."
+**CMC introduces zero new storage primitives.** Internal plugin state — the outbound-delivery retry queue (flow 4) — lives as events in a **hidden companion stream `:_cmc:_internal:retries`** inside main storage. **rqlite / platformDB / cluster-state primitives are NOT in CMC's design surface at all** — same discipline as the mTLS scoping principle in [README.md](README.md) "Future development scoping."
 
 ## Conventions
 
 - `App` = customer code on either side (`DoctorApp`, `PatientApp`, etc.).
 - `Core-X` = the open-pryv.io master process running the API server + the CMC plugin write-hooks. Where the boundary matters (post-hook, retry-queue), the diagrams split it into `APIServer-X` and `Plugin-X`.
 - `Storage-X` = the **per-user PG / Mongo** instance for that core. Holds standard events, accesses, streams — including the user-visible `:_cmc:*` streams AND the hidden `:_cmc:_internal:*` plugin-state stream(s).
-- `Memory` (appears in flow 7) = per-worker in-process memory. Lost on worker restart; acceptable for rate-limit (counts reset means at most N× the limit briefly leaks).
 - HTTPS arrows crossing the `Plugin-X` ↔ `APIServer-Y` boundary are outbound deliveries (`/events` calls, `accesses.*` calls, etc.) authenticated by the access token embedded in the counterparty's stored `apiEndpoint`.
 
 ---
@@ -305,7 +304,6 @@ sequenceDiagram
     APIServer->>Storage: indexed lookup
     Storage-->>Plugin: matching access (one per app per counterparty)
     Plugin->>Plugin: read counterparty.apiEndpoint + remoteChatStreamId<br/>(stamped onto the access at acceptance time)
-    Plugin->>Plugin: rate-limit check<br/>(per-worker sliding window)
     Plugin->>Plugin: outbound POST /events to peer<br/>streamIds: [<remoteChatStreamId>]<br/>type: message/chat-cmc<br/>content.from server-stamped
     Plugin->>APIServer: events.update trigger status='completed'
     APIServer-->>App: socket.io push (status)
@@ -319,9 +317,9 @@ sequenceDiagram
 
 ---
 
-# 7. System channel delivery — features gate + rate-limit
+# 7. System channel delivery — features gate
 
-Same shape as chat, with an additional `features.systemMessaging` check and per-source per-recipient rate-limit.
+Same shape as chat, with an additional `features.systemMessaging` check.
 
 ```mermaid
 sequenceDiagram
@@ -329,28 +327,14 @@ sequenceDiagram
     participant App
     participant Plugin
     participant Storage as Storage<br/>(per-user PG/Mongo)
-    participant Memory as Memory<br/>(per-worker in-process)
 
     App->>Plugin: events.create notification/alert-cmc<br/>:_cmc:apps:my-app:collectors:alice--pryv-me
     Plugin->>Plugin: parse trigger stream-id<br/>→ (appCode='my-app', counterparty={username='alice', hostSlug='pryv-me'})
     Plugin->>Storage: SELECT counterparty access for (appCode, counterparty)
     Storage-->>Plugin: access + counterparty.apiEndpoint + remoteCollectorStreamId
-    Plugin->>Memory: sliding-window check (source, recipient)
-    alt over limit
-        Plugin->>App: events.update trigger status='failed'<br/>reason='cmc-system-rate-limited'
-    end
-    Plugin->>Memory: increment counter
     Plugin->>Plugin: outbound POST /events to peer<br/>streamIds: [<remoteCollectorStreamId>]<br/>content.from server-stamped
     Plugin->>App: events.update trigger status='completed'
 ```
-
-**Quota** (open question 4 in PLAN): 100 events/min per source per recipient proposed.
-
-**Rate-limit storage = per-worker in-memory.** A circular buffer of timestamps per `(source, recipient)` tuple, scoped to one Node worker. Cheap, no I/O, lost on worker restart.
-
-**Known v1 drift:** counters are not shared across workers on the same core. On an N-worker core, a recipient can briefly receive up to N× the configured limit. **Acceptable for v1** — the quota is defensive against abuse, not a strict guarantee. If drift becomes a real problem, `cluster_kv` (master-held in-process, same-core cross-worker — NOT a cross-core primitive) is the upgrade path. Cross-core drift is out of scope by the "no cross-core state in CMC" principle (README.md "Future development scoping").
-
-**Critical-level allowance:** `notification/alert-cmc` with `level: 'critical'` may bypass the standard quota (higher tier). Open question 5 in PLAN — per-level vs all-or-nothing opt-in.
 
 ---
 
@@ -586,7 +570,7 @@ Each numbered flow above corresponds to a specification document that needs writ
 | 4 | Outbound HTTP + retry queue | `FEDERATION.md` + `DATA-RESIDENCY.md` (hidden companion stream + retry event schema) |
 | 5 | Inbox write-hook | `COUNTERPARTY-ACCESSES.md` (write-hook section) |
 | 6 | Chat slug-resolution | `EVENT-SCHEMAS.md` (per-family routing) + `DATA-RESIDENCY.md` (counterparty index requirement) |
-| 7 | System channel + features + rate-limit | `EVENT-SCHEMAS.md` + `SECURITY-NOTES.md` + `DATA-RESIDENCY.md` (per-worker drift caveat) |
+| 7 | System channel + features | `EVENT-SCHEMAS.md` + `SECURITY-NOTES.md` |
 | 8 | Scope-request pre-validation | `EVENT-SCHEMAS.md` (permission-chain rules) |
 | 9 | Scope-update with `accesses.update` | `EVENT-SCHEMAS.md` |
 | 10 | Post-hook + suppression | `EVENT-SCHEMAS.md` + `OPEN-QUESTIONS.md` (cls-hooked mechanism choice) |

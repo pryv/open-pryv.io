@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
  * CMC plugin — handleSystemAlert / handleSystemAck handler tests.
  *
  * [CMCHS] covers system-channel routing: parse collector stream-id, find
- * the user's counterparty-access, rate-limit, deliver via outbound.
+ * the user's counterparty-access, deliver via outbound.
  */
 
 const assert = require('node:assert/strict');
@@ -25,7 +25,6 @@ const {
   deliverSystemToPeer,
   COLLECTOR_STREAM_ID_RE,
 } = require('../src/handleSystem.ts');
-const { RateLimiter } = require('../src/rateLimit.ts');
 const { assertOutboundUrl } = require('./_fake-assertions.cjs');
 
 function fakeMall (accesses) {
@@ -313,54 +312,6 @@ describe('[CMCHS] cmc/handleSystem', () => {
       assert.equal(r.ok, false);
       assert.equal(r.reason, 'cmc-handler-delivery-failed');
       assert.equal(r.detail.peerReason, 'network');
-    });
-  });
-
-  describe('[CMCHS-RL] handleSystem rate-limiting', () => {
-    it('[HS15] blocks when rate-limiter rejects; carries retryAfterMs', async () => {
-      const mall = fakeMall([COUNTERPARTY_ACCESS]);
-      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
-      const rateLimiter = new RateLimiter({ windowMs: 1000, maxInWindow: 1, now: () => 1000 });
-      // First call: allowed.
-      const r1 = await handleSystemAlert({
-        userId: 'u1',
-        triggerEvent: ALERT_TRIGGER,
-        selfIdentity: SELF,
-        deps: { mall, fetch, rateLimiter },
-      });
-      assert.equal(r1.ok, true);
-      assert.equal(calls.length, 1);
-      // Second call within the same window: rate-limited.
-      const r2 = await handleSystemAlert({
-        userId: 'u1',
-        triggerEvent: ALERT_TRIGGER,
-        selfIdentity: SELF,
-        deps: { mall, fetch, rateLimiter },
-      });
-      assert.equal(r2.ok, false);
-      assert.equal(r2.reason, 'cmc-system-rate-limited');
-      assert.ok((r2.detail?.retryAfterMs ?? 0) >= 0);
-      // No second outbound call when rate-limited.
-      assert.equal(calls.length, 1);
-    });
-
-    it('[HS16] no rate-limiter passed → no-op (delivery proceeds every call)', async () => {
-      const mall = fakeMall([COUNTERPARTY_ACCESS]);
-      const { fetch, calls } = fakeFetch([
-        { status: 201, body: {} },
-        { status: 201, body: {} },
-        { status: 201, body: {} },
-      ]);
-      for (let i = 0; i < 3; i++) {
-        const r = await handleSystemAlert({
-          userId: 'u1',
-          triggerEvent: ALERT_TRIGGER,
-          selfIdentity: SELF,
-          deps: { mall, fetch },
-        });
-        assert.equal(r.ok, true, 'expected ok on iteration ' + i);
-      }
-      assert.equal(calls.length, 3);
     });
   });
 

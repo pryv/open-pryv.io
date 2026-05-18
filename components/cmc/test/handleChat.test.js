@@ -11,12 +11,11 @@ const require = createRequire(import.meta.url);
  * CMC plugin — handleChat tests.
  *
  * [CMCHC] covers the message/chat-cmc trigger pipeline: parse chat stream-id,
- * resolve counterparty-access, apply rate-limit, deliver to peer.
+ * resolve counterparty-access, deliver to peer.
  */
 
 const assert = require('node:assert/strict');
 const { handleChat } = require('../src/handleChat.ts');
-const { RateLimiter } = require('../src/rateLimit.ts');
 const { assertOutboundUrl } = require('./_fake-assertions.cjs');
 
 function fakeMall (accesses) {
@@ -206,29 +205,6 @@ describe('[CMCHC] cmc/handleChat', () => {
       assert.equal(r.ok, false);
       assert.equal(r.reason, 'cmc-handler-delivery-failed');
       assert.equal(r.detail.status, 503);
-    });
-  });
-
-  describe('[CMCHC-RL] handleChat rate-limiting', () => {
-    it('[HC09] rate-limiter blocks subsequent calls in the same window', async () => {
-      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
-      const rateLimiter = new RateLimiter({ windowMs: 1000, maxInWindow: 1, now: () => 1000 });
-      const r1 = await handleChat({
-        userId: 'u1',
-        triggerEvent: CHAT_TRIGGER,
-        selfIdentity: SELF,
-        deps: { mall: fakeMall([COUNTERPARTY_ACCESS]), fetch, rateLimiter },
-      });
-      assert.equal(r1.ok, true);
-      const r2 = await handleChat({
-        userId: 'u1',
-        triggerEvent: CHAT_TRIGGER,
-        selfIdentity: SELF,
-        deps: { mall: fakeMall([COUNTERPARTY_ACCESS]), fetch, rateLimiter },
-      });
-      assert.equal(r2.ok, false);
-      assert.equal(r2.reason, 'cmc-chat-rate-limited');
-      assert.equal(calls.length, 1);
     });
   });
 });

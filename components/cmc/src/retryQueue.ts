@@ -303,7 +303,7 @@ async function runRetryLoop (params: {
  *
  * Retryable: the delivery-failed family (5xx / network / timeout) +
  * data-grant-create-failed (transient storage hiccup) +
- * delivery-threw (network exception) + rate-limited.
+ * delivery-threw (network exception).
  */
 const NON_RETRYABLE_REASONS = new Set([
   'cmc-handler-wrong-type',
