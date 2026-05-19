@@ -3,6 +3,10 @@ auth:
   adminAccessKey: some_key_yo
   trustedApps: pryv-test@http://test.pryv.local, pryv-test-no-cors@*, *@https://*.rec.la*, *@https://*.backloop.dev*
   filesReadTokenSecret: 'some_token'
+  # Required by config-validation REQUIRED_WHEN when a test override sets
+  # `services.email.enabled = true` (e.g. [G1VN], [HZCU] in account-seq).
+  # The URL itself doesn't matter for tests — they mock the SMTP transport.
+  passwordResetPageURL: 'http://test.pryv.local/reset-password'
 logs:
   console:
     active: false

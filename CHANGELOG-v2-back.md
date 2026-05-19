@@ -1,5 +1,17 @@
 # Changelog - Internal (no API impact)
 
+## feat(config): boot-time REQUIRED_WHEN validation
+
+`config/plugins/config-validation.js` now refuses to boot when a feature-gated config key is missing or unset. Previously, a missing key silently degraded a downstream consumer at request time — the trigger for this work was PR #71, where `auth.passwordResetPageURL` could be absent at runtime when a deployment had the password-reset email feature enabled. The Pug template then rendered a broken href that some mail clients silently dropped.
+
+- **NEW** `REQUIRED_WHEN` table in [config/plugins/config-validation.js](config/plugins/config-validation.js). Each entry pairs a colon-separated config path with a `when(config)` gating predicate. When the predicate is truthy, the key must resolve to a non-empty, non-sentinel value (`REPLACE …`, `${VAR}` env placeholders, `null`/`undefined`, empty string all fail) — otherwise the existing `process.exit(1)` path fires after logging every problem in one pass.
+- **Initial seed**: `auth:passwordResetPageURL` (when reset-password email is enabled — mirrors the runtime gating in `methods/account.ts:174` against `services.email.enabled`), `auth:adminAccessKey` (always), `auth:filesReadTokenSecret` (always; the multi-core bootstrap bundle already enforces this — single-core deploys had no equivalent guard), `letsEncrypt:atRestKey` + `letsEncrypt:email` (when `letsEncrypt:enabled === true`).
+- **NEW** exports: `validate`, `checkRequiredWhen`, `isMissingOrSentinel`, `REQUIRED_WHEN`. Lets the new `[CV-REQ]` unit-test suite exercise the validator with a fake config object without booting the boiler init lifecycle.
+- **NEW** `components/api-server/test/config-validation-required-when-seq.test.js` — `[CV-REQ]` describe block. Twelve unit tests cover the predicate matrix (enabled-missing / enabled-present / disabled), the `isMissingOrSentinel` classifier, and the shape of `REQUIRED_WHEN`. `-seq` because the api-server mocha hooks run a Platform DB integrity check around tests; the validator tests themselves do not touch storage.
+- **CHANGE** `config/test-config.yml` adds `auth.passwordResetPageURL: http://test.pryv.local/reset-password` so tests that override `services.email.enabled = true` (e.g. `[G1VN]`, `[HZCU]` in `account-seq.test.js`) pass the new REQUIRED_WHEN check. The URL itself is not used by the test (the SMTP transport is mocked) but the key must be present to satisfy the boot validator.
+
+Side-note on the `services.email.enabled` config shape: today it's an object (`{ welcome: true, resetPassword: true }`), inconsistent with the rest of v2's flat boolean feature-gate convention. The REQUIRED_WHEN predicate for `auth:passwordResetPageURL` mirrors the existing runtime gating in `methods/account.ts:174` to stay consistent during this change. Flattening the schema is a focused follow-up — see `_plans/XXX-Backlog/SERVICES-EMAIL-FLATTEN.md` in the macroPryv workspace.
+
 ## docs(cmc): fix wrong Monitor API in IMPLEMENTERS-GUIDE + README
 
 The CMC docs (since Plan 68 first published IMPLEMENTERS-GUIDE.md in

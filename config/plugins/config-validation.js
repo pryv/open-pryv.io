@@ -19,6 +19,70 @@ let logger; // initalized at load();
 //
 const REQUIRED_SERVICE_FIELDS = ['name', 'serial', 'home', 'support', 'terms', 'eventTypes'];
 
+// Feature-gated required keys. Each entry: when `when(config)` returns
+// truthy, `config.get(path)` must return a non-empty, non-sentinel value
+// at boot. Caught here, the missing key fails the boot — strictly better
+// than the same key being missing at request time and silently degrading
+// downstream (PR 71 root cause: `auth.passwordResetPageURL` missing →
+// password-reset email rendered with empty href).
+//
+// The existing `checkIncompleteFields` walker covers `REPLACE` sentinels
+// and unresolved `${VAR}` env placeholders on values that ARE present in
+// the tree. REQUIRED_WHEN adds detection for keys that are simply absent
+// (no entry to descend into) when the feature gating says they ought to
+// be there.
+const REQUIRED_WHEN = [
+  // Plan 71 (PR #71) root-cause fix. `services.email.enabled` is an
+  // object `{ welcome, resetPassword }` in the default config — mirror
+  // the gating logic from `methods/account.ts:174` exactly so the
+  // boot-time check tracks the runtime behaviour.
+  {
+    path: 'auth:passwordResetPageURL',
+    when: c => {
+      const enabled = c.get('services:email:enabled');
+      if (enabled === false) return false;
+      if (enabled != null && typeof enabled === 'object' && enabled.resetPassword === false) return false;
+      return true;
+    }
+  },
+  // Admin keys & secrets — always required at boot. Multi-core bootstrap
+  // already enforces `filesReadTokenSecret` via REQUIRED_AUTH_SECRETS;
+  // single-core deploys had no equivalent guard until now.
+  { path: 'auth:adminAccessKey', when: () => true },
+  { path: 'auth:filesReadTokenSecret', when: () => true },
+  // LetsEncrypt at-rest secrets — required only when the feature is on.
+  { path: 'letsEncrypt:atRestKey', when: c => c.get('letsEncrypt:enabled') === true },
+  { path: 'letsEncrypt:email', when: c => c.get('letsEncrypt:enabled') === true }
+];
+
+// A value is treated as "missing / unset" if it would render the feature
+// non-functional. Includes `null`/`undefined`, empty strings, and the two
+// sentinels (`REPLACE …`, `${VAR}`) — the sentinels are also caught by
+// `checkIncompleteFields` but a redundant problem with a clearer message
+// is strictly better operator UX than a single generic one.
+function isMissingOrSentinel (value) {
+  if (value == null) return true;
+  if (typeof value !== 'string') return false;
+  if (value === '') return true;
+  if (value.includes('REPLACE')) return true;
+  if (/\$\{[A-Z_][A-Z0-9_]*\}/.test(value)) return true;
+  return false;
+}
+
+function checkRequiredWhen (config, problems) {
+  for (const { path, when } of REQUIRED_WHEN) {
+    if (!when(config)) continue;
+    const value = config.get(path);
+    if (isMissingOrSentinel(value)) {
+      problems.push({
+        message: `required configuration key '${path}' is missing or unset — required for this deployment's feature set.`,
+        path: path.split(':'),
+        payload: { path, presentButEmpty: value === '' || (typeof value === 'string' && (value.includes('REPLACE') || /\$\{[A-Z_][A-Z0-9_]*\}/.test(value))) }
+      });
+    }
+  }
+}
+
 async function validate (config) {
   // Collect every validation problem in one pass so the operator sees the
   // full list in a single boot-and-fail cycle instead of one-per-restart.
@@ -35,6 +99,8 @@ async function validate (config) {
       payload: { missing, required: REQUIRED_SERVICE_FIELDS }
     });
   }
+
+  checkRequiredWhen(config, problems);
 
   return problems;
 }
@@ -107,5 +173,11 @@ module.exports = {
       logger.error(formatProblem(p), p.payload);
     }
     process.exit(1);
-  }
+  },
+  // Exported for unit testing — kept stable so [CV-REQ] / future tests can
+  // exercise the validator without booting the boiler init lifecycle.
+  validate,
+  checkRequiredWhen,
+  isMissingOrSentinel,
+  REQUIRED_WHEN
 };
