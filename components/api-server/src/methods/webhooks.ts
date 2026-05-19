@@ -32,7 +32,8 @@ type Access = {
 };
 export default async function produceWebhooksApiMethods (api: any) {
   const config = await ready();
-  const wehbooksSettings = config.get('webhooks');
+  // Plan 70 §2C: lazy getter instead of slice capture.
+  const getWebhooks = () => config.get('webhooks');
   const storageLayer = await getStorageLayer();
   const logger = getLogger('methods:webhooks');
 
@@ -102,8 +103,8 @@ export default async function produceWebhooksApiMethods (api: any) {
       user: context.user,
       accessId: context.access.id,
       webhooksRepository,
-      runsSize: wehbooksSettings.runsSize,
-      minIntervalMs: wehbooksSettings.minIntervalMs
+      runsSize: getWebhooks().runsSize,
+      minIntervalMs: getWebhooks().minIntervalMs
     }, params));
 
     try {

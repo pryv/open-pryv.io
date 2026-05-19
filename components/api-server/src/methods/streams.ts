@@ -27,7 +27,8 @@ const Readable = require('stream').Readable;
  */
 export default async function (api: any) {
   const config = await ready();
-  const updatesSettings = config.get('updates');
+  // Plan 70 §2C: lazy getter instead of slice capture.
+  const getUpdates = () => config.get('updates');
   const mall = await getMall();
   // RETRIEVAL
   api.register('streams.get', commonFns.getParamsValidation(methodsSchema.get.params), checkAuthorization, applyDefaultsForRetrieval, findAccessibleStreams, includeDeletionsIfRequested);
@@ -208,7 +209,7 @@ export default async function (api: any) {
     }
   }
   // UPDATE
-  api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), commonFns.catchForbiddenUpdate(streamSchema('update'), updatesSettings.ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
+  api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), commonFns.catchForbiddenUpdate(streamSchema('update'), () => getUpdates().ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
   async function applyPrerequisitesForUpdate (context: any, params: any, result: any, next: any) {
     if (params?.update?.parentId === params.id) {
       return next(errors.invalidOperation('The provided "parentId" is the same as the stream\'s "id".', params.update));

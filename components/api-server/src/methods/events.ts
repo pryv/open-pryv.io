@@ -49,9 +49,17 @@ const typeRepo = new TypeRepository();
  */
 export default async function (api: any) {
   const config = await ready();
-  const authSettings = config.get('auth');
+  // Plan 70 §2C: lazy getters instead of slice captures. Highest-
+  // severity audit row in the plan-70 PLAN.md — `filesReadTokenSecret`
+  // drives the HMAC of every attachment file-read token; if the
+  // captured slice were undefined at api-register time, every
+  // attachment download would silently HMAC against undefined. The
+  // §2A REQUIRED_WHEN check guarantees the key is populated and the
+  // getter pattern guarantees mid-process config changes (tests +
+  // future Wave 2 sources) reach the per-request callsites.
+  const getAuth = () => config.get('auth');
+  const getUpdates = () => config.get('updates');
   const eventTypesUrl = config.get('service:eventTypes');
-  const updatesSettings = config.get('updates');
   const usersRepository = await getUsersRepository();
   const mall = await getMall();
   const platform = await getPlatform();
@@ -113,7 +121,7 @@ export default async function (api: any) {
     eventsGetUtils.streamQueryAddHiddenStreams,
     eventsGetUtils.findEventsFromStore.bind(
       null,
-      authSettings.filesReadTokenSecret
+      () => getAuth().filesReadTokenSecret
     ),
     includeLocalStorageDeletionsIfRequested
   );
@@ -558,7 +566,7 @@ export default async function (api: any) {
     'events.update',
     commonFns.getParamsValidation(methodsSchema.update.params),
     commonFns.catchForbiddenUpdate(eventSchema('update'),
-      updatesSettings.ignoreProtectedFields, logger),
+      () => getUpdates().ignoreProtectedFields, logger),
     normalizeStreamIdAndStreamIds,
     applyPrerequisitesForUpdate,
     validateEventContentAndCoerce,
@@ -915,7 +923,7 @@ export default async function (api: any) {
       return;
     }
     attachments.forEach(function (att: any) {
-      att.readToken = utils.encryption.fileReadToken(att.id, access.id, access.token, authSettings.filesReadTokenSecret);
+      att.readToken = utils.encryption.fileReadToken(att.id, access.id, access.token, getAuth().filesReadTokenSecret);
     });
     return attachments;
   }

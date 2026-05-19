@@ -33,11 +33,14 @@ function withTrailingSlash (url: any) {
 export default async function (api: any) {
   const config = await ready();
   const storageLayer = await getStorageLayer();
-  const servicesSettings = config.get('services');
+  // Plan 70 §2C: pass a lazy getter to Registration instead of a
+  // captured slice. Welcome-mail send path now reads live `services`
+  // config per-use.
+  const getServicesSettings = () => config.get('services');
   const usersRepository = await getUsersRepository();
   const passwordRules = await getPasswordRules();
   // REGISTER
-  const registration = new Registration(null, storageLayer, servicesSettings);
+  const registration = new Registration(null, storageLayer, getServicesSettings);
   await registration.init();
   const platform = await getPlatform();
 

@@ -27,7 +27,9 @@ export default async function (systemAPI: any, api: any) {
   const config = await ready();
   const logger = getLogger('system');
   const storageLayer = await getStorageLayer();
-  const registration = new Registration(logger, storageLayer, config.get('services'));
+  // Plan 70 §2C: pass a lazy getter to Registration so the welcome-mail
+  // send path reads live `services` config per-use.
+  const registration = new Registration(logger, storageLayer, () => config.get('services'));
   await registration.init();
   const usersRepository = await getUsersRepository();
   const userProfileStorage = storageLayer.profile;

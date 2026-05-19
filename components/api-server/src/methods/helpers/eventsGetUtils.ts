@@ -362,7 +362,12 @@ async function streamQueryAddHiddenStreams (context: any, params: any, result: a
  * - Create a copy of the params per query
  * - Add specific stream queries to each of them
  */
-async function findEventsFromStore (filesReadTokenSecret: any, context: any, params: any, result: any, next: any) {
+// Plan 70 §2C: `secretOrGetter` accepts either a literal string (legacy
+// shape) OR a 0-arg getter function. When a getter is passed, the value
+// is resolved per-request from the live config singleton — config.set()
+// and injectTestConfig() reach this api-register-time-bound callsite.
+async function findEventsFromStore (secretOrGetter: any, context: any, params: any, result: any, next: any) {
+  const filesReadTokenSecret = typeof secretOrGetter === 'function' ? secretOrGetter() : secretOrGetter;
   if (params.arrayOfStreamQueriesWithStoreId?.length === 0) {
     result.events = [];
     return next();
