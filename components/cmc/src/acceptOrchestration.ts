@@ -237,6 +237,14 @@ async function deliverAcceptViaCapability (params: {
       type: C.ET_ACCEPT,
       content: {
         from: params.counterparty,
+        // Stamp capabilityId so handleIncomingAccept can locate the
+        // capability access on the requester side and transition its
+        // single-use lifecycle state from 'open' to 'consumed' (or
+        // append to acceptedBy[] in open-link mode). Without this,
+        // the state-flip block in handleIncomingAccept silently no-ops
+        // and a second accept on the same URL succeeds instead of
+        // being rejected with `cmc-capability-consumed`.
+        capabilityId: params.capabilityId,
         grantedAccess: { apiEndpoint: params.dataGrantApiEndpoint },
         features: params.features ?? null,
         requesterAppCode: params.requesterAppCode ?? null,
@@ -269,6 +277,10 @@ async function deliverRefuseViaCapability (params: {
       type: C.ET_REFUSE,
       content: {
         from: params.counterparty,
+        // See deliverAcceptViaCapability above — same rationale for
+        // stamping capabilityId so the requester-side handler can
+        // transition the capability state on refuse.
+        capabilityId: params.capabilityId,
         reason: params.reason ?? null,
       },
     },
