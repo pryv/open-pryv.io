@@ -297,10 +297,21 @@ async function handleIncomingAccept (params: {
   // provisioned and lazy-provision didn't run on this code path).
   if (acceptEvent.streamIds?.includes(C.NS_INBOX) !== true && deps.mall.events != null) {
     try {
+      // Augment the mirror's content with the doctor-side back-channel
+      // accessId we just minted. The accepter's plugin couldn't have
+      // included this — only the requester's plugin knows the
+      // back-channel access id. Without it the doctor's app has no
+      // discoverable way to find the access for later revoke/scope-update
+      // operations (`cmc.revokeRelationship({accessId, scopeStreamId})`
+      // needs this value).
+      const mirrorContent: any = {
+        ...(acceptEvent.content || {}),
+        backChannelAccessId: access.id,
+      };
       await (deps.mall as any).events.create(userId, {
         streamIds: [C.NS_INBOX],
         type: C.ET_ACCEPT,
-        content: { ...(acceptEvent.content || {}) },
+        content: mirrorContent,
       });
     } catch (err: any) {
       deps.logger?.warn?.('cmc/handleIncomingAccept: inbox mirror failed (non-fatal)', {

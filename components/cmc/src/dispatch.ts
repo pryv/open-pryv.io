@@ -254,6 +254,13 @@ async function dispatch (params: {
       dataGrantAccessId: result?.dataGrantAccessId,
       offerEventId: result?.offerEventId,
       capabilityId: result?.capabilityId,
+      // For handleAccept (accepter side): stamp the resolved REQUESTER
+      // identity so listAcceptedRelationships's mapper picks up
+      // `content.from = {username, host}` instead of falling through to
+      // `content.acceptedBy` (which carries only the accepter's own
+      // data-grant apiEndpoint). Without this the patient app can't
+      // identify the doctor on each relationship row.
+      from: result?.requesterIdentity,
       // handleIncomingAccept fields:
       backChannelAccessId: result?.backChannelAccessId,
       anchorStreamIds: result?.anchorStreamIds,

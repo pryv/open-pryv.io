@@ -51,6 +51,7 @@ type AcceptHandlerResult =
       offerEventId: string;
       backChannelApiEndpoint: string | null; // filled later when requester returns it
       anchorStreamIds: string[];             // chats/collectors anchors created on this side
+      requesterIdentity: { username: string; host: string }; // stamped onto trigger.content.from by dispatch
     }
   | {
       ok: false;
@@ -274,6 +275,14 @@ async function handleAccept (params: {
     offerEventId: offer.id,
     backChannelApiEndpoint: null, // filled in by a follow-up pass when the requester returns it
     anchorStreamIds: preCreatedAnchorIds,
+    // Return the resolved counterparty (the REQUESTER's identity) so the
+    // dispatcher can stamp `content.from = {username, host}` on the
+    // accept trigger event. Without this, listAcceptedRelationships's
+    // mapper falls back to `content.acceptedBy` (which carries the
+    // accepter's own data-grant apiEndpoint, not the requester identity),
+    // and the patient app can't discover WHICH doctor each relationship
+    // belongs to.
+    requesterIdentity: counterparty,
   };
 }
 
