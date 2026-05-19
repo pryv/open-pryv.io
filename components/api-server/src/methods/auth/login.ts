@@ -13,7 +13,7 @@ const errors = require('errors').factory;
 const methodsSchema = require('api-server/src/schema/authMethods.ts');
 const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users/index.ts');
 const { getStorageLayer } = require('storage');
-const { getConfig } = require('@pryv/boiler');
+const { ready } = require('@pryv/boiler');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const timestamp = require('unix-timestamp');
 const { getMFAService, getMFASessionStore, Profile: MFAProfile } = require('business/src/mfa/index.ts');
@@ -30,7 +30,7 @@ export default async function (api: any) {
   const userAccessesStorage = storageLayer.accesses;
   const userProfileStorage = storageLayer.profile;
   const sessionsStorage = storageLayer.sessions;
-  const config = await getConfig();
+  const config = await ready();
   const authSettings = config.get('auth');
   const passwordRules = await getPasswordRules();
   // Lazy per-request read so config.injectTestConfig() in tests is honored.

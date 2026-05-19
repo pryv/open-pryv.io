@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const timestamp = require('unix-timestamp');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 // cnan be overriden;
-const { getConfig } = require('@pryv/boiler');
+const { ready } = require('@pryv/boiler');
 // NOTE There's really no good way to wait for an asynchronous process in a
 //  synchronous method. But we don't want to modify all the code that uses
 //  setCommonMeta either; ideally, we'd have a chain of dependencies leading
@@ -24,7 +24,7 @@ let config: any = null;
  * If no parameter is provided, loads the configuration. Otherwise takes the provided loaded settings.
  */
 export const loadSettings = async function () {
-  config = await getConfig();
+  config = await ready();
   version = await getAPIVersion();
 };
 /**

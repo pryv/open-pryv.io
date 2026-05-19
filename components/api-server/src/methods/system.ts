@@ -13,7 +13,7 @@ const methodsSchema = require('../schema/systemMethods.ts');
 const string = require('./helpers/string.ts');
 const { fromCallback } = require('utils');
 const { getStorageLayer, getUsersLocalIndex } = require('storage');
-const { getConfig, getLogger } = require('@pryv/boiler');
+const { ready, getLogger } = require('@pryv/boiler');
 const { getUsersRepository } = require('business/src/users/index.ts');
 
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
@@ -24,7 +24,7 @@ const { platform } = require('platform');
  * @param api The user-facing API, used to compute usage stats per method
  */
 export default async function (systemAPI: any, api: any) {
-  const config = await getConfig();
+  const config = await ready();
   const logger = getLogger('system');
   const storageLayer = await getStorageLayer();
   const registration = new Registration(logger, storageLayer, config.get('services'));

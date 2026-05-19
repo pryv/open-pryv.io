@@ -13,7 +13,7 @@ const commonFns = require('./helpers/commonFunctions.ts');
 const mailing = require('./helpers/mailing.ts');
 const methodsSchema = require('../schema/accountMethods.ts');
 
-const { getConfig, getLogger } = require('@pryv/boiler');
+const { ready, getLogger } = require('@pryv/boiler');
 const logger = getLogger('methods:account');
 const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
@@ -27,7 +27,7 @@ const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require(
 const accountStreams = require('business/src/system-streams/index.ts');
 
 export default async function (api: any) {
-  const config = await getConfig();
+  const config = await ready();
   const authSettings = config.get('auth');
   const servicesSettings = config.get('services');
   const storageLayer = await getStorageLayer();

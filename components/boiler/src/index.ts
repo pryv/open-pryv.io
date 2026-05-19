@@ -26,9 +26,30 @@ const boiler = {
    */
   getLogger: logging.getLogger,
   /**
-   * Prefered way to get the configuration
+   * Prefered way to get the configuration. Resolves once the sync +
+   * async init lifecycle has completed.
+   *
+   * `ready()` is the stronger-contract sibling; prefer it from any
+   * module that needs to assert that config is fully loaded AND
+   * validated. `getConfig()` is retained for callers that only need
+   * "loaded" semantics.
    */
   getConfig,
+  /**
+   * Resolves once the configuration is fully loaded AND has passed
+   * any registered boot-time validators. Today this is semantically
+   * equivalent to `getConfig()` because the `config-validation`
+   * plugin runs as part of `initASync()` and `process.exit(1)`s on
+   * problems — so reaching `ready()` is itself the validation pass.
+   *
+   * Use this in factories that capture or read config: it documents
+   * the contract ("config is ready to trust") AT THE CALL SITE
+   * instead of relying on tribal knowledge about which plugins ran.
+   * Future async loaders (PlatformDB-backed config, remote-file
+   * pulls) will hook into `ready()` to extend the gate without
+   * touching every consumer.
+   */
+  ready,
   /**
    * Sync access to the fully-loaded configuration. Throws if boiler
    * init() hasn't been called or if async config-loading is still
@@ -114,6 +135,29 @@ async function getConfig () {
 }
 
 /**
+ * Stronger-contract sibling of `getConfig()`. Resolves once
+ * configuration is fully loaded AND has passed any registered
+ * boot-time validators (today: the `config-validation` plugin in
+ * `config/plugins/config-validation.js` registered via `extraConfigs`,
+ * which `process.exit(1)`s if `REQUIRED_WHEN` fails or `REPLACE` /
+ * `${VAR}` sentinels remain in the tree).
+ *
+ * On the current codebase this is semantically equivalent to
+ * `getConfig()` — by the time `initASync` resolves, every registered
+ * `plugin` / `pluginAsync` (including config-validation) has had its
+ * `load(store)` invoked. The validator is `process.exit(1)`, so if
+ * we reach this point, validation passed.
+ *
+ * Use this in factories: it documents the "trust this config"
+ * contract AT THE CALL SITE. Future async sources (PlatformDB-backed
+ * config, remote-file refresh, Wave 2 of the boiler-config plan)
+ * will extend this gate without touching every consumer.
+ */
+async function ready () {
+  return getConfig();
+}
+
+/**
  * Sync access to the fully-loaded config. Throws if boiler hasn't been
  * init()'d or if async config-loading is still pending. Prefer this
  * over `getConfigUnsafe()` everywhere except the two known pre-init
@@ -160,5 +204,5 @@ function getConfigUnsafe (warnOnly?: any) {
 // require('@pryv/boiler')` (and the deep `require('@pryv/boiler')` whole-
 // module pattern) both keep working under Node 24 require(esm).
 const { getLogger } = logging;
-export { boiler, getLogger, getConfig, getConfigSync, getConfigUnsafe, init };
+export { boiler, getLogger, getConfig, ready, getConfigSync, getConfigUnsafe, init };
 export default boiler;

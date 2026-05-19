@@ -12,7 +12,7 @@ const methodsSchema = require('api-server/src/schema/authMethods.ts');
 const Registration = require('business/src/auth/registration.ts').default;
 const { getPlatform } = require('platform');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
-const { getConfig } = require('@pryv/boiler');
+const { ready } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 const { getPasswordRules, getUsersRepository } = require('business').users;
 
@@ -31,7 +31,7 @@ function withTrailingSlash (url: any) {
  *
  */
 export default async function (api: any) {
-  const config = await getConfig();
+  const config = await ready();
   const storageLayer = await getStorageLayer();
   const servicesSettings = config.get('services');
   const usersRepository = await getUsersRepository();

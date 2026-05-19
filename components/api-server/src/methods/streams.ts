@@ -16,7 +16,7 @@ const string = require('./helpers/string.ts');
 const utils = require('utils');
 const treeUtils = utils.treeUtils;
 const { APIError } = require('errors/src/APIError.ts');
-const { getLogger, getConfig } = require('@pryv/boiler');
+const { getLogger, ready } = require('@pryv/boiler');
 const logger = getLogger('methods:streams');
 const { getMall, storeDataUtils } = require('mall');
 const { pubsub } = require('messages');
@@ -26,7 +26,7 @@ const Readable = require('stream').Readable;
  *
  */
 export default async function (api: any) {
-  const config = await getConfig();
+  const config = await ready();
   const updatesSettings = config.get('updates');
   const mall = await getMall();
   // RETRIEVAL

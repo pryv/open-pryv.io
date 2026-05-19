@@ -18,7 +18,7 @@ const Webhook = require('business').webhooks.Webhook;
 const WebhooksRepository = require('business').webhooks.Repository;
 
 const { pubsub } = require('messages');
-const { getLogger, getConfig } = require('@pryv/boiler');
+const { getLogger, ready } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 
 type WebhooksSettingsHolder = {
@@ -31,7 +31,7 @@ type Access = {
   isApp(): Boolean;
 };
 export default async function produceWebhooksApiMethods (api: any) {
-  const config = await getConfig();
+  const config = await ready();
   const wehbooksSettings = config.get('webhooks');
   const storageLayer = await getStorageLayer();
   const logger = getLogger('methods:webhooks');

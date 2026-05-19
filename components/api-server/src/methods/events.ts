@@ -29,7 +29,7 @@ const { getAPIVersion } = require('middleware/src/project_version.ts');
 
 const { TypeRepository, isSeriesType } = require('business').types;
 
-const { getLogger, getConfig } = require('@pryv/boiler');
+const { getLogger, ready } = require('@pryv/boiler');
 const { getPlatform } = require('platform');
 const { getStorageLayer } = require('storage');
 const { ApiEndpoint } = require('utils');
@@ -48,7 +48,7 @@ const typeRepo = new TypeRepository();
  * Events API methods implementations.
  */
 export default async function (api: any) {
-  const config = await getConfig();
+  const config = await ready();
   const authSettings = config.get('auth');
   const eventTypesUrl = config.get('service:eventTypes');
   const updatesSettings = config.get('updates');

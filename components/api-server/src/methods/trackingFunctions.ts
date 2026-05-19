@@ -7,14 +7,14 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const updateAccessUsageStats = require('./helpers/updateAccessUsageStats.ts').default;
-const { getConfig } = require('@pryv/boiler');
+const { ready } = require('@pryv/boiler');
 
 /**
  * Call tracking functions, to be registered after all methods have been registered.
  *
  */
 export default async function (api: any) {
-  const config = await getConfig();
+  const config = await ready();
   if (!config.get('accessTracking:isActive')) { return; }
   const updateAccessUsage = await updateAccessUsageStats();
   api.register('*', updateAccessUsage);

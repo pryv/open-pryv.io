@@ -11,7 +11,7 @@ const errors = require('errors').factory;
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/mfaMethods.ts').default;
 const { getStorageLayer } = require('storage');
-const { getConfig } = require('@pryv/boiler');
+const { ready } = require('@pryv/boiler');
 const { getMFAService, getMFASessionStore, Profile } = require('business/src/mfa/index.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 
@@ -20,7 +20,7 @@ const PROFILE_ID = 'private';
 export default async function (api: any) {
   const storageLayer = await getStorageLayer();
   const userProfileStorage = storageLayer.profile;
-  const config = await getConfig();
+  const config = await ready();
 
   // Read the MFA config block per-invocation so `config.injectTestConfig()`
   // in tests is honored.
