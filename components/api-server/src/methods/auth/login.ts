@@ -13,7 +13,7 @@ const errors = require('errors').factory;
 const methodsSchema = require('api-server/src/schema/authMethods.ts');
 const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users/index.ts');
 const { getStorageLayer } = require('storage');
-const { getConfig } = require('@pryv/boiler');
+const { ready } = require('@pryv/boiler');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const timestamp = require('unix-timestamp');
 const { getMFAService, getMFASessionStore, Profile: MFAProfile } = require('business/src/mfa/index.ts');
@@ -30,15 +30,18 @@ export default async function (api: any) {
   const userAccessesStorage = storageLayer.accesses;
   const userProfileStorage = storageLayer.profile;
   const sessionsStorage = storageLayer.sessions;
-  const config = await getConfig();
-  const authSettings = config.get('auth');
-  const passwordRules = await getPasswordRules();
-  // Lazy per-request read so config.injectTestConfig() in tests is honored.
+  const config = await ready();
+  // Plan 70 §2C: lazy getters instead of slice captures. The pre-existing
+  // `getMfaConfig` already followed this pattern for the reason called
+  // out in its comment; §2C generalises that to every config slice this
+  // factory reads.
+  const getAuth = () => config.get('auth');
   const getMfaConfig = () => config.get('services:mfa');
+  const passwordRules = await getPasswordRules();
 
   api.register('auth.login',
     commonFns.getParamsValidation(methodsSchema.login.params),
-    commonFns.getTrustedAppCheck(authSettings),
+    commonFns.getTrustedAppCheck(getAuth),
     applyPrerequisitesForLogin,
     checkPassword,
     openSession,

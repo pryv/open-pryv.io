@@ -8,13 +8,13 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const Deletion = require('business/src/auth/deletion.ts').default;
 const { getStorageLayer } = require('storage');
-const { getLogger, getConfig } = require('@pryv/boiler');
+const { getLogger, ready } = require('@pryv/boiler');
 /**
  * Auth API methods implementations.
  *
  */
 export default async function (api: any) {
-  const config = await getConfig();
+  const config = await ready();
   const logging = getLogger('delete');
   const storageLayer = await getStorageLayer();
   const deletion = new Deletion(logging, storageLayer, config);

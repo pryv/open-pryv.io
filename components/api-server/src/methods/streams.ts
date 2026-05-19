@@ -16,7 +16,7 @@ const string = require('./helpers/string.ts');
 const utils = require('utils');
 const treeUtils = utils.treeUtils;
 const { APIError } = require('errors/src/APIError.ts');
-const { getLogger, getConfig } = require('@pryv/boiler');
+const { getLogger, ready } = require('@pryv/boiler');
 const logger = getLogger('methods:streams');
 const { getMall, storeDataUtils } = require('mall');
 const { pubsub } = require('messages');
@@ -26,8 +26,9 @@ const Readable = require('stream').Readable;
  *
  */
 export default async function (api: any) {
-  const config = await getConfig();
-  const updatesSettings = config.get('updates');
+  const config = await ready();
+  // Plan 70 §2C: lazy getter instead of slice capture.
+  const getUpdates = () => config.get('updates');
   const mall = await getMall();
   // RETRIEVAL
   api.register('streams.get', commonFns.getParamsValidation(methodsSchema.get.params), checkAuthorization, applyDefaultsForRetrieval, findAccessibleStreams, includeDeletionsIfRequested);
@@ -208,7 +209,7 @@ export default async function (api: any) {
     }
   }
   // UPDATE
-  api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), commonFns.catchForbiddenUpdate(streamSchema('update'), updatesSettings.ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
+  api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), commonFns.catchForbiddenUpdate(streamSchema('update'), () => getUpdates().ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
   async function applyPrerequisitesForUpdate (context: any, params: any, result: any, next: any) {
     if (params?.update?.parentId === params.id) {
       return next(errors.invalidOperation('The provided "parentId" is the same as the stream\'s "id".', params.update));

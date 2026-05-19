@@ -1,14 +1,34 @@
 # Changelog - API Changes
 
+## Boot-time `REQUIRED_WHEN` validation — refuse to start on misconfigured feature gates
+
+The boiler's `config-validation` plugin now refuses to boot when a feature-gated configuration key is missing or carries a sentinel value (`REPLACE …`, unresolved `${VAR}`, empty string, `null`). Replaces the previous silent-degradation behaviour — e.g. password-reset emails rendered with a broken `<a href="?resetToken=…">` when `auth.passwordResetPageURL` was absent at request time.
+
+**Upgrade check before `2.0.0-pre.4`** — confirm your `override-config.yml` (or the platform-issued bootstrap bundle) sets:
+
+| Key | Required when |
+|---|---|
+| `auth.adminAccessKey` | Always |
+| `auth.filesReadTokenSecret` | Always (multi-core bootstrap bundles already set this; single-core deploys had no equivalent guard) |
+| `auth.passwordResetPageURL` | `services.email.enabled` is `true` OR `services.email.enabled.resetPassword !== false` |
+| `letsEncrypt.atRestKey` | `letsEncrypt.enabled: true` |
+| `letsEncrypt.email` | `letsEncrypt.enabled: true` |
+
+If any of these were unset or carried a `REPLACE_WITH_…` sentinel on `2.0.0-pre.3`, the core will exit with a non-zero status on `pre.4` boot. The error log names every missing key in a single pass so the fix is one config edit + one restart.
+
+Pryv.me production (use1 + euc1) and HDS production deploys (api-ch1, demo-api-se1) have all five keys populated — no operator action expected. Dokku quickstart / `INSTALL.md` deploys that booted with `default-config.yml` placeholders left in place will need to fill them in before upgrading.
+
+Follow-up to PR #71 (see "Password-reset email" entry below) — the request-time fallback shipped in `pre.3` has been removed; boot-time `REQUIRED_WHEN` makes it structurally unreachable in valid deployments.
+
 ## Password-reset email: robust against late-bound `auth.passwordResetPageURL`
+
+> Superseded as of `2.0.0-pre.4` — the request-time fallback documented here was removed and replaced by the boot-time `REQUIRED_WHEN` check above. The `RESET_LINK` Pug substitution is retained.
 
 The `account.requestPasswordReset` mail-sending step now re-reads `auth.passwordResetPageURL` from the config store at request time instead of relying on the module-init `auth` slice capture. The captured slice can be missing values populated later by override-config or extraConfig plugins; when that happened, the Pug template rendered `<a href="?resetToken=…">` — a relative URL with no scheme/host that Outlook/Apple Mail QuickLook silently dropped, leaving the user with an invisible link. Observed in HDS production.
 
-- **Re-read at request time** with a fallback to the captured value (back-compat).
-- **Warn at request time** when `auth.passwordResetPageURL` is missing, so operators see a clear server-side signal instead of debugging from user inboxes.
+- **Re-read at request time** with a fallback to the captured value (back-compat). — *removed in `pre.4`; the boot-time check above replaces it.*
+- **Warn at request time** when `auth.passwordResetPageURL` is missing, so operators see a clear server-side signal instead of debugging from user inboxes. — *removed in `pre.4`; the boot-time check above replaces it.*
 - **NEW Pug substitution `RESET_LINK`** — pre-composed full URL (`passwordResetPageURL + '?resetToken=' + encodeURIComponent(token)`). Existing templates that use the two-substitution form `#{RESET_URL}?resetToken=#{RESET_TOKEN}` keep working unchanged; new/updated templates can switch to the single `#{RESET_LINK}` form for robustness against the same class of bug.
-
-Note: a follow-up will move this check to boot-time validation (fail-fast if the URL is missing while password-reset email is enabled) instead of warning at request time. Tracked separately.
 
 ## Cross-account Messaging & Consent (CMC plugin)
 

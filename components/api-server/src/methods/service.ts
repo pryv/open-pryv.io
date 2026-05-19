@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
-const { getConfig } = require('@pryv/boiler');
+const { ready } = require('@pryv/boiler');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 export default function (api: any) {
   api.register('service.info', getServiceInfo);
@@ -17,7 +17,7 @@ export default function (api: any) {
     // changes, or admin APIs updating `service.*`) are picked up without
     // a process restart. The earlier cache-on-first-call behaviour also
     // leaked service state across tests sharing a single api-server.
-    const config = await getConfig();
+    const config = await ready();
     const serviceInfo: any = Object.assign({}, config.get('service') || {});
     // Auto-derive `features.noHF` from cluster.hfsWorkers. lib-js's
     // `Service.supportsHF()` (and any other SDK following the same

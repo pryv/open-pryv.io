@@ -18,7 +18,7 @@ const Webhook = require('business').webhooks.Webhook;
 const WebhooksRepository = require('business').webhooks.Repository;
 
 const { pubsub } = require('messages');
-const { getLogger, getConfig } = require('@pryv/boiler');
+const { getLogger, ready } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 
 type WebhooksSettingsHolder = {
@@ -31,8 +31,9 @@ type Access = {
   isApp(): Boolean;
 };
 export default async function produceWebhooksApiMethods (api: any) {
-  const config = await getConfig();
-  const wehbooksSettings = config.get('webhooks');
+  const config = await ready();
+  // Plan 70 §2C: lazy getter instead of slice capture.
+  const getWebhooks = () => config.get('webhooks');
   const storageLayer = await getStorageLayer();
   const logger = getLogger('methods:webhooks');
 
@@ -102,8 +103,8 @@ export default async function produceWebhooksApiMethods (api: any) {
       user: context.user,
       accessId: context.access.id,
       webhooksRepository,
-      runsSize: wehbooksSettings.runsSize,
-      minIntervalMs: wehbooksSettings.minIntervalMs
+      runsSize: getWebhooks().runsSize,
+      minIntervalMs: getWebhooks().minIntervalMs
     }, params));
 
     try {

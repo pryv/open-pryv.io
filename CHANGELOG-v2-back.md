@@ -1,5 +1,45 @@
 # Changelog - Internal (no API impact)
 
+## docs: storage-isolation keys for parallel tests
+
+New `docs/storage-isolation-for-parallel-tests.md` enumerates every config key that a parallel-test fixture must override per mocha worker to avoid cross-worker collisions on shared PG databases, SQLite paths, ports, and rqlite endpoints. Audit confirmed every relevant key is reachable via `config.set()` and respected by its consumer — no code change needed; the doc is the canonical input for the per-worker test-helper that Plan 61 will ship.
+
+Hardcoded fallbacks in `bin/master.js` (rqlite URL `http://localhost:4001`, raftPort `4002`, dataDir `var-pryv/rqlite-data`) and `components/api-server/src/server.ts` (`http:hfsPort` default `4000`) and `components/messages/src/tcp_pubsub.ts` (`tcpBroker:port` default `4222`) are intentional for single-core production deploys; the per-worker fixture overrides them explicitly before `ready()` resolves. The doc pins the convention: code touching these keys must read through `config.get()` without an in-code literal fallback that would mask a missing config — let REQUIRED_WHEN catch it at boot.
+
+## feat(config): lazy-getter sweep across factories + helpers (plan 70 §2C)
+
+Replace `const x = config.get('slice')` factory captures with lazy getters across `components/api-server/src/methods/*.ts` + the helpers that consumed captured slices (`commonFunctions.getTrustedAppCheck`, `commonFunctions.catchForbiddenUpdate`, `eventsGetUtils.findEventsFromStore`). After this commit, `config.set()` / `injectTestConfig()` / a future async config source reach every per-request callsite without a restart, and the PR-71-class bug shape (factory slice frozen at module init, missing a value populated later by override / plugin / extraConfig) is structurally impossible.
+
+- **CHANGE** `methods/account.ts`: replace `authSettings`/`servicesSettings` captures with `getAuth`/`getEmail` getters. Drop the PR-71 request-time fallback (`auth.passwordResetPageURL` re-read + warn) — the §2A REQUIRED_WHEN check now guarantees the key is populated at boot. The `RESET_LINK` Pug substitution stays because it's a real ergonomics improvement.
+- **CHANGE** `methods/auth/login.ts`: `getAuth` getter alongside the pre-existing `getMfaConfig`.
+- **CHANGE** `methods/auth/register.ts`: pass a getter function to `new Registration()`.
+- **CHANGE** `methods/events.ts`: `getAuth` + `getUpdates` getters. The `filesReadTokenSecret` HMAC seed and `updates.ignoreProtectedFields` validator gate are the highest-severity audit rows — every attachment file-read token and every `events.update` validator depends on them.
+- **CHANGE** `methods/streams.ts`, `methods/system.ts`, `methods/webhooks.ts`: lazy getters for `updates`, `services`, `webhooks` respectively.
+- **CHANGE** `methods/helpers/commonFunctions.ts::getTrustedAppCheck`: signature changes from `(authSettings)` to `(getAuthSettings)`. The closure-cached `trustedApps` list is dropped — re-parsed per-request from the fresh slice. Negligible cost; strictly more correct.
+- **CHANGE** `methods/helpers/commonFunctions.ts::catchForbiddenUpdate`: second arg `ignoreProtectedFieldUpdates` → `ignoreOrGetter` (back-compat: accepts literal OR function via `typeof === 'function'` branch).
+- **CHANGE** `methods/helpers/eventsGetUtils.ts::findEventsFromStore`: first arg `filesReadTokenSecret` → `secretOrGetter` (same back-compat shape).
+- **CHANGE** `business/src/auth/registration.ts`: constructor stores `getServicesSettings` (function); accepts literal OR getter. Welcome-mail send path reads `this.getServicesSettings()?.email` per-call.
+
+## feat(boiler): config.ready() accessor + factory sweep (plan 70 §2B)
+
+New `ready()` export on `@pryv/boiler` — the stronger-contract sibling of `getConfig()`. Documents the "config is ready to trust" contract at the call site: by the time it resolves, sync + async init has completed AND any registered boot-time validators (today: the `config-validation` plugin's REQUIRED_WHEN + REPLACE-sentinel walk, which `process.exit(1)`s on problems) have run. Future Wave 2 work (PlatformDB-backed config, remote-file refresh) will extend the gate without touching every consumer.
+
+- **NEW** `ready()` in `components/boiler/src/index.ts`. On the current codebase semantically equivalent to `getConfig()` — the value-add is the documented contract + the hook point for Wave 2.
+- **CHANGE** 14 factory call sites under `components/api-server/src/methods/*.ts` (account, mfa, service, system, utility, auth/delete, auth/register, helpers/setCommonMeta, events, streams, trackingFunctions, webhooks, auth/login, helpers/updateAccessUsageStats) now use `await ready()` instead of `await getConfig()`. `getConfig()`, `getConfigSync()`, `getConfigUnsafe()` remain exported and unchanged for non-factory consumers.
+- **NEW** `components/api-server/test/boiler-ready-seq.test.js` — `[CONFIG-RDY]` describe block. Six unit tests pin the exported shape, the identity with `getConfig()` / `getConfigSync()`, the resolved test-config values, idempotency, and the key contract that Plan 70 §2C + Plan 61 both depend on: **`config.set()` after `ready()` resolves is visible to the next `.get()` call**.
+
+## feat(config): boot-time REQUIRED_WHEN validation
+
+`config/plugins/config-validation.js` now refuses to boot when a feature-gated config key is missing or unset. Previously, a missing key silently degraded a downstream consumer at request time — the trigger for this work was PR #71, where `auth.passwordResetPageURL` could be absent at runtime when a deployment had the password-reset email feature enabled. The Pug template then rendered a broken href that some mail clients silently dropped.
+
+- **NEW** `REQUIRED_WHEN` table in [config/plugins/config-validation.js](config/plugins/config-validation.js). Each entry pairs a colon-separated config path with a `when(config)` gating predicate. When the predicate is truthy, the key must resolve to a non-empty, non-sentinel value (`REPLACE …`, `${VAR}` env placeholders, `null`/`undefined`, empty string all fail) — otherwise the existing `process.exit(1)` path fires after logging every problem in one pass.
+- **Initial seed**: `auth:passwordResetPageURL` (when reset-password email is enabled — mirrors the runtime gating in `methods/account.ts:174` against `services.email.enabled`), `auth:adminAccessKey` (always), `auth:filesReadTokenSecret` (always; the multi-core bootstrap bundle already enforces this — single-core deploys had no equivalent guard), `letsEncrypt:atRestKey` + `letsEncrypt:email` (when `letsEncrypt:enabled === true`).
+- **NEW** exports: `validate`, `checkRequiredWhen`, `isMissingOrSentinel`, `REQUIRED_WHEN`. Lets the new `[CV-REQ]` unit-test suite exercise the validator with a fake config object without booting the boiler init lifecycle.
+- **NEW** `components/api-server/test/config-validation-required-when-seq.test.js` — `[CV-REQ]` describe block. Twelve unit tests cover the predicate matrix (enabled-missing / enabled-present / disabled), the `isMissingOrSentinel` classifier, and the shape of `REQUIRED_WHEN`. `-seq` because the api-server mocha hooks run a Platform DB integrity check around tests; the validator tests themselves do not touch storage.
+- **CHANGE** `config/test-config.yml` adds `auth.passwordResetPageURL: http://test.pryv.local/reset-password` so tests that override `services.email.enabled = true` (e.g. `[G1VN]`, `[HZCU]` in `account-seq.test.js`) pass the new REQUIRED_WHEN check. The URL itself is not used by the test (the SMTP transport is mocked) but the key must be present to satisfy the boot validator.
+
+Side-note on the `services.email.enabled` config shape: today it's an object (`{ welcome: true, resetPassword: true }`), inconsistent with the rest of v2's flat boolean feature-gate convention. The REQUIRED_WHEN predicate for `auth:passwordResetPageURL` mirrors the existing runtime gating in `methods/account.ts:174` to stay consistent during this change. Flattening the schema is a focused follow-up — see `_plans/XXX-Backlog/SERVICES-EMAIL-FLATTEN.md` in the macroPryv workspace.
+
 ## docs(cmc): fix wrong Monitor API in IMPLEMENTERS-GUIDE + README
 
 The CMC docs (since Plan 68 first published IMPLEMENTERS-GUIDE.md in

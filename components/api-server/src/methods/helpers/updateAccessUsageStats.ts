@@ -10,14 +10,14 @@ const errorHandling = require('errors').errorHandling;
 const errors = require('errors').factory;
 const string = require('./string.ts');
 const timestamp = require('unix-timestamp');
-const { getLogger, getConfig } = require('@pryv/boiler');
+const { getLogger, ready } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 let singleton: any = null;
 export default async function getUpdateAccessUsageStats () {
   if (singleton != null) { return singleton; }
   const logger = getLogger('methods:trackingFunctions');
   const storageLayer = await getStorageLayer();
-  const config = await getConfig();
+  const config = await ready();
   const userAccessesStorage = storageLayer.accesses;
   const isActive = !!config.get('accessTracking:isActive');
   singleton = updateAccessUsageStats;

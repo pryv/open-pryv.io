@@ -10,7 +10,7 @@ const commonFns = require('./helpers/commonFunctions.ts');
 const errorHandling = require('errors').errorHandling;
 const methodsSchema = require('../schema/generalMethods.ts');
 const { fromCallback } = require('utils');
-const { getLogger, getConfig } = require('@pryv/boiler');
+const { getLogger, ready } = require('@pryv/boiler');
 const { getPasswordRules } = require('business/src/users/index.ts');
 const updateAccessUsageStats = require('./helpers/updateAccessUsageStats.ts').default;
 /**
@@ -19,7 +19,7 @@ const updateAccessUsageStats = require('./helpers/updateAccessUsageStats.ts').de
  */
 export default async function (api: any) {
   const logger = getLogger('methods:batch');
-  const config = await getConfig();
+  const config = await ready();
   const isAuditActive = config.get('audit:active');
   const updateAccessUsage = await updateAccessUsageStats();
   const passwordRules = await getPasswordRules();

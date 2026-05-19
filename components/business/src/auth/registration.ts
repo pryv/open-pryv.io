@@ -25,13 +25,22 @@ class Registration {
   /** @default accountStreams.accountMap */
   accountStreamsSettings = accountStreams.accountMap;
 
-  servicesSettings: any; // settings to get the email to send user welcome email
+  // 0-arg getter returning the current `services` config slice. Stored
+  // as a function (not a snapshot object) so the welcome-mail send path
+  // reads live config at request time — plan 70 §2C.
+  getServicesSettings: () => any;
 
   platform: any;
   constructor (logging: any, storageLayer: any, servicesSettings: any) {
     this.logger = getLogger('business:registration');
     this.storageLayer = storageLayer;
-    this.servicesSettings = servicesSettings;
+    // Plan 70 §2C: accept either a literal settings object (legacy) or a
+// 0-arg getter function. When a getter is passed, services config is
+// resolved per-use from the live config singleton — config.set() and
+// injectTestConfig() reach the welcome-mail send path without a
+// restart, and a plugin or override that adds keys later becomes
+// visible.
+this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSettings : () => servicesSettings;
   }
 
   async init () {
@@ -218,7 +227,7 @@ class Registration {
       delete result.forwarded;
       return next();
     }
-    const emailSettings = this.servicesSettings?.email;
+    const emailSettings = this.getServicesSettings()?.email;
     // No email service configured → skip welcome mail silently.
     // Phase D: on a fresh bundle-bootstrapped core, `services.email` may
     // be absent entirely; the previous code threw
