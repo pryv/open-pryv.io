@@ -135,6 +135,7 @@ async function enqueueRetry (params: {
   const event = await deps.mall.events.create(userId, {
     streamIds: [C.NS_INTERNAL_RETRIES],
     type: C.ET_RETRY,
+    time: now / 1000,
     content,
   });
   deps.logger?.debug?.('cmc/retry: enqueued', {

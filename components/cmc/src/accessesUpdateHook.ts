@@ -137,6 +137,7 @@ function createAccessesUpdatePostHook (deps: PostHookDeps) {
         const ev = await deps.mall.events.create(userId, {
           streamIds: [localCollectorStreamId],
           type: C.ET_SYSTEM_SCOPE_UPDATE,
+          time: Date.now() / 1000,
           content: payload,
         });
         localAuditEventId = ev?.id;
