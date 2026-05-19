@@ -147,6 +147,13 @@ describe('[CMCDISP] cmc/dispatch', () => {
       assert.equal(mall.calls.eventsUpdated[0].content.status, 'delivered');
       assert.equal(mall.calls.eventsUpdated[1].content.status, 'completed');
       assert.equal(mall.calls.eventsUpdated[1].content.dataGrantAccessId, 'acc-1');
+      // Dispatch must stamp the resolved REQUESTER identity (returned by
+      // handleAccept as `requesterIdentity`) onto `content.from` of the
+      // completed-update. listAcceptedRelationships on the accepter side
+      // reads this to identify the counterparty for each row — without
+      // it the mapper falls back to `content.acceptedBy` (the accepter's
+      // own data-grant apiEndpoint).
+      assert.deepEqual(mall.calls.eventsUpdated[1].content.from, { username: 'provider-a', host: 'example.com' });
     });
 
     it('[CD05] failed delivery → stamps failed with reason + detail', async () => {

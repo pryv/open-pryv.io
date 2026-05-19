@@ -120,6 +120,11 @@ describe('[CMCCAP] cmc/capability', () => {
       assert.equal(mall.calls.eventsCreated.length, 1);
       assert.deepEqual(mall.calls.eventsCreated[0].streamIds, [':_cmc:_internal:offer:cap123']);
       assert.equal(mall.calls.eventsCreated[0].type, 'consent/request-cmc');
+      // time stamped (mall.events.create does NOT default it the way
+      // api-server's events.create method does — plugin must do it
+      // explicitly or the event disappears from time-ordered queries
+      // such as `cmc.waitForAccept`'s `sinceTime` filter).
+      assert.equal(mall.calls.eventsCreated[0].time, 1000);
       // Access shape
       assert.equal(mall.calls.accessesCreated.length, 1);
       const acc = mall.calls.accessesCreated[0];

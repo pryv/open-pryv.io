@@ -120,6 +120,14 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(r.dataGrantApiEndpoint, 'https://tok-grant@recipient.example.com/');
       assert.equal(r.offerEventId, 'evt-offer');
       assert.equal(r.capabilityId, 'cap-xyz');
+      // requesterIdentity is returned so dispatch can stamp it as
+      // `content.from = {username, host}` on the local accept trigger
+      // event. Without this, listAcceptedRelationships's mapper on the
+      // accepter side falls through to `content.acceptedBy` (the
+      // accepter's OWN data-grant apiEndpoint, not the requester's
+      // identity), and the patient app can't tell WHICH doctor each
+      // relationship row belongs to.
+      assert.deepEqual(r.requesterIdentity, { username: 'provider-a', host: 'example.com' });
       // Mall: one access created
       assert.equal(mall.calls.accessesCreated.length, 1);
       const acc = mall.calls.accessesCreated[0];

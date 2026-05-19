@@ -115,6 +115,10 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       assert.equal(ev.content.originalEventId, 'orig-1');
       assert.equal(ev.content.originalType, 'consent/accept-cmc');
       assert.equal(ev.content.nextAttemptAfter, now + BACKOFF_BASE_MS);
+      // time stamped on the retry event itself (unix seconds = now ms / 1000)
+      // — without it the retry-scheduler's time-ordered query
+      // (runRetryLoop) would miss the event entirely.
+      assert.equal(ev.time, now / 1000);
     });
     it('[RQ06] returns null + does NOT enqueue when reason is non-retryable', async () => {
       const mall = fakeMall();

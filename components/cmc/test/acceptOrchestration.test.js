@@ -232,6 +232,14 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       assert.equal(sent.type, 'consent/accept-cmc');
       assert.equal(sent.content.grantedAccess.apiEndpoint, 'https://X@recipient.example.com/');
       assert.deepEqual(sent.content.from, { username: 'alice', host: 'example.com' });
+      // capabilityId must round-trip on the delivered event so the
+      // requester-side handler can locate the capability access and
+      // transition its single-use lifecycle (open → consumed) or
+      // append to acceptedBy[] for open-link mode. Omitting it makes
+      // the state-flip a silent no-op — a second accept on the same
+      // URL then succeeds instead of being rejected with
+      // `cmc-capability-consumed`.
+      assert.equal(sent.content.capabilityId, 'cap-xyz');
     });
 
     it('[AO11] surfaces 4xx as a non-retryable failure', async () => {
@@ -263,6 +271,10 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       assert.deepEqual(sent.streamIds, [':_cmc:_internal:responses:cap-xyz']);
       assert.equal(sent.type, 'consent/refuse-cmc');
       assert.deepEqual(sent.content.reason, { en: 'Not at this time.' });
+      // capabilityId must round-trip on refuse for the same reason as accept
+      // (see [AO10]) — the requester-side handler needs it to transition
+      // capability state on refuse.
+      assert.equal(sent.content.capabilityId, 'cap-xyz');
     });
 
     it('[AO13] passes null reason if not provided', async () => {

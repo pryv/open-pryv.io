@@ -18,7 +18,7 @@ const assert = require('node:assert/strict');
 const { handleIncomingAccept, resolveRequestScope } = require('../src/handleIncomingAccept.ts');
 
 function fakeMall (opts = {}) {
-  const calls = { streamsCreated: [], accessesCreated: [], eventsGot: 0 };
+  const calls = { streamsCreated: [], accessesCreated: [], eventsGot: 0, eventsCreated: [] };
   const requestEvent = opts.requestEvent;
   return {
     calls,
@@ -37,6 +37,10 @@ function fakeMall (opts = {}) {
       async get (_userId, _params) {
         calls.eventsGot += 1;
         return requestEvent ? [requestEvent] : [];
+      },
+      async create (_userId, params) {
+        calls.eventsCreated.push(params);
+        return { id: 'mirror-' + calls.eventsCreated.length, ...params };
       },
     },
     streams: {
@@ -133,6 +137,66 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       });
       assert.equal(r.ok, true);
       assert.equal(r.anchorStreamIds.length, 4);
+    });
+
+    it('[IA02M] mirrors the accept onto :_cmc:inbox with backChannelAccessId + time when arriving from non-inbox stream', async () => {
+      // When the accept lands on the per-capability responses stream
+      // (`:_cmc:_internal:responses:<capId>` — the path that
+      // `deliverAcceptViaCapability` POSTs to from the accepter side),
+      // handleIncomingAccept mirrors it onto :_cmc:inbox so the
+      // doctor's app sees the accept via the standard inbox
+      // subscription. The mirror MUST include:
+      //   (a) `backChannelAccessId` — only the requester's plugin
+      //       knows this value (it just minted the access). Without
+      //       it the doctor's app has no handle to call
+      //       `cmc.revokeRelationship({accessId, scopeStreamId})` or
+      //       `requestScopeUpdate` later on.
+      //   (b) `time` — `mall.events.create` does NOT default time the
+      //       way the api-server's events.create method does. An
+      //       event with `time: undefined` disappears from
+      //       time-ordered queries — including the `sinceTime`
+      //       filter `cmc.waitForAccept` uses to find recent accepts.
+      const mall = fakeMall({ requestEvent: ORIGINAL_REQUEST_EVENT });
+      const acceptFromResponses = {
+        ...ACCEPT_FROM_INBOX,
+        streamIds: [':_cmc:_internal:responses:cap-xyz'],
+        content: {
+          ...ACCEPT_FROM_INBOX.content,
+          capabilityId: 'cap-xyz',
+        },
+      };
+      const beforeS = Math.floor(Date.now() / 1000) - 1;
+      const r = await handleIncomingAccept({
+        userId: 'u1',
+        acceptEvent: acceptFromResponses,
+        selfIdentity: SELF,
+        deps: { mall },
+      });
+      const afterS = Math.ceil(Date.now() / 1000) + 1;
+      assert.equal(r.ok, true);
+      assert.equal(mall.calls.eventsCreated.length, 1);
+      const mirror = mall.calls.eventsCreated[0];
+      assert.deepEqual(mirror.streamIds, [':_cmc:inbox']);
+      assert.equal(mirror.type, 'consent/accept-cmc');
+      assert.equal(mirror.content.backChannelAccessId, 'acc-back-1');
+      // Original content carried through (grantedAccess, from, …)
+      assert.deepEqual(mirror.content.from, { username: 'alice', host: 'pryv.me' });
+      assert.equal(mirror.content.grantedAccess.apiEndpoint, 'https://granted-tok@accepter.pryv.me/');
+      // time is stamped (unix seconds, within a generous window)
+      assert.equal(typeof mirror.time, 'number');
+      assert.ok(mirror.time >= beforeS && mirror.time <= afterS,
+        'mirror.time outside expected window: ' + mirror.time);
+    });
+
+    it('[IA02N] does NOT write the mirror when accept already arrives on :_cmc:inbox (e.g. handed off by the inbox write-hook)', async () => {
+      const mall = fakeMall({ requestEvent: ORIGINAL_REQUEST_EVENT });
+      await handleIncomingAccept({
+        userId: 'u1',
+        acceptEvent: ACCEPT_FROM_INBOX,
+        selfIdentity: SELF,
+        deps: { mall },
+      });
+      assert.equal(mall.calls.eventsCreated.length, 0);
     });
 
     it('[IA03] falls back to a synthetic scope when request lookup fails', async () => {

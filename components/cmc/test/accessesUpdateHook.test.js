@@ -92,6 +92,12 @@ describe('[CMCAU] cmc/accessesUpdateHook', () => {
         ':_cmc:apps:my-app:collectors:alice--pryv-me',
       ]);
       assert.equal(mall.calls.eventsCreated[0].type, 'consent/scope-update-cmc');
+      // time stamped on the local audit event — without it the audit
+      // event disappears from time-ordered queries that the doctor
+      // app uses to surface counterparty-side scope-update activity.
+      assert.equal(typeof mall.calls.eventsCreated[0].time, 'number');
+      assert.ok(mall.calls.eventsCreated[0].time > 0,
+        'audit event time must be a positive unix-seconds value');
       // Outbound POST to peer's :_cmc:inbox
       assert.equal(calls.length, 1);
       assert.equal(calls[0].url, 'https://pryv.me/events');
