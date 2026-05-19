@@ -1,5 +1,15 @@
 # Changelog - API Changes
 
+## Password-reset email: robust against late-bound `auth.passwordResetPageURL`
+
+The `account.requestPasswordReset` mail-sending step now re-reads `auth.passwordResetPageURL` from the config store at request time instead of relying on the module-init `auth` slice capture. The captured slice can be missing values populated later by override-config or extraConfig plugins; when that happened, the Pug template rendered `<a href="?resetToken=…">` — a relative URL with no scheme/host that Outlook/Apple Mail QuickLook silently dropped, leaving the user with an invisible link. Observed in HDS production.
+
+- **Re-read at request time** with a fallback to the captured value (back-compat).
+- **Warn at request time** when `auth.passwordResetPageURL` is missing, so operators see a clear server-side signal instead of debugging from user inboxes.
+- **NEW Pug substitution `RESET_LINK`** — pre-composed full URL (`passwordResetPageURL + '?resetToken=' + encodeURIComponent(token)`). Existing templates that use the two-substitution form `#{RESET_URL}?resetToken=#{RESET_TOKEN}` keep working unchanged; new/updated templates can switch to the single `#{RESET_LINK}` form for robustness against the same class of bug.
+
+Note: a follow-up will move this check to boot-time validation (fail-fast if the URL is missing while password-reset email is enabled) instead of warning at request time. Tracked separately.
+
 ## Cross-account Messaging & Consent (CMC plugin)
 
 **Public-facing namespace addition.** The api-server now reserves the `:_cmc:` stream-id namespace for the Cross-account Messaging & Consent plugin. Reserved roots auto-create on-demand at first use; per-app and per-counterparty sub-streams are auto-created by the plugin at acceptance time.
