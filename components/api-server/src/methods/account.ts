@@ -13,7 +13,8 @@ const commonFns = require('./helpers/commonFunctions.ts');
 const mailing = require('./helpers/mailing.ts');
 const methodsSchema = require('../schema/accountMethods.ts');
 
-const { getConfig } = require('@pryv/boiler');
+const { getConfig, getLogger } = require('@pryv/boiler');
+const logger = getLogger('methods:account');
 const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
 const { getPlatform } = require('platform');
@@ -175,6 +176,26 @@ export default async function (api: any) {
             (isMailActivated != null && isMailActivated.resetPassword === false)) {
       return next();
     }
+    // Re-read `auth.passwordResetPageURL` fresh at request time. The
+    // module-scope `authSettings = config.get('auth')` capture above is
+    // taken at api init; in some boot orderings it can return a partially
+    // -populated slice that misses values added later (notably by override
+    // configs or extraConfig plugins). The freshly-resolved value falls
+    // back to the captured one for back-compat.
+    const passwordResetPageURL = config.get('auth:passwordResetPageURL') || authSettings.passwordResetPageURL;
+    if (!passwordResetPageURL) {
+      logger.warn('sendPasswordResetMail: auth.passwordResetPageURL is not configured — the reset email will contain a broken link.');
+    }
+    // Pre-compose the full reset link in code rather than concatenating in
+    // the Pug template. This makes the surface less fragile (a missing
+    // RESET_URL would otherwise render as a relative `?resetToken=<token>`
+    // href that some clients silently rewrite). Existing templates that
+    // still use `#{RESET_URL}?resetToken=#{RESET_TOKEN}` keep working
+    // because both substitutions are still provided; new/updated templates
+    // can simply use `#{RESET_LINK}`.
+    const resetLink = passwordResetPageURL
+      ? passwordResetPageURL + '?resetToken=' + encodeURIComponent(context.resetToken)
+      : '?resetToken=' + encodeURIComponent(context.resetToken);
     const recipient = {
       email: context.userBusiness.email,
       name: context.userBusiness.username,
@@ -182,7 +203,8 @@ export default async function (api: any) {
     };
     const substitutions = {
       RESET_TOKEN: context.resetToken,
-      RESET_URL: authSettings.passwordResetPageURL
+      RESET_URL: passwordResetPageURL || '',
+      RESET_LINK: resetLink
     };
     mailing.sendmail(emailSettings, emailSettings.resetPasswordTemplate, recipient, substitutions, context.userBusiness.language, next);
   }
