@@ -211,6 +211,7 @@ async function mintCapability (params: {
   await deps.mall.events.create(userId, {
     streamIds: [offerStreamId],
     type: C.ET_REQUEST,
+    time: now(),
     content: offerContent,
   });
 

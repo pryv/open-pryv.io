@@ -311,6 +311,7 @@ async function handleIncomingAccept (params: {
       await (deps.mall as any).events.create(userId, {
         streamIds: [C.NS_INBOX],
         type: C.ET_ACCEPT,
+        time: Date.now() / 1000,
         content: mirrorContent,
       });
     } catch (err: any) {
