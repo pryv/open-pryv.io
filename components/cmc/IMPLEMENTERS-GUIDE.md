@@ -46,7 +46,7 @@ Cross-platform identity is required in the slug — `alice` on `example.com` and
 - **`<counterparty-slug>`** = `<username>--<host-slug>` where `host-slug` replaces `.` with `-`. Double-hyphen (`--`) is the load-bearing separator; usernames and host-slugs use single hyphens so `--` is unambiguous.
   - Examples: `alice--example-com`, `bob--my-host-example-org`.
 - The same `<counterparty-slug>` shape is used both for chat (`:chats:<counterparty-slug>`) and for system/collector relationships (`:collectors:<counterparty-slug>`) — the app-code and any per-request scoping live in the stream PATH, not in the slug.
-- Helper `pryv.cmc.counterpartySlug({username, host})` ships in `lib-js` / `legacy-shim`.
+- Helper `counterpartySlug({username, host})` ships in the [`@pryv/cmc`](https://github.com/pryv/lib-js/tree/master/components/cmc) package (sibling to `@pryv/monitor` and `@pryv/socket.io`; install alongside `pryv` ≥ 3.3.0).
 
 ### Where to write each event type
 
@@ -444,10 +444,11 @@ monitor.on('event', (event) => {
 await monitor.start();
 ```
 
-The plugin uses `lib-js` / `legacy-shim` helpers to compute slugs deterministically so apps don't roll their own:
+Use the [`@pryv/cmc`](https://github.com/pryv/lib-js/tree/master/components/cmc) helpers so apps don't roll their own slug arithmetic:
 
 ```js
-const slug = pryv.cmc.counterpartySlug({ username: 'alice', host: 'pryv.me' });
+import * as cmc from '@pryv/cmc';
+const slug = cmc.counterpartySlug({ username: 'alice', host: 'pryv.me' });
 // → 'alice--pryv-me'
 ```
 
@@ -1238,8 +1239,9 @@ If the outbound delivery fails (timeout, peer unreachable, peer 4xx/5xx), the pl
 When a trigger transitions to `status: 'failed'`, `content.failure.reason`
 carries a stable kebab-case error id. Match on the **string value** (not
 the English `error.message`) to drive per-outcome UX. The full enumeration
-ships as `cmc.CmcErrorIds` in the plugin and as `pryv.cmc.errorIds` in
-[lib-js](https://github.com/pryv/lib-js).
+ships as `cmc.CmcErrorIds` in the plugin and as `errorIds` in the
+[`@pryv/cmc`](https://github.com/pryv/lib-js/tree/master/components/cmc)
+npm package.
 
 | Constant | Value | When it fires |
 |---|---|---|

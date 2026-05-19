@@ -4,7 +4,7 @@
 > - [IMPLEMENTERS-GUIDE.md](IMPLEMENTERS-GUIDE.md) — customer-facing wire shape (API consumers).
 > - [INTERNALS.md](INTERNALS.md) — plugin-side flow diagrams (engineering / security review).
 
-**Status:** Design locked. Implementation in progress on the `feature/cmc` branch.
+**Status:** Released to `master` and shipped in open-pryv.io 2.0.0-pre.3. Client SDK ships as the [`@pryv/cmc`](https://github.com/pryv/lib-js/tree/master/components/cmc) npm package (sibling to `@pryv/monitor` and `@pryv/socket.io`).
 
 **Design pillars:**
 1. **Plugin, not storage engine** — CMC lives at `components/cmc/`; all state in standard per-user main storage (PG / Mongo).
@@ -92,7 +92,7 @@ The capability access mechanism here is also the natural store for future OAuth2
 1. **Stream-id-namespace ownership** — reserve the `:_cmc:` prefix with the mall dispatcher so writes to `:_cmc:*` route through CMC's hooks.
 2. **Validation + orchestration hooks** — pre/post hooks on `events.create` (for `cmc/*` types), `accesses.update` (for the counterparty post-hook), and stream-creation under `:_cmc:` (reserved-root enforcement + anchor stream auto-creation idempotence).
 3. **Outbound HTTPS client** — federated cross-platform / cross-core delivery using stored counterparty `apiEndpoint`s. No special data-path auth lane; standard access-token HTTPS.
-4. **Helpers** — slug computation, schema validators, status-projection helpers (shipped in `lib-js` / `legacy-shim`).
+4. **Helpers** — slug computation, error-id catalogue, stream-id builders, and the Level-1 protocol functions (`createInvite`, `acceptInvite`, `sendChat`, `sendSystemAlert`, `revokeRelationship`, …) ship as the [`@pryv/cmc`](https://github.com/pryv/lib-js/tree/master/components/cmc) npm package, a sibling to `@pryv/monitor` and `@pryv/socket.io`. Apps install it alongside `pryv` (≥ 3.3.0).
 
 | Data | Lives in |
 |---|---|
@@ -137,7 +137,7 @@ The `:_cmc:` namespace has three plugin-managed regions plus user-creatable scop
 **Slug conventions:**
 - `<counterparty-slug>` = `<username>--<host-slug>` where `host-slug` replaces `.` with `-`. Examples: `alice--example-com`, `bob--my-host-example-org`. Same slug shape is used both for chat (`:chats:<counterparty-slug>`) and for system/collector relationships (`:collectors:<counterparty-slug>`) — the app-code and any per-request scoping live in the stream PATH, not in the slug.
 - Double-hyphen (`--`) is the load-bearing separator; usernames and host-slugs use single hyphens so `--` is unambiguous.
-- Helper `pryv.cmc.counterpartySlug({username, host})` ships in `lib-js` / `legacy-shim`.
+- Helper `counterpartySlug({username, host})` ships in the [`@pryv/cmc`](https://github.com/pryv/lib-js/tree/master/components/cmc) package.
 
 **Cross-platform identity in slugs is required.** `alice@example.com` and `alice@example.com` are different people; the host is part of the slug.
 
