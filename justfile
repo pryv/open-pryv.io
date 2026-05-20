@@ -178,18 +178,38 @@ clean-test-data:
     # SQLite user index + legacy pre-Plan-25 platform-wide.db (retained for safety)
     rm -f ./var-pryv/users/user-index.db ./var-pryv/users/user-index.db-wal ./var-pryv/users/user-index.db-shm
     rm -f ./var-pryv/users/platform-wide.db ./var-pryv/users/platform-wide.db-wal ./var-pryv/users/platform-wide.db-shm
-    # Per-user directories
+    # Per-user directories (each holds the user's audit SQLite + any
+    # stray writes from older engine paths).
     find ./var-pryv/users -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
-    # MongoDB test database (reset only — keeps server running)
-    ./var-pryv/mongodb-bin/bin/mongosh --quiet pryv-node-test --eval 'db.dropDatabase()' > /dev/null 2>&1 || echo "MongoDB not reachable (skipping mongo reset)"
-    # PostgreSQL test database (drop + recreate — tests re-run migrations on startup)
+    # Filesystem-engine storage roots (attachments + previews live at
+    # var-pryv/<dir> by default per override-config.yml, NOT under
+    # users/, so the find above doesn't touch them).
+    rm -rf ./var-pryv/attachments/* ./var-pryv/previews/* 2>/dev/null || true
+    # MongoDB databases — wipe BOTH the test DB and the local dev DB
+    # (pryv-node). Without the latter, users provisioned by `node
+    # bin/master.js` against override-config.yml persist across
+    # cleans and cause "user exists in repo but missing in index"
+    # symptoms on the next prepare (e.g. lib-js's [UEMX]). The mongo
+    # server is kept running.
+    ./var-pryv/mongodb-bin/bin/mongosh --quiet pryv-node-test --eval 'db.dropDatabase()' > /dev/null 2>&1 || echo "MongoDB not reachable (skipping mongo test reset)"
+    ./var-pryv/mongodb-bin/bin/mongosh --quiet pryv-node --eval 'db.dropDatabase()' > /dev/null 2>&1 || echo "MongoDB not reachable (skipping mongo dev reset)"
+    # PostgreSQL databases — same logic as Mongo above: drop+recreate
+    # both pryv-node-test (test harness) AND pryv-node (local dev /
+    # bin/master.js). Tests re-run migrations on next startup; the
+    # local server runs them on next master boot.
     (./var-pryv/postgresql-bin/bin/dropdb -h 127.0.0.1 -p 5432 -U pryv --if-exists pryv-node-test 2>/dev/null && \
-        ./var-pryv/postgresql-bin/bin/createdb -h 127.0.0.1 -p 5432 -U pryv pryv-node-test 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg reset)"
-    # rqlite PlatformDB key-value table (Plan 25: rqlite is the only platform engine)
+        ./var-pryv/postgresql-bin/bin/createdb -h 127.0.0.1 -p 5432 -U pryv pryv-node-test 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg test reset)"
+    (./var-pryv/postgresql-bin/bin/dropdb -h 127.0.0.1 -p 5432 -U pryv --if-exists pryv-node 2>/dev/null && \
+        ./var-pryv/postgresql-bin/bin/createdb -h 127.0.0.1 -p 5432 -U pryv pryv-node 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg dev reset)"
+    # rqlite PlatformDB key-value table (Plan 25: rqlite is the only
+    # platform engine). Wipes both the test harness state AND the
+    # local-dev email/platform-unique index — paired with the PG
+    # dev-DB drop above so the platform DB and the user index can't
+    # diverge across cleans.
     curl -s -X POST -H 'Content-Type: application/json' 'http://localhost:4001/db/execute' -d '[["DELETE FROM keyValue"]]' > /dev/null 2>&1 || echo "rqlite not reachable (skipping rqlite reset)"
     # Stale customAuthStepFn from a prior aborted permissions-seq test (the [P4OM] invalid-fixture test crashes the api-server bin and leaves the file behind, polluting subsequent matrix runs with [api-server fatal] Not a function (string)). Safe to delete unconditionally — committed file is .gitkeep.
     rm -f ./custom-extensions/customAuthStepFn.js
-    @echo "Test data cleaned (SQLite DBs + user dirs + MongoDB pryv-node-test + PostgreSQL pryv-node-test + rqlite keyValue + custom-extensions stale fixture)"
+    @echo "Test data cleaned: SQLite + per-user dirs + attachments/previews + Mongo (pryv-node-test + pryv-node) + PG (pryv-node-test + pryv-node) + rqlite keyValue + custom-extensions stale fixture"
 
 # Cleanup users data and MongoDB data in `var-pryv/`
 clean-data:

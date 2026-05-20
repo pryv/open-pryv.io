@@ -14,7 +14,11 @@ const config = getConfigUnsafe(true);
 
 const database = storage.getDatabaseSync(true);
 
-// MongoDB-specific classes used as initial placeholders until init() provides engine-agnostic instances
+// MongoDB-specific classes used as the synchronous bootstrap target
+// before init() resolves the engine-agnostic StorageLayer. They are
+// behind a transparent Proxy (see `lazyProxy`) so any consumer that
+// captures `dependencies.storage.user.<X>` at module-load time still
+// sees the post-init StorageLayer target on every method call.
 const { PasswordResetRequests } = require('storages/engines/mongodb/src/PasswordResetRequests.ts');
 const { Sessions } = require('storages/engines/mongodb/src/Sessions.ts');
 const { Accesses } = require('storages/engines/mongodb/src/user/Accesses.ts');
@@ -22,18 +26,58 @@ const { Profile } = require('storages/engines/mongodb/src/user/Profile.ts');
 const { Webhooks } = require('storages/engines/mongodb/src/user/Webhooks.ts');
 
 /**
+ * Stable proxy whose underlying target can be swapped by `setTarget`.
+ * Method lookups + property reads always go through the current target.
+ *
+ * Rationale: a few test files capture
+ * `require('test-helpers').dependencies.storage.user.<X>` at module-
+ * load time and pass the captured reference into a Repository
+ * constructor (e.g. `Webhook.test.js`). Without the proxy, the captured
+ * value is the MongoDB placeholder and the Repository hangs the test
+ * suite when Mongo isn't running (e.g. `just test-pg`). With the proxy
+ * the captured value is stable; init() replaces the underlying engine
+ * (StorageLayer-resolved) once and every subsequent method call from
+ * the captured reference reaches the right engine.
+ */
+function lazyProxy (initial: any): { proxy: any, setTarget: (t: any) => void } {
+  let target = initial;
+  const proxy = new Proxy({}, {
+    get (_, prop) {
+      const val = target[prop];
+      return typeof val === 'function' ? val.bind(target) : val;
+    },
+    set (_, prop, value) { target[prop] = value; return true; },
+    has (_, prop) { return prop in target; },
+    ownKeys () { return Reflect.ownKeys(target); },
+    getOwnPropertyDescriptor (_, prop) { return Reflect.getOwnPropertyDescriptor(target, prop); },
+  });
+  return { proxy, setTarget (t: any) { target = t; } };
+}
+
+const accessesProxy = lazyProxy(new Accesses(database));
+const profileProxy = lazyProxy(new Profile(database));
+const webhooksProxy = lazyProxy(new Webhooks(database));
+const sessionsProxy = lazyProxy(new Sessions(database));
+const passwordResetRequestsProxy = lazyProxy(new PasswordResetRequests(database));
+
+/**
  * Test process dependencies.
+ *
+ * `storage.user.*` + `storage.sessions` + `storage.passwordResetRequests`
+ * are exposed as proxies (see `lazyProxy`) so consumers that capture
+ * them at module-load time still reach the post-init StorageLayer
+ * target. The shape is otherwise unchanged.
  */
 const dependencies = {
   settings: config.get(),
   storage: {
     database,
-    passwordResetRequests: new PasswordResetRequests(database),
-    sessions: new Sessions(database),
+    get sessions () { return sessionsProxy.proxy; },
+    get passwordResetRequests () { return passwordResetRequestsProxy.proxy; },
     user: {
-      accesses: new Accesses(database),
-      profile: new Profile(database),
-      webhooks: new Webhooks(database)
+      get accesses () { return accessesProxy.proxy; },
+      get profile () { return profileProxy.proxy; },
+      get webhooks () { return webhooksProxy.proxy; }
     }
   },
   /**
@@ -42,11 +86,11 @@ const dependencies = {
    */
   init: async function () {
     const storageLayer = await storage.getStorageLayer();
-    this.storage.user.accesses = storageLayer.accesses;
-    this.storage.user.profile = storageLayer.profile;
-    this.storage.user.webhooks = storageLayer.webhooks;
-    this.storage.sessions = storageLayer.sessions;
-    this.storage.passwordResetRequests = storageLayer.passwordResetRequests;
+    accessesProxy.setTarget(storageLayer.accesses);
+    profileProxy.setTarget(storageLayer.profile);
+    webhooksProxy.setTarget(storageLayer.webhooks);
+    sessionsProxy.setTarget(storageLayer.sessions);
+    passwordResetRequestsProxy.setTarget(storageLayer.passwordResetRequests);
     // Plan 32 framework / Plan 66: production runs migrations in
     // `bin/master.js` before forking workers. The test harness calls
     // `storages.init()` directly without going through master, so we
@@ -57,7 +101,7 @@ const dependencies = {
       const { createMigrationRunner } = require('storages/interfaces/migrations/index.ts');
       const runner = await createMigrationRunner();
       await runner.runAll();
-    } catch (err) {
+    } catch (_err) {
       // Some test contexts use engines that don't register the
       // migrations capability — proceed without crashing.
     }

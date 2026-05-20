@@ -122,33 +122,6 @@ async function deliverSystemToPeer (params: DeliverSystemParams): Promise<any> {
 }
 
 /**
- * Resolve the counterparty-access tied to a (counterparty, appCode) tuple.
- *
- * Returns the access object, or null. We re-implement the lookup here
- * rather than calling into chatOrchestration to keep system handlers
- * independent of the chat module.
- */
-async function findAccessForCollector (params: {
-  userId: string;
-  counterparty: Counterparty;
-  appCode: string;
-  mall: { accesses: { get: (userId: string, params?: any) => Promise<AccessLike[]> } };
-}): Promise<AccessLike | null> {
-  const { userId, counterparty, appCode, mall } = params;
-  const accesses = await mall.accesses.get(userId, {});
-  for (const acc of accesses) {
-    const cmc = acc?.clientData?.cmc;
-    if (cmc?.role !== 'counterparty') continue;
-    const cp = cmc?.counterparty;
-    if (cp == null) continue;
-    if (cp.username !== counterparty.username || cp.host !== counterparty.host) continue;
-    if (cmc?.appCode != null && cmc.appCode !== appCode) continue;
-    return acc;
-  }
-  return null;
-}
-
-/**
  * Shared dispatch core for notification/alert-cmc + notification/ack-cmc.
  *
  * Both event types share the same routing: pull counterparty access,
@@ -413,7 +386,6 @@ export {
   COLLECTOR_STREAM_ID_RE,
   SYSTEM_EVENT_TYPES,
   parseCollectorStreamId,
-  findAccessForCollector,
   deliverSystemToPeer,
   handleSystemEvent,
   handleSystemAlert,

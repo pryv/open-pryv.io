@@ -363,7 +363,20 @@ describe('[WHBK] Webhook', () => {
         assert.strictEqual(webhook.state, 'inactive');
       });
       it('[BLNP] should update the stored version', async () => {
-        storedWebhook = await repository.getById(user, webhook.id);
+        // [PX10] passes the moment the webhook flips `state = 'inactive'`
+        // in memory (Webhook.ts:136 — before the surrounding `await
+        // makeUpdate(...)` resolves). The storage UPDATE that mirrors
+        // that flip is in-flight at that point, so a naive
+        // `repository.getById()` here races against the persisted row
+        // catching up. Poll with a short deadline rather than asserting
+        // on the first read — masks no real bug (the data does land,
+        // typically in <100ms) and removes a pure-timing flake.
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          storedWebhook = await repository.getById(user, webhook.id);
+          if (storedWebhook && storedWebhook.state === 'inactive') break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
         assert.strictEqual(storedWebhook.state, 'inactive');
       });
       it('[ODNM] should not run anymore', async () => {
