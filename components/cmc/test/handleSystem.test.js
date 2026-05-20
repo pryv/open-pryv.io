@@ -581,6 +581,52 @@ describe('[CMCHS] cmc/handleSystem', () => {
       assert.deepEqual(inboxPerm, { streamId: ':_cmc:inbox', level: 'create-only' });
     });
 
+    it('[HS28c] suppression flag is set during mall.accesses.update (post-hook would see isSuppressed===true)', async () => {
+      // Phase 3.1 verification: when handleSystemScopeUpdate's local-apply
+      // runs mall.accesses.update, the post-hook (`accessesUpdateHook`)
+      // would also fire and would issue a SECOND outbound notification
+      // to the counterparty. To prevent the double-fire, the handler
+      // wraps the update in runWithSuppression() — the post-hook then
+      // observes isSuppressed() === true and returns {ran:false,
+      // reason:'suppressed-by-cmc-handler'} without delivering.
+      //
+      // We assert this end-to-end here by:
+      //  (a) wiring the fake mall.accesses.update to OBSERVE isSuppressed()
+      //      at the time of the call,
+      //  (b) asserting the observed value was true (handler did wrap),
+      //  (c) confirming the handler still issued exactly ONE outbound
+      //      delivery (its own — not duplicated by the post-hook path).
+      const { isSuppressed } = require('../src/accessesUpdateHook.ts');
+      let observedSuppression = null;
+      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const origUpdate = mall.accesses.update;
+      mall.accesses.update = async function (userId, params) {
+        observedSuppression = isSuppressed();
+        return origUpdate(userId, params);
+      };
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const trigger = {
+        ...SCOPE_UPDATE_TRIGGER,
+        content: {
+          ...SCOPE_UPDATE_TRIGGER.content,
+          accessId: 'acc-back-channel',
+          newPermissions: [{ streamId: 'fertility', level: 'read' }],
+        },
+      };
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1',
+        triggerEvent: trigger,
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(observedSuppression, true,
+        'mall.accesses.update should observe isSuppressed()===true during handler local-apply');
+      // Exactly one outbound POST — the handler's own notification.
+      // (The post-hook would have made a second one if not suppressed.)
+      assert.equal(calls.length, 1);
+    });
+
     it('[HS28] local-apply failure surfaces as cmc-scope-update-local-apply-failed', async () => {
       const mall = fakeMall([COUNTERPARTY_ACCESS]);
       mall.accesses.update = async () => { throw new Error('access-update-fail'); };
@@ -602,6 +648,90 @@ describe('[CMCHS] cmc/handleSystem', () => {
       assert.equal(r.ok, false);
       assert.equal(r.reason, 'cmc-scope-update-local-apply-failed');
       assert.equal(r.detail.accessId, 'acc-x');
+    });
+  });
+
+  describe('[CMCHS-FEAT] Phase 2.2 features.systemMessaging gating', () => {
+    // Plan 68 Phase 2.2: `features.systemMessaging: false` on the
+    // counterparty access is binding for user-level system events
+    // (alert + ack). Protocol-level events (scope-request, scope-update)
+    // are NOT subject to this gate — they govern the relationship
+    // itself, not user messaging.
+
+    it('[HS29] rejects notification/alert-cmc with cmc-system-messaging-disabled when features.systemMessaging === false', async () => {
+      const smDisabledAccess = {
+        ...COUNTERPARTY_ACCESS,
+        clientData: {
+          cmc: {
+            ...COUNTERPARTY_ACCESS.clientData.cmc,
+            features: { chat: true, systemMessaging: false },
+          },
+        },
+      };
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const r = await handleSystemAlert({
+        userId: 'u1',
+        triggerEvent: ALERT_TRIGGER,
+        selfIdentity: SELF,
+        deps: { mall: fakeMall([smDisabledAccess]), fetch },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-system-messaging-disabled');
+      assert.equal(r.detail.accessId, 'acc-back-channel');
+      assert.equal(r.detail.eventType, 'notification/alert-cmc');
+      assert.equal(calls.length, 0);
+    });
+
+    it('[HS30] rejects notification/ack-cmc with cmc-system-messaging-disabled when features.systemMessaging === false', async () => {
+      const smDisabledAccess = {
+        ...COUNTERPARTY_ACCESS,
+        clientData: {
+          cmc: {
+            ...COUNTERPARTY_ACCESS.clientData.cmc,
+            features: { chat: true, systemMessaging: false },
+          },
+        },
+      };
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const r = await handleSystemAck({
+        userId: 'u1',
+        triggerEvent: ACK_TRIGGER,
+        selfIdentity: SELF,
+        deps: { mall: fakeMall([smDisabledAccess]), fetch },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-system-messaging-disabled');
+      assert.equal(r.detail.eventType, 'notification/ack-cmc');
+      assert.equal(calls.length, 0);
+    });
+
+    it('[HS31] scope-request / scope-update events are NOT gated by features.systemMessaging', async () => {
+      // Protocol-level: governance, not user messaging. The relationship
+      // can still be updated/revoked even if user-messaging is disabled.
+      const smDisabledAccess = {
+        ...COUNTERPARTY_ACCESS,
+        clientData: {
+          cmc: {
+            ...COUNTERPARTY_ACCESS.clientData.cmc,
+            features: { chat: false, systemMessaging: false },
+          },
+        },
+      };
+      const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r-permit' } } });
+      const scopeRequestTrigger = {
+        id: 'evt-scope-req',
+        type: 'consent/scope-request-cmc',
+        streamIds: [':_cmc:apps:my-app:collectors:provider-a--provider-example-org'],
+        content: { newPermissions: [{ streamId: 'fertility', level: 'read' }] },
+      };
+      const r = await handleSystemScopeRequest({
+        userId: 'u1',
+        triggerEvent: scopeRequestTrigger,
+        selfIdentity: SELF,
+        deps: { mall: fakeMall([smDisabledAccess]), fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(calls.length, 1);
     });
   });
 });

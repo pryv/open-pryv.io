@@ -31,7 +31,10 @@ export default async function (api: any) {
   const getUpdates = () => config.get('updates');
   const mall = await getMall();
   // RETRIEVAL
-  api.register('streams.get', commonFns.getParamsValidation(methodsSchema.get.params), checkAuthorization, applyDefaultsForRetrieval, findAccessibleStreams, includeDeletionsIfRequested);
+  // Phase 4 H5: defense-in-depth — prune `:_cmc:_internal` subtree
+  // from the response tree as a last step.
+  const cmcStreamsGetInternalGuard = cmc.createStreamsGetInternalGuardHook();
+  api.register('streams.get', commonFns.getParamsValidation(methodsSchema.get.params), checkAuthorization, applyDefaultsForRetrieval, findAccessibleStreams, includeDeletionsIfRequested, cmcStreamsGetInternalGuard);
   function applyDefaultsForRetrieval (context: any, params: any, result: any, next: any) {
     params.parentId ??= null;
     params.includeDeletionsSince ??= null;
@@ -271,7 +274,14 @@ export default async function (api: any) {
     }
   }
   // DELETION
-  api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), verifyStreamExistenceAndPermissions, deleteStream);
+  // Phase 4 H6: reserved-root immutability. The base permission model
+  // (AccessLogic._canManageStream) returns true for personal accesses,
+  // so without this guard a personal token could delete `:_cmc:` and
+  // silently break every active CMC relationship on the account. Wired
+  // BEFORE the existing permission check so the rejection is plugin-
+  // owned (not permission-shaped) and surfaces a stable error id.
+  const cmcStreamDeleteHook = cmc.createStreamDeleteReservedRootHook({ errors });
+  api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), cmcStreamDeleteHook, verifyStreamExistenceAndPermissions, deleteStream);
   async function verifyStreamExistenceAndPermissions (context: any, params: any, result: any, next: any) {
     params.mergeEventsWithParent ??= null;
     context.stream = await context.streamForStreamId(params.id);

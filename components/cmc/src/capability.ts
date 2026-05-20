@@ -87,6 +87,18 @@ type MintResult = {
  */
 const DEFAULT_TTL_SECONDS = 7 * 24 * 60 * 60;
 
+/**
+ * Bounds for caller-supplied per-invite TTLs (via
+ * `consent/request-cmc` `content.request.expiresAt` — the absolute
+ * unix-seconds timestamp at which the capability access should expire).
+ * Out-of-range values are rejected at mint time by the
+ * `capabilityMintHook` with `cmc-capability-ttl-out-of-range`. The
+ * `DEFAULT_TTL_SECONDS` continues to apply when no `expiresAt` is
+ * provided.
+ */
+const MIN_TTL_SECONDS = 60;
+const MAX_TTL_SECONDS = 30 * 24 * 60 * 60;
+
 function defaultIdGen (): string {
   // Short, URL-safe id generator. Production callers should pass a real
   // CSRPNG-backed id-gen (cuid / nanoid / etc.) via deps.idGen.
@@ -287,6 +299,55 @@ async function gcCapability (params: {
   }
   await ignoreNotFound(deleteStream(deps.mall, userId, offerStreamId));
   await ignoreNotFound(deleteStream(deps.mall, userId, responsesStreamId));
+}
+
+/**
+ * Update a capability access's `clientData.cmc.requestEventId` after
+ * the trigger event has been persisted (and its id assigned by the
+ * mall). The mint hook runs as middleware BEFORE `createEvent`, so
+ * `triggerEvent.id` is null at mint time and the capability access
+ * was minted with `requestEventId: null`. This post-create helper
+ * stamps the now-known id so downstream consumers
+ * (`handleIncomingAccept` reading `clientData.cmc.requestEventId` to
+ * stamp `inviteEventId` on the inbox-mirror — see Phase 1.1) can
+ * resolve the original invite trigger event.
+ *
+ * Idempotent: if the access already has `requestEventId === id`,
+ * returns `{ok:true}` without writing.
+ */
+async function setRequestEventIdOnAccess (params: {
+  userId: string;
+  accessId: string;
+  requestEventId: string;
+  deps: { mall: MallLike };
+}): Promise<{ ok: boolean; reason?: string }> {
+  const { userId, accessId, requestEventId, deps } = params;
+  if (deps.mall.accesses?.get == null || deps.mall.accesses?.update == null) {
+    return { ok: false, reason: 'mall-accesses-get-or-update-unavailable' };
+  }
+  // The mint hook minted by id; we have it directly — but the access
+  // shape we need to preserve is unknown without a read. accesses.update
+  // top-level merge replaces `clientData` whole-sale, so we read first.
+  const list = await deps.mall.accesses.get(userId, {});
+  const acc = (list || []).find((a: any) => a?.id === accessId) ?? null;
+  if (acc == null) return { ok: false, reason: 'capability-access-not-found' };
+  const cmcCd = acc.clientData?.cmc;
+  if (cmcCd?.requestEventId === requestEventId) {
+    return { ok: true }; // idempotent
+  }
+  await deps.mall.accesses.update(userId, {
+    id: accessId,
+    update: {
+      clientData: {
+        ...(acc.clientData || {}),
+        cmc: {
+          ...(cmcCd || {}),
+          requestEventId,
+        },
+      },
+    },
+  });
+  return { ok: true };
 }
 
 /**
@@ -498,12 +559,15 @@ function buildApiEndpoint (base: string, token: string): string {
 
 export {
   DEFAULT_TTL_SECONDS,
+  MIN_TTL_SECONDS,
+  MAX_TTL_SECONDS,
   mintCapability,
   gcCapability,
   findCapabilityAccess,
   markCapabilityConsumed,
   recordAccepter,
   markCapabilityInvalidated,
+  setRequestEventIdOnAccess,
   buildApiEndpoint,
 };
 export type { CapabilityMode, CapabilityState };

@@ -20,6 +20,11 @@ const { handleIncomingAccept, resolveRequestScope } = require('../src/handleInco
 function fakeMall (opts = {}) {
   const calls = { streamsCreated: [], accessesCreated: [], eventsGot: 0, eventsCreated: [] };
   const requestEvent = opts.requestEvent;
+  // Optional fake capability access — when `opts.capabilityAccess` is supplied,
+  // `mall.accesses.get` returns it, so findCapabilityAccess can resolve
+  // `clientData.cmc.requestEventId` for the inbox-mirror `inviteEventId`
+  // enrichment + capability state-flip.
+  const capabilityAccess = opts.capabilityAccess;
   return {
     calls,
     accesses: {
@@ -31,6 +36,9 @@ function fakeMall (opts = {}) {
           apiEndpoint: 'https://back-tok@requester.example.com/',
           ...params,
         };
+      },
+      async get (_userId, _params) {
+        return capabilityAccess != null ? [capabilityAccess] : [];
       },
     },
     events: {
@@ -139,7 +147,7 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.equal(r.anchorStreamIds.length, 4);
     });
 
-    it('[IA02M] mirrors the accept onto :_cmc:inbox with backChannelAccessId + time when arriving from non-inbox stream', async () => {
+    it('[IA02M] mirrors the accept onto :_cmc:inbox with backChannelAccessId + inviteEventId + time when arriving from non-inbox stream', async () => {
       // When the accept lands on the per-capability responses stream
       // (`:_cmc:_internal:responses:<capId>` — the path that
       // `deliverAcceptViaCapability` POSTs to from the accepter side),
@@ -151,12 +159,33 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       //       it the doctor's app has no handle to call
       //       `cmc.revokeRelationship({accessId, scopeStreamId})` or
       //       `requestScopeUpdate` later on.
-      //   (b) `time` — `mall.events.create` does NOT default time the
+      //   (b) `inviteEventId` — the original `consent/request-cmc`
+      //       trigger event id, read from the capability access's
+      //       `clientData.cmc.requestEventId`. Without it the
+      //       convenience revoke path
+      //       `cmc.revokeRelationship({inviteEventId})` can't find
+      //       the inbox accept event.
+      //   (c) `time` — `mall.events.create` does NOT default time the
       //       way the api-server's events.create method does. An
       //       event with `time: undefined` disappears from
       //       time-ordered queries — including the `sinceTime`
       //       filter `cmc.waitForAccept` uses to find recent accepts.
-      const mall = fakeMall({ requestEvent: ORIGINAL_REQUEST_EVENT });
+      const mall = fakeMall({
+        requestEvent: ORIGINAL_REQUEST_EVENT,
+        // Capability access carries `requestEventId` — the original
+        // invite trigger id the requester wrote at createInvite time.
+        capabilityAccess: {
+          id: 'cap-access-1',
+          clientData: {
+            cmc: {
+              kind: 'capability',
+              capabilityId: 'cap-xyz',
+              requestEventId: 'orig-invite-trigger-1',
+              capability: { mode: 'single-use', state: 'open' },
+            },
+          },
+        },
+      });
       const acceptFromResponses = {
         ...ACCEPT_FROM_INBOX,
         streamIds: [':_cmc:_internal:responses:cap-xyz'],
@@ -179,6 +208,8 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.deepEqual(mirror.streamIds, [':_cmc:inbox']);
       assert.equal(mirror.type, 'consent/accept-cmc');
       assert.equal(mirror.content.backChannelAccessId, 'acc-back-1');
+      // inviteEventId stamped from capability access clientData
+      assert.equal(mirror.content.inviteEventId, 'orig-invite-trigger-1');
       // Original content carried through (grantedAccess, from, …)
       assert.deepEqual(mirror.content.from, { username: 'alice', host: 'pryv.me' });
       assert.equal(mirror.content.grantedAccess.apiEndpoint, 'https://granted-tok@accepter.pryv.me/');
@@ -186,6 +217,62 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.equal(typeof mirror.time, 'number');
       assert.ok(mirror.time >= beforeS && mirror.time <= afterS,
         'mirror.time outside expected window: ' + mirror.time);
+    });
+
+    it('[IA02F] back-channel access carries `features` from accept event content (Phase 2.2 requester-side gating)', async () => {
+      // Phase 2.2 features gating works symmetrically on both sides
+      // of the relationship. The accepter's data-grant already
+      // carries features via buildDataGrantPayload. The requester's
+      // back-channel access (minted here) must mirror them from the
+      // accept event content so handleChat / handleSystem on the
+      // requester side can enforce the contract too.
+      const mall = fakeMall({ requestEvent: ORIGINAL_REQUEST_EVENT });
+      const acceptWithFeatures = {
+        ...ACCEPT_FROM_INBOX,
+        content: {
+          ...ACCEPT_FROM_INBOX.content,
+          features: { chat: true, systemMessaging: false },
+        },
+      };
+      await handleIncomingAccept({
+        userId: 'u1',
+        acceptEvent: acceptWithFeatures,
+        selfIdentity: SELF,
+        deps: { mall },
+      });
+      assert.equal(mall.calls.accessesCreated.length, 1);
+      const access = mall.calls.accessesCreated[0];
+      assert.deepEqual(access.clientData.cmc.features, { chat: true, systemMessaging: false });
+    });
+
+    it('[IA02P] mirror omits inviteEventId when capability access is not findable (degraded but non-fatal)', async () => {
+      // Defensive: if the capability access has been gc'd / can't be
+      // looked up, the mirror still writes with the other handles
+      // (backChannelAccessId, from, time) but `inviteEventId` is
+      // omitted. The {accessId, scopeStreamId} power-user revoke path
+      // still works; only the {inviteEventId} convenience path is
+      // unavailable for this orphan relationship.
+      const mall = fakeMall({
+        requestEvent: ORIGINAL_REQUEST_EVENT,
+        // No capabilityAccess opt → accesses.get returns []
+      });
+      const acceptFromResponses = {
+        ...ACCEPT_FROM_INBOX,
+        streamIds: [':_cmc:_internal:responses:cap-xyz'],
+        content: { ...ACCEPT_FROM_INBOX.content, capabilityId: 'cap-xyz' },
+      };
+      const r = await handleIncomingAccept({
+        userId: 'u1',
+        acceptEvent: acceptFromResponses,
+        selfIdentity: SELF,
+        deps: { mall },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(mall.calls.eventsCreated.length, 1);
+      const mirror = mall.calls.eventsCreated[0];
+      assert.equal(mirror.content.backChannelAccessId, 'acc-back-1');
+      assert.equal(mirror.content.inviteEventId, undefined,
+        'inviteEventId must be omitted when capability access not findable');
     });
 
     it('[IA02N] does NOT write the mirror when accept already arrives on :_cmc:inbox (e.g. handed off by the inbox write-hook)', async () => {

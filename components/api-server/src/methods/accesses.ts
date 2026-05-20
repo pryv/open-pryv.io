@@ -197,11 +197,15 @@ export default async function produceAccessesApiMethods (api: any) {
   const notVisibleAccountStreamsIds = accountStreams.hiddenStreamIds;
   const visibleAccountStreamsIds = Object.keys(accountStreams.accountMap).filter(id => accountStreams.accountMap[id].isShown);
 
+  const cmcAccessCreateForgePreventionHook = cmc.createAccessCreateForgePreventionHook({ errors });
+  const cmcAccessUpdateForgePreventionHook = cmc.createAccessUpdateForgePreventionHook({ errors });
+
   api.register(
     'accesses.create',
     commonFns.basicAccessAuthorizationCheck,
     applyDefaultsForCreation,
     commonFns.getParamsValidation(methodsSchema.create.params),
+    cmcAccessCreateForgePreventionHook,
     applyPrerequisitesForCreation, applyAccountStreamsValidation,
     createDataStructureFromPermissions,
     cleanupPermissions,
@@ -415,6 +419,7 @@ export default async function produceAccessesApiMethods (api: any) {
     'accesses.update',
     commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.update.params),
+    cmcAccessUpdateForgePreventionHook,
     loadAccessForUpdate,
     enforceUpdateChainRules,
     snapshotAndApplyUpdate,

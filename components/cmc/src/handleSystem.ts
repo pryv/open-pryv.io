@@ -221,6 +221,20 @@ async function handleSystemEvent (params: {
   }
 
   const cmc = chosen.clientData?.cmc;
+
+  // Phase 2.2 features gating — the offer's negotiated
+  // `features.systemMessaging` is the relationship's binding contract.
+  // When the counterparty access carries
+  // `clientData.cmc.features.systemMessaging === false`, alert + ack
+  // sends are rejected. Scope-request / scope-update events are NOT
+  // subject to this gate — they're protocol-level (relationship
+  // governance), not user-level messaging.
+  const isUserMessaging = triggerEvent.type === C.ET_SYSTEM_ALERT ||
+                          triggerEvent.type === C.ET_SYSTEM_ACK;
+  if (isUserMessaging && cmc?.features?.systemMessaging === false) {
+    return { ok: false, reason: 'cmc-system-messaging-disabled', detail: { accessId: chosen.id, eventType: triggerEvent.type } };
+  }
+
   const remoteApiEndpoint: string | undefined = cmc?.counterparty?.apiEndpoint;
   const remoteCollectorStreamId: string | undefined = cmc?.counterparty?.remoteCollectorStreamId;
   if (typeof remoteApiEndpoint !== 'string' || remoteApiEndpoint.length === 0) {

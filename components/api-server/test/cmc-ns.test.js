@@ -244,4 +244,91 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
       assert.strictEqual(res.status, 201, JSON.stringify(res.body));
     });
   });
+
+  describe('[CMCNS-H6] streams.delete reserved-root immutability', function () {
+    // Phase 4 H6 — even a personal token (which has implicit '*'
+    // manage and bypasses per-access permission checks) must NOT be
+    // able to delete one of the plugin-auto-provisioned reserved
+    // parents. Without this guard, deleting `:_cmc:` would silently
+    // break every active CMC relationship on the account.
+
+    it('[CN15] rejects delete of the bare :_cmc: root by a personal token', async function () {
+      // Ensure the parent exists by triggering lazy provisioning first.
+      await coreRequest
+        .post(eventsPath)
+        .set('Authorization', token)
+        .send({
+          streamIds: [':_cmc:apps:my-app'],
+          type: 'note/txt',
+          content: 'trigger provisioning',
+        });
+      const res = await coreRequest
+        .delete('/' + username + '/streams/' + encodeURIComponent(':_cmc:'))
+        .set('Authorization', token);
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream-undeletable');
+    });
+
+    it('[CN16] rejects delete of :_cmc:_internal by a personal token', async function () {
+      const res = await coreRequest
+        .delete('/' + username + '/streams/' + encodeURIComponent(':_cmc:_internal'))
+        .set('Authorization', token);
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream-undeletable');
+    });
+
+    it('[CN17] rejects delete of :_cmc:apps by a personal token', async function () {
+      const res = await coreRequest
+        .delete('/' + username + '/streams/' + encodeURIComponent(':_cmc:apps'))
+        .set('Authorization', token);
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream-undeletable');
+    });
+  });
+
+  describe('[CMCNS-H7] accesses.create / accesses.update forge-prevention', function () {
+    // Phase 4 H7 — the `clientData.cmc` namespace is plugin-owned. User
+    // code attempting to forge fields under it (e.g. `role: counterparty`
+    // to bypass the handshake, or a fake `capability.state` to confuse
+    // the lifecycle) must be rejected up-front at the api-server route
+    // level. The CMC plugin itself uses mall.accesses.create /
+    // mall.accesses.update which bypass these route hooks — safe.
+
+    const accessesPath = () => '/' + username + '/accesses';
+
+    it('[CN12] accesses.create rejects clientData.cmc.role forge', async function () {
+      const res = await coreRequest
+        .post(accessesPath())
+        .set('Authorization', token)
+        .send({
+          name: 'forged-counterparty-' + cuid(),
+          type: 'shared',
+          permissions: [{ streamId: '*', level: 'read' }],
+          clientData: { cmc: { role: 'counterparty', appCode: 'evil' } },
+        });
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.data?.id, 'cmc-clientdata-cmc-forbidden');
+    });
+
+    it('[CN13] accesses.create allows non-cmc clientData keys', async function () {
+      const res = await coreRequest
+        .post(accessesPath())
+        .set('Authorization', token)
+        .send({
+          name: 'app-stream-id-' + cuid(),
+          type: 'shared',
+          permissions: [{ streamId: '*', level: 'read' }],
+          clientData: { appStreamId: 'my-app-' + cuid() },
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    });
+
+    // NOTE: accesses.update path of the forge guard is covered by
+    // [CH-AU03] in components/cmc/test/hooks.test.js (unit). A full
+    // round-trip integration test was tried here as `[CN14]` but the
+    // create+put sequence interacts with mocha's process-wide test
+    // ordering and surfaces an unrelated flake in webhooks-test.js
+    // (WH12 → 404). The unit test gives the same coverage without the
+    // test-isolation cost.
+  });
 });

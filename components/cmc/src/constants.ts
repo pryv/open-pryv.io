@@ -149,6 +149,20 @@ function isPluginManagedStreamId (streamId: string): boolean {
 }
 
 /**
+ * Plan 68 Phase 4 H5 — true for any stream-id under the plugin-internal
+ * subtree (`:_cmc:_internal`, `:_cmc:_internal:retries`,
+ * `:_cmc:_internal:offer:*`, `:_cmc:_internal:responses:*`). The
+ * defense-in-depth filter on events.get / events.getOne /
+ * streams.get uses this so internal events / streams cannot leak via
+ * api-server read paths even if an access erroneously has perms on the
+ * subtree.
+ */
+function isCmcInternalStreamId (streamId: string): boolean {
+  if (typeof streamId !== 'string') return false;
+  return streamId === NS_INTERNAL || streamId.startsWith(NS_INTERNAL + ':');
+}
+
+/**
  * Extract the app-code segment for any `:_cmc:apps:<app-code>[:...]` id.
  * Returns null for ids that aren't under `:_cmc:apps:`.
  */
@@ -249,6 +263,7 @@ export {
   isAppNestedPluginStream,
   isUserCreatableStreamId,
   isPluginManagedStreamId,
+  isCmcInternalStreamId,
   getAppCode,
 
   // event types

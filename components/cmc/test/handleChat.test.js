@@ -207,4 +207,72 @@ describe('[CMCHC] cmc/handleChat', () => {
       assert.equal(r.detail.status, 503);
     });
   });
+
+  describe('[CMCHC-FEAT] Phase 2.2 features gating', () => {
+    // Plan 68 Phase 2.2: `features.chat: false` on the counterparty
+    // access is binding. handleChat rejects the send so the offer's
+    // negotiated feature contract isn't a silent no-op.
+
+    it('[HC09] rejects send with cmc-chat-disabled when access.clientData.cmc.features.chat === false', async () => {
+      const chatDisabledAccess = {
+        ...COUNTERPARTY_ACCESS,
+        clientData: {
+          cmc: {
+            ...COUNTERPARTY_ACCESS.clientData.cmc,
+            features: { chat: false, systemMessaging: true },
+          },
+        },
+      };
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const r = await handleChat({
+        userId: 'u1',
+        triggerEvent: CHAT_TRIGGER,
+        selfIdentity: SELF,
+        deps: { mall: fakeMall([chatDisabledAccess]), fetch },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-chat-disabled');
+      assert.equal(r.detail.accessId, 'acc-back-channel');
+      // No outbound POST when feature is gated.
+      assert.equal(calls.length, 0);
+    });
+
+    it('[HC10] permits send when features.chat === true (binding contract is honored)', async () => {
+      const chatEnabledAccess = {
+        ...COUNTERPARTY_ACCESS,
+        clientData: {
+          cmc: {
+            ...COUNTERPARTY_ACCESS.clientData.cmc,
+            features: { chat: true, systemMessaging: false },
+          },
+        },
+      };
+      const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r-permit' } } });
+      const r = await handleChat({
+        userId: 'u1',
+        triggerEvent: CHAT_TRIGGER,
+        selfIdentity: SELF,
+        deps: { mall: fakeMall([chatEnabledAccess]), fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(calls.length, 1);
+    });
+
+    it('[HC11] permits send when features field is absent on the access (default-permit)', async () => {
+      // Backward-compat: pre-Phase-2.2 accesses don't carry features.
+      // Default to permissive so existing relationships continue to work.
+      // (The locked design says "enforce on ALL relationships" but
+      // null/undefined features means "no flag was set" — distinct from
+      // explicit `false`.)
+      const { fetch, calls } = fakeFetch({ status: 201, body: { event: { id: 'r-permit' } } });
+      const r = await handleChat({
+        userId: 'u1',
+        triggerEvent: CHAT_TRIGGER,
+        selfIdentity: SELF,
+        deps: { mall: fakeMall([COUNTERPARTY_ACCESS]), fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(calls.length, 1);
+    });
+  });
 });

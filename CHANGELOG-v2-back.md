@@ -1,5 +1,34 @@
 # Changelog - Internal (no API impact)
 
+## feat(cmc): Phase 4 security hardening + Phase 1.1/2.1/2.2/3.1/3.2 fixes (Plan 68 Phase 2)
+
+Wire-up + tests for the API-facing changes documented in `CHANGELOG-v2.md` (CMC security hardening). Adds:
+
+- `components/cmc/src/hooks.ts`: four new middleware factories — `createAccessCreateForgePreventionHook`, `createAccessUpdateForgePreventionHook`, `createStreamDeleteReservedRootHook`, `createCounterpartyFromStampingHook`, `createEventsGetInternalGuardHook`, `createEventGetOneInternalGuardHook`, `createStreamsGetInternalGuardHook`. All follow the pure-factory pattern (no api-server deps, unit-testable with fake deps).
+- `components/cmc/src/constants.ts`: new `isCmcInternalStreamId(streamId)` predicate.
+- `components/cmc/src/errorIds.ts`: new `CLIENTDATA_CMC_FORBIDDEN` (cmc-clientdata-cmc-forbidden) + reused `CHAT_NO_REMOTE_APIENDPOINT` semantics.
+- `components/api-server/src/methods/accesses.ts`: wires forge-prevention hook into accesses.create + accesses.update.
+- `components/api-server/src/methods/events.ts`: wires from-stamping + events.get/getOne internal guards.
+- `components/api-server/src/methods/streams.ts`: wires streams.delete reserved-root + streams.get internal guard.
+
+Earlier Phase 2 phases (1.1, 2.1, 2.2, 3.1, 3.2) shipped on the same `feat/cmc-phase-2-hds-readiness` branch:
+
+- **Phase 1.1** (inviteEventId stamping) — `handleIncomingAccept` looks up the capability access once, stamps `inviteEventId` on the inbox mirror from `capabilityAccess.clientData.cmc.requestEventId`. Closes `cmc.revokeRelationship({inviteEventId})` doctor-side convenience path. lib-js: `[CMCL1RC]` + `[CMCL1RD]` cover the post-stamping lookup contract.
+- **Phase 2.1** (TTL configurable per-invite) — `capabilityMintHook` reads `event.content.request.expiresAt`, bounds-checks to `[60s, 30d]`, rejects out-of-range with `cmc-capability-ttl-out-of-range`. Default unchanged (7d when `expiresAt` omitted).
+- **Phase 2.2** (features gating) — `handleChat` / `handleSystem` consult `clientData.cmc.features.{chat, systemMessaging}` on the counterparty access at send time. Reject with `cmc-chat-disabled` / `cmc-system-messaging-disabled` when explicitly `false` (default-permit on omission).
+- **Phase 3.1** (scope-update suppression) — verified `accessesUpdateHook` runs `accesses.update` inside `runWithSuppression` so the post-hook doesn't double-fire the peer notification.
+- **Phase 3.2** (`requestEventId` real-flow) — new `createCapabilityPostCreateHook` middleware runs AFTER `createEvent` assigns the trigger's real id, calls `capability.setRequestEventIdOnAccess(...)` to stamp it on the capability access's `clientData.cmc.requestEventId`. Pre-fix the mint hook fired pre-persist when `event.id === null` so `requestEventId` was always null in production (HDS-reported).
+
+Test deltas (Plan 68 Phase 2 cumulative):
+
+| Layer | Pre-Phase-2 | Post-Phase-2 | Delta |
+|---|---|---|---|
+| open-pryv.io cmc | 340 | 394 | +54 |
+| open-pryv.io api-server | 1050 | 1055 | +5 (CN12/13/15/16/17) |
+| lib-js pryv-cmc | 44 | 55 | +11 |
+
+Plus 4 new deployed-infra validation scripts in `_plans/68-cmc-datastore-atwork/tests/` (04-extended-messaging, 05-scope-update, 07-recapture, 08-sdk-handshake) — release-blocking gates before npm publish per Plan 68 Phase 6.
+
 ## docs: storage-isolation keys for parallel tests
 
 New `docs/storage-isolation-for-parallel-tests.md` enumerates every config key that a parallel-test fixture must override per mocha worker to avoid cross-worker collisions on shared PG databases, SQLite paths, ports, and rqlite endpoints. Audit confirmed every relevant key is reachable via `config.set()` and respected by its consumer — no code change needed; the doc is the canonical input for the per-worker test-helper that Plan 61 will ship.

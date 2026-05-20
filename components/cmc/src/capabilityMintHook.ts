@@ -62,6 +62,55 @@ type Middleware = (context: any, params: any, result: any, next: any) => any | P
  * Returns a middleware that fires for consent/request-cmc events with
  * capabilityRequested:true on context.newEvent. Other events passthrough.
  */
+/**
+ * Post-create middleware: AFTER `createEvent` persists the
+ * consent/request-cmc trigger and assigns its real event id, stamp
+ * that id onto the capability access's `clientData.cmc.requestEventId`.
+ *
+ * Why this is a separate hook from the mint hook: the mint hook fires
+ * BEFORE createEvent, so `context.newEvent.id` is null at mint time
+ * (it's assigned by the mall during persist). Plan 68 Phase 3.2
+ * verified this is always the case in production (HDS reported null
+ * requestEventId on real deploys; unit tests passed only because
+ * fixtures set explicit `id`). Without this post-stamp, Phase 1.1's
+ * inviteEventId-on-inbox-mirror feature degrades silently because the
+ * source `requestEventId` is null on real-deploy capability accesses.
+ *
+ * Best-effort: errors are logged but don't fail the trigger create.
+ * The base `consent/request-cmc` event is already persisted at this
+ * point; failing the request here would leave the user with an
+ * orphan event the caller can't see (returned the error instead).
+ */
+function createCapabilityPostCreateHook (deps: Deps): Middleware {
+  return async function cmcCapabilityPostCreateHook (context, _params, _result, next) {
+    const event = context?.newEvent;
+    if (event == null) return next();
+    if (event.type !== C.ET_REQUEST) return next();
+    if (event.content?.capabilityRequested !== true) return next();
+    if (typeof event.id !== 'string' || event.id.length === 0) return next();
+    const accessId: string | undefined = event.content?.capabilityAccessId;
+    if (typeof accessId !== 'string' || accessId.length === 0) return next();
+    const userId = context.user?.id;
+    if (typeof userId !== 'string') return next();
+    try {
+      await capabilityMod.setRequestEventIdOnAccess({
+        userId,
+        accessId,
+        requestEventId: event.id,
+        deps: { mall: deps.mall },
+      });
+    } catch (err: any) {
+      deps.logger?.warn?.('cmc/capability-post-create: requestEventId stamp failed (non-fatal)', {
+        userId,
+        accessId,
+        eventId: event.id,
+        error: String(err?.message || err),
+      });
+    }
+    next();
+  };
+}
+
 function createCapabilityMintHook (deps: Deps): Middleware {
   return async function cmcCapabilityMintHook (context, _params, _result, next) {
     const event = context?.newEvent;
@@ -86,10 +135,41 @@ function createCapabilityMintHook (deps: Deps): Middleware {
       }
     }
 
+    // Per-invite TTL from `content.request.expiresAt` (absolute
+    // unix-seconds timestamp; lib-js `cmc.createInvite({expiresAt})`
+    // writes it there). When present, convert to `ttlSeconds` for
+    // mintCapability and apply platform bounds. Out-of-range rejects
+    // the createInvite at this layer — the trigger event is NOT
+    // persisted, the events.create caller gets a typed API error.
+    // Absent / non-number → fall through to mintCapability's
+    // DEFAULT_TTL_SECONDS (7d).
+    let ttlSeconds: number | undefined;
+    const callerExpiresAt = event.content?.request?.expiresAt;
+    if (typeof callerExpiresAt === 'number' && Number.isFinite(callerExpiresAt)) {
+      const now = (deps.now ?? (() => Date.now() / 1000))();
+      const computed = Math.floor(callerExpiresAt - now);
+      if (computed < capabilityMod.MIN_TTL_SECONDS || computed > capabilityMod.MAX_TTL_SECONDS) {
+        return next(deps.errors.invalidOperation(
+          'CMC capability TTL out of range: expiresAt resolves to ' + computed +
+          's, must be within [' + capabilityMod.MIN_TTL_SECONDS + ', ' +
+          capabilityMod.MAX_TTL_SECONDS + '] seconds from now.',
+          {
+            id: 'cmc-capability-ttl-out-of-range',
+            expiresAt: callerExpiresAt,
+            computedTtlSeconds: computed,
+            minTtlSeconds: capabilityMod.MIN_TTL_SECONDS,
+            maxTtlSeconds: capabilityMod.MAX_TTL_SECONDS,
+          }
+        ));
+      }
+      ttlSeconds = computed;
+    }
+
     try {
       const result = await capabilityMod.mintCapability({
         userId,
         triggerEvent: event,
+        ttlSeconds,
         deps: {
           mall: deps.mall,
           idGen: deps.idGen,
@@ -136,4 +216,4 @@ function createCapabilityMintHook (deps: Deps): Middleware {
   };
 }
 
-export { createCapabilityMintHook };
+export { createCapabilityMintHook, createCapabilityPostCreateHook };

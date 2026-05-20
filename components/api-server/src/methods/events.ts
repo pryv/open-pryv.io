@@ -108,8 +108,18 @@ export default async function (api: any) {
 
   // RETRIEVAL
 
+  // Phase 4 H5: defense-in-depth — strip `:_cmc:_internal:*` ids from
+  // query inputs / single-event lookups / streams.get tree before they
+  // reach the store. Internal CMC streams (`offer/*`, `responses/*`,
+  // `retries`) have no app-visible permissions today, but the explicit
+  // filter guards against future regressions (mis-granted perms,
+  // permission-system bugs) leaking plugin internals via read paths.
+  const cmcEventsGetInternalGuard = cmc.createEventsGetInternalGuardHook();
+  const cmcEventGetOneInternalGuard = cmc.createEventGetOneInternalGuardHook({ errors });
+
   api.register(
     'events.get',
+    cmcEventsGetInternalGuard,
     eventsGetUtils.coerceStreamsParam,
     commonFns.getParamsValidation(methodsSchema.get.params),
     eventsGetUtils.applyDefaultsForRetrieval,
@@ -141,6 +151,7 @@ export default async function (api: any) {
     'events.getOne',
     commonFns.getParamsValidation(methodsSchema.getOne.params),
     findEvent,
+    cmcEventGetOneInternalGuard,
     checkIfAuthorized,
     includeHistoryIfRequested
   );
@@ -213,6 +224,12 @@ export default async function (api: any) {
     logger: getLogger('cmc:ensure-reserved-parents'),
   });
   const cmcInboxWriteHook = cmc.createInboxWriteHook({ errors });
+  // Phase 4 H8: stamp content.from from access identity when a
+  // counterparty-marked access writes a chat/system message into a
+  // per-app stream. inboxWriteHook covers :_cmc:inbox; this hook covers
+  // everything else. Local self-writes (personal/app token) pass
+  // through unchanged — they aren't a cross-actor forge vector.
+  const cmcCounterpartyFromStampingHook = cmc.createCounterpartyFromStampingHook({ errors });
   const cmcCapabilityResponseHook = cmc.createCapabilityResponseHook({ errors });
   const cmcDispatchLogger = getLogger('cmc:dispatch');
   const cmcSelfIdentityFor = async (userId: string) => {
@@ -253,6 +270,17 @@ export default async function (api: any) {
     logger: getLogger('cmc:capability-mint'),
     selfIdentityFor: cmcSelfIdentityFor,
   });
+  // Phase 3.2: AFTER createEvent persists the consent/request-cmc
+  // trigger and the mall assigns its real id, stamp that id onto the
+  // capability access's `clientData.cmc.requestEventId`. The mint hook
+  // can't do this — it runs pre-persist when event.id is null.
+  // Without this post-stamp, Phase 1.1's inviteEventId-on-inbox-mirror
+  // degrades silently on real-deploy because the source field is null.
+  const cmcCapabilityPostCreateHook = cmc.createCapabilityPostCreateHook({
+    mall: mallForCmc,
+    errors,
+    logger: getLogger('cmc:capability-post-create'),
+  });
   const cmcDispatchMiddleware = cmc.createDispatchMiddleware({
     mall: mallForCmc,
     fetch: (url: string, init?: any) => globalThis.fetch(url, init),
@@ -288,6 +316,7 @@ export default async function (api: any) {
     cmcContentValidationHook,
     cmcCapabilityMintHook,
     cmcInboxWriteHook,
+    cmcCounterpartyFromStampingHook,
     cmcCapabilityResponseHook,
     detectAccountStream,
     validateAccountStreamForCreate,
@@ -295,6 +324,11 @@ export default async function (api: any) {
     notifyPlatformForCreate,
     handleSeries,
     createEvent,
+    // Phase 3.2 post-stamp: AFTER createEvent assigns event.id, copy it
+    // onto the capability access's clientData.cmc.requestEventId. Must
+    // run after createEvent (which generates id) and before
+    // cmcDispatchMiddleware (which doesn't depend on this stamp).
+    cmcCapabilityPostCreateHook,
     addIntegrityToContext,
     notify,
     cmcDispatchMiddleware

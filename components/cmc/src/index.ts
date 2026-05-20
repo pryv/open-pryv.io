@@ -55,7 +55,7 @@ export const { RetryScheduler } = retryScheduler;
 export const { startRetryLoopIfEnabled } = bootRetryLoop;
 export const { createMallAccessesAdapter } = mallAccessesAdapter;
 
-export const { createCapabilityMintHook } = capabilityMintHook;
+export const { createCapabilityMintHook, createCapabilityPostCreateHook } = capabilityMintHook;
 export const { createInboxWriteHook } = inboxWriteHook;
 
 export const { createDispatchMiddleware } = dispatch;
@@ -64,7 +64,14 @@ export const { createDispatchMiddleware } = dispatch;
 export const {
   createCmcContentValidationHook,
   createStreamCreateReservedRootHook,
+  createStreamDeleteReservedRootHook,
   createEnsureReservedParentsHook,
+  createCounterpartyFromStampingHook,
+  createAccessCreateForgePreventionHook,
+  createAccessUpdateForgePreventionHook,
+  createEventsGetInternalGuardHook,
+  createEventGetOneInternalGuardHook,
+  createStreamsGetInternalGuardHook,
 } = hooks;
 
 // Provisioning at top-level for users/repository.ts integration.
@@ -93,6 +100,7 @@ export const {
   isAppNestedPluginStream,
   isUserCreatableStreamId,
   isPluginManagedStreamId,
+  isCmcInternalStreamId,
   getAppCode,
   ET_REQUEST,
   ET_ACCEPT,

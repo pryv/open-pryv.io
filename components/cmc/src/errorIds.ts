@@ -66,6 +66,13 @@ const CmcErrorIds = {
   // Capability resolved but the offer stream held more than one event —
   // protocol invariant violation; ops investigation needed.
   CAPABILITY_MULTIPLE_OFFERS: 'cmc-capability-multiple-offers',
+  // Caller's `request.expiresAt` resolves to a TTL outside the
+  // platform-allowed bounds [60s, 30d]. Either the timestamp is in the
+  // past / too close to now, or it's farther than 30 days out. Plugin
+  // rejects the createInvite at mint time. Caller should retry with a
+  // bounded value or omit `expiresAt` to fall back to the 7-day
+  // platform default.
+  CAPABILITY_TTL_OUT_OF_RANGE: 'cmc-capability-ttl-out-of-range',
 
   // --- Trigger-event content shape ---
   // The accept-cmc trigger event's content omitted `capabilityUrl`.
@@ -127,6 +134,33 @@ const CmcErrorIds = {
   CHAT_NO_REMOTE_APIENDPOINT: 'cmc-chat-no-remote-apiendpoint',
   // Same as above for the chat stream-id.
   CHAT_NO_REMOTE_CHAT_STREAM: 'cmc-chat-no-remote-chat-stream',
+  // The offer's `features.chat: false` was negotiated; the
+  // counterparty access carries `clientData.cmc.features.chat ===
+  // false`. handleChat rejects the send so the relationship's
+  // feature contract is binding (not just documentary). Apps issuing
+  // `cmc.sendChat(...)` against a feature-disabled relationship will
+  // see this id.
+  CHAT_DISABLED: 'cmc-chat-disabled',
+  // Same as CHAT_DISABLED for system messaging
+  // (`notification/alert-cmc` + `notification/ack-cmc`). The offer's
+  // `features.systemMessaging: false` was negotiated; the
+  // counterparty access carries
+  // `clientData.cmc.features.systemMessaging === false`.
+  // handleSystem rejects the send. Note: scope-request / scope-update
+  // system events are protocol-level (not user messaging) and remain
+  // permitted regardless of the flag.
+  SYSTEM_MESSAGING_DISABLED: 'cmc-system-messaging-disabled',
+
+  // --- Forge-prevention on accesses.* HTTP routes (Phase 4 H7) ---
+  // User code attempted to write under the `clientData.cmc` namespace
+  // via the api-server accesses.create / accesses.update routes. That
+  // namespace is plugin-owned end-to-end (role, appCode, counterparty,
+  // capability, requestEventId, features) — the CMC plugin populates it
+  // via mall.accesses.create / mall.accesses.update during handshake.
+  // Allowing user-supplied values would let a malicious app forge a
+  // counterparty role on its own access, bypassing the handshake
+  // entirely. Reject up-front.
+  CLIENTDATA_CMC_FORBIDDEN: 'cmc-clientdata-cmc-forbidden',
 } as const;
 
 type CmcErrorId = (typeof CmcErrorIds)[keyof typeof CmcErrorIds];

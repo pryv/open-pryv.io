@@ -212,6 +212,14 @@ async function handleIncomingAccept (params: {
   // legitimate retry path and the access's clientData + permissions
   // must reflect the LATEST acceptance.
   const accessName = 'cmc-back-channel-' + appCode + '--' + peerSlug;
+  // Phase 2.2 features gating — features negotiated by the offer
+  // (and accepted by the counterparty) are delivered on
+  // `acceptEvent.content.features`. Mirror them onto the
+  // back-channel access's clientData so handleChat / handleSystem on
+  // the REQUESTER side can enforce the contract symmetrically with
+  // the accepter side (whose data-grant access carries the same
+  // field via buildDataGrantPayload). Absent / null → permissive.
+  const negotiatedFeatures: any = acceptEvent?.content?.features ?? null;
   const accessParams = {
     type: 'shared',
     name: accessName,
@@ -224,6 +232,7 @@ async function handleIncomingAccept (params: {
       cmc: {
         role: 'counterparty',
         appCode,
+        features: negotiatedFeatures,
         counterparty: {
           username: counterparty.username,
           host: counterparty.host,
@@ -287,6 +296,29 @@ async function handleIncomingAccept (params: {
     }
   }
 
+  // Look up the local capability access once for the inbox-mirror
+  // enrichment + the state-flip block below. The accepter's plugin only
+  // knows `capabilityId` from the URL/cap-id; only the requester (here)
+  // can read `clientData.cmc.requestEventId` (which is the original
+  // invite trigger event id from `consent/request-cmc` — the one the
+  // doctor's app uses with `cmc.revokeRelationship({inviteEventId})`).
+  const capabilityIdToConsume = acceptEvent?.content?.capabilityId;
+  let capabilityAccess: any = null;
+  if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
+    try {
+      capabilityAccess = await capabilityMod.findCapabilityAccess({
+        userId, capabilityId: capabilityIdToConsume, deps: { mall },
+      });
+    } catch (err: any) {
+      deps.logger?.warn?.('cmc/handleIncomingAccept: capability access lookup failed (non-fatal)', {
+        capabilityId: capabilityIdToConsume,
+        error: String(err?.message || err),
+      });
+    }
+  }
+  const inviteEventId: string | null =
+    capabilityAccess?.clientData?.cmc?.requestEventId ?? null;
+
   // Mirror the accept to :_cmc:inbox so the requester's app sees it via
   // standard inbox subscription (per INTERNALS.md flow 3 step 11). The
   // accept event itself lives in :_cmc:_internal:responses:<capId>; the
@@ -297,17 +329,22 @@ async function handleIncomingAccept (params: {
   // provisioned and lazy-provision didn't run on this code path).
   if (acceptEvent.streamIds?.includes(C.NS_INBOX) !== true && deps.mall.events != null) {
     try {
-      // Augment the mirror's content with the doctor-side back-channel
-      // accessId we just minted. The accepter's plugin couldn't have
-      // included this — only the requester's plugin knows the
-      // back-channel access id. Without it the doctor's app has no
-      // discoverable way to find the access for later revoke/scope-update
-      // operations (`cmc.revokeRelationship({accessId, scopeStreamId})`
-      // needs this value).
+      // Augment the mirror's content with handles the doctor's app can
+      // only discover via the requester side:
+      //   - `backChannelAccessId` — the data-grant id we just minted
+      //     locally. Power-user revoke path
+      //     (`cmc.revokeRelationship({accessId, scopeStreamId})`)
+      //     needs this.
+      //   - `inviteEventId` — the original `consent/request-cmc`
+      //     trigger event id, read from the capability access's
+      //     `clientData.cmc.requestEventId`. Convenience revoke path
+      //     (`cmc.revokeRelationship({inviteEventId})`) matches against
+      //     this on the inbox event.
       const mirrorContent: any = {
         ...(acceptEvent.content || {}),
         backChannelAccessId: access.id,
       };
+      if (inviteEventId != null) mirrorContent.inviteEventId = inviteEventId;
       await (deps.mall as any).events.create(userId, {
         streamIds: [C.NS_INBOX],
         type: C.ET_ACCEPT,
@@ -367,13 +404,12 @@ async function handleIncomingAccept (params: {
   // capabilities with `mode: 'open-link'` keep state='open' until
   // explicit invalidation (Phase 2 plan). Best-effort; the back-channel
   // access is already minted so the relationship is established.
-  const capabilityIdToConsume = acceptEvent?.content?.capabilityId;
+  //
+  // `capabilityIdToConsume` and `capabilityAccess` were resolved above
+  // (for the inbox-mirror enrichment). Reuse to avoid a second lookup.
   if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
     try {
-      const acc = await capabilityMod.findCapabilityAccess({
-        userId, capabilityId: capabilityIdToConsume, deps: { mall },
-      });
-      const capabilityMode = acc?.clientData?.cmc?.capability?.mode;
+      const capabilityMode = capabilityAccess?.clientData?.cmc?.capability?.mode;
       if (capabilityMode === 'single-use' || capabilityMode == null) {
         // Default 'single-use' for legacy capabilities minted before
         // this field existed.

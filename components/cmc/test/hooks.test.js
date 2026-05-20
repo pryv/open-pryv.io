@@ -22,7 +22,14 @@ const assert = require('node:assert/strict');
 const {
   createCmcContentValidationHook,
   createStreamCreateReservedRootHook,
+  createStreamDeleteReservedRootHook,
   createEnsureReservedParentsHook,
+  createCounterpartyFromStampingHook,
+  createAccessCreateForgePreventionHook,
+  createAccessUpdateForgePreventionHook,
+  createEventsGetInternalGuardHook,
+  createEventGetOneInternalGuardHook,
+  createStreamsGetInternalGuardHook,
 } = require('../src/hooks.ts');
 
 function fakeErrors () {
@@ -250,6 +257,78 @@ describe('[CMCHOOK] cmc/hooks', () => {
     });
   });
 
+  describe('[CMCHOOK-SD] createStreamDeleteReservedRootHook (H6)', () => {
+    it('[CSD01] passes through deletes outside :_cmc:', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamDeleteReservedRootHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, { id: 'fertility' }, {});
+      assert.equal(err, undefined);
+    });
+
+    it('[CSD02] rejects delete of bare :_cmc: root', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamDeleteReservedRootHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, { id: ':_cmc:' }, {});
+      assert.ok(err instanceof Error);
+      assert.equal(err.details.id, 'cmc-reserved-stream-undeletable');
+    });
+
+    it('[CSD03] rejects delete of any reserved parent', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamDeleteReservedRootHook({ errors: factory });
+      for (const id of [':_cmc:inbox', ':_cmc:apps', ':_cmc:_internal', ':_cmc:_internal:retries']) {
+        const err = await runMiddleware(mw, {}, { id }, {});
+        assert.ok(err instanceof Error, 'expected reject for ' + id);
+        assert.equal(err.details.id, 'cmc-reserved-stream-undeletable');
+      }
+    });
+
+    it('[CSD04] rejects delete inside :_cmc:_internal:* (plugin-internal)', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamDeleteReservedRootHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, { id: ':_cmc:_internal:offer:abc' }, {});
+      assert.ok(err instanceof Error);
+      assert.equal(err.details.id, 'cmc-reserved-stream-undeletable');
+    });
+
+    it('[CSD05] rejects delete of chats/collectors parents + children under :_cmc:apps:', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamDeleteReservedRootHook({ errors: factory });
+      const blocked = [
+        ':_cmc:apps:my-app:chats',
+        ':_cmc:apps:my-app:collectors',
+        ':_cmc:apps:my-app:study-A:chats',
+        ':_cmc:apps:my-app:chats:alice--example-com',
+        ':_cmc:apps:my-app:study-A:collectors:bob--example-com',
+      ];
+      for (const id of blocked) {
+        const err = await runMiddleware(mw, {}, { id }, {});
+        assert.ok(err instanceof Error, 'expected reject for ' + id);
+        assert.equal(err.details.id, 'cmc-reserved-stream-undeletable');
+      }
+    });
+
+    it('[CSD06] ALLOWS delete of user-creatable :_cmc:apps:<app>:<sub>', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamDeleteReservedRootHook({ errors: factory });
+      for (const id of [
+        ':_cmc:apps:my-app',
+        ':_cmc:apps:my-app:study-A',
+        ':_cmc:apps:my-app:study-A:notes',
+      ]) {
+        const err = await runMiddleware(mw, {}, { id }, {});
+        assert.equal(err, undefined, 'expected passthrough for ' + id);
+      }
+    });
+
+    it('[CSD07] passes through when no id', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamDeleteReservedRootHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, {}, {});
+      assert.equal(err, undefined);
+    });
+  });
+
   describe('[CMCHOOK-PR] createEnsureReservedParentsHook', () => {
     function fakeMall (opts = {}) {
       const calls = { streamsCreated: [] };
@@ -360,6 +439,375 @@ describe('[CMCHOOK] cmc/hooks', () => {
       assert.equal(err, undefined);
       // At least one warning was logged (provisionUserStreams + our catch)
       assert.ok(warns.length >= 1, 'expected at least one warn; got ' + warns.length);
+    });
+  });
+
+  describe('[CMCHOOK-IG] :_cmc:_internal:* read-path guard hooks (H5)', () => {
+    describe('[CMCHOOK-EG] createEventsGetInternalGuardHook (events.get)', () => {
+      it('[CH-EG01] passes through when params.streams absent', async () => {
+        const mw = createEventsGetInternalGuardHook();
+        const params = { sortAscending: true };
+        const err = await runMiddleware(mw, {}, params, {});
+        assert.equal(err, undefined);
+        assert.equal(params.streams, undefined);
+      });
+
+      it('[CH-EG02] strips :_cmc:_internal:* string ids, keeps others', async () => {
+        const mw = createEventsGetInternalGuardHook();
+        const params = {
+          streams: ['fertility', ':_cmc:_internal:offer:abc', ':_cmc:apps:my-app', ':_cmc:_internal', '*'],
+        };
+        const err = await runMiddleware(mw, {}, params, {});
+        assert.equal(err, undefined);
+        assert.deepEqual(params.streams, ['fertility', ':_cmc:apps:my-app', '*']);
+      });
+
+      it('[CH-EG03] strips :_cmc:_internal:* object-form streamId queries', async () => {
+        const mw = createEventsGetInternalGuardHook();
+        const params = {
+          streams: [
+            { streamId: 'fertility', and: [] },
+            { streamId: ':_cmc:_internal:responses:abc' },
+            { streamId: ':_cmc:_internal' },
+            { streamId: ':_cmc:apps:foo' },
+          ],
+        };
+        const err = await runMiddleware(mw, {}, params, {});
+        assert.equal(err, undefined);
+        assert.equal(params.streams.length, 2);
+        assert.deepEqual(params.streams.map((s) => s.streamId), ['fertility', ':_cmc:apps:foo']);
+      });
+    });
+
+    describe('[CMCHOOK-EO] createEventGetOneInternalGuardHook (events.getOne)', () => {
+      function deps () {
+        return {
+          errors: {
+            unknownResource (resource, id) {
+              const e = new Error('unknown ' + resource + ' ' + id);
+              e.details = { id: 'unknown-resource', resource, missing: id };
+              return e;
+            },
+            invalidOperation (msg, details) {
+              const e = new Error(msg);
+              e.details = details;
+              return e;
+            },
+          },
+        };
+      }
+
+      it('[CH-EO01] passes through when no context.event', async () => {
+        const mw = createEventGetOneInternalGuardHook(deps());
+        const ctx = {};
+        const err = await runMiddleware(mw, ctx, { id: 'e1' }, {});
+        assert.equal(err, undefined);
+      });
+
+      it('[CH-EO02] passes through when event has only non-internal streamIds', async () => {
+        const mw = createEventGetOneInternalGuardHook(deps());
+        const ctx = { event: { id: 'e1', streamIds: ['fertility', ':_cmc:apps:foo'] } };
+        const err = await runMiddleware(mw, ctx, { id: 'e1' }, {});
+        assert.equal(err, undefined);
+        assert.ok(ctx.event, 'event should be left on context for next middleware');
+      });
+
+      it('[CH-EO03] returns 404 (unknownResource) when event has an internal streamId', async () => {
+        const mw = createEventGetOneInternalGuardHook(deps());
+        const ctx = { event: { id: 'e1', streamIds: [':_cmc:_internal:offer:abc'] } };
+        const err = await runMiddleware(mw, ctx, { id: 'e1' }, {});
+        assert.ok(err instanceof Error);
+        assert.equal(err.details.id, 'unknown-resource');
+        assert.equal(ctx.event, undefined, 'event must be dropped from context');
+      });
+
+      it('[CH-EO04] returns 404 even on mixed streamIds (internal presence is fatal)', async () => {
+        const mw = createEventGetOneInternalGuardHook(deps());
+        const ctx = { event: { id: 'e1', streamIds: ['fertility', ':_cmc:_internal:retries'] } };
+        const err = await runMiddleware(mw, ctx, { id: 'e1' }, {});
+        assert.ok(err instanceof Error);
+        assert.equal(err.details.id, 'unknown-resource');
+      });
+    });
+
+    describe('[CMCHOOK-SG] createStreamsGetInternalGuardHook (streams.get)', () => {
+      it('[CH-SG01] passes through when result.streams absent', async () => {
+        const mw = createStreamsGetInternalGuardHook();
+        const result = {};
+        const err = await runMiddleware(mw, {}, {}, result);
+        assert.equal(err, undefined);
+      });
+
+      it('[CH-SG02] prunes top-level :_cmc:_internal node', async () => {
+        const mw = createStreamsGetInternalGuardHook();
+        const result = {
+          streams: [
+            { id: 'fertility', children: [] },
+            { id: ':_cmc:_internal', children: [{ id: ':_cmc:_internal:retries' }] },
+            { id: ':_cmc:apps', children: [{ id: ':_cmc:apps:foo' }] },
+          ],
+        };
+        const err = await runMiddleware(mw, {}, {}, result);
+        assert.equal(err, undefined);
+        assert.deepEqual(result.streams.map((s) => s.id), ['fertility', ':_cmc:apps']);
+      });
+
+      it('[CH-SG03] prunes nested :_cmc:_internal:* descendants', async () => {
+        const mw = createStreamsGetInternalGuardHook();
+        const result = {
+          streams: [
+            {
+              id: ':_cmc:',
+              children: [
+                { id: ':_cmc:inbox', children: [] },
+                {
+                  id: ':_cmc:_internal',
+                  children: [
+                    { id: ':_cmc:_internal:offer:abc' },
+                    { id: ':_cmc:_internal:responses:abc' },
+                  ],
+                },
+              ],
+            },
+          ],
+        };
+        const err = await runMiddleware(mw, {}, {}, result);
+        assert.equal(err, undefined);
+        assert.equal(result.streams[0].children.length, 1);
+        assert.equal(result.streams[0].children[0].id, ':_cmc:inbox');
+      });
+    });
+  });
+
+  describe('[CMCHOOK-CF] createCounterpartyFromStampingHook (H8)', () => {
+    function counterpartyAccess (cp = { username: 'alice', host: 'alice.example.com' }) {
+      return { id: 'a1', clientData: { cmc: { role: 'counterparty', counterparty: cp } } };
+    }
+
+    it('[CH-CF01] passes through when no newEvent', async () => {
+      const { factory } = fakeErrors();
+      const mw = createCounterpartyFromStampingHook({ errors: factory });
+      const err = await runMiddleware(mw, { access: counterpartyAccess() }, {}, {});
+      assert.equal(err, undefined);
+    });
+
+    it('[CH-CF02] passes through for non-chat/system event types', async () => {
+      const { factory } = fakeErrors();
+      const mw = createCounterpartyFromStampingHook({ errors: factory });
+      const ctx = {
+        access: counterpartyAccess(),
+        newEvent: {
+          streamIds: [':_cmc:apps:my-app:study-A'],
+          type: 'note/txt',
+          content: { from: { username: 'forged', host: 'evil.com' }, text: 'hi' },
+        },
+      };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      assert.equal(err, undefined);
+      // content.from preserved (we only stamp known cmc message types)
+      assert.equal(ctx.newEvent.content.from.username, 'forged');
+    });
+
+    it('[CH-CF03] passes through when writer is not a counterparty access', async () => {
+      const { factory } = fakeErrors();
+      const mw = createCounterpartyFromStampingHook({ errors: factory });
+      const ctx = {
+        access: { id: 'a1', type: 'personal' },
+        newEvent: {
+          streamIds: [':_cmc:apps:my-app:chats:alice--alice-example-com'],
+          type: 'message/chat-cmc',
+          content: { from: { username: 'self-claim', host: 'me.com' }, content: 'hi' },
+        },
+      };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      assert.equal(err, undefined);
+      // Local self-writes preserved — not a cross-actor forge vector.
+      assert.equal(ctx.newEvent.content.from.username, 'self-claim');
+    });
+
+    it('[CH-CF04] passes through writes to :_cmc:inbox (inboxWriteHook owns them)', async () => {
+      const { factory } = fakeErrors();
+      const mw = createCounterpartyFromStampingHook({ errors: factory });
+      const ctx = {
+        access: counterpartyAccess({ username: 'alice', host: 'alice.example.com' }),
+        newEvent: {
+          streamIds: [':_cmc:inbox'],
+          type: 'message/chat-cmc',
+          content: { from: { username: 'forged', host: 'evil.com' }, content: 'hi' },
+        },
+      };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      assert.equal(err, undefined);
+      // Untouched here — inboxWriteHook handles inbox-bound writes.
+      assert.equal(ctx.newEvent.content.from.username, 'forged');
+    });
+
+    it('[CH-CF05] stamps content.from from access identity on chat to per-app stream', async () => {
+      const { factory } = fakeErrors();
+      const mw = createCounterpartyFromStampingHook({ errors: factory });
+      const ctx = {
+        access: counterpartyAccess({ username: 'alice', host: 'alice.example.com' }),
+        newEvent: {
+          streamIds: [':_cmc:apps:my-app:chats:bob--bob-example-com'],
+          type: 'message/chat-cmc',
+          content: { from: { username: 'forged', host: 'evil.com' }, content: 'hi' },
+        },
+      };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      assert.equal(err, undefined);
+      assert.deepEqual(ctx.newEvent.content.from, {
+        username: 'alice', host: 'alice.example.com',
+      });
+      assert.equal(ctx.newEvent.content.content, 'hi'); // payload preserved
+    });
+
+    it('[CH-CF06] stamps on system alert + ack + scope-request + scope-update', async () => {
+      const { factory } = fakeErrors();
+      const mw = createCounterpartyFromStampingHook({ errors: factory });
+      const types = [
+        'notification/alert-cmc',
+        'notification/ack-cmc',
+        'consent/scope-request-cmc',
+        'consent/scope-update-cmc',
+      ];
+      for (const t of types) {
+        const ctx = {
+          access: counterpartyAccess({ username: 'alice', host: 'alice.example.com' }),
+          newEvent: {
+            streamIds: [':_cmc:apps:my-app:collectors:bob--bob-example-com'],
+            type: t,
+            content: { from: { username: 'forged', host: 'evil.com' }, payload: 1 },
+          },
+        };
+        const err = await runMiddleware(mw, ctx, {}, {});
+        assert.equal(err, undefined, 'expected no error for ' + t);
+        assert.equal(ctx.newEvent.content.from.username, 'alice', 'stamping failed for ' + t);
+        assert.equal(ctx.newEvent.content.payload, 1);
+      }
+    });
+
+    it('[CH-CF07] rejects when counterparty access missing identity (defensive)', async () => {
+      const { factory } = fakeErrors();
+      const mw = createCounterpartyFromStampingHook({ errors: factory });
+      const ctx = {
+        access: { id: 'a1', clientData: { cmc: { role: 'counterparty', counterparty: {} } } },
+        newEvent: {
+          streamIds: [':_cmc:apps:my-app:chats:bob--bob-example-com'],
+          type: 'message/chat-cmc',
+          content: { content: 'hi' },
+        },
+      };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      assert.ok(err instanceof Error);
+      assert.equal(err.details.id, 'cmc-counterparty-identity-missing');
+    });
+
+    it('[CH-CF08] sets content.from even when caller omits it entirely', async () => {
+      const { factory } = fakeErrors();
+      const mw = createCounterpartyFromStampingHook({ errors: factory });
+      const ctx = {
+        access: counterpartyAccess({ username: 'alice', host: 'alice.example.com' }),
+        newEvent: {
+          streamIds: [':_cmc:apps:my-app:chats:bob--bob-example-com'],
+          type: 'message/chat-cmc',
+          content: { content: 'no from' },
+        },
+      };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      assert.equal(err, undefined);
+      assert.deepEqual(ctx.newEvent.content.from, {
+        username: 'alice', host: 'alice.example.com',
+      });
+    });
+  });
+
+  describe('[CMCHOOK-AC] createAccessCreateForgePreventionHook (H7)', () => {
+    it('[CH-AC01] passes through when params.clientData is absent', async () => {
+      const { factory, captured } = fakeErrors();
+      const mw = createAccessCreateForgePreventionHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, { type: 'shared', permissions: [] }, {});
+      assert.equal(err, undefined);
+      assert.equal(captured.length, 0);
+    });
+
+    it('[CH-AC02] passes through when params.clientData has no cmc key', async () => {
+      const { factory, captured } = fakeErrors();
+      const mw = createAccessCreateForgePreventionHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, {
+        type: 'shared',
+        permissions: [],
+        clientData: { appStreamId: 'my-app', custom: 1 },
+      }, {});
+      assert.equal(err, undefined);
+      assert.equal(captured.length, 0);
+    });
+
+    it('[CH-AC03] rejects when params.clientData.cmc is set (any nested fields)', async () => {
+      const { factory } = fakeErrors();
+      const mw = createAccessCreateForgePreventionHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, {
+        type: 'shared',
+        permissions: [],
+        clientData: { cmc: { role: 'counterparty' } },
+      }, {});
+      assert.ok(err instanceof Error);
+      assert.equal(err.details.id, 'cmc-clientdata-cmc-forbidden');
+    });
+
+    it('[CH-AC04] rejects even with empty cmc object (any presence forbidden)', async () => {
+      const { factory } = fakeErrors();
+      const mw = createAccessCreateForgePreventionHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, {
+        type: 'shared',
+        permissions: [],
+        clientData: { cmc: {} },
+      }, {});
+      assert.ok(err instanceof Error);
+      assert.equal(err.details.id, 'cmc-clientdata-cmc-forbidden');
+    });
+
+    it('[CH-AC05] passthrough when params is null/undefined (defensive)', async () => {
+      const { factory } = fakeErrors();
+      const mw = createAccessCreateForgePreventionHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, null, {});
+      assert.equal(err, undefined);
+    });
+  });
+
+  describe('[CMCHOOK-AU] createAccessUpdateForgePreventionHook (H7)', () => {
+    it('[CH-AU01] passes through when params.update has no clientData', async () => {
+      const { factory } = fakeErrors();
+      const mw = createAccessUpdateForgePreventionHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, { id: 'a1', update: { permissions: [] } }, {});
+      assert.equal(err, undefined);
+    });
+
+    it('[CH-AU02] passes through when update.clientData has no cmc key', async () => {
+      const { factory } = fakeErrors();
+      const mw = createAccessUpdateForgePreventionHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, {
+        id: 'a1',
+        update: { clientData: { appStreamId: 'x' } },
+      }, {});
+      assert.equal(err, undefined);
+    });
+
+    it('[CH-AU03] rejects when update.clientData.cmc is set', async () => {
+      const { factory } = fakeErrors();
+      const mw = createAccessUpdateForgePreventionHook({ errors: factory });
+      const err = await runMiddleware(mw, {}, {
+        id: 'a1',
+        update: { clientData: { cmc: { role: 'counterparty' } } },
+      }, {});
+      assert.ok(err instanceof Error);
+      assert.equal(err.details.id, 'cmc-clientdata-cmc-forbidden');
+    });
+
+    it('[CH-AU04] passthrough when params or params.update absent (defensive)', async () => {
+      const { factory } = fakeErrors();
+      const mw = createAccessUpdateForgePreventionHook({ errors: factory });
+      assert.equal(await runMiddleware(mw, {}, null, {}), undefined);
+      assert.equal(await runMiddleware(mw, {}, { id: 'a1' }, {}), undefined);
     });
   });
 });

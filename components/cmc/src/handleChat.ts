@@ -113,6 +113,18 @@ async function handleChat (params: {
   }
 
   const cmc = chosen.clientData?.cmc;
+
+  // Phase 2.2 features gating — the offer's negotiated `features.chat`
+  // is the relationship's binding contract (per Plan 68 locked
+  // decision: "an access is a contract that MUST be true"). When the
+  // counterparty access carries `clientData.cmc.features.chat ===
+  // false`, the send is rejected so the documented feature flag isn't
+  // a silent no-op. Absent / `true` → permit (default-permit on
+  // omission to match offer-side default).
+  if (cmc?.features?.chat === false) {
+    return { ok: false, reason: 'cmc-chat-disabled', detail: { accessId: chosen.id } };
+  }
+
   const remoteApiEndpoint: string | undefined = cmc?.counterparty?.apiEndpoint;
   const remoteChatStreamId: string | undefined = cmc?.counterparty?.remoteChatStreamId;
   if (typeof remoteApiEndpoint !== 'string' || remoteApiEndpoint.length === 0) {

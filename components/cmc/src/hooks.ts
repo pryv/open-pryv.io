@@ -24,6 +24,7 @@ const provisioning = require('./provisioning.ts');
 
 type ErrorFactory = {
   invalidOperation: (message: string, details?: any) => any;
+  unknownResource?: (resource: string, id?: any) => any;
 };
 
 type Deps = {
@@ -147,6 +148,49 @@ function createStreamCreateReservedRootHook (deps: Deps): Middleware {
 }
 
 /**
+ * streams.delete hook — Phase 4 H6 reserved-root immutability.
+ *
+ * Symmetric counterpart to `createStreamCreateReservedRootHook`. Even
+ * a personal token (which bypasses per-access permission checks via
+ * `AccessLogic._canManageStream` returning true for personal) MUST NOT
+ * be able to delete one of the plugin-auto-provisioned reserved
+ * parents — deleting `:_cmc:` would silently break every active CMC
+ * relationship on the account because subsequent inbox / chat /
+ * system events would land on a non-existent parent and 400.
+ *
+ * Behaviour mirrors the create-hook decisions:
+ *   - Outside `:_cmc:` → passthrough.
+ *   - Hit a reserved parent (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`,
+ *     `:_cmc:_internal`, `:_cmc:_internal:retries`) → reject.
+ *   - Inside `:_cmc:apps:` and NOT under a `chats|collectors` segment
+ *     (i.e. `isUserCreatableStreamId(id) === true`) → passthrough.
+ *   - Everything else under `:_cmc:` (`:_cmc:_internal:*`,
+ *     chats/collectors parents and children) → reject. The plugin
+ *     owns these and removes them itself when revoking a relationship.
+ */
+function createStreamDeleteReservedRootHook (deps: Deps): Middleware {
+  return function cmcStreamDeleteReservedRootHook (_context, params, _result, next) {
+    const id: unknown = params?.id;
+    if (typeof id !== 'string') return next();
+    if (!C.isCmcStreamId(id)) return next();
+
+    if (C.RESERVED_PARENT_STREAM_IDS.includes(id)) {
+      return next(deps.errors.invalidOperation(
+        'Stream "' + id + '" is reserved by the CMC plugin and may not be deleted',
+        { id: 'cmc-reserved-stream-undeletable', streamId: id }
+      ));
+    }
+
+    if (C.isUserCreatableStreamId(id)) return next();
+
+    return next(deps.errors.invalidOperation(
+      'Stream "' + id + '" lives in a plugin-managed region of :_cmc: and may not be deleted directly',
+      { id: 'cmc-reserved-stream-undeletable', streamId: id }
+    ));
+  };
+}
+
+/**
  * events.create / streams.create lazy auto-provision hook.
  *
  * Existing user accounts that pre-date the CMC deploy don't have the
@@ -215,8 +259,221 @@ function createEnsureReservedParentsHook (deps: ProvisionDeps): Middleware {
   };
 }
 
+/**
+ * events.get hook — Phase 4 H5 defense-in-depth: strip any
+ * `:_cmc:_internal:*` stream-ids from `params.streams` (string form OR
+ * `{streamId, ...}` object form) before the query reaches the store.
+ *
+ * Today the plugin auto-provisions internal streams (`:_cmc:_internal`,
+ * `:_cmc:_internal:retries`, `:_cmc:_internal:offer:*`,
+ * `:_cmc:_internal:responses:*`) with no app-visible permissions, so
+ * an explicit query for an internal id returns empty regardless. This
+ * hook is the belt-and-braces against future regressions (e.g. an
+ * admin permission bundle inadvertently granting read on the subtree,
+ * or a permission-system bug treating `*` as including hidden trees).
+ *
+ * Behaviour: walks `params.streams`. If a string id is internal,
+ * drops it. If an object has `.streamId` that's internal, drops the
+ * object. Leaves wildcard `'*'` queries untouched (those are governed
+ * by access permissions, NOT direct stream-id targeting).
+ */
+function createEventsGetInternalGuardHook (): Middleware {
+  return function cmcEventsGetInternalGuard (_context, params, _result, next) {
+    if (params == null || !Array.isArray(params.streams)) return next();
+    params.streams = params.streams.filter((s: any) => {
+      if (typeof s === 'string') return !C.isCmcInternalStreamId(s);
+      if (s != null && typeof s === 'object' && typeof s.streamId === 'string') {
+        return !C.isCmcInternalStreamId(s.streamId);
+      }
+      return true;
+    });
+    next();
+  };
+}
+
+/**
+ * events.getOne hook — Phase 4 H5 defense-in-depth: if the fetched
+ * event lives in `:_cmc:_internal:*`, return 404 instead of leaking
+ * its existence (mirrors the existing pattern for hidden system
+ * streams in `checkIfAuthorized`).
+ *
+ * Wired AFTER the existing `findEvent` middleware (which loads
+ * `context.event`) so this hook sees the resolved event. Does NOT
+ * mutate the event when it has mixed streamIds (some internal, some
+ * not) — caller invariant is that internal events are *only* in the
+ * internal subtree, so any presence of an internal id means "this
+ * shouldn't be visible at all".
+ */
+function createEventGetOneInternalGuardHook (deps: Deps): Middleware {
+  return function cmcEventGetOneInternalGuard (context, params, _result, next) {
+    const event = context?.event;
+    if (event == null) return next();
+    const streamIds: any[] = Array.isArray(event.streamIds) ? event.streamIds : [];
+    if (streamIds.some((id: any) => C.isCmcInternalStreamId(id))) {
+      // Drop the staged event from context so downstream middleware
+      // doesn't render it, then surface 404 (info-leak parity with the
+      // existing hidden-system-stream pattern).
+      delete context.event;
+      return next(deps.errors.unknownResource?.('event', params?.id) ??
+        deps.errors.invalidOperation('Event not found', { id: 'unknown-resource' }));
+    }
+    next();
+  };
+}
+
+/**
+ * streams.get hook — Phase 4 H5 defense-in-depth: prune the
+ * `:_cmc:_internal` subtree from the response tree. The tree returned
+ * by `findAccessibleStreams` is shaped as a forest of `{id, children}`
+ * nodes; we recursively drop any node whose id starts in the internal
+ * region.
+ *
+ * Wired AFTER `findAccessibleStreams` populates `result.streams`.
+ */
+function createStreamsGetInternalGuardHook (): Middleware {
+  function prune (nodes: any[]): any[] {
+    if (!Array.isArray(nodes)) return nodes;
+    const kept: any[] = [];
+    for (const n of nodes) {
+      if (n != null && typeof n.id === 'string' && C.isCmcInternalStreamId(n.id)) continue;
+      if (Array.isArray(n?.children)) n.children = prune(n.children);
+      kept.push(n);
+    }
+    return kept;
+  }
+  return function cmcStreamsGetInternalGuard (_context, _params, result, next) {
+    if (result != null && Array.isArray(result.streams)) {
+      result.streams = prune(result.streams);
+    }
+    next();
+  };
+}
+
+/**
+ * events.create hook — Phase 4 H8 `content.from` forge-prevention for
+ * chat / system messages delivered into our per-app streams by a
+ * counterparty-marked access (i.e. peer outbound POSTs that landed on
+ * our :_cmc:apps:<app>:[<sub>:]chats:<slug> or
+ * :_cmc:apps:<app>:[<sub>:]collectors:<slug>).
+ *
+ * `inboxWriteHook` already handles writes to `:_cmc:inbox` (lifecycle
+ * events) — including from-stamping with stricter validation
+ * (rejection on missing identity). This hook is the sibling for
+ * non-inbox CMC writes coming from peers. The peer's authentication
+ * token is a counterparty-marked shared access on our server; its
+ * `clientData.cmc.counterparty.{username, host}` was stamped at
+ * handshake time from the OFFER metadata (server-derived, not
+ * user-supplied), so it's the canonical identity. We overwrite
+ * `event.content.from` with that identity before persist, dropping any
+ * value the peer may have hand-crafted into the body.
+ *
+ * Behaviour:
+ *   - Passthrough if no `context.newEvent`.
+ *   - Passthrough if writer is not a counterparty-marked access
+ *     (i.e. self-writes from a personal/app token — local content.from
+ *     is the app's hygiene problem, not a cross-actor forge vector).
+ *   - Passthrough if event type isn't a chat/system family member.
+ *   - Passthrough on writes to `:_cmc:inbox` — `inboxWriteHook` owns
+ *     those (different rejection semantics on missing identity).
+ *   - Otherwise: overwrite content.from with the access's stored
+ *     counterparty identity.
+ */
+function createCounterpartyFromStampingHook (deps: Deps): Middleware {
+  const TYPES_WITH_FROM = new Set([
+    C.ET_CHAT, C.ET_SYSTEM_ALERT, C.ET_SYSTEM_ACK,
+    C.ET_SYSTEM_SCOPE_REQUEST, C.ET_SYSTEM_SCOPE_UPDATE,
+  ]);
+  return function cmcCounterpartyFromStampingHook (context, _params, _result, next) {
+    const event = context?.newEvent;
+    if (event == null) return next();
+    if (!TYPES_WITH_FROM.has(event.type)) return next();
+
+    const accessCmc = context?.access?.clientData?.cmc;
+    if (accessCmc?.role !== 'counterparty') return next();
+
+    const streamIds: string[] = Array.isArray(event.streamIds) ? event.streamIds : [];
+    if (streamIds.includes(C.NS_INBOX)) return next();
+
+    const counterparty = accessCmc.counterparty;
+    if (counterparty?.username == null || counterparty?.host == null) {
+      // No identity stored on access — can't stamp safely. Reject so the
+      // peer's malformed access surfaces rather than persisting a write
+      // with whatever they hand-crafted.
+      return next(deps.errors.invalidOperation(
+        'Counterparty access is missing identity (clientData.cmc.counterparty.{username,host})',
+        { id: 'cmc-counterparty-identity-missing' }
+      ));
+    }
+
+    event.content = {
+      ...(event.content || {}),
+      from: { username: counterparty.username, host: counterparty.host },
+    };
+    context.newEvent = event;
+    next();
+  };
+}
+
+/**
+ * accesses.create / accesses.update hook — Phase 4 H7 forge-prevention.
+ *
+ * The `clientData.cmc` namespace is owned end-to-end by the CMC plugin:
+ * `role`, `appCode`, `counterparty`, `capability`, `requestEventId`,
+ * `features` are all populated by `mall.accesses.create` /
+ * `mall.accesses.update` calls inside the plugin (handshake +
+ * acceptOrchestration + capabilityMintHook + scope-update). User code
+ * has no legitimate reason to populate any field under this key, and
+ * allowing it would let a malicious app forge a counterparty role on
+ * its own access (bypassing the handshake) or stamp a fake
+ * `capability.state` to confuse the lifecycle.
+ *
+ * The CMC plugin reaches the storage layer via `mall.accesses.create` /
+ * `mall.accesses.update`, NOT via the api-server route — so blocking
+ * `clientData.cmc.*` at the route level is safe.
+ *
+ * Behaviour: if `params.clientData?.cmc != null` (any nested fields),
+ * reject with `cmc-clientdata-cmc-forbidden`. Other `clientData.*` keys
+ * pass through unchanged.
+ *
+ * Pair: `createAccessUpdateForgePreventionHook` does the same for the
+ * `params.update.clientData.cmc` path on `accesses.update`.
+ */
+function createAccessCreateForgePreventionHook (deps: Deps): Middleware {
+  return function cmcAccessCreateForgePreventionHook (context, params, result, next) {
+    const clientData = params?.clientData;
+    if (clientData != null && typeof clientData === 'object' && clientData.cmc != null) {
+      return next(deps.errors.invalidOperation(
+        'clientData.cmc is reserved for the CMC plugin and may not be supplied by user code',
+        { id: 'cmc-clientdata-cmc-forbidden' }
+      ));
+    }
+    next();
+  };
+}
+
+function createAccessUpdateForgePreventionHook (deps: Deps): Middleware {
+  return function cmcAccessUpdateForgePreventionHook (context, params, result, next) {
+    const update = params?.update;
+    const clientData = update?.clientData;
+    if (clientData != null && typeof clientData === 'object' && clientData.cmc != null) {
+      return next(deps.errors.invalidOperation(
+        'clientData.cmc is reserved for the CMC plugin and may not be supplied by user code',
+        { id: 'cmc-clientdata-cmc-forbidden' }
+      ));
+    }
+    next();
+  };
+}
+
 export {
   createCmcContentValidationHook,
   createStreamCreateReservedRootHook,
+  createStreamDeleteReservedRootHook,
   createEnsureReservedParentsHook,
+  createCounterpartyFromStampingHook,
+  createAccessCreateForgePreventionHook,
+  createAccessUpdateForgePreventionHook,
+  createEventsGetInternalGuardHook,
+  createEventGetOneInternalGuardHook,
+  createStreamsGetInternalGuardHook,
 };
