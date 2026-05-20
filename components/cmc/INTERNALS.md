@@ -280,7 +280,7 @@ sequenceDiagram
 
 **`content.from` is unforgeable** — the peer plugin cannot set `content.from` themselves; even if they include it in the body, the receiving plugin overwrites with the access's stored counterparty identity. The access was created by the recipient's plugin at acceptance time (flow 3); its `clientData.cmc.counterparty` is server-internal and not visible to API consumers.
 
-**Chat/collector write-hooks** are analogous but allow a different event-type set per region (Family 2 events on `:_cmc:apps:<app-code>:[<path>:]chats:*`, Family 3 events on `:_cmc:apps:<app-code>:[<path>:]collectors:*`).
+**Chat/collector write-hooks** are analogous but allow a different event-type set per region (Family 2 events on `:_cmc:apps:<app-code>:[<path>:]chats:*`, Family 3 events on `:_cmc:apps:<app-code>:[<path>:]collectors:*`). The `content.from` unforgeability extends to these paths too: `createCounterpartyFromStampingHook` overwrites `content.from` from the writer's `clientData.cmc.counterparty` for any chat / system event type when the access is counterparty-marked. Inbox writes stay handled by `createInboxWriteHook` (it has stricter rejection semantics on missing identity); the per-app stamping hook covers everything else.
 
 ---
 

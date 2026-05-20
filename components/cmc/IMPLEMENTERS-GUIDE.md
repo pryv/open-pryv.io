@@ -184,19 +184,30 @@ The plugin saw the `consent/request-cmc` trigger and:
 
 The doctor's app encodes the URL into a QR code, email, deep-link — whatever the operator uses for hand-off.
 
-**Capability TTL.** The capability access expires automatically. The
-default lifetime is **7 days** and is currently hardcoded in
-[`components/cmc/src/capability.ts`](src/capability.ts)
-(`DEFAULT_TTL_SECONDS`). The exact expiry timestamp is stamped on the
-trigger event as `content.capabilityExpiresAt` (Unix seconds), so a
-sender app can display it on the invite UI. Recipient apps should
-check it before opening the URL — a stale URL returns a structured
-`invalid-access-token` from the api-server's auth middleware. There
-is no operator-facing config knob to override the default today; if
-your platform needs longer-lived invites (e.g. patient flows where
-the doctor sends an invite weeks before the patient checks email),
-open a feature request — the knob is a one-config-key change once
-prioritised.
+**Capability TTL.** The capability access expires automatically.
+Default lifetime is **7 days**, configurable per-invite via
+`content.expiresAt` (Unix seconds) on the trigger event. The plugin
+validates the resolved TTL against the platform-allowed bounds
+**`[60s, 30d]`** at mint time and rejects out-of-range values with
+`cmc-capability-ttl-out-of-range`; omit `expiresAt` to fall back to
+the default. The exact expiry stamped on the trigger event as
+`content.capabilityExpiresAt` (Unix seconds) so a sender app can
+display it on the invite UI. Recipient apps should check it before
+opening the URL — a stale URL returns a structured
+`invalid-access-token` from the api-server's auth middleware. The
+defaults + bounds live in [`components/cmc/src/capability.ts`](src/capability.ts)
+(`DEFAULT_TTL_SECONDS` / `MIN_TTL_SECONDS` / `MAX_TTL_SECONDS`).
+
+**Features negotiation.** `content.request.features.{chat,
+systemMessaging}` opts the request IN or OUT of each cross-account
+channel. Both default to `true` when omitted (permitted); set to
+`false` to disable that channel for the relationship. The flag is
+binding on BOTH sides at send time — `cmc.sendChat` /
+`cmc.sendSystemAlert` against a `features.chat: false` /
+`features.systemMessaging: false` access reject with `cmc-chat-disabled`
+/ `cmc-system-messaging-disabled` respectively. Scope-request and
+scope-update are protocol-level and remain permitted regardless of
+the flag.
 
 ## Step 3 — Patient's app receives the URL and reads the offer
 
@@ -1222,7 +1233,7 @@ When you write a `cmc/<action>-v1` event to your own `:_cmc:*` scope stream:
 3. Plugin updates the same event's `content.status` as orchestration progresses (`pending` → `delivered` → `completed`, or `failed`).
 4. App watches via `new pryv.Monitor(connection, { streams: [':_cmc:apps:my-app:...'] })` + `monitor.on('event', handler)` to receive status updates.
 
-If the outbound delivery fails (timeout, peer unreachable, peer 4xx/5xx), the plugin queues for retry (rqlite-persisted: `cmc-pending-deliveries/<deliveryId>`). On terminal failure, sets `status: 'failed'` with reason.
+If the outbound delivery fails (timeout, peer unreachable, peer 4xx/5xx), the plugin queues for retry as a `cmc-internal/retry-cmc` event in the hidden `:_cmc:_internal:retries` stream (one event per pending delivery, exponential backoff up to a configurable cap, then marked `failed-permanent` for operator review). On terminal failure of the trigger itself, sets `status: 'failed'` with reason.
 
 ```ts
 // Trigger event status lifecycle
@@ -1270,12 +1281,21 @@ npm package.
 | `CHAT_COUNTERPARTY_ACCESS_NOT_FOUND` | `cmc-chat-counterparty-access-not-found` | No counterparty-role access matched the parsed slug. |
 | `CHAT_NO_REMOTE_APIENDPOINT` | `cmc-chat-no-remote-apiendpoint` | Counterparty access lacks `apiEndpoint` on `clientData.cmc.counterparty`. Typically the two-phase access materialization hasn't finished — see Step 4 "Two-phase access materialization". |
 | `CHAT_NO_REMOTE_CHAT_STREAM` | `cmc-chat-no-remote-chat-stream` | Same, for `remoteChatStreamId`. |
+| `CAPABILITY_TTL_OUT_OF_RANGE` | `cmc-capability-ttl-out-of-range` | Caller's `content.expiresAt` resolves to a TTL outside the platform-allowed bounds `[60s, 30d]`. Either omit `expiresAt` (default 7d) or pick a value in range and re-issue. |
+| `CHAT_DISABLED` | `cmc-chat-disabled` | The offer negotiated `features.chat: false`; chat write rejected at send time. Re-issue the request with chat enabled, or use the system channel. |
+| `SYSTEM_MESSAGING_DISABLED` | `cmc-system-messaging-disabled` | The offer negotiated `features.systemMessaging: false`; alert/ack write rejected. Scope-request / scope-update are protocol-level and remain permitted regardless. |
+| `CLIENTDATA_CMC_FORBIDDEN` | `cmc-clientdata-cmc-forbidden` | User code tried to write under `clientData.cmc.*` via `accesses.create` / `accesses.update`. That namespace is plugin-owned end-to-end; remove the field. |
+| `COUNTERPARTY_IDENTITY_MISSING` | `cmc-counterparty-identity-missing` | A counterparty-marked access reached the events-create stamping hook with no stored `{username,host}` identity. Wiring bug — surface for ops; usually a back-channel access that failed to receive its identity stamp at handshake. |
 
 **Gaps under discussion** (HANDOVER follow-up):
 
 - `cmc-capability-stale` (TTL-expired specifically — today `CAPABILITY_INVALID` collapses this with "never existed") — requires capability tombstones to distinguish stale from unknown. Open as backlog.
 - `cmc-handshake-refused` / `cmc-handshake-revoked` — both require richer access-state tracking; the current `CAPABILITY_CONSUMED` covers the "accepted" case but doesn't carry the original outcome (accepted vs refused). Worth revisiting only if a real client needs the distinction.
-- ~~`cmc-capability-already-accepted-by-you`~~ — shipped (open-link mode same-patient re-click discrimination, Phase 2).
+- ~~`cmc-capability-already-accepted-by-you`~~ — shipped (open-link mode same-patient re-click discrimination).
+- ~~`cmc-capability-ttl-out-of-range`~~ — shipped (capability mint validates `expiresAt` against `[60s, 30d]`).
+- ~~`cmc-chat-disabled` / `cmc-system-messaging-disabled`~~ — shipped (feature-gating enforced at send time on both `handleChat` + `handleSystem`).
+- ~~`cmc-clientdata-cmc-forbidden`~~ — shipped (route-level forge prevention on `accesses.create` + `accesses.update`).
+- ~~`cmc-reserved-stream-undeletable`~~ — shipped (route-level immutability guard on `streams.delete` for the five reserved CMC parents + `:_cmc:_internal:*` + plugin-managed `chats`/`collectors` segments).
 
 See [HANDOVER-RESPONSE.md](https://github.com/pryv/macroPryv/blob/main/_plans/68-cmc-datastore-atwork/HANDOVER-RESPONSE.md) for the full design discussion.
 
@@ -1288,7 +1308,7 @@ invite without polling the inbox continuously. Two complementary
 query paths cover the common cases — no dedicated `/cmc/*` API:
 
 **Path 1 — query the capability accesses directly (best for dashboards).**
-The Q1 Phase 1 lifecycle stamps the capability state on the access:
+The capability lifecycle stamps the capability state on the access:
 
 ```js
 const { accesses } = (await doctorConnection.api([
