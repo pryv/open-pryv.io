@@ -1,5 +1,17 @@
 # Changelog - Internal (no API impact)
 
+## fix(auth.delete): engine-agnostic audit-log erasure (Plan 72 A.1)
+
+`auth.delete` (the GDPR Art.17 erasure primitive) silently left PG `audit_events` rows referencing the deleted subject behind. The existing `deleteAuditData` step in `business/src/auth/deletion.ts` only wiped the per-user filesystem directory — sufficient for SQLite (whose audit DB is a file inside that tree), insufficient for PG (whose `audit_events` is a shared table keyed by `user_id`). `AuditStoragePG.deleteUser` existed but had only one in-tree caller (the backup-restore preflight); the `auth.delete` pipeline did not invoke it.
+
+Fix:
+
+1. New `deleteAuditDataStorage` middleware in `components/business/src/auth/deletion.ts` calls `require('storages').auditStorage?.deleteUser(context.user.id)` (null-guarded — defensive for any future engine that doesn't declare `auditStorage` in its manifest; today PG and SQLite both do).
+2. Wired into the `auth.delete` pipeline in `components/api-server/src/methods/auth/delete.ts` BEFORE the existing `deleteAuditData` filesystem wipe — so the SQLite path closes the per-user DB file cleanly before the directory rm fires (avoiding `forUser` re-creating the dir during the close).
+3. Existing `[USAD][9]` test in `components/api-server/test/deletion-seq.test.js` ("should delete user audit events") gains an engine-agnostic assertion using `auditStorage.forUser(userId).countEvents() === 0`. The old `fs.existsSync` regression-guard for the SQLite path stays.
+
+Closes the bug chips on `gdpr.Art.17`, `ccpa.1798.105`, `iso-27701.A.7.4.5` in `compliance-matrix/`. GitHub: pryv/open-pryv.io#75. Three companion `feature` chips on the same rows (operator setting `audit.onUserDelete: erase|keep|pseudonymise`) stay until Plan 72 Phase A.2 ships.
+
 ## fix(accesses): align update permission schema with create — accept the same `defaultName`/`name` extras
 
 Closes a long-standing wire-format asymmetry between `accesses.create`, `accesses.checkApp` (returns `checkedPermissions` shaped per CREATE), and `accesses.update`: the first two accepted/produced permission objects with optional `defaultName` + `name` fields used during app-authorization UI; the third strictly rejected those fields with `OBJECT_ADDITIONAL_PROPERTIES`. Naive callers piping `checkApp.checkedPermissions` straight into `accesses.update` hit `invalid-parameters-format`; HDS worked around it by stripping extras client-side in `bridgeAccess.ts` / `Authorization.tsx` (see workspace BUGS B-2026-05-14-4).
