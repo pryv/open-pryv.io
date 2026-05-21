@@ -107,6 +107,25 @@ class Deletion {
     next();
   }
 
+  // Plan 72 Phase A.1: engine-agnostic audit erasure. The filesystem wipe in
+  // deleteAuditData covers SQLite as a side-effect (per-user .sqlite file lives
+  // in the user dir) but leaves PG audit_events rows behind. This step routes
+  // through the AuditStorage interface so every engine converges on the same
+  // end-state. Runs BEFORE deleteAuditData so the SQLite path closes the DB
+  // file cleanly before the directory wipe.
+  async deleteAuditDataStorage (context: any, params: any, result: any, next: any) {
+    try {
+      const auditStorage = require('storages').auditStorage;
+      if (auditStorage != null) {
+        await auditStorage.deleteUser(context.user.id);
+      }
+      next();
+    } catch (err: any) {
+      this.logger.error(err, err);
+      return next(errors.unexpectedError(err));
+    }
+  }
+
   async deleteUser (context: any, params: any, result: any, next: any) {
     try {
       const dbCollections = [
