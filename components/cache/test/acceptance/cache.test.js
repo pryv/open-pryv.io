@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 
-/* global cache, describe, before, after, it, assert, cuid, config, initTests, initCore, coreRequest, getNewFixture, charlatan */
+/* global cache, describe, before, after, it, assert, cuid, config, initTests, initCore, coreRequest, getNewFixture, charlatan, withInjectedConfig */
 
 const STREAMS = {
   A: {},
@@ -121,17 +121,18 @@ describe('[CACH] Cache', function () {
       tSecondCallWithCache += hrtime(st2) / loop;
       assert.strictEqual(res2.status, 200);
     }
-    config.injectTestConfig({ caching: { isActive: false } }); // deactivate cache
-    cache.clear(); // reset cache fully
 
     let tNoCache = 0; // no-cache at all
-    for (let i = 0; i < loop; i++) {
-      const st3 = hrtime();
-      const res3 = await coreRequest.get(streamsPath).set('Authorization', appAccess.token).query({});
-      tNoCache += hrtime(st3) / loop;
-      assert.strictEqual(res3.status, 200);
-      isEmpty();
-    }
+    await withInjectedConfig({ caching: { isActive: false } }, async () => {
+      cache.clear(); // reset cache fully
+      for (let i = 0; i < loop; i++) {
+        const st3 = hrtime();
+        const res3 = await coreRequest.get(streamsPath).set('Authorization', appAccess.token).query({});
+        tNoCache += hrtime(st3) / loop;
+        assert.strictEqual(res3.status, 200);
+        isEmpty();
+      }
+    });
 
     const data = `first-with-cache: ${tFirstCallWithCache}, second-with-cache: ${tSecondCallWithCache}, no-cache: ${tNoCache}  => `;
     assert.ok(tSecondCallWithCache < tFirstCallWithCache, 'second-with-cache streams.get should be faster than first-with-cache' + data);

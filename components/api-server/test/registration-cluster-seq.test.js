@@ -20,7 +20,7 @@ const { ErrorIds } = require('errors/src/ErrorIds.ts');
 const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
 const { getUsersRepository, User } = require('business/src/users/index.ts');
 const { getUserAccountStorage } = require('storage');
-const { databaseFixture } = require('test-helpers');
+const { databaseFixture, injectTestConfigSnapshot } = require('test-helpers');
 const { produceStorageConnection } = require('./test-helpers');
 const { ApiEndpoint } = require('utils');
 
@@ -40,7 +40,6 @@ describe('[REGC] registration: cluster', function () {
   let app;
   let request;
   let res;
-  let config;
   let userData;
   let mongoFixtures;
   let usersRepository;
@@ -52,9 +51,10 @@ describe('[REGC] registration: cluster', function () {
     userAccountStorage = await getUserAccountStorage();
   });
 
+  let restoreConfig;
   before(async function () {
-    config = await getConfig();
-    config.injectTestConfig({
+    await getConfig();
+    restoreConfig = injectTestConfigSnapshot({
       dnsLess: { isActive: false }
     });
     app = getApplication();
@@ -65,7 +65,7 @@ describe('[REGC] registration: cluster', function () {
   });
 
   after(async function () {
-    config.injectTestConfig({});
+    restoreConfig();
     mongoFixtures = databaseFixture(await produceStorageConnection());
     await mongoFixtures.context.cleanEverything();
   });
@@ -189,16 +189,14 @@ describe('[REGC] registration: cluster', function () {
     });
 
     describe('[RC10] when invitationTokens are defined', () => {
+      let restoreRC10;
       before(function () {
-        config.injectTestConfig({
-          dnsLess: { isActive: false },
+        restoreRC10 = injectTestConfigSnapshot({
           invitationTokens: ['enjoy']
         });
       });
       after(function () {
-        config.injectTestConfig({
-          dnsLess: { isActive: false }
-        });
+        restoreRC10();
       });
 
       describe('[RC11] when a valid one is provided', () => {
@@ -238,16 +236,14 @@ describe('[REGC] registration: cluster', function () {
     });
 
     describe('[RC13] when invitationTokens are set to [] (forbidden creation)', () => {
+      let restoreRC13;
       before(function () {
-        config.injectTestConfig({
-          dnsLess: { isActive: false },
+        restoreRC13 = injectTestConfigSnapshot({
           invitationTokens: []
         });
       });
       after(function () {
-        config.injectTestConfig({
-          dnsLess: { isActive: false }
-        });
+        restoreRC13();
       });
 
       describe('[RC14] when any string is provided', () => {
@@ -316,19 +312,15 @@ describe('[REGC] registration: cluster', function () {
 
     describe('[RCPW] When password rules are enabled', function () {
       const validation = helpers.validation;
+      let restoreRCPW;
 
       before(async () => {
-        config.injectTestConfig(Object.assign(
-          { dnsLess: { isActive: false } },
-          helpers.passwordRules.settingsOverride
-        ));
+        restoreRCPW = injectTestConfigSnapshot(helpers.passwordRules.settingsOverride);
         userData = defaults();
       });
 
       after(function () {
-        config.injectTestConfig({
-          dnsLess: { isActive: false }
-        });
+        restoreRCPW();
       });
 
       it('[0OBL] must fail if the new password does not comply', async () => {

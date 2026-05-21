@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-/* global assert, path, charlatan, cuid, audit, config, initTests, initCore, coreRequest, getNewFixture, addActionStreamIdPrefix, addAccessStreamIdPrefix, apiMethods, fakeAuditEvent, CONSTANTS, sinon, MethodContextUtils, CONSTANTS, AuditAccessIds */
+/* global assert, path, charlatan, cuid, audit, config, initTests, initCore, coreRequest, getNewFixture, addActionStreamIdPrefix, addAccessStreamIdPrefix, apiMethods, fakeAuditEvent, CONSTANTS, sinon, MethodContextUtils, CONSTANTS, AuditAccessIds, injectTestConfigSnapshot */
 
 const timestamp = require('unix-timestamp');
 
@@ -370,8 +370,16 @@ describe('[AUDT] Audit', function () {
 
   describe('[AT06] Filtering', function () {
     describe('[AT61] when filtering by calledMethods', function () {
+      let restoreAT61;
+      before(function () {
+        // Snapshot scope at [AT61] entry; nested [AT62]-[AT69] still
+        // wholesale-replace via injectTestConfig as designed. After [AT61]
+        // completes, restoreAT61() reinstates the parent scope instead of
+        // the leaky `inject({})` wipe.
+        restoreAT61 = injectTestConfigSnapshot({});
+      });
       after(async function () {
-        config.injectTestConfig({});
+        restoreAT61();
         await audit.reloadConfig();
       });
       describe('[AT62] when including all', function () {

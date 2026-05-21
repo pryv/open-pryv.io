@@ -34,6 +34,12 @@ async function initTests () {
   if (initTestsDone) return;
   initTestsDone = true;
   _global.config = await getConfig();
+  // Plan 61: expose snapshot/restore helpers as globals so tests reaching
+  // `config` as a global also get `withInjectedConfig` /
+  // `injectTestConfigSnapshot` without an explicit require.
+  const { withInjectedConfig, injectTestConfigSnapshot } = require('./withInjectedConfig.ts');
+  _global.withInjectedConfig = withInjectedConfig;
+  _global.injectTestConfigSnapshot = injectTestConfigSnapshot;
   await userLocalDirectory.init();
 
   if (options.beforeInitTests) {

@@ -21,6 +21,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Initialize boiler config before anything else
 process.env.NODE_ENV = 'test';
 require('test-helpers/src/api-server-tests-config.ts');
+// Load api-server-specific test-helpers/dependencies (assigns
+// `dependencies.settings` as a frozen deep-clone of the boot-time config).
+require('./helpers');
 
 const assert = require('node:assert');
 const path = require('path');
@@ -28,8 +31,7 @@ const cuid = require('cuid');
 const request = require('superagent');
 const storage = require('storage');
 
-const { DynamicInstanceManager, databaseFixture } = require('test-helpers');
-const { getConfig } = require('@pryv/boiler');
+const { DynamicInstanceManager, databaseFixture, dependencies } = require('test-helpers');
 const ErrorIds = require('errors').ErrorIds;
 
 describe('[AUTHP] auth (parallel)', function () {
@@ -56,9 +58,10 @@ describe('[AUTHP] auth (parallel)', function () {
   }
 
   before(async function () {
-    // Initialize config
-    const config = await getConfig();
-    const settings = config.get();
+    // Use the frozen module-load snapshot from test-helpers/dependencies so
+    // later `injectTestConfig` mutations (e.g. by sibling -seq files) can't
+    // leak into the spawned child's temp config.
+    const settings = dependencies.settings;
 
     // Initialize DynamicInstanceManager
     server = new DynamicInstanceManager({

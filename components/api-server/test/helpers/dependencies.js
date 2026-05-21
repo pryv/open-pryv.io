@@ -26,7 +26,15 @@ const { getConfigUnsafe } = require('@pryv/boiler');
  * to every consumer that reads `helpers.dependencies.X` via the index barrel.
  */
 const deps = testHelpers.dependencies;
-deps.settings = getConfigUnsafe(true).get();
+// Plan 61: deep-clone the config snapshot so later test-scope mutations
+// can't leak into spawned-child temp configs via shared nconf object
+// references. Previously: `deps.settings = getConfigUnsafe(true).get()`
+// returned a tree that shared nested references with nconf's literal
+// stores, so `injectTestConfig({storages: {platform: {engine: 'mongodb'}}})`
+// later in a test could mutate `deps.settings.storages.platform.engine`
+// — exposing a latent typo in Mongo's createPlatformDB (B-2026-05-21-2).
+deps.settings = JSON.parse(JSON.stringify(getConfigUnsafe(true).get()));
+
 deps.instanceManager = new DynamicInstanceManager({
   serverFilePath: path.join(__dirname, '/../../bin/server')
 });
