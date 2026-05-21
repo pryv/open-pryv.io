@@ -16,7 +16,7 @@ const cuid = require('cuid');
 const { getApplication } = require('api-server/src/application.ts');
 const { getConfig } = require('@pryv/boiler');
 const { getUsersRepository, User } = require('business/src/users/index.ts');
-const { databaseFixture } = require('test-helpers');
+const { databaseFixture, injectTestConfigSnapshot } = require('test-helpers');
 const { produceStorageConnection } = require('api-server/test/test-helpers');
 const { pubsub } = require('messages');
 const { USERNAME_MIN_LENGTH, USERNAME_MAX_LENGTH } = require('api-server/src/schema/helpers.ts');
@@ -24,21 +24,21 @@ const { ErrorIds } = require('errors/src/ErrorIds.ts');
 const { ApiEndpoint } = require('utils');
 
 describe('[BMM2] registration: DNS-less', () => {
-  let config;
   let mongoFixtures;
   let app;
   let request;
+  let restoreConfig;
 
   before(async function () {
-    config = await getConfig();
-    config.injectTestConfig({
+    await getConfig();
+    restoreConfig = injectTestConfigSnapshot({
       dnsLess: { isActive: true },
       custom: { systemStreams: null }
     });
   });
 
   after(async function () {
-    config.injectTestConfig({});
+    restoreConfig();
   });
 
   before(async function () {

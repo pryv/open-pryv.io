@@ -30,6 +30,7 @@ const require = createRequire(import.meta.url);
 
 const nock = require('nock');
 const { getConfig } = require('@pryv/boiler');
+const { injectTestConfigSnapshot } = require('test-helpers');
 const { _resetMFASingletons } = require('business/src/mfa/index.ts');
 
 const SMS_HOST = 'http://sms-mock.local';
@@ -68,7 +69,6 @@ const mfaConfig = {
 describe('[MFAA] MFA acceptance (seq)', function () {
   this.timeout(20000);
 
-  let config;
   let fixtures;
   let username;
   let password;
@@ -77,7 +77,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
   before(async function () {
     await initTests();
     await initCore();
-    config = await getConfig();
+    await getConfig();
     fixtures = getNewFixture();
     // Block any unmatched outgoing HTTP so missing nock mocks fail fast
     // instead of hanging on a fake SMS endpoint.
@@ -101,7 +101,6 @@ describe('[MFAA] MFA acceptance (seq)', function () {
   });
 
   afterEach(async function () {
-    config.injectTestConfig({});
     await _resetMFASingletons();
     nock.cleanAll();
   });
@@ -134,9 +133,13 @@ describe('[MFAA] MFA acceptance (seq)', function () {
 
   // --------------------------------------------------------------------
   describe('[MA2] when services.mfa.mode is "challenge-verify"', function () {
+    let restoreConfig;
     beforeEach(async function () {
-      config.injectTestConfig(mfaConfig);
+      restoreConfig = injectTestConfigSnapshot(mfaConfig);
       await _resetMFASingletons();
+    });
+    afterEach(function () {
+      restoreConfig();
     });
 
     // ----- activate --------------------------------------------------

@@ -33,6 +33,7 @@ const { spawnSync } = require('node:child_process');
 const cuid = require('cuid');
 
 const { getConfig } = require('@pryv/boiler');
+const { withInjectedConfig } = require('test-helpers');
 const { platform } = require('platform');
 const observability = require('business/src/observability/index.ts');
 const logForwarder = require('business/src/observability/logForwarder.ts');
@@ -45,10 +46,8 @@ function getPlatformDB () {
 describe('[OBS] observability', function () {
   this.timeout(10000);
 
-  let config;
-
   before(async function () {
-    config = await getConfig();
+    await getConfig();
     await platform.init();
   });
 
@@ -85,28 +84,26 @@ describe('[OBS] observability', function () {
 
     it('[OB02] local observability.enabled:false overrides PlatformDB true', async function () {
       await platform.setObservabilityValue('enabled', true);
-      config.injectTestConfig({ observability: { enabled: false } });
-
-      const obs = await platform.getObservabilityConfig();
-      assert.strictEqual(obs.enabled, false, 'local false must win');
-
-      config.injectTestConfig({ observability: {} });
+      await withInjectedConfig({ observability: { enabled: false } }, async () => {
+        const obs = await platform.getObservabilityConfig();
+        assert.strictEqual(obs.enabled, false, 'local false must win');
+      });
     });
 
     it('[OB03] appName falls back to open-pryv.io (<dns.domain>) when unset', async function () {
       const domain = 'ob03-' + cuid() + '.test';
-      config.injectTestConfig({ dns: { domain }, observability: {} });
-
-      const obs = await platform.getObservabilityConfig();
-      assert.strictEqual(obs.appName, 'open-pryv.io (' + domain + ')');
+      await withInjectedConfig({ dns: { domain } }, async () => {
+        const obs = await platform.getObservabilityConfig();
+        assert.strictEqual(obs.appName, 'open-pryv.io (' + domain + ')');
+      });
     });
 
     it('[OB04] hostname derived from new URL(core.url).hostname', async function () {
       const coreUrl = 'https://core-ob04.example.com';
-      config.injectTestConfig({ core: { url: coreUrl }, observability: {} });
-
-      const obs = await platform.getObservabilityConfig();
-      assert.strictEqual(obs.hostname, 'core-ob04.example.com');
+      await withInjectedConfig({ core: { url: coreUrl } }, async () => {
+        const obs = await platform.getObservabilityConfig();
+        assert.strictEqual(obs.hostname, 'core-ob04.example.com');
+      });
     });
   });
 
@@ -179,24 +176,25 @@ describe('[OBS] observability', function () {
 
     it('[OB09B] env has the full shape when enabled + provider + license are set', async function () {
       const coreUrl = 'https://core-ob09b.example.com';
-      config.injectTestConfig({ core: { url: coreUrl }, dns: { domain: 'example.com' }, observability: {} });
-      await platform.setObservabilityValue('enabled', true);
-      await platform.setObservabilityValue('provider', 'newrelic');
-      await platform.setObservabilityValue('newrelic-license-key', 'test-license-xyz-01234567890123456789');
-      await platform.setObservabilityValue('log-level', 'warn');
-      await platform.setObservabilityValue('app-name', 'test-cluster-app');
+      await withInjectedConfig({ core: { url: coreUrl }, dns: { domain: 'example.com' } }, async () => {
+        await platform.setObservabilityValue('enabled', true);
+        await platform.setObservabilityValue('provider', 'newrelic');
+        await platform.setObservabilityValue('newrelic-license-key', 'test-license-xyz-01234567890123456789');
+        await platform.setObservabilityValue('log-level', 'warn');
+        await platform.setObservabilityValue('app-name', 'test-cluster-app');
 
-      const obs = await platform.getObservabilityConfig();
-      const env = buildObservabilityEnv(obs);
+        const obs = await platform.getObservabilityConfig();
+        const env = buildObservabilityEnv(obs);
 
-      assert.strictEqual(env.PRYV_OBSERVABILITY_PROVIDER, 'newrelic');
-      assert.strictEqual(env.NEW_RELIC_LICENSE_KEY, 'test-license-xyz-01234567890123456789');
-      assert.strictEqual(env.NEW_RELIC_APP_NAME, 'test-cluster-app');
-      assert.strictEqual(env.NEW_RELIC_PROCESS_HOST_DISPLAY_NAME, 'core-ob09b.example.com');
-      assert.strictEqual(env.NEW_RELIC_LOG_LEVEL, 'warn');
-      // HSM defaults to 'false' (must match account-side or connect returns 409).
-      assert.strictEqual(env.NEW_RELIC_HIGH_SECURITY, 'false');
-      assert.ok(env.NEW_RELIC_HOME, 'NEW_RELIC_HOME must point at the provider config dir');
+        assert.strictEqual(env.PRYV_OBSERVABILITY_PROVIDER, 'newrelic');
+        assert.strictEqual(env.NEW_RELIC_LICENSE_KEY, 'test-license-xyz-01234567890123456789');
+        assert.strictEqual(env.NEW_RELIC_APP_NAME, 'test-cluster-app');
+        assert.strictEqual(env.NEW_RELIC_PROCESS_HOST_DISPLAY_NAME, 'core-ob09b.example.com');
+        assert.strictEqual(env.NEW_RELIC_LOG_LEVEL, 'warn');
+        // HSM defaults to 'false' (must match account-side or connect returns 409).
+        assert.strictEqual(env.NEW_RELIC_HIGH_SECURITY, 'false');
+        assert.ok(env.NEW_RELIC_HOME, 'NEW_RELIC_HOME must point at the provider config dir');
+      });
     });
 
     it('[OB09C] NEW_RELIC_HIGH_SECURITY flips to "true" only when obs.newrelic.highSecurity=true', async function () {

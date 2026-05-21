@@ -15,6 +15,7 @@ const validation = helpers.validation;
 const methodsSchema = require('../src/schema/service-infoMethods.ts');
 const HttpServer = require('./support/httpServer').default;
 const { getConfig } = require('@pryv/boiler');
+const { withInjectedConfig } = require('test-helpers');
 
 const username = cuid();
 let mongoFixtures;
@@ -62,18 +63,13 @@ describe('[SINF] Service', () => {
       // Test-config defaults `cluster.hfsWorkers: 1`, so noHF is NOT
       // auto-derived in the [FR4K] response. Force the no-HF case by
       // injecting `cluster.hfsWorkers: 0` and re-querying.
-      const config = await getConfig();
-      const original = config.get('cluster:hfsWorkers');
-      config.injectTestConfig({ cluster: { hfsWorkers: 0 } });
-      try {
+      await withInjectedConfig({ cluster: { hfsWorkers: 0 } }, async () => {
         const path = '/' + username + '/service/info';
         const res = await coreRequest.get(path);
         assert.strictEqual(res.status, 200);
         assert.strictEqual(res.body.features && res.body.features.noHF, true,
           'expected features.noHF=true when cluster.hfsWorkers===0');
-      } finally {
-        config.injectTestConfig({ cluster: { hfsWorkers: original } });
-      }
+      });
     });
   });
 });
