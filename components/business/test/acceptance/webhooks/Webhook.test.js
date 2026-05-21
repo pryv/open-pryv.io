@@ -13,6 +13,7 @@ const awaiting = require('awaiting');
 
 const Webhook = require('../../../src/webhooks/Webhook.ts').default;
 const WebhooksRepository = require('business/src/webhooks/repository.ts').default;
+const { createId: cuid } = require('@paralleldrive/cuid2');
 
 const HttpServer = require('./support/httpServer').default;
 // Plan 61: keep PORT in sync with httpServer.js's worker-relative shift.
@@ -443,6 +444,81 @@ describe('[WHBK] Webhook', () => {
         assert.deepEqual(runs3[2], runs2[1]);
         assert.deepEqual(runs3[0], webhook.lastRun);
       });
+    });
+  });
+
+  describe('[WCAD-FIRE] fire-time access-validity check (Plan 72 B.1.c)', () => {
+    const postPath = '/should-not-fire';
+    const url = 'http://127.0.0.1:' + PORT + postPath;
+    const user = { id: 'wcad-fire-user', username: 'wcad-fire-user' };
+    let mockServer;
+
+    before(async () => {
+      mockServer = new HttpServer(postPath, 200);
+      await mockServer.listen();
+    });
+
+    after(() => {
+      mockServer.close();
+    });
+
+    it('[WCADF1] when access is gone, marks webhook inactive and skips the HTTP call', async () => {
+      const fakeAccessesStorage = {
+        findOne: (_u, _q, _opts, cb) => cb(null, null) // access not found
+      };
+      const repo = new WebhooksRepository(storage, userStorage, fakeAccessesStorage);
+      const webhook = new Webhook({
+        accessId: cuid(),
+        url,
+        webhooksRepository: repo,
+        user
+      });
+      await webhook.save();
+      const before = mockServer.getMessages().length;
+      await webhook.send('should-not-be-sent');
+      assert.strictEqual(webhook.state, 'inactive');
+      assert.strictEqual(mockServer.getMessages().length, before);
+      const stored = await repo.getById(user, webhook.id);
+      assert.strictEqual(stored.state, 'inactive');
+      await repo.deleteOne(user, webhook.id);
+    });
+
+    it('[WCADF2] when access is tombstoned (deleted != null), marks webhook inactive', async () => {
+      const fakeAccessesStorage = {
+        findOne: (_u, q, _opts, cb) => cb(null, { id: q.id, deleted: 1700000000 })
+      };
+      const repo = new WebhooksRepository(storage, userStorage, fakeAccessesStorage);
+      const webhook = new Webhook({
+        accessId: cuid(),
+        url,
+        webhooksRepository: repo,
+        user
+      });
+      await webhook.save();
+      const before = mockServer.getMessages().length;
+      await webhook.send('should-not-be-sent');
+      assert.strictEqual(webhook.state, 'inactive');
+      assert.strictEqual(mockServer.getMessages().length, before);
+      await repo.deleteOne(user, webhook.id);
+    });
+
+    it('[WCADF3] when access is live, fires normally', async () => {
+      const fakeAccessesStorage = {
+        findOne: (_u, q, _opts, cb) => cb(null, { id: q.id, deleted: null })
+      };
+      const repo = new WebhooksRepository(storage, userStorage, fakeAccessesStorage);
+      const webhook = new Webhook({
+        accessId: cuid(),
+        url,
+        webhooksRepository: repo,
+        user
+      });
+      await webhook.save();
+      const before = mockServer.getMessages().length;
+      await webhook.send('should-fire');
+      assert.strictEqual(webhook.state, 'active');
+      assert.strictEqual(mockServer.getMessages().length, before + 1);
+      await repo.deleteOne(user, webhook.id);
     });
   });
 });

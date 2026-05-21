@@ -15,8 +15,10 @@ const { getUsersRepository } = require('business/src/users/index.ts');
  */
 class Repository {
   storage: any;
-  constructor (webhooksStorage: any) {
+  accessesStorage: any;
+  constructor (webhooksStorage: any, eventsStorage?: any, accessesStorage?: any) {
     this.storage = webhooksStorage;
+    this.accessesStorage = accessesStorage;
   }
 
   /**
@@ -102,6 +104,26 @@ class Repository {
    */
   async deleteForUser (user: any) {
     await fromCallback((cb: any) => this.storage.delete(user, {}, cb));
+  }
+
+  /**
+   * Deletes all webhooks attached to a given access. Used by the
+   * `accesses.delete` cascade (Plan 72 Phase B).
+   */
+  async deleteByAccess (user: any, accessId: any) {
+    await fromCallback((cb: any) => this.storage.delete(user, { accessId }, cb));
+  }
+
+  /**
+   * Returns true iff an active (non-tombstoned) access exists for the
+   * given accessId. Defensive: returns true when no accessesStorage was
+   * wired (older constructor callers) so we never falsely deactivate.
+   */
+  async accessExists (user: any, accessId: any): Promise<boolean> {
+    if (this.accessesStorage == null) return true;
+    const access = await fromCallback((cb: any) =>
+      this.accessesStorage.findOne(user, { id: accessId }, {}, cb));
+    return access != null && access.deleted == null;
   }
 }
 export default Repository;

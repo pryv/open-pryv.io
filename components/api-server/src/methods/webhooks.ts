@@ -37,7 +37,7 @@ export default async function produceWebhooksApiMethods (api: any) {
   const storageLayer = await getStorageLayer();
   const logger = getLogger('methods:webhooks');
 
-  const webhooksRepository = new WebhooksRepository(storageLayer.webhooks, storageLayer.events);
+  const webhooksRepository = new WebhooksRepository(storageLayer.webhooks, storageLayer.events, storageLayer.accesses);
 
   // RETRIEVAL
 

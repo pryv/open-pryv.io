@@ -1,5 +1,53 @@
 # Changelog - Internal (no API impact)
 
+## fix(webhooks): cascade webhook deletion on accesses.delete (Plan 72 B)
+
+`accesses.delete` did not remove webhooks attached to the deleted
+access (or its descendant shared accesses for an app-access
+deletion). Webhook rows survived with a dangling `accessId` and kept
+firing notifications until manually cleaned. The data exposure is
+bounded by the signal-only design (the receiver's GET back authenticates
+with the now-deleted access and gets 401), but the outbound channel
+itself was not torn down.
+
+Fix is three small additions:
+
+1. `Repository.deleteByAccess(user, accessId)` in
+   `components/business/src/webhooks/repository.ts` mirrors the existing
+   `deleteOne` / `deleteForUser` shape.
+2. `deleteAccesses` middleware in
+   `components/api-server/src/methods/accesses.ts` walks the same
+   `idsToDelete` list (app access + descendants) and calls
+   `webhooksRepository.deleteByAccess` for each — **before** the access
+   row is deleted, so a partial failure leaves a retryable state.
+3. `Webhook.send()` fire-time access-validity check: on cache miss for
+   the parent access, the repository's new `accessExists(user, accessId)`
+   is consulted and the webhook self-deactivates (`state = 'inactive'`)
+   when the access is missing or tombstoned. Self-heals orphan webhooks
+   from before this fix shipped, and any future code path that creates a
+   dangling webhook.
+
+`WebhooksRepository` constructor gained an optional third parameter
+`accessesStorage`; existing two-arg callers still work (defensive
+default `accessExists` returns true, so no-op for legacy wiring). Three
+known instantiation sites updated: `api-server/src/methods/webhooks.ts`,
+`api-server/src/methods/accesses.ts` (new), and
+`webhooks/src/service.ts` (the dispatcher that actually fires webhooks
+in-process per Plan 14).
+
+Tests:
+
+- `[WCAD]` 3 tests in `components/api-server/test/acceptance/accesses.test.js`
+  cover the cascade (own webhook, descendant webhook, unrelated webhook
+  untouched).
+- `[WCAD-FIRE]` 3 tests in
+  `components/business/test/acceptance/webhooks/Webhook.test.js` cover
+  the fire-time check (missing access, tombstoned access, live access).
+
+Closes the bug chips on `hipaa-security.164.308(a)(3)(ii)(C)`,
+`iso-27001.A.5.16`, `iso-27001.A.5.18` in `compliance-matrix/`.
+GitHub: pryv/open-pryv.io#82.
+
 ## feat(auth.delete): operator setting `audit.onUserDelete` (Plan 72 A.2)
 
 Layered on top of A.1 (which made the erasure engine-consistent), A.2 surfaces the policy choice operators need for retention regimes that conflict with the GDPR Art.17 default:

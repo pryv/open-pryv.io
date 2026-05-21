@@ -313,6 +313,88 @@ describe('[AC01] accesses', () => {
     });
   });
 
+  describe('[WCAD] webhook cascade on access delete', () => {
+    let username, streamId, appAccess, sharedAccess, sharedSiblingAccess;
+    let appWebhook, sharedWebhook, siblingWebhook;
+    let mongoFixtures;
+    let webhooksStorage;
+
+    before(async () => {
+      webhooksStorage = helpers.dependencies.storage.user.webhooks;
+    });
+
+    before(async () => {
+      username = cuid();
+      streamId = charlatan.Lorem.word();
+      mongoFixtures = getNewFixture();
+      const user = await mongoFixtures.user(username);
+      await user.stream({ id: streamId }, () => {});
+
+      appAccess = (await user.access({
+        type: 'app',
+        name: charlatan.Lorem.word() + '-app',
+        permissions: [{ streamId, level: 'read' }]
+      })).attrs;
+
+      sharedAccess = (await user.access({
+        type: 'shared',
+        name: charlatan.Lorem.word() + '-shared',
+        permissions: [{ streamId, level: 'read' }],
+        createdBy: appAccess.id
+      })).attrs;
+
+      // Unrelated shared access — its webhook must survive.
+      sharedSiblingAccess = (await user.access({
+        type: 'shared',
+        name: charlatan.Lorem.word() + '-sibling',
+        permissions: [{ streamId, level: 'read' }]
+      })).attrs;
+
+      appWebhook = (await user.webhook({
+        url: `https://${charlatan.Internet.domainName()}/app-notify`
+      }, appAccess.id)).attrs;
+
+      sharedWebhook = (await user.webhook({
+        url: `https://${charlatan.Internet.domainName()}/shared-notify`
+      }, sharedAccess.id)).attrs;
+
+      siblingWebhook = (await user.webhook({
+        url: `https://${charlatan.Internet.domainName()}/sibling-notify`
+      }, sharedSiblingAccess.id)).attrs;
+    });
+
+    after(async () => {
+      await mongoFixtures.clean();
+    });
+
+    describe('[WCAD-A] when deleting an app access', () => {
+      before(async () => {
+        await coreRequest
+          .del(`/${username}/accesses/${appAccess.id}`)
+          .set('Authorization', appAccess.token);
+      });
+
+      it('[WCAD1] deletes the webhook attached to the deleted access', async () => {
+        const findOneAsync = promisify((u, q, opts, cb) => webhooksStorage.findOne(u, q, opts, cb));
+        const found = await findOneAsync({ id: username }, { id: appWebhook.id }, {});
+        assert.strictEqual(found, null);
+      });
+
+      it('[WCAD2] cascades to webhooks on descendant shared accesses', async () => {
+        const findOneAsync = promisify((u, q, opts, cb) => webhooksStorage.findOne(u, q, opts, cb));
+        const found = await findOneAsync({ id: username }, { id: sharedWebhook.id }, {});
+        assert.strictEqual(found, null);
+      });
+
+      it('[WCAD3] does NOT touch webhooks on unrelated accesses', async () => {
+        const findOneAsync = promisify((u, q, opts, cb) => webhooksStorage.findOne(u, q, opts, cb));
+        const found = await findOneAsync({ id: username }, { id: siblingWebhook.id }, {});
+        assert.ok(found != null);
+        assert.strictEqual(found.id, siblingWebhook.id);
+      });
+    });
+  });
+
   describe('[AC11] access expiry', () => {
     // Uses dynamic fixtures:
     // Set up a few ids that we'll use for testing. NOTE that these ids will

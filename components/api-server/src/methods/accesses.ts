@@ -34,6 +34,7 @@ const { parseAccessRef, serializeAccessRef, composeWireAccess } = require('busin
 const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
 const cmc = require('cmc');
 const { getLogger } = require('@pryv/boiler');
+const WebhooksRepository = require('business').webhooks.Repository;
 
 type Permission = {
   streamId: string;
@@ -52,6 +53,7 @@ export default async function produceAccessesApiMethods (api: any) {
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };
   const mall = await getMall();
   const storageLayer = await getStorageLayer();
+  const webhooksRepository = new WebhooksRepository(storageLayer.webhooks, storageLayer.events, storageLayer.accesses);
 
   // RETRIEVAL
 
@@ -768,6 +770,15 @@ export default async function produceAccessesApiMethods (api: any) {
       if (accessToDelete != null) {
         cache.unsetAccessLogic(context.user.id, accessToDelete);
       }
+    }
+    // Plan 72 Phase B: cascade webhook deletion BEFORE access deletion.
+    // On partial failure, the access still exists so a retry re-runs the cascade.
+    try {
+      for (const idToDelete of idsToDelete) {
+        await webhooksRepository.deleteByAccess(context.user, idToDelete.id);
+      }
+    } catch (err) {
+      return next(errors.unexpectedError(err));
     }
     try {
       await fromCallback((cb: any) => {

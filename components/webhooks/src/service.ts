@@ -24,7 +24,7 @@ class WebhooksService {
   settings: any;
   constructor (params: any) {
     this.logger = params.logger;
-    this.repository = new WebhooksRepository(params.storage.webhooks);
+    this.repository = new WebhooksRepository(params.storage.webhooks, params.storage.events, params.storage.accesses);
     this.settings = params.settings;
   }
 
