@@ -1,5 +1,12 @@
 # Changelog - Internal (no API impact)
 
+## fix(cmc): handleAccept reads `content.features` (was `content.extra`) — features-negotiation contract drift
+
+One-line fix in `components/cmc/src/handleAccept.ts:94` paired with the `@pryv/cmc@1.1.1` lib-js patch. The user-visible behaviour change (data-grant access now carries non-null `clientData.cmc.features` reflecting the negotiated offer features) is documented in `CHANGELOG-v2.md`. This entry covers the unit-test additions that pin the fix:
+
+- **NEW** `[HA01F]` — `handleAccept` reads features from `triggerEvent.content.features` and stamps them on the data-grant; `content.extra` decoy is ignored.
+- **NEW** `[HA01G]` — when `content.features` is absent the data-grant's `clientData.cmc.features` stays `null` even if `content.extra` is set (compat with legacy SDK callers).
+
 ## feat(cmc): Phase 4 security hardening + Phase 1.1/2.1/2.2/3.1/3.2 fixes (Plan 68 Phase 2)
 
 Wire-up + tests for the API-facing changes documented in `CHANGELOG-v2.md` (CMC security hardening). Adds:

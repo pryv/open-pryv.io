@@ -145,6 +145,73 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(sentBody.content.grantedAccess.apiEndpoint, 'https://tok-grant@recipient.example.com/');
       assert.deepEqual(sentBody.content.from, { username: 'alice', host: 'recipient.example.com' });
     });
+
+    it('[HA01F] reads negotiated features from triggerEvent.content.features (NOT content.extra) and stamps them on the data-grant', async () => {
+      // README "Features negotiation": SDK persists offer-resolved
+      // features into content.features at acceptInvite time; plugin
+      // forwards them onto the data-grant access's clientData.cmc.features.
+      //
+      // Bug history (2026-05-21, HDS implementer report):
+      // plugin used to read content.extra (the user-supplied pass-through),
+      // so the negotiation never reached the data-grant — accepter-side
+      // ended up with clientData.cmc.features = null even when the offer
+      // specified explicit values. content.extra MUST NOT influence
+      // features stamping.
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const triggerWithFeatures = {
+        id: 'evt-accept-f',
+        type: 'consent/accept-cmc',
+        content: {
+          capabilityUrl: 'https://Tok@example.com/',
+          features: { chat: false, systemMessaging: true },
+          extra: { chat: true, systemMessaging: true } // decoy — must NOT be read
+        }
+      };
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: triggerWithFeatures,
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(mall.calls.accessesCreated.length, 1);
+      const acc = mall.calls.accessesCreated[0];
+      assert.deepEqual(acc.clientData.cmc.features, { chat: false, systemMessaging: true });
+    });
+
+    it('[HA01G] data-grant features stays null when triggerEvent omits content.features (decoy content.extra MUST NOT leak through)', async () => {
+      // Companion of [HA01F]: when the SDK doesn't write content.features
+      // (legacy SDK pre-fix, or third-party callers), the plugin must NOT
+      // fall back to content.extra. Result: clientData.cmc.features = null
+      // (i.e. accepter signals "no negotiation recorded"; downstream
+      // consumers fall back to their own defaults).
+      const mall = fakeMall();
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const triggerExtraOnly = {
+        id: 'evt-accept-extra-only',
+        type: 'consent/accept-cmc',
+        content: {
+          capabilityUrl: 'https://Tok@example.com/',
+          extra: { chat: false, systemMessaging: false } // MUST NOT influence features
+        }
+      };
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: triggerExtraOnly,
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      const acc = mall.calls.accessesCreated[0];
+      assert.equal(acc.clientData.cmc.features, null);
+    });
   });
 
   describe('[CMCHA-FAIL] handleAccept failure paths', () => {

@@ -91,7 +91,7 @@ async function handleAccept (params: {
     return { ok: false, reason: 'cmc-handler-missing-capability-url' };
   }
   const accessName: string | undefined = triggerEvent.content?.accessName;
-  const features: any = triggerEvent.content?.extra ?? null;
+  const features: any = triggerEvent.content?.features ?? null;
 
   // 1. Read the offer.
   let offer: any;

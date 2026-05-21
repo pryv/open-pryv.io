@@ -1,5 +1,12 @@
 # Changelog - API Changes
 
+## CMC plugin — features-negotiation now correctly stamped on data-grant `clientData.cmc.features`
+
+Coordinated fix with `@pryv/cmc@1.1.1` (lib-js): the accept handshake now persists the offer-resolved features onto the accepter's data-grant access in `clientData.cmc.features`. Previously the patient-side data-grant ended up with `clientData.cmc.features: null` even when the offer specified default-true values, because the plugin read the negotiated features from the wrong field of the accept trigger (`content.extra`, which is the SDK's user-supplied free-form pass-through) instead of `content.features`.
+
+- **CHANGED** `components/cmc/src/handleAccept.ts`: reads `triggerEvent.content?.features` (was `triggerEvent.content?.extra`). The handler still defaults to `null` when the field is absent, so older `@pryv/cmc < 1.1.1` clients (which don't write `content.features` yet) keep producing `clientData.cmc.features: null` — bump the SDK to get the full negotiation persisted.
+- **NO IMPACT** on the offer side (`createInvite` already writes `request.features` verbatim), on doctor-side delivery (`handleIncomingAccept` already mirrors features onto the doctor's inbox event), or on the feature-gating hooks (`handleChat` / `handleSystem` honour `clientData.cmc.features.chat` / `.systemMessaging` exactly as before).
+
 ## CMC plugin — security hardening (forge-prevention + reserved-root immutability + internal-stream filtering)
 
 Four route-level guards added to close enforcement gaps in the CMC plugin's `clientData.cmc.*` namespace, reserved-stream lifecycle, peer-side `content.from` stamping, and `:_cmc:_internal:*` visibility. None of these change the wire shape for valid CMC traffic; they add `4xx` rejections for misuse and prune internal events from read responses.
