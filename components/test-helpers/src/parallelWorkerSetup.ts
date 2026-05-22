@@ -152,6 +152,11 @@ export async function applyParallelWorkerConfig (): Promise<WorkerOverrides> {
   if (!o.isParallel) return o;
 
   config.set('storages:engines:postgresql:database', o.postgresqlDatabase);
+  // B-2026-05-22-2 — shrink the PG pool in parallel mode so 2 workers
+  // each running DIM-spawned child api-servers don't saturate PG's
+  // default `max_connections=100`. 4 connections per pool × ~2 pools
+  // per worker × 2 workers × 1 parent + 1 child each = ~32 — fits.
+  config.set('storages:engines:postgresql:max', 4);
   config.set('storages:engines:sqlite:path', o.sqlitePath);
   config.set('storages:engines:filesystem:previewsDirPath', o.previewsDirPath);
   config.set('storages:engines:rqlite:url', o.rqliteUrl);
