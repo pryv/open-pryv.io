@@ -199,29 +199,33 @@ export async function spawnWorkerRqlited (o: WorkerOverrides): Promise<void> {
     dataDir
   ];
 
-  rqliteChild = spawn(binPath, args, {
+  // Capture the spawned child in a local const so strictNullChecks doesn't
+  // flag every subsequent use — the module-level `rqliteChild` can be reset
+  // to null by the `exit` handler, but `child` is stable within this scope.
+  const child = spawn(binPath, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false
   });
+  rqliteChild = child;
 
   // Silently drain stdio so the child doesn't block on a full pipe.
   // Mocha tests don't need rqlited's chatter; the file pidpath gives
   // operators a reproducible log target if they want to attach.
-  rqliteChild.stdout?.on('data', () => {});
-  rqliteChild.stderr?.on('data', () => {});
+  child.stdout?.on('data', () => {});
+  child.stderr?.on('data', () => {});
 
-  rqliteChild.on('error', (err: Error) => {
+  child.on('error', (err: Error) => {
     process.stderr.write(`[parallelWorkerSetup w${o.workerId}] rqlited spawn error: ${err.message}\n`);
   });
 
-  rqliteChild.on('exit', () => {
+  child.on('exit', () => {
     rqliteChild = null;
   });
 
   pidFilePath = path.join(dataDir, 'rqlited.pid');
-  if (rqliteChild.pid != null) {
+  if (child.pid != null) {
     try {
-      fs.writeFileSync(pidFilePath, String(rqliteChild.pid));
+      fs.writeFileSync(pidFilePath, String(child.pid));
     } catch {
       // Pidfile is a courtesy for external cleanup; don't fail the worker over it.
     }
