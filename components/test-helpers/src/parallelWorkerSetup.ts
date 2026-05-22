@@ -31,10 +31,23 @@ const require = createRequire(import.meta.url);
  */
 
 import type { ChildProcess } from 'child_process';
+import { fileURLToPath } from 'node:url';
 
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// `parallelWorkerSetup.ts` lives at
+// `<repo>/components/test-helpers/src/parallelWorkerSetup.ts`. The repo
+// root is three levels up (src → test-helpers → components → repo).
+// Resolve once at module-load — process.cwd() is unreliable here because
+// scripts/components-run cd's into the component dir before mocha starts,
+// so test workers' cwd is e.g. `components/api-server/` not the repo
+// root.
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 
 // Per-worker port stride. §2D spec is `4001 + id*10`. Worker 0 collides
 // with the host dev rqlited at 4001 by design — in parallel mode the
@@ -100,15 +113,19 @@ export function isParallelMode (): boolean {
  */
 export function getPerWorkerOverrides (workerId: number = getWorkerId()): WorkerOverrides {
   const stride = workerId * PORT_STRIDE;
+  // Path-typed config values must be absolute so consumers don't
+  // re-resolve them against an unpredictable cwd. Engines + bin/master.js
+  // both call `path.isAbsolute(p) ? p : path.resolve(process.cwd(), p)`,
+  // and test workers run from `components/<name>/`.
   return {
     workerId,
     isParallel: isParallelMode(),
     postgresqlDatabase: `pryv-node-test-w${workerId}`,
-    sqlitePath: `var-pryv/users-test-w${workerId}/`,
-    previewsDirPath: `var-pryv/previews-test-w${workerId}/`,
+    sqlitePath: path.join(REPO_ROOT, `var-pryv/users-test-w${workerId}/`),
+    previewsDirPath: path.join(REPO_ROOT, `var-pryv/previews-test-w${workerId}/`),
     rqliteUrl: `http://localhost:${RQLITE_HTTP_BASE + stride}`,
     rqliteRaftPort: RQLITE_RAFT_BASE + stride,
-    rqliteDataDir: `var-pryv/rqlite-data-w${workerId}/`,
+    rqliteDataDir: path.join(REPO_ROOT, `var-pryv/rqlite-data-w${workerId}/`),
     mongodbDatabase: `pryv-node-test-w${workerId}`,
     httpPort: HTTP_PORT_BASE + stride,
     hfsPort: HFS_PORT_BASE + stride,
@@ -161,13 +178,12 @@ export async function spawnWorkerRqlited (o: WorkerOverrides): Promise<void> {
   if (!o.isParallel) return;
   if (rqliteChild != null && rqliteChild.exitCode == null) return;
 
-  const repoRoot = findRepoRoot();
   const httpPort = RQLITE_HTTP_BASE + o.workerId * PORT_STRIDE;
   const raftPort = o.rqliteRaftPort;
   const dataDir = path.isAbsolute(o.rqliteDataDir)
     ? o.rqliteDataDir
-    : path.resolve(repoRoot, o.rqliteDataDir);
-  const binPath = path.resolve(repoRoot, 'bin-ext', 'rqlited');
+    : path.resolve(REPO_ROOT, o.rqliteDataDir);
+  const binPath = path.resolve(REPO_ROOT, 'bin-ext', 'rqlited');
 
   if (!fs.existsSync(binPath)) {
     throw new Error(`[parallelWorkerSetup] rqlited binary missing at ${binPath} — run storages/engines/rqlite/scripts/setup`);
@@ -273,12 +289,6 @@ export async function teardownParallelWorker (): Promise<void> {
 }
 
 // --- internals ----------------------------------------------------------
-
-function findRepoRoot (): string {
-  // tests run from open-pryv.io repo root (`cd open-pryv.io && just test ...`)
-  // which contains `bin-ext/rqlited` and `var-pryv/`.
-  return process.cwd();
-}
 
 async function waitForRqliteReady (url: string, timeoutMs: number, workerId: number): Promise<void> {
   const start = Date.now();

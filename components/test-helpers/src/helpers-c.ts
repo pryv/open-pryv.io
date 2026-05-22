@@ -28,9 +28,16 @@ const testConfig: any = {};
 // Override storage engines via STORAGE_ENGINE env var (e.g. 'postgresql')
 if (process.env.STORAGE_ENGINE) {
   const eng = process.env.STORAGE_ENGINE;
+  // Plan 61 Stage 4 — do NOT override `platform.engine` here. rqlite is
+  // the only supported platform engine since Plan 25; the PG + Mongo
+  // PlatformDB impls are intentionally incomplete (B-2026-05-21-1).
+  // Sequential matrices got away with the override because the
+  // storages barrel always inits early enough that the default-config
+  // value (`rqlite`) wins. Parallel mode's per-worker `beforeAll`
+  // setup pushes injectTestConfig BEFORE first barrel init, exposing
+  // the latent broken PG/Mongo PlatformDB.
   testConfig.storages = {
     base: { engine: eng },
-    platform: { engine: eng },
     series: { engine: eng === 'postgresql' ? 'postgresql' : 'influxdb' },
     file: { engine: 'filesystem' },
     audit: { engine: eng === 'postgresql' ? 'postgresql' : 'sqlite' }
