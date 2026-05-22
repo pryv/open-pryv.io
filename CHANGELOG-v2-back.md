@@ -1,5 +1,27 @@
 # Changelog - Internal (no API impact)
 
+## feat(auth.delete): operator setting `audit.onUserDelete` (Plan 72 A.2)
+
+Layered on top of A.1 (which made the erasure engine-consistent), A.2 surfaces the policy choice operators need for retention regimes that conflict with the GDPR Art.17 default:
+
+- **`erase`** (default) — `auditStorage.deleteUser(userId)` runs (A.1 path). Matches GDPR Art.17 / CCPA §1798.105 / PIPEDA Principle 4.5 default.
+- **`keep`** — `deleteAuditDataStorage` middleware skips the wipe with an info-log naming the user. For HIPAA §164.316(b)(2)(i) (6-year audit retention regardless of subject erasure), MDR Art.10(8) (10-year device-history retention), or any regime keeping the audit under a separate lawful basis (GDPR Art.17(3)(b) — compliance with a legal obligation). The operator must document the retention in their DPIA.
+- **`pseudonymise`** — REFUSED AT BOOT. Depends on the not-yet-shipped `auth.randomAlias` primitive (open-pryv.io#38, backlog slug `ALIASES`). `config/plugins/config-validation.js` refuses this value with a clear error message naming the dependency, so operators selecting this mode get a deterministic failure instead of a silent fallback. If somehow seen at runtime (override during a hot reload), the middleware logs a warning and falls back to `erase` defensively.
+
+Wiring:
+
+- `config/default-config.yml` `audit.onUserDelete: erase` (with multi-line comment documenting all three modes + their lawful-basis fit).
+- `config/plugins/config-validation.js` gains `checkAuditOnUserDeleteMode(config, problems)` — enum-style validation + the `pseudonymise` gate. New exports: `checkAuditOnUserDeleteMode`, `AUDIT_ON_USER_DELETE_MODES`.
+- `components/business/src/auth/deletion.ts::deleteAuditDataStorage` reads `audit:onUserDelete` (defaults to `erase` if absent) and branches before the existing A.1 wipe.
+
+Tests:
+
+- `[CV-AOUD]` 6 unit tests in `components/api-server/test/config-validation-required-when-seq.test.js` covering: `erase`/`keep` accepted, `pseudonymise` refused with ALIASES dependency mention, unknown enum rejected with allowed list, absent value tolerated, enum exposed.
+
+Known caveat — **SQLite audit + `keep` mode**: the parent `deleteAuditData` step (filesystem wipe of `userLocalDirectory`) still runs after `deleteAuditDataStorage` returns from `keep`. For SQLite-audit deployments, the per-user `.sqlite` file lives inside that directory and gets wiped regardless. PG-audit deployments work as designed (rows survive). Operators wanting `keep` semantics on SQLite need either a PG audit migration, or a follow-up that teaches `deleteAuditData` to skip when `onUserDelete === 'keep'`. Logged for follow-up; not blocking the chip discharge.
+
+Closes 3 companion `feature` chips on the compliance-matrix (`gdpr.Art.17 feature`, `ccpa.1798.105 feature`, `hipaa-security.164.316(b)(2)(i) feature`). GitHub: pryv/open-pryv.io#75 (same issue as A.1; both phases discharge together on merge).
+
 ## fix(auth.delete): engine-agnostic audit-log erasure (Plan 72 A.1)
 
 `auth.delete` (the GDPR Art.17 erasure primitive) silently left PG `audit_events` rows referencing the deleted subject behind. The existing `deleteAuditData` step in `business/src/auth/deletion.ts` only wiped the per-user filesystem directory — sufficient for SQLite (whose audit DB is a file inside that tree), insufficient for PG (whose `audit_events` is a shared table keyed by `user_id`). `AuditStoragePG.deleteUser` existed but had only one in-tree caller (the backup-restore preflight); the `auth.delete` pipeline did not invoke it.

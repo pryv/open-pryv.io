@@ -187,3 +187,61 @@ describe('[CV-REQ] config-validation REQUIRED_WHEN', () => {
     assert.strictEqual(isMissingOrSentinel({}), false, 'object → not missing');
   });
 });
+
+describe('[CV-AOUD] config-validation audit.onUserDelete (Plan 72 A.2)', () => {
+  let checkAuditOnUserDeleteMode, AUDIT_ON_USER_DELETE_MODES;
+
+  before(async function () {
+    this.timeout(30000);
+    await initTests();
+    await initCore();
+    ({ checkAuditOnUserDeleteMode, AUDIT_ON_USER_DELETE_MODES } =
+      require('../../../config/plugins/config-validation.js'));
+  });
+
+  function fakeConfig (value) {
+    return { get: (key) => (key === 'audit:onUserDelete' ? value : undefined) };
+  }
+
+  it('[CV-AOUD-01] erase mode accepted', () => {
+    const problems = [];
+    checkAuditOnUserDeleteMode(fakeConfig('erase'), problems);
+    assert.strictEqual(problems.length, 0);
+  });
+
+  it('[CV-AOUD-02] keep mode accepted', () => {
+    const problems = [];
+    checkAuditOnUserDeleteMode(fakeConfig('keep'), problems);
+    assert.strictEqual(problems.length, 0);
+  });
+
+  it('[CV-AOUD-03] pseudonymise refused at boot (depends on ALIASES, #38)', () => {
+    const problems = [];
+    checkAuditOnUserDeleteMode(fakeConfig('pseudonymise'), problems);
+    assert.strictEqual(problems.length, 1);
+    assert.ok(problems[0].message.includes('ALIASES'),
+      'expected message to mention ALIASES dependency');
+    assert.ok(problems[0].message.includes('#38'),
+      'expected message to mention the open-pryv.io issue number');
+    assert.strictEqual(problems[0].payload.dependsOn, 'ALIASES (open-pryv.io#38)');
+  });
+
+  it('[CV-AOUD-04] unknown mode rejected with allowed list', () => {
+    const problems = [];
+    checkAuditOnUserDeleteMode(fakeConfig('shred'), problems);
+    assert.strictEqual(problems.length, 1);
+    assert.ok(problems[0].message.includes('erase, keep, pseudonymise'),
+      'expected message to list the allowed enum values');
+    assert.deepEqual(problems[0].payload.allowed, ['erase', 'keep', 'pseudonymise']);
+  });
+
+  it('[CV-AOUD-05] absent value tolerated (consumer falls back to default \'erase\')', () => {
+    const problems = [];
+    checkAuditOnUserDeleteMode(fakeConfig(null), problems);
+    assert.strictEqual(problems.length, 0);
+  });
+
+  it('[CV-AOUD-06] AUDIT_ON_USER_DELETE_MODES enum exposed', () => {
+    assert.deepEqual(AUDIT_ON_USER_DELETE_MODES, ['erase', 'keep', 'pseudonymise']);
+  });
+});

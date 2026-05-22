@@ -113,8 +113,27 @@ class Deletion {
   // through the AuditStorage interface so every engine converges on the same
   // end-state. Runs BEFORE deleteAuditData so the SQLite path closes the DB
   // file cleanly before the directory wipe.
+  //
+  // Plan 72 Phase A.2: behaviour gated by `audit:onUserDelete` operator setting.
+  //   erase (default) — wipe via auditStorage.deleteUser (this method's A.1 path).
+  //   keep            — skip the wipe (HIPAA / MDR long-retention regimes).
+  //   pseudonymise    — refused at boot by config-validation (depends on the
+  //                     not-yet-shipped ALIASES primitive). If somehow seen here
+  //                     (override during runtime), fall back to 'erase' + warn-log.
   async deleteAuditDataStorage (context: any, params: any, result: any, next: any) {
     try {
+      const mode: string = this.config.get('audit:onUserDelete') || 'erase';
+      if (mode === 'keep') {
+        this.logger.info(
+          `audit:onUserDelete=keep — skipping audit erasure for user ${context.user.id} (operator policy)`
+        );
+        return next();
+      }
+      if (mode === 'pseudonymise') {
+        this.logger.warn(
+          `audit:onUserDelete=pseudonymise requested for user ${context.user.id} but ALIASES primitive (open-pryv.io#38) is not yet available — falling back to 'erase'. config-validation should have blocked this at boot.`
+        );
+      }
       const auditStorage = require('storages').auditStorage;
       if (auditStorage != null) {
         await auditStorage.deleteUser(context.user.id);

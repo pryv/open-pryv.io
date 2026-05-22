@@ -384,6 +384,20 @@ migrations:
 # --- Audit ---
 audit:
   active: true
+  # Plan 72 A.2: end-state of audit_logs when `auth.delete` runs.
+  #   erase (default)  — auditStorage.deleteUser(userId) wipes the user's
+  #                      audit rows. GDPR Art.17 / CCPA §1798.105 default.
+  #   keep             — skip audit erasure. For HIPAA §164.316(b)(2)(i)
+  #                      6-year retention, MDR Art.10(8) 10-year retention,
+  #                      or any regime keeping the audit under a separate
+  #                      lawful basis (GDPR Art.17(3)(b)). Operator must
+  #                      document the retention in their DPIA.
+  #   pseudonymise     — null/hash personal identifiers, keep the access
+  #                      pattern + timestamps. Requires the auth.randomAlias
+  #                      primitive (open-pryv.io#38). REFUSED AT BOOT until
+  #                      ALIASES ships — operators selecting this mode get
+  #                      a clear failure rather than a silent fallback.
+  onUserDelete: erase
   storage:
     filter:
       methods:

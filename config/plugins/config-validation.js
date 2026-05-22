@@ -83,6 +83,32 @@ function checkRequiredWhen (config, problems) {
   }
 }
 
+// Plan 72 A.2: enum-style validation for `audit:onUserDelete` mode +
+// gate for `pseudonymise` which depends on the not-yet-shipped ALIASES
+// primitive. Lives alongside REQUIRED_WHEN so future enum-style gates
+// land in the same shape.
+const AUDIT_ON_USER_DELETE_MODES = ['erase', 'keep', 'pseudonymise'];
+
+function checkAuditOnUserDeleteMode (config, problems) {
+  const value = config.get('audit:onUserDelete');
+  if (value == null) return; // default 'erase' wired in default-config.yml — absence here means override removed it, treat as 'erase'
+  if (!AUDIT_ON_USER_DELETE_MODES.includes(value)) {
+    problems.push({
+      message: `'audit:onUserDelete' must be one of: ${AUDIT_ON_USER_DELETE_MODES.join(', ')}. Got: ${JSON.stringify(value)}.`,
+      path: ['audit', 'onUserDelete'],
+      payload: { value, allowed: AUDIT_ON_USER_DELETE_MODES }
+    });
+    return;
+  }
+  if (value === 'pseudonymise') {
+    problems.push({
+      message: "'audit:onUserDelete: pseudonymise' is not yet available — it requires the auth.randomAlias primitive (open-pryv.io#38, backlog slug ALIASES). Use 'erase' (default) or 'keep' until ALIASES ships, then re-enable.",
+      path: ['audit', 'onUserDelete'],
+      payload: { value: 'pseudonymise', dependsOn: 'ALIASES (open-pryv.io#38)' }
+    });
+  }
+}
+
 async function validate (config) {
   // Collect every validation problem in one pass so the operator sees the
   // full list in a single boot-and-fail cycle instead of one-per-restart.
@@ -101,6 +127,7 @@ async function validate (config) {
   }
 
   checkRequiredWhen(config, problems);
+  checkAuditOnUserDeleteMode(config, problems);
 
   return problems;
 }
@@ -178,6 +205,8 @@ module.exports = {
   // exercise the validator without booting the boiler init lifecycle.
   validate,
   checkRequiredWhen,
+  checkAuditOnUserDeleteMode,
   isMissingOrSentinel,
-  REQUIRED_WHEN
+  REQUIRED_WHEN,
+  AUDIT_ON_USER_DELETE_MODES
 };
