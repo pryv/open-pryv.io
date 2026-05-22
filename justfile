@@ -211,6 +211,42 @@ clean-test-data:
     rm -f ./custom-extensions/customAuthStepFn.js
     @echo "Test data cleaned: SQLite + per-user dirs + attachments/previews + Mongo (pryv-node-test + pryv-node) + PG (pryv-node-test + pryv-node) + rqlite keyValue + custom-extensions stale fixture"
 
+# Reset per-worker test state for parallel mode (Plan 61 Stage 3).
+# Wipes worker-private PG DBs (pryv-node-test-w0..N), per-worker user
+# dirs (var-pryv/users-test-w*/), per-worker previews + rqlite data
+# dirs, and kills any lingering rqlited PIDs referenced in worker
+# pidfiles. Defaults to 8 worker slots — bump WORKERS=N if you ever
+# run mocha parallel jobs above that.
+#
+# The dev-host rqlited at port 4001 is left running on purpose; parallel
+# mode workers use offset ports (4011/4021/…). If a previous run crashed
+# while worker 0's port collided with the host rqlited, kill the host
+# rqlited yourself before re-running parallel tests.
+clean-test-data-parallel WORKERS='8':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for i in $(seq 0 $(( {{WORKERS}} - 1 ))); do
+      DB="pryv-node-test-w$i"
+      USR="./var-pryv/users-test-w$i"
+      PRV="./var-pryv/previews-test-w$i"
+      RQD="./var-pryv/rqlite-data-w$i"
+      PID="$RQD/rqlited.pid"
+      if [ -f "$PID" ]; then
+        kill "$(cat "$PID")" 2>/dev/null || true
+        sleep 0.2
+        kill -KILL "$(cat "$PID")" 2>/dev/null || true
+        rm -f "$PID"
+      fi
+      ./var-pryv/postgresql-bin/bin/dropdb -h 127.0.0.1 -p 5432 -U pryv --if-exists "$DB" 2>/dev/null || true
+      ./var-pryv/postgresql-bin/bin/createdb -h 127.0.0.1 -p 5432 -U pryv "$DB" 2>/dev/null || true
+      ./var-pryv/mongodb-bin/bin/mongosh --quiet "$DB" --eval 'db.dropDatabase()' >/dev/null 2>&1 || true
+      rm -rf "$USR" "$PRV" "$RQD"
+    done
+    # Sweep any rqlited processes pointing at the worker data dirs but
+    # missing/stale pidfiles (covers SIGKILL'd or crashed workers).
+    pkill -f 'rqlited.*var-pryv/rqlite-data-w' 2>/dev/null || true
+    echo "Parallel worker test data cleaned (workers 0..$(( {{WORKERS}} - 1 )))"
+
 # Cleanup users data and MongoDB data in `var-pryv/`
 clean-data:
     rm -rf ./var-pryv/users/*

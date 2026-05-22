@@ -204,6 +204,14 @@ function getMochaHooks (isParallelMode = false) {
 
   return {
     async beforeAll () {
+      // Plan 61 Stage 3 — apply per-worker config overrides + spawn the
+      // worker-private rqlited BEFORE any config-reading code runs (the
+      // previewsDirPath lookup below, storages.init() in initCore, …).
+      // No-op in non-parallel mode (host rqlited at 4001 serves the
+      // sequential matrix unchanged).
+      const { setupParallelWorker } = require('./parallelWorkerSetup.ts');
+      await setupParallelWorker();
+
       const config = await getConfig();
       const previewsDirPath = config.get('storages:engines:filesystem:previewsDirPath');
       if (!fs.existsSync(previewsDirPath)) {
@@ -216,6 +224,10 @@ function getMochaHooks (isParallelMode = false) {
       // `resetEvents`) still sees integrity-ready events.
       const { ensureIntegrity: ensureEventsIntegrity } = require('./data/events.ts');
       ensureEventsIntegrity();
+    },
+    async afterAll () {
+      const { teardownParallelWorker } = require('./parallelWorkerSetup.ts');
+      await teardownParallelWorker();
     },
     // Integrity checks disabled in parallel mode (no transport between workers).
     ...(isParallelMode

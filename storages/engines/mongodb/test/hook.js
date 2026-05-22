@@ -12,3 +12,17 @@ Object.assign(global, {
   bluebird: require('bluebird'),
   _: require('lodash')
 });
+
+// Plan 61 Stage 3 — wire the per-worker rqlited harness into this engine
+// suite too. No-op when MOCHA_PARALLEL is unset so sequential matrices
+// keep talking to the host rqlited on 4001/4002.
+export const mochaHooks = {
+  async beforeAll () {
+    const { setupParallelWorker } = require('test-helpers/src/parallelWorkerSetup.ts');
+    await setupParallelWorker();
+  },
+  async afterAll () {
+    const { teardownParallelWorker } = require('test-helpers/src/parallelWorkerSetup.ts');
+    await teardownParallelWorker();
+  }
+};

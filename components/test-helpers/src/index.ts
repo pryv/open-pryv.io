@@ -17,6 +17,7 @@ const syncPrimitives = require('./condition_variable.ts');
 const databaseFixture = require('./databaseFixture.ts').default;
 const portAllocator = require('./portAllocator.ts');
 const parallelTestHelper = require('./parallelTestHelper.ts');
+const parallelWorkerSetup = require('./parallelWorkerSetup.ts');
 const systemStreamFilters = require('./systemStreamFilters.ts');
 const { withInjectedConfig, injectTestConfigSnapshot } = require('./withInjectedConfig.ts');
 
@@ -42,6 +43,7 @@ export {
   databaseFixture,
   portAllocator,
   parallelTestHelper,
+  parallelWorkerSetup,
   systemStreamFilters,
   attachmentsCheck,
   data,
