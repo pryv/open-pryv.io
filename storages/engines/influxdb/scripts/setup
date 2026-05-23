@@ -1,11 +1,164 @@
 #!/bin/bash
 set -e
 
-# influxdata-archive_compat.key GPG Fingerprint: 9D539D90D3328DC7D6C8D3B9D8FF8E1F7DF8B07E
-wget -q https://repos.influxdata.com/influxdata-archive_compat.key
-echo '393e8779c89ac8d958f81f942f9ad7fb82a25e133faddaf92e15b16e6ac9ce4c influxdata-archive_compat.key' | sha256sum -c && cat influxdata-archive_compat.key | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg > /dev/null
-echo 'deb [signed-by=/etc/apt/trusted.gpg.d/influxdata-archive_compat.gpg] https://repos.influxdata.com/debian stable main' | sudo tee /etc/apt/sources.list.d/influxdata.list
+# Sets up InfluxDB 1.8.10 (influxd + influx CLI) for high-frequency series
+# storage. Self-contained, no system packages, no sudo.
+#
+# Mirrors the rqlite setup pattern (Plan 48): binary in bin-ext/, data in var-pryv/.
+#
+# Result:
+#   bin-ext/influxdb/influxd     — the influxd daemon binary
+#   bin-ext/influxdb/influx      — the influx CLI binary
+#   var-pryv/influxdb-data/      — data + meta + wal dirs (created on first start)
+#   var-pryv/influxdb-data/influxdb.conf — generated config (paths into var-pryv/)
+#   var-pryv/influxdb-logs/      — log files
+#
+# The codebase uses the InfluxDB 1.x InfluxQL API via the `influx` npm package
+# (storages/engines/influxdb/src/influx_connection.ts). InfluxDB 2.x is not
+# directly compatible — keep this pinned at 1.8.10 unless that client is
+# replaced.
 
-sudo apt-get update && sudo apt-get install influxdb
-sudo systemctl unmask influxdb.service
-sudo systemctl start influxdb
+INFLUX_VERSION=1.8.10
+
+# Detect OS / arch. InfluxDB 1.x has no darwin-arm64 build (predates Apple
+# Silicon); on M-series Macs the amd64 binary runs transparently via Rosetta.
+case "$(uname)" in
+  Linux)  INFLUX_OS=linux ;;
+  Darwin) INFLUX_OS=darwin ;;
+  *)
+    echo "Installation is meant to be on Linux or macOS"
+    exit 1
+    ;;
+esac
+
+case "$(uname -m)" in
+  x86_64|amd64) INFLUX_ARCH=amd64 ;;
+  arm64|aarch64)
+    if [[ "$INFLUX_OS" == "darwin" ]]; then
+      INFLUX_ARCH=amd64
+      echo "Note: no native darwin-arm64 release for InfluxDB $INFLUX_VERSION; using amd64 via Rosetta."
+      # Rosetta is not installed by default on Apple Silicon. Without it the
+      # amd64 binary fails with "Bad CPU type in executable" — surface a clear
+      # message rather than letting setup silently install a binary that won't run.
+      # `arch -x86_64 <shell-builtin>` bypasses Rosetta; use a real binary.
+      if ! arch -x86_64 /usr/bin/uname -m >/dev/null 2>&1; then
+        cat <<'EOF' >&2
+
+Rosetta 2 is required to run the amd64 InfluxDB binary on Apple Silicon,
+but it is not installed on this machine.
+
+Install it once (one-time, ~few hundred MB):
+
+  sudo softwareupdate --install-rosetta --agree-to-license
+
+Then re-run this setup script.
+
+EOF
+        exit 1
+      fi
+    else
+      echo "Unsupported architecture: $(uname -m) on $INFLUX_OS"
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Unsupported architecture: $(uname -m)"
+    exit 1
+    ;;
+esac
+
+# working dir fix
+SCRIPT_FOLDER=$(cd "$(dirname "${BASH_SOURCE[0]}")"; pwd)
+cd "$SCRIPT_FOLDER/"
+
+# --- Resolve VAR_PRYV_FOLDER ---
+
+if [[ -z "$VAR_PRYV_FOLDER" ]]; then
+  VAR_PRYV_FOLDER=$SCRIPT_FOLDER/../../../../var-pryv
+fi
+mkdir -p "$VAR_PRYV_FOLDER"
+VAR_PRYV_FOLDER="$(cd "$VAR_PRYV_FOLDER" && pwd)"
+
+REPO_ROOT=$(cd "$SCRIPT_FOLDER/../../../.." && pwd)
+INFLUX_BIN_DIR=$REPO_ROOT/bin-ext/influxdb
+INFLUX_DATA_DIR=$VAR_PRYV_FOLDER/influxdb-data
+INFLUX_LOGS_DIR=$VAR_PRYV_FOLDER/influxdb-logs
+INFLUX_CONF=$INFLUX_DATA_DIR/influxdb.conf
+
+mkdir -p "$INFLUX_DATA_DIR" "$INFLUX_LOGS_DIR"
+
+echo ""
+echo "Checking for InfluxDB ($INFLUX_BIN_DIR/influxd)..."
+
+if [[ -x "$INFLUX_BIN_DIR/influxd" ]]; then
+  echo "...already installed ($("$INFLUX_BIN_DIR/influxd" version 2>&1 | head -1))"
+else
+  echo "...installing InfluxDB v$INFLUX_VERSION ($INFLUX_OS-$INFLUX_ARCH)"
+  echo ""
+
+  mkdir -p "$INFLUX_BIN_DIR"
+
+  TARBALL="influxdb-${INFLUX_VERSION}_${INFLUX_OS}_${INFLUX_ARCH}.tar.gz"
+  URL="https://download.influxdata.com/influxdb/releases/${TARBALL}"
+
+  TMP_DIR=$(mktemp -d)
+  trap "rm -rf $TMP_DIR" EXIT
+
+  echo "Downloading $URL ..."
+  curl -fsSL -o "$TMP_DIR/$TARBALL" "$URL"
+
+  echo "Extracting..."
+  tar xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR"
+
+  # Tarball layout varies slightly by platform; locate the binaries.
+  INFLUXD_SRC=$(find "$TMP_DIR" -type f -name influxd -perm -u+x | head -1)
+  INFLUX_SRC=$(find "$TMP_DIR" -type f -name influx -perm -u+x | head -1)
+  if [[ -z "$INFLUXD_SRC" || -z "$INFLUX_SRC" ]]; then
+    echo "Error: could not find influxd / influx binaries in extracted tarball"
+    exit 1
+  fi
+
+  cp "$INFLUXD_SRC" "$INFLUX_BIN_DIR/influxd"
+  cp "$INFLUX_SRC" "$INFLUX_BIN_DIR/influx"
+  chmod +x "$INFLUX_BIN_DIR/influxd" "$INFLUX_BIN_DIR/influx"
+
+  echo "Installed: $("$INFLUX_BIN_DIR/influxd" version 2>&1 | head -1)"
+fi
+
+# --- Generate config if missing ---
+# Paths pinned into var-pryv/ so wiping var-pryv/influxdb-data is a full
+# reset. HTTP bind is loopback-only on default port 8086 (matches the
+# manifest configuration default).
+
+if [[ ! -f "$INFLUX_CONF" ]]; then
+  echo ""
+  echo "Writing config to $INFLUX_CONF ..."
+  cat > "$INFLUX_CONF" <<INFLUXCONF
+# --- Pryv dev settings (InfluxDB $INFLUX_VERSION) ---
+reporting-disabled = true
+
+[meta]
+  dir = "$INFLUX_DATA_DIR/meta"
+
+[data]
+  dir = "$INFLUX_DATA_DIR/data"
+  wal-dir = "$INFLUX_DATA_DIR/wal"
+
+[http]
+  enabled = true
+  bind-address = "127.0.0.1:8086"
+  auth-enabled = false
+  log-enabled = false
+
+[logging]
+  level = "warn"
+INFLUXCONF
+  echo "Config written."
+fi
+
+echo ""
+echo "InfluxDB setup complete."
+echo ""
+echo "To start InfluxDB:"
+echo "    ./storages/engines/influxdb/scripts/start"
+echo ""

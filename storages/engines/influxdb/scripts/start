@@ -1,0 +1,63 @@
+#!/bin/bash
+
+# Starts the local InfluxDB 1.8.10 instance from bin-ext/influxdb/.
+# Mirrors the rqlite start pattern.
+#
+# Modes:
+#   DEVELOPMENT=true  — attached (foreground) process
+#   default           — detached background process, log to var-pryv/influxdb-logs/
+
+SCRIPT_FOLDER=$(cd "$(dirname "$0")"; pwd)
+REPO_ROOT=${REPO_ROOT:-$SCRIPT_FOLDER/../../../..}
+REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
+VAR_PRYV_FOLDER=${VAR_PRYV_FOLDER:-$REPO_ROOT/var-pryv}
+VAR_PRYV_FOLDER="$(cd "$VAR_PRYV_FOLDER" && pwd)"
+
+INFLUX_BIN=$REPO_ROOT/bin-ext/influxdb/influxd
+INFLUX_DATA=$VAR_PRYV_FOLDER/influxdb-data
+INFLUX_LOGS=$VAR_PRYV_FOLDER/influxdb-logs
+INFLUX_CONF=$INFLUX_DATA/influxdb.conf
+PIDFILE=$INFLUX_DATA/influxd.pid
+
+if [[ ! -x "$INFLUX_BIN" ]]; then
+  echo "Error: influxd not found at $INFLUX_BIN"
+  echo "Run ./storages/engines/influxdb/scripts/setup first."
+  exit 1
+fi
+
+if [[ ! -f "$INFLUX_CONF" ]]; then
+  echo "Error: config not found at $INFLUX_CONF"
+  echo "Run ./storages/engines/influxdb/scripts/setup first."
+  exit 1
+fi
+
+mkdir -p "$INFLUX_LOGS"
+
+# Check if already running (via pidfile)
+if [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+  echo "influxd is already running (PID $(cat "$PIDFILE"))."
+  exit 0
+fi
+
+if [[ "$DEVELOPMENT" == "true" ]]; then
+  echo "Starting influxd (foreground)..."
+  exec "$INFLUX_BIN" -config "$INFLUX_CONF"
+else
+  echo "Starting influxd (background)..."
+  nohup "$INFLUX_BIN" -config "$INFLUX_CONF" > "$INFLUX_LOGS/influxd.log" 2>&1 &
+  echo $! > "$PIDFILE"
+
+  # Wait for HTTP API to become ready
+  for i in $(seq 1 60); do
+    if curl -fs http://127.0.0.1:8086/ping >/dev/null 2>&1; then
+      echo "influxd running (PID $(cat "$PIDFILE"))."
+      echo "  Logs: $INFLUX_LOGS/influxd.log"
+      echo "  Stop: kill \$(cat $PIDFILE)"
+      exit 0
+    fi
+    sleep 0.5
+  done
+
+  echo "Error: influxd did not become ready within 30s. See $INFLUX_LOGS/influxd.log"
+  exit 1
+fi
