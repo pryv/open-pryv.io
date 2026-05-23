@@ -225,13 +225,18 @@ clean-test-data:
 clean-test-data-parallel WORKERS='8':
     #!/usr/bin/env bash
     set -euo pipefail
-    for i in $(seq 0 $(( {{WORKERS}} - 1 ))); do
-      DB="pryv-node-test-w$i"
-      USR="./var-pryv/users-test-w$i"
-      PRV="./var-pryv/previews-test-w$i"
-      RQD="./var-pryv/rqlite-data-w$i"
-      CEX="./var-pryv/custom-extensions-w$i"
-      PID="$RQD/rqlited.pid"
+    # Plan 61 overhead-pass: parallelize the per-worker cleanup. Each
+    # iteration is independent (different DB name + dir paths), so they
+    # can fan out via background jobs + `wait`. Wall time on the dev box
+    # dropped from ~13s to ~3s for 8 workers.
+    cleanup_worker () {
+      local i=$1
+      local DB="pryv-node-test-w$i"
+      local USR="./var-pryv/users-test-w$i"
+      local PRV="./var-pryv/previews-test-w$i"
+      local RQD="./var-pryv/rqlite-data-w$i"
+      local CEX="./var-pryv/custom-extensions-w$i"
+      local PID="$RQD/rqlited.pid"
       if [ -f "$PID" ]; then
         kill "$(cat "$PID")" 2>/dev/null || true
         sleep 0.2
@@ -242,7 +247,11 @@ clean-test-data-parallel WORKERS='8':
       ./var-pryv/postgresql-bin/bin/createdb -h 127.0.0.1 -p 5432 -U pryv "$DB" 2>/dev/null || true
       ./var-pryv/mongodb-bin/bin/mongosh --quiet "$DB" --eval 'db.dropDatabase()' >/dev/null 2>&1 || true
       rm -rf "$USR" "$PRV" "$RQD" "$CEX"
+    }
+    for i in $(seq 0 $(( {{WORKERS}} - 1 ))); do
+      cleanup_worker "$i" &
     done
+    wait
     # Sweep any rqlited processes pointing at the worker data dirs but
     # missing/stale pidfiles (covers SIGKILL'd or crashed workers).
     pkill -f 'rqlited.*var-pryv/rqlite-data-w' 2>/dev/null || true

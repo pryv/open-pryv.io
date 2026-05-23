@@ -21,8 +21,20 @@
  *   });
  */
 
+const os = require('os');
 const isParallel = process.env.MOCHA_PARALLEL === '1';
 const isNonParallelOnly = process.env.MOCHA_NON_PARALLEL === '1';
+
+// Default to `cpuCount - 1` jobs so high-core CI / dev machines actually
+// scale, while leaving 1 core for the OS + supporting daemons (PG, Mongo,
+// rqlite). Overridable per-component via `createConfig({ parallelJobs: N })`
+// or globally via `MOCHA_JOBS=N` env var. Lower bound = 2 (parallel mode
+// with 1 worker is pointless).
+const cpuCount = os.cpus().length;
+const envJobs = parseInt(process.env.MOCHA_JOBS || '', 10);
+const defaultParallelJobs = Number.isFinite(envJobs) && envJobs > 0
+  ? envJobs
+  : Math.max(2, cpuCount - 1);
 
 // Base configuration
 const baseConfig = {
@@ -51,7 +63,7 @@ function createConfig (options = {}) {
     timeout = baseConfig.timeout,
     slow = baseConfig.slow,
     nonParallelTests = [],
-    parallelJobs = 2
+    parallelJobs = defaultParallelJobs
   } = options;
 
   const config = {

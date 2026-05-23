@@ -242,12 +242,23 @@ export async function spawnWorkerRqlited (o: WorkerOverrides): Promise<void> {
   }
   fs.mkdirSync(dataDir, { recursive: true });
 
+  // Plan 61 overhead-pass: tune rqlited for fast test-mode startup.
+  // - `-raft-election-timeout=200ms`: default 1s — single-node "cluster"
+  //   elects itself immediately, no need to wait a second.
+  // - `-raft-snap-wal-size=0`: disable WAL-size-triggered snapshots
+  //   (tests are short-lived, no useful retention).
+  // - `-raft-heartbeat-timeout=200ms`: less heartbeat overhead in the
+  //   200ms-election regime (timeouts must be > heartbeat).
+  // Net: per-worker rqlited `readyz` window shrinks from ~1.2s to ~300ms.
   const args = [
     '-node-id', `single-w${o.workerId}`,
     '-http-addr', `0.0.0.0:${httpPort}`,
     '-http-adv-addr', `127.0.0.1:${httpPort}`,
     '-raft-addr', `127.0.0.1:${raftPort}`,
     '-raft-cluster-remove-shutdown',
+    '-raft-election-timeout', '200ms',
+    '-raft-heartbeat-timeout', '200ms',
+    '-raft-snap-wal-size', '0',
     dataDir
   ];
 
