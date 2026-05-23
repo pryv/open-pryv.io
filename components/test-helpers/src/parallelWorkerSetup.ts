@@ -184,7 +184,38 @@ export async function applyParallelWorkerConfig (): Promise<WorkerOverrides> {
   fs.mkdirSync(o.customExtensionsDir, { recursive: true });
   config.set('customExtensions:defaultFolder', o.customExtensionsDir);
 
+  // Mirror the same overrides into `process.env` using boiler's `__`
+  // path separator. Subprocesses spawned by tests (CLI tests via
+  // `spawnSync('node', [bin/X.js])`, ProcessProxy children, the
+  // reg-2core fork) inherit parent env by default; boiler's
+  // `store.env({separator:'__'})` then picks these up at the
+  // subprocess's own init time and aligns it with the per-worker
+  // rqlite/PG/Mongo. The parent's in-memory `config.set` calls above
+  // still win for the parent (memory > env in nconf priority).
+  applyEnvMirror(o);
+
   return o;
+}
+
+/**
+ * Mirror only the per-worker rqlite URL into `process.env` so admin CLI
+ * subprocesses (`bin/mail.js`, `bin/dns-records.js`, `bin/observability.js`)
+ * pick the right PlatformDB at their own boiler init via
+ * `store.env({separator:'__'})`.
+ *
+ * Deliberately scoped: only `storages:engines:rqlite:url`. NOT the network
+ * ports (`http:port` etc.) because reg-2core spawns child api-servers via
+ * `fork(core-process.js, ..., env: {..., CORE_PORT})` with explicit
+ * hardcoded ports outside the harness stride — mirroring `http__port`
+ * would override CORE_PORT through the env layer and trigger EADDRINUSE.
+ * NOT PG/Mongo/SQLite/filesystem because no current subprocess opens
+ * those independent of the parent. If a future CLI needs them, expand
+ * here selectively.
+ *
+ * Idempotent; only called when `o.isParallel` is true.
+ */
+function applyEnvMirror (o: WorkerOverrides): void {
+  process.env.storages__engines__rqlite__url = o.rqliteUrl;
 }
 
 /**
