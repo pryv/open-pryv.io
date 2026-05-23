@@ -76,6 +76,7 @@ interface WorkerOverrides {
   hfsPort: number;
   previewsPort: number;
   tcpBrokerPort: number;
+  customExtensionsDir: string;
 }
 
 let rqliteChild: ChildProcess | null = null;
@@ -130,7 +131,14 @@ export function getPerWorkerOverrides (workerId: number = getWorkerId()): Worker
     httpPort: HTTP_PORT_BASE + stride,
     hfsPort: HFS_PORT_BASE + stride,
     previewsPort: PREVIEWS_PORT_BASE + stride,
-    tcpBrokerPort: TCP_BROKER_PORT_BASE + stride
+    tcpBrokerPort: TCP_BROKER_PORT_BASE + stride,
+    // Per-worker scratch dir for fixtures that previously wrote into the
+    // shared `<repo>/custom-extensions/` directory (e.g. AP04's
+    // `customAuthStepFn.js`). Lives under `var-pryv/` so it's gitignored
+    // and swept by `just clean-test-data-parallel`. Sequential mode
+    // (handled by `applyParallelWorkerConfig` early-return) keeps the
+    // default folder from `paths-config.js`.
+    customExtensionsDir: path.join(REPO_ROOT, `var-pryv/custom-extensions-w${workerId}/`)
   };
 }
 
@@ -167,6 +175,14 @@ export async function applyParallelWorkerConfig (): Promise<WorkerOverrides> {
   config.set('http:hfsPort', o.hfsPort);
   config.set('http:previewsPort', o.previewsPort);
   config.set('tcpBroker:port', o.tcpBrokerPort);
+
+  // Per-worker custom-extensions dir. Application.ts:250 reads this key
+  // when resolving customAuthStepFn / future custom hooks; in parallel
+  // mode multiple workers would otherwise collide on the shared
+  // `<repo>/custom-extensions/` path. Created up front so test fixtures
+  // can write into it without a pre-flight mkdir each time.
+  fs.mkdirSync(o.customExtensionsDir, { recursive: true });
+  config.set('customExtensions:defaultFolder', o.customExtensionsDir);
 
   return o;
 }

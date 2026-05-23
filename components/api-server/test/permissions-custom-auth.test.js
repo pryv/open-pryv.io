@@ -64,9 +64,20 @@ describe('[ACCP] Access permissions (sequential)', function () {
     describe('[AP04] custom auth step (e.g. to validate/parse caller id)', function () {
       const fileName = 'customAuthStepFn.js';
       const srcPath = path.join(__dirname, 'permissions.fixtures', fileName);
-      const destPath = path.join(__dirname, '../../../custom-extensions', fileName);
+      // Plan 61 Wave 4: resolve dest from config, not from a hardcoded
+      // path relative to __dirname. In parallel mode `parallelWorkerSetup`
+      // overrides `customExtensions:defaultFolder` to a per-worker dir
+      // under `var-pryv/`, so concurrent workers can't collide on the
+      // single shared `<repo>/custom-extensions/customAuthStepFn.js`.
+      // In sequential mode the default from `paths-config.js` resolves to
+      // exactly the same `<repo>/custom-extensions/` path the test used
+      // before this change.
+      let destPath;
 
       before(function (done) {
+        const defaultFolder = require('@pryv/boiler').getConfigUnsafe(true).get('customExtensions:defaultFolder');
+        fs.mkdirSync(defaultFolder, { recursive: true });
+        destPath = path.join(defaultFolder, fileName);
         async.series([
           function setupCustomAuthStep (stepDone) {
             fs.readFile(srcPath, function (err, data) {

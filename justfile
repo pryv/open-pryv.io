@@ -230,6 +230,7 @@ clean-test-data-parallel WORKERS='8':
       USR="./var-pryv/users-test-w$i"
       PRV="./var-pryv/previews-test-w$i"
       RQD="./var-pryv/rqlite-data-w$i"
+      CEX="./var-pryv/custom-extensions-w$i"
       PID="$RQD/rqlited.pid"
       if [ -f "$PID" ]; then
         kill "$(cat "$PID")" 2>/dev/null || true
@@ -240,7 +241,7 @@ clean-test-data-parallel WORKERS='8':
       ./var-pryv/postgresql-bin/bin/dropdb -h 127.0.0.1 -p 5432 -U pryv --if-exists "$DB" 2>/dev/null || true
       ./var-pryv/postgresql-bin/bin/createdb -h 127.0.0.1 -p 5432 -U pryv "$DB" 2>/dev/null || true
       ./var-pryv/mongodb-bin/bin/mongosh --quiet "$DB" --eval 'db.dropDatabase()' >/dev/null 2>&1 || true
-      rm -rf "$USR" "$PRV" "$RQD"
+      rm -rf "$USR" "$PRV" "$RQD" "$CEX"
     done
     # Sweep any rqlited processes pointing at the worker data dirs but
     # missing/stale pidfiles (covers SIGKILL'd or crashed workers).
