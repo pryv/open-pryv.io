@@ -293,7 +293,18 @@ describe('[ACCO] account', function () {
   });
 
   describe('[AC04] /change-password', function () {
-    before(async () => { await resetUsers(); });
+    // Plan 61 Wave 5: `resetUsers()` wipes the access used by `request.login`
+    // in the outer [ACCO] `before`. In sequential mode caching:isActive:true
+    // (default) masked this — the auth cache kept the stale token live. In
+    // parallel mode `initCore()` injects `caching:isActive:false` into the
+    // shared test-scope nconf store; that leaks into Pattern A's
+    // `deps.settings`, and the post-reset requests then 403. Re-login here
+    // so the test is cache-independent.
+    before(async () => {
+      await resetUsers();
+      await new Promise((resolve, reject) =>
+        request.login(user, (err) => err ? reject(err) : resolve()));
+    });
 
     const path = basePath + '/change-password';
 
@@ -332,6 +343,11 @@ describe('[ACCO] account', function () {
       before(async () => {
         await resetUsers();
         await server.ensureStartedAsync(settings);
+        // Same rationale as [AC04] outer before — see Plan 61 Wave 5 note.
+        // The restart with new settings also resets the in-process server
+        // state, so re-login is required for the [APWD] tests below.
+        await new Promise((resolve, reject) =>
+          request.login(user, (err) => err ? reject(err) : resolve()));
       });
 
       describe('[AC05] Complexity rules:', function () {
