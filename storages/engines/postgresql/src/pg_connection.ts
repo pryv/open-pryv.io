@@ -200,7 +200,13 @@ function parseInfluxSelect (query: string): { measurement: string, conditions: A
     const timeRegex = /time\s*(>=|<=|>|<)\s*'([^']+)'/g;
     let match;
     while ((match = timeRegex.exec(whereStr)) !== null) {
-      const dateMs = new Date(match[2]).getTime();
+      // `series.ts:timestampToDateString` emits InfluxQL-style time literals
+      // like '1970-01-01 00:00:01.000000000' (no TZ marker — InfluxDB treats
+      // these as UTC). `new Date()` without a TZ suffix parses as LOCAL time,
+      // which yields a wrong nanos range on non-UTC machines and silently
+      // returns 0 rows. Append 'Z' so JS parses as UTC, matching InfluxDB's
+      // semantics.
+      const dateMs = new Date(match[2] + 'Z').getTime();
       const nanoSecs = dateMs * 1e6;
       conditions.push({ op: match[1], value: nanoSecs });
     }
