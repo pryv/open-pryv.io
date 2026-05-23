@@ -235,7 +235,16 @@ describe('[PGTD] DELETE /users/:username', () => {
         it(`[${testIDs[i][10]}] should delete user from the cache`, async function () {
           const usersExists = cache.getUserId(userToDelete.attrs.id);
           assert.strictEqual(usersExists, undefined);
-          if (pubsub.isTransportEnabled()) {
+          // Plan 61 Wave 5: only assert the synchro broadcast when caching
+          // is actually active. With caching disabled (parallel mode via
+          // initCore injecting `caching:isActive:false`), `cache.unsetUser`
+          // early-returns, no `synchro.unsetUser` notify fires, and
+          // `delivered` stays empty — which is correct because there's no
+          // cache state to invalidate. Re-read the live config since the
+          // default-exported `cache.isActive` is the by-value snapshot at
+          // module-load (still `false`), not the live mutated value.
+          const config = await getConfig();
+          if (config.get('caching:isActive') && pubsub.isTransportEnabled()) {
             assert.strictEqual(delivered.length, 1);
             assert.strictEqual(delivered[0].scopeName, 'cache.' + MESSAGES.UNSET_USER);
             assert.strictEqual(delivered[0].eventName, MESSAGES.UNSET_USER);
