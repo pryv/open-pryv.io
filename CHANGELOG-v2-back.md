@@ -1,5 +1,17 @@
 # Changelog - Internal (no API impact)
 
+## build(influxdb): self-contained engine setup, drop apt-based install
+
+`storages/engines/influxdb/scripts/setup` rewritten to mirror the PG / rqlite pattern — self-contained, no system packages, no sudo. Pins InfluxDB 1.8.10 (matches the `influx` 1.x npm client; 2.x is API-incompatible per `influx_connection.ts`). OS/arch detection covers Linux amd64 + Darwin amd64 (via Rosetta on Apple-Silicon since upstream has no darwin-arm64 1.x release). Binary in `bin-ext/influxdb/`, data + logs + config in `var-pryv/`, idempotent, generates `influxdb.conf` with paths pinned. Rosetta-presence check on Apple Silicon catches `Bad CPU type in executable` with a clear install instruction. New companion `storages/engines/influxdb/scripts/start` (mirrors rqlite start: pidfile, background-default, foreground via `DEVELOPMENT=true`). Unblocks fresh-clone dev setup on macOS arm64 + on any non-Debian Linux.
+
+## fix(storage/pg): parse InfluxQL time literals as UTC in series query
+
+`storages/engines/postgresql/src/pg_connection.ts::parseInfluxSelect` appends `'Z'` to the captured time literal before `new Date()`, so JS interprets it as UTC (matching InfluxDB's own semantics and `series.ts:timestampToDateString`'s intent).
+
+Latent bug: `series.ts:timestampToDateString` emits InfluxQL literals like `'1970-01-01 00:00:01.000000000'` (no TZ marker — InfluxDB treats these as UTC). JS `new Date()` without TZ parses as LOCAL time. On a non-UTC dev machine (e.g. CEST/UTC+2) the literal became `-3,599,000 ms` instead of `1000 ms`; the resulting nanos range matched zero rows in PG `series_data`, so any HFS read with a deltaTime offset returned `[]`. Linux CI + Dokku production are UTC, so users were unaffected.
+
+Verified: `just test hfs-server` 60/0 (was 59/1, `[SDHF] [KC15]` now passing); full PG matrix `just test all` 2312/0/8.
+
 ## fix(cmc): handleAccept reads `content.features` (was `content.extra`) — features-negotiation contract drift
 
 One-line fix in `components/cmc/src/handleAccept.ts:94` paired with the `@pryv/cmc@1.1.1` lib-js patch. The user-visible behaviour change (data-grant access now carries non-null `clientData.cmc.features` reflecting the negotiated offer features) is documented in `CHANGELOG-v2.md`. This entry covers the unit-test additions that pin the fix:
