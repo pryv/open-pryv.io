@@ -28,7 +28,7 @@ const encryption = require('utils').encryption;
 const testData = helpers.dynData({ prefix: 'syst' });
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { databaseFixture } = require('test-helpers');
-const { produceStorageConnection, context } = require('./test-helpers');
+const { produceStorageConnection } = require('./test-helpers');
 const charlatan = require('charlatan');
 const cuid = require('cuid');
 const { getConfig } = require('@pryv/boiler');
@@ -38,19 +38,22 @@ require('date-utils');
 describe('[SYRO] system route', function () {
   let mongoFixtures;
   let username;
-  let server;
   let config;
 
+  // Plan 61 Wave 7: migrated from legacy SpawnContext/ProcessProxy to
+  // DynamicInstanceManager. Outer `server = helpers.dependencies.instanceManager`
+  // (line 24) is now the live target — no inner shadowing. `server.request()`
+  // (ProcessProxy supertest helper) replaced with `helpers.request(server.url)`;
+  // `server.url()` (method) replaced with `server.url` (property).
   before(async function () {
     config = await getConfig();
     mongoFixtures = databaseFixture(await produceStorageConnection());
     username = 'system-test';
-    server = await context.spawn();
+    await server.ensureStartedAsync(helpers.dependencies.settings);
   });
   after(async () => {
     await mongoFixtures.clean();
     await testData.cleanup();
-    server.stop();
   });
 
   before(async () => {
@@ -58,14 +61,14 @@ describe('[SYRO] system route', function () {
   });
 
   it('[JT1A] should parse correctly usernames starting with "system"', async () => {
-    const res = await server.request().get('/' + username + '/events')
+    const res = await helpers.request(server.url).get('/' + username + '/events')
       .set('authorization', 'dummy');
     assert.ok(res.body.error);
     assert.strictEqual(res.body.error.id, 'invalid-access-token');
   });
 
   it('[CHEK] System check Platform integrity ', async () => {
-    const res = await request.get(new URL('/system/check-platform-integrity', server.url()).toString())
+    const res = await request.get(new URL('/system/check-platform-integrity', server.url).toString())
       .set('authorization', config.get('auth:adminAccessKey'));
     assert.ok(res.body.checks);
     const checkLength = 2;
@@ -94,7 +97,7 @@ describe('[SYRO] system route', function () {
         token
       });
       await user.session(token);
-      await server.request()
+      await helpers.request(server.url)
         .put(profilePath)
         .set('authorization', token)
         .send({
@@ -103,10 +106,10 @@ describe('[SYRO] system route', function () {
         });
     });
     before(async () => {
-      res = await server.request()
-        .delete(mfaPath)
+      res = await helpers.request(server.url)
+        .del(mfaPath)
         .set('authorization', config.get('auth:adminAccessKey'));
-      profileRes = await server.request().get(profilePath).set('authorization', token);
+      profileRes = await helpers.request(server.url).get(profilePath).set('authorization', token);
     });
     it('[1V4D] should return 204', () => {
       assert.equal(res.status, 204);
@@ -129,6 +132,11 @@ describe('[SYER] system (ex-register)', function () {
   }
 
   before(async function () {
+    // Plan 61 Wave 7: explicit DIM start. In sequential mode another
+    // Pattern-A test would have started DIM earlier and left it running
+    // (cross-file state). In parallel mode each file is its own worker,
+    // so [SYER] must start its own server.
+    await server.ensureStartedAsync(helpers.dependencies.settings);
     mongoFixtures = databaseFixture(await produceStorageConnection());
     await mongoFixtures.context.cleanEverything();
   });

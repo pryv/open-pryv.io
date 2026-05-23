@@ -10,7 +10,8 @@ const require = createRequire(import.meta.url);
 const cuid = require('cuid');
 const assert = require('node:assert');
 
-const { produceStorageConnection, context } = require('./test-helpers');
+const { produceStorageConnection } = require('./test-helpers');
+const helpers = require('./helpers');
 const { databaseFixture } = require('test-helpers');
 const http = require('http');
 const superagent = require('superagent');
@@ -25,9 +26,19 @@ describe('[EVST] events streaming with ' + N_ITEMS + ' entries', function () {
     fixtures = databaseFixture(await produceStorageConnection());
   });
 
-  let apiServer;
+  // Plan 61 Wave 7: migrated from legacy SpawnContext/ProcessProxy to
+  // DynamicInstanceManager — the modern spawner already used by all other
+  // Pattern-A tests (account, system-streams, ...). Pre-spawned ProcessProxy
+  // children died SIGTERM under mocha-parallel before tests ran; DIM uses
+  // `spawn` (not fork) of `bin/server` with dynamic ports + tempfile config,
+  // which is compatible with mocha-parallel workers.
+  const apiServer = helpers.dependencies.instanceManager;
+  let apiHost, apiPort;
   before(async function () {
-    apiServer = await context.spawn();
+    await apiServer.ensureStartedAsync(helpers.dependencies.settings);
+    const u = new URL(apiServer.url);
+    apiHost = u.hostname;
+    apiPort = parseInt(u.port);
   });
 
   let user, username, streamId, appAccessToken;
@@ -59,13 +70,12 @@ describe('[EVST] events streaming with ' + N_ITEMS + ' entries', function () {
 
   after(async function () {
     if (fixtures) await fixtures.clean();
-    await apiServer.stop();
   });
 
   it('[SE1K] Streams events', function (done) {
     const options = {
-      host: apiServer.host,
-      port: apiServer.port,
+      host: apiHost,
+      port: apiPort,
       path: '/' + username + '/events?limit=' + N_ITEMS + '&auth=' + appAccessToken,
       method: 'GET'
     };
@@ -109,8 +119,8 @@ describe('[EVST] events streaming with ' + N_ITEMS + ' entries', function () {
 
   it('[XZGB] Streams deleted in sent as chunked', async function () {
     const options = {
-      host: apiServer.host,
-      port: apiServer.port,
+      host: apiHost,
+      port: apiPort,
       path: '/' + username + '/streams/' + streamId + '?mergeEventsWithParent=false&auth=' + appAccessToken,
       method: 'DELETE'
     };

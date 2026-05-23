@@ -22,7 +22,7 @@ const methodsSchema = require('../src/schema/generalMethods.ts');
 const validation = helpers.validation;
 
 const { databaseFixture } = require('test-helpers');
-const { produceStorageConnection, context } = require('./test-helpers');
+const { produceStorageConnection } = require('./test-helpers');
 const { getConfig } = require('@pryv/boiler');
 const { integrity } = require('business');
 
@@ -65,12 +65,13 @@ describe('[ROOT] root', function () {
     username2 = '00000';
   });
 
-  let server;
+  // Plan 61 Wave 7: migrated from legacy SpawnContext/ProcessProxy to
+  // DynamicInstanceManager. ProcessProxy's `server.request()` and
+  // `server.baseUrl` were swept to `helpers.request(server.url)` and
+  // `server.url` respectively via bulk replace_all.
+  const server = helpers.dependencies.instanceManager;
   before(async () => {
-    server = await context.spawn();
-  });
-  after(() => {
-    server.stop();
+    await server.ensureStartedAsync(helpers.dependencies.settings);
   });
 
   before(async function () {
@@ -130,7 +131,7 @@ describe('[ROOT] root', function () {
 
   describe('[RT01] GET /', function () {
     it('[UA7B] should return basic server meta information as JSON when requested', async function () {
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .get('/')
         .set('Accept', 'application/json');
       assert.strictEqual(res.status, 200);
@@ -139,7 +140,7 @@ describe('[ROOT] root', function () {
     });
 
     it('[TO50] should return basic server meta information as text otherwise', async function () {
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .get('/')
         .set('Accept', 'text/html');
       assert.strictEqual(res.status, 200);
@@ -148,7 +149,7 @@ describe('[ROOT] root', function () {
     });
 
     it('[TS3D] should return an error if trying to access an unknown user account', async function () {
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .get('/unknown_user/events');
       assert.strictEqual(res.status, 404); // 404 does not throw
     });
@@ -159,7 +160,7 @@ describe('[ROOT] root', function () {
       const origin = 'https://test.pryv.io';
       const allowMethod = 'GET';
       const allowHeaders = 'Content-Type';
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .get('/' + username + '/events')
         .set('Origin', origin)
         .set('Authorization', appAccessToken1)
@@ -183,14 +184,14 @@ describe('[ROOT] root', function () {
     });
 
     it('[OQ3G] should return meta data in response body for errors as well', async function () {
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .get('/' + username + '/bad-path');
       assert.strictEqual(res.status, 404);
       validation.checkMeta(res.body);
     });
 
     it('[P06Y] should properly translate the Host header\'s username (i.e. subdomain)', async function () {
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .get('/events')
         .set('Authorization', appAccessToken1)
         .set('Host', username + '.pryv.local');
@@ -198,7 +199,7 @@ describe('[ROOT] root', function () {
     });
 
     it('[R3H5] should translate the username in subdomain also when it only contains numbers', async function () {
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .post('/' + username2 + '/auth/login')
         .send({
           username: username2,
@@ -213,7 +214,7 @@ describe('[ROOT] root', function () {
     });
 
     it('[5IQK] should support POSTing "urlencoded" content with _json and _auth fields', async function () {
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .post('/' + username + '/streams')
         .type('form')
         .send({ _auth: appAccessToken1 })
@@ -222,7 +223,7 @@ describe('[ROOT] root', function () {
     });
 
     it('[2YEI] should support POSTing "urlencoded" content with _json, _method (PUT) and _auth fields', async function () {
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .post('/' + username + '/streams/' + streamId)
         .type('form')
         .send({ _auth: appAccessToken1 })
@@ -232,7 +233,7 @@ describe('[ROOT] root', function () {
     });
 
     it('[VJTP] should support POSTing "urlencoded" content with _json, _method (DELETE) and _auth fields', async function () {
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .post('/' + username + '/streams/' + streamId3)
         .type('form')
         .query({ mergeEventsWithParent: false })
@@ -242,7 +243,7 @@ describe('[ROOT] root', function () {
     });
 
     it('[6D5O] should properly handle JSON errors when POSTing "urlencoded" content with _json field', async function () {
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .post('/' + username + '/streams')
         .type('form')
         .unset('authorization')
@@ -264,7 +265,7 @@ describe('[ROOT] root', function () {
           : 0;
 
       // do request
-      let res = await server.request()
+      let res = await helpers.request(server.url)
         .get('/' + username + '/events')
         .set('Authorization', personalAccessToken);
       const expectedTime = timestamp.now();
@@ -282,7 +283,7 @@ describe('[ROOT] root', function () {
       );
 
       // checkExposedAccess
-      res = await server.request()
+      res = await helpers.request(server.url)
         .get('/' + username + '/accesses')
         .set('Authorization', personalAccessToken);
       const exposed = _.find(res.body.accesses, { token: personalAccessToken });
@@ -299,7 +300,7 @@ describe('[ROOT] root', function () {
       const baselineEventsGet = baseline.calls?.['events:get'] ?? 0;
       const baselineAccessesGet = baseline.calls?.['accesses:get'] ?? 0;
 
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .post('/' + username)
         .set('Authorization', personalAccessToken)
         .send([
@@ -340,7 +341,7 @@ describe('[ROOT] root', function () {
 
   describe('[RT03] OPTIONS /', function () {
     it('[PDMA] should return OK', async function () {
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .options('/');
       assert.strictEqual(res.status, 200);
     });
@@ -348,7 +349,7 @@ describe('[ROOT] root', function () {
 
   describe('[RT04] GET /access-info', function () {
     it('[0MI8] must return current access information', async function () {
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .get('/' + username + '/access-info')
         .set('Authorization', sharedAccessToken);
 
@@ -385,10 +386,10 @@ describe('[ROOT] root', function () {
   describe('[RT05] Accept Basic Auth request', function () {
     let url;
     before(function () {
-      url = server.baseUrl;
+      url = server.url;
     });
 
-    // I didn't manage to make these tests work with server.request() which returns
+    // I didn't manage to make these tests work with helpers.request(server.url) which returns
     // an instance of supertest, so I have used superagent instead.
 
     it('[0MI9] must accept the https://token@user.domain/ AUTH schema', async function () {
@@ -468,7 +469,7 @@ describe('[ROOT] root', function () {
           }
         }
       ];
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .post('/' + username)
         .set('Authorization', sharedAccessToken)
         .send(calls);
@@ -511,7 +512,7 @@ describe('[ROOT] root', function () {
         }
       ];
 
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .post('/' + username)
         .set('authorization', appAccessToken1)
         .send(calls);
@@ -571,8 +572,7 @@ describe('[ROOT] root', function () {
           params: { modifiedSince: -1000000, includeDeletions: true }
         }
       ];
-      const res = await server
-        .request()
+      const res = await helpers.request(server.url)
         .post('/' + username)
         .send(calls)
         .set('authorization', appAccessToken1);
@@ -618,8 +618,7 @@ describe('[ROOT] root', function () {
           }
         }
       ];
-      const res = await server
-        .request()
+      const res = await helpers.request(server.url)
         .post('/' + username)
         .send(calls)
         .set('authorization', appAccessToken1);
@@ -642,7 +641,7 @@ describe('[ROOT] root', function () {
           badProperty: 'bad value'
         }
       ];
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .post('/' + username)
         .send(calls)
         .set('authorization', appAccessToken1);
@@ -680,7 +679,7 @@ describe('[ROOT] root', function () {
           }
         }
       ];
-      const res = await server.request()
+      const res = await helpers.request(server.url)
         .post('/' + username)
         .send(calls)
         .set('authorization', appAccessToken1);
