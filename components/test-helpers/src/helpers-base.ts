@@ -35,6 +35,14 @@ if (process.env.MOCHA_PARALLEL === '1' && process.env.MOCHA_WORKER_ID != null) {
   const stride = (Number.isFinite(wid) && wid >= 0 ? wid : 0) * 10;
   process.env.storages__engines__rqlite__url = `http://localhost:${4001 + stride}`;
   process.env.tcpBroker__port = String(4222 + stride);
+  // Plan 61 Stage 5 (hfs-server unblock): mirror PG + Mongo database names
+  // too, so SpawnContext-forked api-server children (legacy spawner in
+  // hfs-server, root-seq etc.) talk to the SAME per-worker database as the
+  // test parent. Without this, parent writes to `pryv-node-test-w1` but
+  // forked children read from default `pryv-node-test` → 404 on every
+  // fixture lookup.
+  process.env.storages__engines__postgresql__database = `pryv-node-test-w${wid}`;
+  process.env.storages__engines__mongodb__database = `pryv-node-test-w${wid}`;
 }
 
 require('./api-server-tests-config.ts');

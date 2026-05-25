@@ -8,5 +8,6 @@
 const { createConfig } = require('../../.mocharc.js');
 
 module.exports = createConfig({
+  require: 'test/hook.js',
   timeout: 8000
 });

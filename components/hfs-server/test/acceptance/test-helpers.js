@@ -11,6 +11,20 @@ import { dirname } from 'node:path';
 const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const path = require('path');
+
+// Plan 61 Stage 5: pre-seed per-worker env vars BEFORE boiler.init below.
+// Mirrors the block in `test-helpers/src/helpers-base.ts` — hfs-server
+// tests bypass that file (they call boiler.init directly) so the mirror
+// needs to be replicated here. Same gates: parallel-only, worker-only.
+if (process.env.MOCHA_PARALLEL === '1' && process.env.MOCHA_WORKER_ID != null) {
+  const wid = parseInt(process.env.MOCHA_WORKER_ID, 10);
+  const stride = (Number.isFinite(wid) && wid >= 0 ? wid : 0) * 10;
+  process.env.storages__engines__rqlite__url = `http://localhost:${4001 + stride}`;
+  process.env.tcpBroker__port = String(4222 + stride);
+  process.env.storages__engines__postgresql__database = `pryv-node-test-w${wid}`;
+  process.env.storages__engines__mongodb__database = `pryv-node-test-w${wid}`;
+}
+
 require('@pryv/boiler').init({
   appName: 'hfs-server-tests',
   baseFilesDir: path.resolve(__dirname, '../../../../'),
