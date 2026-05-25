@@ -12,6 +12,31 @@ const require = createRequire(import.meta.url);
  * Provides common Pattern C test initialization
  */
 
+// Plan 61 Stage 5: pre-seed per-worker env vars BEFORE boiler.init runs
+// in `api-server-tests-config.ts` below. boiler reads `process.env` once
+// at `init()` and locks values into its env-store. If we wait for
+// `mochaHooks.beforeAll` or even `parallelWorkerSetup` module-load, the
+// env mirror lands too late — `components/cache/src/index.ts` calls
+// `loadConfiguration().catch()` at module-load which fires
+// `getConfig().then(c => c.get('tcpBroker:port'))`. That read happens
+// against the boiler env-store, locking the wrong port.
+// helpers-base.ts is the earliest reliable per-worker entry point —
+// mocha workers `require:` test/helpers.js → test-helpers/helpers-base.ts
+// transitively, and MOCHA_WORKER_ID is set by mocha at worker fork
+// before any code in the worker process runs.
+//
+// Worker-only: parent mocha process doesn't have MOCHA_WORKER_ID set;
+// applying stride=0 in the parent would pin the broker to 4222 there
+// and the workers (which inherit env at fork) would then collide on
+// EADDRINUSE. Gating on MOCHA_WORKER_ID confines the override to
+// worker processes, and overrides any inherited-from-parent value.
+if (process.env.MOCHA_PARALLEL === '1' && process.env.MOCHA_WORKER_ID != null) {
+  const wid = parseInt(process.env.MOCHA_WORKER_ID, 10);
+  const stride = (Number.isFinite(wid) && wid >= 0 ? wid : 0) * 10;
+  process.env.storages__engines__rqlite__url = `http://localhost:${4001 + stride}`;
+  process.env.tcpBroker__port = String(4222 + stride);
+}
+
 require('./api-server-tests-config.ts');
 const { getConfig } = require('@pryv/boiler');
 
@@ -203,7 +228,18 @@ function getMochaHooks (isParallelMode = false) {
   }
 
   return {
-    async beforeAll () {
+    async beforeAll (this: any) {
+      // Plan 61 Stage 5: spawning worker-private rqlited can take 5-10s
+      // on slower boxes (worst case with `-raft-election-timeout=200ms`
+      // it's ~300ms, but PG/Mongo init pile on top). The default mocha
+      // hook timeout doubles in parallel mode (2s → 4s in `.mocharc.js`)
+      // but that's still too tight for the OS-level fork + readyz wait.
+      // api-server overrides `timeout: 10000` so it inherits 20s and
+      // works; other components (audit/cache/storages/...) use the 2s
+      // default and timeout out. Set the hook-local timeout explicitly
+      // to 30s so it doesn't depend on the per-component mocharc
+      // timeout setting at all.
+      this.timeout(30000);
       // Plan 61 Stage 3 — apply per-worker config overrides + spawn the
       // worker-private rqlited BEFORE any config-reading code runs (the
       // previewsDirPath lookup below, storages.init() in initCore, …).
@@ -225,7 +261,10 @@ function getMochaHooks (isParallelMode = false) {
       const { ensureIntegrity: ensureEventsIntegrity } = require('./data/events.ts');
       ensureEventsIntegrity();
     },
-    async afterAll () {
+    async afterAll (this: any) {
+      // Match beforeAll's generous timeout — teardown can need to wait
+      // for SIGTERM + rqlited fsync (up to 5s SIGKILL fallback).
+      this.timeout(30000);
       const { teardownParallelWorker } = require('./parallelWorkerSetup.ts');
       await teardownParallelWorker();
     },

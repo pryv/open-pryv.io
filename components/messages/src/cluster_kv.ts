@@ -210,14 +210,24 @@ const _SHARED_FALLBACK = new _InProcessStore();
  * @param [opts.timeoutMs=5000]
  * @param [opts.fallback=true] - when false, raise instead of using the in-process store.
  */
-function clientFor ({ processHandle = process, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, fallback = true } = {}) {
+function clientFor (opts: any = {}) {
+  const { processHandle = process, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, fallback = true } = opts;
   // Mocha-parallel workers have `process.send` wired to the mocha runner —
   // not to a Pryv cluster master. Any IPC the client would send goes
   // unanswered and times out after 5s, surfacing as 500s in tests like
   // [MFAA]. Force the in-process fallback so single-process test scenarios
   // (Pattern C / supertest, which is how mfa.test.js drives the API) get
   // correct semantics. Production deployments never set MOCHA_PARALLEL.
-  if (process.env.MOCHA_PARALLEL === '1') {
+  //
+  // Apply ONLY to the pure-default invocation (no explicit opts) — MFA's
+  // `SessionStore.constructor` calls `clientFor()` with no args. Callers
+  // that pass `processHandle` or `fallback` are explicit-IPC tests
+  // (`messages/test/cluster_kv.test.js`) and must get the literal IPC
+  // semantics, including the strict "no IPC channel + fallback:false" =
+  // hard-fail branch.
+  if (process.env.MOCHA_PARALLEL === '1' &&
+      opts.processHandle === undefined &&
+      opts.fallback === undefined) {
     return _SHARED_FALLBACK;
   }
   // Detect "no IPC channel" up-front so we can pick the fallback once and

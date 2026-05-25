@@ -198,24 +198,45 @@ export async function applyParallelWorkerConfig (): Promise<WorkerOverrides> {
 }
 
 /**
- * Mirror only the per-worker rqlite URL into `process.env` so admin CLI
- * subprocesses (`bin/mail.js`, `bin/dns-records.js`, `bin/observability.js`)
- * pick the right PlatformDB at their own boiler init via
- * `store.env({separator:'__'})`.
+ * Mirror selected per-worker overrides into `process.env` using boiler's
+ * `__` separator. These need to be set at MODULE LOAD time (before any
+ * `getConfig()`-awaiting code resolves), so boiler picks them up via
+ * `store.env({separator:'__'})` at its first init.
  *
- * Deliberately scoped: only `storages:engines:rqlite:url`. NOT the network
- * ports (`http:port` etc.) because reg-2core spawns child api-servers via
- * `fork(core-process.js, ..., env: {..., CORE_PORT})` with explicit
- * hardcoded ports outside the harness stride — mirroring `http__port`
- * would override CORE_PORT through the env layer and trigger EADDRINUSE.
- * NOT PG/Mongo/SQLite/filesystem because no current subprocess opens
- * those independent of the parent. If a future CLI needs them, expand
- * here selectively.
+ * Why module-load instead of `mochaHooks.beforeAll`-only:
+ *   - admin CLI subprocesses (`bin/mail.js`, `bin/dns-records.js`,
+ *     `bin/observability.js`) inherit `process.env` and re-init boiler
+ *     from disk.
+ *   - `components/cache/src/index.ts` calls `loadConfiguration().catch()`
+ *     at module-load — that fires `getConfig().then(c => c.get('tcpBroker:port'))`
+ *     and locks the tcp_pubsub broker port BEFORE `mochaHooks.beforeAll`
+ *     runs `config.set('tcpBroker:port', 4232)`. With the env mirror set
+ *     at parallelWorkerSetup.ts load (transitively required from
+ *     `test-helpers/src/index.ts`), boiler's env store has the right
+ *     value when the first `getConfig()` resolves.
  *
- * Idempotent; only called when `o.isParallel` is true.
+ * Scoped:
+ *   - `storages:engines:rqlite:url` — for CLI subprocesses.
+ *   - `tcpBroker:port` — for cache-module module-load race + same for
+ *     subprocesses.
+ *
+ * NOT mirrored (intentionally):
+ *   - `http:port` etc. — `reg-2core` forks with explicit `CORE_PORT` env
+ *     and mirroring `http__port` would override that via boiler's env
+ *     store, triggering EADDRINUSE.
+ *   - PG/Mongo/SQLite/filesystem — no current subprocess opens those
+ *     independent of the parent. Expand selectively if/when needed.
  */
 function applyEnvMirror (o: WorkerOverrides): void {
   process.env.storages__engines__rqlite__url = o.rqliteUrl;
+  process.env.tcpBroker__port = String(o.tcpBrokerPort);
+}
+
+// Plan 61 Stage 5: apply env mirror at MODULE LOAD so cache module's
+// `loadConfiguration()` at-load `getConfig()` race resolves with the
+// per-worker `tcpBroker:port`. No-op outside parallel mode.
+if (isParallelMode()) {
+  applyEnvMirror(getPerWorkerOverrides());
 }
 
 /**
@@ -242,25 +263,19 @@ export async function spawnWorkerRqlited (o: WorkerOverrides): Promise<void> {
   }
   fs.mkdirSync(dataDir, { recursive: true });
 
-  // Plan 61 overhead-pass: tune rqlited for fast test-mode startup.
-  // - `-raft-election-timeout=200ms`: default 1s — single-node "cluster"
-  //   elects itself immediately, no need to wait a second.
-  // - `-raft-snap-wal-size=0`: disable WAL-size-triggered snapshots
-  //   (tests are short-lived, no useful retention).
-  // - `-raft-heartbeat-timeout=200ms`: less heartbeat overhead in the
-  //   200ms-election regime (timeouts must be > heartbeat).
-  // Net: per-worker rqlited `readyz` window shrinks from ~1.2s to ~300ms.
   const args = [
     '-node-id', `single-w${o.workerId}`,
     '-http-addr', `0.0.0.0:${httpPort}`,
     '-http-adv-addr', `127.0.0.1:${httpPort}`,
     '-raft-addr', `127.0.0.1:${raftPort}`,
     '-raft-cluster-remove-shutdown',
-    '-raft-election-timeout', '200ms',
-    '-raft-heartbeat-timeout', '200ms',
-    '-raft-snap-wal-size', '0',
     dataDir
   ];
+  // Note: raft tuning for faster startup was attempted but reverted —
+  // rqlite enforces `LeaseTimeout <= HeartbeatTimeout <= ElectionTimeout`
+  // and the defaults (500ms/1s/1s) are the floor without re-deriving all
+  // three. Election dominates startup (~1s) but it's a one-time
+  // per-worker cost, amortized across many test files per worker.
 
   rqliteChild = spawn(binPath, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
