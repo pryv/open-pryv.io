@@ -48,9 +48,16 @@ jobs:
           ./storages/engines/rqlite/scripts/start &
           influxd &
           sleep 3
-      - name: Run PostgreSQL test suite
-        run: just clean-test-data && just test all
+      - name: Run PostgreSQL test suite (parallel)
+        # Plan 61 Stage 6: matrix runs in parallel mode. GitHub-hosted
+        # ubuntu-22.04 runners have 2 vCPUs → 2 workers by default
+        # (`.mocharc.js` `defaultParallelJobs` = max(2, cpus-1)).
+        # `clean-test-data-parallel` auto-scales `WORKERS` to match.
+        # `MOCHA_JOBS=2` is explicit so a runner-vCPU bump doesn't
+        # surprise us by going past the PG conn budget.
+        run: just clean-test-data-parallel && just test-parallel all
         env:
+          MOCHA_JOBS: 2
           storages__engines__postgresql__host: localhost
           storages__engines__postgresql__port: 5432
           storages__engines__postgresql__user: pryv
