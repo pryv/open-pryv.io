@@ -23,7 +23,12 @@ const nonParallelTests = [
 
 module.exports = createConfig({
   require: 'test-helpers/src/helpers-c.ts',
-  timeout: 10000,
+  // Plan 61: bumped from 10000 → 20000 (→ 40000 in parallel mode per
+  // .mocharc.js doubling) so Pattern A `before all` hooks survive
+  // cold child-api-server boot (~5–15 s with 14 workers spawning
+  // concurrently). The "20s timeout" pattern of flake on AC01/ACCO/
+  // VERS/PRFA/ACCP etc. is this cold-start race, not a code bug.
+  timeout: 20000,
   slow: 20,
   nonParallelTests
 });
