@@ -175,6 +175,28 @@ test-data command version:
 
 # Reset test state: SQLite DBs, user dirs, and MongoDB user collections (keeps MongoDB running)
 clean-test-data:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    # Resolve PG client binaries: prefer the local Plan-41 install at
+    # ./var-pryv/postgresql-bin/bin/ (Linux dev + Darwin dev when the
+    # PG setup script ran), fall back to system `dropdb`/`createdb`
+    # found on PATH (Darwin operators using Homebrew / Postgres.app /
+    # the system PG that ships with macOS). Same for `mongosh`. If
+    # neither resolves, the recipe still reports the skip — but at
+    # least the local-bin-missing case no longer hides the issue from
+    # operators who DO have the system tools installed.
+    if [ -x ./var-pryv/postgresql-bin/bin/dropdb ]; then
+      DROPDB=./var-pryv/postgresql-bin/bin/dropdb
+      CREATEDB=./var-pryv/postgresql-bin/bin/createdb
+    else
+      DROPDB=$(command -v dropdb || true)
+      CREATEDB=$(command -v createdb || true)
+    fi
+    if [ -x ./var-pryv/mongodb-bin/bin/mongosh ]; then
+      MONGOSH=./var-pryv/mongodb-bin/bin/mongosh
+    else
+      MONGOSH=$(command -v mongosh || true)
+    fi
     # SQLite user index + legacy pre-Plan-25 platform-wide.db (retained for safety)
     rm -f ./var-pryv/users/user-index.db ./var-pryv/users/user-index.db-wal ./var-pryv/users/user-index.db-shm
     rm -f ./var-pryv/users/platform-wide.db ./var-pryv/users/platform-wide.db-wal ./var-pryv/users/platform-wide.db-shm
@@ -191,16 +213,24 @@ clean-test-data:
     # cleans and cause "user exists in repo but missing in index"
     # symptoms on the next prepare (e.g. lib-js's [UEMX]). The mongo
     # server is kept running.
-    ./var-pryv/mongodb-bin/bin/mongosh --quiet pryv-node-test --eval 'db.dropDatabase()' > /dev/null 2>&1 || echo "MongoDB not reachable (skipping mongo test reset)"
-    ./var-pryv/mongodb-bin/bin/mongosh --quiet pryv-node --eval 'db.dropDatabase()' > /dev/null 2>&1 || echo "MongoDB not reachable (skipping mongo dev reset)"
+    if [ -n "$MONGOSH" ]; then
+      "$MONGOSH" --quiet pryv-node-test --eval 'db.dropDatabase()' > /dev/null 2>&1 || echo "MongoDB not reachable (skipping mongo test reset)"
+      "$MONGOSH" --quiet pryv-node --eval 'db.dropDatabase()' > /dev/null 2>&1 || echo "MongoDB not reachable (skipping mongo dev reset)"
+    else
+      echo "mongosh not found (skipping mongo test reset + mongo dev reset)"
+    fi
     # PostgreSQL databases — same logic as Mongo above: drop+recreate
     # both pryv-node-test (test harness) AND pryv-node (local dev /
     # bin/master.js). Tests re-run migrations on next startup; the
     # local server runs them on next master boot.
-    (./var-pryv/postgresql-bin/bin/dropdb -h 127.0.0.1 -p 5432 -U pryv --if-exists pryv-node-test 2>/dev/null && \
-        ./var-pryv/postgresql-bin/bin/createdb -h 127.0.0.1 -p 5432 -U pryv pryv-node-test 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg test reset)"
-    (./var-pryv/postgresql-bin/bin/dropdb -h 127.0.0.1 -p 5432 -U pryv --if-exists pryv-node 2>/dev/null && \
-        ./var-pryv/postgresql-bin/bin/createdb -h 127.0.0.1 -p 5432 -U pryv pryv-node 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg dev reset)"
+    if [ -n "$DROPDB" ] && [ -n "$CREATEDB" ]; then
+      ("$DROPDB" -h 127.0.0.1 -p 5432 -U pryv --if-exists pryv-node-test 2>/dev/null && \
+          "$CREATEDB" -h 127.0.0.1 -p 5432 -U pryv pryv-node-test 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg test reset)"
+      ("$DROPDB" -h 127.0.0.1 -p 5432 -U pryv --if-exists pryv-node 2>/dev/null && \
+          "$CREATEDB" -h 127.0.0.1 -p 5432 -U pryv pryv-node 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg dev reset)"
+    else
+      echo "dropdb/createdb not found (skipping pg test reset + pg dev reset)"
+    fi
     # rqlite PlatformDB key-value table (Plan 25: rqlite is the only
     # platform engine). Wipes both the test harness state AND the
     # local-dev email/platform-unique index — paired with the PG
@@ -209,7 +239,7 @@ clean-test-data:
     curl -s -X POST -H 'Content-Type: application/json' 'http://localhost:4001/db/execute' -d '[["DELETE FROM keyValue"]]' > /dev/null 2>&1 || echo "rqlite not reachable (skipping rqlite reset)"
     # Stale customAuthStepFn from a prior aborted permissions-seq test (the [P4OM] invalid-fixture test crashes the api-server bin and leaves the file behind, polluting subsequent matrix runs with [api-server fatal] Not a function (string)). Safe to delete unconditionally — committed file is .gitkeep.
     rm -f ./custom-extensions/customAuthStepFn.js
-    @echo "Test data cleaned: SQLite + per-user dirs + attachments/previews + Mongo (pryv-node-test + pryv-node) + PG (pryv-node-test + pryv-node) + rqlite keyValue + custom-extensions stale fixture"
+    echo "Test data cleaned: SQLite + per-user dirs + attachments/previews + Mongo (pryv-node-test + pryv-node) + PG (pryv-node-test + pryv-node) + rqlite keyValue + custom-extensions stale fixture"
 
 # Reset per-worker test state for parallel mode (Plan 61 Stage 3).
 # Wipes worker-private PG DBs (pryv-node-test-w0..N), per-worker user
@@ -242,6 +272,21 @@ clean-test-data-parallel WORKERS='':
         WORKERS=$(( N > 2 ? N - 1 : 2 ))
       fi
     fi
+    # Resolve PG + mongosh binaries (mirror of `clean-test-data`): prefer
+    # the local Plan-41 install at ./var-pryv/<engine>-bin/bin/, fall
+    # back to system tooling on PATH (Darwin Homebrew / Postgres.app).
+    if [ -x ./var-pryv/postgresql-bin/bin/dropdb ]; then
+      DROPDB=./var-pryv/postgresql-bin/bin/dropdb
+      CREATEDB=./var-pryv/postgresql-bin/bin/createdb
+    else
+      DROPDB=$(command -v dropdb || true)
+      CREATEDB=$(command -v createdb || true)
+    fi
+    if [ -x ./var-pryv/mongodb-bin/bin/mongosh ]; then
+      MONGOSH=./var-pryv/mongodb-bin/bin/mongosh
+    else
+      MONGOSH=$(command -v mongosh || true)
+    fi
     # Plan 61 overhead-pass: parallelize the per-worker cleanup. Each
     # iteration is independent (different DB name + dir paths), so they
     # can fan out via background jobs + `wait`. Wall time on the dev box
@@ -260,9 +305,13 @@ clean-test-data-parallel WORKERS='':
         kill -KILL "$(cat "$PID")" 2>/dev/null || true
         rm -f "$PID"
       fi
-      ./var-pryv/postgresql-bin/bin/dropdb -h 127.0.0.1 -p 5432 -U pryv --if-exists "$DB" 2>/dev/null || true
-      ./var-pryv/postgresql-bin/bin/createdb -h 127.0.0.1 -p 5432 -U pryv "$DB" 2>/dev/null || true
-      ./var-pryv/mongodb-bin/bin/mongosh --quiet "$DB" --eval 'db.dropDatabase()' >/dev/null 2>&1 || true
+      if [ -n "$DROPDB" ] && [ -n "$CREATEDB" ]; then
+        "$DROPDB" -h 127.0.0.1 -p 5432 -U pryv --if-exists "$DB" 2>/dev/null || true
+        "$CREATEDB" -h 127.0.0.1 -p 5432 -U pryv "$DB" 2>/dev/null || true
+      fi
+      if [ -n "$MONGOSH" ]; then
+        "$MONGOSH" --quiet "$DB" --eval 'db.dropDatabase()' >/dev/null 2>&1 || true
+      fi
       rm -rf "$USR" "$PRV" "$RQD" "$CEX"
     }
     for i in $(seq 0 $(( WORKERS - 1 ))); do

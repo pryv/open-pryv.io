@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## fix(justfile): `clean-test-data` falls back to system `dropdb`/`createdb`/`mongosh` when local `var-pryv/<engine>-bin/` is absent
+
+The `clean-test-data` + `clean-test-data-parallel` recipes hardcoded `./var-pryv/postgresql-bin/bin/dropdb` etc. — if that local install was absent (e.g. on a Darwin dev box where the operator uses Homebrew / Postgres.app instead of running `storages/engines/postgresql/scripts/setup`), the recipes swallowed the binary-not-found failure as `... not reachable (skipping ...)` and silently left the prior run's PG/Mongo state in place. Tests then tripped on stale residue (e.g. webhook-lifecycle `[WH01]` flakes documented in workspace memory).
+
+Both recipes now resolve `DROPDB`/`CREATEDB`/`MONGOSH` by preferring the local Plan-41 install if present, otherwise falling back to whatever is on PATH (`command -v dropdb` etc.). The skip-message path is preserved but now distinguishes "binary not found" from "server not reachable" so operators see the real cause.
+
+Verified on Darwin: local bin present → unchanged behaviour; local bin hidden + system bin on PATH → fallback invoked correctly; both missing → clear "not found" message instead of misleading "not reachable".
+
 ## fix(cmc): auto-provision per-app appScope roots on `accesses.create` / `accesses.update`
 
 The 5 reserved parents under `:_cmc:*` are pre-provisioned at user creation by [`components/cmc/src/provisioning.ts`](components/cmc/src/provisioning.ts). Per-app sub-trees under `:_cmc:apps:<app-code>` were historically created on-demand at CMC-acceptance time (`provisioning.ts:21-26`) — but the OAuth-grant flow used by `doctor-dashboard` (via `app-web-auth-3`) never reaches an acceptance event before the first invite, leaving the per-app *root* `:_cmc:apps:<app-code>` missing. Downstream `streams.create` for a child of the leaf then failed with `unknown-referenced-resource` ("Unknown referenced unknown Stream"). Bridge-onboarded doctors escape this because their onboarding flow uses a personal token to pre-create the stream — OAuth-onboarded ones cannot.
