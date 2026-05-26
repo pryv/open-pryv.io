@@ -1,5 +1,11 @@
 # Changelog - Internal (no API impact)
 
+## fix(backup): diagnostic shape-guard on every per-user export — replaces cryptic `items.filter is not a function`
+
+`BackupOrchestrator._filterByTimestamp` previously called `items.filter(...)` directly; if any of the 6 upstream `exportAll`/`exportAllEvents` calls (streams / accesses / profile / webhooks / events / audit) ever returned a non-array (shape drift in a storage-layer wrapper, missing collection for a partially-provisioned user, etc.), the backup crashed at the first such call with `TypeError: items.filter is not a function` and no hint about *which* collection produced bad shape — see workspace BUGS B-2026-05-20-1 (HDS hit this in prod on the very first user). Without prod data to repro locally, the root-cause shape mismatch can't be triaged from this side; the value here is making the next occurrence diagnose itself.
+
+`_filterByTimestamp` now takes a `source` label (`streams`/`accesses`/`webhooks`/`events`/`audit`) and asserts `Array.isArray(items)` before filtering — non-arrays throw a clear error: `Backup export shape mismatch: expected array from "streams" (user <id>), got object keys=[rows]. Likely a storage-layer return-shape drift; ...`. The single `profile` export (no timestamp filtering) gets the same guard via a sibling `_assertArray`. 7 new `[BKP-SHAPE-01..07]` unit tests in `components/business/test/unit/backup/orchestrator-shape-guard.test.js`. Smoke: `just test business` 381/0 (was 374 + 7 new tests).
+
 ## fix(system): make `DELETE /system/users/:username` error message self-documenting
 
 The admin endpoint refuses calls without `?onlyReg=true` because it only deletes the user's *platform-side* fields (uniqueFields like email + indexedFields) — it does NOT cascade through base storage (events, streams, attachments) or the audit log. Previous error text "This method needs onlyReg=true for now (query)" said nothing about *why* — operators ran into it, assumed the endpoint was broken, then either gave up (orphan test users on shared hosts) or filed bug reports. New error text spells out the partial-delete semantic + points at `?dryRun=true` for preview. Closes B-2026-05-14-5 (workspace BUGS.md). Endpoint behaviour unchanged. Existing `[GF30]`–`[GF33]` tests still green (6/0 in `npx mocha --grep GF3`).

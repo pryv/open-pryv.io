@@ -184,32 +184,33 @@ class BackupOrchestrator {
     const rawStreams = await fromCallback(
       (cb: any) => this.storageLayer.streams.exportAll(user, cb)
     );
-    const streams = this._filterByTimestamp(rawStreams, snapshotBefore, since);
+    const streams = this._filterByTimestamp(rawStreams, snapshotBefore, since, 'streams');
     await userWriter.writeStreams(streams.map(sanitize));
 
     // Accesses
     const rawAccesses = await fromCallback(
       (cb: any) => this.storageLayer.accesses.exportAll(user, cb)
     );
-    const accesses = this._filterByTimestamp(rawAccesses, snapshotBefore, since);
+    const accesses = this._filterByTimestamp(rawAccesses, snapshotBefore, since, 'accesses');
     await userWriter.writeAccesses(accesses.map(sanitize));
 
     // Profile (no timestamps — always full export)
     const profile = await fromCallback(
       (cb: any) => this.storageLayer.profile.exportAll(user, cb)
     );
+    this._assertArray(profile, 'profile', userId);
     await userWriter.writeProfile(profile.map(sanitize));
 
     // Webhooks
     const rawWebhooks = await fromCallback(
       (cb: any) => this.storageLayer.webhooks.exportAll(user, cb)
     );
-    const webhooks = this._filterByTimestamp(rawWebhooks, snapshotBefore, since);
+    const webhooks = this._filterByTimestamp(rawWebhooks, snapshotBefore, since, 'webhooks');
     await userWriter.writeWebhooks(webhooks.map(sanitize));
 
     // Events
     const rawEvents = await this._exportEvents(userId);
-    const events = this._filterByTimestamp(rawEvents, snapshotBefore, since);
+    const events = this._filterByTimestamp(rawEvents, snapshotBefore, since, 'events');
     await userWriter.writeEvents(events.map(sanitize));
 
     // Attachments — only for events in this backup
@@ -224,7 +225,7 @@ class BackupOrchestrator {
       try {
         const userAudit = this.auditStorage.forUser(userId);
         const auditEvents = await userAudit.exportAllEvents();
-        const filteredAudit = this._filterByTimestamp(auditEvents, snapshotBefore, since);
+        const filteredAudit = this._filterByTimestamp(auditEvents, snapshotBefore, since, 'audit');
         await userWriter.writeAudit(filteredAudit.map(sanitize));
       } catch (e: any) {
         this.logger.warn(`Audit export failed for user ${userId}: ${e.message}`);
@@ -258,7 +259,8 @@ class BackupOrchestrator {
    * @param snapshotBefore - unix timestamp (seconds)
    * @param since - unix timestamp (seconds), null for full backup
    */
-  _filterByTimestamp (items: any, snapshotBefore: any, since: any) {
+  _filterByTimestamp (items: any, snapshotBefore: any, since: any, source: string = 'items') {
+    this._assertArray(items, source);
     return items.filter((item: any) => {
       const ts = item.modified || item.created || item.time;
       if (ts == null) return true; // no timestamp — always include
@@ -268,6 +270,23 @@ class BackupOrchestrator {
       if (since != null && ts <= since) return false;
       return true;
     });
+  }
+
+  // Defensive check. Storage-layer export methods are typed to return arrays,
+  // but a shape drift in any of the underlying `exportAll`/`exportAllEvents`
+  // (e.g. a wrapper change returning `{rows}` or `{data}` instead of bare
+  // array) used to surface as a cryptic "items.filter is not a function" with
+  // no hint about which collection — see B-2026-05-20-1. Throw a clear,
+  // localized message instead.
+  _assertArray (items: any, source: string, userId?: string) {
+    if (!Array.isArray(items)) {
+      const ctx = userId ? ` (user ${userId})` : '';
+      const got = items == null ? String(items) : `${typeof items}${typeof items === 'object' ? ` keys=[${Object.keys(items).slice(0, 5).join(',')}]` : ''}`;
+      throw new Error(
+        `Backup export shape mismatch: expected array from "${source}"${ctx}, got ${got}. ` +
+        'Likely a storage-layer return-shape drift; check the engine\'s exportAll implementation.'
+      );
+    }
   }
 
   async _exportEvents (userId: any) {
