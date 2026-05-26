@@ -69,6 +69,8 @@ export const {
   createCounterpartyFromStampingHook,
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,
+  createAccessProvisionAppScopeHook,
+  extractAppScopeLeavesToProvision,
   createEventsGetInternalGuardHook,
   createEventGetOneInternalGuardHook,
   createStreamsGetInternalGuardHook,

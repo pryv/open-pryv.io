@@ -465,6 +465,126 @@ function createAccessUpdateForgePreventionHook (deps: Deps): Middleware {
   };
 }
 
+/**
+ * accesses.create / accesses.update post-hook — per-app appScope lazy provisioning.
+ *
+ * The 5 reserved parents under `:_cmc:` are pre-provisioned at user
+ * creation by `provisioning.ts`. Per-app sub-trees under
+ * `:_cmc:apps:<app-code>` were historically created on demand at
+ * CMC-acceptance time (see `provisioning.ts:21-26`). The OAuth-grant
+ * flow used by doctor-dashboard never reaches an acceptance event
+ * before the first invite, so the per-app *root* `:_cmc:apps:<app-code>`
+ * is missing when downstream `streams.create` for a child of it runs,
+ * producing `unknown-referenced-resource`.
+ *
+ * This hook runs AFTER `createAccess` / `snapshotAndApplyUpdate` so
+ * `result.access.permissions` is the post-state. It scans those perms
+ * for any `streamId` resolving to a valid app-code via `getAppCode()`
+ * and pre-creates the leaf `:_cmc:apps:<app-code>` as a child of
+ * `:_cmc:apps` via mall.streams.create — bypassing api-server
+ * middleware, the same pattern `provisioning.ts:provisionUserStreams`
+ * uses (otherwise the reserved-root hook would reject the create).
+ *
+ * Deep app sub-trees (`:_cmc:apps:<app>:chats:*` /
+ * `:_cmc:apps:<app>:<...>:collectors:*`) keep their on-demand-at-
+ * acceptance-time behaviour — this hook only provisions the leaf root.
+ *
+ * Provisioning failures are logged but do NOT fail the access response:
+ * the access already exists, surfacing an error here would confuse the
+ * caller (access stored but response 5xx). If the stream truly can't be
+ * created, the caller's first `streams.create` against the child will
+ * surface the same downstream error — matching pre-fix behaviour, not
+ * worse.
+ */
+
+type Mall = {
+  streams: { create: (userId: string, params: any) => Promise<any> };
+};
+
+type ProvisionLogger = {
+  debug?: (msg: string, ...rest: any[]) => void;
+  warn?: (msg: string, ...rest: any[]) => void;
+};
+
+type ProvisionDeps = {
+  mall: Mall;
+  logger?: ProvisionLogger;
+};
+
+// Matches the slug.ts SLUG_PIECE_RE — `manage` perm on an app-code
+// segment is only allowed to provision a stream whose name passes the
+// same shape check the rest of the plugin uses for slug pieces.
+const APP_CODE_RE = /^[a-z0-9-]+$/;
+const RESERVED_APP_SEGMENTS = new Set(C.APP_RESERVED_SEGMENTS);
+
+/**
+ * Extract the set of `:_cmc:apps:<app-code>` leaf stream-ids that this
+ * permission list authorises and which therefore need to exist. Walks
+ * each perm's streamId through `getAppCode()`; a non-empty result that
+ * passes APP_CODE_RE and isn't a reserved sub-segment is added.
+ *
+ * Returns a deduped Set so callers can iterate without rework.
+ */
+function extractAppScopeLeavesToProvision (permissions: any[]): Set<string> {
+  const targets = new Set<string>();
+  if (!Array.isArray(permissions)) return targets;
+  for (const perm of permissions) {
+    const sid = perm?.streamId;
+    if (typeof sid !== 'string') continue;
+    const appCode = C.getAppCode(sid);
+    if (appCode == null || appCode === '') continue;
+    if (RESERVED_APP_SEGMENTS.has(appCode)) continue;
+    if (!APP_CODE_RE.test(appCode)) continue;
+    targets.add(C.NS_APPS + ':' + appCode);
+  }
+  return targets;
+}
+
+function createAccessProvisionAppScopeHook (deps: ProvisionDeps): Middleware {
+  return async function cmcAccessProvisionAppScopeHook (context, params, result, next) {
+    const userId = context?.user?.id;
+    const access = result?.access;
+    if (userId == null || access == null) return next();
+
+    const targets = extractAppScopeLeavesToProvision(access.permissions);
+    if (targets.size === 0) return next();
+
+    for (const streamId of targets) {
+      const appCode = C.getAppCode(streamId);
+      const payload: any = {
+        id: streamId,
+        parentId: C.NS_APPS,
+        name: appCode,
+        clientData: { cmc: { kind: 'app-scope-root', autoProvisioned: true } },
+      };
+      if (access.id != null) {
+        payload.createdBy = access.id;
+        payload.modifiedBy = access.id;
+      }
+      try {
+        await deps.mall.streams.create(userId, payload);
+        deps.logger?.debug?.('cmc: provisioned app-scope root', {
+          userId, streamId, accessId: access.id,
+        });
+      } catch (err: any) {
+        if (provisioning.isAlreadyExistsError(err)) {
+          deps.logger?.debug?.('cmc: app-scope root already present', { userId, streamId });
+          continue;
+        }
+        deps.logger?.warn?.('cmc: failed to provision app-scope root', {
+          userId,
+          streamId,
+          accessId: access.id,
+          error: err?.message || err,
+        });
+        // Intentional: continue rather than abort. See docstring.
+      }
+    }
+
+    next();
+  };
+}
+
 export {
   createCmcContentValidationHook,
   createStreamCreateReservedRootHook,
@@ -473,6 +593,8 @@ export {
   createCounterpartyFromStampingHook,
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,
+  createAccessProvisionAppScopeHook,
+  extractAppScopeLeavesToProvision,
   createEventsGetInternalGuardHook,
   createEventGetOneInternalGuardHook,
   createStreamsGetInternalGuardHook,
