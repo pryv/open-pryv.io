@@ -797,9 +797,9 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       const leafStreamId = ':_cmc:apps:' + appCode;
 
       // Update to add the per-app perm. Route auto-wraps body into {update}.
-      // accesses.update schema is strict — rejects `defaultName` (per
-      // [B-2026-05-14-4] permissions-shape schema asymmetry between
-      // accesses.create / .checkApp / .update). Send the bare perm shape.
+      // accesses.update now accepts the same `defaultName`/`name` extras as
+      // accesses.create (B-2026-05-14-4 symmetry fix); kept bare here so the
+      // test exercises the minimal canonical shape.
       const updateRes = await coreRequest.put(alice.accessesPath + '/' + accessId)
         .set('Authorization', alice.token)
         .send({

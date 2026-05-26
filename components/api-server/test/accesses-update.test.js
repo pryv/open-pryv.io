@@ -353,6 +353,69 @@ describe('[ACUP] accesses.update (Plan 66)', function () {
     });
   });
 
+  describe('[ACUP-SYM] accesses.update accepts the same permission shape as accesses.create (B-2026-05-14-4)', function () {
+    beforeEach(resetAccesses);
+
+    it('[SYM01] accesses.update accepts a permission carrying defaultName + name (does not 400 OBJECT_ADDITIONAL_PROPERTIES)', async function () {
+      // Pre-fix: this PUT body was rejected because UPDATE's permissions
+      // schema was strict on additionalProperties. Now matches CREATE.
+      // `appAccessId` is provisioned by resetAccesses().
+      const res = await coreRequest
+        .put(path(appAccessId))
+        .set('Authorization', personalToken)
+        .send({
+          permissions: [{
+            streamId: stream0.attrs.id,
+            level: 'manage',
+            defaultName: 'Stream 0',
+            name: 'Stream 0'
+          }]
+        });
+      assert.strictEqual(res.status, 200, `expected 200, got ${res.status}: ${JSON.stringify(res.body)}`);
+      // The extras must be stripped before persistence (mirror of the
+      // existing CREATE-side cleanupPermissions behaviour). Locate by
+      // streamId since the stored permissions array may include
+      // system-stream entries auto-injected by the server.
+      const stored = res.body.access.permissions.find((p) => p.streamId === stream0.attrs.id);
+      assert.ok(stored, `expected to find permission for ${stream0.attrs.id} in ${JSON.stringify(res.body.access.permissions)}`);
+      assert.strictEqual(stored.defaultName, undefined,
+        'defaultName must not be persisted on update (cleanupUpdatePermissions)');
+      assert.strictEqual(stored.name, undefined,
+        'name must not be persisted on update (cleanupUpdatePermissions)');
+      assert.strictEqual(stored.level, 'manage');
+    });
+
+    it('[SYM02] checkApp → update round-trip: result.checkedPermissions can be sent straight back to accesses.update', async function () {
+      // Reproduces the scenario from the bug entry: a caller pipes
+      // checkApp.checkedPermissions into accesses.update without manually
+      // stripping {defaultName, name}. Uses the resetAccesses-provisioned
+      // `appAccessId` as the update target.
+      // checkApp returns checkedPermissions including the extras.
+      const checkRes = await coreRequest
+        .post(basePath + '/check-app')
+        .set('Authorization', personalToken)
+        .send({
+          requestingAppId: 'App access',
+          requestedPermissions: [{
+            streamId: stream0.attrs.id,
+            level: 'manage',
+            defaultName: 'Stream 0'
+          }]
+        });
+      assert.strictEqual(checkRes.status, 200);
+      assert.ok(Array.isArray(checkRes.body.checkedPermissions),
+        'expected checkedPermissions array');
+      // Pipe straight into update — pre-fix this would 400 with
+      // invalid-parameters-format (OBJECT_ADDITIONAL_PROPERTIES).
+      const updateRes = await coreRequest
+        .put(path(appAccessId))
+        .set('Authorization', personalToken)
+        .send({ permissions: checkRes.body.checkedPermissions });
+      assert.strictEqual(updateRes.status, 200,
+        `update should accept checkApp output verbatim, got ${updateRes.status}: ${JSON.stringify(updateRes.body)}`);
+    });
+  });
+
   describe('[ACUP07] checkApp head-only', function () {
     beforeEach(resetAccesses);
 

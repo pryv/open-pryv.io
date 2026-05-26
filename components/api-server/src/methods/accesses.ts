@@ -435,11 +435,28 @@ export default async function produceAccessesApiMethods (api: any) {
     cmcAccessUpdateForgePreventionHook,
     loadAccessForUpdate,
     enforceUpdateChainRules,
+    cleanupUpdatePermissions,
     snapshotAndApplyUpdate,
     cmcAccessProvisionAppScopeHook,
     emitUpdateNotifications,
     cmcAccessesUpdatePostHookMiddleware
   );
+
+  // Mirror of `cleanupPermissions` for the update path. UPDATE accepts the
+  // same {defaultName, name} extras as CREATE (B-2026-05-14-4 symmetry fix)
+  // so callers can pipe `checkApp.checkedPermissions` straight in. The
+  // server still doesn't want those app-authorization-UI fields in the
+  // stored permission — strip before snapshotAndApplyUpdate persists.
+  function cleanupUpdatePermissions (context: any, params: any, result: any, next: any) {
+    if (!params.update || !Array.isArray(params.update.permissions)) {
+      return next();
+    }
+    params.update.permissions.forEach(function (perm: any) {
+      delete perm.defaultName;
+      delete perm.name;
+    });
+    next();
+  }
 
   /**
    * Fire-and-forget invocation of the CMC accesses.update post-hook.

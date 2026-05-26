@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## fix(accesses): align update permission schema with create — accept the same `defaultName`/`name` extras
+
+Closes a long-standing wire-format asymmetry between `accesses.create`, `accesses.checkApp` (returns `checkedPermissions` shaped per CREATE), and `accesses.update`: the first two accepted/produced permission objects with optional `defaultName` + `name` fields used during app-authorization UI; the third strictly rejected those fields with `OBJECT_ADDITIONAL_PROPERTIES`. Naive callers piping `checkApp.checkedPermissions` straight into `accesses.update` hit `invalid-parameters-format`; HDS worked around it by stripping extras client-side in `bridgeAccess.ts` / `Authorization.tsx` (see workspace BUGS B-2026-05-14-4).
+
+`components/api-server/src/schema/access.ts` `permissions(action)` now extends the streamPermission shape with `defaultName` + `name` for `Action.UPDATE` as well as `Action.CREATE` — wire-format-symmetric. A new `cleanupUpdatePermissions` middleware (mirror of the existing `cleanupPermissions` used on CREATE) strips those fields in `accesses.update` before `snapshotAndApplyUpdate` persists, so on-disk shape is unchanged. 2 new `[ACUP-SYM]` tests: `[SYM01]` PUT with `defaultName`+`name` returns 200 and stored permission has neither field; `[SYM02]` full `checkApp` → `accesses.update` round-trip with `checkedPermissions` sent verbatim returns 200. The pre-existing `[PA03]` CMC-handshake test comment that documented the workaround is updated to point at the fix.
+
+Behaviour on the wire is strictly additive — pre-fix callers (who sent bare `{streamId, level}`) keep working unchanged; the change just stops rejecting the wider shape.
+
 ## fix(backup): diagnostic shape-guard on every per-user export — replaces cryptic `items.filter is not a function`
 
 `BackupOrchestrator._filterByTimestamp` previously called `items.filter(...)` directly; if any of the 6 upstream `exportAll`/`exportAllEvents` calls (streams / accesses / profile / webhooks / events / audit) ever returned a non-array (shape drift in a storage-layer wrapper, missing collection for a partially-provisioned user, etc.), the backup crashed at the first such call with `TypeError: items.filter is not a function` and no hint about *which* collection produced bad shape — see workspace BUGS B-2026-05-20-1 (HDS hit this in prod on the very first user). Without prod data to repro locally, the root-cause shape mismatch can't be triaged from this side; the value here is making the next occurrence diagnose itself.
