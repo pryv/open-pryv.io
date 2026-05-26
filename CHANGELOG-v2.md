@@ -1,5 +1,15 @@
 # Changelog - API Changes
 
+## `accesses.create` — accepts `:_cmc:*` stream-ids in permissions
+
+`accesses.create` was rejecting permissions referencing the CMC plugin's reserved namespace (e.g. `:_cmc:apps:<app-code>`, `:_cmc:inbox`) with `invalid-request-structure`: *"forbidden character(s) in streamId ':_cmc:...'"*. The auto-create-stream side-effect of personal-access app authorization was hitting the local-store streamId regex (`^[a-z0-9-]{1,100}`), which rejects the leading colon.
+
+The fix skips the auto-create step for `:_cmc:*` stream-ids — the CMC plugin owns provisioning of that namespace (reserved parents auto-provisioned at user creation; user-creatable scopes under `:_cmc:apps:<app>` lazy-provisioned by the plugin or by user-side `streams.create`). Same-shaped permissions on other namespaces (e.g. `:_system:`/`:system:`) are unchanged; truly invalid local stream-ids are still rejected with the same error.
+
+This unblocks app onboarding flows whose `accesses.create` payload mixes local + CMC permissions (e.g. doctor-dashboard via app-web-auth-3, third-party bridges).
+
+Also: the error message for that path is now spelled *"forbidden character(s)"* (was *"forbidden chartacter(s)"*). Clients matching on the message text need to update — matching on `error.id === 'invalid-request-structure'` was always the correct path.
+
 ## CMC plugin — features-negotiation now correctly stamped on data-grant `clientData.cmc.features`
 
 Coordinated fix with `@pryv/cmc@1.1.1` (lib-js): the accept handshake now persists the offer-resolved features onto the accepter's data-grant access in `clientData.cmc.features`. Previously the patient-side data-grant ended up with `clientData.cmc.features: null` even when the offer specified default-true values, because the plugin read the negotiated features from the wrong field of the accept trigger (`content.extra`, which is the SDK's user-supplied free-form pass-through) instead of `content.features`.

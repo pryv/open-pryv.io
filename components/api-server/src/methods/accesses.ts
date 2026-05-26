@@ -318,6 +318,14 @@ export default async function produceAccessesApiMethods (api: any) {
       if (permission.streamId == null ||
                 permission.streamId === '*' ||
                 permission.defaultName == null) { return; }
+      // CMC plugin owns the `:_cmc:*` namespace: reserved parents are
+      // provisioned at user-creation time, user-creatable scopes under
+      // `:_cmc:apps:<app>` and plugin-managed sub-streams are created on
+      // demand by the plugin. Letting this code attempt creation here
+      // would hit the local-store streamId regex which rejects the
+      // colon and fail valid permissions like `:_cmc:inbox` or
+      // `:_cmc:apps:<app>` at access-create time.
+      if (permission.streamId.startsWith(':_cmc:')) { return; }
       const existingStream = await context.streamForStreamId(permission.streamId);
       if (existingStream != null) {
         if (!existingStream.trashed) { return; }
@@ -341,7 +349,7 @@ export default async function produceAccessesApiMethods (api: any) {
       const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(permission.streamId);
       if (storeId === 'local') {
         if (!commonFns.isValidStreamIdForCreation(permission.streamId)) {
-          throw errors.invalidRequestStructure(`Error while creating stream for access. Invalid 'permission' parameter, forbidden chartacter(s) in streamId '${permission.streamId}'. StreamId should be of length 1 to 100 chars, with lowercase letters, numbers or dashes.`, permission);
+          throw errors.invalidRequestStructure(`Error while creating stream for access. Invalid 'permission' parameter, forbidden character(s) in streamId '${permission.streamId}'. StreamId should be of length 1 to 100 chars, with lowercase letters, numbers or dashes.`, permission);
         }
       } else {
         newStream.parentId = ':' + storeId + ':';

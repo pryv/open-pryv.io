@@ -114,7 +114,7 @@ export const getParamsValidation = function getParamsValidation (paramsSchema: a
 };
 export const isValidStreamIdForQuery = function isValidStreamIdForQuery (streamId: any, parameter: any, parameterName: any) {
   const forbiddenChar = findForbiddenChar(streamId);
-  if (forbiddenChar != null) { throw new Error(`Error in '${parameterName}' parameter: ${JSON.stringify(parameter)}, forbidden chartacter(s) in streamId '${streamId}'.`); }
+  if (forbiddenChar != null) { throw new Error(`Error in '${parameterName}' parameter: ${JSON.stringify(parameter)}, forbidden character(s) in streamId '${streamId}'.`); }
 };
 export const isValidStreamIdForCreation = function isValidStreamIdForCreation (streamId: any) {
   return isStreamIdValidForCreation(streamId);

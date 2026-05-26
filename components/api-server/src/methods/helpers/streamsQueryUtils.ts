@@ -140,7 +140,7 @@ function validateStreamsQuerySchemaAndSetStore (arrayOfQueries: any, streamQuery
       if (forbiddenChar != null) {
         throw new Error("Error in 'streams' parameter '" +
                     objectToString(arrayOfQueries) +
-                    "' forbidden chartacter '" +
+                    "' forbidden character '" +
                     forbiddenChar +
                     "' in streamId '" +
                     item +

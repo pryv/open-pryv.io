@@ -641,4 +641,80 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         're-delivery should land a second consent/accept-cmc; got ' + accepts.length);
     });
   });
+
+  // Defined LAST so the extra alice accesses created below do not interfere
+  // with the back-channel state CN12-CN17 / CN18 rely on. The CMCHS-IDEMP /
+  // CMCHS-EXT / CMCHS-SU describes share the alice/bob actors and key
+  // counterparty-access lookups on (username, host, appCode) — extra
+  // alice-side accesses granting :_cmc:* perms confuse those lookups under
+  // the current handleIncomingBackChannel matcher.
+  describe('[CMCHS-AP] accesses.create accepts :_cmc:* permissions', function () {
+    // Regression for B-2026-05-21-4: `accesses.create` with a permission
+    // referencing a `:`-prefixed CMC stream-id (e.g. `:_cmc:apps:<app>`,
+    // `:_cmc:inbox`) used to hit the local-store streamId regex in
+    // ensureStream() and fail with invalid-request-structure
+    // ("forbidden character(s) in streamId ...") at access-create time —
+    // blocking new-doctor onboarding via app-web-auth-3 and bridge flows.
+    // The fix in createDataStructureFromPermissions skips the auto-create
+    // step for `:_cmc:*` stream-ids (the CMC plugin owns provisioning).
+    it('[AP01] creates an app access whose permissions reference :_cmc:* stream-ids', async function () {
+      const res = await coreRequest.post(alice.accessesPath)
+        .set('Authorization', alice.token)
+        .send({
+          name: 'cmc-perms-ap01-' + Date.now(),
+          type: 'app',
+          permissions: [
+            { defaultName: 'My App scope', level: 'manage', streamId: ':_cmc:apps:my-app' },
+            { defaultName: 'CMC inbox', level: 'manage', streamId: ':_cmc:inbox' },
+          ],
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      assert.ok(res.body?.access?.token, 'created access must carry a token');
+      const grantedStreamIds = (res.body.access.permissions || []).map((p) => p.streamId);
+      assert.ok(grantedStreamIds.includes(':_cmc:apps:my-app'));
+      assert.ok(grantedStreamIds.includes(':_cmc:inbox'));
+    });
+
+    it('[AP02] creates an access mixing local + :_cmc:* perms in one call', async function () {
+      // Mirrors the doctor-dashboard / app-web-auth-3 onboarding payload
+      // captured in B-2026-05-21-4: a real app permission alongside two
+      // CMC ones in a single accesses.create.
+      const localStreamId = 'app-ap02-' + cuid().slice(-8);
+      await ensureStream(alice.streamsPath, alice.token,
+        { id: localStreamId, parentId: null, name: 'App AP02' });
+      const res = await coreRequest.post(alice.accessesPath)
+        .set('Authorization', alice.token)
+        .send({
+          name: 'cmc-perms-ap02-' + Date.now(),
+          type: 'app',
+          permissions: [
+            { defaultName: 'App scope', level: 'manage', streamId: localStreamId },
+            { defaultName: 'Collector scope', level: 'manage', streamId: ':_cmc:apps:my-app' },
+            { defaultName: 'Inbox', level: 'manage', streamId: ':_cmc:inbox' },
+          ],
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    });
+
+    it('[AP03] still rejects truly invalid local stream-ids (regex un-touched for non-CMC)', async function () {
+      // Pin that the fix narrowly skips only the `:_cmc:*` namespace.
+      // A bare local stream-id that breaks `^[a-z0-9-]{1,100}` (uppercase)
+      // must still be rejected with the same invalid-request-structure
+      // error and the (now fixed) "forbidden character(s)" message.
+      const res = await coreRequest.post(alice.accessesPath)
+        .set('Authorization', alice.token)
+        .send({
+          name: 'cmc-perms-ap03-' + Date.now(),
+          type: 'app',
+          permissions: [
+            { defaultName: 'Bad scope', level: 'manage', streamId: 'BadStreamId' },
+          ],
+        });
+      assert.ok(res.status >= 400 && res.status < 500,
+        'should reject; got status ' + res.status + ' body ' + JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.id, 'invalid-request-structure');
+      assert.ok(/forbidden character/.test(res.body?.error?.message || ''),
+        'error should cite forbidden character, got: ' + res.body?.error?.message);
+    });
+  });
 });

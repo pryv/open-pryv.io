@@ -1,5 +1,20 @@
 # Changelog - Internal (no API impact)
 
+## fix(api-server/accesses): skip auto-create for `:_cmc:*` permissions
+
+Implementation detail for the user-visible behaviour documented in `CHANGELOG-v2.md`. `accesses.ts::createDataStructureFromPermissions::ensureStream` now early-returns when `permission.streamId.startsWith(':_cmc:')` — the local-store streamId-validity regex (`^[a-z0-9-]{1,100}`) was rejecting valid CMC-plugin stream-ids like `:_cmc:inbox` and `:_cmc:apps:<app>`. The skip is intentionally narrow: the existing `:_system:` / `:system:` path is untouched (parses to `account` store, not `local`), and any non-CMC local streamId with forbidden characters is still rejected with the same `invalid-request-structure` error.
+
+Also fixes the `chartacter` → `character` typo at the three sites that share the error wording (`accesses.ts`, `helpers/commonFunctions.ts`, `helpers/streamsQueryUtils.ts`).
+
+NEW `[CMCHS-AP]` describe in `components/api-server/test/cmc-handshake.test.js` (3 tests):
+- `[AP01]` — `accesses.create` with `:_cmc:apps:<app>` + `:_cmc:inbox` perms returns 201 + preserves perms.
+- `[AP02]` — full doctor-dashboard / app-web-auth-3 shape (local app stream + two `:_cmc:*` perms in one call).
+- `[AP03]` — regression-pin: truly invalid local streamIds still get rejected with `invalid-request-structure` + the fixed `forbidden character(s)` message.
+
+Positioned LAST in the file for the same ordering reason CN14 is — extra alice-side `:_cmc:*` accesses confuse the `(username, host, appCode)`-keyed back-channel matcher used by CMCHS-IDEMP / CMCHS-EXT / CMCHS-SU.
+
+Matrix at close: `just test api-server` (PG) 1058/0/7.
+
 ## build(influxdb): self-contained engine setup, drop apt-based install
 
 `storages/engines/influxdb/scripts/setup` rewritten to mirror the PG / rqlite pattern — self-contained, no system packages, no sudo. Pins InfluxDB 1.8.10 (matches the `influx` 1.x npm client; 2.x is API-incompatible per `influx_connection.ts`). OS/arch detection covers Linux amd64 + Darwin amd64 (via Rosetta on Apple-Silicon since upstream has no darwin-arm64 1.x release). Binary in `bin-ext/influxdb/`, data + logs + config in `var-pryv/`, idempotent, generates `influxdb.conf` with paths pinned. Rosetta-presence check on Apple Silicon catches `Bad CPU type in executable` with a clear install instruction. New companion `storages/engines/influxdb/scripts/start` (mirrors rqlite start: pidfile, background-default, foreground via `DEVELOPMENT=true`). Unblocks fresh-clone dev setup on macOS arm64 + on any non-Debian Linux.
