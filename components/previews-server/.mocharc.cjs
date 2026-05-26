@@ -6,8 +6,15 @@
  */
 
 const { createConfig } = require('../../.mocharc.js');
+const glob = require('glob');
+
+const nonParallelTests = [
+  ...glob.sync('test/**/*-seq.test.js')
+];
 
 module.exports = createConfig({
+  require: 'test/hook.js',
   timeout: 10000,
-  slow: 20
+  slow: 20,
+  nonParallelTests
 });
