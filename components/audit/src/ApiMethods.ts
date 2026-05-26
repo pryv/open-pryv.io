@@ -82,6 +82,7 @@ const AUDITED_METHODS = ALL_METHODS.filter(m => !NOT_AUDITED_METHODS.includes(m)
 // doesnt include non-audited ones
 const WITHOUT_USER_METHODS = [
   'auth.register',
+  'auth.delete',
   'system.createUser',
   'system.deactivateMfa',
   'mfa.recover'
