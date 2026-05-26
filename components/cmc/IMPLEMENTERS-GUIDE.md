@@ -1024,17 +1024,17 @@ The app's access can be scoped at `:_cmc:apps:<app-code>:*` to cover the whole a
 
 ## Helpers
 
-`lib-js` and `legacy-shim` ship the deterministic slug helper; apps should never roll their own:
+The standalone [`@pryv/cmc`](https://github.com/pryv/lib-js/tree/master/components/pryv-cmc#readme) sibling package ships the deterministic slug helper; apps should never roll their own:
 
 ```js
-import { cmc } from 'pryv';
+const cmc = require('@pryv/cmc');
 
 const counterparty = cmc.counterpartySlug({ username: 'alice', host: 'pryv.me' });
 // → 'alice--pryv-me'
 
 // And the inverse:
 const parsed = cmc.parseCounterpartySlug('alice--pryv-me');
-// → { username: 'alice', host: 'pryv.me' }
+// → { username: 'alice', hostSlug: 'pryv-me' }
 ```
 
 ## Why the host is in every slug
@@ -1554,7 +1554,7 @@ What CMC does NOT solve here: if the bridge needs to read patient data streams (
 | Per-collector scope-change tracking via untyped client data | All scope changes (collector-proposed, user-responded, user-initiated, raw `accesses.update` post-hook) land as `consent/scope-update-cmc` events on `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` with `content.source` telling the app which path it came from. |
 | Two writes per action (local + counterparty's account) | One write per action on your own platform. Plugin handles cross-platform delivery. |
 
-`legacy-shim` ships a thin shim that proxies the old `Collector` / `CollectorClient` API onto `:_cmc:` so existing apps don't need a wholesale rewrite.
+The migration path is a rewrite onto [`@pryv/cmc`](https://github.com/pryv/lib-js/tree/master/components/pryv-cmc#readme) (Level-0 helpers + Level-1 protocol functions) plus the wire-shapes documented above — there is no API-compatibility shim for the old `Collector` / `CollectorClient` classes.
 
 ---
 
