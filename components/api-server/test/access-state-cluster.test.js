@@ -24,7 +24,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const path = require('node:path');
 const assert = require('node:assert/strict');
 
-const accessState = require('../src/routes/reg/accessState.ts');
 const { spawnWorkers } = require('test-helpers/src/clusterFixture.ts');
 
 const WORKER_SCRIPT = path.join(__dirname, 'clusterWorkers', 'accessStateWorker.js');
@@ -40,12 +39,16 @@ describe('[XS12] accessState cross-worker (cluster regression)', function () {
   });
 
   after(async function () {
-    if (cluster) await cluster.stop();
-    await accessState.clear();
+    if (cluster) {
+      // Ask a worker to clear (parent process never inits storages —
+      // platformDB is undefined there). Then stop the cluster.
+      try { await cluster.request(0, 'clear'); } catch (_) { /* best-effort */ }
+      await cluster.stop();
+    }
   });
 
   afterEach(async function () {
-    await accessState.clear();
+    if (cluster) await cluster.request(0, 'clear');
   });
 
   it('[XS12A] POST on worker 0 + GET on worker 1 returns the same state', async function () {

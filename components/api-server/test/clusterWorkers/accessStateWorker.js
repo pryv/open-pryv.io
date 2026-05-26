@@ -74,6 +74,10 @@ const handlers = {
     await accessState.remove(args.key);
     return { ok: true };
   },
+  async clear () {
+    await accessState.clear();
+    return { ok: true };
+  },
   async __shutdown () {
     setImmediate(() => process.exit(0));
     return { ok: true };
