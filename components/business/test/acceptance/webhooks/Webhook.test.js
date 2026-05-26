@@ -15,7 +15,8 @@ const Webhook = require('../../../src/webhooks/Webhook.ts').default;
 const WebhooksRepository = require('business/src/webhooks/repository.ts').default;
 
 const HttpServer = require('./support/httpServer').default;
-const PORT = 6123;
+// Plan 61: keep PORT in sync with httpServer.js's worker-relative shift.
+const PORT = 6123 + parseInt(process.env.MOCHA_WORKER_ID || '0', 10) * 10;
 
 // const whStorage = require('test-helpers').dependencies.storage.user.webhooks;
 const storage = require('test-helpers').dependencies.storage.user.webhooks;

@@ -11,7 +11,11 @@ const require = createRequire(import.meta.url);
 
 const EventEmitter = require('events');
 const express = require('express');
-const PORT = 6123;
+// Plan 61: worker-relative port so business's Webhook.test.js
+// (same PORT = 6123) running on a different mocha-parallel worker
+// doesn't collide. See companion shift in business' httpServer.js.
+const WORKER_ID = parseInt(process.env.MOCHA_WORKER_ID || '0', 10);
+const PORT = 6123 + WORKER_ID * 10;
 
 /*
  * Create a local HTTP server for the purpose of answering
@@ -48,7 +52,17 @@ class HttpServer extends EventEmitter {
    * @returns {Promise<void>}
    */
   async listen (port) {
-    this.server = await this.app.listen(port || PORT);
+    // express's app.listen() returns the http.Server SYNCHRONOUSLY — it
+    // may not be actively listening yet. Wait for 'listening' (or
+    // surface 'error' like EADDRINUSE) before resolving so callers can
+    // POST to the URL right after.
+    await new Promise((resolve, reject) => {
+      this.server = this.app.listen(port || PORT, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+      this.server.once('error', reject);
+    });
   }
 
   /**
