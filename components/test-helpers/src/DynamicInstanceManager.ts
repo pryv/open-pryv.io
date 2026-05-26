@@ -20,6 +20,7 @@ const util = require('util');
 
 const { getLogger } = require('@pryv/boiler');
 const portAllocator = require('./portAllocator.ts');
+const { getPerWorkerOverrides, isParallelMode } = require('./parallelWorkerSetup.ts');
 
 let spawnCounter = 0;
 
@@ -151,6 +152,28 @@ class DynamicInstanceManager extends EventEmitter {
       throw new Error('Server is already running; stop it first.');
     }
 
+    // Plan 61 BMM2 fix: in parallel mode, re-apply per-worker DB + path
+    // overrides to the settings the child api-server will read. The
+    // `helpers.dependencies.settings` lazy getter reads live boiler config,
+    // but tests that mutate the boiler config (e.g. `injectTestConfig`
+    // family, `_.merge`-and-pass settings overrides) can revert per-worker
+    // values back to the default `pryv-node-test` between spawns. When
+    // that happens the child api-server connects to the WRONG DB and any
+    // login → 404 (user not found) → boiler's unhandled-rejection logger
+    // throws → worker process exits 7. Forcing these per-worker keys here
+    // is idempotent and decoupled from whatever the test happened to do
+    // to the in-memory boiler store between spawns.
+    if (isParallelMode()) {
+      const o = getPerWorkerOverrides();
+      this.serverSettings.storages = this.serverSettings.storages || {};
+      this.serverSettings.storages.engines = this.serverSettings.storages.engines || {};
+      const eng = this.serverSettings.storages.engines;
+      eng.postgresql = { ...(eng.postgresql || {}), database: o.postgresqlDatabase };
+      eng.mongodb = { ...(eng.mongodb || {}), database: o.mongodbDatabase };
+      eng.sqlite = { ...(eng.sqlite || {}), path: o.sqlitePath };
+      eng.rqlite = { ...(eng.rqlite || {}), url: o.rqliteUrl, raftPort: o.rqliteRaftPort, dataDir: o.rqliteDataDir };
+      eng.filesystem = { ...(eng.filesystem || {}), previewsDirPath: o.previewsDirPath };
+    }
     fs.writeFileSync(this.tempConfigPath, JSON.stringify(this.serverSettings, null, 2));
     const args = ['--config=' + this.tempConfigPath];
     args.unshift(this.config.serverFilePath);
