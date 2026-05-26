@@ -1,5 +1,9 @@
 # Changelog - Internal (no API impact)
 
+## fix(system): make `DELETE /system/users/:username` error message self-documenting
+
+The admin endpoint refuses calls without `?onlyReg=true` because it only deletes the user's *platform-side* fields (uniqueFields like email + indexedFields) — it does NOT cascade through base storage (events, streams, attachments) or the audit log. Previous error text "This method needs onlyReg=true for now (query)" said nothing about *why* — operators ran into it, assumed the endpoint was broken, then either gave up (orphan test users on shared hosts) or filed bug reports. New error text spells out the partial-delete semantic + points at `?dryRun=true` for preview. Closes B-2026-05-14-5 (workspace BUGS.md). Endpoint behaviour unchanged. Existing `[GF30]`–`[GF33]` tests still green (6/0 in `npx mocha --grep GF3`).
+
 ## fix(storages): drop `platformStorage` from postgresql/mongodb manifests + fail fast on engine/storageType misdeclaration
 
 Plan 25 made rqlite the only platform engine in production: `default-config.yml` ships `storages.platform.engine: rqlite`, and the PG / Mongo `PlatformDB` implementations are intentionally incomplete (missing the Plan-27 DNS-records methods, the Plan-55 access-state methods, the Plan-35 LE TLS-cert + ACME-account methods, the Plan-38 observability-secrets methods — see workspace BUGS B-2026-05-21-1). Their manifests nevertheless declared `"platformStorage"`, which made `pluginLoader.getEngineFor('platformStorage')` happily return `postgresql` when a test config quirk set it that way — only to fail much later via the `validatePlatformDB` interface validator with a cryptic `PlatformDB implementation missing method: <X>` and no hint that the root cause was the engine selection.

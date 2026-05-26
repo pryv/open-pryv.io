@@ -329,7 +329,14 @@ export default function system (expressApp: any, app: any) {
       const dryRun = req.query.dryRun === 'true';
 
       if (!onlyReg) {
-        return next(errors.invalidOperation('This method needs onlyReg=true for now (query).'));
+        return next(errors.invalidOperation(
+          'DELETE /system/users/:username only deletes the user\'s platform-side ' +
+          'fields (uniqueFields like email + indexedFields). It does NOT delete ' +
+          'the user\'s base storage (events, streams, attachments, audit log). ' +
+          'Pass ?onlyReg=true to acknowledge this partial-delete semantic, or ' +
+          '?onlyReg=true&dryRun=true to preview without writing. A full ' +
+          'cascading user delete is not yet implemented as a single admin endpoint.'
+        ));
       }
 
       const platformDB = require('storages').platformDB;
