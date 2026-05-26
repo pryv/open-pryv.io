@@ -48,16 +48,15 @@ jobs:
           ./storages/engines/rqlite/scripts/start &
           influxd &
           sleep 3
-      - name: Run PostgreSQL test suite (parallel)
-        # Plan 61 Stage 6: matrix runs in parallel mode. GitHub-hosted
-        # ubuntu-22.04 runners have 2 vCPUs → 2 workers by default
-        # (`.mocharc.js` `defaultParallelJobs` = max(2, cpus-1)).
-        # `clean-test-data-parallel` auto-scales `WORKERS` to match.
-        # `MOCHA_JOBS=2` is explicit so a runner-vCPU bump doesn't
-        # surprise us by going past the PG conn budget.
-        run: just clean-test-data-parallel && just test-parallel all
+      - name: Run PostgreSQL test suite
+        # Plan 61: CI stays SEQUENTIAL on purpose — parallel mode disables
+        # the integrity-check beforeEach/afterEach + bypasses the caching
+        # layer + uses a fallback for cluster_kv (no real IPC). Those are
+        # three real coverage gaps; sequential exercises them. Parallel
+        # mode is a local-dev productivity tool (`just test-parallel all`),
+        # not the matrix-of-record. See SessionState for the audit.
+        run: just clean-test-data && just test all
         env:
-          MOCHA_JOBS: 2
           storages__engines__postgresql__host: localhost
           storages__engines__postgresql__port: 5432
           storages__engines__postgresql__user: pryv
