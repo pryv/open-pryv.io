@@ -199,6 +199,10 @@ export default async function produceAccessesApiMethods (api: any) {
 
   const cmcAccessCreateForgePreventionHook = cmc.createAccessCreateForgePreventionHook({ errors });
   const cmcAccessUpdateForgePreventionHook = cmc.createAccessUpdateForgePreventionHook({ errors });
+  const cmcAccessProvisionAppScopeHook = cmc.createAccessProvisionAppScopeHook({
+    mall,
+    logger: getLogger('cmc:access-provision-app-scope'),
+  });
 
   api.register(
     'accesses.create',
@@ -210,6 +214,7 @@ export default async function produceAccessesApiMethods (api: any) {
     createDataStructureFromPermissions,
     cleanupPermissions,
     createAccess,
+    cmcAccessProvisionAppScopeHook,
     addIntegrityToContext
   );
 
@@ -431,6 +436,7 @@ export default async function produceAccessesApiMethods (api: any) {
     loadAccessForUpdate,
     enforceUpdateChainRules,
     snapshotAndApplyUpdate,
+    cmcAccessProvisionAppScopeHook,
     emitUpdateNotifications,
     cmcAccessesUpdatePostHookMiddleware
   );

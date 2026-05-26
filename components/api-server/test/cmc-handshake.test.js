@@ -717,4 +717,130 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         'error should cite forbidden character, got: ' + res.body?.error?.message);
     });
   });
+
+  describe('[CMCHS-AP-PER-APP] accesses.{create,update} auto-provision per-app appScope roots', function () {
+    // Plan-driven: HDS handoff 2026-05-26 (B-2026-05-26-1). The 5 reserved
+    // parents under :_cmc:* are pre-provisioned at user creation
+    // (provisioning.ts). Per-app sub-trees under :_cmc:apps:<app-code>
+    // were historically created on-demand at CMC-acceptance time — but
+    // the OAuth-grant flow (doctor-dashboard via app-web-auth-3) never
+    // reaches an acceptance event before the first invite, so the
+    // per-app *root* :_cmc:apps:<app-code> was missing when downstream
+    // streams.create for a child of it ran, returning
+    // unknown-referenced-resource ("Unknown referenced unknown Stream").
+    //
+    // The fix: a new hook (createAccessProvisionAppScopeHook) runs after
+    // createAccess / snapshotAndApplyUpdate, scans the post-state perms
+    // for any streamId resolving to a valid app-code via getAppCode(),
+    // and lazy-creates :_cmc:apps:<app-code> as a child of :_cmc:apps
+    // via mall.streams.create.
+    //
+    // Verification pattern: re-attempt creating the leaf via the user's
+    // personal token after accesses.create / accesses.update — if the
+    // hook fired, the second create returns item-already-exists (the
+    // intended outcome); if it didn't, the create succeeds 201 (test
+    // fails — hook regressed).
+
+    it('[PA01] accesses.create with :_cmc:apps:<new-app> perm auto-provisions the leaf', async function () {
+      const appCode = 'pa01-' + cuid().slice(-6);
+      const leafStreamId = ':_cmc:apps:' + appCode;
+
+      const res = await coreRequest.post(alice.accessesPath)
+        .set('Authorization', alice.token)
+        .send({
+          name: 'cmc-perms-pa01-' + Date.now(),
+          type: 'app',
+          permissions: [
+            { defaultName: 'App scope', level: 'manage', streamId: leafStreamId },
+          ],
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+
+      // Re-attempt the leaf create — must collide with the
+      // auto-provisioned stream.
+      const verify = await coreRequest.post(alice.streamsPath)
+        .set('Authorization', alice.token)
+        .send({ id: leafStreamId, parentId: ':_cmc:apps', name: appCode });
+      assert.strictEqual(verify.body?.error?.id, 'item-already-exists',
+        'leaf should already exist after accesses.create; got ' + JSON.stringify(verify.body));
+    });
+
+    it('[PA02] accesses.create with an already-existing leaf perm succeeds (idempotent)', async function () {
+      // :_cmc:apps:my-app was pre-provisioned by makeActor.
+      const res = await coreRequest.post(alice.accessesPath)
+        .set('Authorization', alice.token)
+        .send({
+          name: 'cmc-perms-pa02-' + Date.now(),
+          type: 'app',
+          permissions: [
+            { defaultName: 'App scope', level: 'manage', streamId: ':_cmc:apps:my-app' },
+          ],
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    });
+
+    it('[PA03] accesses.update that ADDS a per-app perm provisions the new leaf', async function () {
+      // Start with an access that has no per-app perm.
+      const createRes = await coreRequest.post(alice.accessesPath)
+        .set('Authorization', alice.token)
+        .send({
+          name: 'cmc-perms-pa03-' + Date.now(),
+          type: 'app',
+          permissions: [
+            { defaultName: 'Inbox', level: 'manage', streamId: ':_cmc:inbox' },
+          ],
+        });
+      assert.strictEqual(createRes.status, 201, JSON.stringify(createRes.body));
+      const accessId = createRes.body.access.id;
+
+      const appCode = 'pa03-' + cuid().slice(-6);
+      const leafStreamId = ':_cmc:apps:' + appCode;
+
+      // Update to add the per-app perm. Route auto-wraps body into {update}.
+      // accesses.update schema is strict — rejects `defaultName` (per
+      // [B-2026-05-14-4] permissions-shape schema asymmetry between
+      // accesses.create / .checkApp / .update). Send the bare perm shape.
+      const updateRes = await coreRequest.put(alice.accessesPath + '/' + accessId)
+        .set('Authorization', alice.token)
+        .send({
+          permissions: [
+            { level: 'manage', streamId: ':_cmc:inbox' },
+            { level: 'manage', streamId: leafStreamId },
+          ],
+        });
+      assert.strictEqual(updateRes.status, 200, JSON.stringify(updateRes.body));
+
+      // Verify the new leaf exists.
+      const verify = await coreRequest.post(alice.streamsPath)
+        .set('Authorization', alice.token)
+        .send({ id: leafStreamId, parentId: ':_cmc:apps', name: appCode });
+      assert.strictEqual(verify.body?.error?.id, 'item-already-exists',
+        'leaf should exist after accesses.update; got ' + JSON.stringify(verify.body));
+    });
+
+    it('[PA04] accesses.create with deep :_cmc:apps:<app>:chats:* perm also provisions the leaf', async function () {
+      // OAuth-grant flow typically asks for the leaf, but deep perms
+      // must work too — the leaf is required for any descendant create.
+      const appCode = 'pa04-' + cuid().slice(-6);
+      const leafStreamId = ':_cmc:apps:' + appCode;
+      const deepStreamId = leafStreamId + ':chats:peer--example-com';
+
+      const res = await coreRequest.post(alice.accessesPath)
+        .set('Authorization', alice.token)
+        .send({
+          name: 'cmc-perms-pa04-' + Date.now(),
+          type: 'app',
+          permissions: [
+            { defaultName: 'Chats', level: 'manage', streamId: deepStreamId },
+          ],
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+
+      const verify = await coreRequest.post(alice.streamsPath)
+        .set('Authorization', alice.token)
+        .send({ id: leafStreamId, parentId: ':_cmc:apps', name: appCode });
+      assert.strictEqual(verify.body?.error?.id, 'item-already-exists',
+        'leaf should exist even for deep-path perm; got ' + JSON.stringify(verify.body));
+    });
+  });
 });
