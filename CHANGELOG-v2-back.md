@@ -1,5 +1,19 @@
 # Changelog - Internal (no API impact)
 
+## fix(cmc): auto-provision per-app appScope roots on `accesses.create` / `accesses.update`
+
+The 5 reserved parents under `:_cmc:*` are pre-provisioned at user creation by [`components/cmc/src/provisioning.ts`](components/cmc/src/provisioning.ts). Per-app sub-trees under `:_cmc:apps:<app-code>` were historically created on-demand at CMC-acceptance time (`provisioning.ts:21-26`) — but the OAuth-grant flow used by `doctor-dashboard` (via `app-web-auth-3`) never reaches an acceptance event before the first invite, leaving the per-app *root* `:_cmc:apps:<app-code>` missing. Downstream `streams.create` for a child of the leaf then failed with `unknown-referenced-resource` ("Unknown referenced unknown Stream"). Bridge-onboarded doctors escape this because their onboarding flow uses a personal token to pre-create the stream — OAuth-onboarded ones cannot.
+
+New `createAccessProvisionAppScopeHook` in `components/cmc/src/hooks.ts`, exported via `index.ts`, wired post-`createAccess` in `accesses.create` and post-`snapshotAndApplyUpdate` in `accesses.update` (`components/api-server/src/methods/accesses.ts`). Scans `result.access.permissions` for any `streamId` resolving via `C.getAppCode()` to a valid app-code (matches `/^[a-z0-9-]+$/`, excludes reserved `chats`/`collectors` segments), and lazy-creates the leaf `:_cmc:apps:<app-code>` as a child of `:_cmc:apps` via `mall.streams.create` — same bypass pattern as `provisionUserStreams` so the reserved-root hook doesn't reject our own provisioning. Provisioning failures are logged but don't fail the access response (the access is already stored; surfacing here would confuse the caller — if the stream truly can't be created, the user's first child `streams.create` will surface the same downstream error). Deep app sub-trees (`:_cmc:apps:<app>:chats:*` / `:_cmc:apps:<app>:<...>:collectors:*`) keep their on-demand-at-acceptance-time behaviour — this hook only provisions the leaf root.
+
+NEW `[CMCHS-AP-PER-APP]` describe in `components/api-server/test/cmc-handshake.test.js` (4 tests, positioned after the existing `[CMCHS-AP]` block from `cad7627`):
+- `[PA01]` — `accesses.create` with a `:_cmc:apps:<new-app>` perm auto-provisions the leaf (verified by re-attempting the leaf create and asserting `item-already-exists`).
+- `[PA02]` — `accesses.create` referencing a pre-existing leaf perm returns 201 (idempotent on the provisioning side).
+- `[PA03]` — `accesses.update` that *adds* a per-app perm provisions the new leaf. (Send bare `{level, streamId}` perms in the update body — `accesses.update` rejects the lenient `accesses.create` shape per the documented permissions-shape asymmetry.)
+- `[PA04]` — `accesses.create` with a deep `:_cmc:apps:<app>:chats:*` perm also provisions the leaf, since any descendant create requires it.
+
+`just test cmc` 396/0; `just test api-server` 1060/2 (the 2 failures are pre-existing `[WH01]` webhook lifecycle flakes from stale DB residue, documented in workspace memory, unrelated to this change).
+
 ## test(parallel): stabilize the parallel-mode test matrix on high-core dev boxes
 
 Closes a long-running internal effort to make `just test-parallel all` (the local-dev productivity tool) survive 14-worker concurrency on a 15-core dev box. Matrix went from a broken 1654/79 baseline (with ~480 tests silently hidden) to 2248/68/3 in ~2:06 wall — and the remaining 3 failures are Pattern A cold-start flakes that don't reproduce at CI's 2-worker scale. CI continues to run the sequential PG matrix (`just clean-test-data && just test all`) as the matrix-of-record because parallel mode disables integrity checks, the caching layer, and `cluster_kv` IPC fallback semantics — three production-relevant verifications that the sequential mode exercises.
