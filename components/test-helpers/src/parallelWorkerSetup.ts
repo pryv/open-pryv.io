@@ -85,6 +85,37 @@ let setupDone = false;
 let pidFilePath: string | null = null;
 
 /**
+ * Compute the per-worker PG pool max so the aggregate connection count
+ * stays below PG's `max_connections` even at high worker counts.
+ *
+ * Workers ≈ `MOCHA_JOBS` env or `max(2, cpus-1)` — same default as
+ * `.mocharc.js` `defaultParallelJobs`. Estimated PG conns per worker:
+ * `2 pools × max × 2 processes` (parent + DIM-spawned child).
+ *
+ * Budget defaults to 240, sized for the bumped dev PG (`max_connections=300`,
+ * see `storages/engines/postgresql/scripts/setup` + `var-pryv/postgresql-data/
+ * postgresql.conf`). Overridable via `PG_MAX_CONN_BUDGET` env for CI / hosts
+ * still on the historical 100-conn default (use `PG_MAX_CONN_BUDGET=80`).
+ *
+ * Result is clamped to `[1, 4]` — `4` matches the historical low-worker
+ * default; `1` is the safe floor for very high worker counts (pg-pool
+ * serializes acquires per pool, fine because each test awaits its query
+ * sequentially).
+ */
+export function computePgPoolMax (): number {
+  const envJobs = parseInt(process.env.MOCHA_JOBS || '', 10);
+  const workers = Number.isFinite(envJobs) && envJobs > 0
+    ? envJobs
+    : Math.max(2, require('node:os').cpus().length - 1);
+  const envBudget = parseInt(process.env.PG_MAX_CONN_BUDGET || '', 10);
+  const PG_BUDGET = Number.isFinite(envBudget) && envBudget > 0 ? envBudget : 240;
+  const POOLS_PER_WORKER = 2;
+  const PROCESSES_PER_WORKER = 2;
+  const perWorker = Math.floor(PG_BUDGET / (workers * POOLS_PER_WORKER * PROCESSES_PER_WORKER));
+  return Math.min(4, Math.max(1, perWorker));
+}
+
+/**
  * Returns the current mocha worker id. Defaults to 0 when the test
  * harness is running sequentially (or when mocha hasn't set
  * `MOCHA_WORKER_ID`).
@@ -160,11 +191,19 @@ export async function applyParallelWorkerConfig (): Promise<WorkerOverrides> {
   if (!o.isParallel) return o;
 
   config.set('storages:engines:postgresql:database', o.postgresqlDatabase);
-  // B-2026-05-22-2 — shrink the PG pool in parallel mode so 2 workers
+  // B-2026-05-22-2 — shrink the PG pool in parallel mode so workers
   // each running DIM-spawned child api-servers don't saturate PG's
-  // default `max_connections=100`. 4 connections per pool × ~2 pools
-  // per worker × 2 workers × 1 parent + 1 child each = ~32 — fits.
-  config.set('storages:engines:postgresql:max', 4);
+  // default `max_connections=100`.
+  //
+  // Plan 61 14-worker scaling fix: compute adaptively from the parallel
+  // job count so a 15-core box (14 workers) doesn't blow past 100 conns.
+  // Per worker we estimate: 2 pools (parent + DIM child) × maxPool
+  // connections each × 2 processes ≈ 4 × maxPool connections. PG default
+  // max_connections=100; reserve 20 for admin/maintenance/replication →
+  // budget is 80 / (workers * 4). Floor at 1 — pg-pool serializes acquire
+  // per pool at max=1, fine for tests since each test awaits its query
+  // sequentially. Cap at 4 to match prior behaviour on low-worker runs.
+  config.set('storages:engines:postgresql:max', computePgPoolMax());
   config.set('storages:engines:sqlite:path', o.sqlitePath);
   config.set('storages:engines:filesystem:previewsDirPath', o.previewsDirPath);
   config.set('storages:engines:rqlite:url', o.rqliteUrl);
@@ -277,29 +316,33 @@ export async function spawnWorkerRqlited (o: WorkerOverrides): Promise<void> {
   // three. Election dominates startup (~1s) but it's a one-time
   // per-worker cost, amortized across many test files per worker.
 
-  rqliteChild = spawn(binPath, args, {
+  // Bind to a local const so TS narrows non-null for the rest of the
+  // function — the module-scoped `rqliteChild` would otherwise be
+  // re-widened to `ChildProcess | null` at every subsequent use.
+  const child = spawn(binPath, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false
   });
+  rqliteChild = child;
 
   // Silently drain stdio so the child doesn't block on a full pipe.
   // Mocha tests don't need rqlited's chatter; the file pidpath gives
   // operators a reproducible log target if they want to attach.
-  rqliteChild.stdout?.on('data', () => {});
-  rqliteChild.stderr?.on('data', () => {});
+  child.stdout?.on('data', () => {});
+  child.stderr?.on('data', () => {});
 
-  rqliteChild.on('error', (err: Error) => {
+  child.on('error', (err: Error) => {
     process.stderr.write(`[parallelWorkerSetup w${o.workerId}] rqlited spawn error: ${err.message}\n`);
   });
 
-  rqliteChild.on('exit', () => {
+  child.on('exit', () => {
     rqliteChild = null;
   });
 
   pidFilePath = path.join(dataDir, 'rqlited.pid');
-  if (rqliteChild.pid != null) {
+  if (child.pid != null) {
     try {
-      fs.writeFileSync(pidFilePath, String(rqliteChild.pid));
+      fs.writeFileSync(pidFilePath, String(child.pid));
     } catch {
       // Pidfile is a courtesy for external cleanup; don't fail the worker over it.
     }

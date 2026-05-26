@@ -215,16 +215,33 @@ clean-test-data:
 # Wipes worker-private PG DBs (pryv-node-test-w0..N), per-worker user
 # dirs (var-pryv/users-test-w*/), per-worker previews + rqlite data
 # dirs, and kills any lingering rqlited PIDs referenced in worker
-# pidfiles. Defaults to 8 worker slots — bump WORKERS=N if you ever
-# run mocha parallel jobs above that.
+# pidfiles.
+#
+# WORKERS default = empty → auto-derive to match `.mocharc.js`
+# `defaultParallelJobs`: `MOCHA_JOBS` env if set, else `max(2, cpus-1)`.
+# This keeps the cleanup sized for the actual parallel-mode worker count
+# on machines with >8 cores (Plan 61 14-worker scaling fix).
 #
 # The dev-host rqlited at port 4001 is left running on purpose; parallel
 # mode workers use offset ports (4011/4021/…). If a previous run crashed
 # while worker 0's port collided with the host rqlited, kill the host
 # rqlited yourself before re-running parallel tests.
-clean-test-data-parallel WORKERS='8':
+clean-test-data-parallel WORKERS='':
     #!/usr/bin/env bash
     set -euo pipefail
+    WORKERS='{{WORKERS}}'
+    if [ -z "$WORKERS" ]; then
+      if [ -n "${MOCHA_JOBS:-}" ]; then
+        WORKERS=$MOCHA_JOBS
+      else
+        if command -v nproc >/dev/null 2>&1; then
+          N=$(nproc)
+        else
+          N=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
+        fi
+        WORKERS=$(( N > 2 ? N - 1 : 2 ))
+      fi
+    fi
     # Plan 61 overhead-pass: parallelize the per-worker cleanup. Each
     # iteration is independent (different DB name + dir paths), so they
     # can fan out via background jobs + `wait`. Wall time on the dev box
@@ -248,14 +265,14 @@ clean-test-data-parallel WORKERS='8':
       ./var-pryv/mongodb-bin/bin/mongosh --quiet "$DB" --eval 'db.dropDatabase()' >/dev/null 2>&1 || true
       rm -rf "$USR" "$PRV" "$RQD" "$CEX"
     }
-    for i in $(seq 0 $(( {{WORKERS}} - 1 ))); do
+    for i in $(seq 0 $(( WORKERS - 1 ))); do
       cleanup_worker "$i" &
     done
     wait
     # Sweep any rqlited processes pointing at the worker data dirs but
     # missing/stale pidfiles (covers SIGKILL'd or crashed workers).
     pkill -f 'rqlited.*var-pryv/rqlite-data-w' 2>/dev/null || true
-    echo "Parallel worker test data cleaned (workers 0..$(( {{WORKERS}} - 1 )))"
+    echo "Parallel worker test data cleaned (workers 0..$(( WORKERS - 1 )))"
 
 # Cleanup users data and MongoDB data in `var-pryv/`
 clean-data:
