@@ -1,5 +1,5 @@
 {
-  "storageTypes": ["baseStorage", "dataStore", "platformStorage", "seriesStorage", "auditStorage"],
+  "storageTypes": ["baseStorage", "dataStore", "seriesStorage", "auditStorage"],
   "entrypoint": "src/index.ts",
   "requiredInternals": [
     "databasePG",

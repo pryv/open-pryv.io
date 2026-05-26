@@ -175,6 +175,25 @@ function resolveConfig (config: any) {
     }
 
     if (engineName) {
+      // Fail fast if the configured engine doesn't declare this storageType
+      // in its manifest. Without this check, a misconfigured engine name
+      // (e.g. `storages.platform.engine: postgresql` when only rqlite
+      // implements PlatformDB since Plan 25) surfaces much later as a
+      // cryptic "PlatformDB implementation missing method: <X>" from the
+      // interface validator, with no hint that the root cause is the
+      // engine selection. The `engineMeta &&` guard preserves "unknown
+      // engine" being reported by getEngineModule at the next call site.
+      const engineMeta = engines[engineName];
+      if (engineMeta && !engineMeta.manifest.storageTypes.includes(storageType)) {
+        const supporters = Object.entries(engines)
+          .filter(([_, m]) => (m as any).manifest.storageTypes.includes(storageType))
+          .map(([name, _]) => name);
+        throw new Error(
+          `Configured engine "${engineName}" for storages.${shortName}.engine ` +
+          `but engine manifest does not declare storageType "${storageType}". ` +
+          `Engines declaring "${storageType}": ${supporters.join(', ') || '(none)'}`
+        );
+      }
       resolvedConfig[storageType] = { engine: engineName };
     }
   }

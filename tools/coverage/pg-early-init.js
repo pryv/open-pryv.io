@@ -25,7 +25,7 @@ if (process.env.STORAGE_ENGINE === 'postgresql') {
     config.injectTestConfig({
       storages: {
         base: { engine: 'postgresql' },
-        platform: { engine: 'postgresql' },
+        platform: { engine: 'rqlite' }, // Plan 25: rqlite is the only platform engine.
         series: { engine: 'postgresql' },
         file: { engine: 'filesystem' },
         audit: { engine: 'postgresql' }

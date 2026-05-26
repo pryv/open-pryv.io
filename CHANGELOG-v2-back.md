@@ -1,5 +1,26 @@
 # Changelog - Internal (no API impact)
 
+## fix(storages): drop `platformStorage` from postgresql/mongodb manifests + fail fast on engine/storageType misdeclaration
+
+Plan 25 made rqlite the only platform engine in production: `default-config.yml` ships `storages.platform.engine: rqlite`, and the PG / Mongo `PlatformDB` implementations are intentionally incomplete (missing the Plan-27 DNS-records methods, the Plan-55 access-state methods, the Plan-35 LE TLS-cert + ACME-account methods, the Plan-38 observability-secrets methods — see workspace BUGS B-2026-05-21-1). Their manifests nevertheless declared `"platformStorage"`, which made `pluginLoader.getEngineFor('platformStorage')` happily return `postgresql` when a test config quirk set it that way — only to fail much later via the `validatePlatformDB` interface validator with a cryptic `PlatformDB implementation missing method: <X>` and no hint that the root cause was the engine selection.
+
+Two-part fix:
+
+- **Manifests** — `storages/engines/postgresql/manifest.json` and `storages/engines/mongodb/manifest.json` no longer declare `"platformStorage"`. Their `createPlatformDB` exports remain (legacy, unused) but the manifest now matches the Plan-25 reality.
+- **Loader fail-fast** — `storages/pluginLoader.ts` `resolveConfig` now throws when a configured engine doesn't declare the requested storageType, e.g.:
+
+  ```
+  Configured engine "postgresql" for storages.platform.engine but engine
+  manifest does not declare storageType "platformStorage". Engines
+  declaring "platformStorage": rqlite
+  ```
+
+  This surfaces a misconfigured engine selection at init time with a clear message, instead of letting it fall through to the interface validator's missing-method error.
+
+`tools/coverage/pg-early-init.js` had `platform: { engine: 'postgresql' }` left over from before Plan 25 / before the PlatformDB scope grew — corrected to `rqlite`.
+
+New test `[PLUG-RESOLVE-MISDECLARE]` in `storages/test/pluginLoader.test.js` (48 passing). Component smoke tests `just test business` (374/0), `just test mall` (22/0), `just test storages` (48/0) all green.
+
 ## fix(justfile): `clean-test-data` falls back to system `dropdb`/`createdb`/`mongosh` when local `var-pryv/<engine>-bin/` is absent
 
 The `clean-test-data` + `clean-test-data-parallel` recipes hardcoded `./var-pryv/postgresql-bin/bin/dropdb` etc. — if that local install was absent (e.g. on a Darwin dev box where the operator uses Homebrew / Postgres.app instead of running `storages/engines/postgresql/scripts/setup`), the recipes swallowed the binary-not-found failure as `... not reachable (skipping ...)` and silently left the prior run's PG/Mongo state in place. Tests then tripped on stale residue (e.g. webhook-lifecycle `[WH01]` flakes documented in workspace memory).
