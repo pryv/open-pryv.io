@@ -394,8 +394,34 @@ export async function stopWorkerRqlited (): Promise<void> {
 export async function setupParallelWorker (): Promise<WorkerOverrides> {
   const o = await applyParallelWorkerConfig();
   await spawnWorkerRqlited(o);
+  await initWorkerRqliteSchema(o);
   setupDone = true;
   return o;
+}
+
+/**
+ * Plan 61 Stage 7 narrow fix — create the `keyValue` table on the
+ * per-worker rqlited BEFORE any test starts. Otherwise tests that
+ * reach `Platform.deleteUser` / `getUserIndexedField` via fixture
+ * cleanup (`mongoFixtures.user(...)` calls `FixtureUser.remove` calls
+ * `UsersRepository.deleteOne` calls `Platform.deleteUser` calls
+ * `DBrqlite.getUserIndexedField`) BEFORE the worker's own `initCore`
+ * runs `storages.init()` get an `rqlite SQL error: no such table:
+ * keyValue` ([PCRO], [RGLG] class of failures).
+ *
+ * Idempotent (`CREATE TABLE IF NOT EXISTS`); cheap (<5ms after rqlited
+ * is already at `readyz`-ok).
+ */
+async function initWorkerRqliteSchema (o: WorkerOverrides): Promise<void> {
+  if (!o.isParallel) return;
+  try {
+    const { DBrqlite } = require('storages/engines/rqlite/src/DBrqlite.ts');
+    const db = new DBrqlite(o.rqliteUrl);
+    await db.init();
+  } catch (err: any) {
+    process.stderr.write(`[parallelWorkerSetup w${o.workerId}] DBrqlite.init failed: ${err.message}\n`);
+    throw err;
+  }
 }
 
 /**
