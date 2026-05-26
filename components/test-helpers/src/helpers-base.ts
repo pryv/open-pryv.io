@@ -282,10 +282,25 @@ function getMochaHooks (isParallelMode = false) {
       : {
           async beforeEach (this: any) {
             if (process.env.DISABLE_INTEGRITY_CHECK === '1') return;
+            // Plan 61 Stage 7 (absorbed Plan 75): skip the integrity check
+            // if the storages barrel hasn't been initialised yet. The check's
+            // `initIndexPlatform()` → `getUsersLocalIndex()` → `ensureBarrel()`
+            // path would otherwise call `storages.init()` with NO config arg —
+            // before the test-scope `injectTestConfig(testConfig)` has applied
+            // the `STORAGE_ENGINE=mongodb` override staged by helpers-c.ts —
+            // locking pluginLoader to the default engine across the whole
+            // suite (B-2026-05-23-1). Pure-unit Pattern C tests that run
+            // before any `initCore()` don't manipulate storage state anyway,
+            // so skipping the check pre-initCore is safe.
+            const storages = require('storages');
+            if (!storages.storageLayer) return;
             await checkIndexAndPlatformIntegrity('BEFORE ' + this.currentTest.title);
           },
           async afterEach (this: any) {
             if (process.env.DISABLE_INTEGRITY_CHECK === '1') return;
+            // Same gate as the beforeEach above.
+            const storages = require('storages');
+            if (!storages.storageLayer) return;
             await checkIndexAndPlatformIntegrity('AFTER ' + this.currentTest.title);
           }
         })
