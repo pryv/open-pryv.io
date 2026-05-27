@@ -87,8 +87,8 @@ describe('backup/FilesystemBackupWriter + Reader', function () {
     });
 
     it('round-trips events with chunking', async function () {
-      // Plan 28 Phase 1: `maxChunkSize` targets *compressed* output size per
-      // the writeChunkedJsonlFiles docstring, so the content must be random /
+      // `maxChunkSize` targets *compressed* output size per the
+      // writeChunkedJsonlFiles docstring, so the content must be random /
       // non-compressible for chunking to trigger reliably. Earlier versions
       // used 'Hello world '.repeat(5) which gzipped to ~20 bytes total and
       // produced a single chunk regardless of item count.
@@ -152,9 +152,9 @@ describe('backup/FilesystemBackupWriter + Reader', function () {
     });
 
     it('round-trips a single event larger than maxChunkSize (soft-limit semantics)', async function () {
-      // Plan 28 Phase 1: `maxChunkSize` is a soft limit. A single item cannot
-      // be split, so when an individual record exceeds the target the chunk
-      // file must still be written and readable — Plan 28 regression.
+      // `maxChunkSize` is a soft limit. A single item cannot be split, so
+      // when an individual record exceeds the target the chunk file must
+      // still be written and readable — regression guard.
       const bigEvent = {
         id: 'evt-big',
         streamIds: ['s1'],
@@ -361,9 +361,9 @@ describe('backup/FilesystemBackupWriter + Reader', function () {
     });
 
     it('round-trips audit data with chunking', async function () {
-      // Plan 28 Phase 1: non-compressible payloads so the chunking check,
-      // which targets *compressed* size, actually fires. See the events-
-      // chunking test above for rationale.
+      // Non-compressible payloads so the chunking check, which targets
+      // *compressed* size, actually fires. See the events-chunking test
+      // above for rationale.
       const auditEvents = [];
       for (let i = 0; i < 10; i++) {
         let payload = '';

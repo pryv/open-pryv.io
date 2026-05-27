@@ -6,7 +6,7 @@
  */
 
 /**
- * Plan 66 — composite access references.
+ * Composite access references.
  *
  * Access versioning exposes references as `<base>` (no serial → original
  * / never-updated) or `<base>:<serial>` (numeric serial → that specific
@@ -14,7 +14,7 @@
  * a cuid/cuid2 id so parsing is unambiguous.
  *
  * The composite form is only built/parsed at the wire seam — storage code
- * keeps `base` and `serial` in their own typed columns. See plan §1.
+ * keeps `base` and `serial` in their own typed columns.
  */
 
 export type AccessRef = { base: string, serial: number | null };
@@ -80,10 +80,10 @@ function composeStoredRef (storedRef: string | undefined | null, serial: number 
 }
 
 /**
- * Plan 66: rewrite an access storage row into the wire-format access
- * object. Composes the composite `id` / `createdBy` / `modifiedBy`
- * when a corresponding serial is set, and strips the internal `serial`
- * + `*BySerial` fields so the response stays inside the API schema's
+ * Rewrite an access storage row into the wire-format access object.
+ * Composes the composite `id` / `createdBy` / `modifiedBy` when a
+ * corresponding serial is set, and strips the internal `serial` +
+ * `*BySerial` fields so the response stays inside the API schema's
  * `additionalProperties: false` whitelist. Pass `historyOfBase` when
  * surfacing a history row — the wire `id` then encodes the FROZEN
  * serial of that row (e.g. `<base>:2`) rather than the storage's

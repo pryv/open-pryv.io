@@ -7,9 +7,9 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 35 Phase 4a — watch PlatformDB for a certificate's rotation,
- * materialize it on local disk, and notify in-process http servers +
- * (optionally) an operator-supplied external reload script.
+ * Watch PlatformDB for a certificate's rotation, materialize it on local
+ * disk, and notify in-process http servers + (optionally) an
+ * operator-supplied external reload script.
  *
  * Every core runs this loop (renewer or not). When the CA-holder core
  * renews a cert, rqlite replicates the new row into every core's local
@@ -118,7 +118,7 @@ function sha256 (s: any) {
 /**
  * Spawn `scriptPath` with env vars the operator can consume. Returns
  * { exitCode, stdout, stderr, durationMs }. Non-zero exits do NOT
- * throw — the caller logs and moves on (Plan 35 Phase 4c semantics).
+ * throw — the caller logs and moves on (script-failure is non-fatal).
  *
  * @param opts.scriptPath
  * @param opts.hostname

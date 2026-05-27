@@ -7,11 +7,11 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 34 — one-time join-token lifecycle.
+ * One-time join-token lifecycle.
  *
  * Tokens are minted by the bootstrap CLI on the issuing core and consumed
- * by that same core's ack endpoint (Phase 4) when the new core calls back
- * to confirm it has joined. Scope is single-core: tokens are stored in a
+ * by that same core's ack endpoint when the new core calls back to confirm
+ * it has joined. Scope is single-core: tokens are stored in a
  * local JSON file on the issuing core's filesystem — the same machine that
  * already holds the cluster CA private key (see ClusterCA.js). No need to
  * put them in PlatformDB: they're never verified anywhere else.

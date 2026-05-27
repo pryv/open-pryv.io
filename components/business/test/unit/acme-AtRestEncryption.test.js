@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Unit tests for Plan 35 Phase 2b — AtRestEncryption (HKDF + AES-256-GCM
+ * Unit tests for AtRestEncryption (HKDF + AES-256-GCM
  * helper used to encrypt TLS cert private keys before handing them to
  * PlatformDB).
  */

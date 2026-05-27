@@ -8,9 +8,9 @@ import type {} from 'node:fs';
 
 
 /**
- * Plan 35 — derive the hostnames and challenge type for the letsEncrypt
- * feature from the existing topology config, so operators don't have
- * to maintain a duplicate list that can drift.
+ * Derive the hostnames and challenge type for the letsEncrypt feature from
+ * the existing topology config, so operators don't have to maintain a
+ * duplicate list that can drift.
  *
  * Rules (first match wins):
  *

@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 34 — passphrase-based bundle encryption.
+ * Passphrase-based bundle encryption.
  *
  * Uses AES-256-GCM with scrypt-derived keys from node's built-in crypto.
  * No new npm dep, no system binary to install.

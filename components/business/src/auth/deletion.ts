@@ -107,15 +107,15 @@ class Deletion {
     next();
   }
 
-  // Plan 72 Phase A.1: engine-agnostic audit erasure. The filesystem wipe in
-  // deleteAuditData covers SQLite as a side-effect (per-user .sqlite file lives
-  // in the user dir) but leaves PG audit_events rows behind. This step routes
-  // through the AuditStorage interface so every engine converges on the same
+  // Engine-agnostic audit erasure. The filesystem wipe in deleteAuditData
+  // covers SQLite as a side-effect (per-user .sqlite file lives in the user
+  // dir) but leaves PG audit_events rows behind. This step routes through
+  // the AuditStorage interface so every engine converges on the same
   // end-state. Runs BEFORE deleteAuditData so the SQLite path closes the DB
   // file cleanly before the directory wipe.
   //
-  // Plan 72 Phase A.2: behaviour gated by `audit:onUserDelete` operator setting.
-  //   erase (default) — wipe via auditStorage.deleteUser (this method's A.1 path).
+  // Behaviour gated by `audit:onUserDelete` operator setting.
+  //   erase (default) — wipe via auditStorage.deleteUser.
   //   keep            — skip the wipe (HIPAA / MDR long-retention regimes).
   //   pseudonymise    — refused at boot by config-validation (depends on the
   //                     not-yet-shipped ALIASES primitive). If somehow seen here

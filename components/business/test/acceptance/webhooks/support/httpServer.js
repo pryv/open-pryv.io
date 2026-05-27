@@ -9,10 +9,10 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const express = require('express');
 const EventEmitter = require('events');
-// Plan 61: worker-relative port so api-server's `webhooks.test.js`
-// (same `PORT = 6123`) running on a different mocha-parallel worker
-// doesn't collide. Workers stride by 10 starting at the base; the
-// non-parallel mode (or worker 0) keeps the historical 6123 default.
+// Worker-relative port so api-server's `webhooks.test.js` (same
+// `PORT = 6123`) running on a different mocha-parallel worker doesn't
+// collide. Workers stride by 10 starting at the base; the non-parallel
+// mode (or worker 0) keeps the historical 6123 default.
 const WORKER_ID = parseInt(process.env.MOCHA_WORKER_ID || '0', 10);
 const PORT = 6123 + WORKER_ID * 10;
 

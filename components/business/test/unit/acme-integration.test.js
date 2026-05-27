@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 35 Phase 5 — integration test.
+ * Integration test for the ACME engine.
  *
  * Wires the real CertRenewer + FileMaterializer + AcmeOrchestrator
  * against real rqlite (via DBrqlite) with a mocked acme-client that
@@ -37,12 +37,12 @@ const { AcmeOrchestrator } = require('../../src/acme/AcmeOrchestrator.ts');
 const { CertRenewer, PlatformDBDnsWriter } = require('../../src/acme/CertRenewer.ts');
 const { FileMaterializer } = require('../../src/acme/FileMaterializer.ts');
 
-// Plan 61 Stage 7: in parallel mode, use the per-worker rqlited URL
-// (worker N at port 4001 + N*10). Otherwise multi-worker ACMEINT
-// concurrent-init races on worker-0's rqlited cause leader-election
-// 503 ("leader not found") in `DBrqlite.init()`. Falls back to the
-// boiler env-mirror (`storages__engines__rqlite__url`) which
-// `helpers-base.ts` already populates per worker.
+// In parallel mode, use the per-worker rqlited URL (worker N at port
+// 4001 + N*10). Otherwise multi-worker ACMEINT concurrent-init races on
+// worker-0's rqlited cause leader-election 503 ("leader not found") in
+// `DBrqlite.init()`. Falls back to the boiler env-mirror
+// (`storages__engines__rqlite__url`) which `helpers-base.ts` already
+// populates per worker.
 const RQLITE_URL = process.env.RQLITE_URL ||
   process.env.storages__engines__rqlite__url ||
   'http://localhost:4001';

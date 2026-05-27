@@ -7,13 +7,13 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * MFA business module — ported from service-mfa as part of Plan 26.
+ * MFA business module.
  *
  * Exposes the MFA service implementations (`ChallengeVerifyService`,
  * `SingleService`) plus shared types (`Profile`) and a factory that picks the
  * right service based on `mfaConfig.mode`.
  *
- * Session storage lives in `./SessionStore` (Plan 26 Phase 3).
+ * Session storage lives in `./SessionStore`.
  */
 
 const Profile = require('./Profile.ts').default;
@@ -39,11 +39,10 @@ function createMFAService (mfaConfig: any) {
 
 // Per-worker MFA service singleton (stateless once built).
 //
-// SessionStore (Plan 55): the `_sessionStore` reference itself is per-worker
-// but the underlying storage is `cluster_kv` (master-held), so every worker
-// in the cluster sees the same MFA sessions. Different from Plan 26's
-// original "single-core only" framing — under cluster.fork() that meant
-// per-worker, which broke the login → verify flow when polls round-robined.
+// The `_sessionStore` reference itself is per-worker but the underlying
+// storage is `cluster_kv` (master-held), so every worker in the cluster
+// sees the same MFA sessions. The earlier per-worker `Map` broke the
+// login → verify flow when polls round-robined across workers.
 let _mfaService: any = null;
 let _sessionStore: any = null;
 

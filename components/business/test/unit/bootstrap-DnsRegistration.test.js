@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Unit tests for Plan 34 Phase 2d — DnsRegistration.
+ * Unit tests for DnsRegistration.
  *
  * Uses a minimal in-memory fake implementing the PlatformDB methods this
  * module depends on. No rqlite or MongoDB required.

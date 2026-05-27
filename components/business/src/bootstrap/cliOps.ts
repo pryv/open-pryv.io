@@ -7,8 +7,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 34 — bootstrap CLI orchestration, decoupled from arg parsing and
- * config loading.
+ * Bootstrap CLI orchestration, decoupled from arg parsing and config
+ * loading.
  *
  * `bin/bootstrap.js` is the operator-facing entry point: it parses argv,
  * initialises @pryv/boiler, pulls platform secrets out of the running
@@ -164,8 +164,8 @@ async function revokeToken ({ tokensPath, coreId, platformDB = null, ip = null }
 }
 
 /**
- * Plan 54 Phase C — initialise the CA-holder core's own TLS material so it
- * can serve mTLS to joining cores' rqlited peers.
+ * Initialise the CA-holder core's own TLS material so it can serve mTLS to
+ * joining cores' rqlited peers.
  *
  * Idempotent. On first invocation: ensures the cluster CA, mints a node cert
  * for `coreId`, writes ca.crt/node.crt/node.key into `tlsDir`, and (when
@@ -175,8 +175,8 @@ async function revokeToken ({ tokensPath, coreId, platformDB = null, ip = null }
  *
  * Symmetric with `applyBundle`: the joiner's TLS layout is `<tlsDir>/{ca,
  * node}.{crt,key}` with the same modes (ca 0644, cert 0644, key 0600). The
- * `verifyClient: true` flag is set on both ends — that is the invariant the
- * Plan 36 manual workaround was about.
+ * `verifyClient: true` flag is set on both ends — that mTLS-on-both-ends
+ * invariant is what this helper enforces.
  *
  * @param opts.caDir - cluster CA dir (`ClusterCA` ensures this).
  * @param opts.tlsDir - where ca.crt / node.crt / node.key go.

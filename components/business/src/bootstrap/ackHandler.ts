@@ -8,7 +8,7 @@ import type {} from 'node:fs';
 
 
 /**
- * Plan 34 Phase 4a — POST /system/admin/cores/ack handler.
+ * POST /system/admin/cores/ack handler.
  *
  * Called by a freshly bootstrapped core to confirm it has joined. The
  * one-time join token from the bundle authenticates the call: if it

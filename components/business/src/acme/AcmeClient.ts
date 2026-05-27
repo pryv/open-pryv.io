@@ -7,9 +7,9 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 35 Phase 3 — thin wrapper around `acme-client` for the two
- * operations we actually need: create an ACME account, issue / renew a
- * cert. Stateless — no PlatformDB, no file I/O, no scheduling.
+ * Thin wrapper around `acme-client` for the two operations we actually
+ * need: create an ACME account, issue / renew a cert. Stateless — no
+ * PlatformDB, no file I/O, no scheduling.
  *
  * Why wrap at all? `acme-client`'s API is small but we want:
  *   1. A stable input / output shape our renewer code can depend on

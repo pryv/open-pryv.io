@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Unit tests for Plan 34 Phase 2 — ClusterCA.
+ * Unit tests for ClusterCA.
  *
  * Uses the system `openssl` binary for certificate work (same approach as
  * the production code). Skips the whole suite when openssl is missing.

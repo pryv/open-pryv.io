@@ -15,8 +15,8 @@ const Profile = require('../../../src/mfa/Profile.ts').default;
 const clusterKv = require('messages/src/cluster_kv.ts');
 
 /**
- * Plan 55 Phase 4 — SessionStore is now backed by clusterKv. Each test
- * spins up a fake `cluster` so master+client share an in-memory store.
+ * SessionStore is backed by clusterKv. Each test spins up a fake
+ * `cluster` so master+client share an in-memory store.
  */
 
 function makeKvHarness () {

@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Acceptance-style tests for Plan 34 Phase 2e — bootstrap CLI orchestration.
+ * Acceptance-style tests for bootstrap CLI orchestration.
  *
  * Exercises the same code path the operator-facing `bin/bootstrap.js` calls,
  * with everything externally-stateful injected: a fake PlatformDB, tmp dirs

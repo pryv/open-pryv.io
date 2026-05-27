@@ -7,27 +7,27 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 35 Phase 2b — at-rest encryption helper for PlatformDB-stored
- * TLS certificate and ACME account private keys.
+ * At-rest encryption helper for PlatformDB-stored TLS certificate and ACME
+ * account private keys.
  *
  * Problem: rqlite-replicated snapshots carry every row of the keyValue
  * table. If a cert's keyPem sits there in plaintext, any node that can
  * read the snapshot (or any off-host backup of it) yields the private
  * key. Today's platform-wide secrets (adminAccessKey,
  * filesReadTokenSecret) avoid this by living in YAML, not PlatformDB.
- * Plan 35's auto-renewed certs NEED to replicate — so we keep them in
- * PlatformDB but encrypt the sensitive bits at rest.
+ * Auto-renewed certs NEED to replicate — so we keep them in PlatformDB
+ * but encrypt the sensitive bits at rest.
  *
  * Model:
  *   - The encryption key is a 32-byte symmetric key derived via
  *     HKDF-SHA256 from a single source-of-truth byte string, parameterised
  *     by a `purpose` label so we can run multiple independent "key
  *     schedules" without needing separate source material.
- *   - The caller chooses the source-of-truth byte string. For the Plan 34
+ *   - The caller chooses the source-of-truth byte string. For the
  *     cluster-CA-holder topology this is the CA private key's DER bytes;
  *     for a future per-cluster `platform_key` it would be that key.
  *     This module does NOT take a stance on WHICH source to use —
- *     that's a Phase-4 wiring decision.
+ *     that's a wiring decision in the caller.
  *   - AES-256-GCM for the actual encryption. Fixed 1-byte envelope
  *     version prefix so we can rev the format later.
  *

@@ -8,11 +8,9 @@
 /**
  * Public TypeScript types for Pryv.io API consumers.
  *
- * These shapes were originally defined as JSDoc @typedef blocks in
- * components/business/src/{events,streams,types}/index.js. Plan 57 §7f
- * promoted them to real TS exports so SDK consumers (lib-js, app-web-auth3,
- * external integrators) can `import type { Event, Stream, Access } from
- * 'pryv-io'` instead of duplicating shapes.
+ * SDK consumers (lib-js, app-web-auth3, external integrators) can
+ * `import type { Event, Stream, Access } from 'pryv-io'` instead of
+ * duplicating shapes.
  */
 
 // ───────────────────────────── Events ─────────────────────────────
