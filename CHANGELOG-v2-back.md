@@ -1,5 +1,33 @@
 # Changelog - Internal (no API impact)
 
+## chore: prune stale TODOs, dead skips, broken doc links
+
+Code-meta-cleanup pass on tests, comments, and component READMEs. No
+production behavior change.
+
+- Two empty test-skip blocks deleted: `[H2GC]` (`result.test.js`
+  never-implemented stub) and `[APRA]` (`accesses.test.js` Pattern-A→C
+  migration leftover).
+- Two surviving skips tightened to symptom-only comments; two title
+  typos fixed (`differnt`→`different` for `[ZUTR]`, doubled `error`
+  for `[60OQ]`).
+- 41 source/test `TODO`s walked: most deleted as aspirational, the few
+  flagging real follow-ups rewritten as dated entries anchored to the
+  internal bug log. Three surfaced new bugs (hfs-server audit-context
+  literal `'TODO'` IP, `events.get` forced/forbidden-id dedup,
+  `test-helpers/spawner` port leak) which are now triaged.
+- Two dead commented-out code blocks removed
+  (`test-helpers/src/child_process.ts`,
+  `api-server/test/acceptance/account.default-streams.test.js`).
+- Two stale component READMEs removed
+  (`components/audit/README.md`, `components/storage/README.md`).
+- Two broken doc-links fixed in `README-DBs.md`
+  (`userLocalDirectory.js`→`.ts`,
+  `userLocalIndex.js`→`usersLocalIndex.ts`).
+
+Test matrix unchanged: `just test api-server` 1073 passing / 0 failing
+/ 6 pending; `just test business` 384 passing / 0 failing.
+
 ## fix(webhooks): cascade webhook deletion on accesses.delete (Plan 72 B)
 
 `accesses.delete` did not remove webhooks attached to the deleted

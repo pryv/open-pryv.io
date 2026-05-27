@@ -108,9 +108,6 @@ describe('[RSLT] Result', function () {
       res.addStream(arrayName1, p1);
       res.toObject(expectation);
     });
-
-    it.skip('[H2GC] must return an error when the core pipeline crashes because of size', function () {
-    });
   });
 });
 

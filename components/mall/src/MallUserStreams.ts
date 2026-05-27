@@ -44,7 +44,6 @@ class MallUserStreams {
    */
   async getOneWithNoChildren (userId: any, streamId: any, storeId: any) {
     if (storeId == null) {
-      // TODO: clarify smelly code (replace full stream id with in-store id?)
       [storeId, streamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamId);
     }
     const streamsStore = this.streamsStores.get(storeId);
@@ -78,7 +77,6 @@ class MallUserStreams {
     let streamId = params.id || '*';
     let storeId = params.storeId;
     if (storeId == null) {
-      // TODO: clarify smelly code (replace full stream id with in-store id?)
       [storeId, streamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamId);
     }
     params.childrenDepth = params.childrenDepth || 0;
@@ -145,7 +143,6 @@ class MallUserStreams {
       }
     }
     return res;
-    // TODO: move utility func out of object
     function getChildlessRootStreamsForOtherStores (storeNames: any) {
       const res: any[] = [];
       for (const [storeId, storeName] of storeNames) {
@@ -162,7 +159,6 @@ class MallUserStreams {
       }
       return res;
     }
-    // TODO: move utility func out of object
     function performExclusion (res: any, excludedIds: any) {
       return treeUtils.filterTree(res, false, (stream: any) => !excludedIds.includes(stream.id));
     }

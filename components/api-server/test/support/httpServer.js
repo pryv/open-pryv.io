@@ -7,7 +7,6 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-// TODO remove this (use a single mocking tool if possible)
 
 const EventEmitter = require('events');
 const express = require('express');

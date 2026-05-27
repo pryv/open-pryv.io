@@ -192,6 +192,9 @@ describe('[SSDC] SystemStreams config', () => {
     });
   });
   describe('[SD05] When providing a custom system stream that has an invalid type', () => {
+    // SYMPTOM: this assertion checks the SD04 error message
+    // ("cannot be unique and not indexed"), but SD05 tests an invalid
+    // TYPE — wrong error text. Test needs fixing not just unskipping.
     it.skip('[LU0A] must throw a config error', () => {
       const store = new nconf.Provider();
       store.use('memory');

@@ -40,7 +40,6 @@ const __ex_get = {
       eventDeletions: array(itemDeletion)
     }, {
       definitions: {
-        // TODO: clean this schema $ref thing up
         stream: stream(Action.READ, false, '#/definitions/stream')
       },
       required: ['streams']
@@ -65,7 +64,6 @@ const __ex_update = {
       update: { $ref: '#/definitions/stream' }
     }, {
       definitions: {
-        // TODO: clean this schema $ref thing up
         stream: stream(Action.UPDATE, false, '#/definitions/stream')
       },
       required: ['id', 'update']

@@ -261,14 +261,14 @@ function streamQueryAddForcedAndForbiddenStreams (context: any, params: any, res
     const forcedStreamIds = context.access.getForcedStreamsGetEventsStreamIds(streamQuery.storeId);
     if (forcedStreamIds?.length > 0) {
       if (streamQuery.all == null) { streamQuery.all = []; }
-      // TODO check for duplicates
+      // TODO(B-2026-05-27-8, 2026-05-27): de-duplicate before push — caller-supplied ids may overlap forced ids
       streamQuery.all.push(...forcedStreamIds);
     }
     // ------------- NOT ------------- //
     const forbiddenStreamIds = context.access.getForbiddenGetEventsStreamIds(streamQuery.storeId);
     if (forbiddenStreamIds?.length > 0) {
       if (streamQuery.not == null) { streamQuery.not = []; }
-      // TODO check for duplicates
+      // TODO(B-2026-05-27-8, 2026-05-27): de-duplicate before push — caller-supplied ids may overlap forbidden ids
       streamQuery.not.push(...forbiddenStreamIds);
     }
     // For non-personal local store queries, exclude account streams root.

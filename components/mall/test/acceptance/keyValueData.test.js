@@ -7,7 +7,6 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-// TODO: enable linting again once implementation finished
 
 /* global assert, initTests, initCore, getNewFixture, charlatan, cuid, coreRequest  */
 

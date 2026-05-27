@@ -252,37 +252,9 @@ class UsersRepository {
         await this.setUserPassword(user.id, user.password, user.accessId);
       }
     });
-    // TODO: re-enable CMC reserved-parent auto-provisioning. The earlier
-    // version that passed `accessId: user.accessId` to provisionUserStreams
-    // surfaced an AC04 [6041] regression in cumulative test runs (403
-    // invalid-access-token). A targeted experiment (commit ephemeral)
-    // confirmed: dropping `accessId` from the provisioning call fixes
-    // [6041]. With provisioning enabled (sans accessId), the remaining
-    // failures are test-fixture concerns, NOT code defects:
-    //
-    //   1. `[SYSS 9CGO]` in api-server/test/streams.test.js asserts a
-    //      fixed snapshot of `streams.get` for a personal access. Adding
-    //      five `:_cmc:*` reserved parents shifts the snapshot.
-    //      Resolution: update the expected fixture to include the
-    //      auto-provisioned CMC reserved tree (or filter `:_cmc:*` out
-    //      of the snapshot assertion).
-    //
-    //   2. `afterEach for [OY2G]` integrity check trips because a
-    //      cuid-generated test user (created by an APWD test) is
-    //      deleted via system-streams cleanup but its provisioned
-    //      `:_cmc:*` streams linger in events/streams storage. The
-    //      integrity check `usersIndex.checkIntegrity()` compares
-    //      `userIdsCount-streams` (9) vs `usersCountOnRepository` (8)
-    //      and trips. Resolution: test cleanup needs to also remove the
-    //      orphan streams for the deleted user, OR the integrity check
-    //      should consider CMC reserved streams as expected residue.
-    //
-    // Both are bounded test-side fixes. Until those land, provisioning
-    // runs no-op; anchor streams are created lazily at acceptance time
-    // by handleAccept + handleIncomingAccept (Phase F slice 3 via
-    // provisionAnchorStreams helper), so the operational impact is
-    // contained — the reserved parents are similarly created on demand
-    // by the plugin's first :_cmc:* write.
+    // TODO(B-2026-05-27-5, 2026-05-27): re-enable CMC reserved-parent
+    // auto-provisioning here. Lazy creation at first :_cmc:* write
+    // keeps the operational impact contained for now.
     if (cmc != null && cmcLogger != null) { /* placeholder */ }
     return user;
   }

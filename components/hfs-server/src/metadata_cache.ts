@@ -128,6 +128,7 @@ class MetadataLoader {
     // Retrieve Access (including accessLogic)
     const contextSource = {
       name: 'hf',
+      // TODO(B-2026-05-27-9, 2026-05-27): pass real client IP from express req — currently emits literal 'TODO' into audit context
       ip: 'TODO'
     };
     const customAuthStep = null;
@@ -220,11 +221,10 @@ class SeriesMetadataImpl {
   produceRowType (repo: any) {
     const type = repo.lookup(this.eventType);
 
-    // TODO review this now that flow is gone:
-    // NOTE The instanceof check here serves to make flow-type happy about the
-    //  value we'll return from this function. If duck-typing via 'isSeries' is
-    //  ever needed, you'll need to find a different way of providing the same
-    //  static guarantee (think interfaces...).
+    // NOTE: the instanceof check here serves to make the type system happy
+    // about the value we return. If duck-typing via 'isSeries' is ever
+    // needed, you'll need a different way of providing the same static
+    // guarantee (think interfaces...).
     if (!type.isSeries() || !(type instanceof SeriesRowType)) { throw errors.invalidOperation("High Frequency data can only be stored in events whose type starts with 'series:'."); }
     type.setSeriesMeta(this);
     return type;

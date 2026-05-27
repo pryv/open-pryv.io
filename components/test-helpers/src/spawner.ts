@@ -94,7 +94,7 @@ class SpawnContext {
     // sure to spawn a few now.
     if (this.pool.length <= 0) { this.prespawn(); }
     // Find a port to use
-    // TODO Free ports once done.
+    // TODO(B-2026-05-27-10, 2026-05-27): allocated ports are never freed — they accumulate as the test pool churns
     const port = await this.allocatePort();
 
     // Obtain a process proxy

@@ -7,7 +7,6 @@
 
 /**
  * Output usual objects as string, e.g. when logging.
- * TODO: make that a separate lib to use on client side too
  */
 const toString: any = {};
 export { toString };

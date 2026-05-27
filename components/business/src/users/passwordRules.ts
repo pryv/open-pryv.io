@@ -39,7 +39,6 @@ async function init () {
   return {
     getPasswordExpirationAndChangeTimes,
     /**
-     * TODO: merge with verification of current password once passwords are entirely within user account storage
      * @throws {APIError} If the password does not follow the configured rules
      */
     async checkCurrentPasswordAge (userId: any) {

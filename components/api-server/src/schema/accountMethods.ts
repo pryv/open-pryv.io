@@ -24,9 +24,6 @@ const accountDetails = helpers.object({
   additionalProperties: false
 });
 
-// TODO: all this will change after user info is moved to profiles (so that users collection only
-//       deals with users' status
-
 const __ex_get = {
     params: helpers.object({}),
     result: helpers.object({

@@ -219,7 +219,6 @@ class MethodContext {
     const session = await fromCallback((cb: any) => storage.sessions.get(token, cb));
     if (session == null) { throw errors.invalidAccessToken('Access session has expired.', 403); }
     // Keep the session alive (don't await, see below)
-    // TODO Maybe delay/amortize this so that we don't write on every request?
     storage.sessions.touch(token, () => null);
   }
 

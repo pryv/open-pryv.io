@@ -147,11 +147,6 @@ describe('[ACCO] Account with system streams', function () {
           event.streamIds.includes(addPrivatePrefixToStreamId('dbDocuments')));
         const attachedFilesAccountEvent = allVisibleAccountEvents.find(event =>
           event.streamIds.includes(addPrivatePrefixToStreamId('attachedFiles')));
-        // TODO: verify the following data or remove those lines
-        // const insurancenumberAccountEvent = allVisibleAccountEvents.find(event =>
-        //   event.streamIds.includes(addCustomerPrefixToStreamId('insurancenumber')));
-        // const phoneNumberAccountEvent = allVisibleAccountEvents.find(event =>
-        //   event.streamIds.includes(addCustomerPrefixToStreamId('phoneNumber')));
         assert.strictEqual(res.body.account.email, emailAccountEvent.content);
         assert.strictEqual(res.body.account.language, languageAccountEvent.content);
         assert.strictEqual(res.body.account.storageUsed.dbDocuments, dbDocumentsAccountEvent.content);

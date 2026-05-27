@@ -210,7 +210,6 @@ describe('[VERS] Versioning', function () {
           async function checkThatHistoryIsUnchanged () {
             const eventHistory = await mall.events.getHistory(user.id, trashedEventWithHistory.id);
 
-            // TODO clean this test
             const checked = { first: false, second: false };
             assert.strictEqual(eventHistory.length, 2);
             eventHistory.forEach(function (event) {

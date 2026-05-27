@@ -96,13 +96,6 @@ class ChildProcess {
   // Main method to launch the child process.
   //
   run () {
-    // // Keeps the event loop busy. This is what the child does as long as it is not
-    // // serving requests.
-    // //
-    // function work() {
-    //   setTimeout(work, 10000);
-    // }
-    // work();
   }
 }
 export default ChildProcess;

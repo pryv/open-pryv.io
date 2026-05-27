@@ -8,7 +8,6 @@
 
 import type {} from 'node:fs';
 
-// TODO: move this inside mall once the latter is a proper singleton object
 class MallTransaction {
   mall;
   storeTransactions;

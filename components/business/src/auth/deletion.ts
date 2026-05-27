@@ -15,9 +15,6 @@ const { getLogger } = require('@pryv/boiler');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const setAdminAuditAccessId = setAuditAccessId(AuditAccessIds.ADMIN_TOKEN);
 
-/**
- * TODO: cleanup this class… it breaks encapsulation (e.g. with event files) and its scope is unclear
- */
 class Deletion {
   logger: any;
 

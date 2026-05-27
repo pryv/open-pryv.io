@@ -18,7 +18,7 @@ In v2 the **default `baseStorage` engine is PostgreSQL** (`storages.base.engine:
 
 #### User local directory
 
-base code: [components/storage/src/userLocalDirectory.js](components/storage/src/userLocalDirectory.js)
+base code: [components/storage/src/userLocalDirectory.ts](components/storage/src/userLocalDirectory.ts)
 
 Localization of user data on the host file system, usually in `var-pryv/users` then a directory path is constructed using the 3 last characters of the userId and the userId. 
 
@@ -28,7 +28,7 @@ In this directory, the attachments and any user attributed data and sqlite db sh
 
 #### User local index
 
-base code: [components/storage/src/userLocalIndex.js](components/storage/src/userLocalIndex.js)
+base code: [components/storage/src/usersLocalIndex.ts](components/storage/src/usersLocalIndex.ts)
 
 This database is a per-server index to map userId and userName. In the future it could be extended to allow user aliases. 
 
