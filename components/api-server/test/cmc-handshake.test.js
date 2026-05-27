@@ -484,29 +484,39 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     let bobDataGrantId; // bob's counterparty access pointing to alice
 
     /**
-     * Find on `actor`'s mall the access whose clientData.cmc identifies
-     * `peerUsername` as the counterparty AND whose stored remoteChat
+     * Poll `actor`'s accesses until one matches: clientData.cmc identifies
+     * `peerUsername` as the counterparty AND its stored remoteChat
      * stream-id sits under `expectedScope`. Disambiguates between
      * multiple counterparty accesses to the same peer.
+     *
+     * `runFreshHandshake` returns when the back-channel-cmc EVENT lands
+     * on bob's inbox, but bob's counterparty access is updated via a
+     * separate async path (cmc post-hook + pubsub). On heavily loaded
+     * runs (`just test all` matrix) that update can land a few hundred
+     * ms after the inbox event. Polling here aligns the two paths.
      */
-    async function findCounterpartyAccessForScope (actor, peerUsername, expectedScope) {
-      const res = await coreRequest.get(actor.accessesPath)
-        .set('Authorization', actor.token);
-      const accesses = res.body?.accesses || [];
-      return accesses.find((a) => {
-        const cmc = a?.clientData?.cmc;
-        if (cmc?.role !== 'counterparty') return false;
-        if (cmc?.counterparty?.username !== peerUsername) return false;
-        const rcs = cmc?.counterparty?.remoteChatStreamId;
-        return typeof rcs === 'string' && rcs.startsWith(expectedScope + ':chats:');
-      });
+    async function pollCounterpartyAccessForScope (actor, peerUsername, expectedScope) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        const res = await coreRequest.get(actor.accessesPath)
+          .set('Authorization', actor.token);
+        const accesses = res.body?.accesses || [];
+        const match = accesses.find((a) => {
+          const cmc = a?.clientData?.cmc;
+          if (cmc?.role !== 'counterparty') return false;
+          if (cmc?.counterparty?.username !== peerUsername) return false;
+          const rcs = cmc?.counterparty?.remoteChatStreamId;
+          return typeof rcs === 'string' && rcs.startsWith(expectedScope + ':chats:');
+        });
+        if (match != null) return match;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      throw new Error('poll timeout: counterparty access with back-channel under ' + expectedScope + ' for peer ' + peerUsername);
     }
 
     before(async function () {
       h = await runFreshHandshake('study-su');
-      const dg = await findCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
-      assert.ok(dg != null,
-        'expected bob to have a counterparty access whose back-channel points to ' + h.triggerStreamId);
+      const dg = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
       bobDataGrantId = dg.id;
     });
 
