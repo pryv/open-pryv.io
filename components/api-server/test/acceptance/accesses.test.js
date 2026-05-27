@@ -922,11 +922,5 @@ describe('[AC01] accesses', () => {
       assert.ok(body.user.username);
       assert.strictEqual(body.user.username, userId);
     });
-
-    // NOTE: This test requires server restart with custom settings - skipped in Pattern C
-    describe.skip('[APRA] When password rules are enabled', async () => {
-      // This test requires spawning server with different settings (settingsOverride)
-      // which is not supported in Pattern C. Keep using Pattern B if this test is needed.
-    });
   });
 });

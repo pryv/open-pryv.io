@@ -221,9 +221,12 @@ describe('[EGSQ] events.get streams query', function () {
           }
         });
 
-        it.skip('[ZUTR] should expand queries from differnt store', async function () {
+        // SYMPTOM: cross-store query expansion not implemented.
+        // The sibling [I7GF] asserts mixed-store queries throw; this
+        // asserts the inverse (per-item dispatch) which the
+        // implementation lacks.
+        it.skip('[ZUTR] should expand queries from different store', async function () {
           await validateQuery([{ any: ['A'] }, { any: [':_audit:test'] }]);
-          // todo
         });
       });
     });

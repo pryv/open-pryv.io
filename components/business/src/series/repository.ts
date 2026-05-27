@@ -35,7 +35,6 @@ class Repository {
    * @returns {Promise<any>}
    */
   async get (namespace: any, name: any) {
-    // TODO Cache all the setup checks we do here in an LRU cache.
     // Make sure that the database exists:
     await this.connection.createDatabase(namespace);
     return new Series(this.connection, namespace, name);
@@ -51,7 +50,6 @@ class Repository {
   //    await batch.store();
   //
   async makeBatch (namespace: any) {
-    // TODO Cache all the setup checks we do here in an LRU cache.
     // Make sure that the database exists:
     await this.connection.createDatabase(namespace);
     return new NamespaceBatch(this.connection, namespace);

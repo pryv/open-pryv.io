@@ -15,8 +15,6 @@ const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers.ts');
  * Accepts a list of paths to ignore (e.g. /register, /socket.io), and does not add the
  * username again if it is already present as the path root.
  *
- * TODO: this responsibility should be moved out to the reverse proxy (e.g. Nginx)
- *
  * @param ignoredPaths Paths for which no translation is needed
  */
 export default function (ignoredPaths: any, ignoredSubdomains: any) {

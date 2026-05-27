@@ -15,7 +15,6 @@ const { getLogger } = require('@pryv/boiler');
 
 /**
  * Error route handling.
- * TODO: (re)move that once something's been done about api-server's own errors middleware
  */
 export default function (logging: any) {
   const logger = getLogger('routes');

@@ -57,8 +57,6 @@ class Series {
     const toMeasurement = (row: any) => {
       const struct = row.toStruct();
 
-      // TODO review this now that flow is gone:
-      // This cannot fail, but somehow flow thinks we access the deltaTime.
       delete struct.deltaTime;
       const deltaTime = row.get('deltaTime');
       return {
@@ -79,7 +77,6 @@ class Series {
    */
   query (query: any) {
     const queryOptions = { database: this.namespace };
-    // TODO worry about limit, offset
     const measurementName = this.name;
     const condition = this.buildExpression(query);
     const wherePart = condition.length > 0 ? 'WHERE ' + condition.join(' AND ') : '';
@@ -106,7 +103,7 @@ class Series {
     const idx = headers.indexOf('time');
     if (idx >= 0) { headers[idx] = 'deltaTime'; }
     for (const row of data) {
-      row[idx] = +row[idx] / 1000; // TODO replace
+      row[idx] = +row[idx] / 1000;
     }
     return new DataMatrix(headers, data);
   }

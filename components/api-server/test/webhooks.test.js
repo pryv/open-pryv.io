@@ -375,7 +375,7 @@ describe('[WH01] webhooks', () => {
         });
 
         // TODO: Flaky — timing-dependent collision detection
-        it.skip('[60OQ] should return a status 409 with a collision error error', () => {
+        it.skip('[60OQ] should return a status 409 with a collision error', () => {
           validation.checkError(response, {
             status: 409,
             id: ErrorIds.ItemAlreadyExists

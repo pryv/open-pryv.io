@@ -31,7 +31,7 @@ function accessSchema (action: any) {
   });
   helpers.addTrackingProperties(base);
 
-  // explicitly forbid 'id' on create TODO: ignore it instead
+  // explicitly forbid 'id' on create
   if (action !== Action.CREATE) {
     base.properties.id = string();
   }

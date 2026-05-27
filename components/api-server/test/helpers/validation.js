@@ -421,7 +421,6 @@ export const removeAccountStreams = function (streams) {
   return removeSystemStreams(streams);
 };
 
-// TODO: cleanup this mess, we shouldn't have data creation logic in "validation", nor these `require()` mid-file
 export const addStoreStreams = async function (streams, storesId, atTheEnd) {
   const { getMall } = require('mall');
   const streamsUtils = require('mall/src/helpers/streamsUtils.ts');

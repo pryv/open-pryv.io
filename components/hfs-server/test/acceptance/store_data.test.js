@@ -160,7 +160,6 @@ describe('[SDHF] Storing data in a HF series', function () {
   });
   describe('[SD02] UPDATE and DELETE on handling event affect the serie', function () {
     this.timeout(5000);
-    // TODO Worry about deleting data that we stored in earlier tests.
     let hfServer;
     let apiServer;
     // Spawns a server.
@@ -336,7 +335,6 @@ describe('[SDHF] Storing data in a HF series', function () {
     });
   });
   describe('[SD03] POST /events/EVENT_ID/series', function () {
-    // TODO Worry about deleting data that we stored in earlier tests.
     let server;
     describe('[SD31] bypassing authentication', () => {
       const EVENT_ID = 'EVENTID';
