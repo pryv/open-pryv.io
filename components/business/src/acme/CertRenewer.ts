@@ -7,19 +7,19 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 35 Phase 3b — CertRenewer: orchestrates ACME issuance + at-rest
- * encryption + PlatformDB persistence.
+ * CertRenewer: orchestrates ACME issuance + at-rest encryption + PlatformDB
+ * persistence.
  *
  * Glue layer on top of:
  *   - AcmeClient (HTTP to Let's Encrypt)
  *   - AtRestEncryption (encrypts private-key material before it touches
  *     the rqlite-replicated keyValue table)
  *   - PlatformDB.{setAcmeAccount, getAcmeAccount, setCertificate,
- *     getCertificate} (added in Phase 2a)
+ *     getCertificate}
  *
  * Scheduling (daily check loop, renew-before-N-days logic) is intentionally
- * NOT in this class — that's Phase 4 wiring in bin/master.js. This class
- * exposes the primitive operations; the caller decides when to run them.
+ * NOT in this class — that's wired in bin/master.js. This class exposes the
+ * primitive operations; the caller decides when to run them.
  */
 
 const AtRestEncryption = require('./AtRestEncryption.ts');
@@ -239,8 +239,8 @@ class PlatformDBDnsWriter {
  * PlatformDB key is just `_acme-challenge` — any other shape silently
  * fails to resolve during LE validation.
  *
- * This function used to return the FQDN shape; Plan 36 pre-prod
- * rollout surfaced the mismatch with DnsServer.
+ * This function used to return the FQDN shape; a pre-prod rollout
+ * surfaced the mismatch with DnsServer.
  *
  * @param identifierValue - LE authz identifier (e.g. `*.example.com`)
  */

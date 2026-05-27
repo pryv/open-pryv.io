@@ -24,7 +24,7 @@ export { __ex_users as users };
 const __ex_MethodContext = require('./MethodContext.ts').default;
 export { __ex_MethodContext as MethodContext };
 
-// Plan 57 §7f — public types for Pryv.io API consumers.
+// Public types for Pryv.io API consumers.
 export type {
   Event, Stream, Access, Webhook, Permission, StreamPermission, FeaturePermission,
   AccessType, PermissionLevel, WebhookState, WebhookRun,

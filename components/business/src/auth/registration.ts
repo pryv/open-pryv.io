@@ -27,19 +27,18 @@ class Registration {
 
   // 0-arg getter returning the current `services` config slice. Stored
   // as a function (not a snapshot object) so the welcome-mail send path
-  // reads live config at request time — plan 70 §2C.
+  // reads live config at request time.
   getServicesSettings: () => any;
 
   platform: any;
   constructor (logging: any, storageLayer: any, servicesSettings: any) {
     this.logger = getLogger('business:registration');
     this.storageLayer = storageLayer;
-    // Plan 70 §2C: accept either a literal settings object (legacy) or a
-// 0-arg getter function. When a getter is passed, services config is
-// resolved per-use from the live config singleton — config.set() and
-// injectTestConfig() reach the welcome-mail send path without a
-// restart, and a plugin or override that adds keys later becomes
-// visible.
+    // Accept either a literal settings object (legacy) or a 0-arg getter
+// function. When a getter is passed, services config is resolved per-use
+// from the live config singleton — config.set() and injectTestConfig()
+// reach the welcome-mail send path without a restart, and a plugin or
+// override that adds keys later becomes visible.
 this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSettings : () => servicesSettings;
   }
 

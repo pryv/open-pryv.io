@@ -291,12 +291,13 @@ class AccessLogic {
     return this.id === access.createdBy;
   }
 
-  // Plan 66: Whether the current access can update the given target access.
-  // Encodes the §3 matrix (no self-update, personal-immutable, app can only
-  // update shared accesses it manages). Does NOT check whether the proposed
-  // changes are valid — that's the chain-rules check at apply time (Phase C).
-  // Chain match is by `base` (`parseAccessRef(target.createdBy).base === this.id`),
-  // not by composite id.
+  // Whether the current access can update the given target access.
+  // Encodes the update matrix (no self-update, personal-immutable, app can
+  // only update shared accesses it manages). Does NOT check whether the
+  // proposed changes are valid — that's the chain-rules check at apply
+  // time. Chain match is by `base`
+  // (`parseAccessRef(target.createdBy).base === this.id`), not by composite
+  // id.
   async canUpdateAccess (target: any): Promise<boolean> {
     if (target == null) return false;
     // No self-update — mutation always flows top-down from a parent.

@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Unit tests for Plan 35 Phase 3 — AcmeClient wrapper.
+ * Unit tests for the AcmeClient wrapper.
  *
  * Uses a fake `acmeLib` that imitates the acme-client surface we care
  * about: .Client / .crypto / .directory. The real end-to-end flow is

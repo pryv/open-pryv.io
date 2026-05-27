@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 34 Phase 4c — bootstrap-mode driver for `bin/master.js --bootstrap`.
+ * Bootstrap-mode driver for `bin/master.js --bootstrap`.
  *
  * Walks a fresh core through the consume-side of the bootstrap dance:
  *   1. Read the armored bundle file from `bundlePath`.

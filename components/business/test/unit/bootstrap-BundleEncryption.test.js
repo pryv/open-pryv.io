@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Unit tests for Plan 34 Phase 2b — passphrase-based bundle encryption.
+ * Unit tests for passphrase-based bundle encryption.
  */
 
 const assert = require('node:assert/strict');

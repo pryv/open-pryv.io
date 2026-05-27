@@ -13,11 +13,11 @@ const superagent = require('superagent');
 const request = require('supertest');
 require('test-helpers/src/api-server-tests-config.ts');
 
-// Plan 61: per-worker mocha hook so parallel-mode workers spawn their
-// own rqlited + apply per-worker config overrides. Without this,
-// `[USRP] Users repository` `before all` hits `fetch failed` trying
-// to reach the host rqlite at :4001 (killed in parallel mode), and
-// `[WHBK] Webhook` storage writes go to the default DB.
+// Per-worker mocha hook so parallel-mode workers spawn their own rqlited
+// + apply per-worker config overrides. Without this, `[USRP] Users
+// repository` `before all` hits `fetch failed` trying to reach the host
+// rqlite at :4001 (killed in parallel mode), and `[WHBK] Webhook`
+// storage writes go to the default DB.
 //
 // ALSO chain `helpers.dependencies.init()` into beforeAll — the
 // existing `test/global.test.js` `before` only runs in workers that

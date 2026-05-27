@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Unit tests for Plan 34 Phase 4b — applyBundle (consumer-side).
+ * Unit tests for applyBundle (consumer-side).
  *
  * Round-trips a real bundle (CA + node cert via openssl, real GCM
  * encryption) through applyBundle and asserts the on-disk artefacts:

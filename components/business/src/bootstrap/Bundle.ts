@@ -8,7 +8,7 @@ import type {} from 'node:fs';
 
 
 /**
- * Plan 34 — bootstrap bundle schema, assembly and validation.
+ * Bootstrap bundle schema, assembly and validation.
  *
  * The bundle is the trust boundary between an existing core and a new one:
  * it carries the platform-wide secrets, the new core's identity, the mTLS
@@ -21,12 +21,12 @@ import type {} from 'node:fs';
  * 1..BUNDLE_VERSION (forward-compat is rejected loudly so a downgrade can't
  * silently strip a field). Producers always emit the latest version.
  *
- * v1: original Plan 34 shape.
- * v2: optional `platformSecrets.letsEncrypt.atRestKey` (Plan 54 Phase B) —
- *     base64 32-byte symmetric key used by AtRestEncryption to encrypt cert
- *     + ACME account private keys at rest in rqlite. Issuing core embeds it
- *     when its own config has `letsEncrypt.atRestKey` set; joiner copies it
- *     into override-config.yml so cluster-wide AtRestEncryption keys agree.
+ * v1: original shape.
+ * v2: optional `platformSecrets.letsEncrypt.atRestKey` — base64 32-byte
+ *     symmetric key used by AtRestEncryption to encrypt cert + ACME account
+ *     private keys at rest in rqlite. Issuing core embeds it when its own
+ *     config has `letsEncrypt.atRestKey` set; joiner copies it into
+ *     override-config.yml so cluster-wide AtRestEncryption keys agree.
  *     Bundle stays v2-shaped even when the field is absent — the field is
  *     optional, the version is not.
  */

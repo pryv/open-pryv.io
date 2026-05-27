@@ -18,8 +18,8 @@ const Profile = require('./Profile.ts').default;
  * by `mfaToken` — a UUID v4 returned to the client in lieu of an access
  * token while MFA is pending.
  *
- * Cluster-aware (Plan 55): with `cluster.apiWorkers > 1`, login may land on
- * worker A and verify on worker B. Backing on cluster_kv makes the store
+ * Cluster-aware: with `cluster.apiWorkers > 1`, login may land on worker A
+ * and verify on worker B. Backing on cluster_kv makes the store
  * worker-symmetric within a single core. For cross-core MFA flows (a future
  * need; not today) swap the backing for PlatformDB.
  */

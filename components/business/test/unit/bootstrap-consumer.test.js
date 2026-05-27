@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Unit tests for Plan 34 Phase 4c — bootstrap consumer driver.
+ * Unit tests for the bootstrap consumer driver.
  *
  * Round-trips a real bundle through `consume()` with an injected fake
  * httpClient so we can assert the ack POST payload + the side effects on

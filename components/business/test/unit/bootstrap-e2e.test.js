@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * End-to-end test for Plan 34 — bootstrap flow across the three subsystems
+ * End-to-end test for the bootstrap flow across the three subsystems
  * that talk to each other in production:
  *
  *   1. Issuing core    → cliOps.newCore() mints token, pre-registers in

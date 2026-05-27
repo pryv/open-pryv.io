@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 54 Phase C — `cliOps.initCaHolder()` unit tests.
+ * Unit tests for `cliOps.initCaHolder()`.
  *
  * Covers:
  *   - first run mints CA + node cert, writes TLS files, merges

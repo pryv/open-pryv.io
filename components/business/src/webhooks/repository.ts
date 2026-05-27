@@ -108,7 +108,7 @@ class Repository {
 
   /**
    * Deletes all webhooks attached to a given access. Used by the
-   * `accesses.delete` cascade (Plan 72 Phase B).
+   * `accesses.delete` cascade.
    */
   async deleteByAccess (user: any, accessId: any) {
     await fromCallback((cb: any) => this.storage.delete(user, { accessId }, cb));

@@ -8,7 +8,7 @@ import type {} from 'node:fs';
 
 
 /**
- * Plan 34 — PlatformDB + DNS side-effects for the bootstrap CLI.
+ * PlatformDB + DNS side-effects for the bootstrap CLI.
  *
  * When the CLI on an existing core issues a bundle for a new core, it also
  * pre-registers the new core in PlatformDB and publishes the DNS entries
@@ -21,11 +21,12 @@ import type {} from 'node:fs';
  *    as soon as it starts up).
  *  - `{core-id}.{domain}` already resolves to its IP.
  *
- * The only non-trivial mutation is `lsc.{domain}`: Plan 31's API replaces
- * records per-subdomain. We want *append* semantics (the record must list
- * every core's IP), so we read-merge-write. Two concurrent bootstrap runs
- * could race on this path; the CLI surfaces a warning reminding operators
- * that adding a core is a deliberate single-operator action.
+ * The only non-trivial mutation is `lsc.{domain}`: the DNS-records API
+ * replaces records per-subdomain. We want *append* semantics (the record
+ * must list every core's IP), so we read-merge-write. Two concurrent
+ * bootstrap runs could race on this path; the CLI surfaces a warning
+ * reminding operators that adding a core is a deliberate single-operator
+ * action.
  */
 
 const LSC_SUBDOMAIN = 'lsc';

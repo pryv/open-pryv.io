@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Unit tests for Plan 34 Phase 2c — TokenStore.
+ * Unit tests for TokenStore.
  */
 
 const assert = require('node:assert/strict');

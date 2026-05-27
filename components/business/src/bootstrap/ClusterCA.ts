@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 34 — cluster CA and node-cert issuance.
+ * Cluster CA and node-cert issuance.
  *
  * The first time the bootstrap CLI is invoked on a core, it generates a
  * self-signed cluster CA whose private key lives only on that core's

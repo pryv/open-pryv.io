@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 34 Phase 4b — apply a bootstrap bundle on the new core.
+ * Apply a bootstrap bundle on the new core.
  *
  * Given the armored bundle file content + the passphrase, this module:
  *   1. Decrypts and schema-validates the bundle.
@@ -20,7 +20,7 @@ const require = createRequire(import.meta.url);
  * the highest precedence (see node_modules/@pryv/boiler/src/config.js).
  *
  * Pure-ish: no network, no boiler, no PlatformDB. The caller (master.js's
- * --bootstrap branch in Phase 4c) drives the ack POST separately.
+ * --bootstrap branch) drives the ack POST separately.
  */
 
 const fs = require('node:fs');

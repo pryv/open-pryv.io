@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Unit tests for Plan 34 Phase 2b — Bundle assembly + schema validation.
+ * Unit tests for Bundle assembly + schema validation.
  */
 
 const assert = require('node:assert/strict');

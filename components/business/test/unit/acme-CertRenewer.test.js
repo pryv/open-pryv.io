@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Unit tests for Plan 35 Phase 3b — CertRenewer and PlatformDBDnsWriter.
+ * Unit tests for CertRenewer and PlatformDBDnsWriter.
  *
  * Uses a fake PlatformDB + a fake acme-client surface so the orchestration
  * logic can be asserted without network / file-system side effects. The

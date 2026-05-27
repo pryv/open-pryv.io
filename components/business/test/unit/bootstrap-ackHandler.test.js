@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Unit tests for Plan 34 Phase 4a — ack handler.
+ * Unit tests for the ack handler.
  *
  * Exercises the handler in isolation with a real TokenStore (file-backed,
  * tmp dir) and a fake PlatformDB. No express, no rqlited.

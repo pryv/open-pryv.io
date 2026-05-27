@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 35 Phase 3 — tiny PEM helpers used by the ACME engine.
+ * Tiny PEM helpers used by the ACME engine.
  */
 
 const { X509Certificate } = require('node:crypto');
@@ -47,8 +47,8 @@ function parseValidity (pem: any) {
 
 /**
  * Derive a filesystem-safe directory name for a hostname. Wildcards
- * ('*.domain.com') become 'wildcard.domain.com' — see Plan 35 config
- * contract (tlsDir/<hostname>/…).
+ * ('*.domain.com') become 'wildcard.domain.com' — matches the letsEncrypt
+ * tlsDir/<hostname>/… layout on disk.
  *
  */
 function hostnameToDirName (hostname: any) {

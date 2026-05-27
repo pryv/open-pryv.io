@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Unit tests for Plan 35 Phase 4b — AcmeOrchestrator.
+ * Unit tests for AcmeOrchestrator.
  *
  * Uses a fake CertRenewer + fake FileMaterializer to test the interval /
  * renew-decision logic without touching ACME, PlatformDB or the fs.

@@ -16,7 +16,7 @@ const WebhooksRepository = require('business/src/webhooks/repository.ts').defaul
 const { createId: cuid } = require('@paralleldrive/cuid2');
 
 const HttpServer = require('./support/httpServer').default;
-// Plan 61: keep PORT in sync with httpServer.js's worker-relative shift.
+// Keep PORT in sync with httpServer.js's worker-relative shift.
 const PORT = 6123 + parseInt(process.env.MOCHA_WORKER_ID || '0', 10) * 10;
 
 // const whStorage = require('test-helpers').dependencies.storage.user.webhooks;
@@ -447,7 +447,7 @@ describe('[WHBK] Webhook', () => {
     });
   });
 
-  describe('[WCAD-FIRE] fire-time access-validity check (Plan 72 B.1.c)', () => {
+  describe('[WCAD-FIRE] fire-time access-validity check', () => {
     const postPath = '/should-not-fire';
     const url = 'http://127.0.0.1:' + PORT + postPath;
     const user = { id: 'wcad-fire-user', username: 'wcad-fire-user' };

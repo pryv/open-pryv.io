@@ -106,8 +106,9 @@ class Webhook {
    */
   async send (message: any, isRescheduled?: any) {
     if (this.state === 'inactive') { return; }
-    // Fire-time access-validity check (Plan 72 B.1.c): self-heal orphan webhooks
-    // whose access was revoked, including those created before the cascade fix shipped.
+    // Fire-time access-validity check: self-heal orphan webhooks whose
+    // access was revoked, including those created before the cascade
+    // delete logic shipped.
     if (this.repository != null && typeof this.repository.accessExists === 'function') {
       const cacheHit = cache.getAccessLogicForId(this.user.id, this.accessId);
       if (cacheHit == null) {

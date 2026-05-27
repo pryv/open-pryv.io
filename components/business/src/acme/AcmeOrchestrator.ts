@@ -7,10 +7,9 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 35 Phase 4b — runtime orchestrator for the Let's Encrypt
- * integration. One of these is instantiated by `bin/master.js` when
- * `letsEncrypt.enabled: true` and lives for the life of the master
- * process.
+ * Runtime orchestrator for the Let's Encrypt integration. One of these is
+ * instantiated by `bin/master.js` when `letsEncrypt.enabled: true` and
+ * lives for the life of the master process.
  *
  * Responsibilities:
  *   1. File materialization — every core (renewer or not) polls
