@@ -1297,8 +1297,6 @@ npm package.
 - ~~`cmc-clientdata-cmc-forbidden`~~ — shipped (route-level forge prevention on `accesses.create` + `accesses.update`).
 - ~~`cmc-reserved-stream-undeletable`~~ — shipped (route-level immutability guard on `streams.delete` for the five reserved CMC parents + `:_cmc:_internal:*` + plugin-managed `chats`/`collectors` segments).
 
-See [HANDOVER-RESPONSE.md](https://github.com/pryv/macroPryv/blob/main/_plans/68-cmc-datastore-atwork/HANDOVER-RESPONSE.md) for the full design discussion.
-
 ---
 
 # Reference — "Did the patient click my invite yet?"

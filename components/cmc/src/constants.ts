@@ -149,8 +149,8 @@ function isPluginManagedStreamId (streamId: string): boolean {
 }
 
 /**
- * Plan 68 Phase 4 H5 — true for any stream-id under the plugin-internal
- * subtree (`:_cmc:_internal`, `:_cmc:_internal:retries`,
+ * True for any stream-id under the plugin-internal subtree
+ * (`:_cmc:_internal`, `:_cmc:_internal:retries`,
  * `:_cmc:_internal:offer:*`, `:_cmc:_internal:responses:*`). The
  * defense-in-depth filter on events.get / events.getOne /
  * streams.get uses this so internal events / streams cannot leak via

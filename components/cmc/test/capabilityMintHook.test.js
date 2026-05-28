@@ -195,10 +195,10 @@ describe('[CMCMINT] cmc/capabilityMintHook', () => {
   });
 
   describe('[CMCMINT-TTL] caller-supplied expiresAt → ttlSeconds', () => {
-    // Plan 68 Phase 2.1: honor `request.expiresAt` as the source of
-    // truth for capability TTL. Bounds [60s, 30d]; out-of-range
-    // rejected at mint time with `cmc-capability-ttl-out-of-range`.
-    // Absent / non-number → DEFAULT_TTL_SECONDS (7d) preserved.
+    // Honor `request.expiresAt` as the source of truth for capability
+    // TTL. Bounds [60s, 30d]; out-of-range rejected at mint time with
+    // `cmc-capability-ttl-out-of-range`. Absent / non-number →
+    // DEFAULT_TTL_SECONDS (7d) preserved.
 
     it('[CM07] threads request.expiresAt into capability access expiry within bounds', async () => {
       const errors = fakeErrors();
@@ -351,13 +351,13 @@ describe('[CMCMINT] cmc/capabilityMintHook', () => {
   });
 
   describe('[CMCMINT-PC] capabilityPostCreateHook', () => {
-    // Plan 68 Phase 3.2: the mint hook minted the access with
+    // The mint hook initially mints the access with
     // `requestEventId: null` because `context.newEvent.id` is not yet
     // assigned (mall.events.create assigns it later in the chain).
     // After createEvent persists the trigger and the mall assigns the
     // real id, this post-create hook stamps it on the access. Without
-    // this, Phase 1.1's inviteEventId enrichment on the inbox-mirror
-    // degrades silently on real deploys.
+    // this, the inviteEventId enrichment on the inbox-mirror degrades
+    // silently on real deploys.
 
     it('[CM13] stamps event.id onto capability access requestEventId after createEvent', async () => {
       const errors = fakeErrors();

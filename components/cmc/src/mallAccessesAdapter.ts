@@ -25,7 +25,7 @@ const require = createRequire(import.meta.url);
  * `mall.accesses`.
  *
  * NOTE: this adapter is intentionally minimal — it does NOT enforce
- * the Plan 66 chain rules / composite-id semantics that the full
+ * the chain rules / composite-id semantics that the full
  * `accesses.update` method path applies. CMC handlers that need full
  * chain-rule validation should call through the api-server's own
  * `accesses.update` API method instead (via the api-method registry).
@@ -127,9 +127,9 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
 
     /**
      * Update an access. Minimal shape: { id, update: { permissions?,
-     * clientData?, name?, expires? } }. Does NOT enforce Plan 66 chain
-     * rules — CMC handlers requiring chain validation should call
-     * through the api-server's own accesses.update.
+     * clientData?, name?, expires? } }. Does NOT enforce composite-id
+     * chain rules — CMC handlers requiring chain validation should
+     * call through the api-server's own accesses.update.
      */
     async update (userId: string, params: any): Promise<any> {
       if (storageAccesses.updateOne == null) {

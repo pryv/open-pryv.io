@@ -32,12 +32,12 @@ const CmcErrorIds = {
   // HANDOVER-RESPONSE.md).
   CAPABILITY_INVALID: 'cmc-capability-invalid',
   // The capability was already accepted/refused (single-use mode only —
-  // open-link mode does not transition to 'consumed' on accept; see
-  // `_plans/XX-cmc-capability-open-link-later/PLAN.md`). Distinct from
-  // INVALID: the access still exists, the write-hook detected
-  // `clientData.cmc.capability.state === 'consumed'` and rejected the
-  // re-click. Lets the patient app show "you already accepted this
-  // invite" instead of the generic "invite no longer valid".
+  // open-link mode does not transition to 'consumed' on accept).
+  // Distinct from INVALID: the access still exists, the write-hook
+  // detected `clientData.cmc.capability.state === 'consumed'` and
+  // rejected the re-click. Lets the patient app show "you already
+  // accepted this invite" instead of the generic "invite no longer
+  // valid".
   CAPABILITY_CONSUMED: 'cmc-capability-consumed',
   // The capability (the LINK / join mechanism) was explicitly
   // invalidated by the requester. Open-link mode use case: "stop

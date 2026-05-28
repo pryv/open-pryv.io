@@ -311,7 +311,7 @@ async function handleSystemScopeRequest (params: {
  * to inform the peer that an access they hold has had its permissions
  * adjusted. Content typically carries:
  *   - the new permissions
- *   - the new compositeId/version (Plan 66 composite-id versioning)
+ *   - the new compositeId/version (composite-id access versioning)
  *   - optional reason / human-readable message
  *
  * The peer uses this to know their existing data-grant has new scope

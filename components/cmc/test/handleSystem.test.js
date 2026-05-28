@@ -652,11 +652,11 @@ describe('[CMCHS] cmc/handleSystem', () => {
   });
 
   describe('[CMCHS-FEAT] Phase 2.2 features.systemMessaging gating', () => {
-    // Plan 68 Phase 2.2: `features.systemMessaging: false` on the
-    // counterparty access is binding for user-level system events
-    // (alert + ack). Protocol-level events (scope-request, scope-update)
-    // are NOT subject to this gate — they govern the relationship
-    // itself, not user messaging.
+    // `features.systemMessaging: false` on the counterparty access is
+    // binding for user-level system events (alert + ack). Protocol-
+    // level events (scope-request, scope-update) are NOT subject to
+    // this gate — they govern the relationship itself, not user
+    // messaging.
 
     it('[HS29] rejects notification/alert-cmc with cmc-system-messaging-disabled when features.systemMessaging === false', async () => {
       const smDisabledAccess = {
