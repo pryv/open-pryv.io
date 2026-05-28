@@ -9,7 +9,7 @@
 #
 # Single-node only — multi-core peer discovery is master.js's job at runtime.
 #
-# Binary lives at repo-root/bin-ext/rqlited (moved out of var-pryv/ in Plan 48).
+# Binary lives at repo-root/bin-ext/rqlited.
 
 SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
 REPO_ROOT=${REPO_ROOT:-$SCRIPT_FOLDER/../../../..}

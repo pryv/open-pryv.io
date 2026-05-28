@@ -29,11 +29,10 @@ function setHeadIdNullIfMissing (access: any) {
   return access;
 }
 
-// Plan 66 note: `headId` stays on the storage item so the integrity
-// hash (computed at insert time including headId) round-trips
-// consistently with the read-time recompute. The api-server layer
-// strips `headId` via `composeWireAccess` before responding to the
-// client.
+// `headId` stays on the storage item so the integrity hash (computed
+// at insert time including headId) round-trips consistently with the
+// read-time recompute. The api-server layer strips `headId` via
+// `composeWireAccess` before responding to the client.
 
 const indexes = [
   {
@@ -106,10 +105,11 @@ class Accesses extends BaseStorage {
   }
 
   /**
-   * Plan 66 schema bootstrap. Idempotent. Drops the pre-Plan-66 unique indexes
-   * whose partial filter did not include `headId`, then backfills existing
-   * rows so the new `{ headId: { $type: 'null' } }` partial filter applies to
-   * them. Called once from the engine's `initStorageLayer`.
+   * Schema bootstrap for the access-versioning shape. Idempotent.
+   * Drops the pre-versioning unique indexes whose partial filter did
+   * not include `headId`, then backfills existing rows so the new
+   * `{ headId: { $type: 'null' } }` partial filter applies to them.
+   * Called once from the engine's `initStorageLayer`.
    */
   async bootstrap () {
     await this.database.ensureConnect();
@@ -204,10 +204,10 @@ class Accesses extends BaseStorage {
   }
 
   /**
-   * Plan 66: return the chronological history docs for a base id. Each
-   * doc is a frozen pre-update snapshot; `serial` is the value that
-   * doc was at before the update that produced the next version.
-   * Sorted by `modified` ascending so caller iterates oldest-first.
+   * Return the chronological history docs for a base id. Each doc is
+   * a frozen pre-update snapshot; `serial` is the value that doc was
+   * at before the update that produced the next version. Sorted by
+   * `modified` ascending so caller iterates oldest-first.
    */
   async findHistory (userOrUserId: any, baseId: string): Promise<any[]> {
     await this.database.ensureConnect();
@@ -221,9 +221,9 @@ class Accesses extends BaseStorage {
   }
 
   /**
-   * Plan 66: snapshot the current live head document into a history doc.
-   * Reads via findOne (camelCase item), clones, replaces `id` with a
-   * freshly-minted cuid, sets `headId` to the original base, drops the
+   * Snapshot the current live head document into a history doc. Reads
+   * via findOne (camelCase item), clones, replaces `id` with a freshly-
+   * minted cuid, sets `headId` to the original base, drops the
    * integrity hash so insertOne's `addIntegrity` recomputes against
    * the snapshot row's fields. Goes through the standard insertOne so
    * the partial-filter-unique-index sees the new doc with headId set.

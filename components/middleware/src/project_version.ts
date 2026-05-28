@@ -55,11 +55,11 @@ class ProjectVersion {
     // Sources, in priority order:
     //   1. `process.mainModule.paths` siblings (CJS entry point)
     //   2. `require.main.paths` (also CJS-only but distinct from mainModule)
-    //   3. Walk upward from this file's own location (ESM-safe fallback —
-    //      Plan 57 Phase 5f flipped many forked entry points to ESM, where
-    //      both mainModule and require.main are undefined; without this
-    //      fallback project_version returns the git-describe stamp which
-    //      breaks consumers expecting a `1.2.3`-shaped version string).
+    //   3. Walk upward from this file's own location (ESM-safe fallback
+    //      — many forked entry points are ESM, where both mainModule
+    //      and require.main are undefined; without this fallback
+    //      project_version returns the git-describe stamp which breaks
+    //      consumers expecting a `1.2.3`-shaped version string).
     // process.mainModule was deprecated and removed from @types/node;
     // the fallback chain is intentional for legacy CJS contexts.
     const mainModule: any = (process as any).mainModule || require.main;

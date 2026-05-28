@@ -36,8 +36,8 @@ const Server = require('./server.ts').default;
 const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
 
-// Tracing shim. See components/tracing/src/Tracing.js for the rationale —
-// New Relic APM (Plan 38) is the active observability path; this layer
+// Tracing shim. See components/tracing/src/Tracing.ts for the rationale
+// — New Relic APM is the active observability path; this layer
 // preserves the architectural slot.
 class NoopSpan {
   operationName;

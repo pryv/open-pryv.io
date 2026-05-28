@@ -49,12 +49,12 @@ jobs:
           influxd &
           sleep 3
       - name: Run PostgreSQL test suite
-        # Plan 61: CI stays SEQUENTIAL on purpose — parallel mode disables
-        # the integrity-check beforeEach/afterEach + bypasses the caching
-        # layer + uses a fallback for cluster_kv (no real IPC). Those are
-        # three real coverage gaps; sequential exercises them. Parallel
-        # mode is a local-dev productivity tool (`just test-parallel all`),
-        # not the matrix-of-record. See SessionState for the audit.
+        # CI stays SEQUENTIAL on purpose — parallel mode disables the
+        # integrity-check beforeEach/afterEach + bypasses the caching
+        # layer + uses a fallback for cluster_kv (no real IPC). Those
+        # are three real coverage gaps; sequential exercises them.
+        # Parallel mode is a local-dev productivity tool
+        # (`just test-parallel all`), not the matrix-of-record.
         run: just clean-test-data && just test all
         env:
           storages__engines__postgresql__host: localhost

@@ -87,8 +87,8 @@ async function initStorageLayer (storageLayer: any, connection: any, options: an
     await fromCallback((cb: any) => connection.deleteMany({ name: collectionName }, {}, cb));
   };
 
-  // Plan 66: drop pre-versioning unique indexes + backfill `headId: null`
-  // on legacy rows so the new partial-filter (headId: $type null) applies.
+  // Drop pre-versioning unique indexes + backfill `headId: null` on
+  // legacy rows so the new partial-filter (headId: $type null) applies.
   await storageLayer.accesses.bootstrap();
 }
 

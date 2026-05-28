@@ -72,7 +72,7 @@ tag-tests:
     scripts/tag-tests
 
 # Run tests on the given component ('all' for all components) with optional extra parameters.
-# PostgreSQL is the default baseStorage since Plan 49 — use `test-mongo` for Mongo.
+# PostgreSQL is the default baseStorage — use `test-mongo` for Mongo.
 test component *params:
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}
@@ -231,18 +231,18 @@ clean-test-data:
     else
       echo "dropdb/createdb not found (skipping pg test reset + pg dev reset)"
     fi
-    # rqlite PlatformDB key-value table (Plan 25: rqlite is the only
-    # platform engine). Wipes both the test harness state AND the
-    # local-dev email/platform-unique index — paired with the PG
-    # dev-DB drop above so the platform DB and the user index can't
-    # diverge across cleans.
+    # rqlite PlatformDB key-value table (rqlite is the only platform
+    # engine). Wipes both the test harness state AND the local-dev
+    # email/platform-unique index — paired with the PG dev-DB drop
+    # above so the platform DB and the user index can't diverge
+    # across cleans.
     curl -s -X POST -H 'Content-Type: application/json' 'http://localhost:4001/db/execute' -d '[["DELETE FROM keyValue"]]' > /dev/null 2>&1 || echo "rqlite not reachable (skipping rqlite reset)"
     # Stale customAuthStepFn from a prior aborted permissions-seq test (the [P4OM] invalid-fixture test crashes the api-server bin and leaves the file behind, polluting subsequent matrix runs with [api-server fatal] Not a function (string)). Safe to delete unconditionally — committed file is .gitkeep.
     rm -f ./custom-extensions/customAuthStepFn.js
     echo "Test data cleaned: SQLite + per-user dirs + attachments/previews + Mongo (pryv-node-test + pryv-node) + PG (pryv-node-test + pryv-node) + rqlite keyValue + custom-extensions stale fixture"
 
-# Reset per-worker test state for parallel mode (Plan 61 Stage 3).
-# Wipes worker-private PG DBs (pryv-node-test-w0..N), per-worker user
+# Reset per-worker test state for parallel mode. Wipes worker-private
+# PG DBs (pryv-node-test-w0..N), per-worker user
 # dirs (var-pryv/users-test-w*/), per-worker previews + rqlite data
 # dirs, and kills any lingering rqlited PIDs referenced in worker
 # pidfiles.
@@ -250,7 +250,7 @@ clean-test-data:
 # WORKERS default = empty → auto-derive to match `.mocharc.js`
 # `defaultParallelJobs`: `MOCHA_JOBS` env if set, else `max(2, cpus-1)`.
 # This keeps the cleanup sized for the actual parallel-mode worker count
-# on machines with >8 cores (Plan 61 14-worker scaling fix).
+# on machines with >8 cores.
 #
 # The dev-host rqlited at port 4001 is left running on purpose; parallel
 # mode workers use offset ports (4011/4021/…). If a previous run crashed
@@ -287,10 +287,10 @@ clean-test-data-parallel WORKERS='':
     else
       MONGOSH=$(command -v mongosh || true)
     fi
-    # Plan 61 overhead-pass: parallelize the per-worker cleanup. Each
-    # iteration is independent (different DB name + dir paths), so they
-    # can fan out via background jobs + `wait`. Wall time on the dev box
-    # dropped from ~13s to ~3s for 8 workers.
+    # Parallelize the per-worker cleanup. Each iteration is independent
+    # (different DB name + dir paths), so they can fan out via background
+    # jobs + `wait`. Wall time on the dev box dropped from ~13s to ~3s
+    # for 8 workers.
     cleanup_worker () {
       local i=$1
       local DB="pryv-node-test-w$i"
@@ -366,7 +366,7 @@ version version:
     npm version --no-git-tag-version --workspaces --include-workspace-root {{version}}
 
 # –––––––––––––----------------------------------------------------------------
-# TypeScript (Plan 57 — incremental migration to TS+ESM, currently CJS-emit)
+# TypeScript — incremental migration to TS+ESM, currently CJS-emit
 # –––––––––––––----------------------------------------------------------------
 
 # Run the TypeScript compiler in check-only mode (no emit)

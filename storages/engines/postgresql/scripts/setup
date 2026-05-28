@@ -133,8 +133,8 @@ listen_addresses = '127.0.0.1'
 log_destination = 'stderr'
 logging_collector = on
 log_directory = 'log'
-# Plan 61 14-worker scaling: 300 gives headroom for `MOCHA_PARALLEL=1`
-# on boxes with ~16 cores (≈14 workers × 16 conns/worker = 224).
+# 14-worker scaling: 300 gives headroom for `MOCHA_PARALLEL=1` on
+# boxes with ~16 cores (≈14 workers × 16 conns/worker = 224).
 max_connections = 300
 shared_buffers = 128MB
 PGCONF

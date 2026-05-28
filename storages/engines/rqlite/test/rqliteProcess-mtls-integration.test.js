@@ -11,11 +11,10 @@ import { dirname } from 'node:path';
 const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 /**
- * Integration test for Plan 34 Phase 1 — actually spawns two rqlited
- * processes with mTLS on the Raft channel and verifies that the cluster
- * forms and replicates writes. This validates that the flag names and
- * ordering produced by buildArgs() match what the real rqlited binary
- * accepts.
+ * Integration test that spawns two rqlited processes with mTLS on the
+ * Raft channel and verifies that the cluster forms and replicates
+ * writes. Validates that the flag names and ordering produced by
+ * buildArgs() match what the real rqlited binary accepts.
  *
  * Prerequisites (the test skip()s when any are missing):
  *   - `openssl` on PATH  (to generate a self-signed CA + node certs)

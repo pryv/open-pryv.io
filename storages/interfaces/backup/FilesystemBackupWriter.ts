@@ -231,7 +231,7 @@ async function writeChunkedJsonlFiles (dir: string, baseName: string, items: Asy
   // exceeds the target, the compressed output is *possibly* over the limit —
   // worth a check. Without this lower-bound trigger, small datasets (fewer than
   // CHECK_INTERVAL items) never fire the batch check and produce a single chunk
-  // regardless of maxChunkSize — see Plan 28 Phase 1.
+  // regardless of maxChunkSize.
   let rawSize = 0;
   const CHECK_INTERVAL = 100;
 

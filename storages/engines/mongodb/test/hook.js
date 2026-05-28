@@ -13,9 +13,9 @@ Object.assign(global, {
   _: require('lodash')
 });
 
-// Plan 61 Stage 3 — wire the per-worker rqlited harness into this engine
-// suite too. No-op when MOCHA_PARALLEL is unset so sequential matrices
-// keep talking to the host rqlited on 4001/4002.
+// Wire the per-worker rqlited harness into this engine suite. No-op
+// when MOCHA_PARALLEL is unset so sequential matrices keep talking to
+// the host rqlited on 4001/4002.
 export const mochaHooks = {
   async beforeAll () {
     const { setupParallelWorker } = require('test-helpers/src/parallelWorkerSetup.ts');

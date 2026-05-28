@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 55 Phase 3 — clusterKv unit tests.
+ * cluster_kv unit tests.
  *
  * Two layers:
  *   - in-memory shim: a fake `cluster` + `process` round-trip in the

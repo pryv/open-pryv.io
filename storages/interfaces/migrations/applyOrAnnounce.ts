@@ -20,9 +20,10 @@
  *  | false   | none        | info      | 1 line: "Migrations skipped …"     |
  *  | false   | >= 1        | warn      | summary + per-engine WARNING lines |
  *
- * The warning is deliberately loud — Plan 69 was opened after a demo deploy
- * outage where pending Plan 66 migrations were silently skipped because
- * `migrations:autoRunOnStart` was false in the operator's override.
+ * The warning is deliberately loud — a demo deploy outage was caused
+ * by pending access-versioning migrations being silently skipped
+ * because `migrations:autoRunOnStart` was false in the operator's
+ * override.
  */
 
 import type { AppliedMigration, EngineStatus } from './MigrationRunner.js';

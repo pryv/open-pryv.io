@@ -16,11 +16,11 @@
  *   const helpers = require('../../../test/helpers');
  *   helpers.state.config = helpers.getEngineConfig('mongodb', require('../manifest.json'));
  *
- * Plan 57 5g.4 — converted from CJS spread-mutation pattern to ESM
- * named exports. The previous shape `module.exports = { ...require('test-helpers') }`
- * + `module.exports.config = X` doesn't work under ESM (consumer namespace
- * is read-only). Cross-test mutable state lives on the `state` object;
- * everything else is a fixed re-export.
+ * Uses ESM named exports. The CJS shape `module.exports =
+ * { ...require('test-helpers') }` + `module.exports.config = X`
+ * doesn't work under ESM (consumer namespace is read-only). Cross-test
+ * mutable state lives on the `state` object; everything else is a
+ * fixed re-export.
  */
 
 import { createRequire } from 'node:module';

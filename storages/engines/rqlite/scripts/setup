@@ -5,7 +5,7 @@ set -e
 # Mirrors the setup-mongodb pattern: downloads a precompiled binary into bin-ext/.
 #
 # Result:
-#   bin-ext/rqlited               — the rqlited daemon binary (OUTSIDE var-pryv/ since Plan 48
+#   bin-ext/rqlited               — the rqlited daemon binary (OUTSIDE var-pryv/
 #                                   so operators can bind-mount /app/var-pryv/... without shadowing)
 #   var-pryv/rqlite-data/         — Raft log + SQLite snapshot directory (created on first start)
 

@@ -46,8 +46,8 @@ interface RqliteOpts {
 
 /**
  * Build the argv passed to rqlited. Pure function — no side effects.
- * Exported so Phase 1 (Plan 34) can unit-test argv construction without
- * spawning a real process.
+ * Exported so callers can unit-test argv construction without spawning
+ * a real process.
  */
 function buildArgs (opts: RqliteOpts): string[] {
   const {

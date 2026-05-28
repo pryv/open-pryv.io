@@ -7,7 +7,7 @@ RUN apt-get update && \
     apt-get install -y python3 build-essential curl && \
     rm -rf /var/lib/apt/lists/*
 
-# rqlite — mandatory since Plan 25 (rqlite is the only platform engine).
+# rqlite — mandatory (rqlite is the only platform engine in v2).
 # master.js spawns rqlited directly; the binary must be inside the image.
 # Installed under /app/bin-ext/ (NOT /app/var-pryv/) so operators can bind-mount
 # /app/var-pryv/rqlite-data without shadowing the baked-in binary.

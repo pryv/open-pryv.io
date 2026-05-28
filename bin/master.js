@@ -122,7 +122,7 @@ if (cluster.isPrimary) {
     //
     // When `migrations.autoRunOnStart` is false the runner is still consulted
     // via `status()` so a loud WARNING surfaces any pending migrations — the
-    // silent-skip footgun took down a demo deploy on 2026-05-13 (Plan 69).
+    // silent-skip footgun took down a demo deploy on 2026-05-13.
     const autoRunMigrations = config.get('migrations:autoRunOnStart') ?? true;
     const { createMigrationRunner, applyOrAnnounce } = require('../storages/interfaces/migrations/index.ts');
     const migrationRunner = await createMigrationRunner({ logger: getLogger('migrations') });
@@ -159,10 +159,10 @@ if (cluster.isPrimary) {
     await tcpPubsub.init();
     log('TCP pub/sub broker started');
 
-    // Cluster-wide ephemeral kv (Plan 55 Phase 3) — master-held Map +
-    // request/response IPC with workers. Used for state that must be
-    // shared across workers but doesn't need persistence (single-core
-    // scope; cross-core state belongs in PlatformDB instead).
+    // Cluster-wide ephemeral kv — master-held Map + request/response
+    // IPC with workers. Used for state that must be shared across
+    // workers but doesn't need persistence (single-core scope;
+    // cross-core state belongs in PlatformDB instead).
     require('../components/messages/src/cluster_kv.ts').masterStart({
       log: (m) => log('[cluster_kv] ' + m)
     });
@@ -226,9 +226,9 @@ if (cluster.isPrimary) {
           atRestKey,
           dnsServer,
           onRotate: async (certPath, keyPath, hostname) => {
-            // Broadcast to every live worker so their HTTPS servers hot-swap
-            // to the rotated cert (Plan 35 Phase 4d). Workers that aren't
-            // serving HTTPS (hfs, previews, and api-server in http-only mode)
+            // Broadcast to every live worker so their HTTPS servers
+            // hot-swap to the rotated cert. Workers that aren't serving
+            // HTTPS (hfs, previews, and api-server in http-only mode)
             // ignore the message.
             const msg = { type: 'acme:rotate', hostname, certPath, keyPath };
             for (const id in cluster.workers) {
@@ -352,10 +352,11 @@ if (cluster.isPrimary) {
     }
 
     // --- IPC from workers (DNS record updates) ---
-    // Plan 27 Phase 1: the worker already persisted the record to PlatformDB
-    // before sending this IPC. Master refreshes from PlatformDB to pick it up
-    // atomically (instead of trusting the IPC payload) — any other core in the
-    // deployment will do the same via its next periodic refresh.
+    // The worker already persisted the record to PlatformDB before
+    // sending this IPC. Master refreshes from PlatformDB to pick it
+    // up atomically (instead of trusting the IPC payload) — any other
+    // core in the deployment will do the same via its next periodic
+    // refresh.
     if (dnsServer) {
       cluster.on('message', (worker, msg) => {
         if (msg && msg.type === 'dns:updateRecords') {
@@ -381,11 +382,11 @@ if (cluster.isPrimary) {
       }
     });
 
-    // Plan 54 Phase D — admin force-renew IPC. The api-server route
+    // Admin force-renew IPC. The api-server route
     // POST /system/admin/certs/force-renew runs in a worker; it sends
-    // `acme:force-renew` to the master, which holds the AcmeOrchestrator,
-    // and waits for `acme:force-renew:reply`. Non-renewer cores reply with
-    // ok:false so the route can return a 400.
+    // `acme:force-renew` to the master, which holds the
+    // AcmeOrchestrator, and waits for `acme:force-renew:reply`. Non-
+    // renewer cores reply with ok:false so the route can return a 400.
     cluster.on('message', async (worker, msg) => {
       if (!msg || msg.type !== 'acme:force-renew') return;
       const reply = { type: 'acme:force-renew:reply', requestId: msg.requestId };

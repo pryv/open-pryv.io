@@ -11,8 +11,7 @@ import { dirname } from 'node:path';
 const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 /**
- * [ERC] Engine plugin runtime contract — Plan 57 Phase 5a pre-flight
- * characterization test.
+ * [ERC] Engine plugin runtime contract — characterization test.
  *
  * For every concrete engine plugin under storages/engines/, asserts that
  * the loaded module exports the methods that pluginLoader's REQUIRED_EXPORTS

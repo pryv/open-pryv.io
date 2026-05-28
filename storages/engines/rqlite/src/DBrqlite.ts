@@ -262,7 +262,7 @@ class DBrqlite {
     await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
   }
 
-  // --- DNS records (Plan 27 Phase 1) --- //
+  // --- DNS records --- //
 
   async setDnsRecord (subdomain: any, records: any) {
     const key = getDnsRecordKey(subdomain);
@@ -421,7 +421,7 @@ class DBrqlite {
     );
   }
 
-  // --- Access-request state (Plan 55 §12 fix) --- //
+  // --- Access-request state --- //
 
   async setAccessState (key: any, value: any, expiresAt: any) {
     const storeKey = getAccessStateKey(key);

@@ -32,10 +32,10 @@ const REQUIRED_SERVICE_FIELDS = ['name', 'serial', 'home', 'support', 'terms', '
 // (no entry to descend into) when the feature gating says they ought to
 // be there.
 const REQUIRED_WHEN = [
-  // Plan 71 (PR #71) root-cause fix. `services.email.enabled` is an
-  // object `{ welcome, resetPassword }` in the default config — mirror
-  // the gating logic from `methods/account.ts:174` exactly so the
-  // boot-time check tracks the runtime behaviour.
+  // `services.email.enabled` is an object `{ welcome, resetPassword }`
+  // in the default config — mirror the gating logic from
+  // `methods/account.ts:174` exactly so the boot-time check tracks the
+  // runtime behaviour.
   {
     path: 'auth:passwordResetPageURL',
     when: c => {
@@ -83,8 +83,8 @@ function checkRequiredWhen (config, problems) {
   }
 }
 
-// Plan 72 A.2: enum-style validation for `audit:onUserDelete` mode +
-// gate for `pseudonymise` which depends on the not-yet-shipped ALIASES
+// Enum-style validation for `audit:onUserDelete` mode + gate for
+// `pseudonymise` which depends on the not-yet-shipped ALIASES
 // primitive. Lives alongside REQUIRED_WHEN so future enum-style gates
 // land in the same shape.
 const AUDIT_ON_USER_DELETE_MODES = ['erase', 'keep', 'pseudonymise'];
