@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * Plan 68 Phase D — outbound HTTPS client.
+ * Outbound HTTPS client.
  *
  * Federated cross-platform / cross-core delivery to counterparty apiEndpoints.
  *

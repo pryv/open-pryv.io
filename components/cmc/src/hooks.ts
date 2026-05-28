@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * Plan 68 — middleware factories for the CMC plugin's write-hooks.
+ * Middleware factories for the CMC plugin's write-hooks.
  *
  * Each factory takes a `deps` object (errors factory, logger) and returns
  * an api-server-shaped middleware: `(context, params, result, next) → void`.

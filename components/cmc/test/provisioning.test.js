@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * Plan 68 Phase C — auto-provisioning unit tests.
+ * Auto-provisioning unit tests.
  *
  * [CMCPROV] suite covers `provisionUserStreams` against a fake mall:
  * - all seven reserved parents created on a fresh user

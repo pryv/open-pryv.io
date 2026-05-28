@@ -209,9 +209,9 @@ describe('[CMCHC] cmc/handleChat', () => {
   });
 
   describe('[CMCHC-FEAT] Phase 2.2 features gating', () => {
-    // Plan 68 Phase 2.2: `features.chat: false` on the counterparty
-    // access is binding. handleChat rejects the send so the offer's
-    // negotiated feature contract isn't a silent no-op.
+    // `features.chat: false` on the counterparty access is binding.
+    // handleChat rejects the send so the offer's negotiated feature
+    // contract isn't a silent no-op.
 
     it('[HC09] rejects send with cmc-chat-disabled when access.clientData.cmc.features.chat === false', async () => {
       const chatDisabledAccess = {

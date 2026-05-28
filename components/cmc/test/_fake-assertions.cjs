@@ -11,8 +11,7 @@
  * Pins the cmc plugin's calling conventions to mall + outbound HTTP, so a
  * fake that previously accepted any param shape now rejects the wrong
  * shape at the call site. Catches the class of "wire-shape" bugs that
- * shipped past unit tests during Plan 68 (see TEST-GAP-DEBRIEF.md
- * Category A / bugs #1, #2).
+ * unit tests with permissive fakes would miss.
  */
 
 const assert = require('node:assert/strict');
@@ -34,7 +33,6 @@ const ALLOWED_QUERY_PARAMS = new Set([
  * `eventObject` identifies the event by `id`; the OTHER fields are the new
  * values to write. A top-level `update` field is the WRONG shape (the HTTP
  * accesses.update API uses { id, update: {...} } — the mall does not).
- * Catches Plan 68 bug #1.
  */
 function assertEventUpdateShape (params) {
   assert.ok(params != null && typeof params === 'object',
@@ -51,8 +49,8 @@ function assertEventUpdateShape (params) {
  * Validates the outbound URL grammar the cmc plugin uses to call peer Pryv
  * APIs. Pathname must be one of `/events`, `/streams`, `/accesses`, or
  * `/accesses/<id>`; query params must come from the Pryv API grammar
- * (`streams[]`, `types[]`, `limit`, …). Catches Plan 68 bug #2
- * (`?streamIds=` instead of `?streams[]=`).
+ * (`streams[]`, `types[]`, `limit`, …). Catches wire-shape mistakes
+ * like `?streamIds=` instead of `?streams[]=`.
  */
 function assertOutboundUrl (url, init) {
   let u;

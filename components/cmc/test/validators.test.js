@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * Plan 68 Phase C — cmc/* content validator tests.
+ * cmc/* content validator tests.
  *
  * [CMCVAL] suite covers the write-side schemas every CMC event type
  * has to satisfy before the orchestration loop sees the trigger.

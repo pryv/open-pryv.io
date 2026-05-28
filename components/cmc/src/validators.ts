@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * Plan 68 — content validators for cmc/* event types.
+ * Content validators for cmc/* event types.
  *
  * Each per-type validator returns { valid: boolean, errors: string[] }.
  * `validate(eventType, content)` dispatches by type and is what the

@@ -2,7 +2,7 @@
   "name": "cmc",
   "version": "0.1.0",
   "private": true,
-  "description": "Plan 68 — Cross-account Messaging & Consent plugin (stream-id-namespace owner + orchestration hooks)",
+  "description": "Cross-account Messaging & Consent plugin (stream-id-namespace owner + orchestration hooks)",
   "homepage": "https://pryv.com",
   "license": "BSD-3-Clause",
   "author": "Pryv <info@pryv.com> (https://pryv.com)",
