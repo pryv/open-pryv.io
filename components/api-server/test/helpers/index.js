@@ -8,8 +8,7 @@
 /**
  * Extends the common test support object with server-specific stuff.
  *
- * Plan 57 5g.4 — converted from CJS spread-mutation pattern to ESM
- * named re-exports. The previous shape:
+ * Uses ESM named re-exports rather than the CJS spread-mutation pattern:
  *
  *   exports = module.exports = { ...require('test-helpers') };
  *   exports.commonTests = require('./commonTests');

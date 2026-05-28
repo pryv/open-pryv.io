@@ -230,16 +230,16 @@ describe('[PGTD] DELETE /users/:username', () => {
           if (!isAuditActive) this.skip();
           // SQLite regression-guard: per-user audit DB file lives inside the
           // userLocalDirectory tree, so the filesystem wipe in deleteAuditData
-          // would by itself remove the file. After Plan 72 A.1 the engine-
-          // agnostic auditStorage.deleteUser also runs (BEFORE the dir wipe);
-          // this assertion still passes for both code paths on SQLite.
+          // would by itself remove the file. The engine-agnostic
+          // auditStorage.deleteUser also runs (BEFORE the dir wipe); this
+          // assertion still passes for both code paths on SQLite.
           const pathToUserAuditData = require('storage').userLocalDirectory.getPathForUser(userToDelete.attrs.id);
           const userFileExists = fs.existsSync(pathToUserAuditData);
           assert.strictEqual(userFileExists, false);
-          // Plan 72 A.1: engine-agnostic check — every engine that declares
-          // auditStorage must have zero rows / events for the deleted user
-          // after auth.delete (the gap on PG where the shared audit_events
-          // table previously survived erasure).
+          // Engine-agnostic check — every engine that declares
+          // auditStorage must have zero rows / events for the deleted
+          // user after auth.delete (the gap on PG where the shared
+          // audit_events table previously survived erasure).
           const auditStorage = require('storages').auditStorage;
           if (auditStorage != null) {
             const userDb = await auditStorage.forUser(userToDelete.attrs.id);
@@ -250,14 +250,14 @@ describe('[PGTD] DELETE /users/:username', () => {
         it(`[${testIDs[i][10]}] should delete user from the cache`, async function () {
           const usersExists = cache.getUserId(userToDelete.attrs.id);
           assert.strictEqual(usersExists, undefined);
-          // Plan 61 Wave 5: only assert the synchro broadcast when caching
-          // is actually active. With caching disabled (parallel mode via
-          // initCore injecting `caching:isActive:false`), `cache.unsetUser`
+          // Only assert the synchro broadcast when caching is actually
+          // active. With caching disabled (parallel mode via initCore
+          // injecting `caching:isActive:false`), `cache.unsetUser`
           // early-returns, no `synchro.unsetUser` notify fires, and
-          // `delivered` stays empty — which is correct because there's no
-          // cache state to invalidate. Re-read the live config since the
-          // default-exported `cache.isActive` is the by-value snapshot at
-          // module-load (still `false`), not the live mutated value.
+          // `delivered` stays empty — correct because there's no cache
+          // state to invalidate. Re-read the live config since the
+          // default-exported `cache.isActive` is the by-value snapshot
+          // at module-load (still `false`), not the live mutated value.
           const config = await getConfig();
           if (config.get('caching:isActive') && pubsub.isTransportEnabled()) {
             assert.strictEqual(delivered.length, 1);

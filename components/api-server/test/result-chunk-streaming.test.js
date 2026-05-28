@@ -26,12 +26,11 @@ describe('[EVST] events streaming with ' + N_ITEMS + ' entries', function () {
     fixtures = databaseFixture(await produceStorageConnection());
   });
 
-  // Plan 61 Wave 7: migrated from legacy SpawnContext/ProcessProxy to
-  // DynamicInstanceManager — the modern spawner already used by all other
-  // Pattern-A tests (account, system-streams, ...). Pre-spawned ProcessProxy
-  // children died SIGTERM under mocha-parallel before tests ran; DIM uses
-  // `spawn` (not fork) of `bin/server` with dynamic ports + tempfile config,
-  // which is compatible with mocha-parallel workers.
+  // Uses DynamicInstanceManager (the modern spawner used by all other
+  // Pattern-A tests like account, system-streams, …). Pre-spawned
+  // ProcessProxy children died SIGTERM under mocha-parallel before
+  // tests ran; DIM uses `spawn` (not fork) of `bin/server` with dynamic
+  // ports + tempfile config, compatible with mocha-parallel workers.
   const apiServer = helpers.dependencies.instanceManager;
   let apiHost, apiPort;
   before(async function () {

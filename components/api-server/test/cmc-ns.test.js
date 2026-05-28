@@ -162,13 +162,12 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
     });
 
     it('[CN08] passes through unrecognised types under shared classes (post class/format rename)', async function () {
-      // After the Plan 68 rename to class/format-style names, the CMC
-      // plugin's class namespaces (consent, message, notification) are
-      // shared with potentially app-defined formats. We no longer
-      // claim every event in those classes — only the exact set of
-      // CMC-known types is intercepted for content validation. An
-      // unrecognised type under a `:_cmc:apps:*` stream passes through
-      // and is persisted (the app may be using its own custom format).
+      // CMC plugin's class namespaces (consent, message, notification)
+      // are shared with potentially app-defined formats. We don't claim
+      // every event in those classes — only the exact set of CMC-known
+      // types is intercepted for content validation. An unrecognised
+      // type under a `:_cmc:apps:*` stream passes through and is
+      // persisted (the app may be using its own custom format).
       const res = await coreRequest
         .post(eventsPath)
         .set('Authorization', token)

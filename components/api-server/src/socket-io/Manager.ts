@@ -161,10 +161,10 @@ class NamespaceContext {
   }
 
   messageFromPubSub (payload: any) {
-    // Structured payloads (Plan 66 onwards) carry both an event type
-    // and data fields — forward the entire payload alongside the socket
-    // event name. Legacy string payloads stay arg-less for back-compat
-    // with existing SDK consumers (eventsChanged / accessesChanged /
+    // Structured payloads carry both an event type and data fields —
+    // forward the entire payload alongside the socket event name.
+    // Legacy string payloads stay arg-less for back-compat with
+    // existing SDK consumers (eventsChanged / accessesChanged /
     // streamsChanged listeners called without args today).
     if (payload != null && typeof payload === 'object' && typeof payload.type === 'string') {
       const message = messageMap[payload.type];

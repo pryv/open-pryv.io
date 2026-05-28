@@ -64,11 +64,11 @@ describe('[ACCP] Access permissions (sequential)', function () {
     describe('[AP04] custom auth step (e.g. to validate/parse caller id)', function () {
       const fileName = 'customAuthStepFn.js';
       const srcPath = path.join(__dirname, 'permissions.fixtures', fileName);
-      // Plan 61 Wave 4: resolve dest from config, not from a hardcoded
-      // path relative to __dirname. In parallel mode `parallelWorkerSetup`
-      // overrides `customExtensions:defaultFolder` to a per-worker dir
-      // under `var-pryv/`, so concurrent workers can't collide on the
-      // single shared `<repo>/custom-extensions/customAuthStepFn.js`.
+      // Resolve dest from config, not from a hardcoded path relative
+      // to __dirname. In parallel mode `parallelWorkerSetup` overrides
+      // `customExtensions:defaultFolder` to a per-worker dir under
+      // `var-pryv/`, so concurrent workers can't collide on the single
+      // shared `<repo>/custom-extensions/customAuthStepFn.js`.
       // In sequential mode the default from `paths-config.js` resolves to
       // exactly the same `<repo>/custom-extensions/` path the test used
       // before this change.

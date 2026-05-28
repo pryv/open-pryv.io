@@ -89,7 +89,7 @@ class Server {
       serverInfos.hostname = 'custom-according-to-your-ssl-cert';
       this.logger.info('SSL Mode using custom certificates');
       // Keep a reference so reloadTls() can hot-swap the SecureContext
-      // when the Let's Encrypt orchestrator (Plan 35) rotates the cert.
+      // when the Let's Encrypt orchestrator rotates the cert.
       this.httpsServer = server;
     } else { // http
       server = http.createServer(requestHandler);
@@ -244,12 +244,11 @@ class Server {
   /**
    * Hot-swap the TLS context from the currently-configured cert/key
    * files. Triggered by a `acme:rotate` IPC message from master after
-   * the Let's Encrypt orchestrator (Plan 35) writes a freshly-renewed
-   * cert to disk. No-op when this worker isn't serving HTTPS.
+   * the Let's Encrypt orchestrator writes a freshly-renewed cert to
+   * disk. No-op when this worker isn't serving HTTPS.
    *
    * Uses https.Server.setSecureContext which takes effect for new TLS
-   * handshakes while leaving in-flight connections alone — validated
-   * in Plan 35 Phase 1 Level 3 spike.
+   * handshakes while leaving in-flight connections alone.
    */
   reloadTls () {
     if (this.httpsServer == null) {

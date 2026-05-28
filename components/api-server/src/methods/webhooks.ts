@@ -32,7 +32,7 @@ type Access = {
 };
 export default async function produceWebhooksApiMethods (api: any) {
   const config = await ready();
-  // Plan 70 §2C: lazy getter instead of slice capture.
+  // Lazy getter instead of slice capture.
   const getWebhooks = () => config.get('webhooks');
   const storageLayer = await getStorageLayer();
   const logger = getLogger('methods:webhooks');

@@ -32,10 +32,10 @@ const logger = getLogger('serverRoot');
   const server = new Server();
   await server.start();
 
-  // Plan 35 Phase 4d — master broadcasts `acme:rotate` after the Let's
-  // Encrypt orchestrator writes a freshly-renewed cert to disk. Hot-swap
-  // the TLS context so new connections use the new cert without
-  // restarting the worker. Ignored when this worker isn't HTTPS.
+  // Master broadcasts `acme:rotate` after the Let's Encrypt orchestrator
+  // writes a freshly-renewed cert to disk. Hot-swap the TLS context so
+  // new connections use the new cert without restarting the worker.
+  // Ignored when this worker isn't HTTPS.
   process.on('message', (msg) => {
     if (msg && msg.type === 'acme:rotate') {
       server.reloadTls();
@@ -49,9 +49,9 @@ const logger = getLogger('serverRoot');
     } else {
       console.log(e);
     }
-    // Plan 37 Phase D finding: boiler's file logger swallows errors when the
-    // worker dies during startup — also mirror to stderr so the master's
-    // `api worker died (code=1)` message has an actionable cause attached.
+    // Boiler's file logger swallows errors when the worker dies during
+    // startup — also mirror to stderr so the master's `api worker died
+    // (code=1)` message has an actionable cause attached.
     process.stderr.write('[api-server fatal] ' + (e && e.stack || e) + '\n');
     process.exit(1);
   });

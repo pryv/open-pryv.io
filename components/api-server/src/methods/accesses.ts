@@ -79,8 +79,8 @@ export default async function produceAccessesApiMethods (api: any) {
       if (excludeExpired(params)) {
         accesses = accesses.filter((a: any) => !isAccessExpired(a));
       }
-      // Plan 66: compose wire-format ids + strip internal serial fields,
-      // then attach apiEndpoint.
+      // Compose wire-format ids + strip internal serial fields, then
+      // attach apiEndpoint.
       result.accesses = accesses.map((a: any) => {
         const wire = composeWireAccess(a);
         wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
@@ -115,7 +115,7 @@ export default async function produceAccessesApiMethods (api: any) {
     }
   }
 
-  // GET ONE (Plan 66)
+  // GET ONE
 
   api.register(
     'accesses.getOne',
@@ -258,10 +258,10 @@ export default async function produceAccessesApiMethods (api: any) {
     if (expireAfter != null) {
       if (expireAfter >= 0) { params.expires = timestamp.now() + expireAfter; } else { return next(errors.invalidParametersFormat('expireAfter cannot be negative.')); }
     }
-    // Plan 66 Rule D: a managed shared access cannot outlive its managing
-    // app's expiry. Retrofitted on create for consistency with the update
-    // path (BREAKING — see CHANGELOG-v2.md). Parent with `expires: null`
-    // imposes no constraint.
+    // A managed shared access cannot outlive its managing app's expiry.
+    // Enforced on create for consistency with the update path (BREAKING —
+    // see CHANGELOG-v2.md). Parent with `expires: null` imposes no
+    // constraint.
     if (access.expires != null && params.expires != null && params.expires > access.expires) {
       return next(errors.invalidOperation(
         'New access cannot expire later than the managing access.',
@@ -482,9 +482,9 @@ export default async function produceAccessesApiMethods (api: any) {
   }
 
   async function loadAccessForUpdate (context: any, params: any, result: any, next: any) {
-    // Plan 66: composite-id parse + conflict-check. The wire-form `id` is
-    // either bare cuid (never-updated access) or `<base>:<serial>`. Look
-    // up by base; reject stale composites with 409.
+    // Composite-id parse + conflict-check. The wire-form `id` is either
+    // bare cuid (never-updated access) or `<base>:<serial>`. Look up by
+    // base; reject stale composites with 409.
     let ref;
     try {
       ref = parseAccessRef(params.id);
@@ -696,7 +696,7 @@ export default async function produceAccessesApiMethods (api: any) {
     const accessesRepository = storageLayer.accesses;
     const currentAccess = context.access;
     if (currentAccess == null) { return next(new Error('AF: currentAccess cannot be null.')); }
-    // Plan 66: parse composite id + serial conflict-check (mirrors update).
+    // Parse composite id + serial conflict-check (mirrors update).
     let ref;
     try {
       ref = parseAccessRef(params.id);
@@ -771,8 +771,8 @@ export default async function produceAccessesApiMethods (api: any) {
         cache.unsetAccessLogic(context.user.id, accessToDelete);
       }
     }
-    // Plan 72 Phase B: cascade webhook deletion BEFORE access deletion.
-    // On partial failure, the access still exists so a retry re-runs the cascade.
+    // Cascade webhook deletion BEFORE access deletion. On partial failure,
+    // the access still exists so a retry re-runs the cascade.
     try {
       for (const idToDelete of idsToDelete) {
         await webhooksRepository.deleteByAccess(context.user, idToDelete.id);

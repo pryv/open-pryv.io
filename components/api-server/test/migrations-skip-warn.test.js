@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
  * Pure unit tests for `applyOrAnnounce`. The previous inline block in
  * `bin/master.js` silently skipped migrations when
  * `migrations.autoRunOnStart=false`, which took down a demo deploy on
- * 2026-05-13 (Plan 69). The helper now logs a WARNING for every pending
+ * 2026-05-13. The helper now logs a WARNING for every pending
  * migration in the skipped state; these tests pin that contract.
  *
  * `-seq` because the api-server mocha hooks run a Platform DB integrity

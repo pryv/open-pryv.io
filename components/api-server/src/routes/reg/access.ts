@@ -39,10 +39,10 @@ export default function (expressApp: any, app: any) {
       const { key, state, expiresAt } = accessState.buildState(req.body);
 
       // Build poll URL from the LOCAL core's URL — accessState is stored
-      // in-memory per core, so every poll GET must hit the same core that
-      // served the POST. Using the cluster-wide `service.register` URL
-      // (e.g. https://reg.pryv.me/...) would round-robin across cores and
-      // cause `unknown-access-key`. See _claude-memory/project_multicore_auth_pattern.md.
+      // per core, so every poll GET must hit the same core that served
+      // the POST. Using the cluster-wide `service.register` URL (e.g.
+      // https://reg.pryv.me/...) would round-robin across cores and
+      // cause `unknown-access-key`.
       //
       const serviceInfo = app.config.get('service') || {};
       const coreUrl = app.config.get('core:url');

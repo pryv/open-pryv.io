@@ -13,12 +13,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 /* global initTests */
 
 /**
- * Plan 55 Phase 5 — cross-worker accessState regression test.
+ * Cross-worker accessState regression test.
  *
  * Spawns two child workers and asserts that an access-request state created
- * on worker 0 is readable on worker 1. Before Plan 55 Phase 2 (PlatformDB
- * backing), this round-trip failed because each worker held its own
- * `new Map()` — exactly the §12 production bug.
+ * on worker 0 is readable on worker 1. Before accessState was backed by
+ * PlatformDB, this round-trip failed because each worker held its own
+ * `new Map()` — a real production bug.
  */
 
 const path = require('node:path');

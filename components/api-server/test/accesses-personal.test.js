@@ -446,8 +446,7 @@ describe('[ACSF] accesses (personal)', function () {
     beforeEach(resetAccesses);
 
     it('[U04A] unknown id returns unknown-resource', async function () {
-      // Plan 66: accesses.update is back. Updating an unknown id is now
-      // a 404 unknown-resource (the endpoint isn't gone anymore).
+      // accesses.update on an unknown id returns 404 unknown-resource.
       const res = await coreRequest
         .put(path('unknown-id'))
         .set('Authorization', personalToken)

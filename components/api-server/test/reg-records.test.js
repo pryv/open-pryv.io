@@ -39,7 +39,7 @@ describe('[RGRC] Register records admin endpoint', () => {
       assert.strictEqual(res.body.subdomain, sub);
       assert.strictEqual(res.body.status, 'ok');
 
-      // Plan 27 Phase 1: record must be persisted to PlatformDB.
+      // Record must be persisted to PlatformDB.
       const stored = await platform.getDnsRecord(sub);
       assert.deepStrictEqual(stored, { txt: ['validation-token-123'] });
       await platform.deleteDnsRecord(sub); // cleanup

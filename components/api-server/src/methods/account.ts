@@ -27,13 +27,13 @@ const accountStreams = require('business/src/system-streams/index.ts');
 
 export default async function (api: any) {
   const config = await ready();
-  // Plan 70 §2C: lazy getters instead of slice captures. Each call reads
-  // the current config singleton via `.get()` — config.set() and
-  // injectTestConfig() now reach this factory's request handlers without
-  // a restart, and a plugin or override that adds a key after factory
-  // init becomes visible at request time. The boot-time REQUIRED_WHEN
-  // check (§2A) guarantees the keys this factory depends on are
-  // populated and validated by the time `ready()` resolves.
+  // Lazy getters instead of slice captures. Each call reads the current
+  // config singleton via `.get()` — config.set() and injectTestConfig()
+  // reach this factory's request handlers without a restart, and a
+  // plugin or override that adds a key after factory init becomes
+  // visible at request time. The boot-time REQUIRED_WHEN check
+  // guarantees the keys this factory depends on are populated and
+  // validated by the time `ready()` resolves.
   const getAuth = () => config.get('auth');
   const getEmail = () => config.get('services:email');
   const storageLayer = await getStorageLayer();
@@ -182,11 +182,11 @@ export default async function (api: any) {
             (isMailActivated != null && isMailActivated.resetPassword === false)) {
       return next();
     }
-    // Plan 70 §2A REQUIRED_WHEN guarantees `auth.passwordResetPageURL`
-    // is populated at boot when the reset-password email feature is
-    // enabled (boot exits with code 1 otherwise). The PR-71 request-time
-    // fallback and warn log are no longer needed — boot is the right
-    // place to catch missing config, not the per-request mail path.
+    // The REQUIRED_WHEN boot check guarantees `auth.passwordResetPageURL`
+    // is populated when the reset-password email feature is enabled
+    // (boot exits with code 1 otherwise). No request-time fallback —
+    // boot is the right place to catch missing config, not the
+    // per-request mail path.
     const passwordResetPageURL = getAuth().passwordResetPageURL;
     const resetLink = passwordResetPageURL + '?resetToken=' + encodeURIComponent(context.resetToken);
     const recipient = {

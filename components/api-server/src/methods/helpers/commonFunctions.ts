@@ -39,14 +39,14 @@ export const basicAccessAuthorizationCheck = function (context: any, params: any
  */
 export const getTrustedAppCheck = function getTrustedAppCheck (getAuthSettings: any) {
   // `getAuthSettings` is a 0-arg function returning the current `auth`
-  // config slice. Plan 70 §2C replaced the slice-capture pattern (`const
-  // x = config.get('auth')`) with a lazy getter so config.set() /
-  // injectTestConfig() / future async config sources reach this helper
-  // through the closure. The trustedApps list is parsed on every
-  // request from the freshly-resolved slice — negligible cost (a single
-  // split on a short comma-separated list) and strictly more correct
-  // than the previous module-scope memoization that froze the list at
-  // first request and made tests' config injection invisible.
+  // config slice. The lazy-getter shape (vs a captured `const x =
+  // config.get('auth')`) means config.set() / injectTestConfig() /
+  // future async config sources reach this helper through the closure.
+  // The trustedApps list is parsed on every request from the freshly-
+  // resolved slice — negligible cost (a single split on a short
+  // comma-separated list) and strictly more correct than a module-scope
+  // memoization that would freeze the list at first request and make
+  // tests' config injection invisible.
   return function requireTrustedApp (context: any, params: any, result: any, next: any) {
     if (!isTrustedApp(params.appId, params.origin)) {
       return next(errors.invalidCredentials('The app id ("appId") is either missing or ' + 'not trusted.'));
@@ -192,10 +192,10 @@ function _addCustomMessage (error: any, schema: any) {
   // if there are no custom messages, just return default z-schema message
   return error;
 }
-// Plan 70 §2C: `ignoreOrGetter` accepts either a literal (legacy callers
-// like webhooks.ts that pass `false` because the setting is hard-coded)
-// OR a 0-arg getter function (factories that bind to a live config key,
-// so config.set() / injectTestConfig() reach this validator at request
+// `ignoreOrGetter` accepts either a literal (legacy callers like
+// webhooks.ts that pass `false` because the setting is hard-coded) OR a
+// 0-arg getter function (factories that bind to a live config key, so
+// config.set() / injectTestConfig() reach this validator at request
 // time instead of freezing the value at api-register time).
 export const catchForbiddenUpdate = function catchForbiddenUpdate (paramsSchema: any, ignoreOrGetter: any, logger: any) {
   const getIgnore = typeof ignoreOrGetter === 'function' ? ignoreOrGetter : () => ignoreOrGetter;

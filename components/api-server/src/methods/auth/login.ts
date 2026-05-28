@@ -31,10 +31,9 @@ export default async function (api: any) {
   const userProfileStorage = storageLayer.profile;
   const sessionsStorage = storageLayer.sessions;
   const config = await ready();
-  // Plan 70 §2C: lazy getters instead of slice captures. The pre-existing
-  // `getMfaConfig` already followed this pattern for the reason called
-  // out in its comment; §2C generalises that to every config slice this
-  // factory reads.
+  // Lazy getters instead of slice captures. Every config slice this
+  // factory reads is resolved per-request from the live config
+  // singleton, matching the long-standing `getMfaConfig` pattern.
   const getAuth = () => config.get('auth');
   const getMfaConfig = () => config.get('services:mfa');
   const passwordRules = await getPasswordRules();
@@ -166,7 +165,7 @@ export default async function (api: any) {
   }
 
   /**
-   * Plan 26 MFA integration. Runs as the final step of auth.login.
+   * MFA integration. Runs as the final step of auth.login.
    *
    * If the user has MFA active (persistent state at `profile.private.data.mfa`)
    * AND the server has MFA enabled (`services.mfa.mode !== 'disabled'`):

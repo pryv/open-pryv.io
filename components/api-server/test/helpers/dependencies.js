@@ -26,13 +26,13 @@ const { getConfigUnsafe } = require('@pryv/boiler');
  * to every consumer that reads `helpers.dependencies.X` via the index barrel.
  */
 const deps = testHelpers.dependencies;
-// Plan 61: lazy deep-clone getter. Two failure modes are closed:
-//   1. Shared nconf reference leak (Stage 1, B-2026-05-21-2 root cause):
+// Lazy deep-clone getter. Two failure modes are closed:
+//   1. Shared nconf reference leak (B-2026-05-21-2 root cause):
 //      `nconf.get()` returns nested objects that share refs with the live
 //      literal stores. `injectTestConfig(...)` later in a test would
 //      mutate `deps.settings.storages.platform.engine` through that
 //      shared chain. Solution: deep-clone on every access.
-//   2. Module-load timing miss (Stage 3 parallel harness): the previous
+//   2. Module-load timing miss in the parallel harness: the previous
 //      eager snapshot ran at FIRST require — before `mochaHooks.beforeAll`
 //      injected per-worker `config.set(...)` overrides for ports, DB
 //      names, etc. Captured deps.settings carried default ports across

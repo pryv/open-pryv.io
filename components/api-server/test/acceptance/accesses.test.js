@@ -173,8 +173,8 @@ describe('[AC01] accesses', () => {
             .get(`/${userId}/accesses`)
             .set('Authorization', accessToken);
           activeAccess = res.body.accesses.find((a) => a.token === activeToken);
-          // Plan 66: accesses.update is back; sending the immutable
-          // `deleted` field now lands on schema validation, which has an
+          // Sending the immutable `deleted` field on accesses.update
+          // lands on schema validation, which has an
           // `additionalProperties: false` whitelist of mutable fields
           // (name, deviceName, permissions, expireAfter, expires,
           // clientData). The route auto-wraps the body into `update`, so

@@ -49,10 +49,10 @@ describe('[MIGRUN] MigrationRunner', () => {
   });
 
   beforeEach(async () => {
-    // Plan 66 (test-helpers/dependencies.ts:init) runs the production
-    // migration runner during initCore — leaving `schema_migrations`
-    // at the latest applied version. Reset before each test so the
-    // baseline matches the legacy expectation (v0 with no pending).
+    // `test-helpers/dependencies.ts:init` runs the production migration
+    // runner during initCore — leaving `schema_migrations` at the latest
+    // applied version. Reset before each test so the baseline matches
+    // the legacy expectation (v0 with no pending).
     for (const cap of capabilities) {
       await resetCapability(cap);
     }

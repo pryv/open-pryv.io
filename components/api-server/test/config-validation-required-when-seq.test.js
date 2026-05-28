@@ -188,7 +188,7 @@ describe('[CV-REQ] config-validation REQUIRED_WHEN', () => {
   });
 });
 
-describe('[CV-AOUD] config-validation audit.onUserDelete (Plan 72 A.2)', () => {
+describe('[CV-AOUD] config-validation audit.onUserDelete', () => {
   let checkAuditOnUserDeleteMode, AUDIT_ON_USER_DELETE_MODES;
 
   before(async function () {

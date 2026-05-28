@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 require('test-helpers/src/api-server-tests-config.ts');
 
 /**
- * Plan 54 Phase D — unit tests for the worker-side IPC client used by
+ * Unit tests for the worker-side IPC client used by
  * POST /system/admin/certs/force-renew. Stubs `process` so we can drive
  * master replies without spinning up the cluster.
  */
