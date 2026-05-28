@@ -7,8 +7,8 @@
 
 const { createConfig } = require('../../../.mocharc.js');
 
-// Plan 61: rqlite engine tests test the engine itself + rqliteProcess
-// (which spawns its own rqlited). No per-worker setup hook needed.
+// rqlite engine tests cover the engine itself + rqliteProcess (which
+// spawns its own rqlited). No per-worker setup hook needed.
 // Without this mocharc, mocha inherits `storages/.mocharc.cjs` and
 // looks for `test/hook.js` which doesn't exist here, crashing the
 // matrix at exit 4.

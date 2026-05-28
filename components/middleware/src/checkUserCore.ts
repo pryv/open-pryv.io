@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * Plan 27 Phase 2 — wrong-core middleware (DNSless multi-core).
+ * Wrong-core middleware (DNSless multi-core).
  *
  * Mounted on `/:username/*`. Looks up `req.params.username` in PlatformDB and
  * if the user is mapped to a different core than this one, responds with

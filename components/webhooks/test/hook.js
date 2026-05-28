@@ -8,8 +8,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-// Plan 61 Stage 5: parallel-mode mochaHook for the webhooks component.
-// Mirrors components/storage/test/hook.js.
+// Parallel-mode mochaHook for the webhooks component. Mirrors
+// components/storage/test/hook.js.
 //
 // Loading `api-server-tests-config.ts` first ensures boiler is initialized
 // at module load, in case mocha-parallel hands a test file to a worker

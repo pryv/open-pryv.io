@@ -35,11 +35,11 @@ class AccessesPG extends BaseStoragePG {
     if (item && item.type === 'shared' && !('deviceName' in item)) {
       item.deviceName = null;
     }
-    // Plan 66 note: `headId` stays on the storage item so the integrity
-    // hash (computed at insert time including headId) round-trips
+    // `headId` stays on the storage item so the integrity hash
+    // (computed at insert time including headId) round-trips
     // consistently with the read-time recompute. The api-server layer
-    // strips `headId` via `composeWireAccess` before responding to the
-    // client.
+    // strips `headId` via `composeWireAccess` before responding to
+    // the client.
     return item;
   }
 
@@ -137,10 +137,10 @@ class AccessesPG extends BaseStoragePG {
   }
 
   /**
-   * Plan 66: return the chronological history rows for a base id. Each
-   * row is a frozen pre-update snapshot; `serial` is the value that
-   * row was at before the update that produced the next version.
-   * Sorted by `modified` ascending so caller iterates oldest-first.
+   * Return the chronological history rows for a base id. Each row is
+   * a frozen pre-update snapshot; `serial` is the value that row was
+   * at before the update that produced the next version. Sorted by
+   * `modified` ascending so caller iterates oldest-first.
    */
   async findHistory (userOrUserId: any, baseId: string): Promise<any[]> {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
@@ -152,12 +152,12 @@ class AccessesPG extends BaseStoragePG {
   }
 
   /**
-   * Plan 66: snapshot the current live head row into a history row.
-   * Reads the head row as a camelCase item, clones it, replaces `id`
-   * with a freshly-minted cuid and sets `headId` to the original base,
-   * drops the head's integrity hash (so applyDefaults recomputes
-   * against the snapshot row's fields), then routes through the
-   * standard insertOne path. This keeps integrity consistent on the
+   * Snapshot the current live head row into a history row. Reads the
+   * head row as a camelCase item, clones it, replaces `id` with a
+   * freshly-minted cuid and sets `headId` to the original base, drops
+   * the head's integrity hash (so applyDefaults recomputes against the
+   * snapshot row's fields), then routes through the standard insertOne
+   * path. This keeps integrity consistent on the
    * history row.
    *
    * Caller is expected to mutate the head row immediately after this

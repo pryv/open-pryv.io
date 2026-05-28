@@ -320,7 +320,7 @@ describe('[DNS] DNS Server', function () {
     });
 
     it('[DN41] must reject updates that would shadow a config-static entry', async () => {
-      // Plan 27 Phase 1: config wins — admin cannot override infrastructure records.
+      // Config wins — admin cannot override infrastructure records.
       let caught = null;
       try {
         await server.updateStaticEntry('www', { a: ['99.99.99.99'] });
@@ -348,13 +348,13 @@ describe('[DNS] DNS Server', function () {
 });
 
 // =============================================================================
-// Plan 27 Phase 1 — Persistent DNS records via PlatformDB
+// Persistent DNS records via PlatformDB
 // Isolated describe block with its own DnsServer instance so the mock platform
 // can expose setDnsRecord/getDnsRecord/getAllDnsRecords/deleteDnsRecord without
 // interfering with the main suite above.
 // =============================================================================
 
-describe('[DNP] DNS Server — PlatformDB persistence (Plan 27 Phase 1)', function () {
+describe('[DNP] DNS Server — PlatformDB persistence', function () {
   this.timeout(30000);
 
   // In-memory mock PlatformDB backing store shared across all tests in this block.

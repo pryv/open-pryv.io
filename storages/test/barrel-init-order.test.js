@@ -8,13 +8,14 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * [BARREL-INIT-ORDER] — Plan 57 Phase 5a pre-flight characterization test.
+ * [BARREL-INIT-ORDER] — characterization test for the storages barrel
+ * import behaviour.
  *
  * Pins the CURRENT (CommonJS) behavior of `require('storages')` getter access
  * before `init()` has run. Today the barrel uses lazy getters that return
- * `undefined` for uninitialized fields. After Phase 5 (ESM + top-level await
- * in the barrel), this contract changes — top-level await means consumers
- * that import the barrel implicitly wait for initialization.
+ * `undefined` for uninitialized fields. The future ESM + top-level-await
+ * shape will change this contract — top-level await means consumers that
+ * import the barrel implicitly wait for initialization.
  *
  * Without this test pinning the current contract, an ESM regression that
  * silently changes pre-init access from "returns undefined" to "throws"

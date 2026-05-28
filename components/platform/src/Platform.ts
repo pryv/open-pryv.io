@@ -36,7 +36,7 @@ class Platform {
   #db: any;
   #config: any;
   initialized: boolean = false;
-  // Plan 27 Phase 2: in-memory cache of coreId → public URL.
+  // In-memory cache of coreId → public URL.
   #coreUrlCache: Map<any, any>;
 
   constructor () {
@@ -62,9 +62,9 @@ class Platform {
     // Register this core in PlatformDB so other cores can discover it
     await this.registerSelf();
 
-    // Plan 27 Phase 2: load all known core URLs into the in-memory cache so
-    // `coreIdToUrl()` can answer synchronously even when explicit `core.url`
-    // overrides are in play (DNSless multi-core).
+    // Load all known core URLs into the in-memory cache so
+    // `coreIdToUrl()` can answer synchronously even when explicit
+    // `core.url` overrides are in play (DNSless multi-core).
     await this._refreshCoreUrlCache();
 
     // Seed invitation tokens from config into PlatformDB (if not already present)
@@ -296,10 +296,10 @@ class Platform {
 
   /**
    * Build the deterministic snapshot of platform-wide config keys this core
-   * observes. Mirrors the Plan 27 Phase 2b boot log so operators can
-   * cross-reference a CLI read (e.g. `bin/observability.js show`) against the
-   * value each core logs at startup. `auth.adminAccessKey` is surfaced only as
-   * a short SHA-256 prefix — the secret itself never leaves config.
+   * observes. Mirrors the boot log so operators can cross-reference a
+   * CLI read (e.g. `bin/observability.js show`) against the value
+   * each core logs at startup. `auth.adminAccessKey` is surfaced only
+   * as a short SHA-256 prefix — the secret itself never leaves config.
    *
    */
   getPlatformConfigSnapshot () {
@@ -356,7 +356,7 @@ class Platform {
     return await this.#db.getAllCoreInfos();
   }
 
-  // --- Persistent DNS records (Plan 27 Phase 1) --- //
+  // --- Persistent DNS records --- //
 
   /**
    * Set a persistent DNS record. Runtime-managed entries like ACME challenges.

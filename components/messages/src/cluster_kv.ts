@@ -10,8 +10,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * Plan 55 Phase 3 — cluster_kv: master-held key/value store with TTL,
- * accessed by workers over the existing cluster IPC channel.
+ * cluster_kv: master-held key/value store with TTL, accessed by
+ * workers over the existing cluster IPC channel.
  *
  * Single-core scope. For cross-core state use PlatformDB.
  *

@@ -7,7 +7,7 @@
 'use strict';
 
 /**
- * Plan 66 — accesses versioning: add `serial`, `head_id`, `created_by_serial`,
+ * Accesses versioning: add `serial`, `head_id`, `created_by_serial`,
  * `modified_by_serial` columns; tighten unique indexes so they only apply to
  * live head rows; add a history-lookup index.
  *

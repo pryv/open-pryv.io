@@ -178,7 +178,7 @@ function resolveConfig (config: any) {
       // Fail fast if the configured engine doesn't declare this storageType
       // in its manifest. Without this check, a misconfigured engine name
       // (e.g. `storages.platform.engine: postgresql` when only rqlite
-      // implements PlatformDB since Plan 25) surfaces much later as a
+      // implements PlatformDB) surfaces much later as a
       // cryptic "PlatformDB implementation missing method: <X>" from the
       // interface validator, with no hint that the root cause is the
       // engine selection. The `engineMeta &&` guard preserves "unknown

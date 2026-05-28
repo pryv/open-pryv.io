@@ -29,7 +29,7 @@ const ErrorIds = {
   InvalidRequestStructure: 'invalid-request-structure',
   ItemAlreadyExists: 'item-already-exists',
   /**
-   * Plan 66: caller passed a stale `<base>:<serial>` composite id on
+   * Caller passed a stale `<base>:<serial>` composite id on
    * `accesses.update` or `accesses.delete`. Refetch + retry.
    */
   StaleResource: 'stale-resource',

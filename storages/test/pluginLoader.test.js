@@ -107,11 +107,12 @@ describe('[PLUG] Plugin Loader infrastructure', () => {
     });
 
     it('[PLUG-RESOLVE-MISDECLARE] init() throws when config picks an engine for a storageType the engine does not declare', async () => {
-      // Plan 25 made rqlite the only platform engine; non-rqlite engines have
-      // intentionally incomplete PlatformDB impls (see workspace BUGS B-2026-05-21-1).
-      // A config that picks postgresql for platformStorage must fail fast here
-      // rather than later via the PlatformDB interface validator's cryptic
-      // "missing method: <X>" error.
+      // rqlite is the only platform engine; non-rqlite engines have
+      // intentionally incomplete PlatformDB impls (see BUGS
+      // B-2026-05-21-1). A config that picks postgresql for
+      // platformStorage must fail fast here rather than later via the
+      // PlatformDB interface validator's cryptic "missing method: <X>"
+      // error.
       const fakeConfig = {
         has: (key) => key === 'storages:platform:engine',
         get: (key) => key === 'storages:platform:engine' ? 'postgresql' : null

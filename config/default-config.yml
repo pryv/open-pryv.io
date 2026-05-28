@@ -2,7 +2,7 @@
 # Unified service-core configuration
 # Merged from per-component configs into a single source of truth.
 #
-# Configuration model (see _plans/27-pre-open-pryv-merge-atwork/CONFIG-SEPARATION.md):
+# Configuration model — three classes:
 #   - PER-CORE:      local to each node (ports, paths, workers, DB credentials)
 #   - PLATFORM-WIDE: MUST be identical across cores in a deployment (policy, schema, identity)
 #   - BOOTSTRAP:     platform-wide in meaning but YAML-only because needed before PlatformDB is reachable
@@ -30,9 +30,10 @@ http:
 # `storages.platform.engine` + rqlite settings are BOOTSTRAP — needed before PlatformDB is reachable.
 storages:
   base:
-    # baseStorage + dataStore. PostgreSQL is the default since Plan 49;
-    # Mongo stays fully supported — set `engine: mongodb` in override-config.yml
-    # (or `STORAGE_ENGINE=mongodb` in the test harness) to pick it explicitly.
+    # baseStorage + dataStore. PostgreSQL is the default; Mongo stays
+    # fully supported — set `engine: mongodb` in override-config.yml
+    # (or `STORAGE_ENGINE=mongodb` in the test harness) to pick it
+    # explicitly.
     engine: postgresql
   platform:
     engine: rqlite          # platformStorage
@@ -74,8 +75,8 @@ storages:
       binPath: bin-ext/rqlited        # rqlited binary path (Docker: /app/bin-ext/rqlited)
       # tls: null = plain TCP for Raft (single-core / VPN-protected multi-core).
       # To enable mutually-authenticated TLS on the Raft channel, set all of
-      # caFile / certFile / keyFile to PEM files on disk. See Plan 34
-      # bootstrap bundle for the CLI that issues these automatically.
+      # caFile / certFile / keyFile to PEM files on disk. See
+      # `bin/bootstrap.js` for the CLI that issues these automatically.
       tls: null
       # tls:
       #   caFile:   /etc/pryv/tls/ca.crt
@@ -90,7 +91,7 @@ eventFiles:
   previewsCacheCleanUpCronTime: 00 00 2 * * * # every day at 2:00:00AM
 
 # === BOOTSTRAP → PLATFORM-WIDE ===
-# Plan 17 Phase 13: seeded into PlatformDB on first boot, then PlatformDB is authoritative.
+# Seeded into PlatformDB on first boot, then PlatformDB is authoritative.
 invitationTokens: null  # null = allow all, [] = block all, ['token1'] = check list
 
 # === MIXED: per-core secrets + platform-wide policy ===
@@ -115,7 +116,7 @@ customExtensions:
 # MFA `mode` is PLATFORM-WIDE policy — documented as YAML-only in v2, targeted for post-v2 move.
 # --- Services (external integrations) ---
 services:
-  # Multi-factor authentication (Plan 26: merged from service-mfa)
+  # Multi-factor authentication
   # mode: disabled — no MFA enforcement (default, backwards-compatible)
   # mode: challenge-verify — separate challenge + verify SMS endpoints
   # mode: single — combined challenge+verify in one SMS endpoint
@@ -214,7 +215,7 @@ user-account:
 
 # === PLATFORM-WIDE schema (CRITICAL — drift corrupts user account data) ===
 # `custom.systemStreams` defines the account-field schema. All cores MUST agree.
-# Targeted for PlatformDB migration before v2 ships (Plan 27 Phase 2b follow-up).
+# Targeted for PlatformDB migration in a future release.
 # `custom.dataStores` lists code plugins — must be identical because the code is identical.
 custom:
   systemStreams:
@@ -282,7 +283,7 @@ core:
 # === MIXED ===
 # `dns.domain` is BOOTSTRAP → PLATFORM-WIDE (seeded from YAML, PlatformDB authoritative after first boot — targeted for v2).
 # `dns.active`/`dns.port`/`dns.ip`/`dns.ip6`/`dns.defaultTTL`: PER-CORE (each node decides whether it runs an authoritative DNS server).
-# `dns.staticEntries` and `dns.records.root.*`: PER-CORE today; Plan 27 Phase 1 considers moving `staticEntries` to PlatformDB so runtime records replicate.
+# `dns.staticEntries` and `dns.records.root.*`: PER-CORE today; a future release may move `staticEntries` to PlatformDB so runtime records replicate.
 dns:
   domain: null           # primary domain (e.g. pryv.me); null = dnsLess mode
   active: false          # start DNS server (default off)
@@ -315,8 +316,8 @@ dns:
 # --- Hostings (regions/zones/providers) ---
 # Structure matches legacy /reg/hostings response for backward compatibility.
 # In single-core mode, a default hosting is auto-generated.
-# Availability bits (`available`, `availableCore`) already live in PlatformDB per Plan 17 Phase 6;
-# Plan 27 Phase 2b follow-up should move the hierarchy itself there too.
+# Availability bits (`available`, `availableCore`) already live in PlatformDB;
+# a future release should move the hierarchy itself there too.
 hostings: null           # null = auto-generate; or { regions: { ... } }
 
 # === PER-CORE: process tuning + bootstrap CLI paths ===
@@ -384,7 +385,7 @@ migrations:
 # --- Audit ---
 audit:
   active: true
-  # Plan 72 A.2: end-state of audit_logs when `auth.delete` runs.
+  # End-state of audit_logs when `auth.delete` runs.
   #   erase (default)  — auditStorage.deleteUser(userId) wipes the user's
   #                      audit rows. GDPR Art.17 / CCPA §1798.105 default.
   #   keep             — skip audit erasure. For HIPAA §164.316(b)(2)(i)

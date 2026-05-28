@@ -8,9 +8,9 @@
 /**
  * Shared types used across storages/interfaces/.
  *
- * Plan 57 §7m — extracted to deduplicate inline declarations that
- * previously lived in 3+ interface files (Callback in Sessions,
- * PasswordResetRequests, UserStorage; UserOrId in UserStorage).
+ * Extracted to deduplicate inline declarations that previously lived
+ * in 3+ interface files (Callback in Sessions, PasswordResetRequests,
+ * UserStorage; UserOrId in UserStorage).
  */
 
 /** Node-style callback shape used by every legacy interface method that

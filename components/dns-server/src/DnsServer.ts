@@ -29,7 +29,7 @@ const DEFAULT_PLATFORM_REFRESH_INTERVAL_MS = 30000;
 /**
  * Subdomains that are part of the open-pryv.io distribution surface: every
  * core answers these endpoints directly (`/reg/*`, `/reg/access/*`, `/mfa/*`
- * are all routes inside master.js since Plan 26). The embedded DNS resolves
+ * are all routes inside master.js in v2). The embedded DNS resolves
  * them to ALL available cores' IPs so clients can round-robin across the
  * cluster without the operator having to maintain explicit staticEntries.
  * Operators keep full control over non-reserved names via
@@ -110,8 +110,9 @@ class DnsServer {
       this.#logger.info(`DNS server listening on [${ip6}]:${port} (IPv6)`);
     }
 
-    // Plan 27 Phase 1: load runtime DNS records from PlatformDB and start periodic refresh.
-    // Multi-core: Core B picks up records created on Core A via PlatformDB replication.
+    // Load runtime DNS records from PlatformDB and start periodic
+    // refresh. Multi-core: Core B picks up records created on Core A
+    // via PlatformDB replication.
     await this.refreshFromPlatform();
     if (this.#platformRefreshIntervalMs > 0) {
       this.#platformRefreshTimer = setInterval(() => {

@@ -9,8 +9,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
  * Unit tests for rqliteProcess.buildArgs() — the pure function that builds
- * the argv passed to rqlited. Covers Plan 34 Phase 1 (rqlite TLS flag passthrough)
- * and the pre-existing argv (single-core + DNS discovery).
+ * the argv passed to rqlited. Covers TLS flag passthrough + single-core
+ * + DNS discovery argv shapes.
  *
  * These tests do NOT spawn rqlited and do not require network / filesystem state.
  */
@@ -99,7 +99,7 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
     });
   });
 
-  describe('TLS (Plan 34 Phase 1)', () => {
+  describe('TLS', () => {
     const tls = {
       caFile: '/etc/pryv/tls/ca.crt',
       certFile: '/etc/pryv/tls/node.crt',

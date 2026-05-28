@@ -8,13 +8,13 @@
 /**
  * Extends the common test support object with server-specific stuff.
  *
- * Plan 57 5g.4 — converted from CJS spread-mutation pattern to ESM
- * named re-exports. The previous `module.exports = { ...require('test-helpers') }`
- * + property assignments doesn't work under ESM (consumer namespace is
- * read-only). The mutations on `dependencies` properties still propagate
- * because `dependencies` is a singleton object reference shared with
- * test-helpers — modifying its properties is independent of how the
- * top-level binding is exported.
+ * Uses ESM named re-exports. The CJS shape `module.exports =
+ * { ...require('test-helpers') }` + property assignments doesn't work
+ * under ESM (consumer namespace is read-only). The mutations on
+ * `dependencies` properties still propagate because `dependencies` is
+ * a singleton object reference shared with test-helpers — modifying
+ * its properties is independent of how the top-level binding is
+ * exported.
  */
 
 import { createRequire } from 'node:module';

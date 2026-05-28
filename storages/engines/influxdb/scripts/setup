@@ -4,7 +4,7 @@ set -e
 # Sets up InfluxDB 1.8.10 (influxd + influx CLI) for high-frequency series
 # storage. Self-contained, no system packages, no sudo.
 #
-# Mirrors the rqlite setup pattern (Plan 48): binary in bin-ext/, data in var-pryv/.
+# Mirrors the rqlite setup pattern: binary in bin-ext/, data in var-pryv/.
 #
 # Result:
 #   bin-ext/influxdb/influxd     — the influxd daemon binary
