@@ -9,8 +9,8 @@ const require = createRequire(import.meta.url);
 
 const { getConfigUnsafe } = require('@pryv/boiler');
 
-// Plan 61 Stage 1 — `injectTestConfig` wholesale-replaces the `'test'` nconf
-// scope. Callers paired `inject(A)` with a later `inject({})` to "reset",
+// `injectTestConfig` wholesale-replaces the `'test'` nconf scope.
+// Callers paired `inject(A)` with a later `inject({})` to "reset",
 // which wiped any pre-existing test scope state (e.g. initCore's
 // dnsLess/caching baseline) and leaked between sibling test files inside one
 // mocha worker. These helpers snapshot the current `'test'` scope, then

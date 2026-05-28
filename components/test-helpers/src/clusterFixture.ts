@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 
 
 /**
- * Plan 55 Phase 5 — multi-worker test fixture.
+ * Multi-worker test fixture.
  *
  * Spawns N child processes via `child_process.fork`, each running a worker
  * harness that initialises storages and exposes a JSON-RPC over IPC. The

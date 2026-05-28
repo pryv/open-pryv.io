@@ -12,8 +12,8 @@ const require = createRequire(import.meta.url);
  * Provides common Pattern C test initialization
  */
 
-// Plan 61 Stage 5: pre-seed per-worker env vars BEFORE boiler.init runs
-// in `api-server-tests-config.ts` below. boiler reads `process.env` once
+// Pre-seed per-worker env vars BEFORE boiler.init runs in
+// `api-server-tests-config.ts` below. boiler reads `process.env` once
 // at `init()` and locks values into its env-store. If we wait for
 // `mochaHooks.beforeAll` or even `parallelWorkerSetup` module-load, the
 // env mirror lands too late — `components/cache/src/index.ts` calls
@@ -35,8 +35,8 @@ if (process.env.MOCHA_PARALLEL === '1' && process.env.MOCHA_WORKER_ID != null) {
   const stride = (Number.isFinite(wid) && wid >= 0 ? wid : 0) * 10;
   process.env.storages__engines__rqlite__url = `http://localhost:${4001 + stride}`;
   process.env.tcpBroker__port = String(4222 + stride);
-  // Plan 61 Stage 5 (hfs-server unblock): mirror PG + Mongo database names
-  // too, so SpawnContext-forked api-server children (legacy spawner in
+  // Mirror PG + Mongo database names too, so SpawnContext-forked
+  // api-server children (legacy spawner in
   // hfs-server, root-seq etc.) talk to the SAME per-worker database as the
   // test parent. Without this, parent writes to `pryv-node-test-w1` but
   // forked children read from default `pryv-node-test` → 404 on every
@@ -67,7 +67,7 @@ async function initTests () {
   if (initTestsDone) return;
   initTestsDone = true;
   _global.config = await getConfig();
-  // Plan 61: expose snapshot/restore helpers as globals so tests reaching
+  // Expose snapshot/restore helpers as globals so tests reaching
   // `config` as a global also get `withInjectedConfig` /
   // `injectTestConfigSnapshot` without an explicit require.
   const { withInjectedConfig, injectTestConfigSnapshot } = require('./withInjectedConfig.ts');
@@ -237,8 +237,8 @@ function getMochaHooks (isParallelMode = false) {
 
   return {
     async beforeAll (this: any) {
-      // Plan 61 Stage 5: spawning worker-private rqlited can take 5-10s
-      // on slower boxes (worst case with `-raft-election-timeout=200ms`
+      // Spawning worker-private rqlited can take 5-10s on slower boxes
+      // (worst case with `-raft-election-timeout=200ms`
       // it's ~300ms, but PG/Mongo init pile on top). The default mocha
       // hook timeout doubles in parallel mode (2s → 4s in `.mocharc.js`)
       // but that's still too tight for the OS-level fork + readyz wait.
@@ -248,8 +248,8 @@ function getMochaHooks (isParallelMode = false) {
       // to 30s so it doesn't depend on the per-component mocharc
       // timeout setting at all.
       this.timeout(30000);
-      // Plan 61 Stage 3 — apply per-worker config overrides + spawn the
-      // worker-private rqlited BEFORE any config-reading code runs (the
+      // Apply per-worker config overrides + spawn the worker-private
+      // rqlited BEFORE any config-reading code runs (the
       // previewsDirPath lookup below, storages.init() in initCore, …).
       // No-op in non-parallel mode (host rqlited at 4001 serves the
       // sequential matrix unchanged).
@@ -282,8 +282,8 @@ function getMochaHooks (isParallelMode = false) {
       : {
           async beforeEach (this: any) {
             if (process.env.DISABLE_INTEGRITY_CHECK === '1') return;
-            // Plan 61 Stage 7 (absorbed Plan 75): skip the integrity check
-            // if the storages barrel hasn't been initialised yet. The check's
+            // Skip the integrity check if the storages barrel hasn't
+            // been initialised yet. The check's
             // `initIndexPlatform()` → `getUsersLocalIndex()` → `ensureBarrel()`
             // path would otherwise call `storages.init()` with NO config arg —
             // before the test-scope `injectTestConfig(testConfig)` has applied

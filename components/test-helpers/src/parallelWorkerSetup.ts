@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * Plan 61 Stage 3 — per-worker parallel-test harness.
+ * Per-worker parallel-test harness.
  *
  * Consumes the §2D contract documented at
  * `open-pryv.io/docs/storage-isolation-for-parallel-tests.md`:
@@ -175,8 +175,8 @@ export function getPerWorkerOverrides (workerId: number = getWorkerId()): Worker
 
 /**
  * Apply the per-worker config overrides via `config.set`. §2A/§2C
- * (Plan 70 Wave 1) make these reads lazy, so calling `set` before any
- * factory captures the value is enough to propagate.
+ * make these reads lazy, so calling `set` before any factory captures
+ * the value is enough to propagate.
  *
  * Idempotent — safe to call multiple times.
  */
@@ -195,7 +195,7 @@ export async function applyParallelWorkerConfig (): Promise<WorkerOverrides> {
   // each running DIM-spawned child api-servers don't saturate PG's
   // default `max_connections=100`.
   //
-  // Plan 61 14-worker scaling fix: compute adaptively from the parallel
+  // 14-worker scaling: compute pool size adaptively from the parallel
   // job count so a 15-core box (14 workers) doesn't blow past 100 conns.
   // Per worker we estimate: 2 pools (parent + DIM child) × maxPool
   // connections each × 2 processes ≈ 4 × maxPool connections. PG default
@@ -271,7 +271,7 @@ function applyEnvMirror (o: WorkerOverrides): void {
   process.env.tcpBroker__port = String(o.tcpBrokerPort);
 }
 
-// Plan 61 Stage 5: apply env mirror at MODULE LOAD so cache module's
+// Apply env mirror at MODULE LOAD so cache module's
 // `loadConfiguration()` at-load `getConfig()` race resolves with the
 // per-worker `tcpBroker:port`. No-op outside parallel mode.
 if (isParallelMode()) {
@@ -400,8 +400,8 @@ export async function setupParallelWorker (): Promise<WorkerOverrides> {
 }
 
 /**
- * Plan 61 Stage 7 narrow fix — create the `keyValue` table on the
- * per-worker rqlited BEFORE any test starts. Otherwise tests that
+ * Create the `keyValue` table on the per-worker rqlited BEFORE any
+ * test starts. Otherwise tests that
  * reach `Platform.deleteUser` / `getUserIndexedField` via fixture
  * cleanup (`mongoFixtures.user(...)` calls `FixtureUser.remove` calls
  * `UsersRepository.deleteOne` calls `Platform.deleteUser` calls
