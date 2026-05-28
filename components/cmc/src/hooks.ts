@@ -212,11 +212,6 @@ function createStreamDeleteReservedRootHook (deps: Deps): Middleware {
  * Failure is non-fatal (logged) — the downstream call will surface a
  * clearer "parent not found" error if provisioning truly didn't take.
  */
-type ProvisionDeps = {
-  mall: { streams: { create: (userId: string, params: any) => Promise<any> } };
-  logger?: { debug: Function; warn: Function };
-};
-
 function createEnsureReservedParentsHook (deps: ProvisionDeps): Middleware {
   return async function cmcEnsureReservedParents (context, _params, _result, next) {
     const userId: string | undefined = context?.user?.id;
