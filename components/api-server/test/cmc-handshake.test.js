@@ -310,14 +310,14 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
   // idempotency test, but leaves earlier handshakes' remote-stream
   // pointers stale, which would break CN15-CN17 / CN18.
 
-  // --- Extended in-process scenarios (ported from _plans/68/tests/) ---
+  // --- Extended in-process scenarios ---
   //
   // The CN12-CN14 block above covers the canonical handshake:
   //   request → accept → back-channel + chat (one-way) + accept re-delivery.
   // The extended block below covers the bidirectional / post-acceptance
-  // flows the deployed-infra scripts used to validate, but which can be
-  // exercised in-process via the same fetch shim. The KEEP-as-deployed
-  // scenarios (02 cross-cores, 03 cross-infra) remain in _plans/68/tests/.
+  // flows, exercised in-process via the same fetch shim. Deployed-infra
+  // scenarios (cross-cores, cross-infra) are exercised by separate
+  // deployment tests.
   //
   // These tests establish their OWN fresh handshake (study-ext / study-su)
   // rather than re-use CN12's. The current back-channel matcher

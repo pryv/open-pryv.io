@@ -7,9 +7,9 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Plan 54 Phase D — request/response IPC client used by the admin
- * `force-renew` route. The worker sends `acme:force-renew` to the master
- * which holds the AcmeOrchestrator, and resolves on the matching
+ * Request/response IPC client used by the admin `force-renew` route.
+ * The worker sends `acme:force-renew` to the master which holds the
+ * AcmeOrchestrator, and resolves on the matching
  * `acme:force-renew:reply` (matched by `requestId`).
  *
  * Kept in a dedicated file so the route stays declarative and so unit

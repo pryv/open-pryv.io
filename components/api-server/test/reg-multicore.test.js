@@ -596,7 +596,7 @@ describe('[RGMC] register: multi-core', function () {
   });
 
   // ----------------------------------------------------------------
-  // 9. Plan 27 Phase 2: wrong-core middleware on /:username/*
+  // 9. Wrong-core middleware on /:username/*
   // ----------------------------------------------------------------
   describe('[MC09] wrong-core middleware', function () {
     let request;
@@ -676,7 +676,7 @@ describe('[RGMC] register: multi-core', function () {
   });
 
   // ----------------------------------------------------------------
-  // 10. Plan 27 Phase 2: explicit core.url override (DNSless multi-core)
+  // 10. Explicit core.url override (DNSless multi-core)
   // ----------------------------------------------------------------
   describe('[MC10] core.url override', function () {
     after(restoreSingleCore);

@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * MFA routes. Plan 26: HTTP bindings for the mfa.* API methods.
+ * MFA routes — HTTP bindings for the mfa.* API methods.
  *
  * Route pattern summary:
  *

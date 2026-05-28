@@ -10,9 +10,9 @@ const require = createRequire(import.meta.url);
 
 const EventEmitter = require('events');
 const express = require('express');
-// Plan 61: worker-relative port so business's Webhook.test.js
-// (same PORT = 6123) running on a different mocha-parallel worker
-// doesn't collide. See companion shift in business' httpServer.js.
+// Worker-relative port so business's Webhook.test.js (same PORT = 6123)
+// running on a different mocha-parallel worker doesn't collide. See
+// companion shift in business' httpServer.js.
 const WORKER_ID = parseInt(process.env.MOCHA_WORKER_ID || '0', 10);
 const PORT = 6123 + WORKER_ID * 10;
 

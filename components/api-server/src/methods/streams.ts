@@ -27,7 +27,7 @@ const Readable = require('stream').Readable;
  */
 export default async function (api: any) {
   const config = await ready();
-  // Plan 70 §2C: lazy getter instead of slice capture.
+  // Lazy getter instead of slice capture.
   const getUpdates = () => config.get('updates');
   const mall = await getMall();
   // RETRIEVAL

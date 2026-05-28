@@ -282,8 +282,8 @@ describe('[ACCP] accesses (app)', function () {
     beforeEach(resetAccesses);
 
     it('[11UZ] an app access cannot update a sibling app access', async function () {
-      // Plan 66: app can only update shared accesses it directly manages,
-      // not another app access. canUpdateAccess returns false → 403.
+      // App can only update shared accesses it directly manages, not
+      // another app access. canUpdateAccess returns false → 403.
       const res = await coreRequest
         .put(path(appAccessB.attrs.id))
         .set('Authorization', appAccessAToken)

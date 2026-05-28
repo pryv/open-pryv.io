@@ -40,11 +40,11 @@ describe('[SYRO] system route', function () {
   let username;
   let config;
 
-  // Plan 61 Wave 7: migrated from legacy SpawnContext/ProcessProxy to
-  // DynamicInstanceManager. Outer `server = helpers.dependencies.instanceManager`
-  // (line 24) is now the live target — no inner shadowing. `server.request()`
-  // (ProcessProxy supertest helper) replaced with `helpers.request(server.url)`;
-  // `server.url()` (method) replaced with `server.url` (property).
+  // Uses DynamicInstanceManager. Outer `server =
+  // helpers.dependencies.instanceManager` (line 24) is the live target
+  // — no inner shadowing. Callsites use `helpers.request(server.url)`
+  // and `server.url` (property) rather than the legacy ProcessProxy
+  // `server.request()` and `server.url()` method.
   before(async function () {
     config = await getConfig();
     mongoFixtures = databaseFixture(await produceStorageConnection());
@@ -132,10 +132,10 @@ describe('[SYER] system (ex-register)', function () {
   }
 
   before(async function () {
-    // Plan 61 Wave 7: explicit DIM start. In sequential mode another
-    // Pattern-A test would have started DIM earlier and left it running
-    // (cross-file state). In parallel mode each file is its own worker,
-    // so [SYER] must start its own server.
+    // Explicit DIM start. In sequential mode another Pattern-A test
+    // would have started DIM earlier and left it running (cross-file
+    // state). In parallel mode each file is its own worker, so [SYER]
+    // must start its own server.
     await server.ensureStartedAsync(helpers.dependencies.settings);
     mongoFixtures = databaseFixture(await produceStorageConnection());
     await mongoFixtures.context.cleanEverything();

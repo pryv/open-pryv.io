@@ -65,10 +65,10 @@ describe('[ROOT] root', function () {
     username2 = '00000';
   });
 
-  // Plan 61 Wave 7: migrated from legacy SpawnContext/ProcessProxy to
-  // DynamicInstanceManager. ProcessProxy's `server.request()` and
-  // `server.baseUrl` were swept to `helpers.request(server.url)` and
-  // `server.url` respectively via bulk replace_all.
+  // Uses DynamicInstanceManager (modern Pattern-A spawner). Callsites
+  // use `helpers.request(server.url)` and `server.url` (property)
+  // rather than the legacy ProcessProxy `server.request()` and
+  // `server.baseUrl`.
   const server = helpers.dependencies.instanceManager;
   before(async () => {
     await server.ensureStartedAsync(helpers.dependencies.settings);

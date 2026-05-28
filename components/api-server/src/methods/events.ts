@@ -49,14 +49,13 @@ const typeRepo = new TypeRepository();
  */
 export default async function (api: any) {
   const config = await ready();
-  // Plan 70 §2C: lazy getters instead of slice captures. Highest-
-  // severity audit row in the plan-70 PLAN.md — `filesReadTokenSecret`
+  // Lazy getters instead of slice captures. `filesReadTokenSecret`
   // drives the HMAC of every attachment file-read token; if the
   // captured slice were undefined at api-register time, every
   // attachment download would silently HMAC against undefined. The
-  // §2A REQUIRED_WHEN check guarantees the key is populated and the
+  // REQUIRED_WHEN boot check guarantees the key is populated and the
   // getter pattern guarantees mid-process config changes (tests +
-  // future Wave 2 sources) reach the per-request callsites.
+  // future dynamic-config sources) reach the per-request callsites.
   const getAuth = () => config.get('auth');
   const getUpdates = () => config.get('updates');
   const eventTypesUrl = config.get('service:eventTypes');

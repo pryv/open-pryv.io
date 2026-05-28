@@ -9,7 +9,6 @@ const require = createRequire(import.meta.url);
 
 /**
  * JSON Schema specification of methods data for MFA (multi-factor authentication).
- * Plan 26: merged from service-mfa.
  */
 
 const helpers = require('./helpers.ts');

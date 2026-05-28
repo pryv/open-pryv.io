@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
 /**
- * Plan 26 — merged service-mfa acceptance tests.
+ * MFA acceptance tests.
  *
  * Covers the full SMS-based MFA lifecycle with the external SMS provider mocked
  * via nock:

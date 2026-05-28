@@ -27,10 +27,10 @@ function root (expressApp: any, app: any) {
   // Bootstrap to user's Pryv page (i.e. browser home).
   expressApp.get('/', rootIndex);
   expressApp.get(Paths.UserRoot + '/', rootIndex);
-  // Plan 27 Phase 2: wrong-core check (DNSless multi-core).
-  // Mounted BEFORE getAuth/initContextMiddleware so we don't waste cycles
-  // loading user context for requests that will be rejected with 421.
-  // No-op in single-core mode.
+  // Wrong-core check (DNSless multi-core). Mounted BEFORE
+  // getAuth/initContextMiddleware so we don't waste cycles loading user
+  // context for requests that will be rejected with 421. No-op in
+  // single-core mode.
   expressApp.all(Paths.UserRoot + '/*', middleware.checkUserCore);
   // Load user for all user API methods.
   expressApp.all(Paths.UserRoot + '/*', getAuth);

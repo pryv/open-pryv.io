@@ -14,7 +14,7 @@ const { getConfig } = require('@pryv/boiler');
 const storage = require('storage');
 const { pubsub } = require('messages');
 
-describe('[ACUP] accesses.update (Plan 66)', function () {
+describe('[ACUP] accesses.update', function () {
   let username;
   let fixtureUser;
   let stream0, stream1, stream0Child;

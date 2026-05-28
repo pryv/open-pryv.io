@@ -9,8 +9,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * Plan 55 Phase 5 — child worker harness for the access-state cross-worker
- * test. Initialises storages on first request and dispatches accessState
+ * Child worker harness for the access-state cross-worker test.
+ * Initialises storages on first request and dispatches accessState
  * operations over IPC. Run via `child_process.fork`.
  *
  * Operations:
@@ -30,11 +30,12 @@ const accessState = require('api-server/src/routes/reg/accessState.ts');
 let initialized = false;
 
 /**
- * Plan 55 Phase 5 — initialize ONLY the rqlite PlatformDB. Avoid the full
- * `storages.init()` so the worker doesn't open a PG/Mongo baseStorage pool
- * (each child × test would otherwise eat PG connection slots and starve the
- * parent's [EVST]/[ROOT] suites). accessState's lazy `require('storages').
- * platformDB` lookup goes through the property defined below.
+ * Initialize ONLY the rqlite PlatformDB. Avoid the full
+ * `storages.init()` so the worker doesn't open a PG/Mongo baseStorage
+ * pool (each child × test would otherwise eat PG connection slots and
+ * starve the parent's [EVST]/[ROOT] suites). accessState's lazy
+ * `require('storages').platformDB` lookup goes through the property
+ * defined below.
  */
 async function ensureInit () {
   if (initialized) return;
