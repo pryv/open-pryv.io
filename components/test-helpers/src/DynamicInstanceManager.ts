@@ -152,8 +152,8 @@ class DynamicInstanceManager extends EventEmitter {
       throw new Error('Server is already running; stop it first.');
     }
 
-    // Plan 61 BMM2 fix: in parallel mode, re-apply per-worker DB + path
-    // overrides to the settings the child api-server will read. The
+    // In parallel mode, re-apply per-worker DB + path overrides to the
+    // settings the child api-server will read. The
     // `helpers.dependencies.settings` lazy getter reads live boiler config,
     // but tests that mutate the boiler config (e.g. `injectTestConfig`
     // family, `_.merge`-and-pass settings overrides) can revert per-worker
