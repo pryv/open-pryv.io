@@ -30,10 +30,10 @@ http:
 # `storages.platform.engine` + rqlite settings are BOOTSTRAP — needed before PlatformDB is reachable.
 storages:
   base:
-    # baseStorage + dataStore. PostgreSQL is the default; Mongo stays
-    # fully supported — set `engine: mongodb` in override-config.yml
-    # (or `STORAGE_ENGINE=mongodb` in the test harness) to pick it
-    # explicitly.
+    # baseStorage + dataStore. PostgreSQL is the default; SQLite is the
+    # alternative for low-volume / single-node deployments — set
+    # `engine: sqlite` in override-config.yml (or `STORAGE_ENGINE=sqlite`
+    # in the test harness) to pick it explicitly.
     engine: postgresql
   platform:
     engine: rqlite          # platformStorage
@@ -45,14 +45,6 @@ storages:
     engine: sqlite          # auditStorage
 
   engines:
-    mongodb:
-      authUser: ''
-      authPassword: ''
-      host: '127.0.0.1'
-      port: 27017
-      name: 'pryv-node'
-      connectTimeoutMS: 60000
-      socketTimeoutMS: 60000
     postgresql:
       host: '127.0.0.1'
       port: 5432

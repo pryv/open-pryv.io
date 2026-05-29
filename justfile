@@ -30,11 +30,9 @@ install-stable:
 # Run
 # –––––––––––––----------------------------------------------------------------
 
-# Run all dependency services (e.g. Mongo, Influx…)
+# Run optional dependency services (e.g. Influx for HF series)
 start-deps:
-    DEVELOPMENT=true concurrently --names "mongo,influx" \
-        --prefix-colors "green,magenta" \
-        storages/engines/mongodb/scripts/start influxd
+    DEVELOPMENT=true influxd
 
 # Start the master process (cluster mode with N API workers)
 start-master *params:
@@ -72,33 +70,17 @@ tag-tests:
     scripts/tag-tests
 
 # Run tests on the given component ('all' for all components) with optional extra parameters.
-# PostgreSQL is the default baseStorage — use `test-mongo` for Mongo.
+# PostgreSQL is the default baseStorage; SQLite is the alternative — use `test-sqlite`.
 test component *params:
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}
 
-# Same as `test` but using MongoDB baseStorage
-test-mongo component *params:
-    STORAGE_ENGINE=mongodb NODE_ENV=test COMPONENT={{component}} scripts/components-run \
-        npx mocha -- {{params}}
-
-# Same as `test-parallel` but using MongoDB baseStorage
-test-mongo-parallel component *params:
-    STORAGE_ENGINE=mongodb NODE_ENV=test MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
-        npx mocha -- {{params}}
-
-# Same as `test` but using SQLite PoC storage
+# Same as `test` but using the SQLite baseStorage engine
 test-sqlite component *params:
     STORAGE_ENGINE=sqlite NODE_ENV=test COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}
 
-# Run tests with storages: [Platform, userStorage, usersIndex] using mongoDB engine and not sqLite
-test-full-mongo component *params:
-    storagePlatform__engine=mongodb storageUserAccount__engine=mongodb storageUserIndex__engine=mongodb \
-        NODE_ENV=test COMPONENT={{component}} scripts/components-run \
-        npx mocha -- {{params}}
-
-# Run tests with detailed output (PG default — prefix with `STORAGE_ENGINE=mongodb` for Mongo)
+# Run tests with detailed output (PG default)
 test-detailed component *params:
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
         npx mocha -- --reporter=spec {{params}}
@@ -138,7 +120,7 @@ test-cover component *params:
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} nyc \
         scripts/components-run npx mocha -- {{params}}
 
-# Run all tests across all engines (MongoDB + PG + SQLite) and generate coverage report
+# Run all tests across supported engines (PG + SQLite) and generate coverage report
 test-cover-all:
     scripts/coverage
     npx nyc report
@@ -169,11 +151,11 @@ trace:
     open http://localhost:16686/
     docker run --rm -p 6831:6831/udp -p 6832:6832/udp -p 16686:16686 jaegertracing/all-in-one:1.7 --log-level=debug
 
-# Dump/restore MongoDB test data; command must be 'dump' or 'restore'
+# Dump/restore test data; command must be 'dump' or 'restore'
 test-data command version:
     NODE_ENV=development node components/test-helpers/scripts/{{command}}-test-data {{version}}
 
-# Reset test state: SQLite DBs, user dirs, and MongoDB user collections (keeps MongoDB running)
+# Reset test state: SQLite DBs + per-user dirs + PG test databases
 clean-test-data:
     #!/usr/bin/env bash
     set -uo pipefail
@@ -181,10 +163,7 @@ clean-test-data:
     # ./var-pryv/postgresql-bin/bin/ (Linux dev + Darwin dev when the
     # PG setup script ran), fall back to system `dropdb`/`createdb`
     # found on PATH (Darwin operators using Homebrew / Postgres.app /
-    # the system PG that ships with macOS). Same for `mongosh`. If
-    # neither resolves, the recipe still reports the skip — but at
-    # least the local-bin-missing case no longer hides the issue from
-    # operators who DO have the system tools installed.
+    # the system PG that ships with macOS).
     if [ -x ./var-pryv/postgresql-bin/bin/dropdb ]; then
       DROPDB=./var-pryv/postgresql-bin/bin/dropdb
       CREATEDB=./var-pryv/postgresql-bin/bin/createdb
@@ -192,34 +171,17 @@ clean-test-data:
       DROPDB=$(command -v dropdb || true)
       CREATEDB=$(command -v createdb || true)
     fi
-    if [ -x ./var-pryv/mongodb-bin/bin/mongosh ]; then
-      MONGOSH=./var-pryv/mongodb-bin/bin/mongosh
-    else
-      MONGOSH=$(command -v mongosh || true)
-    fi
     # SQLite user index + legacy pre-Plan-25 platform-wide.db (retained for safety)
     rm -f ./var-pryv/users/user-index.db ./var-pryv/users/user-index.db-wal ./var-pryv/users/user-index.db-shm
     rm -f ./var-pryv/users/platform-wide.db ./var-pryv/users/platform-wide.db-wal ./var-pryv/users/platform-wide.db-shm
-    # Per-user directories (each holds the user's audit SQLite + any
-    # stray writes from older engine paths).
+    # Per-user directories (each holds the user's audit SQLite + the SQLite
+    # baseStorage file when the SQLite engine is in use).
     find ./var-pryv/users -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
     # Filesystem-engine storage roots (attachments + previews live at
     # var-pryv/<dir> by default per override-config.yml, NOT under
     # users/, so the find above doesn't touch them).
     rm -rf ./var-pryv/attachments/* ./var-pryv/previews/* 2>/dev/null || true
-    # MongoDB databases — wipe BOTH the test DB and the local dev DB
-    # (pryv-node). Without the latter, users provisioned by `node
-    # bin/master.js` against override-config.yml persist across
-    # cleans and cause "user exists in repo but missing in index"
-    # symptoms on the next prepare (e.g. lib-js's [UEMX]). The mongo
-    # server is kept running.
-    if [ -n "$MONGOSH" ]; then
-      "$MONGOSH" --quiet pryv-node-test --eval 'db.dropDatabase()' > /dev/null 2>&1 || echo "MongoDB not reachable (skipping mongo test reset)"
-      "$MONGOSH" --quiet pryv-node --eval 'db.dropDatabase()' > /dev/null 2>&1 || echo "MongoDB not reachable (skipping mongo dev reset)"
-    else
-      echo "mongosh not found (skipping mongo test reset + mongo dev reset)"
-    fi
-    # PostgreSQL databases — same logic as Mongo above: drop+recreate
+    # PostgreSQL databases — drop+recreate
     # both pryv-node-test (test harness) AND pryv-node (local dev /
     # bin/master.js). Tests re-run migrations on next startup; the
     # local server runs them on next master boot.
@@ -239,7 +201,7 @@ clean-test-data:
     curl -s -X POST -H 'Content-Type: application/json' 'http://localhost:4001/db/execute' -d '[["DELETE FROM keyValue"]]' > /dev/null 2>&1 || echo "rqlite not reachable (skipping rqlite reset)"
     # Stale customAuthStepFn from a prior aborted permissions-seq test (the [P4OM] invalid-fixture test crashes the api-server bin and leaves the file behind, polluting subsequent matrix runs with [api-server fatal] Not a function (string)). Safe to delete unconditionally — committed file is .gitkeep.
     rm -f ./custom-extensions/customAuthStepFn.js
-    echo "Test data cleaned: SQLite + per-user dirs + attachments/previews + Mongo (pryv-node-test + pryv-node) + PG (pryv-node-test + pryv-node) + rqlite keyValue + custom-extensions stale fixture"
+    echo "Test data cleaned: SQLite + per-user dirs + attachments/previews + PG (pryv-node-test + pryv-node) + rqlite keyValue + custom-extensions stale fixture"
 
 # Reset per-worker test state for parallel mode. Wipes worker-private
 # PG DBs (pryv-node-test-w0..N), per-worker user
@@ -272,20 +234,15 @@ clean-test-data-parallel WORKERS='':
         WORKERS=$(( N > 2 ? N - 1 : 2 ))
       fi
     fi
-    # Resolve PG + mongosh binaries (mirror of `clean-test-data`): prefer
-    # the local Plan-41 install at ./var-pryv/<engine>-bin/bin/, fall
-    # back to system tooling on PATH (Darwin Homebrew / Postgres.app).
+    # Resolve PG binaries (mirror of `clean-test-data`): prefer the local
+    # Plan-41 install at ./var-pryv/postgresql-bin/bin/, fall back to
+    # system tooling on PATH (Darwin Homebrew / Postgres.app).
     if [ -x ./var-pryv/postgresql-bin/bin/dropdb ]; then
       DROPDB=./var-pryv/postgresql-bin/bin/dropdb
       CREATEDB=./var-pryv/postgresql-bin/bin/createdb
     else
       DROPDB=$(command -v dropdb || true)
       CREATEDB=$(command -v createdb || true)
-    fi
-    if [ -x ./var-pryv/mongodb-bin/bin/mongosh ]; then
-      MONGOSH=./var-pryv/mongodb-bin/bin/mongosh
-    else
-      MONGOSH=$(command -v mongosh || true)
     fi
     # Parallelize the per-worker cleanup. Each iteration is independent
     # (different DB name + dir paths), so they can fan out via background
@@ -309,9 +266,6 @@ clean-test-data-parallel WORKERS='':
         "$DROPDB" -h 127.0.0.1 -p 5432 -U pryv --if-exists "$DB" 2>/dev/null || true
         "$CREATEDB" -h 127.0.0.1 -p 5432 -U pryv "$DB" 2>/dev/null || true
       fi
-      if [ -n "$MONGOSH" ]; then
-        "$MONGOSH" --quiet "$DB" --eval 'db.dropDatabase()' >/dev/null 2>&1 || true
-      fi
       rm -rf "$USR" "$PRV" "$RQD" "$CEX"
     }
     for i in $(seq 0 $(( WORKERS - 1 ))); do
@@ -323,12 +277,9 @@ clean-test-data-parallel WORKERS='':
     pkill -f 'rqlited.*var-pryv/rqlite-data-w' 2>/dev/null || true
     echo "Parallel worker test data cleaned (workers 0..$(( WORKERS - 1 )))"
 
-# Cleanup users data and MongoDB data in `var-pryv/`
+# Cleanup users data in `var-pryv/`
 clean-data:
     rm -rf ./var-pryv/users/*
-    (killall mongod && sleep 2) || echo "MongoDB was not running"
-    rm -rf ./var-pryv/mongodb-data/*
-    DEVELOPMENT=true ./storages/engines/mongodb/scripts/start
 
 # Run security assessment and output to `security-assessment`
 security-assessment:

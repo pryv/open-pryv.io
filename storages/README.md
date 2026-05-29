@@ -27,9 +27,6 @@ storages/
     fileStorage/
 
   engines/                # One folder per engine
-    mongodb/
-      manifest.json
-      src/index.js
     postgresql/
       manifest.json
       src/index.js
@@ -37,6 +34,12 @@ storages/
       manifest.json
       src/index.js
     filesystem/
+      manifest.json
+      src/index.js
+    rqlite/
+      manifest.json
+      src/index.js
+    influxdb/
       manifest.json
       src/index.js
 ```
@@ -54,7 +57,7 @@ Only storage–service-core integration fields. Standard package metadata (name,
 }
 ```
 
-The engine name is derived from the folder name (e.g. `engines/mongodb/` → engine name `mongodb`).
+The engine name is derived from the folder name (e.g. `engines/postgresql/` → engine name `postgresql`).
 ```
 
 ## Engine Entrypoint
@@ -75,21 +78,20 @@ module.exports = {
 ```yaml
 storages:
   baseStorage:
-    engine: mongodb
+    engine: postgresql
   dataStore:
-    engine: mongodb
+    engine: postgresql
   platformStorage:
-    engine: sqlite
+    engine: rqlite
   seriesStorage:
-    engine: mongodb
+    engine: postgresql
   fileStorage:
     engine: filesystem
-  mongodb:
-    host: localhost
-    port: 27017
   postgresql:
     host: localhost
     port: 5432
+  sqlite:
+    path: var-pryv/users
 ```
 
 Legacy config keys (`storageEngine`, `database:engine`, etc.) are supported via backward-compat mapping in `pluginLoader.js`.
