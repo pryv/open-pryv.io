@@ -17,7 +17,10 @@ let db: any;
 const userAccountStorage = _internals.createUserAccountStorage({
   async init (): Promise<void> {
     db = _internals.databasePG;
-    await db.ensureConnect();
+    // waitForConnection (bounded retry) instead of single-shot
+    // ensureConnect — defends test/production bootstrap against
+    // transient TCP resets while the PG service ramps up.
+    await db.waitForConnection();
   },
 
   async getPasswordHash (userId: string): Promise<string | undefined> {

@@ -81,13 +81,26 @@ class DatabasePG {
 
   /**
    * Wait until PG is up. For use at startup.
+   *
+   * Defends against transient TCP resets during bootstrap (observed in
+   * GHA test runs against a dockerized postgres service container,
+   * where the first pool.connect() occasionally fails with ECONNRESET
+   * while load ramps up). 1-second backoff between attempts; throws
+   * after `maxRetries` consecutive failures so genuine config errors
+   * (wrong host/port/auth) surface within a bounded window.
    */
-  async waitForConnection (): Promise<void> {
+  async waitForConnection (maxRetries: number = 30): Promise<void> {
+    let attempts = 0;
     while (!this.connected) {
       try {
         await this.ensureConnect();
       } catch (err) {
-        this.logger.warn(`Cannot connect to PostgreSQL at ${this.poolConfig.host}:${this.poolConfig.port}, retrying in a sec`);
+        attempts++;
+        if (attempts >= maxRetries) {
+          this.logger.error(`Cannot connect to PostgreSQL at ${this.poolConfig.host}:${this.poolConfig.port} after ${attempts} attempts; giving up.`);
+          throw err;
+        }
+        this.logger.warn(`Cannot connect to PostgreSQL at ${this.poolConfig.host}:${this.poolConfig.port} (attempt ${attempts}/${maxRetries}), retrying in a sec`);
         await setTimeout(1000);
       }
     }
