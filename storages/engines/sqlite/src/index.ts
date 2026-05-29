@@ -62,15 +62,17 @@ const PRR_METHODS = [
   'get', 'generate', 'destroy', 'clearAll', 'exportAll', 'importAll'
 ];
 
-async function initStorageLayer (storageLayer: any, _connection: any, _options: any): Promise<void> {
+async function initStorageLayer (storageLayer: any, _connection: any, options: any): Promise<void> {
   const { DatabaseSQLite } = require('./DatabaseSQLite.ts');
+  const { SessionsSQLite } = require('./SessionsSQLite.ts');
+  const { PasswordResetRequestsSQLite } = require('./PasswordResetRequestsSQLite.ts');
   const sharedDb = new DatabaseSQLite();
   await sharedDb.init();
 
   storageLayer.connection = sharedDb;
 
-  storageLayer.sessions = buildStub('Sessions', SESSIONS_METHODS);
-  storageLayer.passwordResetRequests = buildStub('PasswordResetRequests', PRR_METHODS);
+  storageLayer.sessions = new SessionsSQLite(sharedDb, { maxAge: options.sessionMaxAge });
+  storageLayer.passwordResetRequests = new PasswordResetRequestsSQLite(sharedDb, { maxAge: options.passwordResetRequestMaxAge });
   storageLayer.accesses = buildStub('Accesses', USER_STORAGE_METHODS);
   storageLayer.profile = buildStub('Profile', USER_STORAGE_METHODS);
   storageLayer.streams = buildStub('Streams', USER_STORAGE_METHODS);

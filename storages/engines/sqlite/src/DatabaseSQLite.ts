@@ -31,10 +31,9 @@ class DatabaseSQLite {
 
   constructor () {
     this.logger = _internals.lazyLogger('sqlite:baseStorage');
-    const sqliteCfg = _internals.config.get('storages:engines:sqlite');
-    const base = sqliteCfg && sqliteCfg.path;
+    const base = _internals.config && _internals.config.path;
     if (!base) {
-      throw new Error('SQLite engine config missing storages.engines.sqlite.path');
+      throw new Error('SQLite engine config missing `path`');
     }
     const sharedDir = path.join(base, '_shared');
     fs.mkdirSync(sharedDir, { recursive: true });
@@ -58,7 +57,7 @@ class DatabaseSQLite {
 
     await concurrentSafeWrite.execute(() => {
       this.db.prepare(`
-        CREATE TABLE IF NOT EXISTS password_reset_requests (
+        CREATE TABLE IF NOT EXISTS password_resets (
           id TEXT PRIMARY KEY,
           username TEXT NOT NULL,
           expires INTEGER NOT NULL
@@ -70,7 +69,7 @@ class DatabaseSQLite {
       this.db.prepare('CREATE INDEX IF NOT EXISTS sessions_expires ON sessions(expires)').run();
     });
     await concurrentSafeWrite.execute(() => {
-      this.db.prepare('CREATE INDEX IF NOT EXISTS prr_username ON password_reset_requests(username)').run();
+      this.db.prepare('CREATE INDEX IF NOT EXISTS password_resets_username ON password_resets(username)').run();
     });
 
     this.initialized = true;
