@@ -211,23 +211,22 @@ class DatabaseFixture {
    */
   async clean () {
     let integrityError;
-    // In parallel mode the integrity check scans ALL data in the shared
-    // database, including other workers' data, leading to false failures.
+    // Parallel-mode safety: per-worker DBs (pryv-node-test-w<id>) mean the
+    // check sees only this worker's data. The DISABLE_INTEGRITY_CHECK gate
+    // remains as a per-test opt-out for sections that deliberately leave
+    // platform/index state inconsistent (reg-multicore, default-streams).
     if (process.env.DISABLE_INTEGRITY_CHECK !== '1') {
       try {
-        // check integrity before reset — this could trigger error related to previous test
         await integrityFinalCheck.all();
       } catch (err) {
-        integrityError = err; // keep it for later
+        integrityError = err;
       }
     }
-    // clean data anyway
     const done = await this.dependents.all((fixtureItem: any) => {
       return fixtureItem.remove();
     });
     if (integrityError) {
-      console.log(integrityError);
-      // throw(integrityError);
+      throw integrityError;
     }
     return done;
   }

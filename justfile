@@ -111,12 +111,12 @@ test-debug component *params:
 # Run tests with parallel file execution (PG default; excludes tests that can't parallelize)
 # Uses MOCHA_PARALLEL=1 to enable parallel mode in .mocharc.js
 test-parallel component *params:
-    STORAGE_ENGINE=postgresql NODE_ENV=test DISABLE_INTEGRITY_CHECK=1 MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
+    STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}
 
 # Run parallel tests first, then sequential tests (PG default)
 test-fast component *params:
-    STORAGE_ENGINE=postgresql NODE_ENV=test DISABLE_INTEGRITY_CHECK=1 MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
+    STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}} && \
     STORAGE_ENGINE=postgresql NODE_ENV=test MOCHA_NON_PARALLEL=1 COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}

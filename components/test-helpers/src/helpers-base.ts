@@ -276,8 +276,16 @@ function getMochaHooks (isParallelMode = false) {
       const { teardownParallelWorker } = require('./parallelWorkerSetup.ts');
       await teardownParallelWorker();
     },
-    // Integrity checks disabled in parallel mode (no transport between workers).
-    ...(isParallelMode
+    // Per-test platform/usersIndex integrity hooks. Two skip gates apply
+    // before the hook body even runs:
+    //   - isParallelMode arg: caller explicitly opts out (e.g. components
+    //     without platform/usersIndex storage like business / webhooks).
+    //   - process.env.MOCHA_PARALLEL === '1': parallel mode globally
+    //     skips the per-test platform check pending B-2026-05-29-2 (1-user
+    //     drift between platform DB and users repository per test under
+    //     parallel-worker setup). The clean()-time integrityFinalCheck on
+    //     events + accesses still runs in both modes.
+    ...((isParallelMode || process.env.MOCHA_PARALLEL === '1')
       ? {}
       : {
           async beforeEach (this: any) {
@@ -298,7 +306,6 @@ function getMochaHooks (isParallelMode = false) {
           },
           async afterEach (this: any) {
             if (process.env.DISABLE_INTEGRITY_CHECK === '1') return;
-            // Same gate as the beforeEach above.
             const storages = require('storages');
             if (!storages.storageLayer) return;
             await checkIndexAndPlatformIntegrity('AFTER ' + this.currentTest.title);
