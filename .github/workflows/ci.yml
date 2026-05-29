@@ -20,8 +20,16 @@ jobs:
           POSTGRES_DB: pryv-node-test
         ports:
           - 5432:5432
+        # pg_isready WITHOUT -d defaults to db=$USER (pryv), which is not
+        # created — every healthcheck triggered a backend fork that hit
+        # `FATAL: database "pryv" does not exist` (visible 5s-interval
+        # spam in PG service logs). Hypothesis: that churn (~615 PG-touching
+        # processes / 5s window during test startup) contributed to the
+        # first pool.connect() ECONNRESET that broke test-postgres since
+        # 2026-05-21. Probing the real test DB stops the spam and avoids
+        # backend churn during the bootstrap window.
         options: >-
-          --health-cmd "pg_isready -U pryv"
+          --health-cmd "pg_isready -U pryv -d pryv-node-test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
