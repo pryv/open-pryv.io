@@ -34,7 +34,8 @@ const _internals = {
   get getEventFiles (): any { return registry.getEventFiles; },
   get createUserAccountStorage (): any { return registry.createUserAccountStorage; },
   get getLogger (): (name: string) => any { return registry.getLogger; },
-  get config (): any { return registry.config; }
+  get config (): any { return registry.config; },
+  get storageLayer (): any { return registry.storageLayer; }
 };
 
 export { _internals };
