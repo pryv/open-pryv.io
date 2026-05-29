@@ -8,8 +8,17 @@
 /**
  * SQLite storage engine plugin.
  *
- * Note: StorageLayer (Sessions, etc.) is NOT yet implemented for SQLite.
- * Note: dataStore streams fallback to MongoDB (incomplete).
+ * State of implementation:
+ *  - userAccountStorage    ✓ shipped
+ *  - usersLocalIndex       ✓ shipped
+ *  - auditStorage          ✓ shipped (per-user file via SqliteStorage)
+ *  - baseStorage           ⚠ shared DB + stub classes wired; real Sessions/
+ *                            PasswordResetRequests and per-user Accesses/
+ *                            Webhooks/Profile/Streams land in follow-up work.
+ *  - dataStore             ⚠ partial (events stream tail outstanding).
+ *
+ * Stubs satisfy validateUserStorage / validateSessions / validatePasswordResetRequests
+ * (method-existence check only) but throw at runtime on first call.
  */
 
 import { createRequire } from 'node:module';
@@ -17,9 +26,6 @@ const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
 
-/**
- * Receive host internals from the barrel.
- */
 function init (config: Record<string, any>, getLogger: (name: string) => any, internals: Record<string, any>): void {
   _internals.set('config', config);
   _internals.set('getLogger', getLogger);
@@ -30,8 +36,67 @@ function init (config: Record<string, any>, getLogger: (name: string) => any, in
 
 // -- BaseStorage --------------------------------------------------------
 
-function initStorageLayer (_storageLayer: any, _connection: any, _options: any): void {
-  throw new Error('SQLite StorageLayer not yet implemented. Use storageEngine: "mongodb" for now.');
+function buildStub (label: string, methods: string[]): any {
+  const stub: Record<string, any> = {};
+  for (const m of methods) {
+    stub[m] = function () {
+      throw new Error(`SQLite ${label}.${m}() not yet implemented`);
+    };
+  }
+  return stub;
+}
+
+const USER_STORAGE_METHODS = [
+  'getCollectionInfo', 'find', 'findOne', 'insertOne', 'findOneAndUpdate',
+  'updateOne', 'updateMany', 'delete', 'removeOne', 'removeMany', 'removeAll',
+  'count', 'countAll', 'findDeletions', 'iterateAll',
+  'exportAll', 'importAll', 'clearAll'
+];
+
+const SESSIONS_METHODS = [
+  'get', 'getMatching', 'generate', 'touch', 'expireNow', 'destroy',
+  'clearAll', 'remove', 'exportAll', 'importAll'
+];
+
+const PRR_METHODS = [
+  'get', 'generate', 'destroy', 'clearAll', 'exportAll', 'importAll'
+];
+
+async function initStorageLayer (storageLayer: any, _connection: any, _options: any): Promise<void> {
+  const { DatabaseSQLite } = require('./DatabaseSQLite.ts');
+  const sharedDb = new DatabaseSQLite();
+  await sharedDb.init();
+
+  storageLayer.connection = sharedDb;
+
+  storageLayer.sessions = buildStub('Sessions', SESSIONS_METHODS);
+  storageLayer.passwordResetRequests = buildStub('PasswordResetRequests', PRR_METHODS);
+  storageLayer.accesses = buildStub('Accesses', USER_STORAGE_METHODS);
+  storageLayer.profile = buildStub('Profile', USER_STORAGE_METHODS);
+  storageLayer.streams = buildStub('Streams', USER_STORAGE_METHODS);
+  storageLayer.webhooks = buildStub('Webhooks', USER_STORAGE_METHODS);
+
+  storageLayer.events = {
+    importAll (_userOrUserId: any, _items: any[], callback: (err: any) => void) {
+      callback(new Error('SQLite events.importAll not yet implemented'));
+    },
+    clearAll (_userOrUserId: any, callback: (err: any) => void) {
+      callback(new Error('SQLite events.clearAll not yet implemented'));
+    }
+  };
+
+  storageLayer.iterateAllEvents = async function * () {
+    throw new Error('SQLite iterateAllEvents not yet implemented');
+    yield; // unreachable; satisfies generator type
+  };
+
+  storageLayer.getAllUserIdsFromCollection = async function (_collectionName: string): Promise<string[]> {
+    throw new Error('SQLite getAllUserIdsFromCollection not yet implemented');
+  };
+
+  storageLayer.clearCollection = async function (_collectionName: string): Promise<void> {
+    throw new Error('SQLite clearCollection not yet implemented');
+  };
 }
 
 function getUserAccountStorage () {
