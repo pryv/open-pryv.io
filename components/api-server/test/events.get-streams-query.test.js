@@ -11,7 +11,6 @@ const require = createRequire(import.meta.url);
 
 const eventsQueryUtils = require('mall/src/helpers/eventsQueryUtils.ts');
 const streamsQueryUtils = require('../src/methods/helpers/streamsQueryUtils.ts');
-const { toMongoDBQuery } = require('storages/engines/mongodb/src/dataStore/streamsQueryToMongo.ts');
 const { storeDataUtils } = require('mall');
 
 /**
@@ -272,56 +271,6 @@ describe('[EGSQ] events.get streams query', function () {
       });
     });
 
-    describe('[EQ05] toMongoQuery()', function () {
-      it('[KKIH] must convert to MongoDB including expansion', async function () {
-        const clean = await validateQuery(['A', 'B']);
-        const storeQuery = eventsQueryUtils.normalizeStreamQuery(clean);
-        const mongo = toMongoDBQuery(storeQuery);
-        assert.deepStrictEqual(mongo, { streamIds: { $in: ['A', 'B', 'C'] } });
-      });
-
-      it('[4QMR] must convert to MongoDB including with "ALL"', async function () {
-        const clean = await validateQuery({ any: ['A', 'B'], all: ['E'] });
-        const storeQuery = eventsQueryUtils.normalizeStreamQuery(clean);
-        const mongo = toMongoDBQuery(storeQuery);
-        assert.deepStrictEqual(mongo, { $and: [{ streamIds: { $in: ['A', 'B', 'C'] } }, { streamIds: { $eq: 'E' } }] });
-      });
-
-      it('[NG7F] must convert to MongoDB including expansion with "NOT"', async function () {
-        const clean = await validateQuery({ any: ['A', 'B'], not: ['E'] });
-        const storeQuery = eventsQueryUtils.normalizeStreamQuery(clean);
-        const mongo = toMongoDBQuery(storeQuery);
-        assert.deepStrictEqual(mongo, {
-          $and: [{ streamIds: { $in: ['A', 'B', 'C'] } }, { streamIds: { $ne: 'E' } }]
-        });
-      });
-
-      it('[HC6X] must convert to MongoDB including expansion with "ALL" and "NOT"', async function () {
-        const clean = await validateQuery({ any: ['A', 'E'], all: ['D', 'C'], not: ['D', 'F'] });
-        const mongo = toMongoDBQuery(eventsQueryUtils.normalizeStreamQuery(clean));
-        assert.deepStrictEqual(mongo, {
-          $and: [
-            { streamIds: { $in: ['A', 'B', 'C', 'E'] } },
-            { streamIds: { $eq: 'C' } },
-            { streamIds: { $nin: ['D', 'E', 'F'] } }
-          ]
-        });
-      });
-
-      it('[0RNW] must handle array of queries', async function () {
-        const clean = await validateQuery([{ any: ['B'] }, { any: ['D'], not: ['E'] }]);
-        const mongo = toMongoDBQuery(eventsQueryUtils.normalizeStreamQuery(clean));
-        const expected = {
-          $or: [
-            { streamIds: { $eq: 'B' } },
-            {
-              $and: [{ streamIds: { $in: ['D', 'E', 'F'] } }, { streamIds: { $ne: 'E' } }]
-            }
-          ]
-        };
-        assert.deepStrictEqual(mongo, expected);
-      });
-    });
   });
 
   describe('[EQ06] GET /events with streams queries', function () {

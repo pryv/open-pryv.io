@@ -42,19 +42,8 @@ class Context {
 
   async cleanEverything () {
     if (this.storageLayer) {
-      // Engine-agnostic path via StorageLayer.clearCollection()
       for (const name of ['accesses', 'sessions', 'webhooks']) {
         await this.storageLayer.clearCollection(name);
-      }
-    } else {
-      // Legacy raw DB path (MongoDB)
-      const collectionNames = [
-        'accesses',
-        'sessions',
-        'webhooks'
-      ];
-      for (const collectionName of collectionNames) {
-        await fromCallback((cb: any) => this.db.deleteMany({ name: collectionName }, {}, cb));
       }
     }
     const usersRepository = await getUsersRepository();
@@ -77,23 +66,14 @@ class UserContext {
   }
 
   initStorage () {
-    if (this.context.storageLayer) {
-      // Engine-agnostic path via StorageLayer
-      const sl = this.context.storageLayer;
-      return {
-        sessions: new SessionsFixture(sl.sessions),
-        accesses: sl.accesses,
-        webhooks: sl.webhooks
-      };
+    const sl = this.context.storageLayer;
+    if (!sl) {
+      throw new Error('databaseFixture: StorageLayer not provided — pass a StorageLayer (engine-agnostic API)');
     }
-    // Legacy raw DB path (MongoDB)
-    const db = this.context.db;
-    const { Accesses: MongoAccesses } = require('storages/engines/mongodb/src/user/Accesses.ts');
-    const { Webhooks: MongoWebhooks } = require('storages/engines/mongodb/src/user/Webhooks.ts');
     return {
-      sessions: new Sessions(db),
-      accesses: new MongoAccesses(db),
-      webhooks: new MongoWebhooks(db)
+      sessions: new SessionsFixture(sl.sessions),
+      accesses: sl.accesses,
+      webhooks: sl.webhooks
     };
   }
 }

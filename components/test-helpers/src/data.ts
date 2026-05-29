@@ -335,9 +335,21 @@ export const getStructure = function (version: any) {
   return require(path.join(__dirname, '/structure/', version));
 };
 
-function clearAllData (callback: any) {
+async function clearAllDataAsync () {
   deleteUsersDataDirectory();
-  storage.database.dropDatabase(callback);
+  const storageMod = require('storage');
+  const storageLayer = await storageMod.getStorageLayer();
+  for (const name of ['accesses', 'sessions', 'webhooks', 'profile', 'passwordResetRequests']) {
+    const handle = storageLayer[name];
+    if (handle && typeof handle.clearAll === 'function') {
+      await new Promise((resolve, reject) =>
+        handle.clearAll((err: any) => (err ? reject(err) : resolve(null))));
+    }
+  }
+}
+
+function clearAllData (callback: any) {
+  clearAllDataAsync().then(() => callback(null), callback);
 }
 
 function getDumpFolder (versionNum: any) {
