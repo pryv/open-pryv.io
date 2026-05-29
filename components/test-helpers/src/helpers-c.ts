@@ -83,5 +83,24 @@ base.init({
 // skipped in parallel mode pending the cleanup-asymmetry investigation
 // (platform DB vs users repository drift by 1 per test under MOCHA_PARALLEL=1).
 // The clean()-time integrityFinalCheck on events + accesses runs in both modes.
-const mochaHooks = base.getMochaHooks(disableIntegrityCheck || isParallelMode);
+const baseHooks = base.getMochaHooks(disableIntegrityCheck || isParallelMode);
+
+// Extend the base beforeAll: after setupParallelWorker has applied the
+// per-worker config overrides (per-worker DB names + per-worker rqlite URL),
+// initialize the api-server-side `dependencies` lazy proxies. This routes
+// pluginLoader and the StorageLayer-backed Sessions/Accesses/etc through the
+// per-worker engine wiring BEFORE the first test's Pattern A child-server
+// boot pulls them. Fixes the [ACCO]/[SYRO]/[PGTD] cold-start race: when 14
+// worker DIM spawns happen concurrently, Pattern A child-servers were
+// inheriting the worker-0 engine wiring and timing out on engine init.
+const mochaHooks = {
+  ...baseHooks,
+  async beforeAll (this: any) {
+    if (typeof baseHooks.beforeAll === 'function') {
+      await baseHooks.beforeAll.call(this);
+    }
+    const { dependencies } = require('./dependencies.ts');
+    await dependencies.init();
+  }
+};
 export { mochaHooks };

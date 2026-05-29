@@ -33,7 +33,7 @@ const require = createRequire(import.meta.url);
 if (process.env.MOCHA_PARALLEL === '1' && process.env.MOCHA_WORKER_ID != null) {
   const wid = parseInt(process.env.MOCHA_WORKER_ID, 10);
   const stride = (Number.isFinite(wid) && wid >= 0 ? wid : 0) * 10;
-  process.env.storages__engines__rqlite__url = `http://localhost:${4001 + stride}`;
+  process.env.storages__engines__rqlite__url = `http://localhost:${4011 + stride}`;
   process.env.tcpBroker__port = String(4222 + stride);
   // Mirror PG + Mongo database names too, so SpawnContext-forked
   // api-server children (legacy spawner in

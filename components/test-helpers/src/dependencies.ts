@@ -86,30 +86,39 @@ const dependencies = {
     }
   },
   /**
-   * Called by global.test.js to initialize async components.
-   * Always reconfigures storage via StorageLayer (engine-agnostic).
+   * Called by global.test.js to initialize async components, and by
+   * helpers-c.ts's beforeAll wrapper (in case the latter runs first).
+   * Idempotent — re-entrant calls return the same in-flight promise so
+   * the migration runner only fires once per process / per worker.
    */
-  init: async function () {
-    const storageLayer = await storage.getStorageLayer();
-    accessesProxy.setTarget(storageLayer.accesses);
-    profileProxy.setTarget(storageLayer.profile);
-    webhooksProxy.setTarget(storageLayer.webhooks);
-    sessionsProxy.setTarget(storageLayer.sessions);
-    passwordResetRequestsProxy.setTarget(storageLayer.passwordResetRequests);
-    // Production runs migrations in `bin/master.js` before forking
-    // workers. The test harness calls `storages.init()` directly
-    // without going through master, so we run the migration runner
-    // ourselves to bring the test DB up to the same schema shape as a
-    // deployed server (e.g. the `head_id`-aware unique-token index).
-    try {
-      const { createMigrationRunner } = require('storages/interfaces/migrations/index.ts');
-      const runner = await createMigrationRunner();
-      await runner.runAll();
-    } catch (_err) {
-      // Some test contexts use engines that don't register the
-      // migrations capability — proceed without crashing.
-    }
-  }
+  init: (function () {
+    let inFlight: Promise<void> | null = null;
+    return async function () {
+      if (inFlight) return inFlight;
+      inFlight = (async () => {
+        const storageLayer = await storage.getStorageLayer();
+        accessesProxy.setTarget(storageLayer.accesses);
+        profileProxy.setTarget(storageLayer.profile);
+        webhooksProxy.setTarget(storageLayer.webhooks);
+        sessionsProxy.setTarget(storageLayer.sessions);
+        passwordResetRequestsProxy.setTarget(storageLayer.passwordResetRequests);
+        // Production runs migrations in `bin/master.js` before forking
+        // workers. The test harness calls `storages.init()` directly
+        // without going through master, so we run the migration runner
+        // ourselves to bring the test DB up to the same schema shape as a
+        // deployed server (e.g. the `head_id`-aware unique-token index).
+        try {
+          const { createMigrationRunner } = require('storages/interfaces/migrations/index.ts');
+          const runner = await createMigrationRunner();
+          await runner.runAll();
+        } catch (_err) {
+          // Some test contexts use engines that don't register the
+          // migrations capability — proceed without crashing.
+        }
+      })();
+      return inFlight;
+    };
+  })()
 };
 export default dependencies;
 export { dependencies };

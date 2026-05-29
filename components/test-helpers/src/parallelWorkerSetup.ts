@@ -49,14 +49,15 @@ const __dirname = path.dirname(__filename);
 // root.
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 
-// Per-worker port stride. §2D spec is `4001 + id*10`. Worker 0 collides
-// with the host dev rqlited at 4001 by design — in parallel mode the
-// host rqlited must be stopped first (`just clean-test-data-parallel`
-// includes a stop hint).
+// Per-worker port stride. Worker 0 starts at 4011/4012 so the host dev
+// rqlited at 4001/4002 can keep serving sequential test runs unmodified.
+// (Original §2D spec was `4001 + id*10` with worker 0 colliding with the
+// host rqlited; that forced operators to stop the host rqlited before any
+// parallel run. Shifting +10 removes that requirement.)
 const PORT_STRIDE = 10;
 
-const RQLITE_HTTP_BASE = 4001;
-const RQLITE_RAFT_BASE = 4002;
+const RQLITE_HTTP_BASE = 4011;
+const RQLITE_RAFT_BASE = 4012;
 const HTTP_PORT_BASE = 3000;
 const HFS_PORT_BASE = 4000;
 const PREVIEWS_PORT_BASE = 3001;
