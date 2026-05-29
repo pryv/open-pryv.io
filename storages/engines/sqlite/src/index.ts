@@ -66,6 +66,10 @@ async function initStorageLayer (storageLayer: any, _connection: any, options: a
   const { DatabaseSQLite } = require('./DatabaseSQLite.ts');
   const { SessionsSQLite } = require('./SessionsSQLite.ts');
   const { PasswordResetRequestsSQLite } = require('./PasswordResetRequestsSQLite.ts');
+  const { AccessesSQLite } = require('./user/AccessesSQLite.ts');
+  const { ProfileSQLite } = require('./user/ProfileSQLite.ts');
+  const { StreamsSQLite } = require('./user/StreamsSQLite.ts');
+  const { WebhooksSQLite } = require('./user/WebhooksSQLite.ts');
   const sharedDb = new DatabaseSQLite();
   await sharedDb.init();
 
@@ -73,10 +77,10 @@ async function initStorageLayer (storageLayer: any, _connection: any, options: a
 
   storageLayer.sessions = new SessionsSQLite(sharedDb, { maxAge: options.sessionMaxAge });
   storageLayer.passwordResetRequests = new PasswordResetRequestsSQLite(sharedDb, { maxAge: options.passwordResetRequestMaxAge });
-  storageLayer.accesses = buildStub('Accesses', USER_STORAGE_METHODS);
-  storageLayer.profile = buildStub('Profile', USER_STORAGE_METHODS);
-  storageLayer.streams = buildStub('Streams', USER_STORAGE_METHODS);
-  storageLayer.webhooks = buildStub('Webhooks', USER_STORAGE_METHODS);
+  storageLayer.accesses = new AccessesSQLite(options.integrityAccesses);
+  storageLayer.profile = new ProfileSQLite();
+  storageLayer.streams = new StreamsSQLite();
+  storageLayer.webhooks = new WebhooksSQLite();
 
   storageLayer.events = {
     importAll (_userOrUserId: any, _items: any[], callback: (err: any) => void) {
