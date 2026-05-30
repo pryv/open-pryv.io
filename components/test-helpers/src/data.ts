@@ -16,19 +16,6 @@ const __dirname = require('path').dirname(__filename);
 
 const childProcess = require('child_process');
 
-// Tiny callback-series helper, used in dumpCurrent / restoreFromDump where the
-// step list is a mix of callback-style functions (childProcess.exec.bind(...),
-// fs.rm.bind(...), exports.resetUsers, etc). Replaces a former `async.series`
-// dependency.
-function runSeries (fns: any, cb: any) {
-  let i = 0;
-  function next (err?: any) {
-    if (err || i >= fns.length) return cb(err);
-    try { fns[i++](next); } catch (e) { cb(e); }
-  }
-  next();
-}
-
 const dependenciesMod = require('./dependencies.ts');
 const dependencies = dependenciesMod.default ?? dependenciesMod;
 const settings = dependencies.settings;
@@ -231,102 +218,6 @@ function getAttachmentInfo (id: any, filename: any, type: any) {
   };
 }
 
-// data dump & restore (for testing data migration)
-
-/**
- * Dumps test data into a `data` subfolder named after the provided version.
- * DB data is mongodumped, attachments data is tarballed.
- * The output folder will be overwritten if it already exists.
- *
- * @param mongoFolder Path to MongoDB base folder
- */
-export const dumpCurrent = function (mongoFolder: any, version: any, callback: any) {
-  const mongodump = path.resolve(mongoFolder, 'bin/mongodump');
-  const outputFolder = getDumpFolder(version);
-  logger.info('Dumping current test data to ' + outputFolder);
-  runSeries([
-    clearAllData,
-    exports.resetUsers,
-    exports.resetAccesses,
-    exports.resetProfile,
-    exports.resetStreams,
-    exports.resetEvents,
-    fs.rm.bind(null, outputFolder, { recursive: true, force: true }),
-    childProcess.exec.bind(null, mongodump +
-            (settings.storages.engines.mongodb.authUser
-              ? ' -u ' +
-                    settings.storages.engines.mongodb.authUser +
-                    ' -p ' +
-                    settings.storages.engines.mongodb.authPassword
-              : '') +
-            ' --host ' +
-            settings.storages.engines.mongodb.host +
-            ':' +
-            settings.storages.engines.mongodb.port +
-            ' --db ' +
-            settings.storages.engines.mongodb.name +
-            ' --out ' +
-            getDumpDBSubfolder(outputFolder)),
-    childProcess.exec.bind(null, 'tar -C ' +
-            settings.storages.engines.filesystem.attachmentsDirPath +
-            ' -czf ' +
-            getDumpFilesArchive(outputFolder) +
-            ' .')
-  ], function (err: any) {
-    if (err) {
-      return callback(err);
-    }
-    callback();
-  });
-};
-
-/**
- *
- * @param versionNum Must match an existing dumped version (e.g. "0.3.0")
- * @param mongoFolder Path to MongoDB base folder
- */
-export const restoreFromDump = function (versionNum: any, mongoFolder: any, callback: any) {
-  const mongorestore = path.resolve(mongoFolder, 'bin/mongorestore');
-  const sourceFolder = getDumpFolder(versionNum);
-  const sourceDBFolder = getDumpDBSubfolder(sourceFolder);
-  const sourceFilesArchive = getDumpFilesArchive(sourceFolder);
-  logger.info('Restoring v' + versionNum + ' data from ' + sourceFolder);
-  if (!fs.existsSync(sourceDBFolder) || !fs.existsSync(sourceFilesArchive)) {
-    throw new Error('Missing source dump or part of it at ' + sourceFolder);
-  }
-  runSeries([
-    clearAllData,
-    childProcess.exec.bind(null, mongorestore +
-            ' --nsFrom "pryv-node.*" --nsTo "pryv-node-test.*" ' +
-            (settings.storages.engines.mongodb.authUser
-              ? ' -u ' +
-                    settings.storages.engines.mongodb.authUser +
-                    ' -p ' +
-                    settings.storages.engines.mongodb.authPassword
-              : '') +
-            ' --host ' +
-            settings.storages.engines.mongodb.host +
-            ':' +
-            settings.storages.engines.mongodb.port +
-            ' ' +
-            sourceDBFolder),
-    function (done: any) {
-      fs.mkdirSync(settings.storages.engines.filesystem.attachmentsDirPath, { recursive: true });
-      done();
-    },
-    childProcess.exec.bind(null, 'tar -xzf ' +
-            sourceFilesArchive +
-            ' -C ' +
-            settings.storages.engines.filesystem.attachmentsDirPath)
-  ], function (err: any) {
-    if (err) {
-      return callback(err);
-    }
-    logger.info('OK');
-    callback();
-  });
-};
-
 /**
  * Fetches the database structure for a given version
  *
@@ -334,35 +225,6 @@ export const restoreFromDump = function (versionNum: any, mongoFolder: any, call
 export const getStructure = function (version: any) {
   return require(path.join(__dirname, '/structure/', version));
 };
-
-async function clearAllDataAsync () {
-  deleteUsersDataDirectory();
-  const storageMod = require('storage');
-  const storageLayer = await storageMod.getStorageLayer();
-  for (const name of ['accesses', 'sessions', 'webhooks', 'profile', 'passwordResetRequests']) {
-    const handle = storageLayer[name];
-    if (handle && typeof handle.clearAll === 'function') {
-      await new Promise((resolve, reject) =>
-        handle.clearAll((err: any) => (err ? reject(err) : resolve(null))));
-    }
-  }
-}
-
-function clearAllData (callback: any) {
-  clearAllDataAsync().then(() => callback(null), callback);
-}
-
-function getDumpFolder (versionNum: any) {
-  return path.resolve(__dirname, 'data/dumps', versionNum);
-}
-
-function getDumpDBSubfolder (dumpFolder: any) {
-  return path.resolve(dumpFolder, 'db');
-}
-
-function getDumpFilesArchive (dumpFolder: any) {
-  return path.resolve(dumpFolder, 'event-files.tar.gz');
-}
 
 function buildCustomAccountProperties () {
   const customStreams = getConfigUnsafe(true).get('custom:systemStreams:account');
