@@ -41,7 +41,7 @@ if (process.env.STORAGE_ENGINE) {
   // broken PG/Mongo PlatformDB.
   testConfig.storages = {
     base: { engine: eng },
-    series: { engine: eng === 'postgresql' ? 'postgresql' : 'influxdb' },
+    series: { engine: eng },
     file: { engine: 'filesystem' },
     audit: { engine: eng === 'postgresql' ? 'postgresql' : 'sqlite' }
   };

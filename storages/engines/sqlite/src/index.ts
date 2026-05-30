@@ -128,4 +128,10 @@ function createAuditStorage () {
   return new SqliteStorage('audit');
 }
 
-export { init, initStorageLayer, getUserAccountStorage, getUsersLocalIndex, getDataStoreModule, createAuditStorage };
+// -- SeriesStorage (SQLite, per-user file) ------------------------------
+
+function createSeriesConnection (config: any): any {
+  return require('./seriesStorage/index.ts').createSeriesConnection(config);
+}
+
+export { init, initStorageLayer, getUserAccountStorage, getUsersLocalIndex, getDataStoreModule, createAuditStorage, createSeriesConnection };
