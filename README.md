@@ -18,7 +18,7 @@ Pryv.io serves as the backend for applications in health, quantified self, smart
 
 ## What's new in v2
 
-- **Pluggable storage engines** — MongoDB, PostgreSQL, SQLite, InfluxDB, filesystem, rqlite. Engines are plugins under `storages/engines/` with manifest-driven configuration.
+- **Pluggable storage engines** — PostgreSQL (default), SQLite, InfluxDB, filesystem, rqlite. Engines are plugins under `storages/engines/` with manifest-driven configuration.
 - **Unified master process** — single `bin/master.js` manages N API workers + M HFS workers + optional previews worker. Single Docker image replaces multi-container orchestration.
 - **Built-in user registration** — no external service-register needed. Registration fully self-contained via PlatformDB.
 - **Built-in MFA** — SMS-based two-factor authentication as `mfa.*` API methods.
@@ -51,10 +51,10 @@ For a complete Docker deployment with PostgreSQL, see [INSTALL.md](./INSTALL.md)
 
 ## Native installation
 
-Prerequisites: Node.js 22.x, MongoDB 4.2+ or PostgreSQL 14+, [just](https://github.com/casey/just#installation).
+Prerequisites: Node.js 22.x, PostgreSQL 14+ (or SQLite — bundled), [just](https://github.com/casey/just#installation).
 
 ```bash
-just setup-dev-env    # setup local file structure + MongoDB
+just setup-dev-env    # setup local file structure + PostgreSQL + rqlite
 just install          # install node modules
 just start-master     # start in cluster mode
 ```
@@ -121,9 +121,8 @@ node bin/master.js
 
 | Engine | Storage types | Status |
 |--------|--------------|--------|
-| MongoDB | base, dataStore | Production |
-| PostgreSQL | base, dataStore, series, audit | Production |
-| SQLite | dataStore (per-user), user account, user index, audit | Production |
+| PostgreSQL | base, dataStore, series, audit | Production (default) |
+| SQLite | base, dataStore, user account, user index, audit (per-user files) | Production (alternative) |
 | rqlite | platform (single- and multi-core) | Production |
 | Filesystem | file (attachments) | Production |
 | InfluxDB | series (HFS) | Production |
@@ -150,7 +149,7 @@ open-pryv.io/
 |   +-- webhooks/           # Webhook business logic (runs in api-server)
 |   +-- test-helpers/       # Test infrastructure
 +-- storages/               # Plugin system (npm workspace)
-|   +-- engines/            # mongodb, postgresql, sqlite, filesystem, influxdb, rqlite
+|   +-- engines/            # postgresql, sqlite, filesystem, influxdb, rqlite
 |   +-- interfaces/         # Formal contracts per storage type
 +-- config/                 # Default and environment configs
 +-- Dockerfile              # Single-image Docker build
@@ -162,7 +161,7 @@ open-pryv.io/
 ```bash
 just test all                     # all components (PostgreSQL — default since v2)
 just test api-server              # single component
-just test-mongo all               # MongoDB mode
+just test-sqlite all              # SQLite mode (alternative engine)
 just test-parallel all            # parallel file execution
 just clean-test-data              # reset test databases
 ```

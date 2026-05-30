@@ -50,8 +50,7 @@ storages/         Plugin tree for storage engines (npm workspace)
     baseStorage/  dataStore/  platformStorage/  fileStorage/
     seriesStorage/  auditStorage/  backup/  migrations/
   engines/
-    mongodb/        baseStorage, dataStore, auditStorage
-    postgresql/     baseStorage, dataStore, platformStorage, seriesStorage, auditStorage
+    postgresql/     baseStorage, dataStore, seriesStorage, auditStorage
     sqlite/         per-user SQLite (baseStorage, dataStore, auditStorage)
     rqlite/         distributed SQLite (platformStorage — always used in v2)
     filesystem/     attachments + previews on disk (fileStorage)
@@ -61,16 +60,16 @@ storages/         Plugin tree for storage engines (npm workspace)
   pluginLoader.js     Reads `storages.<type>.engine` + loads the chosen engine
 
 config/           default-config.yml + plugins
-Dockerfile        Canonical container (bundles rqlited, sharp, mongosh)
+Dockerfile        Canonical container (bundles rqlited, sharp)
 test/             Integration test entry — see `just test …` in justfile
 ```
 
 ## Running locally
 
-Prerequisites: Node.js 22.x, MongoDB 4.2+ or PostgreSQL 14+, [just](https://github.com/casey/just#installation).
+Prerequisites: Node.js 22.x, PostgreSQL 14+ (or SQLite — bundled), [just](https://github.com/casey/just#installation).
 
 ```bash
-just setup-dev-env     # prepares var-pryv/ layout + launches PG/Mongo/rqlite binaries
+just setup-dev-env     # prepares var-pryv/ layout + launches PG/rqlite binaries
 just install           # npm install across workspaces
 just start-master      # boot the single-binary cluster
 ```
@@ -80,9 +79,8 @@ just start-master      # boot the single-binary cluster
 ```bash
 just test all                      # full suite, PostgreSQL baseStorage (default)
 just test <component>              # single component, PostgreSQL baseStorage
-just test-mongo all                # full suite, MongoDB baseStorage
-just test-mongo <component>        # single component, MongoDB baseStorage
-just test-sqlite <component>       # SQLite baseStorage where applicable
+just test-sqlite all               # full suite, SQLite baseStorage
+just test-sqlite <component>       # single component, SQLite baseStorage
 just clean-test-data               # reset test DBs + per-user dirs
 ```
 
@@ -130,7 +128,7 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
      audit:    { engine: sqlite }       # auditStorage
      engines:
        postgresql: { host: 127.0.0.1, port: 5432, database: pryv-node, user: pryv, password: '', max: 20 }
-       # mongodb, sqlite, rqlite, influxdb, filesystem also configurable here
+       # sqlite, rqlite, influxdb, filesystem also configurable here
    ```
 
    The `pluginLoader` reads `storages/engines/<name>/manifest.json` to see which `storageTypes` each engine provides. From code:
@@ -149,7 +147,7 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 
 ## Common pitfalls for agents
 
-- **Don't assume MongoDB.** The engine plugin tree lets operators choose; contributions that hard-code MongoDB or SQLite inside business logic will get rejected. Use `pluginLoader.getEngineModule(pluginLoader.getEngineFor('<storageType>'))`.
+- **Don't assume a single engine.** The engine plugin tree lets operators choose between PostgreSQL (default) and SQLite for `baseStorage` / `dataStore` / `auditStorage`; contributions that hard-code either inside business logic will get rejected. Use `pluginLoader.getEngineModule(pluginLoader.getEngineFor('<storageType>'))`.
 - **Don't add an APM agent at `require()` time unconditionally.** Observability (APM) is opt-in via the pluggable provider façade; the agent is bootstrapped by `bin/_observability-boot.js` only when a provider is explicitly enabled (admin CLI: `bin/observability.js`). Always honour `NODE_ENV=test` as a no-op.
 - **Don't introduce a second TLS terminator.** See truth #2.
 - **Don't hot-wire cert rotation with `fs.watchFile` or cron.** Use the existing `AcmeOrchestrator` → `acme:rotate` IPC → worker `reloadTls()` path.
@@ -215,6 +213,6 @@ _A few operator pages on pryv.github.io (notably `dns-config`, `audit-setup`, an
 
 - Read `bin/master.js` top-to-bottom. It's the single entry point and its comments explain more than this file can.
 - If a config key feels like it should exist but you can't find it: check `config/default-config.yml` — if it's not there, it probably isn't a thing.
-- Test changes against both engines before assuming engine-agnostic behaviour: `just test all` (PostgreSQL default) and `just test-mongo all`.
+- Test changes against both engines before assuming engine-agnostic behaviour: `just test all` (PostgreSQL default) and `just test-sqlite all`.
 
 — Happy hacking.

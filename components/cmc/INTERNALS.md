@@ -6,7 +6,7 @@
 
 ## Data residency assumed in these diagrams
 
-**Locked design:** CMC is a plugin (stream-id-namespace owner + orchestration hooks) running inside the API server process — NOT a separate storage engine. All `:_cmc:*` events, accesses, and streams live in the **standard per-user main storage (PG / Mongo)** alongside the user's other data, addressed through the normal `events.*` / `accesses.*` / `streams.*` API paths. The plugin doesn't bypass the API server to talk to storage; it dispatches through the same code paths app developers use.
+**Locked design:** CMC is a plugin (stream-id-namespace owner + orchestration hooks) running inside the API server process — NOT a separate storage engine. All `:_cmc:*` events, accesses, and streams live in the **standard per-user main storage (PG / SQLite)** alongside the user's other data, addressed through the normal `events.*` / `accesses.*` / `streams.*` API paths. The plugin doesn't bypass the API server to talk to storage; it dispatches through the same code paths app developers use.
 
 **CMC introduces zero new storage primitives.** Internal plugin state — the outbound-delivery retry queue (flow 4) — lives as events in a **hidden companion stream `:_cmc:_internal:retries`** inside main storage. **rqlite / platformDB / cluster-state primitives are NOT in CMC's design surface at all** — same discipline as the mTLS scoping principle in [README.md](README.md) "Future development scoping."
 
@@ -14,7 +14,7 @@
 
 - `App` = customer code on either side (`DoctorApp`, `PatientApp`, etc.).
 - `Core-X` = the open-pryv.io master process running the API server + the CMC plugin write-hooks. Where the boundary matters (post-hook, retry-queue), the diagrams split it into `APIServer-X` and `Plugin-X`.
-- `Storage-X` = the **per-user PG / Mongo** instance for that core. Holds standard events, accesses, streams — including the user-visible `:_cmc:*` streams AND the hidden `:_cmc:_internal:*` plugin-state stream(s).
+- `Storage-X` = the **per-user PG / SQLite** instance for that core. Holds standard events, accesses, streams — including the user-visible `:_cmc:*` streams AND the hidden `:_cmc:_internal:*` plugin-state stream(s).
 - HTTPS arrows crossing the `Plugin-X` ↔ `APIServer-Y` boundary are outbound deliveries (`/events` calls, `accesses.*` calls, etc.) authenticated by the access token embedded in the counterparty's stored `apiEndpoint`.
 
 ---
@@ -40,7 +40,7 @@ sequenceDiagram
     participant App
     participant APIServer
     participant Plugin
-    participant Storage as Storage<br/>(per-user PG/Mongo)
+    participant Storage as Storage<br/>(per-user PG/SQLite)
 
     App->>APIServer: events.create cmc/<action>-v1<br/>status: 'pending'
     APIServer->>Storage: persist trigger event
@@ -89,7 +89,7 @@ sequenceDiagram
     participant App as RequesterApp
     participant APIServer as APIServer-A
     participant Plugin as Plugin-A
-    participant Storage as Storage-A<br/>(per-user PG/Mongo)
+    participant Storage as Storage-A<br/>(per-user PG/SQLite)
 
     App->>APIServer: events.create consent/request-cmc<br/>capabilityRequested: true
     APIServer->>Plugin: trigger dispatch
@@ -153,7 +153,7 @@ sequenceDiagram
     CoreB-->>AccepterApp: socket.io push (trigger status)
 ```
 
-All persistence happens in the **per-user accesses/streams/events tables** of each core's standard storage (PG/Mongo). No rqlite, no separate engine.
+All persistence happens in the **per-user accesses/streams/events tables** of each core's standard storage (PG/SQLite). No rqlite, no separate engine.
 
 **Atomicity worry:** if step 9 (capability delete) crashes after the back-channel access is created (step 7) but before the response is sent (step 10), the accepter retries and the request fails with `capability-already-consumed`. Recovery: operator-side cleanup script (backlog) reads back-channel accesses created without a paired data-grant and prunes. v1 ships with the race surfaced as an error; pruning is operational.
 
@@ -189,7 +189,7 @@ sequenceDiagram
     autonumber
     participant Plugin
     participant APIServer
-    participant Storage as Storage<br/>(per-user PG/Mongo)
+    participant Storage as Storage<br/>(per-user PG/SQLite)
     participant HTTPSClient as outbound HTTPS client
     participant Peer as peer APIServer
 
@@ -254,7 +254,7 @@ sequenceDiagram
     participant PeerPlugin as Plugin-A<br/>(remote)
     participant APIServer as APIServer-B
     participant Plugin as Plugin-B
-    participant Storage as Storage-B<br/>(per-user PG/Mongo)
+    participant Storage as Storage-B<br/>(per-user PG/SQLite)
     participant App as RecipientApp
 
     PeerPlugin->>APIServer: POST /events<br/>streamIds:[:_cmc:inbox]<br/>type: consent/accept-cmc<br/>Authorization: <back-channel access token>
@@ -294,7 +294,7 @@ sequenceDiagram
     participant App as SenderApp
     participant APIServer
     participant Plugin
-    participant Storage as Storage<br/>(per-user PG/Mongo)
+    participant Storage as Storage<br/>(per-user PG/SQLite)
 
     App->>APIServer: events.create message/chat-cmc<br/>streamIds: [:_cmc:apps:my-app:chats:alice--pryv-me]
     APIServer->>Storage: persist trigger
@@ -309,7 +309,7 @@ sequenceDiagram
     APIServer-->>App: socket.io push (status)
 ```
 
-**Index requirement:** Phase B `DATA-RESIDENCY.md` must specify a B-tree index on `accesses.clientData.cmc.counterparty.{username, host}` (PG path) / equivalent on Mongo. Without it, the slug-resolution lookup degrades to a full-table scan per chat write.
+**Index requirement:** Phase B `DATA-RESIDENCY.md` must specify a B-tree index on `accesses.clientData.cmc.counterparty.{username, host}` (PG path) / equivalent on SQLite. Without it, the slug-resolution lookup degrades to a full-table scan per chat write.
 
 **Per-app scoping:** matching on `clientData.cmc.appCode` means the user can have multiple counterparty-accesses to the same person across different apps (one per app) without cross-talk. The trigger's app-scope is canonical; the matched access carries the corresponding remote stream-id.
 
@@ -326,7 +326,7 @@ sequenceDiagram
     autonumber
     participant App
     participant Plugin
-    participant Storage as Storage<br/>(per-user PG/Mongo)
+    participant Storage as Storage<br/>(per-user PG/SQLite)
 
     App->>Plugin: events.create notification/alert-cmc<br/>:_cmc:apps:my-app:collectors:alice--pryv-me
     Plugin->>Plugin: parse trigger stream-id<br/>→ (appCode='my-app', counterparty={username='alice', hostSlug='pryv-me'})
@@ -374,7 +374,7 @@ sequenceDiagram
     participant UserApp
     participant Plugin as Plugin-B
     participant APIServer as APIServer-B
-    participant Storage as Storage-B<br/>(per-user PG/Mongo)
+    participant Storage as Storage-B<br/>(per-user PG/SQLite)
     participant Peer as Plugin-A
 
     UserApp->>Plugin: events.create consent/scope-update-cmc<br/>content.scopeRequestEventId<br/>content.accept=true
@@ -406,7 +406,7 @@ sequenceDiagram
     participant APIServer
     participant PostHook as accesses.update post-hook
     participant Plugin
-    participant Storage as Storage<br/>(per-user PG/Mongo)
+    participant Storage as Storage<br/>(per-user PG/SQLite)
 
     caller->>APIServer: accesses.update id=<access>, permissions=[...]
     APIServer->>Storage: composite-id bump
@@ -539,7 +539,7 @@ sequenceDiagram
     RCore-->>RApp: socket.io :_cmc:inbox
 
     rect rgb(245, 245, 235)
-    Note over RApp,AApp: post-acceptance: bidirectional access pair held<br/>by each plugin in their respective per-user Storage (PG/Mongo)
+    Note over RApp,AApp: post-acceptance: bidirectional access pair held<br/>by each plugin in their respective per-user Storage (PG/SQLite)
     end
 
     RApp->>RCore: events.create message/chat-cmc<br/>:_cmc:apps:my-app:chats:<accepter-slug>

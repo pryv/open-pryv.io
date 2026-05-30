@@ -3,9 +3,8 @@
 ## Prerequisites
 
 - **Node.js** 24.x (matches `engines.node` in `package.json`)
-- **Database**: PostgreSQL 14+ (recommended) or MongoDB 4.2+
+- **Database**: PostgreSQL 14+ (default) or SQLite (bundled — alternative for low-volume / single-user deployments)
 - **rqlite** — distributed SQLite used for the platform DB. The `rqlited` binary is bundled under `bin-ext/` after `just setup-dev-env` (Docker image: `/app/bin-ext/rqlited`). `bin/master.js` spawns and supervises it; no manual install needed in single- or multi-core deployments.
-- **SQLite** (bundled — used for audit and per-user account/index storage)
 - **InfluxDB** 1.x (optional — for high-frequency series; PostgreSQL can also serve as series engine)
 - **GraphicsMagick** (optional — for image previews): `apt install graphicsmagick`
 - [just](https://github.com/casey/just#installation) (task runner)
@@ -14,7 +13,7 @@
 
 ```bash
 git clone <repo-url> service-core && cd service-core
-just setup-dev-env    # local file structure + MongoDB (dev)
+just setup-dev-env    # local file structure + PostgreSQL + rqlite (dev)
 just install          # npm install across all workspaces
 ```
 
@@ -63,7 +62,7 @@ service:
 
 storages:
   base:
-    engine: postgresql    # or mongodb
+    engine: postgresql    # or sqlite
   platform:
     engine: rqlite        # only supported value; master.js spawns the embedded rqlited
   file:

@@ -1,82 +1,135 @@
 # Pryv.io Databases
 
-Initially Pryv.io was built on top of MongoDB with separated collection per user. This initial design allowed to isolate peruser data on the file system. 
+## v2 storage picture
 
-This design has a drawback as MongoDB was consuming a fixed amount of RAM per collection and the with growing sets of users (over 40'000 per node) 16Gb was needed. In v1.6.0 an option to merge the Mongo's collection was added, resulting in an average RAM requirement of 4Gb for 100'000 users. 
+Open Pryv.io v2 runs on two complementary engines for user-data storage:
 
-From v1.7.0 Sqlite has been investigated in order to provide  back the ability to isolate peruser data on the file system. The motivation is to provide full control over the user's data in order to facilitate and prove the "right to be forgotten."
+- **PostgreSQL** — the default. Shared `user_id`-keyed tables. Cheap
+  cross-user queries, single `pg_dump` artefact for backup. Deleted-user
+  rows linger in historical backups (Art.17 erasure is application-level).
+- **SQLite** — the alternative. Per-user files at
+  `<userLocalDirectory>/<userId>/baseStorage-<version>.sqlite`. Deletion
+  is `unlink(<userId>)`, per-user backups are trivial, clean GDPR
+  Art.17 right-to-be-forgotten semantics. Best fit for low-volume /
+  single-tenant deployments.
 
-From v1.8.0 a Sqlite version for Event has been provided on top of the [datastore](https://github.com/pryv/pryv-datastore) abstraction. 
+Both engines cover `baseStorage`, `dataStore`, and `auditStorage`.
+PostgreSQL additionally covers `seriesStorage` (HF time-series).
+InfluxDB remains an optional `seriesStorage` choice.
 
-Since v1.9.2 Pryv.io can be deployed in "full-cloud" setup without relying on the file system. This can be done by configuring all storage modules to use MongoDB. For the attachments and S3 implementation is in development. 
+The **platform DB** is always [`rqlite`](https://rqlite.io/) (distributed
+SQLite, embedded — `bin/master.js` spawns and supervises `rqlited`).
+Multi-core clusters all share one logical platform DB via Raft.
 
-For future v1.9.3 Pryv.io will be also capable in being "full local" with only SQLite databases.
+Engine choice is per `storageType` in `config/default-config.yml`:
 
-In v2 the **default `baseStorage` engine is PostgreSQL** (`storages.base.engine: postgresql` in `config/default-config.yml`). MongoDB remains fully supported — set `storages.base.engine: mongodb` in `override-config.yml`, or run the test harness with `just test-mongo` instead of `just test`.
+```yaml
+storages:
+  base:     { engine: postgresql }   # or sqlite
+  data:     { engine: postgresql }   # or sqlite
+  series:   { engine: postgresql }   # or influxdb
+  audit:    { engine: sqlite }
+  platform: { engine: rqlite }        # only supported value in v2
+  file:     { engine: filesystem }
+```
 
 ## List of storage used in Pryv.io
 
-#### User local directory
+### User local directory
 
 base code: [components/storage/src/userLocalDirectory.ts](components/storage/src/userLocalDirectory.ts)
 
-Localization of user data on the host file system, usually in `var-pryv/users` then a directory path is constructed using the 3 last characters of the userId and the userId. 
+Localization of user data on the host filesystem, usually under
+`var-pryv/users/`. A directory path is constructed using the 3 last
+characters of the userId and the userId itself.
 
-Exemple with userId `c123456789abc`: `var-pryv/users/c/b/a/c123456789abc/`
+Example with userId `c123456789abc`: `var-pryv/users/c/b/a/c123456789abc/`
 
-In this directory, the attachments and any user attributed data and sqlite db should be stored.
+In this directory, attachments and per-user SQLite databases (including
+the SQLite engine's `baseStorage-<version>.sqlite` when SQLite is the
+selected engine) are stored.
 
-#### User local index
+### User local index
 
 base code: [components/storage/src/usersLocalIndex.ts](components/storage/src/usersLocalIndex.ts)
 
-This database is a per-server index to map userId and userName. In the future it could be extended to allow user aliases. 
+Per-server index mapping userId ↔ userName. Backed by a single SQLite
+file at `var-pryv/user-index.db`. Could be extended in the future to
+allow user aliases.
 
-- With SQLite (default) the db file can be usually found at `var-pryv/user-index.db`
-- With MongoDB the collection is `id4name` and stored in the main host database `pryv-node`
+### User account storage
 
-Settings to activate MongoDB instead of SQLite: `storageUserIndex:engine = 'mongodb'`
+base code: [components/storage/src/userAccountStorage.ts](components/storage/src/userAccountStorage.ts)
 
-#### User account storage
+Per-user password + password history. SQLite file `account-1.0.0.sqlite`
+inside the per-user local directory.
 
-base code: [components/storage/src/userAccountStorage*.js](components/storage/src/)  *: Mongo or Sqlite
-
-This database contains the password and passwords history of the user. 
-
-- With SQLite (default) it can be found in the "User local directory" named as `account-1.0.0.sqlite` . 
-- With MongoDB the collection is `passwords` and stored in the main host database `pryv-node`
-
-Settings to activate MongoDB instead of SQLite: `storageUserAccount:engine = 'mongodb'`
-
-#### Platform Wide Shared Storage
+### Platform-wide shared storage
 
 base code: [components/platform](components/platform)
 
-This database contains all indexed and unique fields for users such as emails and custom systems streams data, plus the user→core mapping in multi-core deployments.
+Holds indexed and unique fields for users (emails, custom system-stream
+data) plus the user→core mapping in multi-core deployments.
 
-Since v2 the platform DB is **always** rqlite (distributed SQLite). `bin/master.js` spawns and supervises an embedded `rqlited` in single-core mode (one node) and in multi-core mode (each core runs its own node, joined into one Raft cluster via DNS discovery on `lsc.{dns.domain}`).
+Since v2 the platform DB is **always** rqlite (distributed SQLite).
+`bin/master.js` spawns and supervises an embedded `rqlited` in
+single-core mode (one node) and in multi-core mode (each core runs its
+own node, joined into one Raft cluster via DNS discovery on
+`lsc.{dns.domain}`).
 
 - Data lives in `var-pryv/rqlite-data/` (Raft log + SQLite snapshot)
 - HTTP API: `http://localhost:4001` (default)
-- Other engines (mongodb, postgresql) still ship `PlatformDB` implementations for conformance tests, but rqlite is the only engine that can be selected at runtime via `storages.platform.engine`
+- PostgreSQL still ships a `PlatformDB` implementation for conformance
+  tests, but rqlite is the only engine selectable at runtime via
+  `storages.platform.engine`
 
-#### Events, Streams & Attachments Storage
+### Events, Streams & Attachments storage
 
-base code:  [components/storage/src/localDataStore](components/storage/src/localDataStore)  and [localDataStoreSQLite](components/storage/src/localDataStoreSqlite)
+base code:  [storages/engines/postgresql/src/dataStore](storages/engines/postgresql/src/dataStore) and [storages/engines/sqlite/src/dataStore](storages/engines/sqlite/src/dataStore)
 
-Main storage for `events` ,  `streams`  & `attachments` this implementation follows the modular API of [datastore](https://github.com/pryv/pryv-datastore) abstraction. 
+Main storage for `events`, `streams` & `attachments`. Implementations
+follow the modular API of the
+[datastore](https://github.com/pryv/pryv-datastore) abstraction.
 
-- Fully implemented with MongoDB
-- Only events are implemented with SQLite - Expecting full SQLite implementation in v1.9.3
+- **PostgreSQL** — shared `pryv-node` database, tables keyed by
+  `user_id`.
+- **SQLite** — per-user file
+  `<userLocalDirectory>/<userId>/baseStorage-<version>.sqlite`. One
+  table per collection inside the file; minimal schema (id / headId
+  / deleted as columns + JSON `data` column for the rest).
+- Attachments stay on the local filesystem via the `filesystem`
+  fileStorage engine, regardless of dataStore choice.
 
-#### Profile, Accesses, FollowedSlices & Webhooks Storage
+### Profile, Accesses & Webhooks storage
 
-base code:  [components/storage/src/user](components/storage/src/user)  
+base code:  [storages/engines/postgresql/src/user](storages/engines/postgresql/src/user) and [storages/engines/sqlite/src/userBaseStorage](storages/engines/sqlite/src/userBaseStorage)
 
-Only implemented for MongoDB - Expecting full SQLite implementation in v1.9.3
+Per-user `profile`, `accesses`, `webhooks`, `streams` (legacy), plus
+shared `sessions` and `passwordResetRequests` collections. Both engines
+implement the full surface; the PG version uses shared tables with
+`user_id` columns, SQLite uses per-user files (alongside the dataStore
+SQLite file).
 
-### Notes
+### High-frequency series storage
 
-#### Known issues
+base code: [storages/engines/postgresql/src/dataStore](storages/engines/postgresql/src/dataStore) (series) and [storages/engines/influxdb](storages/engines/influxdb)
 
-- [ ] test B2I7 is failing when testing `storage` with `full-mongo` as indexes for password is not yet created. Run `just test-full-mongo storage` to reproduce
+Engine choices for `seriesStorage`:
+
+- **PostgreSQL** (default) — same backend as baseStorage; HF points
+  stored in a separate table family.
+- **InfluxDB** 1.x — kept as alternative for high-throughput HF
+  workloads.
+
+A SQLite implementation of `seriesStorage` is **not yet available** —
+deployments choosing SQLite for baseStorage/dataStore must still pick
+PostgreSQL or InfluxDB for HF series.
+
+### Audit storage
+
+base code: [storages/engines/sqlite/src/userSQLite](storages/engines/sqlite/src/userSQLite) and [storages/engines/postgresql/src/AuditStoragePG.ts](storages/engines/postgresql/src/AuditStoragePG.ts)
+
+Per-user audit trail. SQLite is the default (per-user file via the
+`userSQLite/Storage` abstraction). PostgreSQL is supported as an
+alternative for deployments standardising on a single relational
+backend.

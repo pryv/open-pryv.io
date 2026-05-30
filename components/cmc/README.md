@@ -7,7 +7,7 @@
 **Status:** Released to `master` and shipped in open-pryv.io 2.0.0-pre.3. Client SDK ships as the [`@pryv/cmc`](https://github.com/pryv/lib-js/tree/master/components/cmc) npm package (sibling to `@pryv/monitor` and `@pryv/socket.io`).
 
 **Design pillars:**
-1. **Plugin, not storage engine** — CMC lives at `components/cmc/`; all state in standard per-user main storage (PG / Mongo).
+1. **Plugin, not storage engine** — CMC lives at `components/cmc/`; all state in standard per-user main storage (PG / SQLite).
 2. **Zero new storage primitives** — retry queue is a hidden companion stream `:_cmc:_internal:retries`.
 3. **Zero new HTTP route namespace** — every CMC behaviour is reachable via existing Pryv API surfaces (`events.*`, `streams.*`, `accesses.*`, socket.io monitor). No `/cmc/*` top-level routes. If a use case feels like it wants a CMC-specific endpoint, the right answer is either a `clientData` filter on the existing resource, a richer query on the trigger event, or a socket.io subscription. Keeps the plugin a true plugin (no API-surface ownership).
 4. **`:_cmc:apps:` user namespace** — user-creatable streams pack under one plugin-managed parent.
@@ -59,7 +59,7 @@ And it does this **without changing the API surface** that clients consume. `lib
 
 | Question | Answer |
 |---|---|
-| Implementation vehicle | **Dedicated CMC plugin (NOT a new storage engine).** Stream-id-namespace owner + orchestration hooks under `components/cmc/`. Reserves the `:_cmc:` prefix with the mall dispatcher for write-hook routing only — all state lives in the user's standard storage (PG/Mongo) alongside the user's other events / accesses / streams. **No new API methods. No new public HTTP routes on the core. No new storage engine.** |
+| Implementation vehicle | **Dedicated CMC plugin (NOT a new storage engine).** Stream-id-namespace owner + orchestration hooks under `components/cmc/`. Reserves the `:_cmc:` prefix with the mall dispatcher for write-hook routing only — all state lives in the user's standard storage (PG/SQLite) alongside the user's other events / accesses / streams. **No new API methods. No new public HTTP routes on the core. No new storage engine.** |
 | Composite-id `accesses.update` floor | Yes. Plugin uses composite-id `accesses.update` + `accessUpdated` socket event natively. |
 | First-ship event-type families | All three: **requests + chat + system messages** (system family absorbs scope-update via `consent/scope-request-cmc` + `consent/scope-update-cmc`). One coherent plugin. |
 | Federation model | **Cross-platform between independent operators is a first-class supported case.** No shared CA, no federation auth, no shared user namespace. Capability accesses + bidirectional shared accesses are the fabric. Topology-invariant (works for `dnsLess: true` and `false`). |
@@ -87,7 +87,7 @@ The capability access mechanism here is also the natural store for future OAuth2
 
 ### Data residency
 
-**CMC introduces zero new storage primitives.** All state — user-visible and plugin-internal — lives in the user's **standard per-user main storage (PG / Mongo)**, addressed through the normal `events.*` / `accesses.*` / `streams.*` API paths. The plugin's role is purely:
+**CMC introduces zero new storage primitives.** All state — user-visible and plugin-internal — lives in the user's **standard per-user main storage (PG / SQLite)**, addressed through the normal `events.*` / `accesses.*` / `streams.*` API paths. The plugin's role is purely:
 
 1. **Stream-id-namespace ownership** — reserve the `:_cmc:` prefix with the mall dispatcher so writes to `:_cmc:*` route through CMC's hooks.
 2. **Validation + orchestration hooks** — pre/post hooks on `events.create` (for `cmc/*` types), `accesses.update` (for the counterparty post-hook), and stream-creation under `:_cmc:` (reserved-root enforcement + anchor stream auto-creation idempotence).
@@ -104,7 +104,7 @@ The capability access mechanism here is also the natural store for future OAuth2
 
 **rqlite / platformDB is NOT part of CMC's design surface at all.** Same scoping principle as the mTLS / cluster-CA discipline below: cross-core platform infrastructure stays out of CMC's vocabulary. If CMC ever needs cross-core resilience (e.g., retry-queue failover when the home core dies), that's a separate plan with its own threat model — not a v1 feature.
 
-**Hidden companion stream convention:** the `:_cmc:_internal:*` prefix is filtered out of regular `events.get` / `events.getOne` / `streams.get` responses by plugin-owned read-hooks (`createEventsGetInternalGuardHook`, `createEventGetOneInternalGuardHook`, `createStreamsGetInternalGuardHook`) keyed on `isCmcInternalStreamId()`. The `events.get` hook strips any internal-stream id from `params.streams`; `events.getOne` returns 404 (info-leak parity with hidden-system-stream behaviour) if the resolved event carries any internal streamId; `streams.get` prunes the `:_cmc:_internal` subtree from the response tree. Operators / admin tooling can opt-in to see internal events via direct PG/Mongo queries or via the platform `/system/admin/*` endpoints — the plugin guards only the user-facing route chains.
+**Hidden companion stream convention:** the `:_cmc:_internal:*` prefix is filtered out of regular `events.get` / `events.getOne` / `streams.get` responses by plugin-owned read-hooks (`createEventsGetInternalGuardHook`, `createEventGetOneInternalGuardHook`, `createStreamsGetInternalGuardHook`) keyed on `isCmcInternalStreamId()`. The `events.get` hook strips any internal-stream id from `params.streams`; `events.getOne` returns 404 (info-leak parity with hidden-system-stream behaviour) if the resolved event carries any internal streamId; `streams.get` prunes the `:_cmc:_internal` subtree from the response tree. Operators / admin tooling can opt-in to see internal events via direct PG/SQLite queries or via the platform `/system/admin/*` endpoints — the plugin guards only the user-facing route chains.
 
 **Sequencing dependency (preferred):** the long-term goal is to promote the hidden-stream pattern to a first-class baseStorage primitive (modelled on Pryv's existing `isShown: false` flag for `:_system:email` / `:_system:account`), so any plugin can opt streams out of regular API responses by configuration rather than middleware. CMC shipped before that promotion landed, so the plugin carries its own filter middleware as interim debt — to be removed once the platform-wide primitive ships and `:_cmc:_internal:*` can declare `isShown: false` declaratively.
 
@@ -294,13 +294,13 @@ Output: short spec docs alongside this README (or expanded sections of this READ
 
 ### Phase C — Plugin skeleton & namespace registration
 
-1. Create `components/business/src/cmc/` (NOT `storages/datastores/` — CMC is a plugin, not a storage engine) with: plugin manifest, namespace-registration helper, write-hook registration, schema-validators directory, slug helpers, type-script source. No new storage engine, no new mall routing target — `:_cmc:*` events / accesses / streams use the existing per-user PG/Mongo storage paths.
+1. Create `components/business/src/cmc/` (NOT `storages/datastores/` — CMC is a plugin, not a storage engine) with: plugin manifest, namespace-registration helper, write-hook registration, schema-validators directory, slug helpers, type-script source. No new storage engine, no new mall routing target — `:_cmc:*` events / accesses / streams use the existing per-user PG/SQLite storage paths.
 2. Register `:_cmc:` prefix with mall dispatcher for **write-hook routing only**. Reserve the five plugin-managed parent regions (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`, `:_cmc:_internal`, `:_cmc:_internal:retries`) so they auto-exist on every user account. Allow user `streams.create({parentId: ':_cmc:apps'})` for everything user-creatable. Reject `streams.create` directly under `:_cmc:` outside `:_cmc:apps`. The `chats` / `collectors` sub-segments are plugin-reserved at any depth under `:_cmc:apps:<app-code>:...` and auto-created on demand by the plugin (user code may not create them).
 3. Auto-provision the five reserved parent streams on user creation (system-stream-style — they always exist).
 4. Wire into the API server hook chain (after access auth, before storage write). No `storages.init()` participation — the plugin doesn't own storage.
 5. Test: `[CMCNS]` namespace registration + reserved-root rejection + auto-provisioning + `:_cmc:apps` sub-stream creation (10–12 tests).
 
-**Exit:** PG + Mongo matrix green; users can `streams.create({parentId: ':_cmc:apps'})`; reserved-root streams reject mutation; `cmc/*` events can be written into `:_cmc:apps:*` sub-streams; events / accesses / streams under `:_cmc:*` are queryable via the standard `events.get` / `accesses.get` / `streams.get` paths (no plugin-specific reader).
+**Exit:** PG + SQLite matrix green; users can `streams.create({parentId: ':_cmc:apps'})`; reserved-root streams reject mutation; `cmc/*` events can be written into `:_cmc:apps:*` sub-streams; events / accesses / streams under `:_cmc:*` are queryable via the standard `events.get` / `accesses.get` / `streams.get` paths (no plugin-specific reader).
 
 ### Phase D — Plugin orchestration framework + capability + accept/refuse
 
@@ -371,7 +371,7 @@ Output: short spec docs alongside this README (or expanded sections of this READ
 
 ### Phase J — Test matrix + deploy + cross-platform e2e + public docs
 
-1. Full PG + Mongo matrix green. Plugin tests live under `components/cmc/test/`. No new conformance matrix — `:_cmc:*` events / accesses / streams pass through the existing per-user-storage conformance.
+1. Full PG + SQLite matrix green. Plugin tests live under `components/cmc/test/`. No new conformance matrix — `:_cmc:*` events / accesses / streams pass through the existing per-user-storage conformance.
 2. Deploy to `dev-pryv2-single` (single-core single-platform), validate.
 3. Deploy to pryv.me `core-use1` + `core-euc1`, validate cross-core via the standard HTTPS path.
 4. **Cross-platform e2e**: stand up a second open-pryv.io instance on a different domain (e.g. dev-deploy could add `dev-cmc-peer.example.com`); run a request → accept → chat → scope-update → revoke flow with users on both platforms. Different `dnsLess` topologies on each side ideally.
