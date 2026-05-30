@@ -6,8 +6,8 @@ on:
     branches: [master]
 
 jobs:
-  # PostgreSQL is the default baseStorage engine. MongoDB is opt-in
-  # (`just test-mongo all`) and validated locally rather than in CI.
+  # PostgreSQL is the default baseStorage engine; SQLite is the
+  # alternative. CI runs the PG matrix sequentially.
   test-postgres:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -52,7 +52,6 @@ jobs:
         run: npm install --ignore-scripts && npm rebuild
       - name: Start services
         run: |
-          ./storages/engines/mongodb/scripts/start
           ./storages/engines/rqlite/scripts/start &
           influxd &
           sleep 3
