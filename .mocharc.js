@@ -26,7 +26,7 @@ const isParallel = process.env.MOCHA_PARALLEL === '1';
 const isNonParallelOnly = process.env.MOCHA_NON_PARALLEL === '1';
 
 // Default to `cpuCount - 1` jobs so high-core CI / dev machines actually
-// scale, while leaving 1 core for the OS + supporting daemons (PG, Mongo,
+// scale, while leaving 1 core for the OS + supporting daemons (PG,
 // rqlite). Overridable per-component via `createConfig({ parallelJobs: N })`
 // or globally via `MOCHA_JOBS=N` env var. Lower bound = 2 (parallel mode
 // with 1 worker is pointless).
