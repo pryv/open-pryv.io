@@ -35,14 +35,12 @@ if (process.env.MOCHA_PARALLEL === '1' && process.env.MOCHA_WORKER_ID != null) {
   const stride = (Number.isFinite(wid) && wid >= 0 ? wid : 0) * 10;
   process.env.storages__engines__rqlite__url = `http://localhost:${4011 + stride}`;
   process.env.tcpBroker__port = String(4222 + stride);
-  // Mirror PG + Mongo database names too, so SpawnContext-forked
-  // api-server children (legacy spawner in
-  // hfs-server, root-seq etc.) talk to the SAME per-worker database as the
-  // test parent. Without this, parent writes to `pryv-node-test-w1` but
-  // forked children read from default `pryv-node-test` → 404 on every
-  // fixture lookup.
+  // Mirror PG database name too, so TestServerContext-forked
+  // api-server children (hfs-server, root-seq etc.) talk to the SAME
+  // per-worker database as the test parent. Without this, parent writes
+  // to `pryv-node-test-w1` but forked children read from default
+  // `pryv-node-test` → 404 on every fixture lookup.
   process.env.storages__engines__postgresql__database = `pryv-node-test-w${wid}`;
-  process.env.storages__engines__mongodb__database = `pryv-node-test-w${wid}`;
 }
 
 require('./api-server-tests-config.ts');
@@ -89,7 +87,7 @@ async function initCore () {
 
   // Build config
   // Parallel mode: each worker has its own in-memory cache that cannot be
-  // invalidated by other workers' direct MongoDB modifications (fixture
+  // invalidated by other workers' direct DB modifications (fixture
   // inserts/deletes). Without transport, cache entries become stale and cause
   // spurious 403/404 errors. Only disable caching when truly parallel.
   const isParallelMode = process.env.MOCHA_PARALLEL === '1';
@@ -112,7 +110,7 @@ async function initCore () {
   // Get StorageLayer (now initialized by app) for engine-agnostic fixtures
   const storageLayer = await storage.getStorageLayer();
 
-  // Reconfigure test dependencies for non-MongoDB engines
+  // Reconfigure test dependencies for the selected engine
   const dependencies = require('./dependencies.ts');
   await dependencies.init();
 
@@ -239,7 +237,7 @@ function getMochaHooks (isParallelMode = false) {
     async beforeAll (this: any) {
       // Spawning worker-private rqlited can take 5-10s on slower boxes
       // (worst case with `-raft-election-timeout=200ms`
-      // it's ~300ms, but PG/Mongo init pile on top). The default mocha
+      // it's ~300ms, but PG/SQLite init pile on top). The default mocha
       // hook timeout doubles in parallel mode (2s → 4s in `.mocharc.js`)
       // but that's still too tight for the OS-level fork + readyz wait.
       // api-server overrides `timeout: 10000` so it inherits 20s and
@@ -295,7 +293,7 @@ function getMochaHooks (isParallelMode = false) {
             // `initIndexPlatform()` → `getUsersLocalIndex()` → `ensureBarrel()`
             // path would otherwise call `storages.init()` with NO config arg —
             // before the test-scope `injectTestConfig(testConfig)` has applied
-            // the `STORAGE_ENGINE=mongodb` override staged by helpers-c.ts —
+            // the `STORAGE_ENGINE=sqlite` override staged by helpers-c.ts —
             // locking pluginLoader to the default engine across the whole
             // suite (B-2026-05-23-1). Pure-unit Pattern C tests that run
             // before any `initCore()` don't manipulate storage state anyway,

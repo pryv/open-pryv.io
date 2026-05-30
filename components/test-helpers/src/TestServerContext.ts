@@ -31,7 +31,7 @@ let spawnCounter = 0;
  * Lazy-fork replacement for the legacy `SpawnContext`: no prespawn pool, no
  * eager env capture at constructor time. Each `spawn()` forks a fresh child
  * with the parent's *current* `process.env`, so per-worker overrides
- * (PG/Mongo DB names, rqlite URL, etc.) injected by
+ * (PG DB name, rqlite URL, etc.) injected by
  * `parallelWorkerSetup.ts` after module load reach the child.
  *
  * IPC protocol with the child is unchanged: msgpack-encoded

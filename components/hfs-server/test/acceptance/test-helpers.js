@@ -23,7 +23,6 @@ if (process.env.MOCHA_PARALLEL === '1' && process.env.MOCHA_WORKER_ID != null) {
   process.env.storages__engines__rqlite__url = `http://localhost:${4001 + stride}`;
   process.env.tcpBroker__port = String(4222 + stride);
   process.env.storages__engines__postgresql__database = `pryv-node-test-w${wid}`;
-  process.env.storages__engines__mongodb__database = `pryv-node-test-w${wid}`;
 }
 
 require('@pryv/boiler').init({

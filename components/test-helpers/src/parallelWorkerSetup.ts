@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
  *
  *   - applies a deterministic set of per-worker config overrides
  *     (PG database name, SQLite path, rqlite ports + dataDir, http ports,
- *      tcpBroker port, mongo database name, filesystem previews path) so
+ *      tcpBroker port, filesystem previews path) so
  *     concurrent mocha worker processes can't collide on shared storage
  *     state.
  *   - spawns a worker-private rqlited bound to the per-worker ports,
@@ -72,7 +72,6 @@ interface WorkerOverrides {
   rqliteUrl: string;
   rqliteRaftPort: number;
   rqliteDataDir: string;
-  mongodbDatabase: string;
   httpPort: number;
   hfsPort: number;
   previewsPort: number;
@@ -159,7 +158,6 @@ export function getPerWorkerOverrides (workerId: number = getWorkerId()): Worker
     rqliteUrl: `http://localhost:${RQLITE_HTTP_BASE + stride}`,
     rqliteRaftPort: RQLITE_RAFT_BASE + stride,
     rqliteDataDir: path.join(REPO_ROOT, `var-pryv/rqlite-data-w${workerId}/`),
-    mongodbDatabase: `pryv-node-test-w${workerId}`,
     httpPort: HTTP_PORT_BASE + stride,
     hfsPort: HFS_PORT_BASE + stride,
     previewsPort: PREVIEWS_PORT_BASE + stride,
@@ -210,7 +208,6 @@ export async function applyParallelWorkerConfig (): Promise<WorkerOverrides> {
   config.set('storages:engines:rqlite:url', o.rqliteUrl);
   config.set('storages:engines:rqlite:raftPort', o.rqliteRaftPort);
   config.set('storages:engines:rqlite:dataDir', o.rqliteDataDir);
-  config.set('storages:engines:mongodb:database', o.mongodbDatabase);
   config.set('http:port', o.httpPort);
   config.set('http:hfsPort', o.hfsPort);
   config.set('http:previewsPort', o.previewsPort);
@@ -230,7 +227,7 @@ export async function applyParallelWorkerConfig (): Promise<WorkerOverrides> {
   // reg-2core fork) inherit parent env by default; boiler's
   // `store.env({separator:'__'})` then picks these up at the
   // subprocess's own init time and aligns it with the per-worker
-  // rqlite/PG/Mongo. The parent's in-memory `config.set` calls above
+  // rqlite/PG/SQLite. The parent's in-memory `config.set` calls above
   // still win for the parent (memory > env in nconf priority).
   applyEnvMirror(o);
 
@@ -264,7 +261,7 @@ export async function applyParallelWorkerConfig (): Promise<WorkerOverrides> {
  *   - `http:port` etc. — `reg-2core` forks with explicit `CORE_PORT` env
  *     and mirroring `http__port` would override that via boiler's env
  *     store, triggering EADDRINUSE.
- *   - PG/Mongo/SQLite/filesystem — no current subprocess opens those
+ *   - PG/SQLite/filesystem — no current subprocess opens those
  *     independent of the parent. Expand selectively if/when needed.
  */
 function applyEnvMirror (o: WorkerOverrides): void {
@@ -389,8 +386,7 @@ export async function stopWorkerRqlited (): Promise<void> {
 
 /**
  * Convenience composite — apply config overrides + spawn rqlited.
- * Used by mochaHooks.beforeAll in `helpers-base.ts` and equivalent
- * places (e.g. the mongodb-engine test hook).
+ * Used by mochaHooks.beforeAll in `helpers-base.ts`.
  */
 export async function setupParallelWorker (): Promise<WorkerOverrides> {
   const o = await applyParallelWorkerConfig();
@@ -404,7 +400,7 @@ export async function setupParallelWorker (): Promise<WorkerOverrides> {
  * Create the `keyValue` table on the per-worker rqlited BEFORE any
  * test starts. Otherwise tests that
  * reach `Platform.deleteUser` / `getUserIndexedField` via fixture
- * cleanup (`mongoFixtures.user(...)` calls `FixtureUser.remove` calls
+ * cleanup (`fixtures.user(...)` calls `FixtureUser.remove` calls
  * `UsersRepository.deleteOne` calls `Platform.deleteUser` calls
  * `DBrqlite.getUserIndexedField`) BEFORE the worker's own `initCore`
  * runs `storages.init()` get an `rqlite SQL error: no such table:
