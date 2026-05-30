@@ -207,6 +207,26 @@ class BaseStorageSQLite {
 
   // ---- CRUD ----
 
+  /**
+   * Drop fields named in `options.projection` (any falsy value = exclude).
+   * Mirrors PG's `applyExclusions` for the `{ calls: 0, deleted: 0 }`
+   * pattern api-server uses to strip internal counters from accesses
+   * before exposing them in the API response.
+   */
+  private applyProjection (items: any[], options: any): any[] {
+    const projection = options?.projection;
+    if (!projection || Object.keys(projection).length === 0) return items;
+    const excludeProps = Object.entries(projection)
+      .filter(([, v]) => !v)
+      .map(([k]) => k);
+    if (excludeProps.length === 0) return items;
+    for (const item of items) {
+      if (item == null) continue;
+      for (const prop of excludeProps) delete item[prop];
+    }
+    return items;
+  }
+
   find (userOrUserId: any, query: any, options: any, callback: (err: any, items?: any[]) => void): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = this.addImplicitFilters(query || {});
@@ -215,7 +235,7 @@ class BaseStorageSQLite {
       const { clause: lim } = this.buildLimitOffset(options);
       const sql = `SELECT * FROM ${this.tableName} ${where} ${orderBy}${lim}`.trim();
       const rows = udb.db.prepare(sql).all(...params);
-      callback(null, this.rowsToItems(rows));
+      callback(null, this.applyProjection(this.rowsToItems(rows), options));
     });
   }
 
@@ -226,17 +246,20 @@ class BaseStorageSQLite {
       const { clause: lim } = this.buildLimitOffset(options);
       const sql = `SELECT * FROM ${this.tableName} ${where} ${orderBy}${lim}`.trim();
       const rows = udb.db.prepare(sql).all(...params);
-      callback(null, this.rowsToItems(rows));
+      callback(null, this.applyProjection(this.rowsToItems(rows), options));
     });
   }
 
-  findOne (userOrUserId: any, query: any, _options: any, callback: (err: any, item?: any) => void): void {
+  findOne (userOrUserId: any, query: any, options: any, callback: (err: any, item?: any) => void): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = this.addImplicitFilters(query || {});
       const { sql: where, params } = this.buildWhere(q);
       const sql = `SELECT * FROM ${this.tableName} ${where} LIMIT 1`.trim();
       const row = udb.db.prepare(sql).get(...params);
-      callback(null, row ? this.rowToItem(row) : null);
+      if (!row) return callback(null, null);
+      const item = this.rowToItem(row);
+      const arr = this.applyProjection([item], options);
+      callback(null, arr[0]);
     });
   }
 

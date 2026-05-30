@@ -45,6 +45,25 @@ if (process.env.STORAGE_ENGINE) {
     file: { engine: 'filesystem' },
     audit: { engine: eng === 'postgresql' ? 'postgresql' : 'sqlite' }
   };
+  // CRITICAL: apply the engine override at MODULE LOAD time (not at
+  // mochaHooks.beforeAll) so test files that capture
+  // `helpers.dependencies.settings` at module-load (e.g.
+  // `const settings = _.merge(structuredClone(helpers.dependencies.settings),
+  // passwordRules.settingsOverride)` inside a describe in account.test.js
+  // and login.test.js) see the right engine. By the time mochaHooks
+  // runs, those captures are already frozen with whatever
+  // `dependencies.settings` returned at file-load time.
+  //
+  // Use `config.set()` rather than `injectTestConfig(...)` because some
+  // tests (reg-multicore restoreSingleCore) call `injectTestConfig({})`
+  // mid-suite to wipe the 'test' scope — config.set survives that
+  // (memory scope > test scope).
+  const { getConfigUnsafe } = require('@pryv/boiler');
+  const cfg = getConfigUnsafe(true);
+  cfg.set('storages:base:engine', testConfig.storages.base.engine);
+  cfg.set('storages:series:engine', testConfig.storages.series.engine);
+  cfg.set('storages:audit:engine', testConfig.storages.audit.engine);
+  cfg.set('storages:file:engine', testConfig.storages.file.engine);
 }
 
 if (isAuditMode) {
@@ -94,25 +113,27 @@ const baseHooks = base.getMochaHooks(disableIntegrityCheck || isParallelMode);
 // worker DIM spawns happen concurrently, Pattern A child-servers were
 // inheriting the worker-0 engine wiring and timing out on engine init.
 //
-// CRITICAL: inject `testConfig` (which carries the `STORAGE_ENGINE` override
-// when set, plus parallel-mode caching toggle, plus per-test audit/syslog
-// flips) into boiler BEFORE calling `dependencies.init()`. That call walks
-// through `storage.getStorageLayer()` → `ensureBarrel()` → `storages.init()`
-// → `pluginLoader.init(config)` which has a one-shot `if (initialized)`
-// guard. Without the inject-first ordering, the barrel locks to the default
-// engine (postgresql) for the rest of the process lifetime — under
-// `STORAGE_ENGINE=sqlite`, the PARENT would talk to PG while the DIM-spawned
-// CHILD (reads engine=sqlite from its temp config) talks to SQLite, and
-// every login lookup misses across the engine boundary.
+// CRITICAL: stage the storage-engine override via `config.set()` (highest
+// nconf priority — memory scope) BEFORE calling `dependencies.init()`.
+// `dependencies.init()` walks through `storage.getStorageLayer()` →
+// `ensureBarrel()` → `storages.init()` → `pluginLoader.init(config)` which
+// has a one-shot `if (initialized)` guard. Without the engine override in
+// scope first, the barrel locks to the default engine (postgresql) for
+// the rest of the process lifetime — under `STORAGE_ENGINE=sqlite`, the
+// PARENT would talk to PG while the DIM-spawned CHILD (reads engine=sqlite
+// from its temp config) talks to SQLite, and every login lookup misses
+// across the engine boundary.
+//
+// We use `config.set()` rather than `injectTestConfig(...)` because some
+// tests (e.g. reg-multicore restoreSingleCore) call
+// `config.injectTestConfig({})` to wipe the 'test' scope mid-suite —
+// `config.set()` survives that (memory scope > test scope).
 const mochaHooks = {
   ...baseHooks,
   async beforeAll (this: any) {
     if (typeof baseHooks.beforeAll === 'function') {
       await baseHooks.beforeAll.call(this);
     }
-    const { getConfig } = require('@pryv/boiler');
-    const cfg = await getConfig();
-    cfg.injectTestConfig(testConfig);
     const { dependencies } = require('./dependencies.ts');
     await dependencies.init();
   }
