@@ -93,12 +93,26 @@ const baseHooks = base.getMochaHooks(disableIntegrityCheck || isParallelMode);
 // boot pulls them. Fixes the [ACCO]/[SYRO]/[PGTD] cold-start race: when 14
 // worker DIM spawns happen concurrently, Pattern A child-servers were
 // inheriting the worker-0 engine wiring and timing out on engine init.
+//
+// CRITICAL: inject `testConfig` (which carries the `STORAGE_ENGINE` override
+// when set, plus parallel-mode caching toggle, plus per-test audit/syslog
+// flips) into boiler BEFORE calling `dependencies.init()`. That call walks
+// through `storage.getStorageLayer()` → `ensureBarrel()` → `storages.init()`
+// → `pluginLoader.init(config)` which has a one-shot `if (initialized)`
+// guard. Without the inject-first ordering, the barrel locks to the default
+// engine (postgresql) for the rest of the process lifetime — under
+// `STORAGE_ENGINE=sqlite`, the PARENT would talk to PG while the DIM-spawned
+// CHILD (reads engine=sqlite from its temp config) talks to SQLite, and
+// every login lookup misses across the engine boundary.
 const mochaHooks = {
   ...baseHooks,
   async beforeAll (this: any) {
     if (typeof baseHooks.beforeAll === 'function') {
       await baseHooks.beforeAll.call(this);
     }
+    const { getConfig } = require('@pryv/boiler');
+    const cfg = await getConfig();
+    cfg.injectTestConfig(testConfig);
     const { dependencies } = require('./dependencies.ts');
     await dependencies.init();
   }

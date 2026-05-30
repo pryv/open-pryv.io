@@ -18,19 +18,25 @@ const { userEvents } = require('./localUserEventsSQLite.ts');
 const { getStorage } = require('../userSQLite/index.ts');
 
 /**
- * No-op transaction. SQLite per-user files serialize their own writes via
- * concurrentSafeWrite; the per-call transaction primitive PG uses
+ * Pass-through transaction. SQLite per-user files serialize their own writes
+ * via concurrentSafeWrite; the per-call transaction primitive PG uses
  * (LocalTransactionPG) doesn't translate cleanly to per-user-file SQLite.
- * Callers in this codebase use transactions only to chain a few writes
- * within a single dataStore call; per-call SQLite concurrent-safety
- * subsumes that. If true ACID-multi-statement is needed later,
- * LocalTransactionSQLite can be hooked in here.
+ * Callers in this codebase use `localTransaction.exec(callback)` to chain a
+ * few writes within a single dataStore call; per-call SQLite
+ * concurrent-safety subsumes that. We still need to actually run the
+ * caller's callback, otherwise the side-effects (e.g.
+ * `usersIndex.addUser` inside `usersRepository.insertOne`) never fire and
+ * platform DB drifts from the local index. If true ACID-multi-statement is
+ * needed later, LocalTransactionSQLite can be hooked in here.
  */
 class NoopTransactionSQLite {
+  transactionSession: any = null;
   async init () { /* noop */ }
   async commit () { /* noop */ }
   async rollback () { /* noop */ }
-  async exec () { /* noop */ }
+  async exec (callback?: () => Promise<any>) {
+    if (typeof callback === 'function') return await callback();
+  }
 }
 
 const dataStore = ds.createDataStore({
