@@ -1,5 +1,60 @@
 # Changelog - Internal (no API impact)
 
+## test-helpers: TestServerContext (lazy fork) replaces SpawnContext
+
+`SpawnContext` prespawned a pool of child processes at module-load
+time, capturing `process.env` then. Under `MOCHA_PARALLEL=1` the
+per-worker DB names + rqlite URL injected by `setupParallelWorker` in
+the parent's `mochaHooks.beforeAll` arrived AFTER prespawn — so the
+prespawned children booted against the default `pryv-node-test` DB and
+the wrong rqlite endpoint. Tests that grabbed a prespawned child then
+failed on stale connections (the `[SDHF]` Pattern A cold-start
+failures in `hfs-server/test/acceptance/store_data.test.js`).
+
+`TestServerContext` (new file
+`components/test-helpers/src/TestServerContext.ts`) is a drop-in
+replacement with the same external API: `spawn(customSettings?)`,
+`shutdown()`, `Server` exposing `request()` / `baseUrl` /
+`url(path)` / `stop()` / `process.sendToChild(cmd, ...args)`. The two
+material changes:
+
+1. **Lazy fork** — children are forked at the `spawn()` call, never
+   ahead of time. No prespawn pool to drain or refill.
+2. **Per-fork env capture** — `process.env` is snapshotted at fork
+   time, so per-worker config injected after module load reaches the
+   child.
+
+IPC protocol with the child is unchanged (msgpack `[msgId, cmd,
+...args]` → child `ChildProcess` handler → `['ok'|'err', msgId, cmd,
+ret|errJson]`), so the existing launcher scripts
+`api-server/test/helpers/child_process.js` and
+`hfs-server/test/support/child_process.js` are untouched and
+`server.process.sendToChild('mockAuthentication', false)` style mock
+injection still works.
+
+Consumers migrated:
+
+- `api-server/test/test-helpers.js` — `context = new TestServerContext()`
+- `hfs-server/test/acceptance/test-helpers.js` — `spawnContext = new TestServerContext('test/support/child_process')`
+- `api-server/test/helpers/index.js` — re-export shifted from
+  `SpawnContext` + `InstanceManager` to `TestServerContext`. Legacy
+  `InstanceManager` (a sibling of `DynamicInstanceManager` that no
+  test file actually consumed directly) is also dropped from this
+  surface.
+
+The legacy `spawner.ts` (367 LOC) and `InstanceManager.ts` (180 LOC)
+are deleted. `DynamicInstanceManager` (used by api-server +
+previews-server `dependencies.instanceManager` for the modern
+in-process startup path) is unaffected.
+
+Verification: `just test hfs-server` 60/0, `just test webhooks` 8/0
+sequential PG. `just test-parallel hfs-server` 60/0 — closes the 4
+`[SDHF]` `[SD01]/[SD02]` parallel-mode failures. Full
+`just test-parallel all`: ~5 failing (down from ~10), all remaining
+failures are pre-existing parallel-mode flakes in `audit`
+(log-count race) + `api-server` (`[PFRC]`, `[PCRO]`) — neither uses
+the spawn surface.
+
 ## chore: prune stale TODOs, dead skips, broken doc links
 
 Code-meta-cleanup pass on tests, comments, and component READMEs. No

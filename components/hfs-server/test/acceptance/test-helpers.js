@@ -78,13 +78,13 @@ async function produceConnection () {
 }
 const produceStorageConnection = produceConnection;
 export { produceConnection, produceStorageConnection };
-// --------------------------------------------------------- prespawning servers
-logger.debug('creating new spawn context');
-const spawner = testHelpers.spawner;
-const spawnContext = new spawner.SpawnContext('test/support/child_process');
+// --------------------------------------------------------- test server context
+logger.debug('creating new test-server context');
+const { TestServerContext } = testHelpers;
+const spawnContext = new TestServerContext('test/support/child_process');
 
 after(() => {
-  logger.debug('shutting down spawn context');
+  logger.debug('shutting down test-server context');
   spawnContext.shutdown();
 });
 
