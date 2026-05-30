@@ -422,6 +422,28 @@ class BaseStorageSQLite {
       }
     }
 
+    // Auto-expand $set values that are plain objects targeting a
+    // JSONB-equivalent column (everything stored under SQLite's `data`
+    // TEXT column counts). Mirrors PG's `_buildUpdateClauses` logic:
+    // `{data: {keyOne: 'v', keyTwo: null}}` MUST merge with the existing
+    // `data` (treating `null` as delete), not replace it wholesale.
+    // Profile/clientData/etc updates rely on this — the test fixtures
+    // pass `{data: {...partial}}` and expect a deep merge against the
+    // currently-stored data.
+    for (const [k, v] of Object.entries($set)) {
+      if (v == null || typeof v !== 'object' || Array.isArray(v)) continue;
+      if (COL_SET.has(k)) continue; // indexed col — value is the column value, not a nested map
+      const existing = merged[k];
+      if (existing != null && typeof existing === 'object' && !Array.isArray(existing)) {
+        const mergedField: any = Object.assign({}, existing);
+        for (const [subKey, subVal] of Object.entries(v as Record<string, any>)) {
+          if (subVal === null) delete mergedField[subKey];
+          else mergedField[subKey] = subVal;
+        }
+        $set[k] = mergedField;
+      }
+    }
+
     for (const [k, v] of Object.entries($set)) {
       this.setNested(merged, k, v);
     }
@@ -513,7 +535,11 @@ class BaseStorageSQLite {
   // ---- Test/extra helpers ----
 
   findAll (userOrUserId: any, options: any, callback: (err: any, items?: any[]) => void): void {
-    this.find(userOrUserId, {}, options, callback);
+    // Mirror PG's findAll: do NOT apply implicit filters (deleted=null,
+    // headId=null), so the result includes deleted + versioned rows.
+    // Used by test fixtures (`accesses-app.test.js` etc.) to assert on
+    // deletion-tombstone state after a soft-delete.
+    this.findIncludingDeletionsAndVersions(userOrUserId, {}, options, callback);
   }
 
   insertMany (userOrUserId: any, items: any[], callback: (err: any) => void): void {

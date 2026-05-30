@@ -142,6 +142,61 @@ class AccessesSQLite extends BaseStorageSQLite {
     });
     super.insertMany(userOrUserId, prepared, callback);
   }
+
+  /**
+   * Override `insertOne` to enforce the same uniqueness invariants the PG
+   * engine gets from UNIQUE INDEX `idx_access_token` + `idx_access_name_type_deviceName`
+   * (both `WHERE deleted IS NULL`). SQLite stores access fields inside a
+   * JSON `data` TEXT column, so we can't lean on a SQLite-side UNIQUE
+   * constraint; check at the JS layer before INSERT and throw an error
+   * shaped like PG's so api-server's `err.isDuplicateIndex('token')` /
+   * `'name'` / `'type'` / `'deviceName'` branches keep matching.
+   */
+  insertOne (userOrUserId: any, item: any, callback: (err: any, item?: any) => void): void {
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    const prepared = this.applyDefaults(Object.assign({ deleted: null }, item));
+    // Versioned snapshots (headId != null) bypass the uniqueness check —
+    // PG's `idx_access_token` predicate is `WHERE deleted IS NULL AND
+    // head_id IS NULL`, so multiple snapshots sharing token/name with a
+    // live head are allowed there too.
+    if (prepared.headId != null) {
+      return super.insertOne(userId, prepared, callback);
+    }
+    this.findIncludingDeletionsAndVersions(userId, { deleted: null, headId: null }, null, (err: any, existing: any[]) => {
+      if (err) return callback(err);
+      for (const ex of (existing || [])) {
+        if (ex.id === prepared.id) continue; // same row (shouldn't happen — defensive)
+        if (ex.token != null && ex.token === prepared.token) {
+          return callback(duplicateIndexError(['token'], { token: '(hidden)' }));
+        }
+        if (ex.name != null && ex.type != null &&
+            ex.name === prepared.name &&
+            ex.type === prepared.type &&
+            (ex.deviceName ?? null) === (prepared.deviceName ?? null)) {
+          return callback(duplicateIndexError(['name', 'type', 'deviceName'], {
+            name: prepared.name, type: prepared.type, deviceName: prepared.deviceName ?? null
+          }));
+        }
+      }
+      super.insertOne(userId, prepared, callback);
+    });
+  }
+}
+
+/**
+ * Build a duplicate-key error that mimics the shape attached by
+ * `DatabasePG.handleDuplicateError`. The api-server methods only call
+ * `err.isDuplicateIndex(key)` (not `err.code`), so a thin shim is enough.
+ */
+function duplicateIndexError (constraintKeys: string[], data: Record<string, any>): any {
+  const err: any = new Error('duplicate key');
+  err.isDuplicate = true;
+  err.duplicateKeys = constraintKeys;
+  err.data = data;
+  err.isDuplicateIndex = (key: string): boolean => {
+    return constraintKeys.includes(key);
+  };
+  return err;
 }
 
 export { AccessesSQLite };
