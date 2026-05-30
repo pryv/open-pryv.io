@@ -32,14 +32,14 @@ const EVENT4ID = {}; // will be filled by fixtures
 
 describe('[PFRC] permissions forcedStreams', function () {
   describe('[PF01] GET /events with forcedStreams', function () {
-    let mongoFixtures;
+    let fixtures;
     before(async function () {
       await initTests();
       await initCore();
-      mongoFixtures = getNewFixture();
+      fixtures = getNewFixture();
     });
     after(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     let user,
@@ -54,7 +54,7 @@ describe('[PFRC] permissions forcedStreams', function () {
       basePath = `/${username}`;
       basePathEvent = `${basePath}/events/`;
 
-      user = await mongoFixtures.user(username, {});
+      user = await fixtures.user(username, {});
 
       for (const [streamId, streamData] of Object.entries(STREAMS)) {
         const stream = {

@@ -24,14 +24,14 @@ const getWebhooksStorage = () => dependencies.storage.user.webhooks;
 const { Webhook } = require('business').webhooks;
 
 describe('[WH01] webhooks', () => {
-  let mongoFixtures;
+  let fixtures;
   before(async function () {
     await initTests();
     await initCore();
-    mongoFixtures = getNewFixture();
+    fixtures = getNewFixture();
   });
   after(async () => {
-    await mongoFixtures.clean();
+    await fixtures.clean();
   });
 
   let username, personalAccessToken,
@@ -53,7 +53,7 @@ describe('[WH01] webhooks', () => {
   describe('[WH02] GET /', () => {
     before(() => {
       username = cuid();
-      return mongoFixtures.user(username, {}, (user) => {
+      return fixtures.user(username, {}, (user) => {
         user.access({
           type: 'personal', token: personalAccessToken
         });
@@ -78,7 +78,7 @@ describe('[WH01] webhooks', () => {
     });
 
     after(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     describe('[WH08] when using an app token', () => {
@@ -178,7 +178,7 @@ describe('[WH01] webhooks', () => {
 
     before(() => {
       username = cuid();
-      return mongoFixtures.user(username, {}, async (user) => {
+      return fixtures.user(username, {}, async (user) => {
         user.access({
           type: 'personal', token: personalAccessToken
         });
@@ -209,7 +209,7 @@ describe('[WH01] webhooks', () => {
     });
 
     after(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     describe('[WH11] when using an app token', () => {
@@ -298,7 +298,7 @@ describe('[WH01] webhooks', () => {
     const usedUrl = 'https://existing.com/notifications';
 
     before(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
       username = cuid();
       personalAccessToken = cuid();
       appAccessId1 = cuid();
@@ -308,7 +308,7 @@ describe('[WH01] webhooks', () => {
     });
 
     before(() => {
-      return mongoFixtures.user(username, {}, async (user) => {
+      return fixtures.user(username, {}, async (user) => {
         user.access({
           type: 'personal', token: personalAccessToken
         });
@@ -475,7 +475,7 @@ describe('[WH01] webhooks', () => {
 
     before(() => {
       username = cuid();
-      return mongoFixtures.user(username, {}, async (user) => {
+      return fixtures.user(username, {}, async (user) => {
         user.access({
           type: 'personal', token: personalAccessToken
         });
@@ -513,7 +513,7 @@ describe('[WH01] webhooks', () => {
     });
 
     after(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     describe('[WH26] when using an app token', () => {
@@ -674,7 +674,7 @@ describe('[WH01] webhooks', () => {
 
     before(() => {
       username = cuid();
-      return mongoFixtures.user(username, {}, async (user) => {
+      return fixtures.user(username, {}, async (user) => {
         user.access({
           type: 'personal', token: personalAccessToken
         });
@@ -710,7 +710,7 @@ describe('[WH01] webhooks', () => {
     });
 
     after(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     describe('[WH36] when using an app token', () => {
@@ -859,7 +859,7 @@ describe('[WH01] webhooks', () => {
 
     before(() => {
       username = cuid();
-      return mongoFixtures.user(username, {}, async (user) => {
+      return fixtures.user(username, {}, async (user) => {
         user.access({
           type: 'personal', token: personalAccessToken
         });
@@ -894,7 +894,7 @@ describe('[WH01] webhooks', () => {
     });
 
     after(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
       await notificationsServer.close();
     });
 

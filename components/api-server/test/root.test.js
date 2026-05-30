@@ -36,13 +36,13 @@ describe('[ROOT] root', function () {
     isAuditActive = config.get('audit:active');
   });
 
-  let mongoFixtures;
+  let fixtures;
   before(async function () {
-    mongoFixtures = databaseFixture(await produceStorageConnection());
-    await mongoFixtures.context.cleanEverything();
+    fixtures = databaseFixture(await produceStorageConnection());
+    await fixtures.context.cleanEverything();
   });
   after(async () => {
-    await mongoFixtures.context.cleanEverything();
+    await fixtures.context.cleanEverything();
   });
 
   let username, personalAccess, personalAccessToken,
@@ -76,7 +76,7 @@ describe('[ROOT] root', function () {
 
   before(async function () {
     // delete all database before start
-    user = await mongoFixtures.user(username, {});
+    user = await fixtures.user(username, {});
     personalAccess = await user.access({
       type: 'personal', token: personalAccessToken
     });
@@ -110,7 +110,7 @@ describe('[ROOT] root', function () {
     await user.session(personalAccessToken);
     user = user.attrs;
 
-    user2 = await mongoFixtures.user(username2, {
+    user2 = await fixtures.user(username2, {
       id: 'u_2',
       password: 't3st-Numb3r',
       email: '00001@test.com',

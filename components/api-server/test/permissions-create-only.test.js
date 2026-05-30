@@ -22,16 +22,16 @@ const { getConfig } = require('@pryv/boiler');
 let isAuditActive = true;
 
 describe('[PCRO] permissions create-only level', () => {
-  let mongoFixtures;
+  let fixtures;
   before(async function () {
     await initTests();
     await initCore();
-    mongoFixtures = getNewFixture();
+    fixtures = getNewFixture();
     const config = await getConfig();
     isAuditActive = config.get('audit:active');
   });
   after(async () => {
-    await mongoFixtures.clean();
+    await fixtures.clean();
   });
 
   let user,
@@ -70,7 +70,7 @@ describe('[PCRO] permissions create-only level', () => {
   });
 
   before(async () => {
-    user = await mongoFixtures.user(username, {});
+    user = await fixtures.user(username, {});
     const streamParent = await user.stream({
       id: streamParentId,
       name: 'Does not matter at all'

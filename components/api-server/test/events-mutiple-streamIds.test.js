@@ -19,14 +19,14 @@ require('date-utils');
 
 describe('[MSTR] events.streamIds', function () {
   describe('[MS01] events', function () {
-    let mongoFixtures;
+    let fixtures;
     before(async function () {
       await initTests();
       await initCore();
-      mongoFixtures = getNewFixture();
+      fixtures = getNewFixture();
     });
     after(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     let user,
@@ -59,7 +59,7 @@ describe('[MSTR] events.streamIds', function () {
       tokenContributeAB = cuid();
       basePathEvent = `/${username}/events/`;
 
-      user = await mongoFixtures.user(username, {});
+      user = await fixtures.user(username, {});
       await user.stream({
         id: streamAId,
         name: 'streamA'
@@ -149,7 +149,7 @@ describe('[MSTR] events.streamIds', function () {
       });
     });
     afterEach(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     function eventPath (eventId) {
@@ -426,7 +426,7 @@ describe('[MSTR] events.streamIds', function () {
       });
 
       beforeEach(async () => {
-        const user = await mongoFixtures.user(userId);
+        const user = await fixtures.user(userId);
         await user.stream({
           id: streamId,
           name: streamId.toUpperCase()
@@ -528,14 +528,14 @@ describe('[MSTR] events.streamIds', function () {
   });
 
   describe('[MS13] streams', function () {
-    let mongoFixtures;
+    let fixtures;
     before(async function () {
       await initTests();
       await initCore();
-      mongoFixtures = getNewFixture();
+      fixtures = getNewFixture();
     });
     after(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     let user,
@@ -564,7 +564,7 @@ describe('[MSTR] events.streamIds', function () {
       basePathStream = `/${username}/streams/`;
       basePathEvent = `/${username}/events/`;
 
-      user = await mongoFixtures.user(username, {});
+      user = await fixtures.user(username, {});
       await user.stream({
         id: streamAId,
         name: 'streamA'
@@ -616,7 +616,7 @@ describe('[MSTR] events.streamIds', function () {
       });
     });
     afterEach(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     /**

@@ -36,18 +36,18 @@ describe('[AC01] accesses', () => {
       accessToken = cuid();
     });
 
-    let mongoFixtures;
+    let fixtures;
     before(async () => {
-      mongoFixtures = getNewFixture();
+      fixtures = getNewFixture();
     });
     after(async () => {
-      await mongoFixtures.context.cleanEverything();
+      await fixtures.context.cleanEverything();
     });
 
     describe('[AC03] when given a few existing accesses', () => {
       const deletedTimestamp = timestamp.now('-1h');
       before(async () => {
-        const user = await mongoFixtures.user(userId);
+        const user = await fixtures.user(userId);
         await user.stream({ id: streamId }, () => { });
         await user.access({
           type: 'app',
@@ -201,10 +201,10 @@ describe('[AC01] accesses', () => {
       username = cuid();
       streamId = charlatan.Lorem.word();
     });
-    let mongoFixtures;
+    let fixtures;
     before(async () => {
-      mongoFixtures = getNewFixture();
-      const user = await mongoFixtures.user(username);
+      fixtures = getNewFixture();
+      const user = await fixtures.user(username);
       await user.stream({ id: streamId }, () => { });
       access = await user.access({
         type: 'app',
@@ -267,7 +267,7 @@ describe('[AC01] accesses', () => {
       expiredSharedAccess = expiredSharedAccess.attrs;
     });
     after(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     describe('[AC10] when deleting an app access that created shared accesses', () => {
@@ -316,7 +316,7 @@ describe('[AC01] accesses', () => {
   describe('[WCAD] webhook cascade on access delete', () => {
     let username, streamId, appAccess, sharedAccess, sharedSiblingAccess;
     let appWebhook, sharedWebhook, siblingWebhook;
-    let mongoFixtures;
+    let fixtures;
     let webhooksStorage;
 
     before(async () => {
@@ -326,8 +326,8 @@ describe('[AC01] accesses', () => {
     before(async () => {
       username = cuid();
       streamId = charlatan.Lorem.word();
-      mongoFixtures = getNewFixture();
-      const user = await mongoFixtures.user(username);
+      fixtures = getNewFixture();
+      const user = await fixtures.user(username);
       await user.stream({ id: streamId }, () => {});
 
       appAccess = (await user.access({
@@ -364,7 +364,7 @@ describe('[AC01] accesses', () => {
     });
 
     after(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     describe('[WCAD-A] when deleting an app access', () => {
@@ -411,10 +411,10 @@ describe('[AC01] accesses', () => {
       hasExpiryToken = cuid();
     });
     describe('[AC12] when given a few existing accesses', () => {
-      let mongoFixtures;
+      let fixtures;
       before(async () => {
-        mongoFixtures = getNewFixture();
-        const user = await mongoFixtures.user(userId);
+        fixtures = getNewFixture();
+        const user = await fixtures.user(userId);
         await user.stream({ id: streamId }, () => { });
         // A token that expired one day ago
         await user.access({
@@ -733,10 +733,10 @@ describe('[AC01] accesses', () => {
       ];
     });
     describe('[AC28] when given a few existing accesses', () => {
-      let mongoFixtures;
+      let fixtures;
       before(async () => {
-        mongoFixtures = getNewFixture();
-        const user = await mongoFixtures.user(userId);
+        fixtures = getNewFixture();
+        const user = await fixtures.user(userId);
         await user.stream({ id: streamId }, () => { });
         await user.access({ token: accessToken, type: 'personal' });
         await user.access(existingAccess);
@@ -889,14 +889,14 @@ describe('[AC01] accesses', () => {
   });
 
   describe('[AC38] access-info', () => {
-    let mongoFixtures;
+    let fixtures;
     const userId = cuid();
     let user;
     const appToken = cuid();
 
     before(async () => {
-      mongoFixtures = getNewFixture();
-      user = await mongoFixtures.user(userId);
+      fixtures = getNewFixture();
+      user = await fixtures.user(userId);
       await user.access({
         type: 'app',
         token: appToken,

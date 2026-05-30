@@ -20,7 +20,7 @@ const STREAMS = {
 describe('[CACH] Cache', function () {
   let user, username, password, access, appAccess;
   let personalToken;
-  let mongoFixtures;
+  let fixtures;
   let accessesPath, eventsPath, streamsPath;
 
   const streamId = 'yo';
@@ -28,8 +28,8 @@ describe('[CACH] Cache', function () {
     await initTests();
     await initCore();
     password = cuid();
-    mongoFixtures = getNewFixture();
-    user = await mongoFixtures.user(charlatan.Lorem.characters(7), {
+    fixtures = getNewFixture();
+    user = await fixtures.user(charlatan.Lorem.characters(7), {
       password
     });
 
@@ -63,7 +63,7 @@ describe('[CACH] Cache', function () {
   });
 
   after(async function () {
-    await mongoFixtures.clean();
+    await fixtures.clean();
   });
 
   function validGet (path) { return coreRequest.get(path).set('Authorization', appAccess.token); }

@@ -14,7 +14,7 @@ const timestamp = require('unix-timestamp');
 describe('[ALGR] Audit legacy route', function () {
   let user, username, password, access, appAccess;
   let personalToken;
-  let mongoFixtures;
+  let fixtures;
   let eventsPath, accessesPath, auditPath;
 
   const streamId = 'yo';
@@ -22,8 +22,8 @@ describe('[ALGR] Audit legacy route', function () {
     await initTests();
     await initCore();
     password = cuid();
-    mongoFixtures = getNewFixture();
-    user = await mongoFixtures.user(charlatan.Lorem.characters(7), {
+    fixtures = getNewFixture();
+    user = await fixtures.user(charlatan.Lorem.characters(7), {
       password
     });
 
@@ -48,7 +48,7 @@ describe('[ALGR] Audit legacy route', function () {
   });
 
   after(async function () {
-    await mongoFixtures.clean();
+    await fixtures.clean();
   });
 
   function validGet (path) { return coreRequest.get(path).set('Authorization', appAccess.token); }

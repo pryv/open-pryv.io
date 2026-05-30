@@ -274,17 +274,17 @@ describe('[EGSQ] events.get streams query', function () {
   });
 
   describe('[EQ06] GET /events with streams queries', function () {
-    let mongoFixtures;
+    let fixtures;
     // EVENT4ID maps event IDs to their keys - must be per-test-run for parallel safety
     const EVENT4ID = {};
 
     before(async function () {
       await initTests();
       await initCore();
-      mongoFixtures = getNewFixture();
+      fixtures = getNewFixture();
     });
     after(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     let user,
@@ -299,7 +299,7 @@ describe('[EGSQ] events.get streams query', function () {
       basePath = `/${username}`;
       basePathEvent = `${basePath}/events/`;
 
-      user = await mongoFixtures.user(username, {});
+      user = await fixtures.user(username, {});
 
       for (const [streamId, streamData] of Object.entries(STREAMS)) {
         const stream = {

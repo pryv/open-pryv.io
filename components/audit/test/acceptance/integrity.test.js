@@ -15,7 +15,7 @@ const timestamp = require('unix-timestamp');
 describe('[AINT] Audit events integrity', function () {
   let user, username, password, access, appAccess;
   let personalToken;
-  let mongoFixtures;
+  let fixtures;
   let eventsPath, accessesPath;
   let auditedEvent;
 
@@ -26,8 +26,8 @@ describe('[AINT] Audit events integrity', function () {
     await initTests();
     await initCore();
     password = cuid();
-    mongoFixtures = getNewFixture();
-    user = await mongoFixtures.user(charlatan.Lorem.characters(7), {
+    fixtures = getNewFixture();
+    user = await fixtures.user(charlatan.Lorem.characters(7), {
       password
     });
 
@@ -50,7 +50,7 @@ describe('[AINT] Audit events integrity', function () {
   });
 
   after(async function () {
-    await mongoFixtures.clean();
+    await fixtures.clean();
   });
 
   function validPost (path) { return coreRequest.post(path).set('Authorization', appAccess.token); }

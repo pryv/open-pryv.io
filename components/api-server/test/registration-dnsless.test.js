@@ -24,7 +24,7 @@ const { ErrorIds } = require('errors/src/ErrorIds.ts');
 const { ApiEndpoint } = require('utils');
 
 describe('[BMM2] registration: DNS-less', () => {
-  let mongoFixtures;
+  let fixtures;
   let app;
   let request;
   let restoreConfig;
@@ -42,7 +42,7 @@ describe('[BMM2] registration: DNS-less', () => {
   });
 
   before(async function () {
-    mongoFixtures = databaseFixture(await produceStorageConnection());
+    fixtures = databaseFixture(await produceStorageConnection());
     app = getApplication(true);
     await app.initiate();
 
@@ -340,7 +340,7 @@ describe('[BMM2] registration: DNS-less', () => {
   describe('[RD12] GET /reg/:username/check', function () {
     const existingUsername = 'exist-' + cuid();
     before(async function () {
-      await mongoFixtures.user(existingUsername);
+      await fixtures.user(existingUsername);
     });
 
     function path (username) {

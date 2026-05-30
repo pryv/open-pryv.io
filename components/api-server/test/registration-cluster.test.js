@@ -41,13 +41,13 @@ describe('[REGC] registration: cluster', function () {
   let request;
   let res;
   let userData;
-  let mongoFixtures;
+  let fixtures;
   let usersRepository;
   let userAccountStorage;
 
   before(async function () {
-    mongoFixtures = databaseFixture(await produceStorageConnection());
-    await mongoFixtures.context.cleanEverything();
+    fixtures = databaseFixture(await produceStorageConnection());
+    await fixtures.context.cleanEverything();
     userAccountStorage = await getUserAccountStorage();
   });
 
@@ -66,8 +66,8 @@ describe('[REGC] registration: cluster', function () {
 
   after(async function () {
     restoreConfig();
-    mongoFixtures = databaseFixture(await produceStorageConnection());
-    await mongoFixtures.context.cleanEverything();
+    fixtures = databaseFixture(await produceStorageConnection());
+    await fixtures.context.cleanEverything();
   });
 
   const methodPath = '/users';
