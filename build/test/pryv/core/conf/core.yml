@@ -4,10 +4,6 @@ serviceInfoUrl: "file:///app/conf/service-info.json"
 http:
   ip: "0.0.0.0"
   port: "9000"
-database:
-  host: "mongodb"
-  port: 27017
-  name: "pryv-node"
 influxdb:
   host: "influxdb"
   port: 8086

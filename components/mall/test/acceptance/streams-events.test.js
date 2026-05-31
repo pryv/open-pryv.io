@@ -15,7 +15,7 @@ const { getConfig } = require('@pryv/boiler');
 describe('[MSTE] Stores Streams & Events', function () {
   let user, username, password, access, appAccessDummy, appAccessMaster;
   let personalToken;
-  let mongoFixtures;
+  let fixtures;
   let isAuditActive;
   let accessesPath, streamsPath, eventsPath;
 
@@ -27,8 +27,8 @@ describe('[MSTE] Stores Streams & Events', function () {
   before(async function () {
     await initTests();
     await initCore();
-    mongoFixtures = getNewFixture();
-    user = await mongoFixtures.user(charlatan.Lorem.characters(7), {
+    fixtures = getNewFixture();
+    user = await fixtures.user(charlatan.Lorem.characters(7), {
       password
     });
 
@@ -60,7 +60,7 @@ describe('[MSTE] Stores Streams & Events', function () {
   });
 
   after(async function () {
-    await mongoFixtures.clean();
+    await fixtures.clean();
   });
 
   describe('[MS01] Streams', function () {

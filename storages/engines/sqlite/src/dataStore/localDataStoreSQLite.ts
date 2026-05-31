@@ -13,23 +13,44 @@ const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
 const { _internals } = require('../_internals.ts');
-const userStreams = ds.createUserStreams({});
+const { userStreams } = require('./localUserStreamsSQLite.ts');
 const { userEvents } = require('./localUserEventsSQLite.ts');
 const { getStorage } = require('../userSQLite/index.ts');
+
+/**
+ * Pass-through transaction. SQLite per-user files serialize their own writes
+ * via concurrentSafeWrite; the per-call transaction primitive PG uses
+ * (LocalTransactionPG) doesn't translate cleanly to per-user-file SQLite.
+ * Callers in this codebase use `localTransaction.exec(callback)` to chain a
+ * few writes within a single dataStore call; per-call SQLite
+ * concurrent-safety subsumes that. We still need to actually run the
+ * caller's callback, otherwise the side-effects (e.g.
+ * `usersIndex.addUser` inside `usersRepository.insertOne`) never fire and
+ * platform DB drifts from the local index. If true ACID-multi-statement is
+ * needed later, LocalTransactionSQLite can be hooked in here.
+ */
+class NoopTransactionSQLite {
+  transactionSession: any = null;
+  async init () { /* noop */ }
+  async commit () { /* noop */ }
+  async rollback () { /* noop */ }
+  async exec (callback?: () => Promise<any>) {
+    if (typeof callback === 'function') return await callback();
+  }
+}
 
 const dataStore = ds.createDataStore({
 
   async init (this: any, params: any): Promise<any> {
     this.settings = params.settings;
 
-    // init events
     const eventFilesStorage = await _internals.getEventFiles();
-
     const userStorage = await getStorage('local');
     userEvents.init(userStorage, eventFilesStorage, this.settings, params.integrity.setOnEvent, params.systemStreams);
     eventFilesStorage.attachToEventStore(userEvents, params.integrity.setOnEvent);
 
-    // streams not implemented for SQLite — stub via ds.createUserStreams({})
+    const userStreamsStorage = _internals.storageLayer.streams;
+    userStreams.init(userStreamsStorage);
 
     return this;
   },
@@ -38,15 +59,20 @@ const dataStore = ds.createDataStore({
 
   events: userEvents,
 
+  async newTransaction (): Promise<any> {
+    return new NoopTransactionSQLite();
+  },
+
   async deleteUser (uid: string): Promise<void> {
-    // streams not implemented for SQLite — nothing to delete
+    await userStreams._deleteUser(uid);
     await userEvents._deleteUser(uid);
   },
 
   async getUserStorageInfos (uid: string): Promise<any> {
+    const streams = await userStreams._getStorageInfos(uid);
     const events = await userEvents._getStorageInfos(uid);
     const files = await userEvents._getFilesStorageInfos(uid);
-    return { streams: { count: 0 }, events, files };
+    return { streams, events, files };
   }
 });
 

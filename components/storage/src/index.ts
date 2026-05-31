@@ -23,7 +23,7 @@ const interfaces = {
   UserAuditDatabase: require('storages/interfaces/auditStorage/UserAuditDatabase.ts')
 };
 
-export { Size, StorageLayer, getStorageLayer, getDatabaseSync, userLocalDirectory, getUsersLocalIndex, getUserAccountStorage, interfaces };
+export { Size, StorageLayer, getStorageLayer, userLocalDirectory, getUsersLocalIndex, getUserAccountStorage, interfaces };
 
 /**
  * Ensure the storages barrel is initialized (lazy fallback).
@@ -44,29 +44,4 @@ async function getUserAccountStorage () {
 
 async function getStorageLayer () {
   return (await ensureBarrel()).storageLayer;
-}
-
-// Lazy-created MongoDB database — used by getDatabaseSync before barrel init
-// (e.g. test-helpers/dependencies.js at module load).
-let _lazyDatabase: any;
-function _ensureMongoDatabase () {
-  if (!_lazyDatabase) {
-    const { getConfigUnsafe, getLogger } = require('@pryv/boiler');
-    const { dataBaseTracer } = require('tracing');
-    const config = getConfigUnsafe(true);
-    const { _internals: mongoInternals } = require('storages/engines/mongodb/src/_internals.ts');
-    if (!mongoInternals.getLogger) mongoInternals.set('getLogger', getLogger);
-    const { Database } = require('storages/engines/mongodb/src/Database.ts');
-    _lazyDatabase = new Database(config.get('storages:engines:mongodb'));
-    dataBaseTracer(_lazyDatabase);
-  }
-  return _lazyDatabase;
-}
-
-/**
- * Get the MongoDB database connection (sync).
- * Falls back to lazy construction for test code that needs it before barrel init.
- */
-function getDatabaseSync () {
-  return require('storages').database || _ensureMongoDatabase();
 }

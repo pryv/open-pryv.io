@@ -35,7 +35,7 @@ describe('[AD01] Accesses with account streams', function () {
   let res;
   let createAccessResponse;
   let accountAccessData;
-  let mongoFixtures;
+  let fixtures;
   let basePath;
   let eventsBasePath;
   let access;
@@ -44,7 +44,7 @@ describe('[AD01] Accesses with account streams', function () {
 
   async function createUser () {
     // Use cuid for unique username to avoid parallel test conflicts
-    user = await mongoFixtures.user('acsds' + cuid.slug().toLowerCase(), {
+    user = await fixtures.user('acsds' + cuid.slug().toLowerCase(), {
       insurancenumber: charlatan.Number.number(4),
       phoneNumber: charlatan.Lorem.characters(3)
     });
@@ -90,7 +90,7 @@ describe('[AD01] Accesses with account streams', function () {
     const helpers = require('api-server/test/helpers');
     config = await getConfig();
     validation = helpers.validation;
-    mongoFixtures = databaseFixture(await produceStorageConnection());
+    fixtures = databaseFixture(await produceStorageConnection());
 
     app = getApplication(true);
     await app.initiate();

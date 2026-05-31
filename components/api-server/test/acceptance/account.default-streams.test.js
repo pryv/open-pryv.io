@@ -29,7 +29,7 @@ describe('[ACCO] Account with system streams', function () {
   let app;
   let request;
   let res;
-  let mongoFixtures;
+  let fixtures;
   let basePath;
   let access;
   let user;
@@ -45,7 +45,7 @@ describe('[ACCO] Account with system streams', function () {
 
   async function createUser () {
     // Use cuid for unique username to avoid parallel test conflicts
-    user = await mongoFixtures.user('accds' + cuid.slug().toLowerCase(), {
+    user = await fixtures.user('accds' + cuid.slug().toLowerCase(), {
       insurancenumber: charlatan.Number.number(4),
       phoneNumber: charlatan.Lorem.characters(3)
     });
@@ -83,7 +83,7 @@ describe('[ACCO] Account with system streams', function () {
   }
 
   before(async function () {
-    mongoFixtures = databaseFixture(await produceStorageConnection());
+    fixtures = databaseFixture(await produceStorageConnection());
     app = getApplication(true);
     await app.initiate();
     // Initialize notifications dependency

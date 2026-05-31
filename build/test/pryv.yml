@@ -19,20 +19,7 @@ services:
     environment:
       - HOSTNAME=$HOSTNAME
     links:
-      - mongodb
       - influxdb
-    restart: always
-
-  mongodb:
-    image: "localhost/pryvio/mongodb:test"
-    container_name: pryvio_mongodb
-    networks:
-      - backend
-    volumes:
-      - ${PRYV_CONF_ROOT}/pryv/mongodb/conf/:/app/conf/:ro
-      - ${PRYV_CONF_ROOT}/pryv/mongodb/data/:/app/data/
-      - ${PRYV_CONF_ROOT}/pryv/mongodb/log/:/app/log/
-      - ${PRYV_CONF_ROOT}/pryv/mongodb/backup/:/app/backup/
     restart: always
 
   influxdb:

@@ -31,11 +31,10 @@ Each row: the config key, today's default fallback (if any), what it owns, and t
 | `storages:engines:postgresql:password` | `pryv` | PG password | unchanged |
 | `storages:engines:sqlite:path` | `var-pryv/users` (default-config; per-user dirs nest under this root) | SQLite user-dirs root | `var-pryv/users-test-w${id}/` |
 | `storages:engines:filesystem:previewsDirPath` | unset by default; required when previews are on | Previews disk store | `var-pryv/previews-test-w${id}/` |
-| `storages:engines:rqlite:url` | `http://localhost:4001` (fallback in `bin/master.js:88`) | rqlite HTTP endpoint | `http://localhost:${4001 + id*10}` (and the master-spawned rqlited gets `-http-addr` matching) |
-| `storages:engines:rqlite:raftPort` | `4002` (fallback in `bin/master.js:98`) | rqlite Raft port | `${4002 + id*10}` |
+| `storages:engines:rqlite:url` | `http://localhost:4001` (fallback in `bin/master.js:88`) | rqlite HTTP endpoint | `http://localhost:${4011 + id*10}` (worker 0 → 4011 so host rqlited at 4001 can keep serving sequential runs) |
+| `storages:engines:rqlite:raftPort` | `4002` (fallback in `bin/master.js:98`) | rqlite Raft port | `${4012 + id*10}` |
 | `storages:engines:rqlite:dataDir` | `var-pryv/rqlite-data` (fallback in `bin/master.js:96`) | rqlite data dir | `var-pryv/rqlite-data-w${id}/` |
 | `storages:engines:rqlite:external` | `false` | tells master to spawn (false) vs. connect (true) | leave unchanged; workers spawn their own rqlited |
-| `storages:engines:mongodb` (full slice — `database`, `host`, `port`) | varies by deployment | Mongo connection | `database: pryv-node-test-w${id}` |
 | `http:port` | unset by default; must be set | api-server primary HTTP port | `${3000 + id*10}` |
 | `http:ip` | `127.0.0.1` | api-server bind address | unchanged |
 | `http:hfsPort` | `4000` (fallback in `components/api-server/src/server.ts:64`) | HFS in-process dispatcher target port | `${4000 + id*10}` |
@@ -64,10 +63,9 @@ const config = await ready();
 config.set('storages:engines:postgresql:database', `pryv-node-test-w${id}`);
 config.set('storages:engines:sqlite:path', `var-pryv/users-test-w${id}/`);
 config.set('storages:engines:filesystem:previewsDirPath', `var-pryv/previews-test-w${id}/`);
-config.set('storages:engines:rqlite:url', `http://localhost:${4001 + id * 10}`);
-config.set('storages:engines:rqlite:raftPort', 4002 + id * 10);
+config.set('storages:engines:rqlite:url', `http://localhost:${4011 + id * 10}`);
+config.set('storages:engines:rqlite:raftPort', 4012 + id * 10);
 config.set('storages:engines:rqlite:dataDir', `var-pryv/rqlite-data-w${id}/`);
-config.set('storages:engines:mongodb:database', `pryv-node-test-w${id}`);
 config.set('http:port', 3000 + id * 10);
 config.set('http:hfsPort', 4000 + id * 10);
 config.set('http:previewsPort', 3001 + id * 10);

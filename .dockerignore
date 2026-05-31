@@ -7,7 +7,6 @@
 #build
 coverage
 docs
-mongo-scripts
 node_modules
 #scripts
 security-assessment

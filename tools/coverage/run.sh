@@ -27,14 +27,14 @@ ENGINES=()
 for arg in "$@"; do
   case "$arg" in
     --report) REPORT_ONLY=true ;;
-    mongodb|postgresql|sqlite) ENGINES+=("$arg") ;;
+    postgresql|sqlite) ENGINES+=("$arg") ;;
     *) echo "Unknown argument: $arg"; exit 1 ;;
   esac
 done
 
 # Default: all engines
 if [ ${#ENGINES[@]} -eq 0 ] && [ "$REPORT_ONLY" = false ]; then
-  ENGINES=(mongodb postgresql sqlite)
+  ENGINES=(postgresql sqlite)
 fi
 
 if [ "$REPORT_ONLY" = false ]; then
@@ -49,18 +49,16 @@ if [ "$REPORT_ONLY" = false ]; then
     echo "  Coverage: ${engine}"
     echo "========================================"
 
-    # Clean user data but don't restart MongoDB (clean-data blocks in dev mode)
+    # Clean per-user data between engine runs
     rm -rf var-pryv/users/* 2>/dev/null || true
 
     local env_vars="NODE_ENV=test NODE_V8_COVERAGE=$(pwd)/$V8DIR"
     case "$engine" in
-      mongodb)
-        ;;
       postgresql)
         env_vars="STORAGE_ENGINE=postgresql $env_vars"
         ;;
       sqlite)
-        env_vars="database__engine=sqlite $env_vars"
+        env_vars="STORAGE_ENGINE=sqlite $env_vars"
         ;;
     esac
 

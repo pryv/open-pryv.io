@@ -169,7 +169,6 @@ class DynamicInstanceManager extends EventEmitter {
       this.serverSettings.storages.engines = this.serverSettings.storages.engines || {};
       const eng = this.serverSettings.storages.engines;
       eng.postgresql = { ...(eng.postgresql || {}), database: o.postgresqlDatabase };
-      eng.mongodb = { ...(eng.mongodb || {}), database: o.mongodbDatabase };
       eng.sqlite = { ...(eng.sqlite || {}), path: o.sqlitePath };
       eng.rqlite = { ...(eng.rqlite || {}), url: o.rqliteUrl, raftPort: o.rqliteRaftPort, dataDir: o.rqliteDataDir };
       eng.filesystem = { ...(eng.filesystem || {}), previewsDirPath: o.previewsDirPath };

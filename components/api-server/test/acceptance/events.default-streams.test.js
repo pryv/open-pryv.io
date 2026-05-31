@@ -30,7 +30,7 @@ describe('[FG5R] Events of system streams', () => {
   let app;
   let request;
   let res;
-  let mongoFixtures;
+  let fixtures;
   let basePath;
   let access;
   let user;
@@ -46,7 +46,7 @@ describe('[FG5R] Events of system streams', () => {
 
   async function createUser () {
     // Use cuid for unique username to avoid parallel test conflicts
-    user = await mongoFixtures.user('evtdef_' + cuid.slug(), {
+    user = await fixtures.user('evtdef_' + cuid.slug(), {
       insurancenumber: charlatan.Number.number(4),
       phoneNumber: charlatan.Lorem.characters(3)
     });
@@ -65,7 +65,7 @@ describe('[FG5R] Events of system streams', () => {
     process.env.DISABLE_INTEGRITY_CHECK = '1';
     const helpers = require('api-server/test/helpers');
     validation = helpers.validation;
-    mongoFixtures = databaseFixture(await produceStorageConnection());
+    fixtures = databaseFixture(await produceStorageConnection());
 
     app = getApplication(true);
     await app.initiate();

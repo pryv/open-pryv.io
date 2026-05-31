@@ -12,11 +12,11 @@ const require = createRequire(import.meta.url);
 require('date-utils');
 
 describe('[PSLF] permissions selfRevoke', function () {
-  let mongoFixtures;
+  let fixtures;
   before(async function () {
     await initTests();
     await initCore();
-    mongoFixtures = getNewFixture();
+    fixtures = getNewFixture();
   });
 
   describe('[PS01] POST /accesses', function () {
@@ -32,7 +32,7 @@ describe('[PSLF] permissions selfRevoke', function () {
       appToken = cuid();
       streamId = cuid();
       basePathAccess = `/${username}/accesses/`;
-      const user = await mongoFixtures.user(username, {});
+      const user = await fixtures.user(username, {});
       await user.access({
         type: 'personal',
         token: personalToken
@@ -56,7 +56,7 @@ describe('[PSLF] permissions selfRevoke', function () {
     });
 
     afterEach(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     it('[JYL5] must list accesses with forbidden selfRevoke by GET /accesses', async () => {
@@ -151,7 +151,7 @@ describe('[PSLF] permissions selfRevoke', function () {
       username = cuid();
       basePathAccess = `/${username}/accesses/`;
       accesses = structuredClone(accessDefs);
-      const user = await mongoFixtures.user(username, {});
+      const user = await fixtures.user(username, {});
 
       for (let i = 0; i < accessKeys.length; i++) {
         const access = accesses[accessKeys[i]];
@@ -175,7 +175,7 @@ describe('[PSLF] permissions selfRevoke', function () {
       }
     });
     afterEach(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
 
     for (let i = 0; i < accessKeys.length; i++) {

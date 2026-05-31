@@ -23,7 +23,6 @@ if (process.env.MOCHA_PARALLEL === '1' && process.env.MOCHA_WORKER_ID != null) {
   process.env.storages__engines__rqlite__url = `http://localhost:${4001 + stride}`;
   process.env.tcpBroker__port = String(4222 + stride);
   process.env.storages__engines__postgresql__database = `pryv-node-test-w${wid}`;
-  process.env.storages__engines__mongodb__database = `pryv-node-test-w${wid}`;
 }
 
 require('@pryv/boiler').init({
@@ -78,13 +77,13 @@ async function produceConnection () {
 }
 const produceStorageConnection = produceConnection;
 export { produceConnection, produceStorageConnection };
-// --------------------------------------------------------- prespawning servers
-logger.debug('creating new spawn context');
-const spawner = testHelpers.spawner;
-const spawnContext = new spawner.SpawnContext('test/support/child_process');
+// --------------------------------------------------------- test server context
+logger.debug('creating new test-server context');
+const { TestServerContext } = testHelpers;
+const spawnContext = new TestServerContext('test/support/child_process');
 
 after(() => {
-  logger.debug('shutting down spawn context');
+  logger.debug('shutting down test-server context');
   spawnContext.shutdown();
 });
 

@@ -1,8 +1,6 @@
 ---
 http:
   ip: "0.0.0.0"
-database:
-  host: "mongodb"
 influxdb:
   host: "influxdb"
   port: 8086

@@ -16,13 +16,13 @@ const { getUsersRepository, User } = require('business/src/users/index.ts');
 const { ErrorIds } = require('errors');
 
 describe('[USRP] Users repository', () => {
-  let mongoFixtures;
+  let fixtures;
   before(async function () {
-    mongoFixtures = databaseFixture(await produceStorageConnection());
-    await mongoFixtures.clean();
+    fixtures = databaseFixture(await produceStorageConnection());
+    await fixtures.clean();
   });
   after(async () => {
-    await mongoFixtures.clean();
+    await fixtures.clean();
   });
   let username;
   let email;
@@ -33,7 +33,7 @@ describe('[USRP] Users repository', () => {
       customRegistrationUniqueField = charlatan.App.name();
       email = charlatan.Internet.email();
       try {
-        await mongoFixtures.user(username, {
+        await fixtures.user(username, {
           email,
           customRegistrationUniqueField
         });
@@ -42,7 +42,7 @@ describe('[USRP] Users repository', () => {
       }
     });
     after(async () => {
-      await mongoFixtures.clean();
+      await fixtures.clean();
     });
     it('[7C22] must throw an item already exists error when username field is not unique', async () => {
       try {

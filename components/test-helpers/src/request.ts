@@ -54,14 +54,23 @@ Request.prototype.login = function (this: any, user: any, callback: any) {
     .set('Origin', 'http://test.pryv.local')
     .send(authData)
     .end((err: any, res: any) => {
-      assert.strictEqual(err?.message || null, null, 'Request must be a success');
-      assert.ok(res !== undefined, 'Request has a result');
-      assert.strictEqual(res.statusCode, 200);
-      if (res.body.token == null) {
-        return callback(new Error('Expected "token" in login response body.'));
+      // Wrap assertions in try/catch and forward to callback. Without
+      // this, an AssertionError inside the superagent callback throws
+      // synchronously, gets re-raised by boiler/src/logging.ts:153 as
+      // an unhandledRejection, and kills the whole test runner before
+      // mocha can report the failing test (B-2026-05-29-4).
+      try {
+        assert.strictEqual(err?.message || null, null, `Request must be a success — login(${user.username}) got: ${err?.message || res?.statusCode || 'unknown'}`);
+        assert.ok(res !== undefined, 'Request has a result');
+        assert.strictEqual(res.statusCode, 200, `Login expected 200, got ${res?.statusCode}`);
+        if (res.body.token == null) {
+          return callback(new Error('Expected "token" in login response body.'));
+        }
+        this.token = res.body.token;
+        callback();
+      } catch (e: any) {
+        callback(e);
       }
-      this.token = res.body.token;
-      callback();
     });
 };
 /**

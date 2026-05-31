@@ -62,9 +62,8 @@ const boiler = {
    * or not async loading has completed; with `warnOnly: true`, prints
    * a warning instead of throwing when config is partial. Use only for
    * call sites that genuinely run before init resolves (e.g.
-   * test-helpers fixture pre-computation, lazy-on-first-test-access
-   * MongoDB Database constructor). Prefer `getConfigSync()` everywhere
-   * else.
+   * test-helpers fixture pre-computation, integrity-check module-top
+   * config capture). Prefer `getConfigSync()` everywhere else.
    * @param warnOnly - Only warns about potential misuse of config
    */
   getConfigUnsafe,
@@ -160,8 +159,8 @@ async function ready () {
 /**
  * Sync access to the fully-loaded config. Throws if boiler hasn't been
  * init()'d or if async config-loading is still pending. Prefer this
- * over `getConfigUnsafe()` everywhere except the two known pre-init
- * sites (integrity fixture-time read, storage lazy MongoDB ctor).
+ * over `getConfigUnsafe()` everywhere except the legitimate pre-init
+ * site (integrity fixture-time read).
  */
 function getConfigSync () {
   if (!configInitCalledWithName) {
@@ -177,12 +176,10 @@ function getConfigSync () {
  * Pre-init escape hatch. With `warnOnly: true` returns the partial
  * config + warns. Without (or with false) throws like `getConfigSync`.
  *
- * KEEP THIS for the two legitimate pre-init sites:
+ * KEEP THIS for the legitimate pre-init site:
  *   - components/business/src/integrity/integrity.ts (module-top
  *     capture; test-helpers/data/events.ts fixture pre-computation
  *     races against boiler init).
- *   - components/storage/src/index.ts:_ensureMongoDatabase
- *     (test-helpers/dependencies lazy-loads MongoDB at module-load).
  *
  * Anywhere else, use `getConfigSync()`.
  */

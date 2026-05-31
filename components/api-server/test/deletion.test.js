@@ -36,7 +36,7 @@ let user1;
 let username2;
 let request;
 let res;
-let mongoFixtures;
+let fixtures;
 let usersRepository;
 let seriesConn;
 let seriesRepository;
@@ -62,8 +62,8 @@ describe('[PGTD] DELETE /users/:username', () => {
     await require('api-server/src/methods/utility.ts').default(app.api);
     await require('api-server/src/methods/auth/register.ts').default(app.api);
     request = supertest(app.expressApp);
-    mongoFixtures = databaseFixture(await produceStorageConnection());
-    await mongoFixtures.context.cleanEverything();
+    fixtures = databaseFixture(await produceStorageConnection());
+    await fixtures.context.cleanEverything();
     seriesConn = await produceSeriesConnection(app.config);
     seriesRepository = new SeriesRepository(seriesConn);
     usersRepository = await getUsersRepository();
@@ -74,7 +74,7 @@ describe('[PGTD] DELETE /users/:username', () => {
     mall = await getMall();
   });
   after(async function () {
-    await mongoFixtures.context.cleanEverything();
+    await fixtures.context.cleanEverything();
   });
   describe('[USAD] depending on "user-account:delete"  config parameter', function () {
     let personalAccessToken;
@@ -379,7 +379,7 @@ describe('[PGTD] DELETE /users/:username', () => {
  * @returns {Promise<any>}
  */
 async function initiateUserWithData (userId) {
-  const user = await mongoFixtures.user(userId);
+  const user = await fixtures.user(userId);
   const stream = await user.stream({ id: cuid() });
   const eventId = cuid();
   await stream.event({

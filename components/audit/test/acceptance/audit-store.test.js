@@ -15,15 +15,15 @@ describe('[ASTE] Audit Streams and Events', function () {
   let user, username, password, access, appAccess, anotherAppAccess;
   let personalToken;
   let eventsPath, streamsPath, accessesPath;
-  let mongoFixtures;
+  let fixtures;
 
   const streamId = 'yo';
   before(async function () {
     await initTests();
     await initCore();
     password = cuid();
-    mongoFixtures = getNewFixture();
-    user = await mongoFixtures.user(charlatan.Lorem.characters(7), {
+    fixtures = getNewFixture();
+    user = await fixtures.user(charlatan.Lorem.characters(7), {
       password
     });
 
@@ -44,7 +44,7 @@ describe('[ASTE] Audit Streams and Events', function () {
   });
 
   after(async function () {
-    await mongoFixtures.clean();
+    await fixtures.clean();
   });
 
   async function createAppAccess (personalToken, token) {

@@ -40,10 +40,9 @@ const data = tested.data;
 const dynData = tested.dynData;
 const request = tested.request;
 const databaseFixture = tested.databaseFixture;
-const InstanceManager = tested.InstanceManager;
 const DynamicInstanceManager = tested.DynamicInstanceManager;
 const instanceTestSetup = tested.instanceTestSetup;
-const spawner = tested.spawner;
+const TestServerContext = tested.TestServerContext;
 const child_process = tested.child_process; // eslint-disable-line camelcase
 const syncPrimitives = tested.syncPrimitives;
 const portAllocator = tested.portAllocator;
@@ -61,10 +60,9 @@ export {
   dynData,
   request,
   databaseFixture,
-  InstanceManager,
   DynamicInstanceManager,
   instanceTestSetup,
-  spawner,
+  TestServerContext,
   child_process, // eslint-disable-line camelcase
   syncPrimitives,
   portAllocator,

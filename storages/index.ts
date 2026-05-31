@@ -45,7 +45,7 @@ function registerInternals (config: any, database: any, databasePG: any, storage
 
 /**
  * Initialize all discovered engines whose requiredInternals are all registered.
- * Engines whose internals aren't satisfied (e.g. postgresql when only MongoDB is
+ * Engines whose internals aren't satisfied (e.g. postgresql when only sqlite is
  * configured) are silently skipped.
  */
 /**
@@ -105,20 +105,17 @@ async function init (config?: any) {
   }
 
   const { StorageLayer } = require('storage/src/StorageLayer.ts');
-  const { dataBaseTracer } = require('tracing');
 
   // 1. Database connection (based on baseStorage engine)
   const baseEngine = pluginLoader.getEngineFor('baseStorage');
   let database = null;
   let databasePG = null;
-  if (baseEngine === 'mongodb') {
-    const { Database } = require('./engines/mongodb/src/Database.ts');
-    database = new Database(config.get('storages:engines:mongodb'));
-    dataBaseTracer(database);
-  } else if (baseEngine === 'postgresql') {
+  if (baseEngine === 'postgresql') {
     const { DatabasePG } = require('./engines/postgresql/src/DatabasePG.ts');
     databasePG = new DatabasePG(config.get('storages:engines:postgresql'));
   }
+  // sqlite: no shared `connection` object; the engine's initStorageLayer
+  // creates DatabaseSQLite internally.
   const connection = database || databasePG || null;
 
   // Publish early so sub-component inits can find the connections

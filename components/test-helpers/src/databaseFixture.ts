@@ -42,19 +42,8 @@ class Context {
 
   async cleanEverything () {
     if (this.storageLayer) {
-      // Engine-agnostic path via StorageLayer.clearCollection()
       for (const name of ['accesses', 'sessions', 'webhooks']) {
         await this.storageLayer.clearCollection(name);
-      }
-    } else {
-      // Legacy raw DB path (MongoDB)
-      const collectionNames = [
-        'accesses',
-        'sessions',
-        'webhooks'
-      ];
-      for (const collectionName of collectionNames) {
-        await fromCallback((cb: any) => this.db.deleteMany({ name: collectionName }, {}, cb));
       }
     }
     const usersRepository = await getUsersRepository();
@@ -77,23 +66,14 @@ class UserContext {
   }
 
   initStorage () {
-    if (this.context.storageLayer) {
-      // Engine-agnostic path via StorageLayer
-      const sl = this.context.storageLayer;
-      return {
-        sessions: new SessionsFixture(sl.sessions),
-        accesses: sl.accesses,
-        webhooks: sl.webhooks
-      };
+    const sl = this.context.storageLayer;
+    if (!sl) {
+      throw new Error('databaseFixture: StorageLayer not provided — pass a StorageLayer (engine-agnostic API)');
     }
-    // Legacy raw DB path (MongoDB)
-    const db = this.context.db;
-    const { Accesses: MongoAccesses } = require('storages/engines/mongodb/src/user/Accesses.ts');
-    const { Webhooks: MongoWebhooks } = require('storages/engines/mongodb/src/user/Webhooks.ts');
     return {
-      sessions: new Sessions(db),
-      accesses: new MongoAccesses(db),
-      webhooks: new MongoWebhooks(db)
+      sessions: new SessionsFixture(sl.sessions),
+      accesses: sl.accesses,
+      webhooks: sl.webhooks
     };
   }
 }
@@ -211,23 +191,22 @@ class DatabaseFixture {
    */
   async clean () {
     let integrityError;
-    // In parallel mode the integrity check scans ALL data in the shared
-    // database, including other workers' data, leading to false failures.
+    // Parallel-mode safety: per-worker DBs (pryv-node-test-w<id>) mean the
+    // check sees only this worker's data. The DISABLE_INTEGRITY_CHECK gate
+    // remains as a per-test opt-out for sections that deliberately leave
+    // platform/index state inconsistent (reg-multicore, default-streams).
     if (process.env.DISABLE_INTEGRITY_CHECK !== '1') {
       try {
-        // check integrity before reset — this could trigger error related to previous test
         await integrityFinalCheck.all();
       } catch (err) {
-        integrityError = err; // keep it for later
+        integrityError = err;
       }
     }
-    // clean data anyway
     const done = await this.dependents.all((fixtureItem: any) => {
       return fixtureItem.remove();
     });
     if (integrityError) {
-      console.log(integrityError);
-      // throw(integrityError);
+      throw integrityError;
     }
     return done;
   }

@@ -8,10 +8,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const request = require('./request.ts').default;
-const InstanceManager = require('./InstanceManager.ts').default;
 const DynamicInstanceManager = require('./DynamicInstanceManager.ts').default;
 const instanceTestSetup = require('./instanceTestSetup.ts');
-const spawner = require('./spawner.ts');
+const { TestServerContext, TestServer } = require('./TestServerContext.ts');
 const child_process = require('./child_process.ts').default;
 const syncPrimitives = require('./condition_variable.ts');
 const databaseFixture = require('./databaseFixture.ts').default;
@@ -34,10 +33,10 @@ const dependencies = require('./dependencies.ts').default;
 
 export {
   request,
-  InstanceManager,
   DynamicInstanceManager,
   instanceTestSetup,
-  spawner,
+  TestServerContext,
+  TestServer,
   child_process,
   syncPrimitives,
   databaseFixture,

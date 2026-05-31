@@ -183,14 +183,17 @@ UserDatabase.prototype.updateEvent = async function (eventId: string, eventData:
   dbEvent.eventid = eventId;
   const update = this.db.prepare(queryString);
 
+  let updated = false;
   await concurrentSafeWrite.execute(() => {
     const res = update.run(dbEvent);
     this.logger.debug(`UPDATE events changes: ${res.changes} eventId: ${eventId} event: ${JSON.stringify(dbEvent)}`);
-    if (res.changes !== 1) {
-      throw new Error('Event not found');
-    }
+    updated = res.changes === 1;
   });
 
+  // PG's localUserEventsPG.update returns `res.rowCount === 1` (boolean,
+  // never throws on 0 rows). Match that semantics so cleanup paths that
+  // chain update-after-delete don't get spurious "Event not found" 500s.
+  if (!updated) return null;
   return eventsSchema.fromDB(dbEvent);
 };
 

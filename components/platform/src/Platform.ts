@@ -174,24 +174,30 @@ class Platform {
 
   /**
    * Fully delete a user from PlatformDB.
+   *
+   * Discovers what's actually present by enumerating all PlatformDB entries
+   * for the username and deleting each. Robust to runtime changes in
+   * `accountStreams.{uniqueFieldNames,indexedFieldNames}` — those are mutable
+   * module-level bindings rebound by `reloadForTests` (see B-2026-05-29-2):
+   * a fixture user created under one systemStreams config can be removed
+   * under another without leaking the custom-field entries.
+   *
+   * The `user` arg is no longer load-bearing but kept on the signature for
+   * backwards compatibility with existing callers.
    */
-  async deleteUser (username: any, user: any) {
+  async deleteUser (username: any, _user: any) {
+    const entries: any[] = await this.#db.getAllWithPrefix('user');
     const operations: any[] = [];
-    for (const field of accountStreams.uniqueFieldNames) {
-      // Get value from user object if available, otherwise look it up in PlatformDB
-      let value = user?.[field];
-      if (value == null) {
-        value = await this.#db.getUserIndexedField(username, field);
-      }
-      if (value != null) {
-        operations.push({ action: 'delete', key: field, value, isUnique: true });
-      }
+    for (const entry of entries) {
+      if (entry.username !== username) continue;
+      if (entry.field == null || entry.field.startsWith('_')) continue;
+      operations.push({
+        action: 'delete',
+        key: entry.field,
+        value: entry.value,
+        isUnique: entry.isUnique === true
+      });
     }
-
-    for (const field of accountStreams.indexedFieldNames) {
-      operations.push({ action: 'delete', key: field, isUnique: false });
-    }
-
     await this.#applyOperations(username, operations);
   }
 

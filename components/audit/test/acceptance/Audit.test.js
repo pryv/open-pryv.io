@@ -16,14 +16,14 @@ describe('[AUDT] Audit', function () {
   let eventsPath, auditPath;
 
   let sysLogSpy, storageSpy;
-  let mongoFixtures;
+  let fixtures;
 
   before(async function () {
     await initTests();
     await initCore();
     password = cuid();
-    mongoFixtures = getNewFixture();
-    user = await mongoFixtures.user(charlatan.Lorem.characters(7), {
+    fixtures = getNewFixture();
+    user = await fixtures.user(charlatan.Lorem.characters(7), {
       password
     });
     sysLogSpy = sinon.spy(audit.syslog, 'eventForUser');
@@ -58,7 +58,7 @@ describe('[AUDT] Audit', function () {
   }
 
   after(async function () {
-    await mongoFixtures.clean();
+    await fixtures.clean();
   });
 
   describe('[AT01] when making valid API calls', function () {

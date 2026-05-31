@@ -18,7 +18,7 @@ const { getConfig } = require('@pryv/boiler');
 const { withInjectedConfig } = require('test-helpers');
 
 const username = cuid();
-let mongoFixtures;
+let fixtures;
 let infoHttpServer;
 let mockInfo;
 const infoHttpServerPort = 5123;
@@ -31,12 +31,12 @@ describe('[SINF] Service', () => {
 
     infoHttpServer = new HttpServer('/service/info', 200, mockInfo);
     await infoHttpServer.listen(infoHttpServerPort);
-    mongoFixtures = getNewFixture();
-    await mongoFixtures.user(username, {});
+    fixtures = getNewFixture();
+    await fixtures.user(username, {});
   });
 
   after(async () => {
-    await mongoFixtures.clean();
+    await fixtures.clean();
     infoHttpServer.close();
   });
 

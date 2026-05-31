@@ -27,7 +27,7 @@ describe('[SYSS] System streams', function () {
   let app;
   let request;
   let res;
-  let mongoFixtures;
+  let fixtures;
   let basePath;
   let access;
   let user;
@@ -35,7 +35,7 @@ describe('[SYSS] System streams', function () {
 
   async function createUser () {
     // Use cuid for unique username to avoid parallel test conflicts
-    user = await mongoFixtures.user('strds' + cuid.slug().toLowerCase(), {
+    user = await fixtures.user('strds' + cuid.slug().toLowerCase(), {
       insurancenumber: charlatan.Number.number(4),
       phoneNumber: charlatan.Lorem.characters(3)
     });
@@ -52,7 +52,7 @@ describe('[SYSS] System streams', function () {
   before(async function () {
     savedIntegrityCheck = process.env.DISABLE_INTEGRITY_CHECK;
     process.env.DISABLE_INTEGRITY_CHECK = '1';
-    mongoFixtures = databaseFixture(await produceStorageConnection());
+    fixtures = databaseFixture(await produceStorageConnection());
 
     app = getApplication(true);
     await app.initiate();

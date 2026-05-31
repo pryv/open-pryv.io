@@ -1,5 +1,60 @@
 # Changelog - API Changes
 
+## **BREAKING** — MongoDB removed as a user-data storage engine
+
+The MongoDB engine has been dropped from open-pryv.io. Supported user-data engines are now **PostgreSQL** (default) and **SQLite** (alternative). InfluxDB remains optional for high-frequency seriesStorage; rqlited remains the only platformStorage.
+
+### What changed at the operator surface
+
+- `storages.base.engine: mongodb` and `storages.engines.mongodb.*` config keys are gone — startup fails with a clear plugin-loader error if `engine: mongodb` is set.
+- `STORAGE_ENGINE=mongodb` test harness override is gone.
+- The `mongodb` npm dependency is removed from `package.json`; the install footprint shrinks accordingly.
+- The `storages/engines/mongodb/` plugin directory is deleted entirely.
+
+### Migration path for existing MongoDB deployments
+
+Use the engine-agnostic backup tool that has been part of the V2 release line:
+
+```bash
+# On the MongoDB-backed deployment (this build's predecessor)
+bin/backup.js --export --userid <userid>     # exports user data as a JSONL bundle
+
+# On a fresh PostgreSQL-backed deployment of this build
+bin/backup.js --restore --bundle <path>      # reads the bundle into PG
+```
+
+This is the same path used for the V1→V2 migration and for production MongoDB→PostgreSQL cutovers. Bundles include accounts, streams, events, accesses, profiles, webhooks, and attachments.
+
+### Code-level removals
+
+`components/storage/src/index.ts` drops `getDatabaseSync` + `_ensureMongoDatabase`; test-helpers `dependencies.ts` no longer imports the MongoDB collection classes; `databaseFixture.ts` drops the legacy raw-DB branches; `storages/index.ts` drops the `baseEngine === 'mongodb'` connection bootstrap branch.
+
+### Platform.deleteUser hardening
+
+Shipped alongside the engine removal: `Platform.deleteUser` now discovers PlatformDB entries by username prefix and deletes whatever is present, instead of iterating the mutable `accountStreams.{uniqueFieldNames,indexedFieldNames}` module-level lists at call time. Fixes a latent leak where a fixture user created under one `systemStreams` config couldn't be fully removed after a config change (test-only impact, but the root cause was a production-side fragility).
+
+## SQLite baseStorage — now a complete V2 alternative engine
+
+Counterpart to the MongoDB removal: the SQLite engine is now a real user-data option, not the "not yet implemented" stub that throws at init.
+
+### Engine-choice tradeoff: backup/deletion semantics, not volume
+
+The PG and SQLite engines have **different data-layout shapes**:
+
+- **PostgreSQL** holds all users' data in shared tables keyed by `user_id`. Cross-user queries are cheap; backups via `pg_dump` are a single artefact; a user's data is interspersed with other users' rows in any backup taken before that user's deletion.
+- **SQLite** (new) holds each user's data in a **per-user file** at `<userLocalDirectory>/<userId>/baseStorage-<version>.sqlite`. Deleting a user is an `unlink` — the user's data goes away cleanly, and historical backups that haven't yet included this user (or are taken per-user) don't carry the deleted user's rows by default.
+
+This shape difference matters under **GDPR Art.17 / right-to-be-forgotten** + similar privacy-preserving deletion regimes. Operators with stricter deletion semantics, per-user backup orchestration, or per-user retention policies may prefer SQLite. Operators with high-volume cross-user analytics or who already have PG operational tooling stay on PG. Neither is a "low-volume only" choice.
+
+### What ships under `storages/engines/sqlite/src/`
+
+- **Shared baseStorage SQLite** (`DatabaseSQLite`, `LocalTransactionSQLite`): single file at `<sqlite.path>/_shared/baseStorage.sqlite` for cross-user collections (Sessions, PasswordResetRequests).
+- **Per-user baseStorage** (`UserBaseStorageDb` + `BaseStorageSQLite`): per-user file at `<userLocalDirectory>/<userId>/baseStorage-<version>.sqlite`. Tables for `accesses`, `profile`, `streams`, `webhooks` with minimal schema (id / headId / deleted as columns + JSON `data` column). MongoDB-style query translation (`$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte`/`$in`/`$type`/`$or`) and update operators (`$set`/`$unset`/`$inc`/`$min`/`$max` with dotted-path nested-object semantics).
+- **Collection subclasses**: `AccessesSQLite` (full mirror including integrity-batch delete + `findHistory`/`snapshotHead`), `ProfileSQLite`, `StreamsSQLite` (path computation + treeUtils tree-shape), `WebhooksSQLite` (soft-delete with the same unset list as PostgreSQL).
+- **dataStore streams** (`localUserStreamsSQLite`) wired in `localDataStoreSQLite`. Events were already implemented; the engine now ships full dataStore.
+
+Per-test SQLite matrix is clean across `audit`, `business`, `cmc`, `hfs-server`, `mall`, `storages`, etc (1225+ tests passing under `STORAGE_ENGINE=sqlite`). The `api-server` component shares a pre-existing test-helper crash with the now-removed Mongo matrix run (tracked separately) and is verified component-by-component until that is closed.
+
 ## `accesses.create` — accepts `:_cmc:*` stream-ids in permissions
 
 `accesses.create` was rejecting permissions referencing the CMC plugin's reserved namespace (e.g. `:_cmc:apps:<app-code>`, `:_cmc:inbox`) with `invalid-request-structure`: *"forbidden character(s) in streamId ':_cmc:...'"*. The auto-create-stream side-effect of personal-access app authorization was hitting the local-store streamId regex (`^[a-z0-9-]{1,100}`), which rejects the leading colon.
