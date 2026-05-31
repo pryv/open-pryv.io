@@ -19,6 +19,13 @@ const require = createRequire(import.meta.url);
  * - PATTERN_C_AUDIT=1          : Enable audit functionality
  */
 
+// Signal to helpers-base.ts that this process is an api-server test.
+// helpers-base.ts beforeAll uses this to skip the matrix-hygiene wipe
+// (api-server runs first in the matrix and has no upstream leftover
+// state to clean; the wipe also conflicts with Pattern A
+// `dependencies.ts` init that runs in this file's beforeAll).
+process.env.PRYV_IS_API_SERVER_TEST = '1';
+
 const base = require('./helpers-base.ts');
 
 // Test mode flags from environment

@@ -12,6 +12,7 @@ const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const timestamp = require('unix-timestamp');
 const treeUtils = require('../../../../shared/treeUtils.ts');
+const { _internals } = require('../_internals.ts');
 
 class StreamsSQLite extends BaseStorageSQLite {
   constructor () {
@@ -54,14 +55,27 @@ class StreamsSQLite extends BaseStorageSQLite {
   }
 
   insertOne (userOrUserId: any, stream: any, callback: (err: any, item?: any) => void): void {
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    if (_internals.cache) _internals.cache.unsetUserData(userId);
     if (!stream.path) {
-      const userId = this.getUserIdFromUserOrUserId(userOrUserId);
       this._computePath(userId, stream)
         .then(() => super.insertOne(userOrUserId, stream, callback))
         .catch(callback);
       return;
     }
     super.insertOne(userOrUserId, stream, callback);
+  }
+
+  updateOne (userOrUserId: any, query: any, updatedData: any, callback: (err: any, item?: any) => void): void {
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    if (_internals.cache) {
+      if (typeof updatedData.parentId !== 'undefined') {
+        _internals.cache.unsetUserData(userId);
+      } else {
+        _internals.cache.unsetStreams(userId, 'local');
+      }
+    }
+    super.updateOne(userOrUserId, query, updatedData, callback);
   }
 
   async _computePath (userId: string, stream: any): Promise<void> {
@@ -83,6 +97,8 @@ class StreamsSQLite extends BaseStorageSQLite {
   }
 
   delete (userOrUserId: any, query: any, callback: (err: any, res?: any) => void): void {
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    if (_internals.cache) _internals.cache.unsetUserData(userId);
     this.updateMany(userOrUserId, query, {
       $set: { deleted: timestamp.now() },
       $unset: {

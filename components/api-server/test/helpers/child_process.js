@@ -31,6 +31,13 @@ class ApplicationLauncher {
       logger.debug('launch with settings', injectSettings);
       const config = await getConfig();
       // directly inject settings in nconf // to be updated to
+      // TestServerContext.spawn copies the parent's effective storage
+      // engine choice into `injectSettings.storages.{base,series,audit,
+      // file}.engine` so the child inherits it without needing to read
+      // STORAGE_ENGINE env at boot — env override would WIN over
+      // injectTestConfig (memory > test scope) and force every spawned
+      // child onto SQLite even when the parent (e.g. webhooks tests)
+      // uses the PG default.
       config.injectTestConfig(injectSettings);
       const app = (this.app = getApplication());
       await app.initiate();

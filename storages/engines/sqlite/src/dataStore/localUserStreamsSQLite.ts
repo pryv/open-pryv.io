@@ -13,6 +13,7 @@ const assert = require('assert');
 const ds = require('@pryv/datastore');
 const treeUtils = require('../../../../shared/treeUtils.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
+const { _internals } = require('../_internals.ts');
 
 const STREAM_PROPERTIES = [
   'id', 'name', 'parentId', 'clientData', 'children',
@@ -50,9 +51,19 @@ const userStreams = ds.createUserStreams({
     this.userStreamsStorage = userStreamsStorage;
   },
 
-  async get (this: any, userId: string, query: any): Promise<any> {
+  async _getAllFromAccountAndCache (this: any, userId: string): Promise<any> {
+    if (_internals.cache) {
+      const cached = _internals.cache.getStreams(userId, 'local');
+      if (cached != null) return cached;
+    }
     const all = await fromCallback((cb: any) =>
       this.userStreamsStorage.find({ id: userId }, {}, null, cb));
+    if (_internals.cache) _internals.cache.setStreams(userId, 'local', all);
+    return all;
+  },
+
+  async get (this: any, userId: string, query: any): Promise<any> {
+    const all = await this._getAllFromAccountAndCache(userId);
     if (query.includeTrashed) return structuredClone(all);
     return treeUtils.filterTree(all, false, (s: any) => !s.trashed);
   },
@@ -60,8 +71,7 @@ const userStreams = ds.createUserStreams({
   async getOne (this: any, userId: string, streamId: string, query: any): Promise<any> {
     assert.ok(streamId !== '*' && streamId != null);
 
-    const all = await fromCallback((cb: any) =>
-      this.userStreamsStorage.find({ id: userId }, {}, null, cb));
+    const all = await this._getAllFromAccountAndCache(userId);
     const found = treeUtils.findById(all, streamId);
     if (found == null) return null;
 
@@ -123,6 +133,7 @@ const userStreams = ds.createUserStreams({
   async deleteAll (this: any, userId: string): Promise<void> {
     await fromCallback((cb: any) =>
       this.userStreamsStorage.removeAll({ id: userId }, cb));
+    if (_internals.cache) _internals.cache.unsetUserData(userId);
   },
 
   async _deleteUser (this: any, userId: string): Promise<any> {

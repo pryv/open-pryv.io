@@ -304,8 +304,17 @@ function checkObjectEquality (actual, expected, verifiedProps = []) {
   }
   verifiedProps.push('attachments');
 
-  // Integrity cannot be checked when "approximate results"
-  if (isApprox) verifiedProps.push('integrity');
+  // Integrity is a storage-layer hash derived from the other fields
+  // — never authored by the test caller. Skip it unconditionally if
+  // the expected object doesn't carry one. Previously this only
+  // excluded `integrity` when `isApprox` was true (i.e. when
+  // `actual.modified !== expected.modified` so the times had drifted),
+  // which made tests rely on PG-shaped network latency: under SQLite
+  // the modified timestamp could match the test's post-response
+  // `timestamp.now()` exactly, isApprox stayed false, and the
+  // integrity field showed up as a phantom diff (e.g. `[4QRU]`
+  // events PUT, `[AC01]` accesses).
+  if (expected.integrity == null) verifiedProps.push('integrity');
 
   const remaining = _.omit(actual, verifiedProps);
   const expectedRemaining = _.omit(expected, verifiedProps);

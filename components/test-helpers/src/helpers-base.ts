@@ -44,7 +44,36 @@ if (process.env.MOCHA_PARALLEL === '1' && process.env.MOCHA_WORKER_ID != null) {
 }
 
 require('./api-server-tests-config.ts');
-const { getConfig } = require('@pryv/boiler');
+const { getConfig, getConfigUnsafe } = require('@pryv/boiler');
+
+// Apply the STORAGE_ENGINE=sqlite override at MODULE LOAD time so every
+// test component (audit / cache / mall / ... that loads helpers-base.ts
+// directly via its own test/helpers.js) picks up the engine override —
+// not just api-server which loads helpers-c.ts. Without this, the
+// non-api-server matrix components would boot with the default engine
+// (postgresql) while api-server's process ran SQLite — Pattern A
+// child cores' cross-engine writes then leaked into the next
+// component's `checkIndexAndPlatformIntegrity` hook.
+//
+// SCOPE: SQLite only. Under STORAGE_ENGINE=postgresql we leave the
+// default-config values in place — overriding via `cfg.set()` here
+// (memory scope, highest priority) blocks later `injectTestConfig`
+// resets that mall tests rely on and timed them out under matrix
+// mode. The default engine is already PG, so this is a no-op move.
+//
+// We DELIBERATELY leave `storages:audit:engine` alone in all modes:
+// UserAuditDatabasePG.createEvent has a pre-existing `null value in
+// column "eventid"` constraint violation that fires on `[ASTO]` audit
+// unit tests as soon as audit storage is routed through PG. The
+// audit unit tests live in the audit component (which loads only
+// helpers-base.ts) — leaving audit untouched here keeps that suite
+// green while still aligning the rest of the storage engine choice.
+if (process.env.STORAGE_ENGINE === 'sqlite') {
+  const cfg = getConfigUnsafe(true);
+  cfg.set('storages:base:engine', 'sqlite');
+  cfg.set('storages:series:engine', 'sqlite');
+  cfg.set('storages:file:engine', 'filesystem');
+}
 
 const storage = require('storage');
 const supertest = require('supertest');
@@ -266,6 +295,39 @@ function getMochaHooks (isParallelMode = false) {
       // `resetEvents`) still sees integrity-ready events.
       const { ensureIntegrity: ensureEventsIntegrity } = require('./data/events.ts');
       ensureEventsIntegrity();
+
+      // Matrix-mode hygiene (SQLite only): between component runs the
+      // persistent platform DB (rqlite at :4001) AND the per-user-file
+      // SQLite index keep state from earlier components — api-server's
+      // `versioning.test.js [VE07]` registers users via POST /users
+      // with no explicit cleanup and the leftover users produce a
+      // 1-vs-N drift in the per-test `checkIndexAndPlatformIntegrity`
+      // hook of the next matrix component (mall, …).
+      //
+      // Under PG the cleanup paths already keep things in sync via
+      // the shared `users` table — and the wipe destabilises the
+      // `[ASTE]` audit suite under matrix mode — so the gate is
+      // `STORAGE_ENGINE === 'sqlite'`.
+      //
+      // Also skipped for api-server (PRYV_IS_API_SERVER_TEST=1 set by
+      // helpers-c.ts) — api-server runs FIRST in the matrix, has no
+      // upstream pollution to clean, and racing with helpers-c.ts
+      // `dependencies.init()` regresses `[ACUP07]`/`[EVNT]`.
+      if (process.env.STORAGE_ENGINE === 'sqlite' &&
+          process.env.PRYV_IS_API_SERVER_TEST !== '1') {
+        try {
+          await require('storages').init(config);
+          const { platform } = require('platform');
+          await platform.init();
+          await platform.deleteAll();
+          const { getUsersLocalIndex } = require('storage');
+          const idx = await getUsersLocalIndex();
+          await idx.init();
+          await idx.deleteAll();
+        } catch (_e) {
+          // not configured for this component — nothing to wipe.
+        }
+      }
     },
     async afterAll (this: any) {
       // Match beforeAll's generous timeout — teardown can need to wait

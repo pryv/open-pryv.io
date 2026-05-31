@@ -55,10 +55,45 @@ class TestServerContext {
     const proxy = this.forkChild();
     this.allocated.push(proxy);
 
+    // Inherit the parent's effective storage-engine choice when running
+    // under SQLite. helpers-c.ts (api-server) overrides
+    // `storages:base:engine` to SQLite at module load when
+    // STORAGE_ENGINE=sqlite; helpers-base.ts callers (audit, cache,
+    // webhooks, …) leave the default in place. By copying the parent's
+    // resolved value into `injectSettings`, the forked child talks to
+    // the same engine — without forcing audit/cache/webhooks parents
+    // (which DON'T override) to switch to SQLite themselves and hit
+    // per-engine bugs.
+    //
+    // Gated to `STORAGE_ENGINE === 'sqlite'`: under PG matrix the
+    // child's own default-config.yml resolution already picks PG (it
+    // IS the default) AND passing engine settings through here
+    // surfaces the pre-existing `[ASTE]`/`[AINT]`/`[ALGR]` audit
+    // flake fanout we observed under matrix mode.
+    const engineSettings: any = {};
+    if (process.env.STORAGE_ENGINE === 'sqlite') {
+      try {
+        const { getConfigUnsafe } = require('@pryv/boiler');
+        const cfg = getConfigUnsafe(true);
+        const baseEng = cfg.get('storages:base:engine');
+        const seriesEng = cfg.get('storages:series:engine');
+        const fileEng = cfg.get('storages:file:engine');
+        if (baseEng || seriesEng || fileEng) {
+          engineSettings.storages = {};
+          if (baseEng) engineSettings.storages.base = { engine: baseEng };
+          if (seriesEng) engineSettings.storages.series = { engine: seriesEng };
+          if (fileEng) engineSettings.storages.file = { engine: fileEng };
+        }
+      } catch (_e) {
+        // boiler not initialised in this process — fall through with no
+        // engine override; child uses its own default.
+      }
+    }
+
     const settings = deepMerge({
       http: { port, hfsPort: port, previewsPort: port },
       testNotifications: { enabled: true }
-    }, customSettings || {});
+    }, engineSettings, customSettings || {});
 
     await proxy.startServer(settings);
     logger.debug(`spawned child on port ${port}`);

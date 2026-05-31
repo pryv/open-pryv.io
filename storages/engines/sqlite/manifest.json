@@ -5,7 +5,8 @@
     "userLocalDirectory",
     "getEventFiles",
     "createUserAccountStorage",
-    "storageLayer"
+    "storageLayer",
+    "cache"
   ],
   "configuration": {
     "fields": {
