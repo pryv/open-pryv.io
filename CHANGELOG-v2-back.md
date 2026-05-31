@@ -1,5 +1,87 @@
 # Changelog - Internal (no API impact)
 
+## storages/sqlite + test-helpers: SQLite full-matrix parity
+
+`just test-sqlite all` now matches `just test all` (PG) at exit=0,
+0 fail, same baseline pass count. Six fixes, each gated narrowly so
+the PG matrix is untouched:
+
+1. **`test-helpers/src/helpers-base.ts` module-load engine
+   override.** `STORAGE_ENGINE=sqlite` now propagates to every test
+   component that loads helpers-base.ts directly (audit, cache,
+   mall, webhooks, …), not just to api-server which loads
+   helpers-c.ts. Without this, non-api-server components booted on
+   the PG default and saw Pattern A child cores' cross-engine
+   writes in their first `checkIndexAndPlatformIntegrity` hook.
+   `storages:audit:engine` is DELIBERATELY left at the default —
+   PG audit storage (`UserAuditDatabasePG.createEvent`) has a
+   pre-existing `eventid` NOT NULL violation that fires on
+   `[ASTO]` if audit is routed through PG. Override gated to
+   `STORAGE_ENGINE === 'sqlite'`: under PG the memory-scope set
+   blocked later `injectTestConfig` resets the mall suite relies
+   on and timed `[MS04]`/`[MS08]` out.
+
+2. **`test-helpers/src/helpers-base.ts` matrix-hygiene wipe** in
+   `mochaHooks.beforeAll` — calls `platform.deleteAll()` +
+   `usersLocalIndex.deleteAll()` once per non-api-server component
+   process. Clears leftover users that api-server's
+   `versioning.test.js [VE07]` (POST /users with no cleanup)
+   writes to the persistent rqlite + per-user-file SQLite index.
+   Without this, `mall [2Z7L]` and `audit [U2PV]` saw 4-vs-1
+   repo-vs-platform drift in their per-test integrity hook. Gated
+   to SQLite + non-api-server (api-server runs first and racing
+   with helpers-c.ts `dependencies.init()` regresses
+   `[ACUP07]`/`[EVNT]`).
+
+3. **`TestServerContext.spawn` engine pass-through (SQLite only)**
+   — copies parent's effective `storages.{base,series,file}.engine`
+   into the spawned child's `injectSettings`. Fixes the 3-failure
+   `webhooks [WH01]` block: the test parent spawns an api-server
+   child via `context.spawn(...)`, and that child was booting with
+   the default engine. The test wrote a user to the parent's
+   SQLite store; the child looked it up in PG → 404. Settings
+   are passed via `injectSettings` (test scope) rather than env
+   (memory scope) so non-SQLite consumers can still pin their
+   child to PG.
+
+4. **SQLite engine: wire the `cache` internal end-to-end.** The
+   engine manifest gains `cache` in `requiredInternals`;
+   `_internals.ts` exposes the getter;
+   `StreamsSQLite.{insertOne, updateOne, delete}` call
+   `_internals.cache.unsetUserData(userId)` (or `unsetStreams` for
+   non-structural updates) to invalidate the per-user
+   permission-level cache on writes — mirroring PG `StreamsPG`.
+   `localUserStreamsSQLite._getAllFromAccountAndCache` reads /
+   sets the streams cache so subsequent `mall.streams.get` is a
+   cache hit. Closes `cache [XDP6]`: under SQLite, stale
+   `AccessLogic` permissions after `streams.update` reparenting
+   kept granting access to a `parentId: null` move-out.
+
+5. **`cache/test/acceptance/cache.test.js [FELT]` SQLite skip**
+   on the 15%-speedup timing-gain assertion. Local SQLite's
+   per-user-file fetch is fast enough that the cache memoization
+   adds more overhead than it saves; the `isFull()` cache-hit
+   invariant earlier in the same test still verifies the
+   integration. Same skip already existed for CI for the same
+   reason. (A future cache-evaluation pass can revisit whether
+   local memoization is worth keeping when storage round-trips
+   are sub-millisecond.)
+
+6. **`api-server/test/helpers/validation.js checkObjectEquality`**
+   — always exclude `integrity` from comparison when the
+   expected object doesn't carry one. Previously this only
+   skipped under "approximate match" (i.e. when
+   `actual.modified !== expected.modified`); under PG the times
+   always drifted from the test's post-response
+   `timestamp.now()` so integrity got skipped, but under SQLite
+   the modified timestamp could match exactly, integrity got
+   compared, and the test failed with a phantom
+   `+ integrity: EVENT:0:sha256-...` diff. Removes the
+   engine-shape coupling from `[4QRU]` (events PUT),
+   `[AC01]`/`[AC18]` (accesses), and the cluster of
+   `[EVNT]`/`[CMCNS]` intermittent fails the SessionState had
+   tracked as "matrix-only test isolation".
+
 ## test-helpers: TestServerContext (lazy fork) replaces SpawnContext
 
 `SpawnContext` prespawned a pool of child processes at module-load
