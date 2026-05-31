@@ -1,6 +1,6 @@
 # Pryv Performance Benchmark Tool
 
-Benchmarks for Pryv service-core — measures throughput, latency, resource usage, and storage growth across configurations.
+Benchmarks for `open-pryv.io` — measures throughput, latency, resource usage, and storage growth across configurations.
 
 ## Setup
 
@@ -8,8 +8,8 @@ No dependencies to install — uses Node.js built-in `fetch` (undici) and `/proc
 
 Requires:
 - Node.js >= 22
-- A running service-core instance (local or remote)
-- MongoDB, InfluxDB running (for full scenario coverage)
+- A running `open-pryv.io` instance (local or remote)
+- The default storage engine (PostgreSQL + rqlite + filesystem) running locally; the optional `influxd` is only needed for `series-*` scenarios when `storages.series.engine: influxdb` is configured in `override-config.yml`.
 
 ## Quick Start
 
@@ -19,9 +19,9 @@ From the `macroPryv/` root:
 # 1. Clean databases (server stopped)
 _local/scripts/perf-clean.sh --hard
 
-# 2. Start service-core
-cd service-core && just start-deps    # terminal 1
-cd service-core && just start-master  # terminal 2
+# 2. Start open-pryv.io
+cd open-pryv.io && just start-deps    # terminal 1
+cd open-pryv.io && just start-master  # terminal 2
 
 # 3. Seed test data
 _local/scripts/perf-seed.sh --users 3 --events 50000 --profile manual
@@ -31,6 +31,9 @@ _local/scripts/perf-run.sh all --concurrency 10 --duration 30
 
 # Or full cycle in one command (prompts to start server after clean)
 _local/scripts/perf-full.sh --users 3 --events 50000 --duration 30
+
+# Or compare PostgreSQL vs SQLite end-to-end (script controls server)
+_local/scripts/perf-vs.sh --users 3 --events 10000 --duration 15
 ```
 
 ## Helper Scripts
@@ -42,7 +45,8 @@ All scripts run from `macroPryv/` root.
 | `_local/scripts/perf-clean.sh` | Clean benchmark data (soft: API delete, hard: wipe DBs) |
 | `_local/scripts/perf-seed.sh` | Seed test users with realistic data |
 | `_local/scripts/perf-run.sh` | Run benchmark scenarios |
-| `_local/scripts/perf-full.sh` | Full cycle: clean → seed → run all |
+| `_local/scripts/perf-full.sh` | Full cycle: clean → seed → run all (single engine) |
+| `_local/scripts/perf-vs.sh` | Run the full benchmark for PostgreSQL AND SQLite back-to-back, then produce a Markdown comparison. Manages the server (start/stop) and `config/override-config.yml` for each leg. |
 | `_local/scripts/perf-compare.sh` | Compare two result files |
 
 ## Scenarios
