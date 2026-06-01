@@ -51,15 +51,11 @@ type Access = {
   expires: number | undefined | null;
   clientData: {} | undefined | null;
 };
+import type { MethodNext, NodeCallback } from './_types.ts';
+
 type UpdatesSettingsHolder = {
   ignoreProtectedFields: boolean;
 };
-
-// Next() callback used across the method-API middleware pipeline (distinct
-// from Express NextFunction — these middlewares are method-stage links).
-type MethodNext = (err?: unknown) => void;
-// Node-style callback shape used by the storage layer's fromCallback bridge.
-type NodeCallback<T = unknown> = (err: unknown, value?: T) => void;
 
 export default async function produceAccessesApiMethods (api: any) {
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };

@@ -19,13 +19,9 @@ const { Readable } = require('stream');
 const SetFileReadTokenStream = require('../streams/SetFileReadTokenStream.ts').default;
 const accountStreams = require('business/src/system-streams/index.ts');
 const integrity = require('business/src/integrity/index.ts').default;
-let mall: any;
+import type { MethodNext } from '../_types.ts';
 
-// Next() callback used across the method-API middleware pipeline (distinct
-// from Express NextFunction). Mirrors the alias declared locally in
-// methods/events.ts + methods/accesses.ts — to be unified once the duplicate
-// triple becomes annoying.
-type MethodNext = (err?: unknown) => void;
+let mall: any;
 
 export { init, applyDefaultsForRetrieval, coerceStreamsParam, validateStreamsQueriesAndSetStore, transformArrayOfStringsToStreamsQuery, streamQueryCheckPermissionsAndReplaceStars, streamQueryAddForcedAndForbiddenStreams, streamQueryExpandStreams, streamQueryAddHiddenStreams, findEventsFromStore };
 /**

@@ -40,14 +40,11 @@ const CleanDeletedEventsStream = require('./streams/CleanDeletedEventsStream.ts'
 
 const { integrity } = require('business');
 
+import type { MethodNext } from './_types.ts';
+
 // Type repository that will contain information about what is allowed/known
 // for events.
 const typeRepo = new TypeRepository();
-
-// The next() callback used across the method-API middleware pipeline.
-// Distinct from express.NextFunction — these middlewares are method-stage
-// links, not HTTP-stage links.
-type MethodNext = (err?: unknown) => void;
 
 /**
  * Events API methods implementations.
