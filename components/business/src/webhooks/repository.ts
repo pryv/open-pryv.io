@@ -10,6 +10,11 @@ const { fromCallback } = require('utils');
 const { deepMerge } = require('utils');
 const Webhook = require('./Webhook.ts').default;
 const { getUsersRepository } = require('business/src/users/index.ts');
+
+type NodeCallback<T = unknown> = (err: unknown, value?: T) => void;
+type User = { id: string; username: string };
+type AccessLike = { id: string; isApp: () => boolean };
+
 /**
  * Repository of all Webhooks in this Pryv.io instance.
  */
@@ -28,15 +33,15 @@ class Repository {
     const usersRepository = await getUsersRepository();
     const users = await usersRepository.getAllUsersIdAndName();
     const allWebhooks = new Map();
-    await Promise.all(users.map((u: any) => retrieveWebhooks.call(this, u)));
+    await Promise.all(users.map((u: User) => retrieveWebhooks.call(this, u)));
     return allWebhooks;
-    async function retrieveWebhooks (this: any, user: any) {
+    async function retrieveWebhooks (this: Repository, user: User) {
       const webhooksQuery = {};
       const webhooksOptions = {};
-      const webhooks = await fromCallback((cb: any) => this.storage.find(user, webhooksQuery, webhooksOptions, cb));
-      const userWebhooks: any[] = [];
-      webhooks.forEach((w: any) => {
-        userWebhooks.push(initWebhook(user, this, w));
+      const webhooks: unknown[] = await fromCallback((cb: NodeCallback<unknown[]>) => this.storage.find(user, webhooksQuery, webhooksOptions, cb));
+      const userWebhooks: unknown[] = [];
+      webhooks.forEach((w: unknown) => {
+        userWebhooks.push(initWebhook(user, this, w as Record<string, unknown>));
       });
       if (userWebhooks.length > 0) {
         allWebhooks.set(user.username, userWebhooks);
@@ -49,16 +54,16 @@ class Repository {
    * Personal access: returns all webhooks
    * App access: all those created by the access
    */
-  async get (user: any, access: any) {
-    const query: any = {};
-    const options: any = {};
+  async get (user: User, access: AccessLike) {
+    const query: Record<string, unknown> = {};
+    const options: Record<string, unknown> = {};
     if (access.isApp()) {
       query.accessId = { $eq: access.id };
     }
-    const webhooks = await fromCallback((cb: any) => this.storage.find(user, query, options, cb));
-    const webhookObjects: any[] = [];
-    webhooks.forEach((w: any) => {
-      const webhook = initWebhook(user, this, w);
+    const webhooks: unknown[] = await fromCallback((cb: NodeCallback<unknown[]>) => this.storage.find(user, query, options, cb));
+    const webhookObjects: unknown[] = [];
+    webhooks.forEach((w: unknown) => {
+      const webhook = initWebhook(user, this, w as Record<string, unknown>);
       webhookObjects.push(webhook);
     });
     return webhookObjects;
@@ -67,12 +72,12 @@ class Repository {
   /**
    * Returns a webhook for a user, fetched by its id
    */
-  async getById (user: any, webhookId: any) {
+  async getById (user: User, webhookId: string) {
     const query = {
       id: { $eq: webhookId }
     };
     const options = {};
-    const webhook = await fromCallback((cb: any) => this.storage.findOne(user, query, options, cb));
+    const webhook = await fromCallback((cb: NodeCallback) => this.storage.findOne(user, query, options, cb));
     if (webhook == null) { return null; }
     return initWebhook(user, this, webhook);
   }
@@ -80,38 +85,38 @@ class Repository {
   /**
    * Inserts a webhook for a user
    */
-  async insertOne (user: any, webhook: any) {
-    await fromCallback((cb: any) => this.storage.insertOne(user, webhook.forStorage(), cb));
+  async insertOne (user: User, webhook: { forStorage: () => unknown }) {
+    await fromCallback((cb: NodeCallback) => this.storage.insertOne(user, webhook.forStorage(), cb));
   }
 
   /**
    * Updates certain fields of a webhook for a user
    */
-  async updateOne (user: any, update: any, webhookId: any) {
+  async updateOne (user: User, update: Record<string, unknown>, webhookId: string) {
     const query = { id: webhookId };
-    await fromCallback((cb: any) => this.storage.updateOne(user, query, update, cb));
+    await fromCallback((cb: NodeCallback) => this.storage.updateOne(user, query, update, cb));
   }
 
   /**
    * Deletes a webhook for a user, given the webhook's id
    */
-  async deleteOne (user: any, webhookId: any) {
-    await fromCallback((cb: any) => this.storage.delete(user, { id: webhookId }, cb));
+  async deleteOne (user: User, webhookId: string) {
+    await fromCallback((cb: NodeCallback) => this.storage.delete(user, { id: webhookId }, cb));
   }
 
   /**
    * Deletes all webhooks for a user.
    */
-  async deleteForUser (user: any) {
-    await fromCallback((cb: any) => this.storage.delete(user, {}, cb));
+  async deleteForUser (user: User) {
+    await fromCallback((cb: NodeCallback) => this.storage.delete(user, {}, cb));
   }
 
   /**
    * Deletes all webhooks attached to a given access. Used by the
    * `accesses.delete` cascade.
    */
-  async deleteByAccess (user: any, accessId: any) {
-    await fromCallback((cb: any) => this.storage.delete(user, { accessId }, cb));
+  async deleteByAccess (user: User, accessId: string) {
+    await fromCallback((cb: NodeCallback) => this.storage.delete(user, { accessId }, cb));
   }
 
   /**
@@ -119,16 +124,16 @@ class Repository {
    * given accessId. Defensive: returns true when no accessesStorage was
    * wired (older constructor callers) so we never falsely deactivate.
    */
-  async accessExists (user: any, accessId: any): Promise<boolean> {
+  async accessExists (user: User, accessId: string): Promise<boolean> {
     if (this.accessesStorage == null) return true;
-    const access = await fromCallback((cb: any) =>
+    const access: { deleted?: unknown } | null = await fromCallback((cb: NodeCallback) =>
       this.accessesStorage.findOne(user, { id: accessId }, {}, cb));
     return access != null && access.deleted == null;
   }
 }
 export default Repository;
 export { Repository };
-function initWebhook (user: any, repository: any, webhook: any) {
+function initWebhook (user: User, repository: Repository, webhook: Record<string, unknown>) {
   return new Webhook(deepMerge({
     webhooksRepository: repository,
     user
