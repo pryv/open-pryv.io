@@ -849,6 +849,7 @@ export default async function (api: any) {
    */
   function blockAccountEventDeletion (context: any, params: any, result: any, next: any) {
     const event = context.oldEvent;
+    if (!Array.isArray(event?.streamIds)) return next();
     for (const streamId of event.streamIds) {
       if (streamId.startsWith(':_system:') || streamId.startsWith(':system:')) {
         return next(errors.invalidOperation('Account events cannot be deleted.'));
