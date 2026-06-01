@@ -94,7 +94,9 @@ export default function system (expressApp: any, app: any) {
           hostname: c.hostname,
           issuedAt: c.issuedAt,
           expiresAt: c.expiresAt,
-          daysUntilExpiry: Math.round((c.expiresAt - Date.now()) / (24 * 3600 * 1000))
+          daysUntilExpiry: c.expiresAt != null
+            ? Math.round((c.expiresAt - Date.now()) / (24 * 3600 * 1000))
+            : null
         }))
       });
     } catch (err: any) {
