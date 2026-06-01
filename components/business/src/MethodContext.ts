@@ -19,33 +19,36 @@ const AUTH_SEPARATOR = ' ';
 const ACCESS_TYPE_PERSONAL = 'personal';
 
 class MethodContext {
-  source;
-  user;
-  access: any;
-  streams: any;
-  accessToken: any;
-  callerId: any;
+  source: ContextSource;
+  user: UserDef;
+  // Populated lazily by retrieveAccess*; consumers must guard against null.
+  access: InstanceType<typeof AccessLogic> | null;
+  // Legacy field, not actively used today; kept for compatibility.
+  streams: unknown;
+  accessToken: string | null;
+  callerId: string | null;
   /**
    * Used in custom auth function
    */
-  headers;
+  headers: Record<string, string | string[] | undefined>;
   /**
    * API method id, e.g. "events.get"
    */
-  methodId: any;
-  originalQuery;
+  methodId: string | null;
+  originalQuery: Record<string, unknown> | undefined;
   /**
    * Custom auth function, if one was configured.
    */
-  customAuthStepFn;
+  customAuthStepFn: CustomAuthFunction | null;
+  // mall: any — Mall instance; will tighten once a Mall interface is exported
   mall: any;
-  _tracing;
+  _tracing: unknown;
   /**
    * Used in events.get
    */
-  acceptStreamsQueryNonStringified: any;
+  acceptStreamsQueryNonStringified: boolean | undefined;
 
-  constructor (source: any, username: any, auth: any, customAuthStepFn: any, headers: any, query: any, tracing: any) {
+  constructor (source: ContextSource, username: string, auth: string | null, customAuthStepFn: CustomAuthFunction | null, headers: Record<string, string | string[] | undefined>, query: Record<string, unknown>, tracing: unknown) {
     this.source = source;
     this.user = { id: null, username };
     this.mall = null;
@@ -77,7 +80,7 @@ class MethodContext {
    * Extracts access token and optional caller id from the given auth string,
    * assigning to `this.accessToken` and `this.callerId`.
    */
-  parseAuth (auth: any) {
+  parseAuth (auth: string) {
     this.accessToken = auth;
     // Sometimes, the auth string will look like this:
     //    'TOKEN CALLERID'
@@ -130,7 +133,7 @@ class MethodContext {
    * a subclass of APIError.
    *
    */
-  async retrieveExpandedAccess (storage: any) {
+  async retrieveExpandedAccess (storage: any) { // storage layer; not modelled
     try {
       if (this.access == null) { await this.retrieveAccessFromToken(storage); }
       const access = this.access;
@@ -155,8 +158,8 @@ class MethodContext {
   /**
    * Generic retrieve access
    */
-  async _retrieveAccess (storage: any, query: any) {
-    const access = await fromCallback((cb: any) => storage.accesses.findOne(this.user, query, null, cb));
+  async _retrieveAccess (storage: any, query: Record<string, unknown>) {
+    const access = await fromCallback((cb: NodeCallback) => storage.accesses.findOne(this.user, query, null, cb));
     if (access == null) { throw errors.invalidAccessToken('Cannot find access from token.', 403); }
     this.access = new AccessLogic(this.user.id, access);
     cache.setAccessLogic(this.user.id, this.access);
@@ -165,7 +168,7 @@ class MethodContext {
   /**
    * Internal: Loads `this.access`.
    */
-  async retrieveAccessFromToken (storage: any) {
+  async retrieveAccessFromToken (storage: any) { // storage layer
     const token = this.accessToken;
     if (token == null) {
       throw errors.invalidAccessToken('The access token is missing: expected an ' +
@@ -187,7 +190,8 @@ class MethodContext {
    * Returns nothing but throws if an error is detected.
    *
    */
-  checkAccessValid (access: any) {
+  checkAccessValid (access: { type?: string; expires?: number | null; deleted?: unknown } | null) {
+    if (access == null) return;
     const now = timestamp.now();
     if (access.expires != null && now > access.expires) { throw errors.forbidden('Access has expired.'); }
   }
@@ -196,7 +200,7 @@ class MethodContext {
    * Loads an access by id or throw an error. On success, assigns to
    * `this.access` and `this.accessToken`.
    */
-  async retrieveAccessFromId (storage: any, accessId: any) {
+  async retrieveAccessFromId (storage: any, accessId: string) {
     this.access = cache.getAccessLogicForId(this.user.id, accessId);
     if (this.access == null) {
       await this._retrieveAccess(storage, { id: accessId });
@@ -209,14 +213,14 @@ class MethodContext {
   /**
    * Loads session and touches it (personal sessions only)
    */
-  async checkSessionValid (storage: any) {
+  async checkSessionValid (storage: any) { // storage layer
     const access = this.access;
     if (access == null) { throw new Error('AF: access != null'); }
     // Only 'personal' tokens expire - if it is not personal, abort.
     if (access.type !== ACCESS_TYPE_PERSONAL) { return; }
     // assert: type === 'personal'
     const token = access.token;
-    const session = await fromCallback((cb: any) => storage.sessions.get(token, cb));
+    const session = await fromCallback((cb: NodeCallback) => storage.sessions.get(token, cb));
     if (session == null) { throw errors.invalidAccessToken('Access session has expired.', 403); }
     // Keep the session alive (don't await, see below)
     storage.sessions.touch(token, () => null);
@@ -225,17 +229,18 @@ class MethodContext {
   /**
    * Perform custom auth step `customAuthStep`. Errors are caught and rethrown.
    */
-  performCustomAuthStep (customAuthStep: any) {
+  performCustomAuthStep (customAuthStep: CustomAuthFunction) {
     return new Promise<void>((resolve, reject) => {
       try {
-        customAuthStep(this, (err: any) => {
+        customAuthStep(this, (err: Error | null | undefined) => {
           if (err != null) { reject(errors.invalidAccessToken(`Custom auth step failed: ${err.message}`)); }
           resolve();
         });
-      } catch (err: any) {
+      } catch (err) {
         // If the custom auth step throws a synchronous exception, then we dont
         // simply log an auth failure, but rather a server failure:
-        reject(errors.unexpectedError(`Custom auth step threw synchronously: ${err.message}`));
+        const msg = err instanceof Error ? err.message : String(err);
+        reject(errors.unexpectedError(`Custom auth step threw synchronously: ${msg}`));
       }
     });
   }
@@ -245,17 +250,17 @@ class MethodContext {
    * @param streamId  undefined
    * @param storeId  - If storeId is null streamId should be fully scoped
    */
-  async streamForStreamId (streamId: any, storeId: any) {
+  async streamForStreamId (streamId: string, storeId: string | null) {
     return await this.mall.streams.getOneWithNoChildren(this.user.id, streamId, storeId);
   }
 
-  initTrackingProperties (item: any, authorOverride: any) {
+  initTrackingProperties (item: { created?: number; createdBy?: string; modified?: number; modifiedBy?: string; [k: string]: unknown }, authorOverride?: string | null) {
     item.created = timestamp.now();
     item.createdBy = authorOverride || this.getTrackingAuthorId();
     return this.updateTrackingProperties(item, authorOverride);
   }
 
-  updateTrackingProperties (updatedData: any, authorOverride: any) {
+  updateTrackingProperties (updatedData: { modified?: number; modifiedBy?: string; [k: string]: unknown }, authorOverride?: string | null) {
     updatedData.modified = timestamp.now();
     updatedData.modifiedBy = authorOverride || this.getTrackingAuthorId();
     return updatedData;
@@ -276,13 +281,9 @@ class MethodContext {
 }
 export default MethodContext;
 export { MethodContext };
-type CustomAuthFunctionCallback = (err: any) => void;
-/**
- * @typedef {(
- *   b: MethodContext,
- *   a: CustomAuthFunctionCallback
- * ) => void} CustomAuthFunction
- */
+type CustomAuthFunctionCallback = (err: Error | null | undefined) => void;
+type CustomAuthFunction = (ctx: MethodContext, cb: CustomAuthFunctionCallback) => void;
+type NodeCallback<T = unknown> = (err: unknown, value?: T) => void;
 
 type ContextSourceName = 'http' | 'socket.io' | 'hf' | 'test';
 type ContextSource = {
