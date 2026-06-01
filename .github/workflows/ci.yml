@@ -10,7 +10,7 @@ jobs:
   # alternative. CI runs the PG matrix sequentially.
   test-postgres:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:16
