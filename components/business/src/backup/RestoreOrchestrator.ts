@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { PlatformDB, PlatformEntry } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
@@ -16,23 +17,24 @@ const timestamp = require('unix-timestamp');
  * AuditStorage, EventFiles, PlatformDB.
  */
 class RestoreOrchestrator {
+  // Storage-layer shapes are not yet modelled — typed loosely as `any` and
+  // tightened when StorageLayer / UsersLocalIndex / EventFiles / SeriesConnection
+  // get formal interfaces.
   storageLayer: any;
   usersLocalIndex: any;
   userAccountStorage: any;
   eventFiles: any;
-  platformDB: any;
+  platformDB!: PlatformDB;
   auditStorage: any;
   seriesConnection: any;
-  logger: any;
+  logger!: Logger;
 
   constructor () {
     this.storageLayer = null;
     this.usersLocalIndex = null;
     this.userAccountStorage = null;
     this.eventFiles = null;
-    this.platformDB = null;
     this.auditStorage = null;
-    this.logger = null;
   }
 
   async init () {
@@ -61,8 +63,8 @@ class RestoreOrchestrator {
    * @param [options.deleteOnSuccess=false] - delete backup data after successful restore
    * @param [options.moveOnSuccess] - move backup data to this path after successful restore
    */
-  async restoreAllUsers (reader: any, options: any = {}) {
-    const opts: any = Object.assign({ overwrite: true, skipPlatform: false, skipConflicts: false }, options);
+  async restoreAllUsers (reader: BackupReader, options: RestoreOptions = {}) {
+    const opts: RestoreOptions = Object.assign({ overwrite: true, skipPlatform: false, skipConflicts: false }, options);
 
     if (opts.skipConflicts && !opts.deleteOnSuccess && !opts.moveOnSuccess) {
       throw new Error('--skip-conflicts requires --delete-on-success or --move-on-success');
@@ -73,7 +75,7 @@ class RestoreOrchestrator {
 
     // Detect conflicts
     const conflicts = await this._detectConflicts(manifest.users);
-    const report: { restored: any[], skipped: any[], conflicts: any[] } = { restored: [], skipped: [], conflicts };
+    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[] } = { restored: [], skipped: [], conflicts };
 
     if (conflicts.length > 0 && !opts.skipConflicts) {
       const conflictDesc = conflicts.map(c => `${c.username} (${c.reason})`).join(', ');
@@ -110,11 +112,11 @@ class RestoreOrchestrator {
    * @param [options.skipPlatform=true] - skip platform data
    * @param [options.remapUserId] - remap to a different userId
    */
-  async restoreUser (userId: any, reader: any, options: any = {}) {
-    const opts: any = Object.assign({ overwrite: false, skipPlatform: true }, options);
+  async restoreUser (userId: string, reader: BackupReader, options: RestoreOptions = {}) {
+    const opts: RestoreOptions = Object.assign({ overwrite: false, skipPlatform: true }, options);
     const manifest = await reader.readManifest();
 
-    const userManifest = manifest.users.find((u: any) => u.userId === userId);
+    const userManifest = manifest.users.find((u: UserManifest) => u.userId === userId);
     if (!userManifest) {
       throw new Error(`User ${userId} not found in backup manifest`);
     }
@@ -141,7 +143,7 @@ class RestoreOrchestrator {
   /**
    * Restore platform data only.
    */
-  async restorePlatform (reader: any) {
+  async restorePlatform (reader: BackupReader) {
     await reader.readManifest();
     await this._restorePlatform(reader);
   }
@@ -150,7 +152,7 @@ class RestoreOrchestrator {
   // Internal
   // -------------------------------------------------------------------------
 
-  async _restoreSingleUser (reader: any, userId: any, username: any, opts: any, targetUserId?: any) {
+  async _restoreSingleUser (reader: BackupReader, userId: string, username: string, opts: RestoreOptions, targetUserId?: string) {
     targetUserId = targetUserId || userId;
 
     this.logger.info(`Restoring user: ${username} (${userId}${targetUserId !== userId ? ' -> ' + targetUserId : ''})`);
@@ -180,51 +182,51 @@ class RestoreOrchestrator {
     // 6. Account data, Audit (independent)
     // Note: no FK constraints in MongoDB or PostgreSQL, but order is kept
     // for correctness if constraints are added in the future.
-    const streams: any[] = [];
+    const streams: unknown[] = [];
     for await (const stream of await userReader.readStreams()) {
       streams.push(stream);
     }
     if (streams.length > 0) {
       await fromCallback(
-        (cb: any) => this.storageLayer.streams.importAll(user, streams, cb)
+        (cb: NodeCallback) => this.storageLayer.streams.importAll(user, streams, cb)
       );
     }
 
     // Accesses
-    const accesses: any[] = [];
+    const accesses: unknown[] = [];
     for await (const access of await userReader.readAccesses()) {
       accesses.push(access);
     }
     if (accesses.length > 0) {
       await fromCallback(
-        (cb: any) => this.storageLayer.accesses.importAll(user, accesses, cb)
+        (cb: NodeCallback) => this.storageLayer.accesses.importAll(user, accesses, cb)
       );
     }
 
     // Profile
-    const profile: any[] = [];
+    const profile: unknown[] = [];
     for await (const item of await userReader.readProfile()) {
       profile.push(item);
     }
     if (profile.length > 0) {
       await fromCallback(
-        (cb: any) => this.storageLayer.profile.importAll(user, profile, cb)
+        (cb: NodeCallback) => this.storageLayer.profile.importAll(user, profile, cb)
       );
     }
 
     // Webhooks
-    const webhooks: any[] = [];
+    const webhooks: unknown[] = [];
     for await (const wh of await userReader.readWebhooks()) {
       webhooks.push(wh);
     }
     if (webhooks.length > 0) {
       await fromCallback(
-        (cb: any) => this.storageLayer.webhooks.importAll(user, webhooks, cb)
+        (cb: NodeCallback) => this.storageLayer.webhooks.importAll(user, webhooks, cb)
       );
     }
 
     // Events
-    const events: any[] = [];
+    const events: unknown[] = [];
     for await (const event of await userReader.readEvents()) {
       events.push(event);
     }
@@ -244,12 +246,12 @@ class RestoreOrchestrator {
     }
 
     // Ensure minimum account fields exist (safety net for v1 backups without accountFields)
-    const hasAccountFields = accountData?.accountFields?.length > 0;
+    const hasAccountFields = (accountData?.accountFields?.length ?? 0) > 0;
     if (!hasAccountFields) {
       const leavesMap = accountStreams.accountLeavesMap;
       const now = timestamp.now();
       let defaultsCreated = 0;
-      for (const [streamId, stream] of Object.entries(leavesMap) as Array<[string, any]>) {
+      for (const [streamId, stream] of Object.entries(leavesMap) as Array<[string, { default?: unknown }]>) {
         if (stream.default != null) {
           const fieldName = accountStreams.toFieldName(streamId);
           await this.userAccountStorage.setAccountField(targetUserId, fieldName, stream.default, 'restore', now);
@@ -264,7 +266,7 @@ class RestoreOrchestrator {
     // Audit (optional)
     if (this.auditStorage) {
       try {
-        const auditEvents: any[] = [];
+        const auditEvents: unknown[] = [];
         for await (const ae of await userReader.readAudit()) {
           auditEvents.push(ae);
         }
@@ -272,30 +274,30 @@ class RestoreOrchestrator {
           const userAudit = this.auditStorage.forUser(targetUserId);
           await userAudit.importAllEvents(auditEvents);
         }
-      } catch (e: any) {
-        this.logger.warn(`Audit import failed for user ${targetUserId}: ${e.message}`);
+      } catch (e: unknown) {
+        this.logger.warn(`Audit import failed for user ${targetUserId}: ${(e as Error).message}`);
       }
     }
 
     // Series (optional — skip if no series engine configured)
     if (this.seriesConnection) {
       try {
-        const seriesMeasurements: any[] = [];
+        const seriesMeasurements: unknown[] = [];
         for await (const item of await userReader.readSeries()) {
           seriesMeasurements.push(item);
         }
         if (seriesMeasurements.length > 0) {
           await this.seriesConnection.importDatabase(targetUserId, { measurements: seriesMeasurements });
         }
-      } catch (e: any) {
-        this.logger.warn(`Series import failed for user ${targetUserId}: ${e.message}`);
+      } catch (e: unknown) {
+        this.logger.warn(`Series import failed for user ${targetUserId}: ${(e as Error).message}`);
       }
     }
 
     this.logger.info(`User restored: ${username} (${targetUserId})`);
   }
 
-  async _importEvents (user: any, events: any) {
+  async _importEvents (user: UserRef, events: unknown[]) {
     // Use BaseStorage importAll via callback (same path as existing migration)
     // The storageLayer doesn't expose events directly, but the engine's
     // local data store does via the events collection.
@@ -304,18 +306,18 @@ class RestoreOrchestrator {
     const eventsStore = this.storageLayer.events;
     if (eventsStore && typeof eventsStore.importAll === 'function') {
       await fromCallback(
-        (cb: any) => eventsStore.importAll(user, events, cb)
+        (cb: NodeCallback) => eventsStore.importAll(user, events, cb)
       );
     }
   }
 
-  async _clearUserData (user: any, userId: any) {
+  async _clearUserData (user: UserRef, userId: string) {
     // Clear all user-scoped stores
     const collections = ['streams', 'accesses', 'profile', 'webhooks'];
     for (const coll of collections) {
       if (this.storageLayer[coll] && typeof this.storageLayer[coll].clearAll === 'function') {
         await fromCallback(
-          (cb: any) => this.storageLayer[coll].clearAll(user, cb)
+          (cb: NodeCallback) => this.storageLayer[coll].clearAll(user, cb)
         );
       }
     }
@@ -323,7 +325,7 @@ class RestoreOrchestrator {
     // Clear events
     if (this.storageLayer.events && typeof this.storageLayer.events.clearAll === 'function') {
       await fromCallback(
-        (cb: any) => this.storageLayer.events.clearAll(user, cb)
+        (cb: NodeCallback) => this.storageLayer.events.clearAll(user, cb)
       );
     }
 
@@ -339,8 +341,8 @@ class RestoreOrchestrator {
     if (this.auditStorage) {
       try {
         await this.auditStorage.deleteUser(userId);
-      } catch (e: any) {
-        this.logger.warn(`Audit clear failed for user ${userId}: ${e.message}`);
+      } catch (e: unknown) {
+        this.logger.warn(`Audit clear failed for user ${userId}: ${(e as Error).message}`);
       }
     }
 
@@ -348,14 +350,14 @@ class RestoreOrchestrator {
     if (this.seriesConnection) {
       try {
         await this.seriesConnection.dropDatabase(userId);
-      } catch (e: any) {
-        this.logger.warn(`Series clear failed for user ${userId}: ${e.message}`);
+      } catch (e: unknown) {
+        this.logger.warn(`Series clear failed for user ${userId}: ${(e as Error).message}`);
       }
     }
   }
 
-  async _detectConflicts (users: any) {
-    const conflicts: any[] = [];
+  async _detectConflicts (users: UserManifest[]): Promise<ConflictRef[]> {
+    const conflicts: ConflictRef[] = [];
     for (const { userId, username } of users) {
       // Check if username already exists with a different userId
       try {
@@ -388,9 +390,9 @@ class RestoreOrchestrator {
     return conflicts;
   }
 
-  async _restorePlatform (reader: any) {
+  async _restorePlatform (reader: BackupReader) {
     if (!this.platformDB) return;
-    const data: any[] = [];
+    const data: unknown[] = [];
     let skipped = 0;
     for await (const item of await reader.readPlatformData()) {
       // v1 backups (and old v2 exports) write raw `{key, value}` entries straight from
@@ -398,7 +400,7 @@ class RestoreOrchestrator {
       // parsed shape `{username, field, value, isUnique}` (matching exportAll output).
       // Bridge both shapes here so v1→v2 migrations restore platform data correctly.
       if (item.username == null && typeof item.key === 'string') {
-        const parsed = parseRawPlatformEntry(item);
+        const parsed = parseRawPlatformEntry(item as { key: string; value: string });
         if (parsed) data.push(parsed);
         else skipped++;
       } else {
@@ -406,7 +408,7 @@ class RestoreOrchestrator {
       }
     }
     if (data.length > 0) {
-      await this.platformDB.importAll(data);
+      await this.platformDB.importAll(data as PlatformEntry[]);
     }
     this.logger.info(`Platform data restored: ${data.length} records${skipped ? ` (${skipped} unsupported keys skipped)` : ''}`);
 
@@ -430,7 +432,7 @@ class RestoreOrchestrator {
       const cores = typeof this.platformDB.getAllCoreInfos === 'function'
         ? await this.platformDB.getAllCoreInfos()
         : [];
-      const availableCores = cores.filter((c: any) => c.available !== false);
+      const availableCores = cores.filter((c) => c.available !== false);
       const defaultCoreId = availableCores.length === 1 ? availableCores[0].id : null;
       if (defaultCoreId != null) {
         for await (const mapping of await reader.readServerMappings()) {
@@ -439,10 +441,10 @@ class RestoreOrchestrator {
           serverMappingsCount++;
         }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       // readServerMappings is optional (default impl is a no-op) — any
       // error here should not fail the whole restore.
-      this.logger.warn('Restoring register/ server mappings failed: ' + err.message);
+      this.logger.warn('Restoring register/ server mappings failed: ' + (err as Error).message);
     }
     if (serverMappingsCount > 0) {
       this.logger.info(`Register server mappings restored: ${serverMappingsCount} user-core rows written`);
@@ -459,7 +461,7 @@ class RestoreOrchestrator {
  * the only key types present in v1 platform data. Other key types (user-core,
  * core-info, invitation) are v2-only and have no v1 equivalent; returns null.
  */
-function parseRawPlatformEntry (entry: any) {
+function parseRawPlatformEntry (entry: { key: string; value: string }) {
   const parts = entry.key.split('/');
   if (parts.length < 3) return null;
   const [type, field, userNameOrValue] = parts;
@@ -474,3 +476,42 @@ function parseRawPlatformEntry (entry: any) {
 
 export default RestoreOrchestrator;
 export { RestoreOrchestrator };
+
+// Local type aliases for the shapes this orchestrator threads through.
+// BackupReader is a structural interface — the concrete reader implementations
+// live alongside (BackupReaderTar, BackupReaderDir, ...) and don't formally
+// implement an interface yet.
+type Logger = {
+  info (msg: string): void;
+  warn (msg: string): void;
+};
+type UserRef = { id: string };
+type UserManifest = { userId: string; username: string };
+type Manifest = { formatVersion: string; backupType: string; users: UserManifest[] };
+type ConflictRef = { userId: string; username: string; reason: string };
+type UserReader = {
+  readStreams (): AsyncIterable<unknown>;
+  readAccesses (): AsyncIterable<unknown>;
+  readProfile (): AsyncIterable<unknown>;
+  readWebhooks (): AsyncIterable<unknown>;
+  readEvents (): AsyncIterable<unknown>;
+  readAttachments (): AsyncIterable<{ eventId: string; fileId: string; stream: unknown }>;
+  readAccountData (): Promise<{ accountFields?: unknown[] } | null>;
+  readAudit (): AsyncIterable<unknown>;
+  readSeries (): AsyncIterable<unknown>;
+};
+type BackupReader = {
+  readManifest (): Promise<Manifest>;
+  openUser (userId: string): Promise<UserReader>;
+  readPlatformData (): AsyncIterable<{ username?: string; field?: string; value?: string; isUnique?: boolean; key?: string }>;
+  readServerMappings (): AsyncIterable<{ username: string; server?: string }>;
+};
+type RestoreOptions = {
+  overwrite?: boolean;
+  skipPlatform?: boolean;
+  skipConflicts?: boolean;
+  deleteOnSuccess?: boolean;
+  moveOnSuccess?: string;
+  remapUserId?: string;
+};
+type NodeCallback<T = unknown> = (err: Error | null | undefined, value?: T) => void;
