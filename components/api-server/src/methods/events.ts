@@ -41,6 +41,18 @@ const CleanDeletedEventsStream = require('./streams/CleanDeletedEventsStream.ts'
 const { integrity } = require('business');
 
 import type { MethodNext } from './_types.ts';
+import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
+// Events middleware chains use the request context as a scratchpad
+// (newEvent/oldEvent/event are populated by earlier steps and read by later
+// ones). Widen MethodContext locally so the chain functions can carry
+// these without per-step assertions or `as any` casts.
+type MethodContext = BaseMethodContext & {
+  // Scratchpad — the middleware chain populates fields like newEvent /
+  // oldEvent / event / systemStream / accountStreamId(s) / auditIntegrityPayload
+  // on the context as the steps run. Open-ended index keeps the typing
+  // pragmatic; the BaseMethodContext fields stay strictly typed.
+  [key: string]: any;
+};
 
 // Type repository that will contain information about what is allowed/known
 // for events.
@@ -49,7 +61,7 @@ const typeRepo = new TypeRepository();
 /**
  * Events API methods implementations.
  */
-export default async function (api: any) {
+export default async function (api: { register (...args: unknown[]): unknown }) {
   const config = await ready();
   // Lazy getters instead of slice captures. `filesReadTokenSecret`
   // drives the HMAC of every attachment file-read token; if the
@@ -103,7 +115,7 @@ export default async function (api: any) {
   // Update types and log error
   typeRepo
     .tryUpdate(eventTypesUrl, version)
-    .catch((err: any) => getLogger('typeRepo').warn(err));
+    .catch((err: unknown) => getLogger('typeRepo').warn((err as Error).message ?? String(err)));
 
   const logger = getLogger('methods:events');
 
@@ -137,7 +149,7 @@ export default async function (api: any) {
     includeLocalStorageDeletionsIfRequested
   );
 
-  async function includeLocalStorageDeletionsIfRequested (context: any, params: any, result: any, next: MethodNext) {
+  async function includeLocalStorageDeletionsIfRequested (context: MethodContext, params: any, result: any, next: MethodNext) {
     if (params.modifiedSince == null || !params.includeDeletions) {
       return next();
     }
@@ -157,7 +169,7 @@ export default async function (api: any) {
     includeHistoryIfRequested
   );
 
-  async function findEvent (context: any, params: any, result: any, next: MethodNext) {
+  async function findEvent (context: MethodContext, params: any, result: any, next: MethodNext) {
     try {
       const event = await mall.events.getOne(context.user.id, params.id);
       if (event == null) { return next(errors.unknownResource('event', params.id)); }
@@ -167,7 +179,7 @@ export default async function (api: any) {
       return next(errors.unexpectedError(err));
     }
   }
-  async function checkIfAuthorized (context: any, params: any, result: any, next: MethodNext) {
+  async function checkIfAuthorized (context: MethodContext, params: any, result: any, next: MethodNext) {
     if (!context.event) { return next(); }
     const event = context.event;
     delete context.event;
@@ -195,7 +207,7 @@ export default async function (api: any) {
     result.event = event;
     return next();
   }
-  async function includeHistoryIfRequested (context: any, params: any, result: any, next: MethodNext) {
+  async function includeHistoryIfRequested (context: MethodContext, params: any, result: any, next: MethodNext) {
     if (!params.includeHistory) {
       return next();
     }
@@ -288,7 +300,7 @@ export default async function (api: any) {
     timeoutMs: 15_000,
     logger: cmcDispatchLogger,
     selfIdentityFor: cmcSelfIdentityFor,
-  }, (context: any) => {
+  }, (context: MethodContext) => {
     // Per-request: bind a notifyEventChanged that fires pubsub for THIS
     // user. The dispatch loop's fire-and-forget events.update calls
     // bypass the request chain, so without this the app's socket.io
@@ -352,7 +364,7 @@ export default async function (api: any) {
     },
   });
 
-  function applyPrerequisitesForCreation (context: any, params: any, result: any, next: MethodNext) {
+  function applyPrerequisitesForCreation (context: MethodContext, params: any, result: any, next: MethodNext) {
     const event = context.newEvent;
     // default time is now
     event.time ??= timestamp.now();
@@ -360,7 +372,7 @@ export default async function (api: any) {
     context.newEvent = event;
     next();
   }
-  async function verifyCanCreateEventsOnStream (context: any, params: any, result: any, next: MethodNext) {
+  async function verifyCanCreateEventsOnStream (context: MethodContext, params: any, result: any, next: MethodNext) {
     for (const streamId of context.newEvent.streamIds) {
       // refuse if any context is not accessible
       if (!(await context.access.canCreateEventsOnStream(streamId))) {
@@ -376,7 +388,7 @@ export default async function (api: any) {
    * Detect if event belongs to an account stream. Sets context flags
    * used by subsequent account middleware (shared by create and update).
    */
-  function detectAccountStream (context: any, params: any, result: any, next: MethodNext) {
+  function detectAccountStream (context: MethodContext, params: any, result: any, next: MethodNext) {
     const allAccountStreamIds = Object.keys(accountStreams.accountMap);
     const streamIds = context.newEvent.streamIds || [];
     const oldStreamIds = context.oldEvent ? context.oldEvent.streamIds : [];
@@ -392,7 +404,7 @@ export default async function (api: any) {
    * - Only one account stream ID per event
    * - Stream must be editable
    */
-  function validateAccountStreamForCreate (context: any, params: any, result: any, next: MethodNext) {
+  function validateAccountStreamForCreate (context: MethodContext, params: any, result: any, next: MethodNext) {
     if (!context.doesEventBelongToAccountStream) return next();
     if (context.accountStreamIds.length > 1) {
       return next(errors.invalidOperation(
@@ -420,7 +432,7 @@ export default async function (api: any) {
    * - Cannot change from one account stream to another
    * - Stream must be editable
    */
-  function validateAccountStreamForUpdate (context: any, params: any, result: any, next: MethodNext) {
+  function validateAccountStreamForUpdate (context: MethodContext, params: any, result: any, next: MethodNext) {
     if (!context.doesEventBelongToAccountStream) return next();
     const activeStreamIds = context.accountStreamIds.length > 0
       ? context.accountStreamIds
@@ -456,7 +468,7 @@ export default async function (api: any) {
   /**
    * Validate content format for indexed account fields (must be string or number).
    */
-  function validateAccountStreamContent (context: any, params: any, result: any, next: MethodNext) {
+  function validateAccountStreamContent (context: MethodContext, params: any, result: any, next: MethodNext) {
     if (!context.doesEventBelongToAccountStream) return next();
     if (context.newEvent == null || context.newEvent.content == null) return next();
     const contentType = typeof context.newEvent.content;
@@ -474,12 +486,12 @@ export default async function (api: any) {
    * Notify platform of a new or changed indexed account field value.
    * Uses 'update' action when the field already has a value (to clean up old unique entries).
    */
-  async function notifyPlatformForCreate (context: any, params: any, result: any, next: MethodNext) {
+  async function notifyPlatformForCreate (context: MethodContext, params: any, result: any, next: MethodNext) {
     if (!context.doesEventBelongToAccountStream) return next();
     if (!context.systemStream.isIndexed) return next();
     try {
-      const fieldName = context.accountStreamIdWithoutPrefix;
-      const previousValue = context.user[fieldName];
+      const fieldName: string = context.accountStreamIdWithoutPrefix;
+      const previousValue = (context.user as any)[fieldName];
       const action = previousValue != null ? 'update' : 'create';
       const operations = [{
         action,
@@ -499,7 +511,7 @@ export default async function (api: any) {
   /**
    * Notify platform of an updated indexed account field value.
    */
-  async function notifyPlatformForUpdate (context: any, params: any, result: any, next: MethodNext) {
+  async function notifyPlatformForUpdate (context: MethodContext, params: any, result: any, next: MethodNext) {
     if (!context.doesEventBelongToAccountStream) return next();
     if (!context.systemStream.isIndexed) return next();
     try {
@@ -518,7 +530,7 @@ export default async function (api: any) {
     next();
   }
 
-  function handleSeries (context: any, params: any, result: any, next: MethodNext) {
+  function handleSeries (context: MethodContext, params: any, result: any, next: MethodNext) {
     if (isSeriesType(context.newEvent.type)) {
       try {
         context.newEvent.content = createSeriesEventContent(context);
@@ -530,7 +542,7 @@ export default async function (api: any) {
     }
     next();
   }
-  async function createEvent (context: any, params: any, result: any, next: MethodNext) {
+  async function createEvent (context: MethodContext, params: any, result: any, next: MethodNext) {
     let newEvent: Record<string, unknown> | null = null;
     // if event has attachments
     const files = sanitizeRequestFiles(params.files);
@@ -548,7 +560,7 @@ export default async function (api: any) {
       }
       try {
         newEvent = await mall.events.createWithAttachments(context.user.id, context.newEvent, attachmentItems);
-        newEvent!.attachments = setFileReadToken(context.access, (newEvent as { attachments?: unknown }).attachments);
+        newEvent!.attachments = setFileReadToken(context.access, (newEvent as { attachments?: Array<{ id: string; readToken?: string }> }).attachments);
       } catch (err) {
         if (err instanceof APIError) { return next(err); }
         return next(errors.unexpectedError(err));
@@ -567,7 +579,7 @@ export default async function (api: any) {
   /**
    * Creates the event's body according to its type and context.
    */
-  function createSeriesEventContent (context: any) {
+  function createSeriesEventContent (context: MethodContext) {
     const seriesTypeName = context.newEvent.type;
     const eventType = typeRepo.lookup(seriesTypeName);
     // assert: Type is a series type, so this should be always true:
@@ -578,7 +590,7 @@ export default async function (api: any) {
       required: eventType.requiredFields()
     };
   }
-  function addIntegrityToContext (context: any, params: any, result: any, next: MethodNext) {
+  function addIntegrityToContext (context: MethodContext, params: any, result: any, next: MethodNext) {
     if (result?.event?.integrity != null) {
       context.auditIntegrityPayload = {
         key: integrity.events.key(result.event),
@@ -614,7 +626,7 @@ export default async function (api: any) {
     notify
   );
 
-  async function applyPrerequisitesForUpdate (context: any, params: any, result: any, next: MethodNext) {
+  async function applyPrerequisitesForUpdate (context: MethodContext, params: any, result: any, next: MethodNext) {
     const eventUpdate = context.newEvent;
     context.updateTrackingProperties(eventUpdate);
     let event;
@@ -681,11 +693,11 @@ export default async function (api: any) {
       }
     }
     next();
-    function hasStreamIdsModification (event: any) {
+    function hasStreamIdsModification (event: { streamIds?: string[] }) {
       return event.streamIds != null;
     }
   }
-  async function updateEvent (context: any, params: any, result: any, next: MethodNext) {
+  async function updateEvent (context: MethodContext, params: any, result: any, next: MethodNext) {
     try {
       // deals with attachments if any
       const files = sanitizeRequestFiles(params.files);
@@ -715,7 +727,7 @@ export default async function (api: any) {
       next(e);
     }
   }
-  function notify (context: any, params: any, result: any, next: MethodNext) {
+  function notify (context: MethodContext, params: any, result: any, next: MethodNext) {
     pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
     // notify is called by create, update and delete
     // depending on the case the event properties will be found in context or event
@@ -732,7 +744,7 @@ export default async function (api: any) {
       };
       pubsub.series.emit(subject, payload);
     }
-    function isSeriesEvent (event: any) {
+    function isSeriesEvent (event: { type?: string }) {
       return event != null && typeof event.type === 'string' && event.type.startsWith('series:');
     }
     next();
@@ -742,13 +754,15 @@ export default async function (api: any) {
    * Express lists files as an array in a `file` property (instead of directly as properties).
    *
    */
+  // Multer-style files-or-files-array — runtime shape is heterogeneous,
+  // intentionally kept wide.
   function sanitizeRequestFiles (files: any) {
     if (!files || !files.file || !Array.isArray(files.file)) {
       // assume files is an object, nothing to do
       return files;
     }
     const result: any = {};
-    files.file.forEach(function (item: any, i: any) {
+    files.file.forEach(function (item: any, i: number) {
       if (!item.filename) {
         item.filename = item.name;
       }
@@ -756,7 +770,7 @@ export default async function (api: any) {
     });
     return result;
   }
-  async function normalizeStreamIdAndStreamIds (context: any, params: any, result: any, next: MethodNext) {
+  async function normalizeStreamIdAndStreamIds (context: MethodContext, params: any, result: any, next: MethodNext) {
     const event = isEventsUpdateMethod() ? params.update : params;
     // remove double entries from streamIds
     if (event.streamIds != null && event.streamIds.length > 1) {
@@ -795,7 +809,7 @@ export default async function (api: any) {
    *
    * @param context.newEvent contains the event data
    */
-  async function validateEventContentAndCoerce (context: any, params: any, result: any, next: MethodNext) {
+  async function validateEventContentAndCoerce (context: MethodContext, params: any, result: any, next: MethodNext) {
     const type = context.newEvent.type;
     // Unknown types can just be created as normal events.
     if (!typeRepo.isKnown(type)) {
@@ -819,10 +833,10 @@ export default async function (api: any) {
     } catch (err) {
       next(errors.invalidParametersFormat("The event content's format is invalid.", err));
     }
-    function isCreateSeriesAndHasContent (params: any) {
+    function isCreateSeriesAndHasContent (params: { type?: string; content?: unknown }) {
       return params.content != null;
     }
-    function isUpdateSeriesAndHasContent (params: any) {
+    function isUpdateSeriesAndHasContent (params: { update?: { content?: unknown } }) {
       return params.update != null && params.update.content != null;
     }
   }
@@ -833,7 +847,7 @@ export default async function (api: any) {
     commonFns.getParamsValidation(methodsSchema.del.params),
     checkEventForDelete,
     blockAccountEventDeletion,
-    function (context: any, params: any, result: any, next: MethodNext) {
+    function (context: MethodContext, params: any, result: any, next: MethodNext) {
       if (!context.oldEvent.trashed) {
         // move to trash
         flagAsTrashed(context, params, result, next);
@@ -849,7 +863,7 @@ export default async function (api: any) {
    * Block deletion of account events (system stream events).
    * Account events represent current field values and cannot be deleted through the API.
    */
-  function blockAccountEventDeletion (context: any, params: any, result: any, next: MethodNext) {
+  function blockAccountEventDeletion (context: MethodContext, params: any, result: any, next: MethodNext) {
     const event = context.oldEvent;
     if (!Array.isArray(event?.streamIds)) return next();
     for (const streamId of event.streamIds) {
@@ -859,7 +873,7 @@ export default async function (api: any) {
     }
     next();
   }
-  async function flagAsTrashed (context: any, params: any, result: any, next: MethodNext) {
+  async function flagAsTrashed (context: MethodContext, params: any, result: any, next: MethodNext) {
     const newEvent = structuredClone(context.oldEvent);
     newEvent.trashed = true;
     context.updateTrackingProperties(newEvent);
@@ -868,7 +882,7 @@ export default async function (api: any) {
     result.event.attachments = setFileReadToken(context.access, result.event.attachments);
     next();
   }
-  async function deleteWithData (context: any, params: any, result: any, next: MethodNext) {
+  async function deleteWithData (context: MethodContext, params: any, result: any, next: MethodNext) {
     try {
       await mall.events.delete(context.user.id, context.oldEvent);
       result.eventDeletion = { id: params.id };
@@ -883,11 +897,11 @@ export default async function (api: any) {
       next(err);
     }
   }
-  function getTotalAttachmentsSize (attachments: any) {
+  function getTotalAttachmentsSize (attachments: Array<{ size?: number }> | undefined) {
     if (attachments == null) {
       return 0;
     }
-    return attachments.reduce((evtTotal: number, att: { size: number }) => evtTotal + att.size, 0);
+    return attachments.reduce((evtTotal: number, att) => evtTotal + (att.size ?? 0), 0);
   }
 
   api.register(
@@ -897,7 +911,7 @@ export default async function (api: any) {
     deleteAttachment
   );
 
-  async function deleteAttachment (context: any, params: any, result: any, next: MethodNext) {
+  async function deleteAttachment (context: MethodContext, params: any, result: any, next: MethodNext) {
     const attIndex = getAttachmentIndex(context.event.attachments, params.fileId);
     if (attIndex === -1) {
       return next(errors.unknownResource('attachment', params.fileId));
@@ -918,7 +932,7 @@ export default async function (api: any) {
     pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
     next();
   }
-  async function checkEventForDelete (context: any, params: any, result: any, next: MethodNext) {
+  async function checkEventForDelete (context: MethodContext, params: any, result: any, next: MethodNext) {
     const eventId = params.id;
     let event;
     try {
@@ -946,19 +960,19 @@ export default async function (api: any) {
   /**
    * Returns the key of the attachment with the given file name.
    */
-  function getAttachmentIndex (attachments: any, fileId: any) {
-    return attachments.findIndex((att: any) => att.id === fileId);
+  function getAttachmentIndex (attachments: Array<{ id?: string }>, fileId: string) {
+    return attachments.findIndex((att) => att.id === fileId);
   }
   /**
    * Sets the file read token for each of the given event's attachments (if any) for the given
    * access.
    *
    */
-  function setFileReadToken (access: any, attachments: any) {
+  function setFileReadToken (access: { id: string; token: string }, attachments: Array<{ id: string; readToken?: string }> | undefined) {
     if (attachments == null) {
       return;
     }
-    attachments.forEach(function (att: any) {
+    attachments.forEach(function (att) {
       att.readToken = utils.encryption.fileReadToken(att.id, access.id, access.token, getAuth().filesReadTokenSecret);
     });
     return attachments;
