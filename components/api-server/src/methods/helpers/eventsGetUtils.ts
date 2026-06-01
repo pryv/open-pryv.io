@@ -21,6 +21,12 @@ const accountStreams = require('business/src/system-streams/index.ts');
 const integrity = require('business/src/integrity/index.ts').default;
 let mall: any;
 
+// Next() callback used across the method-API middleware pipeline (distinct
+// from Express NextFunction). Mirrors the alias declared locally in
+// methods/events.ts + methods/accesses.ts — to be unified once the duplicate
+// triple becomes annoying.
+type MethodNext = (err?: unknown) => void;
+
 export { init, applyDefaultsForRetrieval, coerceStreamsParam, validateStreamsQueriesAndSetStore, transformArrayOfStringsToStreamsQuery, streamQueryCheckPermissionsAndReplaceStars, streamQueryAddForcedAndForbiddenStreams, streamQueryExpandStreams, streamQueryAddHiddenStreams, findEventsFromStore };
 /**
  *  # Stream Query Flow
@@ -66,7 +72,7 @@ export { init, applyDefaultsForRetrieval, coerceStreamsParam, validateStreamsQue
  *      - "not" is expanded in third and added to `and` -- !! we exclude streamIds that are in 'any' as some authorization might have been given on child now expanded
  *          example: `{all: ['A'], not['B', 'C']}` =>  `{and: [{any: [...expand('A')]}, {not: [...expand('B')...expand('C')]}]}
  */
-function coerceStreamsParam (context: any, params: any, result: any, next: any) {
+function coerceStreamsParam (context: any, params: any, result: any, next: MethodNext) {
   if (params.streams == null) {
     return next();
   }
@@ -122,7 +128,7 @@ function coerceStreamsParam (context: any, params: any, result: any, next: any) 
     return true;
   }
 }
-async function applyDefaultsForRetrieval (context: any, params: any, result: any, next: any) {
+async function applyDefaultsForRetrieval (context: any, params: any, result: any, next: MethodNext) {
   params.streams ??= [{ any: ['*'] }];
   params.types ??= null;
   params.fromTime ??= null;
@@ -147,7 +153,7 @@ async function applyDefaultsForRetrieval (context: any, params: any, result: any
   }
   next();
 }
-function transformArrayOfStringsToStreamsQuery (context: any, params: any, result: any, next: any) {
+function transformArrayOfStringsToStreamsQuery (context: any, params: any, result: any, next: MethodNext) {
   try {
     params.arrayOfStreamQueries =
             streamsQueryUtils.transformArrayOfStringsToStreamsQuery(params.streams);
@@ -156,7 +162,7 @@ function transformArrayOfStringsToStreamsQuery (context: any, params: any, resul
   }
   next();
 }
-function validateStreamsQueriesAndSetStore (context: any, params: any, result: any, next: any) {
+function validateStreamsQueriesAndSetStore (context: any, params: any, result: any, next: MethodNext) {
   try {
     streamsQueryUtils.validateStreamsQueriesAndSetStore(params.arrayOfStreamQueries);
     params.arrayOfStreamQueriesWithStoreId = params.arrayOfStreamQueries;
@@ -166,11 +172,11 @@ function validateStreamsQueriesAndSetStore (context: any, params: any, result: a
   next();
 }
 // the two tasks are joined as '*' replaced have their permissions checked
-async function streamQueryCheckPermissionsAndReplaceStars (context: any, params: any, result: any, next: any) {
+async function streamQueryCheckPermissionsAndReplaceStars (context: any, params: any, result: any, next: MethodNext) {
   context.tracing.startSpan('streamQueries');
-  const unAuthorizedStreamIds: any[] = [];
-  const unAccessibleStreamIds: any[] = [];
-  async function streamExistsAndCanGetEventsOnStream (streamId: any, storeId: any, unAuthorizedStreamIds: any, unAccessibleStreamIds: any) {
+  const unAuthorizedStreamIds: string[] = [];
+  const unAccessibleStreamIds: string[] = [];
+  async function streamExistsAndCanGetEventsOnStream (streamId: string, storeId: string, unAuthorizedStreamIds: string[], unAccessibleStreamIds: string[]) {
     const cleanStreamId = hasDoNotExpandMarker(streamId)
       ? stripDoNotExpandMarker(streamId)
       : streamId;
@@ -183,7 +189,7 @@ async function streamQueryCheckPermissionsAndReplaceStars (context: any, params:
       unAuthorizedStreamIds.push(cleanStreamId);
     }
   }
-  const additionalStoreQueries: any[] = [];
+  const additionalStoreQueries: unknown[] = [];
   for (const streamQuery of params.arrayOfStreamQueriesWithStoreId) {
     // ------------ "*" case
     if (streamQuery.any && streamQuery.any.includes('*')) {
@@ -195,7 +201,7 @@ async function streamQueryCheckPermissionsAndReplaceStars (context: any, params:
         continue;
       } // We can keep star
       // replace any by allowed streams for reading
-      const canReadStreamIds: any[] = [];
+      const canReadStreamIds: string[] = [];
       for (const streamPermission of context.access.getStoresPermissions(streamQuery.storeId)) {
         if (await context.access.canGetEventsOnStream(streamPermission.streamId, streamQuery.storeId)) {
           canReadStreamIds.push(streamPermission.streamId);
@@ -209,10 +215,10 @@ async function streamQueryCheckPermissionsAndReplaceStars (context: any, params:
       if (streamQuery.storeId !== storeDataUtils.LocalStoreId) continue;
       for (const [otherStoreId, perms] of Object.entries(context.access._streamByStorePermissionsMap || {}) as Array<[string, any]>) {
         if (otherStoreId === streamQuery.storeId) continue;
-        if (params.arrayOfStreamQueriesWithStoreId.some((q: any) => q.storeId === otherStoreId)) continue;
+        if (params.arrayOfStreamQueriesWithStoreId.some((q: { storeId: string }) => q.storeId === otherStoreId)) continue;
         // Skip audit store — audit events should only appear via explicit :_audit: queries
         if (otherStoreId === '_audit') continue;
-        const otherStreamIds: any[] = [];
+        const otherStreamIds: string[] = [];
         for (const perm of Object.values(perms) as any[]) {
           if (await context.access.canGetEventsOnStream(perm.streamId, otherStoreId)) {
             otherStreamIds.push(perm.streamId);
@@ -254,7 +260,7 @@ async function streamQueryCheckPermissionsAndReplaceStars (context: any, params:
 /**
  * Add "forced" and "none" events from permissions
  */
-function streamQueryAddForcedAndForbiddenStreams (context: any, params: any, result: any, next: any) {
+function streamQueryAddForcedAndForbiddenStreams (context: any, params: any, result: any, next: MethodNext) {
   for (const streamQuery of params.arrayOfStreamQueriesWithStoreId) {
     // ------------ ALL --------------- //
     // add forced Streams if exists
@@ -282,7 +288,7 @@ function streamQueryAddForcedAndForbiddenStreams (context: any, params: any, res
   }
   next();
 }
-async function streamQueryExpandStreams (context: any, params: any, result: any, next: any) {
+async function streamQueryExpandStreams (context: any, params: any, result: any, next: MethodNext) {
   try {
     params.arrayOfStreamQueriesWithStoreId =
             await streamsQueryUtils.expandAndTransformStreamQueries(params.arrayOfStreamQueriesWithStoreId, expandStreamInContext);
@@ -293,10 +299,10 @@ async function streamQueryExpandStreams (context: any, params: any, result: any,
   }
   // delete streamQueries with no inclusions
   params.arrayOfStreamQueriesWithStoreId =
-        params.arrayOfStreamQueriesWithStoreId.filter((streamQuery: any) => streamQuery.any != null || streamQuery.and != null);
+        params.arrayOfStreamQueriesWithStoreId.filter((streamQuery: { any?: unknown; and?: unknown }) => streamQuery.any != null || streamQuery.and != null);
   context.tracing.finishSpan('streamQueries');
   next();
-  async function expandStreamInContext (streamId: any, storeId: any, excludedIds: any) {
+  async function expandStreamInContext (streamId: string, storeId: string, excludedIds: string[]) {
     if (hasDoNotExpandMarker(streamId)) {
       return [stripDoNotExpandMarker(streamId)];
     }
@@ -312,23 +318,23 @@ async function streamQueryExpandStreams (context: any, params: any, result: any,
     // collect streamIds
     const resultWithPrefix = treeUtils.collectPluck(tree, 'id');
     // remove storePrefix
-    const result = resultWithPrefix.map((fullStreamId: any) => storeDataUtils.parseStoreIdAndStoreItemId(fullStreamId)[1]);
+    const result = resultWithPrefix.map((fullStreamId: string) => storeDataUtils.parseStoreIdAndStoreItemId(fullStreamId)[1]);
     return result;
   }
 }
-function hasDoNotExpandMarker (streamId: any) {
+function hasDoNotExpandMarker (streamId: string) {
   return streamId.endsWith('!');
 }
 /**
  * Warning: assumes (without checking) that the "do not expand" marker is present!
  */
-function stripDoNotExpandMarker (streamIdWithDoNotExpandMarker: any) {
+function stripDoNotExpandMarker (streamIdWithDoNotExpandMarker: string) {
   return streamIdWithDoNotExpandMarker.slice(0, -1);
 }
 /**
  * Add Hidden StreamsId (System) to local queries and eventually trashed streams if state !== 'all'
  */
-async function streamQueryAddHiddenStreams (context: any, params: any, result: any, next: any) {
+async function streamQueryAddHiddenStreams (context: any, params: any, result: any, next: MethodNext) {
   // forbidden stream
   const forbiddenStreamIds = accountStreams.hiddenStreamIds;
   for (const streamQuery of params.arrayOfStreamQueriesWithStoreId) {
@@ -350,8 +356,8 @@ async function streamQueryAddHiddenStreams (context: any, params: any, result: a
         excludedIds: []
       });
       const trashedRootStreamsIds = rootStreams
-        .filter((stream: any) => stream.trashed)
-        .map((stream: any) => stream.id);
+        .filter((stream: { trashed?: boolean }) => stream.trashed)
+        .map((stream: { id: string }) => stream.id);
       if (streamQuery.and == null) { streamQuery.and = []; }
       streamQuery.and.push({ not: trashedRootStreamsIds });
     }
@@ -373,7 +379,9 @@ async function findEventsFromStore (secretOrGetter: any, context: any, params: a
     return next();
   }
   // in> params.fromTime = 2 params.streams = [{any: '*' storeId: 'local'}, {any: 'access-gasgsg', storeId: 'audit'}, {any: 'action-events.get', storeId: 'audit'}]
-  const paramsByStoreId: any = {};
+  // Per-store query params; the inner shape varies by store so this stays
+  // wide. A tighter type lands when MallEvents getWithParamsByStore is typed.
+  const paramsByStoreId: Record<string, any> = {};
   for (const streamQuery of params.arrayOfStreamQueriesWithStoreId) {
     const storeId = streamQuery.storeId;
     if (storeId == null) {
@@ -449,7 +457,7 @@ async function findEventsFromStore (secretOrGetter: any, context: any, params: a
       // Merge, sort, apply global skip/limit
       let merged = accountEvents.concat(localEvents);
       const sortDir = params.sortAscending ? 1 : -1;
-      merged.sort((a: any, b: any) => sortDir * (a.time - b.time));
+      merged.sort((a: { time: number }, b: { time: number }) => sortDir * (a.time - b.time));
       if (origSkip) merged = merged.slice(origSkip);
       if (origLimit != null) merged = merged.slice(0, origLimit);
       result.addToConcatArrayStream('events', Readable.from(merged));
