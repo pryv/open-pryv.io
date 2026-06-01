@@ -1,5 +1,32 @@
 # Changelog - API Changes
 
+## **BREAKING** — `/reg/access` polling endpoint response shapes trimmed
+
+The access-request polling endpoints have been narrowed to expose only the fields each consumer audience actually needs. SDKs (lib-js + downstream apps) get the minimum needed to drive the flow; the auth UI (app-web-auth3 + equivalents) keeps a richer poll response.
+
+### What changed
+
+**`POST /reg/access`** (SDK-facing — create access request):
+
+The response now contains only `{ status, key, authUrl, poll, poll_rate_ms }`. Removed fields: `code`, `url` (was a v1 alias of `authUrl`), `returnUrl` (camelCase duplicate of `returnURL`), `requestingAppId`, `requestedPermissions`, `lang`, `returnURL`, `oauthState`, `clientData`, `serviceInfo`. Echoed inputs and service metadata are reachable via the GET poll path or `/service/info`.
+
+**`GET /reg/access/:key`** (auth-UI-facing on `NEED_SIGNIN`, SDK-facing on terminal states):
+
+- `code` field dropped from the body (it was always the HTTP status, already conveyed by `res.status`).
+- `url` (v1 alias of `authUrl`) and `returnUrl` (camelCase duplicate of `returnURL`) dropped.
+- `serviceInfo` is now embedded only on the `NEED_SIGNIN` poll — the only response the auth UI actually consumes for that field. SDK polling does not need it (the SDK fetches `/service/info` directly when it wants service metadata).
+- `REDIRECTED` responses now emit both `poll` (back-compat with existing SDK rehydration) and a new explicit `redirectUrl` field so consumers don't have to overload `poll`.
+
+**Refused/Error responses** (POST + GET, all forms):
+
+- The `reasonID` field has been renamed to `reasonId` to match the camelCase convention used by the auth UI and by every consumer that actually reads the field. The old `reasonID` spelling never reached any reader and was effectively dead.
+
+### Migration
+
+- SDK callers using `pryv@>=3.5.0` are unaffected — the SDK already speaks the new shapes.
+- SDK callers on `pryv@<3.5.0` that read `body.url`, `body.returnUrl`, `body.code`, or `body.reasonID` from `/reg/access` responses must switch to `authUrl` / `returnURL` / HTTP status / `reasonId` respectively, or upgrade.
+- Custom auth UIs that depend on `serviceInfo` being present on every poll must read it from the initial `NEED_SIGNIN` poll (still emitted) and cache, or fetch from `/service/info` directly. The `app-web-auth3` build shipped alongside this server release derives a fallback `/service/info` URL from the poll URL.
+
 ## **BREAKING** — MongoDB removed as a user-data storage engine
 
 The MongoDB engine has been dropped from open-pryv.io. Supported user-data engines are now **PostgreSQL** (default) and **SQLite** (alternative). InfluxDB remains optional for high-frequency seriesStorage; rqlited remains the only platformStorage.

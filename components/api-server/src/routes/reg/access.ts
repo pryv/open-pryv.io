@@ -83,30 +83,16 @@ export default function (expressApp: any, app: any) {
       // shape; we write to PlatformDB here, after the URLs are computed.
       await accessState.persist(key, state, expiresAt);
 
-      const lang = req.body.languageCode || 'en';
+      // Calling-app surface: only the fields the SDK needs to drive
+      // the flow. The auth UI gets richer state from GET /reg/access/:key
+      // (and from query parameters on `authUrl`). Service metadata
+      // belongs at `/service/info` — clients fetch it from there.
       res.status(201).json({
         status: state.status,
-        code: 201,
         key,
-        requestingAppId: state.requestingAppId,
-        requestedPermissions: state.requestedPermissions,
         authUrl,
-        // @deprecated — kept for v1 SDK compatibility; new clients should
-        // read `authUrl` instead. Remove once no in-the-wild SDK reads `url`.
-        url: authUrl,
         poll: pollUrl,
-        poll_rate_ms: state.poll_rate_ms,
-        lang,
-        returnURL: state.returnURL,
-        // lib-js's NEED_SIGNIN state type declares `returnUrl` (camelCase).
-        // Include both spellings for compatibility with v1 + v2 SDKs.
-        returnUrl: state.returnURL,
-        oauthState: state.oauthState,
-        clientData: state.clientData,
-        // v1-compatible: SDKs (lib-js) read service metadata from the
-        // access-request response without round-tripping /service/info.
-        //
-        serviceInfo
+        poll_rate_ms: state.poll_rate_ms
       });
     } catch (err) { next(err); }
   });
@@ -123,35 +109,24 @@ export default function (expressApp: any, app: any) {
         });
       }
 
-      // Embed service metadata in every poll response — app-web-auth3's
-      // context.init() calls loadAccessState() and then
-      // setServiceInfo(accessState.serviceInfo), which crashes with
-      // "Cannot read properties of undefined (reading 'name')" if the
-      // poll response is missing it.
-      const serviceInfo = app.config.get('service') || {};
-
       const response: any = {
-        status: state.status,
-        code: state.code,
-        serviceInfo
+        status: state.status
       };
 
       if (state.status === 'NEED_SIGNIN') {
-      // Reconstruct poll + authUrl: lib-js's NEED_SIGNIN state type requires
-      // them in every state-shaped payload, and some clients re-hydrate
-      // their state from the poll response directly. The poll URL must be
-      // core-affine (matches the POST-built URL) — store it on state at
-      // creation time so GET and POST agree.
+        // Embed service metadata only on NEED_SIGNIN polls — that's where
+        // the auth UI loads it during init. Later polls (lib-js polling
+        // for ACCEPTED) don't need it; clients can hit `/service/info`
+        // directly.
+        response.serviceInfo = app.config.get('service') || {};
         response.key = state.key;
         response.requestingAppId = state.requestingAppId;
         response.requestedPermissions = state.requestedPermissions;
         response.poll = state.pollUrl || null;
         response.authUrl = state.authUrl || null;
-        response.url = state.authUrl || null; // @deprecated — v1 alias
         response.poll_rate_ms = state.poll_rate_ms;
         response.lang = state.languageCode || 'en';
         response.returnURL = state.returnURL;
-        response.returnUrl = state.returnURL;
         response.oauthState = state.oauthState;
         response.clientData = state.clientData;
       } else if (state.status === 'ACCEPTED') {
@@ -159,11 +134,14 @@ export default function (expressApp: any, app: any) {
         response.token = state.token;
         response.apiEndpoint = state.apiEndpoint;
       } else if (state.status === 'REFUSED' || state.status === 'ERROR') {
-        response.reasonID = state.reasonID;
+        response.reasonId = state.reasonId;
         response.message = state.message;
       } else if (state.status === 'REDIRECTED') {
-      // Multi-core: auth moved to another core, follow the new poll URL
+        // Multi-core: auth moved to another core; the SDK follows the
+        // new poll URL. The auth UI receives the same field via the
+        // POST update response and redirects the browser.
         response.poll = state.redirectUrl;
+        response.redirectUrl = state.redirectUrl;
       }
 
       res.status(state.code).json(response);
@@ -207,18 +185,18 @@ export default function (expressApp: any, app: any) {
       }
 
       const response: any = {
-        status: state.status,
-        code: state.code
+        status: state.status
       };
       if (state.status === 'ACCEPTED') {
         response.username = state.username;
         response.token = state.token;
         response.apiEndpoint = state.apiEndpoint;
       } else if (state.status === 'REFUSED' || state.status === 'ERROR') {
-        response.reasonID = state.reasonID;
+        response.reasonId = state.reasonId;
         response.message = state.message;
       } else if (state.status === 'REDIRECTED') {
         response.poll = state.redirectUrl;
+        response.redirectUrl = state.redirectUrl;
       }
       res.status(state.code).json(response);
     } catch (err) { next(err); }

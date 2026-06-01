@@ -33,8 +33,6 @@ describe('[RGAC] Register access authorization', () => {
       assert.strictEqual(res.body.status, 'NEED_SIGNIN');
       assert.ok(res.body.key);
       assert.strictEqual(res.body.key.length, 16);
-      assert.strictEqual(res.body.requestingAppId, 'test-app');
-      assert.deepStrictEqual(res.body.requestedPermissions, [{ streamId: 'diary', level: 'read' }]);
       assert.ok(res.body.poll);
       assert.strictEqual(res.body.poll_rate_ms, 1000);
     });
@@ -53,17 +51,21 @@ describe('[RGAC] Register access authorization', () => {
       assert.strictEqual(res.body.error.id, 'invalid-parameters');
     });
 
-    it('[RA04] must echo clientData and oauthState', async () => {
-      const res = await coreRequest.post('/reg/access')
+    it('[RA04] must echo clientData and oauthState on GET (NEED_SIGNIN poll)', async () => {
+      const postRes = await coreRequest.post('/reg/access')
         .send({
           requestingAppId: 'test-app',
           requestedPermissions: [{ streamId: 'diary', level: 'read' }],
           clientData: { foo: 'bar' },
           oauthState: 'xyz123'
         });
-      assert.strictEqual(res.status, 201);
-      assert.deepStrictEqual(res.body.clientData, { foo: 'bar' });
-      assert.strictEqual(res.body.oauthState, 'xyz123');
+      assert.strictEqual(postRes.status, 201);
+      // POST response is trimmed to the calling-app surface; clientData /
+      // oauthState live on the GET (auth UI consumer).
+      const getRes = await coreRequest.get('/reg/access/' + postRes.body.key);
+      assert.strictEqual(getRes.status, 201);
+      assert.deepStrictEqual(getRes.body.clientData, { foo: 'bar' });
+      assert.strictEqual(getRes.body.oauthState, 'xyz123');
     });
   });
 
@@ -160,12 +162,12 @@ describe('[RGAC] Register access authorization', () => {
       const refuseRes = await coreRequest.post('/reg/access/' + key)
         .send({
           status: 'REFUSED',
-          reasonID: 'USER_DENIED',
+          reasonId: 'USER_DENIED',
           message: 'User denied access'
         });
       assert.strictEqual(refuseRes.status, 403);
       assert.strictEqual(refuseRes.body.status, 'REFUSED');
-      assert.strictEqual(refuseRes.body.reasonID, 'USER_DENIED');
+      assert.strictEqual(refuseRes.body.reasonId, 'USER_DENIED');
     });
 
     it('[RA31] subsequent poll must return REFUSED state', async () => {
@@ -177,7 +179,7 @@ describe('[RGAC] Register access authorization', () => {
       const key = createRes.body.key;
 
       await coreRequest.post('/reg/access/' + key)
-        .send({ status: 'REFUSED', reasonID: 'USER_DENIED', message: 'No' });
+        .send({ status: 'REFUSED', reasonId: 'USER_DENIED', message: 'No' });
 
       const pollRes = await coreRequest.get('/reg/access/' + key);
       assert.strictEqual(pollRes.status, 403);
@@ -201,7 +203,7 @@ describe('[RGAC] Register access authorization', () => {
 
     it('[RA41] must return 400 for unknown key', async () => {
       const res = await coreRequest.post('/reg/access/nonexistentkey00')
-        .send({ status: 'REFUSED', reasonID: 'test', message: 'test' });
+        .send({ status: 'REFUSED', reasonId: 'test', message: 'test' });
       assert.strictEqual(res.status, 400);
     });
   });
