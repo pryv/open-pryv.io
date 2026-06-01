@@ -10,7 +10,7 @@ jobs:
   # alternative. CI runs the PG matrix sequentially.
   test-postgres:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:16
@@ -54,7 +54,23 @@ jobs:
         run: |
           ./storages/engines/rqlite/scripts/start &
           influxd &
-          sleep 3
+          sleep 10
+      - name: Warm up PostgreSQL connection
+        # The first pg-pool connect from the test runner sporadically returns
+        # ECONNRESET (broken on master since 2026-05-21). Doing one real client
+        # connection here lets PG fork and warm its connection-handling path
+        # so the test runner's pool sees a stable backend.
+        env:
+          PGPASSWORD: pryv
+        run: |
+          for i in 1 2 3 4 5; do
+            if psql -h 127.0.0.1 -p 5432 -U pryv -d pryv-node-test -c "SELECT 1;" > /dev/null 2>&1; then
+              echo "PG warmup OK on attempt $i"
+              break
+            fi
+            echo "PG warmup attempt $i failed; retrying..."
+            sleep 2
+          done
       - name: Run PostgreSQL test suite
         # CI stays SEQUENTIAL on purpose — parallel mode disables the
         # integrity-check beforeEach/afterEach + bypasses the caching
@@ -64,6 +80,11 @@ jobs:
         # (`just test-parallel all`), not the matrix-of-record.
         run: just clean-test-data && just test all
         env:
+          # PGPASSWORD lets the `dropdb` calls inside `just clean-test-data`
+          # authenticate cleanly. Without it, dropdb's stdin-password fallback
+          # has been observed to silently block the whole step on CI runners
+          # — even when an earlier `psql` connection succeeded.
+          PGPASSWORD: pryv
           storages__engines__postgresql__host: localhost
           storages__engines__postgresql__port: 5432
           storages__engines__postgresql__user: pryv

@@ -309,7 +309,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       request = supertest(app.expressApp);
     });
 
-    it('[MC14] POST /reg/access returns authUrl, poll, lang, serviceInfo, url (deprecated)', async function () {
+    it('[MC14] POST /reg/access returns {status, key, authUrl, poll, poll_rate_ms}', async function () {
       const res = await request.post('/reg/access').send({
         requestingAppId: 'test-app',
         requestedPermissions: [{ streamId: '*', level: 'read' }]
@@ -322,18 +322,21 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
       assert.ok(body.poll.startsWith(buildCoreUrl(CORE_A)),
         'poll URL must be core-affine (pointing at this core): ' + body.poll);
       assert.strictEqual(typeof body.poll_rate_ms, 'number', 'must return poll_rate_ms');
-      assert.strictEqual(body.lang, 'en', 'must return lang (default en)');
       // authUrl is populated only when access.defaultAuthUrl is configured.
-      // With no config, authUrl is null — acceptable; real deployments always set it.
       if (body.authUrl) {
-        assert.strictEqual(body.url, body.authUrl, 'url (deprecated) must equal authUrl');
         assert.ok(body.authUrl.includes('key=' + body.key),
           'authUrl must include the key query param');
         assert.ok(body.authUrl.includes('poll='),
           'authUrl must include the poll query param');
       }
-      assert.ok(body.serviceInfo, 'must return serviceInfo');
-      assert.ok(body.serviceInfo.name, 'serviceInfo.name must be set');
+      // Calling-app surface is trimmed — service metadata + echoed input
+      // fields live on the GET poll path (used by the auth UI). The SDK
+      // resolves service metadata from `/service/info` if it needs it.
+      assert.strictEqual(body.serviceInfo, undefined);
+      assert.strictEqual(body.url, undefined);
+      assert.strictEqual(body.lang, undefined);
+      assert.strictEqual(body.requestingAppId, undefined);
+      assert.strictEqual(body.requestedPermissions, undefined);
     });
 
     it('[MC15] GET /reg/access/:key NEED_SIGNIN response includes poll, authUrl, serviceInfo', async function () {
