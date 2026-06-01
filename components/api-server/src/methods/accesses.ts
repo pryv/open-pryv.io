@@ -39,6 +39,11 @@ const WebhooksRepository = require('business').webhooks.Repository;
 type Permission = {
   streamId: string;
   level: 'manage' | 'contribute' | 'read' | 'create-only' | 'none';
+  // Display-only fields that the wire schema accepts on create / update and the
+  // cleanup middleware strips before storage. Kept here so the cleanup forEach
+  // can `delete` them under noImplicitAny.
+  defaultName?: string;
+  name?: string;
 };
 type Access = {
   type: 'personal' | 'app' | 'shared';
@@ -49,6 +54,13 @@ type Access = {
 type UpdatesSettingsHolder = {
   ignoreProtectedFields: boolean;
 };
+
+// Next() callback used across the method-API middleware pipeline (distinct
+// from Express NextFunction — these middlewares are method-stage links).
+type MethodNext = (err?: unknown) => void;
+// Node-style callback shape used by the storage layer's fromCallback bridge.
+type NodeCallback<T = unknown> = (err: unknown, value?: T) => void;
+
 export default async function produceAccessesApiMethods (api: any) {
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };
   const mall = await getMall();
@@ -65,23 +77,23 @@ export default async function produceAccessesApiMethods (api: any) {
     includeDeletionsIfRequested
   );
 
-  async function findAccessibleAccesses (context: any, params: any, result: any, next: any) {
+  async function findAccessibleAccesses (context: any, params: any, result: any, next: MethodNext) {
     const currentAccess = context.access;
     const accessesRepository = storageLayer.accesses;
-    const query: any = {};
+    const query: Record<string, unknown> = {};
     if (currentAccess == null) { return next(new Error('AF: Access cannot be null at this point.')); }
     if (!currentAccess.canListAnyAccess()) {
       // app -> only access it created
       query.createdBy = currentAccess.id;
     }
     try {
-      let accesses: any = await fromCallback((cb: any) => accessesRepository.find(context.user, query, dbFindOptions, cb));
+      let accesses: Access[] = await fromCallback((cb: NodeCallback) => accessesRepository.find(context.user, query, dbFindOptions, cb));
       if (excludeExpired(params)) {
-        accesses = accesses.filter((a: any) => !isAccessExpired(a));
+        accesses = accesses.filter((a: Access) => !isAccessExpired(a));
       }
       // Compose wire-format ids + strip internal serial fields, then
       // attach apiEndpoint.
-      result.accesses = accesses.map((a: any) => {
+      result.accesses = accesses.map((a: Access) => {
         const wire = composeWireAccess(a);
         wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
         return wire;
@@ -90,25 +102,25 @@ export default async function produceAccessesApiMethods (api: any) {
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
-    function excludeExpired (params: any) {
+    function excludeExpired (params: { includeExpired?: boolean }) {
       return !params.includeExpired;
     }
   }
 
-  async function includeDeletionsIfRequested (context: any, params: any, result: any, next: any) {
+  async function includeDeletionsIfRequested (context: any, params: any, result: any, next: MethodNext) {
     if (params.includeDeletions == null) {
       return next();
     }
     const currentAccess = context.access;
     const accessesRepository = storageLayer.accesses;
-    const query: any = {};
+    const query: Record<string, unknown> = {};
     if (!currentAccess.canListAnyAccess()) {
       // app -> only access it created
       query.createdBy = currentAccess.id;
     }
     try {
-      const deletions = await fromCallback((cb: any) => accessesRepository.findDeletions(context.user, query, { projection: { calls: 0 } }, cb));
-      result.accessDeletions = (deletions || []).map((d: any) => composeWireAccess(d));
+      const deletions = await fromCallback((cb: NodeCallback) => accessesRepository.findDeletions(context.user, query, { projection: { calls: 0 } }, cb));
+      result.accessDeletions = (deletions || []).map((d: unknown) => composeWireAccess(d));
       next();
     } catch (err) {
       return next(errors.unexpectedError(err));
@@ -124,17 +136,17 @@ export default async function produceAccessesApiMethods (api: any) {
     findOneAccess
   );
 
-  async function findOneAccess (context: any, params: any, result: any, next: any) {
+  async function findOneAccess (context: any, params: any, result: any, next: MethodNext) {
     let ref;
     try {
       ref = parseAccessRef(params.id);
-    } catch (e: any) {
+    } catch (e) {
       return next(errors.unknownResource('access', params.id));
     }
     const accessesRepository = storageLayer.accesses;
     let head: any;
     try {
-      head = await fromCallback((cb: any) =>
+      head = await fromCallback((cb: NodeCallback) =>
         accessesRepository.findOne(context.user, { id: ref.base }, dbFindOptions, cb));
     } catch (err) {
       return next(errors.unexpectedError(err));
@@ -162,13 +174,13 @@ export default async function produceAccessesApiMethods (api: any) {
     } else if (currentSerial != null && ref.serial < currentSerial) {
       // Obsolete composite — historical row, with a `current` hint pointing
       // at the live head's composite id (Q-pivot=a, GitHub-commit-by-sha-style).
-      let history: any[] = [];
+      let history: Access[] = [];
       try {
         history = await accessesRepository.findHistory(context.user, ref.base);
       } catch (err) {
         return next(errors.unexpectedError(err));
       }
-      const snapshot = (history || []).find((h: any) => (h.serial ?? null) === ref.serial);
+      const snapshot = (history || []).find((h: Access & { serial?: number }) => (h.serial ?? null) === ref.serial);
       if (snapshot == null) return next(errors.unknownResource('access', params.id));
       const wire = composeWireAccess(snapshot, ref.base);
       wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
@@ -182,7 +194,7 @@ export default async function produceAccessesApiMethods (api: any) {
     if (params.includeHistory) {
       try {
         const history = await accessesRepository.findHistory(context.user, ref.base);
-        result.history = (history || []).map((h: any) => {
+        result.history = (history || []).map((h: Access) => {
           const wire = composeWireAccess(h, ref.base);
           wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
           return wire;
@@ -220,12 +232,12 @@ export default async function produceAccessesApiMethods (api: any) {
     addIntegrityToContext
   );
 
-  function applyDefaultsForCreation (context: any, params: any, result: any, next: any) {
+  function applyDefaultsForCreation (context: any, params: any, result: any, next: MethodNext) {
     params.type ??= 'shared';
     next();
   }
 
-  async function applyPrerequisitesForCreation (context: any, params: any, result: any, next: any) {
+  async function applyPrerequisitesForCreation (context: any, params: any, result: any, next: MethodNext) {
     if (params.type === 'personal') {
       return next(errors.forbidden('Personal accesses are created automatically on login.'));
     }
@@ -234,8 +246,9 @@ export default async function produceAccessesApiMethods (api: any) {
       if (permission.streamId != null) {
         try {
           commonFns.isValidStreamIdForQuery(permission.streamId, permission, 'permissions');
-        } catch (err: any) {
-          return next(errors.invalidRequestStructure(err.message, params.permissions));
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return next(errors.invalidRequestStructure(msg, params.permissions));
         }
       }
     }
@@ -275,7 +288,7 @@ export default async function produceAccessesApiMethods (api: any) {
   /**
    * If user is creating an access for system streams, apply some validations
    */
-  function applyAccountStreamsValidation (context: any, params: any, result: any, next: any) {
+  function applyAccountStreamsValidation (context: any, params: any, result: any, next: MethodNext) {
     if (params.permissions == null) { return next(); }
     for (const permission of params.permissions) {
       if (isStreamBasedPermission(permission)) {
@@ -309,7 +322,7 @@ export default async function produceAccessesApiMethods (api: any) {
   // Creates default data structure from permissions if needed, for app
   // authorization.
   //
-  async function createDataStructureFromPermissions (context: any, params: any, result: any, next: any) {
+  async function createDataStructureFromPermissions (context: any, params: any, result: any, next: MethodNext) {
     const access = context.access;
     if (!access.isPersonal()) { return next(); } // not needed for personal access
     for (const permission of params.permissions) {
@@ -378,18 +391,18 @@ export default async function produceAccessesApiMethods (api: any) {
    * Strips off the properties in permissions that are used to create the default data structure
    * (for app authorization).
    */
-  function cleanupPermissions (context: any, params: any, result: any, next: any) {
+  function cleanupPermissions (context: any, params: any, result: any, next: MethodNext) {
     if (!params.permissions) {
       return next();
     }
-    params.permissions.forEach(function (perm: any) {
+    params.permissions.forEach(function (perm: Permission) {
       delete perm.defaultName;
       delete perm.name;
     });
     next();
   }
 
-  function createAccess (context: any, params: any, result: any, next: any) {
+  function createAccess (context: any, params: any, result: any, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
     if (params.type === 'shared') params.deviceName = null;
     accessesRepository.insertOne(context.user, params, function (err: any, newAccess: any) {
@@ -449,11 +462,11 @@ export default async function produceAccessesApiMethods (api: any) {
   // so callers can pipe `checkApp.checkedPermissions` straight in. The
   // server still doesn't want those app-authorization-UI fields in the
   // stored permission — strip before snapshotAndApplyUpdate persists.
-  function cleanupUpdatePermissions (context: any, params: any, result: any, next: any) {
+  function cleanupUpdatePermissions (context: any, params: any, result: any, next: MethodNext) {
     if (!params.update || !Array.isArray(params.update.permissions)) {
       return next();
     }
-    params.update.permissions.forEach(function (perm: any) {
+    params.update.permissions.forEach(function (perm: Permission) {
       delete perm.defaultName;
       delete perm.name;
     });
@@ -466,7 +479,7 @@ export default async function produceAccessesApiMethods (api: any) {
    * when called inside runWithSuppression). Errors are caught inside
    * the hook so we don't propagate to events.create's caller.
    */
-  function cmcAccessesUpdatePostHookMiddleware (context: any, params: any, result: any, next: any) {
+  function cmcAccessesUpdatePostHookMiddleware (context: any, params: any, result: any, next: MethodNext) {
     const before = params.targetAccess;
     const after = result?.access;
     if (after != null && context?.user?.id != null) {
@@ -481,19 +494,19 @@ export default async function produceAccessesApiMethods (api: any) {
     next();
   }
 
-  async function loadAccessForUpdate (context: any, params: any, result: any, next: any) {
+  async function loadAccessForUpdate (context: any, params: any, result: any, next: MethodNext) {
     // Composite-id parse + conflict-check. The wire-form `id` is either
     // bare cuid (never-updated access) or `<base>:<serial>`. Look up by
     // base; reject stale composites with 409.
     let ref;
     try {
       ref = parseAccessRef(params.id);
-    } catch (e: any) {
+    } catch (e) {
       return next(errors.unknownResource('access', params.id));
     }
     let access: any;
     try {
-      access = await fromCallback((cb: any) => {
+      access = await fromCallback((cb: NodeCallback) => {
         storageLayer.accesses.findOne(context.user, { id: ref.base }, dbFindOptions, cb);
       });
     } catch (err) {
@@ -521,7 +534,7 @@ export default async function produceAccessesApiMethods (api: any) {
     next();
   }
 
-  async function enforceUpdateChainRules (context: any, params: any, result: any, next: any) {
+  async function enforceUpdateChainRules (context: any, params: any, result: any, next: MethodNext) {
     const target = params.targetAccess;
     const updates = params.update;
 
@@ -554,7 +567,7 @@ export default async function produceAccessesApiMethods (api: any) {
         if (createdByBase === context.access.id) {
           managingApp = context.access;
         } else {
-          const mgrRow = await fromCallback((cb: any) =>
+          const mgrRow = await fromCallback((cb: NodeCallback) =>
             storageLayer.accesses.findOne(context.user, { id: createdByBase }, null, cb));
           if (mgrRow != null) {
             managingApp = new AccessLogic(context.user.id, mgrRow);
@@ -588,7 +601,7 @@ export default async function produceAccessesApiMethods (api: any) {
         // would now sit outside the new scope/expiry.
         const wouldBe = new AccessLogic(context.user.id, after);
         await wouldBe.loadPermissions();
-        const allAccesses = await fromCallback((cb: any) =>
+        const allAccesses = await fromCallback((cb: NodeCallback) =>
           storageLayer.accesses.find(context.user, {}, null, cb));
         const managed = (allAccesses || []).filter((a: any) =>
           a.type === 'shared' && a.id !== target.id &&
@@ -624,7 +637,7 @@ export default async function produceAccessesApiMethods (api: any) {
     next();
   }
 
-  async function snapshotAndApplyUpdate (context: any, params: any, result: any, next: any) {
+  async function snapshotAndApplyUpdate (context: any, params: any, result: any, next: MethodNext) {
     const target = params.targetAccess;
     const baseId = params.targetBase;
     const updates = params.update;
@@ -637,12 +650,12 @@ export default async function produceAccessesApiMethods (api: any) {
 
     try {
       // 1. Snapshot current head into history row (frozen state pre-bump).
-      await fromCallback((cb: any) => accessesRepository.snapshotHead(context.user, baseId, cb));
+      await fromCallback((cb: NodeCallback) => accessesRepository.snapshotHead(context.user, baseId, cb));
       // 2. Apply head update (integrity-aware updateOne handles the hash).
-      await fromCallback((cb: any) =>
+      await fromCallback((cb: NodeCallback) =>
         accessesRepository.updateOne(context.user, { id: baseId }, update, cb));
       // 3. Re-read the new head.
-      const newHead = await fromCallback((cb: any) =>
+      const newHead = await fromCallback((cb: NodeCallback) =>
         accessesRepository.findOne(context.user, { id: baseId }, dbFindOptions, cb));
       if (newHead == null) {
         return next(errors.unexpectedError(new Error('head row missing after update')));
@@ -665,7 +678,7 @@ export default async function produceAccessesApiMethods (api: any) {
     next();
   }
 
-  function emitUpdateNotifications (context: any, params: any, result: any, next: any) {
+  function emitUpdateNotifications (context: any, params: any, result: any, next: MethodNext) {
     // Coarse-grained event — existing subscribers refetch on any access
     // change. String payload matches the legacy create/delete shape so
     // `Manager.pubsubMessageToSocket` translates it to `accessesChanged`.
@@ -692,7 +705,7 @@ export default async function produceAccessesApiMethods (api: any) {
     deleteAccesses
   );
 
-  async function checkAccessForDeletion (context: any, params: any, result: any, next: any) {
+  async function checkAccessForDeletion (context: any, params: any, result: any, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
     const currentAccess = context.access;
     if (currentAccess == null) { return next(new Error('AF: currentAccess cannot be null.')); }
@@ -700,12 +713,12 @@ export default async function produceAccessesApiMethods (api: any) {
     let ref;
     try {
       ref = parseAccessRef(params.id);
-    } catch (e: any) {
+    } catch (e) {
       return next(errors.unknownResource('access', params.id));
     }
     let access: any;
     try {
-      access = await fromCallback((cb: any) => {
+      access = await fromCallback((cb: NodeCallback) => {
         accessesRepository.findOne(context.user, { id: ref.base }, dbFindOptions, cb);
       });
     } catch (err) {
@@ -731,7 +744,7 @@ export default async function produceAccessesApiMethods (api: any) {
     next();
   }
 
-  async function findRelatedAccesses (context: any, params: any, result: any, next: any) {
+  async function findRelatedAccesses (context: any, params: any, result: any, next: MethodNext) {
     const accessToDelete = params.accessToDelete;
     const accessesRepository = storageLayer.accesses;
     // Deleting a personal access does NOT delete the app/shared accesses it
@@ -742,23 +755,23 @@ export default async function produceAccessesApiMethods (api: any) {
     }
     let accesses: any;
     try {
-      accesses = await fromCallback((cb: any) => {
+      accesses = await fromCallback((cb: NodeCallback) => {
         accessesRepository.find(context.user, { createdBy: params.id }, dbFindOptions, cb);
       });
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
     if (accesses.length === 0) { return next(); }
-    accesses = accesses.filter((a: any) => a.id !== params.id);
-    accesses = accesses.filter((a: any) => !isAccessExpired(a));
-    accesses = accesses.map((a: any) => {
+    accesses = accesses.filter((a: Access & { id?: string }) => a.id !== params.id);
+    accesses = accesses.filter((a: Access) => !isAccessExpired(a));
+    accesses = accesses.map((a: Access & { id?: string }) => {
       return { id: a.id };
     });
     result.relatedDeletions = accesses;
     next();
   }
 
-  async function deleteAccesses (context: any, params: any, result: any, next: any) {
+  async function deleteAccesses (context: any, params: any, result: any, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
     let idsToDelete = [{ id: params.id }];
     if (result.relatedDeletions != null) {
@@ -781,7 +794,7 @@ export default async function produceAccessesApiMethods (api: any) {
       return next(errors.unexpectedError(err));
     }
     try {
-      await fromCallback((cb: any) => {
+      await fromCallback((cb: NodeCallback) => {
         accessesRepository.delete(context.user, { $or: idsToDelete }, cb);
       });
     } catch (err) {
@@ -801,7 +814,7 @@ export default async function produceAccessesApiMethods (api: any) {
     checkApp
   );
 
-  function checkApp (context: any, params: any, result: any, next: any) {
+  function checkApp (context: any, params: any, result: any, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
     const query = {
       type: 'app',
@@ -940,7 +953,7 @@ export default async function produceAccessesApiMethods (api: any) {
     return access.expires != null && now > access.expires;
   }
 
-  function addIntegrityToContext (context: any, params: any, result: any, next: any) {
+  function addIntegrityToContext (context: any, params: any, result: any, next: MethodNext) {
     if (result?.access?.integrity != null) {
       context.auditIntegrityPayload = {
         key: integrity.accesses.key(result.access),
