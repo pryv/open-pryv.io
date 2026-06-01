@@ -81,8 +81,25 @@ just test all                      # full suite, PostgreSQL baseStorage (default
 just test <component>              # single component, PostgreSQL baseStorage
 just test-sqlite all               # full suite, SQLite baseStorage
 just test-sqlite <component>       # single component, SQLite baseStorage
+just test-pg-influx all            # full suite, PostgreSQL + InfluxDB seriesStorage
+just test-sqlite-influx all        # full suite, SQLite + InfluxDB seriesStorage
 just clean-test-data               # reset test DBs + per-user dirs
 ```
+
+`just test` (PG) and `just test-sqlite` are the per-push baselines. The two `*-influx` recipes exercise InfluxDB as the seriesStorage and assume a running `influxd` reachable at `storages.engines.influxdb.{host,port}` — start it from `storages/engines/influxdb/scripts/start` if it isn't already up.
+
+### Pre-release verification — required before any version bump
+
+Before bumping `package.json:version` (publishing a new `2.x.y` tag, building a new `pryvio/open-pryv.io` image), all four storage-engine matrices MUST exit 0:
+
+```bash
+just clean-test-data && just test all                # PostgreSQL — default
+just clean-test-data && just test-sqlite all         # SQLite (full alternative)
+just clean-test-data && just test-pg-influx all      # PG + InfluxDB
+just clean-test-data && just test-sqlite-influx all  # SQLite + InfluxDB
+```
+
+The Influx variants are not run on every push but they cover real operator deployments and must be green before release. Any failure that only surfaces under `*-influx` is a release blocker (intermittent timeouts in the seriesStorage path are known to flake — see `clean-test-data` then a single re-run before treating a failure as deterministic).
 
 **Production-ish single node**:
 
