@@ -185,11 +185,21 @@ clean-test-data:
     # both pryv-node-test (test harness) AND pryv-node (local dev /
     # bin/master.js). Tests re-run migrations on next startup; the
     # local server runs them on next master boot.
+    # Wrap dropdb/createdb in `timeout` (GNU coreutils on Linux; absent on
+    # default macOS) so a misbehaving PG (held connections, auth prompt
+    # waiting on stdin, …) can't hang the whole recipe — observed on CI
+    # runners as 38-minute silent stalls. Darwin operators skip the wrapper
+    # since they typically don't share the runner's flakiness profile.
+    if command -v timeout >/dev/null 2>&1; then
+      TIMEOUT="timeout 30"
+    else
+      TIMEOUT=""
+    fi
     if [ -n "$DROPDB" ] && [ -n "$CREATEDB" ]; then
-      ("$DROPDB" -h 127.0.0.1 -p 5432 -U pryv --if-exists pryv-node-test 2>/dev/null && \
-          "$CREATEDB" -h 127.0.0.1 -p 5432 -U pryv pryv-node-test 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg test reset)"
-      ("$DROPDB" -h 127.0.0.1 -p 5432 -U pryv --if-exists pryv-node 2>/dev/null && \
-          "$CREATEDB" -h 127.0.0.1 -p 5432 -U pryv pryv-node 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg dev reset)"
+      ($TIMEOUT "$DROPDB" -h 127.0.0.1 -p 5432 -U pryv --if-exists --force pryv-node-test 2>/dev/null && \
+          $TIMEOUT "$CREATEDB" -h 127.0.0.1 -p 5432 -U pryv pryv-node-test 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg test reset)"
+      ($TIMEOUT "$DROPDB" -h 127.0.0.1 -p 5432 -U pryv --if-exists --force pryv-node 2>/dev/null && \
+          $TIMEOUT "$CREATEDB" -h 127.0.0.1 -p 5432 -U pryv pryv-node 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg dev reset)"
     else
       echo "dropdb/createdb not found (skipping pg test reset + pg dev reset)"
     fi

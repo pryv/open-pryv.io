@@ -80,6 +80,11 @@ jobs:
         # (`just test-parallel all`), not the matrix-of-record.
         run: just clean-test-data && just test all
         env:
+          # PGPASSWORD lets the `dropdb` calls inside `just clean-test-data`
+          # authenticate cleanly. Without it, dropdb's stdin-password fallback
+          # has been observed to silently block the whole step on CI runners
+          # — even when an earlier `psql` connection succeeded.
+          PGPASSWORD: pryv
           storages__engines__postgresql__host: localhost
           storages__engines__postgresql__port: 5432
           storages__engines__postgresql__user: pryv
