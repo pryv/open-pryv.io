@@ -87,7 +87,7 @@ UserDatabase.prototype.close = function (): void {
   this.db.close();
 };
 
-UserDatabase.prototype.getEvents = function (params: any): any[] | null {
+UserDatabase.prototype.getEvents = async function (params: any): Promise<any[] | null> {
   params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
   params.query.push({ type: 'equal', content: { field: 'headId', value: null } });
   const queryString = prepareEventsGetQuery(params);
@@ -136,22 +136,22 @@ function readableEventsStreamForIterator (iterateSource: any): any {
   return Readable.from(iterateTransform);
 }
 
-UserDatabase.prototype.getAllActions = function (): any[] {
+UserDatabase.prototype.getAllActions = async function (): Promise<any[]> {
   return this.eventQueries.getTerms.all('action-%');
 };
 
-UserDatabase.prototype.getAllAccesses = function (): any[] {
+UserDatabase.prototype.getAllAccesses = async function (): Promise<any[]> {
   return this.eventQueries.getTerms.all('access-%');
 };
 
-UserDatabase.prototype.getOneEvent = function (eventId: string): any | null {
+UserDatabase.prototype.getOneEvent = async function (eventId: string): Promise<any | null> {
   this.logger.debug(`GET one event: ${eventId}`);
   const event = this.eventQueries.getById.get(eventId);
   if (event == null) return null;
   return eventsSchema.fromDB(event);
 };
 
-UserDatabase.prototype.countEvents = function (): number {
+UserDatabase.prototype.countEvents = async function (): Promise<number> {
   const res = this.db.prepare('SELECT count(*) as count FROM events').get();
   return res?.count || 0;
 };
@@ -197,7 +197,7 @@ UserDatabase.prototype.updateEvent = async function (eventId: string, eventData:
   return eventsSchema.fromDB(dbEvent);
 };
 
-UserDatabase.prototype.getEventHistory = function (eventId: string): any[] {
+UserDatabase.prototype.getEventHistory = async function (eventId: string): Promise<any[]> {
   this.logger.debug(`GET event history for: ${eventId}`);
   return this.eventQueries.getHistory.all(eventId).map(eventsSchema.fromDBHistory);
 };
@@ -247,7 +247,7 @@ UserDatabase.prototype.deleteEvents = async function (params: any): Promise<any>
 /**
  * Export all raw event rows from the database.
  */
-UserDatabase.prototype.exportAllEvents = function (): any[] {
+UserDatabase.prototype.exportAllEvents = async function (): Promise<any[]> {
   return this.eventQueries.getAll.all();
 };
 

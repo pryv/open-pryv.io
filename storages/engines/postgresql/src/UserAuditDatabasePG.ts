@@ -131,10 +131,6 @@ class UserAuditDatabasePG {
     );
   }
 
-  async createEventSync (event: any): Promise<void> {
-    return this.createEvent(event);
-  }
-
   async updateEvent (eventId: string, eventData: any): Promise<any | null> {
     const row = toDB(eventData);
     delete row.eventid;

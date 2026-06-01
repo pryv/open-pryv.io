@@ -30,26 +30,25 @@ export interface UserAuditDatabase {
   init (): Promise<void>;
   close (): void;
 
-  getEvents (params: QueryParams): any[] | null;
+  getEvents (params: QueryParams): Promise<any[] | null>;
   getEventsStreamed (params: QueryParams): Readable;
   getEventDeletionsStreamed (deletedSince: number): Readable;
-  getOneEvent (eventId: string): any | null;
-  countEvents (): number;
+  getOneEvent (eventId: string): Promise<any | null>;
+  countEvents (): Promise<number>;
 
-  getAllActions (): any[];
-  getAllAccesses (): any[];
+  getAllActions (): Promise<any[]>;
+  getAllAccesses (): Promise<any[]>;
 
   createEvent (event: any): Promise<void>;
-  createEventSync (event: any): void;
   updateEvent (eventId: string, eventData: any): Promise<any>;
 
-  getEventHistory (eventId: string): any[];
+  getEventHistory (eventId: string): Promise<any[]>;
   minimizeEventHistory (eventId: string, fieldsToRemove: string[]): Promise<void>;
   deleteEventHistory (eventId: string): Promise<void>;
   deleteEvents (params: DeleteParams): Promise<any>;
 
   // Migration methods
-  exportAllEvents (): any[];
+  exportAllEvents (): Promise<any[]>;
   importAllEvents (events: any[]): Promise<void>;
 }
 
@@ -64,7 +63,6 @@ const REQUIRED_METHODS: string[] = [
   'getAllActions',
   'getAllAccesses',
   'createEvent',
-  'createEventSync',
   'updateEvent',
   'getEventHistory',
   'minimizeEventHistory',

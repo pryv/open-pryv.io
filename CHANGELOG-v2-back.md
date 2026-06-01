@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## audit: align UserAuditDatabase to a uniform Promise contract
+
+The `UserAuditDatabase` interface (`storages/interfaces/auditStorage/UserAuditDatabase.ts`) declared synchronous return types for seven query methods, but PostgreSQL's implementation always returned Promises and the SQLite implementation always returned values synchronously. Callers that `await`-ed PG behaved correctly; callers that did not relied on SQLite's sync return. An engine swap between PG and SQLite was therefore unsafe — same source line behaved differently depending on which engine was wired in.
+
+All query methods now return `Promise<T>` on both engines:
+
+- `getEvents`, `getOneEvent`, `countEvents`, `getAllActions`, `getAllAccesses`, `getEventHistory`, `exportAllEvents` — SQLite implementations wrapped with `async` (better-sqlite3 stays internally sync; `async` just lifts the return into a Promise at no runtime cost). Interface signatures updated to match.
+- One internal caller in `storages/engines/sqlite/src/dataStore/localUserEventsSQLite.ts` (`_getStorageInfos` → `countEvents`) now awaits the result.
+
+`createEventSync` was removed from the cross-engine interface and from the PostgreSQL implementation. It survives as a SQLite-only helper used by `userSQLite/migrations/1.ts`, which has to run inside a synchronous `BEGIN/COMMIT` block — wrapping the write in a Promise would break transaction semantics. The PG version was dead code (no caller ever invoked it).
+
+Full SEQUENTIAL matrix verified locally on both engines: `just test all` 2344 passing / 0 failing / 7 pending; `just test-sqlite all` 2294 passing / 0 failing / 7 pending — both unchanged from the prior baseline.
+
 ## storages/sqlite + test-helpers: SQLite full-matrix parity
 
 `just test-sqlite all` now matches `just test all` (PG) at exit=0,

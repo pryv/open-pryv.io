@@ -141,7 +141,7 @@ const userEvents = ds.createUserEvents({
 
   async _getStorageInfos (this: any, userId: string): Promise<any> {
     const db = await this.storage.forUser(userId);
-    const count = db.countEvents();
+    const count = await db.countEvents();
     return { count };
   },
 
