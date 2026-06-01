@@ -9,7 +9,6 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
-const eventsQueryUtils = require('mall/src/helpers/eventsQueryUtils.ts');
 const streamsQueryUtils = require('../src/methods/helpers/streamsQueryUtils.ts');
 const { storeDataUtils } = require('mall');
 
@@ -270,7 +269,6 @@ describe('[EGSQ] events.get streams query', function () {
         }
       });
     });
-
   });
 
   describe('[EQ06] GET /events with streams queries', function () {

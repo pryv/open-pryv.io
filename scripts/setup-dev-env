@@ -35,18 +35,13 @@ mkdir -p $LOGS_FOLDER
 export ATTACHMENTS_FOLDER=$VAR_PRYV_FOLDER/attachments
 mkdir -p $ATTACHMENTS_FOLDER
 
-# database
+# Base storage engines: PostgreSQL (default) + SQLite (alternative) — no
+# system-level setup step is required here. CI provides PostgreSQL via the
+# GitHub Actions services container; local dev compiles PG from source by
+# invoking storages/engines/postgresql/scripts/setup directly when needed.
+# SQLite has no setup step (npm install handles better-sqlite3).
 
 REPO_ROOT="$(pwd)"
-. storages/engines/mongodb/scripts/setup
-EXIT_CODE=$?
-cd "$REPO_ROOT"
-if [[ ${EXIT_CODE} -ne 0 ]]; then
-  echo ""
-  echo "Error setting up MongoDB; setup aborted"
-  echo ""
-  exit ${EXIT_CODE}
-fi
 
 # platform DB (rqlite — mandatory since v2)
 
