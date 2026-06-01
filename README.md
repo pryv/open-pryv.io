@@ -18,7 +18,7 @@ Pryv.io serves as the backend for applications in health, quantified self, smart
 
 ## What's new in v2
 
-- **Pluggable storage engines** — PostgreSQL (default), SQLite, InfluxDB, filesystem, rqlite. Engines are plugins under `storages/engines/` with manifest-driven configuration.
+- **Pluggable storage engines** — PostgreSQL (default), SQLite (full alternative), InfluxDB (optional series), filesystem, rqlite. Engines are plugins under `storages/engines/` with manifest-driven configuration.
 - **Unified master process** — single `bin/master.js` manages N API workers + M HFS workers + optional previews worker. Single Docker image replaces multi-container orchestration.
 - **Built-in user registration** — no external service-register needed. Registration fully self-contained via PlatformDB.
 - **Built-in MFA** — SMS-based two-factor authentication as `mfa.*` API methods.
@@ -51,7 +51,7 @@ For a complete Docker deployment with PostgreSQL, see [INSTALL.md](./INSTALL.md)
 
 ## Native installation
 
-Prerequisites: Node.js 22.x, PostgreSQL 14+ (or SQLite — bundled), [just](https://github.com/casey/just#installation).
+Prerequisites: Node.js 24.x, PostgreSQL 14+ (or SQLite — bundled), [just](https://github.com/casey/just#installation).
 
 ```bash
 just setup-dev-env    # setup local file structure + PostgreSQL + rqlite
@@ -122,10 +122,10 @@ node bin/master.js
 | Engine | Storage types | Status |
 |--------|--------------|--------|
 | PostgreSQL | base, dataStore, series, audit | Production (default) |
-| SQLite | base, dataStore, user account, user index, audit (per-user files) | Production (alternative) |
-| rqlite | platform (single- and multi-core) | Production |
+| SQLite | base, dataStore, series, audit, user account, user index (per-user files) | Production (full alternative) |
+| rqlite | platform (single- and multi-core) | Production (only platform engine) |
 | Filesystem | file (attachments) | Production |
-| InfluxDB | series (HFS) | Production |
+| InfluxDB | series (HFS, alternative) | Production (optional) |
 
 ### Project structure
 

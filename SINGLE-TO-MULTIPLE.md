@@ -18,7 +18,7 @@ Since v2 the platform DB is **always** rqlite — `bin/master.js` spawns and sup
 
 - Running single-core deployment with users and data (already using rqlite for platform — automatic since v2)
 - DNS control for the target domain (wildcard A record needed)
-- A second machine or Dokku app for the second core (with its own PostgreSQL)
+- A second machine or Dokku app for the second core (with its own base storage — PostgreSQL or SQLite, matching the existing core's `storages.base.engine`)
 - `openssl` available on the existing core (used to mint the cluster CA on first run)
 
 ## How adding a core works

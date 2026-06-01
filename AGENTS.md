@@ -51,10 +51,10 @@ storages/         Plugin tree for storage engines (npm workspace)
     seriesStorage/  auditStorage/  backup/  migrations/
   engines/
     postgresql/     baseStorage, dataStore, seriesStorage, auditStorage
-    sqlite/         per-user SQLite (baseStorage, dataStore, auditStorage)
-    rqlite/         distributed SQLite (platformStorage — always used in v2)
+    sqlite/         per-user SQLite (baseStorage, dataStore, seriesStorage, auditStorage)
+    rqlite/         distributed SQLite (platformStorage — only supported platform engine in v2)
     filesystem/     attachments + previews on disk (fileStorage)
-    influxdb/       high-frequency series (seriesStorage)
+    influxdb/       high-frequency series (seriesStorage, optional alternative)
   datastores/       Custom datastore plugins (e.g. `account` for system streams)
   manifest-schema.js  Schema for engine manifests
   pluginLoader.js     Reads `storages.<type>.engine` + loads the chosen engine
@@ -66,7 +66,7 @@ test/             Integration test entry — see `just test …` in justfile
 
 ## Running locally
 
-Prerequisites: Node.js 22.x, PostgreSQL 14+ (or SQLite — bundled), [just](https://github.com/casey/just#installation).
+Prerequisites: Node.js 24.x, PostgreSQL 14+ (or SQLite — bundled, full alternative engine), [just](https://github.com/casey/just#installation).
 
 ```bash
 just setup-dev-env     # prepares var-pryv/ layout + launches PG/rqlite binaries
@@ -121,11 +121,11 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 
    ```yaml
    storages:
-     base:     { engine: postgresql }   # baseStorage + dataStore
+     base:     { engine: postgresql }   # or sqlite — baseStorage + dataStore
      platform: { engine: rqlite }       # platformStorage — always rqlite in v2
-     series:   { engine: influxdb }     # seriesStorage
+     series:   { engine: postgresql }   # or sqlite, or influxdb — seriesStorage
      file:     { engine: filesystem }   # fileStorage
-     audit:    { engine: sqlite }       # auditStorage
+     audit:    { engine: sqlite }       # or postgresql — auditStorage
      engines:
        postgresql: { host: 127.0.0.1, port: 5432, database: pryv-node, user: pryv, password: '', max: 20 }
        # sqlite, rqlite, influxdb, filesystem also configurable here
@@ -139,11 +139,11 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 
    Adding an engine = new directory under `storages/engines/` with a `manifest.json` + `src/index.js`. Don't reinvent — the plugin pattern exists.
 
-   PostgreSQL is a first-class production engine for every `storageType` except `platform`, which is rqlite-only (Raft consensus is what makes multi-core work). See `README-DBs.md` for the human-readable DB layout.
+   PostgreSQL and SQLite are both first-class production engines for `baseStorage`, `dataStore`, `seriesStorage`, and `auditStorage` — pick by deployment shape (shared tables vs per-user files; cross-user analytics ergonomics vs Art.17 delete-by-unlink). `platform` is rqlite-only (Raft consensus is what makes multi-core work; single-core still runs embedded `rqlited` so the operator surface stays consistent). InfluxDB stays an opt-in alternative for HF series. See `README-DBs.md` for the human-readable DB layout.
 
 5. **Cluster CA lifecycle.** The first `master.js` boot on a fresh box mints a self-signed cluster CA under `/etc/pryv/ca/`. **Back that directory up immediately** — the private key never leaves the host, and losing it means you can't add or rotate cores. `bin/bootstrap.js new-core --id <name> --ip <ip>` issues a sealed AES-256-GCM-encrypted bundle + one-time join token to onboard additional cores. Bundle and passphrase travel **on different channels**. See `SINGLE-TO-MULTIPLE.md`.
 
-6. **`components/tracing/` is a permanent no-op shim — keep the architectural slot, plug a `DummyTracing` instance.** Jaeger / OpenTracing / cls-hooked are gone (Plan 52 Phase 5.G). The 8 hot-path consumers (api-server `application.js` / `Result.js` / `socket-io/Manager.js`, business `MethodContext.js`, middleware `setMethodId.js` / `setMinimalMethodContext.js`, storage `storage/index.js` + `storages/index.js`) still import from `tracing` — every call collapses to a `DummyTracing` no-op. The hfs-server side (`components/hfs-server/src/tracing/`) follows the same pattern: `cls.js` and the trace middleware are no-op pass-throughs. New Relic APM (Plan 38) is the active observability path and runs in parallel, *not* through this component. If a future tracer (OpenTelemetry, Tempo, custom) is wanted, replace the body of `components/tracing/src/Tracing.js` with the real impl — the 8 consumers do not need to change.
+6. **`components/tracing/` is a permanent no-op shim — keep the architectural slot, plug a `DummyTracing` instance.** Jaeger / OpenTracing / cls-hooked are gone. The 8 hot-path consumers (api-server `application.js` / `Result.js` / `socket-io/Manager.js`, business `MethodContext.js`, middleware `setMethodId.js` / `setMinimalMethodContext.js`, storage `storage/index.js` + `storages/index.js`) still import from `tracing` — every call collapses to a `DummyTracing` no-op. The hfs-server side (`components/hfs-server/src/tracing/`) follows the same pattern: `cls.js` and the trace middleware are no-op pass-throughs. The opt-in observability (APM) façade in `components/business/src/observability/` is the active path and runs in parallel, *not* through this component. If a future tracer (OpenTelemetry, Tempo, custom) is wanted, replace the body of `components/tracing/src/Tracing.js` with the real impl — the 8 consumers do not need to change.
 
 ## Common pitfalls for agents
 

@@ -1,18 +1,18 @@
-# Installing service-core
+# Installing open-pryv.io
 
 ## Prerequisites
 
 - **Node.js** 24.x (matches `engines.node` in `package.json`)
-- **Database**: PostgreSQL 14+ (default) or SQLite (bundled — alternative for low-volume / single-user deployments)
+- **Database**: PostgreSQL 14+ (default) or SQLite (bundled — full alternative; per-user file layout, suitable for low-volume / single-host / GDPR-Art.17-strict deployments)
 - **rqlite** — distributed SQLite used for the platform DB. The `rqlited` binary is bundled under `bin-ext/` after `just setup-dev-env` (Docker image: `/app/bin-ext/rqlited`). `bin/master.js` spawns and supervises it; no manual install needed in single- or multi-core deployments.
-- **InfluxDB** 1.x (optional — for high-frequency series; PostgreSQL can also serve as series engine)
+- **InfluxDB** 1.x (optional — for high-throughput HF series; PostgreSQL or SQLite cover series natively for most workloads)
 - **GraphicsMagick** (optional — for image previews): `apt install graphicsmagick`
 - [just](https://github.com/casey/just#installation) (task runner)
 
 ## Setup
 
 ```bash
-git clone <repo-url> service-core && cd service-core
+git clone <repo-url> open-pryv.io && cd open-pryv.io
 just setup-dev-env    # local file structure + PostgreSQL + rqlite (dev)
 just install          # npm install across all workspaces
 ```
@@ -62,15 +62,15 @@ service:
 
 storages:
   base:
-    engine: postgresql    # or sqlite
+    engine: postgresql    # or sqlite (full alternative — per-user files)
   platform:
     engine: rqlite        # only supported value; master.js spawns the embedded rqlited
   file:
     engine: filesystem
   series:
-    engine: postgresql    # or influxdb
+    engine: postgresql    # or sqlite, or influxdb (HF-throughput optimised)
   audit:
-    engine: sqlite
+    engine: sqlite        # or postgresql
   engines:
     postgresql:
       host: localhost

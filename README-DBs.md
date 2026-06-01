@@ -13,9 +13,10 @@ Open Pryv.io v2 runs on two complementary engines for user-data storage:
   Art.17 right-to-be-forgotten semantics. Best fit for low-volume /
   single-tenant deployments.
 
-Both engines cover `baseStorage`, `dataStore`, and `auditStorage`.
-PostgreSQL additionally covers `seriesStorage` (HF time-series).
-InfluxDB remains an optional `seriesStorage` choice.
+Both engines cover `baseStorage`, `dataStore`, `seriesStorage` (HF
+time-series), and `auditStorage` — picking SQLite no longer forces a
+separate series engine. InfluxDB remains an optional `seriesStorage`
+choice for high-throughput HF workloads.
 
 The **platform DB** is always [`rqlite`](https://rqlite.io/) (distributed
 SQLite, embedded — `bin/master.js` spawns and supervises `rqlited`).
@@ -27,11 +28,16 @@ Engine choice is per `storageType` in `config/default-config.yml`:
 storages:
   base:     { engine: postgresql }   # or sqlite
   data:     { engine: postgresql }   # or sqlite
-  series:   { engine: postgresql }   # or influxdb
-  audit:    { engine: sqlite }
+  series:   { engine: postgresql }   # or sqlite, or influxdb
+  audit:    { engine: sqlite }       # or postgresql
   platform: { engine: rqlite }        # only supported value in v2
   file:     { engine: filesystem }
 ```
+
+For a fully-SQLite deployment (single-host, low-volume, GDPR-Art.17
+deletion priority), set `base`, `data`, `series`, and `audit` all to
+`sqlite` — every per-user storage type then lives in the per-user
+directory described in the next section.
 
 ## List of storage used in Pryv.io
 
@@ -79,9 +85,12 @@ own node, joined into one Raft cluster via DNS discovery on
 
 - Data lives in `var-pryv/rqlite-data/` (Raft log + SQLite snapshot)
 - HTTP API: `http://localhost:4001` (default)
-- PostgreSQL still ships a `PlatformDB` implementation for conformance
-  tests, but rqlite is the only engine selectable at runtime via
-  `storages.platform.engine`
+- rqlite is the only engine selectable at runtime via
+  `storages.platform.engine`. Even single-core deployments run an
+  embedded `rqlited` (single-node mode) so the operator surface stays
+  consistent between single- and multi-core. PostgreSQL still ships a
+  legacy `PlatformDB` implementation for conformance tests only — it
+  is not a selectable platform engine.
 
 ### Events, Streams & Attachments storage
 
@@ -112,18 +121,18 @@ SQLite file).
 
 ### High-frequency series storage
 
-base code: [storages/engines/postgresql/src/dataStore](storages/engines/postgresql/src/dataStore) (series) and [storages/engines/influxdb](storages/engines/influxdb)
+base code: [storages/engines/postgresql/src/dataStore](storages/engines/postgresql/src/dataStore) (series), [storages/engines/sqlite/src/seriesStorage](storages/engines/sqlite/src/seriesStorage), and [storages/engines/influxdb](storages/engines/influxdb)
 
 Engine choices for `seriesStorage`:
 
 - **PostgreSQL** (default) — same backend as baseStorage; HF points
   stored in a separate table family.
+- **SQLite** — per-user file
+  `<userLocalDirectory>/<userId>/series-<version>.sqlite`, sibling to
+  the per-user baseStorage file. Picks up the same Art.17
+  delete-by-unlink semantics as the rest of the SQLite engine.
 - **InfluxDB** 1.x — kept as alternative for high-throughput HF
   workloads.
-
-A SQLite implementation of `seriesStorage` is **not yet available** —
-deployments choosing SQLite for baseStorage/dataStore must still pick
-PostgreSQL or InfluxDB for HF series.
 
 ### Audit storage
 
