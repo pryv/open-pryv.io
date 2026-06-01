@@ -75,6 +75,15 @@ if (process.env.STORAGE_ENGINE === 'sqlite') {
   cfg.set('storages:file:engine', 'filesystem');
 }
 
+// `STORAGE_SERIES` overrides the series engine choice with precedence over
+// the STORAGE_ENGINE-derived default. Used by the test-pg-influx /
+// test-sqlite-influx matrix recipes to exercise the InfluxDB seriesStorage
+// without flipping the base engine.
+if (process.env.STORAGE_SERIES) {
+  const cfg = getConfigUnsafe(true);
+  cfg.set('storages:series:engine', process.env.STORAGE_SERIES);
+}
+
 const storage = require('storage');
 const supertest = require('supertest');
 const { getApplication } = require('api-server/src/application.ts');

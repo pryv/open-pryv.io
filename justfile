@@ -80,6 +80,18 @@ test-sqlite component *params:
     STORAGE_ENGINE=sqlite NODE_ENV=test COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}
 
+# Same as `test` (PostgreSQL baseStorage) but with InfluxDB as the seriesStorage.
+# Requires a running influxd reachable at storages.engines.influxdb.{host,port}.
+test-pg-influx component *params:
+    STORAGE_ENGINE=postgresql STORAGE_SERIES=influxdb NODE_ENV=test COMPONENT={{component}} scripts/components-run \
+        npx mocha -- {{params}}
+
+# Same as `test-sqlite` (SQLite baseStorage) but with InfluxDB as the seriesStorage.
+# Requires a running influxd reachable at storages.engines.influxdb.{host,port}.
+test-sqlite-influx component *params:
+    STORAGE_ENGINE=sqlite STORAGE_SERIES=influxdb NODE_ENV=test COMPONENT={{component}} scripts/components-run \
+        npx mocha -- {{params}}
+
 # Run tests with detailed output (PG default)
 test-detailed component *params:
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
