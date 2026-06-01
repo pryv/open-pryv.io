@@ -7,6 +7,7 @@
 
 
 import { createRequire } from 'node:module';
+import type { PlatformDB, CoreInfo, DnsRecord } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 const require = createRequire(import.meta.url);
 
 const crypto = require('crypto');
@@ -33,11 +34,11 @@ const reservedWords = new Set(require('./reserved-words.json').list);
  */
 class Platform {
   #initialized: boolean;
-  #db: any;
-  #config: any;
+  #db!: PlatformDB;
+  #config!: Config;
   initialized: boolean = false;
   // In-memory cache of coreId → public URL.
-  #coreUrlCache: Map<any, any>;
+  #coreUrlCache: Map<string, string>;
 
   constructor () {
     this.#initialized = false;
@@ -85,7 +86,7 @@ class Platform {
   /**
    * Get if value exists for this unique key
    */
-  async getUsersUniqueField (field: any, value: any) {
+  async getUsersUniqueField (field: string, value: string) {
     return await this.#db.getUsersUniqueField(field, value);
   }
 
@@ -93,12 +94,12 @@ class Platform {
    * Check uniqueness of operations against PlatformDB.
    * Used by repository.insertOne to gather all conflicts before throwing.
    */
-  async checkUpdateOperationUniqueness (username: any, operations: any) {
-    const uniquenessErrors: any = {};
+  async checkUpdateOperationUniqueness (username: string, operations: PlatformOperation[]) {
+    const uniquenessErrors: Record<string, string> = {};
     for (const op of operations) {
       if (op.action !== 'delete' && op.isUnique) {
-        const value = await this.#db.getUsersUniqueField(op.key, op.value);
-        if (value != null && value !== username) uniquenessErrors[op.key] = op.value;
+        const value = await this.#db.getUsersUniqueField(op.key, op.value as string);
+        if (value != null && value !== username) uniquenessErrors[op.key] = op.value as string;
       }
     }
     return uniquenessErrors;
@@ -107,7 +108,7 @@ class Platform {
   /**
    * Update user fields in PlatformDB (unique + indexed).
    */
-  async updateUser (username: any, operations: any) {
+  async updateUser (username: string, operations: PlatformOperation[]) {
     const uniquenessErrors = await this.checkUpdateOperationUniqueness(username, operations);
     if (Object.keys(uniquenessErrors).length > 0) {
       throw (errors.itemAlreadyExists('user', uniquenessErrors));
@@ -118,7 +119,7 @@ class Platform {
   /**
    * Apply operations to PlatformDB.
    */
-  async #applyOperations (username: any, operations: any) {
+  async #applyOperations (username: string, operations: PlatformOperation[]) {
     for (const op of operations) {
       switch (op.action) {
         case 'create':
@@ -137,9 +138,10 @@ class Platform {
         case 'update':
           if (!op.isActive) break;
           if (op.isUnique) {
-            const existingUsernameValue = await this.#db.getUsersUniqueField(op.key, op.previousValue);
+            const previousValue = op.previousValue ?? '';
+            const existingUsernameValue = await this.#db.getUsersUniqueField(op.key, previousValue);
             if (existingUsernameValue !== null && existingUsernameValue === username) {
-              await this.#db.deleteUserUniqueField(op.key, op.previousValue);
+              await this.#db.deleteUserUniqueField(op.key, previousValue);
             }
 
             const potentialCollisionUsername = await this.#db.getUsersUniqueField(op.key, op.value);
@@ -185,9 +187,9 @@ class Platform {
    * The `user` arg is no longer load-bearing but kept on the signature for
    * backwards compatibility with existing callers.
    */
-  async deleteUser (username: any, _user: any) {
-    const entries: any[] = await this.#db.getAllWithPrefix('user');
-    const operations: any[] = [];
+  async deleteUser (username: string, _user: unknown) {
+    const entries = await this.#db.getAllWithPrefix('user');
+    const operations: PlatformOperation[] = [];
     for (const entry of entries) {
       if (entry.username !== username) continue;
       if (entry.field == null || entry.field.startsWith('_')) continue;
@@ -195,7 +197,8 @@ class Platform {
         action: 'delete',
         key: entry.field,
         value: entry.value,
-        isUnique: entry.isUnique === true
+        isUnique: entry.isUnique === true,
+        isActive: true
       });
     }
     await this.#applyOperations(username, operations);
@@ -203,20 +206,20 @@ class Platform {
 
   // ----------------  Core identity (multi-core)  ----------------
 
-  get coreId () {
-    return this.#config.get('core:id') || 'single';
+  get coreId (): string {
+    return (this.#config.get('core:id') as string) || 'single';
   }
 
-  get coreUrl () {
-    return this.#config.get('core:url') || null;
+  get coreUrl (): string | null {
+    return (this.#config.get('core:url') as string) || null;
   }
 
-  get isSingleCore () {
+  get isSingleCore (): boolean {
     return this.#config.get('core:isSingleCore') !== false;
   }
 
-  get domain () {
-    return this.#config.get('dns:domain') || null;
+  get domain (): string | null {
+    return (this.#config.get('dns:domain') as string) || null;
   }
 
   /**
@@ -233,7 +236,7 @@ class Platform {
    * `_refreshCoreUrlCache()` (called from this core after `registerSelf()`).
    *
    */
-  coreIdToUrl (coreId: any) {
+  coreIdToUrl (coreId: string): string {
     let url;
     if (this.#coreUrlCache.has(coreId)) {
       url = this.#coreUrlCache.get(coreId);
@@ -276,13 +279,13 @@ class Platform {
       throw new Error('Platform.registerSelf: PlatformDB is not initialised. ' +
         'Call `await require("storages").init(config)` before getPlatform()/platform.init().');
     }
-    const info = {
+    const info: CoreInfo = {
       id: this.coreId,
-      url: this.coreUrl || null, // advertise explicit URL for DNSless multi-core
-      ip: this.#config.get('core:ip') || null,
-      ipv6: this.#config.get('core:ipv6') || null,
-      cname: this.#config.get('core:cname') || null,
-      hosting: this.#config.get('core:hosting') || null,
+      url: this.coreUrl || undefined, // advertise explicit URL for DNSless multi-core
+      ip: (this.#config.get('core:ip') as string) || undefined,
+      ipv6: (this.#config.get('core:ipv6') as string) || undefined,
+      cname: (this.#config.get('core:cname') as string) || undefined,
+      hosting: (this.#config.get('core:hosting') as string) || undefined,
       available: this.#config.get('core:available') !== false
     };
     await this.#db.setCoreInfo(this.coreId, info);
@@ -309,7 +312,7 @@ class Platform {
    *
    */
   getPlatformConfigSnapshot () {
-    const snapshot: any = {
+    const snapshot: Record<string, unknown> = {
       'dns.domain': this.#config.get('dns:domain') || null,
       'integrity.algorithm': this.#config.get('integrity:algorithm') || null,
       'versioning.deletionMode': this.#config.get('versioning:deletionMode') || null,
@@ -330,14 +333,14 @@ class Platform {
   /**
    * Get which core hosts a user.
    */
-  async getUserCore (username: any) {
+  async getUserCore (username: string) {
     return await this.#db.getUserCore(username);
   }
 
   /**
    * Set which core hosts a user.
    */
-  async setUserCore (username: any, coreId: any) {
+  async setUserCore (username: string, coreId: string) {
     await this.#db.setUserCore(username, coreId);
   }
 
@@ -351,7 +354,7 @@ class Platform {
   /**
    * Get info for a specific core.
    */
-  async getCoreInfo (coreId: any) {
+  async getCoreInfo (coreId: string) {
     return await this.#db.getCoreInfo(coreId);
   }
 
@@ -368,11 +371,11 @@ class Platform {
    * Set a persistent DNS record. Runtime-managed entries like ACME challenges.
    * Static infrastructure records stay in YAML config; admin MUST NOT shadow them.
    */
-  async setDnsRecord (subdomain: any, records: any) {
+  async setDnsRecord (subdomain: string, records: DnsRecord) {
     await this.#db.setDnsRecord(subdomain, records);
   }
 
-  async getDnsRecord (subdomain: any) {
+  async getDnsRecord (subdomain: string) {
     return await this.#db.getDnsRecord(subdomain);
   }
 
@@ -380,14 +383,14 @@ class Platform {
     return await this.#db.getAllDnsRecords();
   }
 
-  async deleteDnsRecord (subdomain: any) {
+  async deleteDnsRecord (subdomain: string) {
     await this.#db.deleteDnsRecord(subdomain);
   }
 
   /**
    * Update this core's availability in PlatformDB.
    */
-  async setAvailable (available: any) {
+  async setAvailable (available: boolean) {
     if (!this.#db) {
       throw new Error('Platform.setAvailable: PlatformDB is not initialised (init() was not awaited).');
     }
@@ -403,14 +406,14 @@ class Platform {
    * Single-core: returns self. Multi-core: least-users among available cores in the given hosting.
    * @param [hosting] - hosting key (null = any)
    */
-  async selectCoreForRegistration (hosting: any) {
+  async selectCoreForRegistration (hosting: string | null): Promise<string> {
     if (this.isSingleCore) return this.coreId;
 
     // Get all registered cores, filter by hosting + availability
     const allCores = await this.#db.getAllCoreInfos();
-    let candidates = allCores.filter((c: any) => c.available !== false);
+    let candidates = allCores.filter((c: CoreInfo) => c.available !== false);
     if (hosting != null) {
-      candidates = candidates.filter((c: any) => c.hosting === hosting);
+      candidates = candidates.filter((c: CoreInfo) => c.hosting === hosting);
     }
     if (candidates.length === 0) return this.coreId; // fallback to self
     if (candidates.length === 1) return candidates[0].id;
@@ -454,7 +457,7 @@ class Platform {
    *   aws-us-east-1 registrations land on the correct core even if
    *   another hosting has fewer users.
    */
-  async validateRegistration (username: any, invitationToken: any, uniqueFields: any, hosting: any) {
+  async validateRegistration (username: string, invitationToken: string, uniqueFields: Record<string, string>, hosting: string | null) {
     // 1. Check invitation token
     await this.#checkInvitationToken(invitationToken);
 
@@ -468,7 +471,7 @@ class Platform {
     const usersRepository = await getUsersRepository();
     if (await usersRepository.usernameExists(username)) {
       // Gather other eventual uniqueness conflicts for a complete error
-      const allConflicts: any = { username };
+      const allConflicts: Record<string, string> = { username };
       for (const [field, value] of Object.entries(uniqueFields)) {
         if (field === 'username') continue;
         const existingUsername = await this.#db.getUsersUniqueField(field, value);
@@ -480,7 +483,7 @@ class Platform {
     }
 
     // 4. Atomically reserve unique fields (except username, handled by usersIndex)
-    const conflicts: any = {};
+    const conflicts: Record<string, string> = {};
     for (const [field, value] of Object.entries(uniqueFields)) {
       if (field === 'username') continue;
       if (value == null) continue;
@@ -514,7 +517,7 @@ class Platform {
    * - Token exists and not consumed → valid
    * - Token missing or already consumed → invalid
    */
-  async #checkInvitationToken (invitationToken: any) {
+  async #checkInvitationToken (invitationToken: string) {
     const allTokens = await this.#db.getAllInvitationTokens();
 
     // No tokens in PlatformDB → check config fallback
@@ -544,7 +547,7 @@ class Platform {
    * Consume an invitation token (mark as used).
    * @param username - the user who consumed it
    */
-  async consumeInvitationToken (token: any, username: any) {
+  async consumeInvitationToken (token: string, username: string) {
     const info = await this.#db.getInvitationToken(token);
     if (info == null) return; // static config token or no tokens — nothing to consume
     info.consumedAt = Date.now();
@@ -555,7 +558,7 @@ class Platform {
   /**
    * Check if invitation token is valid (for /access/invitationtoken/check).
    */
-  async isInvitationTokenValid (token: any) {
+  async isInvitationTokenValid (token: string) {
     const allTokens = await this.#db.getAllInvitationTokens();
 
     // No tokens in PlatformDB → check config fallback
@@ -582,9 +585,9 @@ class Platform {
    * @param createdBy - admin username
    * @param [description]
    */
-  async generateInvitationTokens (count: any, createdBy: any, description: any) {
+  async generateInvitationTokens (count: number, createdBy: string, description: string) {
     const crypto = require('node:crypto');
-    const created: any[] = [];
+    const created: Array<{ id: string; createdAt: number; createdBy: string; description: string }> = [];
     for (let i = 0; i < count; i++) {
       const token = crypto.randomBytes(4).toString('hex');
       const info = {
@@ -621,7 +624,7 @@ class Platform {
   /**
    * Check if username is reserved (starts with "pryv" or in reserved words list).
    */
-  #isUsernameReserved (username: any) {
+  #isUsernameReserved (username: string) {
     const lower = username.toLowerCase();
     if (/^pryv/.test(lower)) return true;
     return reservedWords.has(lower);
@@ -653,9 +656,9 @@ class Platform {
    * }>}
    */
   async getObservabilityConfig () {
-    const localYaml = this.#config.get('observability') || {};
+    const localYaml: any = this.#config.get('observability') || {};
     const dbRows = await this.#db.getAllObservabilityValues();
-    const db: any = {};
+    const db: Record<string, string> = {};
     for (const { key, value } of dbRows) {
       db[key] = value;
     }
@@ -710,53 +713,53 @@ class Platform {
    *
    * @param value — JSON-encodable.
    */
-  async setObservabilityValue (key: any, value: any) {
+  async setObservabilityValue (key: string, value: unknown) {
     const serialised = SECRET_OBSERVABILITY_KEYS.has(key)
       ? await this.#encryptObservabilitySecret(key, value)
       : JSON.stringify(value);
     await this.#db.setObservabilityValue(key, serialised);
   }
 
-  async deleteObservabilityValue (key: any) {
+  async deleteObservabilityValue (key: string) {
     await this.#db.deleteObservabilityValue(key);
   }
 
-  #deriveHostname () {
-    const coreUrl = this.#config.get('core:url');
+  #deriveHostname (): string {
+    const coreUrl = this.#config.get('core:url') as string | undefined;
     if (coreUrl) {
       try {
         const h = new URL(coreUrl).hostname;
         if (h) return h;
       } catch { /* fall through */ }
     }
-    const domain = this.#config.get('dns:domain');
+    const domain = this.#config.get('dns:domain') as string | undefined;
     if (domain) return 'single.' + domain;
     return require('os').hostname();
   }
 
-  #getAtRestKey (purpose: any) {
+  #getAtRestKey (purpose: string) {
     const adminKey = this.#config.get('auth:adminAccessKey');
     if (!adminKey) {
       throw new Error('observability: auth.adminAccessKey is required to derive at-rest key');
     }
     return AtRestEncryption.deriveKey(
-      Buffer.from(adminKey, 'utf8'),
+      Buffer.from(adminKey as string, 'utf8'),
       purpose
     );
   }
 
-  async #encryptObservabilitySecret (key: any, value: any) {
+  async #encryptObservabilitySecret (key: string, value: unknown) {
     const atRestKey = this.#getAtRestKey('observability-' + key);
     return AtRestEncryption.encrypt(Buffer.from(String(value), 'utf8'), atRestKey);
   }
 
-  async #decryptObservabilitySecret (key: any, stored: any) {
+  async #decryptObservabilitySecret (key: string, stored: string | null) {
     if (!stored) return '';
     try {
       const atRestKey = this.#getAtRestKey('observability-' + key);
       return AtRestEncryption.decrypt(stored, atRestKey).toString('utf8');
-    } catch (err: any) {
-      logger.warn('observability: failed to decrypt ' + key + ': ' + err.message);
+    } catch (err: unknown) {
+      logger.warn('observability: failed to decrypt ' + key + ': ' + (err as Error).message);
       return '';
     }
   }
@@ -768,16 +771,16 @@ const SECRET_OBSERVABILITY_KEYS = new Set(['newrelic-license-key']);
 // (matches serviceInfo.{register,api,access}). Centralizing here so naive
 // `url + 'users'` concatenation in clients/tests can't produce
 // `https://single.example.devusers`.
-function withTrailingSlash (url: any) {
-  if (url == null || url === '') return url;
+function withTrailingSlash (url: string | null | undefined): string {
+  if (url == null || url === '') return '';
   return url.endsWith('/') ? url : url + '/';
 }
 
-function parseJsonBoolean (raw: any) {
+function parseJsonBoolean (raw: string): boolean {
   try { return JSON.parse(raw) === true; } catch { return false; }
 }
 
-function parseJsonString (raw: any) {
+function parseJsonString (raw: string): string {
   try {
     const v = JSON.parse(raw);
     return typeof v === 'string' ? v : '';
@@ -790,3 +793,14 @@ function parseJsonString (raw: any) {
 const platform = new Platform();
 export default platform;
 export { platform, Platform };
+
+// Local type aliases for shapes that aren't formally exported by an interface.
+type Config = { get (key: string): unknown };
+type PlatformOperation = {
+  action: 'create' | 'update' | 'delete';
+  isUnique: boolean;
+  isActive?: boolean;
+  key: string;
+  value: string;
+  previousValue?: string;
+};

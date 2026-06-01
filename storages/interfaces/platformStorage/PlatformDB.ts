@@ -71,6 +71,18 @@ export interface ObservabilityEntry { key: string; value: string }
 
 export interface AccessStateEntry { value: any; expiresAt: number }
 
+export interface InvitationTokenInfo {
+  createdAt: number;
+  createdBy: string;
+  description: string;
+  consumedAt?: number;
+  consumedBy?: string;
+}
+
+export interface InvitationTokenEntry extends InvitationTokenInfo {
+  id: string;
+}
+
 export interface PlatformDB {
   init (): Promise<void>;
 
@@ -133,6 +145,13 @@ export interface PlatformDB {
   getAccessState (key: string): Promise<AccessStateEntry | null>;
   deleteAccessState (key: string): Promise<void>;
   sweepExpiredAccessStates (now?: number): Promise<{ removed: number }>;
+
+  // --- Invitation tokens ------------------------------------------
+  createInvitationToken (token: string, info: InvitationTokenInfo): Promise<void>;
+  getInvitationToken (token: string): Promise<InvitationTokenInfo | null>;
+  getAllInvitationTokens (): Promise<InvitationTokenEntry[]>;
+  updateInvitationToken (token: string, info: InvitationTokenInfo): Promise<void>;
+  deleteInvitationToken (token: string): Promise<void>;
 }
 
 /**
@@ -241,7 +260,19 @@ const PlatformDB: PlatformDB = {
 
   async deleteAccessState (key: string): Promise<void> { throw new Error('Not implemented'); },
 
-  async sweepExpiredAccessStates (now?: number): Promise<{ removed: number }> { throw new Error('Not implemented'); }
+  async sweepExpiredAccessStates (now?: number): Promise<{ removed: number }> { throw new Error('Not implemented'); },
+
+  // --- Invitation tokens --- //
+
+  async createInvitationToken (token: string, info: InvitationTokenInfo): Promise<void> { throw new Error('Not implemented'); },
+
+  async getInvitationToken (token: string): Promise<InvitationTokenInfo | null> { throw new Error('Not implemented'); },
+
+  async getAllInvitationTokens (): Promise<InvitationTokenEntry[]> { throw new Error('Not implemented'); },
+
+  async updateInvitationToken (token: string, info: InvitationTokenInfo): Promise<void> { throw new Error('Not implemented'); },
+
+  async deleteInvitationToken (token: string): Promise<void> { throw new Error('Not implemented'); }
 };
 
 // Limit tampering on existing properties
