@@ -1,5 +1,25 @@
 # Changelog - Internal (no API impact)
 
+## tooling: backup/restore round-trip + cross-engine fixes in bin/backup.js
+
+New `just test-backup-roundtrip` recipe (driver under `tools/backup-roundtrip/`) exercises `bin/backup.js` across engine boundaries: PG seed → SQLite restore → PG restore → SQLite restore, then deep-compares the four resulting bundles for per-user record-count parity. ~30 s wall time on the reference dev box. Listed as a release gate in `AGENTS.md` "Pre-release verification" alongside the four engine matrices.
+
+The round-trip surfaced four bugs in the cross-engine path, all closed in the same change set:
+
+- **BackupOrchestrator._exportEvents (PostgreSQL)**: returned the raw `pg.QueryResult` (`{ command, rowCount, oid, rows, fields }`) instead of `.rows`. An earlier diagnostic-only fix asserted the shape mismatch loudly; this change supplies the actual data-shape repair (`return res?.rows || []`).
+- **BackupOrchestrator._exportEvents (SQLite branch was missing)**: function early-returned `[]` when no shared database existed. SQLite stores events in per-user `baseStorage-*.sqlite` files; new branch reads via `UserBaseStorageDb.forUser(userId)` and flattens row → event.
+- **storages/engines/sqlite/src/index.ts `events.importAll`**: was a no-op stub that silently dropped events on restore. Now writes each event into the per-user events table with `INSERT OR REPLACE INTO events (id, head_id, deleted, data) VALUES (?, ?, ?, ?)`, with `ensureTable` for lazy schema creation.
+- **storages/engines/sqlite/src/userAccountStorage._getPasswordHistory**: SELECTed `hash, time` only, dropping `createdBy`. Cross-engine restore propagated `createdBy: null` into PG then back into SQLite, where the `createdBy TEXT NOT NULL` schema rejected the row. SELECT now includes `createdBy`.
+
+## test: STORAGE_SERIES env override + test-{pg,sqlite}-influx matrix recipes
+
+New `STORAGE_SERIES` env var honoured at test-helpers module load with precedence over the `STORAGE_ENGINE`-derived series engine default. Mirrors the existing `STORAGE_ENGINE=sqlite` shape but only flips `storages.series.engine`. Two new `justfile` recipes use this:
+
+- `just test-pg-influx <component>` — PostgreSQL baseStorage + InfluxDB seriesStorage.
+- `just test-sqlite-influx <component>` — SQLite baseStorage + InfluxDB seriesStorage.
+
+Both recipes assume a running `influxd` reachable at `storages.engines.influxdb.{host,port}` (default `127.0.0.1:8086`). The bundled `bin-ext/influxdb/influxd` + `storages/engines/influxdb/scripts/start` cover local dev. `AGENTS.md` "Pre-release verification" lists the four engine matrices (PG-100, SQLite-100, PG+Influx, SQLite+Influx) as required-green before any version bump.
+
 ## storages/sqlite + test-helpers: SQLite full-matrix parity
 
 `just test-sqlite all` now matches `just test all` (PG) at exit=0,
