@@ -90,16 +90,19 @@ just clean-test-data               # reset test DBs + per-user dirs
 
 ### Pre-release verification — required before any version bump
 
-Before bumping `package.json:version` (publishing a new `2.x.y` tag, building a new `pryvio/open-pryv.io` image), all four storage-engine matrices MUST exit 0:
+Before bumping `package.json:version` (publishing a new `2.x.y` tag, building a new `pryvio/open-pryv.io` image), all four storage-engine matrices MUST exit 0 AND the backup/restore round-trip MUST be green:
 
 ```bash
 just clean-test-data && just test all                # PostgreSQL — default
 just clean-test-data && just test-sqlite all         # SQLite (full alternative)
 just clean-test-data && just test-pg-influx all      # PG + InfluxDB
 just clean-test-data && just test-sqlite-influx all  # SQLite + InfluxDB
+just test-backup-roundtrip                           # PG ↔ SQLite backup round-trip
 ```
 
 The Influx variants are not run on every push but they cover real operator deployments and must be green before release. Any failure that only surfaces under `*-influx` is a release blocker (intermittent timeouts in the seriesStorage path are known to flake — see `clean-test-data` then a single re-run before treating a failure as deterministic).
+
+The backup round-trip (`tools/backup-roundtrip/`) seeds a small fixture (10 events on one user), backs up with PG, restores into SQLite, re-backs-up, restores back to PG, and confirms all four bundles agree on record counts. Catches engine-shape divergence in `bin/backup.js`'s export/import path that the standard matrices don't exercise. Requires `rqlited` on `:4001` and a running PostgreSQL (same env the regular matrices need).
 
 **Production-ish single node**:
 

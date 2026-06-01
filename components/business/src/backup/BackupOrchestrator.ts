@@ -290,9 +290,28 @@ class BackupOrchestrator {
   }
 
   async _exportEvents (userId: any) {
-    // Events are in a shared collection, filtered by userId.
-    // Use the database directly with BaseStorage-style query.
+    // Events live in a shared collection (Mongo/PG) or in the per-user
+    // SQLite baseStorage file. Branch on the engine.
     const storages = require('storages');
+
+    // SQLite: per-user file at <userLocalDirectory>/<userId>/baseStorage-*.sqlite.
+    // Read directly from the events table — covers both active and deleted
+    // rows (history kept via head_id semantics).
+    const engine = storages.pluginLoader?.getEngineFor('baseStorage');
+    if (engine === 'sqlite') {
+      const { UserBaseStorageDb } = require('storages/engines/sqlite/src/userBaseStorage/UserBaseStorageDb.ts');
+      const udb = await UserBaseStorageDb.forUser(userId);
+      const rows = udb.db.prepare('SELECT * FROM events').all();
+      return rows.map((row: any) => {
+        const event: any = row.data ? JSON.parse(row.data) : {};
+        event.id = row.id;
+        if (row.head_id != null) event.headId = row.head_id;
+        if (row.deleted != null) event.deleted = row.deleted;
+        return event;
+      });
+    }
+
+    // Mongo / PG: use the shared database connection.
     const database = storages.database || storages.databasePG;
     if (!database) return [];
 
@@ -303,13 +322,16 @@ class BackupOrchestrator {
       );
     }
 
-    // PostgreSQL: use the events table
+    // PostgreSQL: use the events table. `database.query` returns a pg
+    // QueryResult ({ command, rowCount, oid, rows, fields }); the caller
+    // wants the rows array. Closes B-2026-05-26-F6 (diagnostic-only fix
+    // landed earlier without the actual data-shape repair).
     if (storages.databasePG) {
-      const rows = await database.query(
+      const res = await database.query(
         'SELECT * FROM events WHERE user_id = $1',
         [userId]
       );
-      return rows || [];
+      return res?.rows || [];
     }
 
     return [];

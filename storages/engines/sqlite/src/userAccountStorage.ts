@@ -167,7 +167,9 @@ async function deleteAccountField (userId: string, field: string): Promise<void>
 async function _getPasswordHistory (userId: string): Promise<any[]> {
   const db = await getUserDB(userId);
   const res: any[] = [];
-  const getALL = db.prepare('SELECT hash, time FROM passwords');
+  // Include `createdBy` so cross-engine restore preserves the field —
+  // PG's passwords NOT NULL constraint trips otherwise.
+  const getALL = db.prepare('SELECT hash, time, createdBy FROM passwords');
   for (const entry of getALL.iterate()) {
     res.push(entry);
   }

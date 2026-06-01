@@ -92,6 +92,14 @@ test-sqlite-influx component *params:
     STORAGE_ENGINE=sqlite STORAGE_SERIES=influxdb NODE_ENV=test COMPONENT={{component}} scripts/components-run \
         npx mocha -- {{params}}
 
+# Backup/restore round-trip test: PG → SQLite → PG → SQLite using bin/backup.js.
+# Seeds a fixture user (10 events on a stream) via API, backs up, restores
+# across engine boundaries, and compares the four backup manifests for
+# count parity. Required before release per AGENTS.md "Pre-release verification".
+# Driver: tools/backup-roundtrip/backup-roundtrip.sh.
+test-backup-roundtrip *params:
+    tools/backup-roundtrip/backup-roundtrip.sh {{params}}
+
 # Run tests with detailed output (PG default)
 test-detailed component *params:
     STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \

@@ -83,11 +83,34 @@ async function initStorageLayer (storageLayer: any, _connection: any, options: a
   storageLayer.webhooks = new WebhooksSQLite();
 
   storageLayer.events = {
-    importAll (_userOrUserId: any, _items: any[], callback: (err: any) => void) {
-      // No-op: events are routed through the dataStore layer for the
-      // SQLite engine. Backup-restore goes via the user-events dataStore
-      // path; nothing in the live code path calls this.
-      callback(null);
+    async importAll (userOrUserId: any, items: any[], callback: (err: any) => void) {
+      // Write each event into the per-user `events` table. Event rows
+      // are flat-shaped as { id, head_id, deleted, data:JSON-of-rest }
+      // to match what `iterateAllEvents` reads back.
+      const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
+      try {
+        const { UserBaseStorageDb } = require('./userBaseStorage/UserBaseStorageDb.ts');
+        const udb = await UserBaseStorageDb.forUser(userId);
+        await udb.ensureTable('events', { withDeleted: true, withHeadId: true });
+        const stmt = udb.db.prepare(
+          'INSERT OR REPLACE INTO events (id, head_id, deleted, data) VALUES (?, ?, ?, ?)'
+        );
+        for (const event of items || []) {
+          const id = event.id;
+          if (!id) continue;
+          const headId = event.headId != null ? event.headId : null;
+          const deleted = event.deleted != null ? event.deleted : null;
+          const data = { ...event };
+          delete data.id;
+          delete data.headId;
+          delete data.deleted;
+          delete data.userId;
+          stmt.run(id, headId, deleted, JSON.stringify(data));
+        }
+        callback(null);
+      } catch (e: any) {
+        callback(e);
+      }
     },
     async clearAll (userOrUserId: any, callback: (err: any) => void) {
       const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
