@@ -731,7 +731,7 @@ export default async function (api: any) {
       pubsub.series.emit(subject, payload);
     }
     function isSeriesEvent (event: any) {
-      return event.type.startsWith('series:');
+      return event != null && typeof event.type === 'string' && event.type.startsWith('series:');
     }
     next();
   }
