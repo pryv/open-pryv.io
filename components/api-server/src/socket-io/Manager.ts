@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { MethodContext, CustomAuthFunction } from 'business/src/MethodContext.ts';
 const require = createRequire(import.meta.url);
 const errorHandling = require('errors').errorHandling;
 const commonMeta = require('../methods/helpers/setCommonMeta.ts');
@@ -21,34 +22,35 @@ const { initRootSpan } = require('tracing');
 //
 
 class Manager {
-  contexts: any;
+  contexts: Map<string | null, NamespaceContext>;
 
-  logger: any;
+  logger: Logger;
 
-  io: any;
+  io: SocketServer;
 
-  api: any;
+  api: Api;
 
-  storageLayer: any;
+  storageLayer: unknown;
 
-  customAuthStepFn: any;
+  customAuthStepFn: CustomAuthFunction | null;
 
-  apiVersion: any;
+  apiVersion: string | null;
 
-  hostname: any;
-  constructor (logger: any, io: any, api: any, storageLayer: any, customAuthStepFn: any) {
+  hostname: string;
+  constructor (logger: Logger, io: SocketServer, api: Api, storageLayer: unknown, customAuthStepFn: CustomAuthFunction | null) {
     this.logger = logger;
     this.io = io;
     this.api = api;
     this.contexts = new Map();
     this.storageLayer = storageLayer;
     this.customAuthStepFn = customAuthStepFn;
+    this.apiVersion = null;
     this.hostname = require('os').hostname();
   }
 
   // Returns true if the `candidate` could be a username on a lexical level.
   //
-  looksLikeUsername (candidate: any) {
+  looksLikeUsername (candidate: string): boolean {
     const reUsername = new RegExp(USERNAME_REGEXP_STR);
     const lowercasedUsername = candidate.toLowerCase(); // for retro-compatibility
     return reUsername.test(lowercasedUsername);
@@ -59,7 +61,7 @@ class Manager {
   //
   //    manager.getUsername('/foobar') // => 'foobar'
   //
-  extractUsername (namespaceName: any) {
+  extractUsername (namespaceName: string): string | null {
     const ns = cleanNS(namespaceName);
     if (!ns.startsWith('/')) { return null; }
     // assert: namespaceName[0] === '/'
@@ -70,7 +72,7 @@ class Manager {
      * Takes the last field of the NS path
      *
      */
-    function cleanNS (namespace: any) {
+    function cleanNS (namespace: string): string {
       let cleaned = '' + namespace;
       // remove eventual trailing "/"
       if (cleaned.slice(-1) === '/') { cleaned = cleaned.slice(0, -1); }
@@ -83,7 +85,7 @@ class Manager {
     }
   }
 
-  async ensureInitNamespace (namespaceName: any) {
+  async ensureInitNamespace (namespaceName: string): Promise<NamespaceContext> {
     await initAsyncProps.call(this);
     const username = this.extractUsername(namespaceName);
     let context = this.contexts.get(username);
@@ -97,31 +99,29 @@ class Manager {
     /**
      * putting this here because putting it above requires rendering too much code async. I'm sorry.
      */
-    async function initAsyncProps (this: any) {
+    async function initAsyncProps (this: Manager) {
       if (this.apiVersion == null) { this.apiVersion = await getAPIVersion(); }
     }
   }
 }
 
 class NamespaceContext {
-  namespaceName: any;
+  username: string | null;
 
-  username: any;
+  socketNs: SocketNamespace;
 
-  socketNs: any;
+  api: Api;
 
-  api: any;
+  logger: Logger;
 
-  logger: any;
+  apiVersion: string | null;
 
-  apiVersion: any;
+  hostname: string;
 
-  hostname: any;
+  connections: Map<string, Connection>;
 
-  connections: any;
-
-  pubsubRemover: any;
-  constructor (username: any, socketNs: any, api: any, logger: any, apiVersion: any, hostname: any) {
+  pubsubRemover: PubsubRemover | null;
+  constructor (username: string | null, socketNs: SocketNamespace, api: Api, logger: Logger, apiVersion: string | null, hostname: string) {
     this.username = username;
     this.socketNs = socketNs;
     this.api = api;
@@ -135,7 +135,7 @@ class NamespaceContext {
   // Adds a connection to the namespace. This produces a `Connection` instance
   // and stores it in (our) namespace.
   //
-  addConnection (socket: any, _methodContext?: any) {
+  addConnection (socket: SocketLike, _methodContext?: MethodContext) {
     // This will represent state that we keep for every connection.
     const connection = new Connection(this.logger, socket, this, socket.methodContext, this.api, this.apiVersion, this.hostname);
     // Permanently store the connection in this namespace.
@@ -144,12 +144,12 @@ class NamespaceContext {
     connection.init();
   }
 
-  storeConnection (conn: any) {
+  storeConnection (conn: Connection) {
     const connMap = this.connections;
     connMap.set(conn.key(), conn);
   }
 
-  deleteConnection (conn: any) {
+  deleteConnection (conn: Connection) {
     const connMap = this.connections;
     connMap.delete(conn.key());
   }
@@ -160,7 +160,7 @@ class NamespaceContext {
     this.pubsubRemover = pubsub.notifications.onAndGetRemovable(this.username, this.messageFromPubSub.bind(this));
   }
 
-  messageFromPubSub (payload: any) {
+  messageFromPubSub (payload: PubsubPayload) {
     // Structured payloads carry both an event type and data fields —
     // forward the entire payload alongside the socket event name.
     // Legacy string payloads stay arg-less for back-compat with
@@ -194,7 +194,7 @@ class NamespaceContext {
   // ------------------------------------------------------------ event handlers
   // Called when a new socket connects to the namespace `socketNs`.
   //
-  onConnect (socket: any) {
+  onConnect (socket: SocketLike) {
     const logger = this.logger;
     const namespaceName = socket.nsp.name;
     logger.info(`New client connected on namespace '${namespaceName}' (context ${this.socketNs.name})`);
@@ -210,7 +210,7 @@ class NamespaceContext {
 
   // Called when the underlying socket-io socket disconnects.
   //
-  async onDisconnect (conn: any) {
+  async onDisconnect (conn: Connection) {
     const logger = this.logger;
     const namespace = this.socketNs;
     // Remove the connection from our connection list.
@@ -227,18 +227,18 @@ class NamespaceContext {
 }
 
 class Connection {
-  socket: any;
+  socket: SocketLike;
 
-  methodContext: any;
+  methodContext: MethodContext;
 
-  api: any;
+  api: Api;
 
-  logger: any;
+  logger: Logger;
 
-  apiVersion: any;
+  apiVersion: string | null;
 
-  hostname: any;
-  constructor (logger: any, socket: any, namespaceContext: any, methodContext: any, api: any, apiVersion: any, hostname: any) {
+  hostname: string;
+  constructor (logger: Logger, socket: SocketLike, namespaceContext: NamespaceContext, methodContext: MethodContext, api: Api, apiVersion: string | null, hostname: string) {
     this.socket = socket;
     this.methodContext = methodContext;
     this.api = api;
@@ -248,19 +248,19 @@ class Connection {
   }
 
   // This should be used as a key when storing the connection inside a Map.
-  key () {
+  key (): string {
     return this.socket.id;
   }
 
   init () {
-    this.socket.on('*', (callData: any, callback: any) => this.onMethodCall(callData, callback));
+    this.socket.on('*', (callData: unknown, callback: unknown) => this.onMethodCall(callData as CallData, callback as SocketCallback));
   }
 
   // ------------------------------------------------------------ event handlers
   // Called when the socket wants to call a Pryv IO method.
   //
-  async onMethodCall (callData: any, callback: any) {
-    const methodContext = this.methodContext;
+  async onMethodCall (callData: CallData, callback: SocketCallback) {
+    const methodContext: any = this.methodContext;
     methodContext.tracing = initRootSpan('socket.io', {
       apiVersion: this.apiVersion,
       hostname: this.hostname
@@ -283,9 +283,9 @@ class Connection {
     // Accept streamQueries in JSON format for socket.io
     methodContext.acceptStreamsQueryNonStringified = true;
     try {
-      const result = await fromCallback((cb: any) => api.call(methodContext, params, cb));
+      const result = await fromCallback((cb: NodeCallback) => api.call(methodContext, params, cb));
       if (result == null) { throw new Error('AF: either err or result must be non-null'); }
-      const obj = await fromCallback((cb: any) => result.toObject(cb));
+      const obj = await fromCallback((cb: NodeCallback) => result.toObject(cb));
       // good ending
       methodContext.tracing.finishSpan('socket.io');
       // remove tracing for next call
@@ -307,47 +307,43 @@ class Connection {
     // NOT REACHED
   }
 }
-const messageMap: any = {};
+const messageMap: Record<string, string> = {};
 messageMap[pubsub.USERNAME_BASED_EVENTS_CHANGED] = 'eventsChanged';
 messageMap[pubsub.USERNAME_BASED_ACCESSES_CHANGED] = 'accessesChanged';
 messageMap[pubsub.USERNAME_BASED_STREAMS_CHANGED] = 'streamsChanged';
 messageMap[pubsub.ACCESS_UPDATED] = 'accessUpdated';
-function pubsubMessageToSocket (payload: any) {
-  const key = typeof payload === 'object' ? JSON.stringify(payload) : payload;
+function pubsubMessageToSocket (payload: unknown): string | undefined {
+  const key = typeof payload === 'object' ? JSON.stringify(payload) : (payload as string);
   return messageMap[key];
 }
 export default Manager;
 export { Manager };
-type SocketIO$SocketId = string;
-type SocketIO$Handshake = {
-  methodContext: any /* JSDoc-only MethodContext */;
-  query: {
-  resource: string;
-  auth: string;
-  };
+
+// Local types for the socket-io plumbing this module wraps. Kept minimal —
+// only the surface area Manager / NamespaceContext / Connection actually use.
+type Logger = {
+  info: (msg: string) => void;
+  warn: (msg: string) => void;
 };
-type SocketIO$CallData = {
+type SocketNamespace = {
   name: string;
-  args: Array<unknown>;
+  emit (event: string, ...args: unknown[]): void;
 };
-type SocketIO$Socket = {
-  id: SocketIO$SocketId;
-  on(eventName: string, ...args: Array<unknown>): unknown;
-  once(eventName: string, ...args: Array<unknown>): unknown;
-  namespace: SocketIO$Namespace;
+type SocketServer = {
+  of (namespacePattern: string): SocketNamespace;
 };
-type SocketIO$Namespace = {
-  // Here's a bad interface.
-  on(eventName: string, ...args: Array<unknown>): unknown;
-  emit(eventName: string, ...args: Array<unknown>): void;
-  name: string;
-  sockets: {
-  [socketId in SocketIO$SocketId]: SocketIO$Socket;
-  };
+type SocketLike = {
+  id: string;
+  nsp: { name: string };
+  methodContext: MethodContext;
+  on (event: string, listener: (...args: unknown[]) => unknown): unknown;
+  once (event: string, listener: (...args: unknown[]) => unknown): unknown;
 };
-type SocketIO$Server = {
-  of: (a: string) => SocketIO$Namespace;
-  handshaken: {
-  [id in SocketIO$SocketId]: SocketIO$Handshake;
-  };
+type Api = {
+  call (context: MethodContext, params: unknown, cb: (err: Error | null, result?: unknown) => void): void;
 };
+type NodeCallback<T = unknown> = (err: Error | null | undefined, value?: T) => void;
+type SocketCallback = (err: Error | null | undefined, result?: unknown) => void;
+type CallData = { data: [string, unknown, SocketCallback?] };
+type PubsubPayload = { type?: string; [key: string]: unknown } | string | null;
+type PubsubRemover = () => void;

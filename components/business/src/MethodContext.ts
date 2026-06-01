@@ -281,6 +281,7 @@ class MethodContext {
 }
 export default MethodContext;
 export { MethodContext };
+export type { CustomAuthFunction, CustomAuthFunctionCallback };
 type CustomAuthFunctionCallback = (err: Error | null | undefined) => void;
 type CustomAuthFunction = (ctx: MethodContext, cb: CustomAuthFunctionCallback) => void;
 type NodeCallback<T = unknown> = (err: unknown, value?: T) => void;
