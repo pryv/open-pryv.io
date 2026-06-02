@@ -11,8 +11,21 @@ const require = createRequire(import.meta.url);
 const Transform = require('stream').Transform;
 const storeDataUtils = require('./storeDataUtils.ts');
 const errorFactory = require('errors').factory;
+
+type Event = {
+  id?: string;
+  time?: number | null;
+  endTime?: number | null;
+  duration?: number | null;
+  streamIds?: string[];
+  trashed?: boolean;
+  deleted?: number | null;
+  attachments?: unknown[];
+  [k: string]: unknown;
+};
+
 // ------------  Duration -----------//
-function durationToStoreEndTime (eventData: any) {
+function durationToStoreEndTime (eventData: Event): Event {
   if (eventData.time == null) {
     delete eventData.duration;
     return eventData;
@@ -26,12 +39,12 @@ function durationToStoreEndTime (eventData: any) {
     eventData.endTime = eventData.time;
   } else {
     // defined
-    eventData.endTime = eventData.time + eventData.duration;
+    eventData.endTime = (eventData.time as number) + (eventData.duration as number);
   }
   delete eventData.duration;
   return eventData;
 }
-function endTimeFromStoreToDuration (eventData: any) {
+function endTimeFromStoreToDuration (eventData: Event): Event {
   if (eventData.time == null) {
     delete eventData.endTime;
     return eventData;
@@ -40,7 +53,7 @@ function endTimeFromStoreToDuration (eventData: any) {
     eventData.duration = null;
   } else if (eventData.endTime !== undefined) {
     const prevDuration = eventData.duration;
-    eventData.duration = eventData.endTime - eventData.time;
+    eventData.duration = (eventData.endTime as number) - (eventData.time as number);
     if (prevDuration != null && prevDuration !== eventData.duration) {
       console.log('What !! ', new Error('Duration issue.. This should not thappen'));
     }
@@ -53,23 +66,23 @@ function endTimeFromStoreToDuration (eventData: any) {
   return eventData;
 }
 // state
-function stateToStore (eventData: any) {
+function stateToStore (eventData: Event) {
   eventData.trashed = eventData.trashed === true;
   return eventData;
 }
-function stateFromStore (eventData: any) {
+function stateFromStore (eventData: Event) {
   if (eventData.trashed !== true) { delete eventData.trashed; }
   return eventData;
 }
 // ---------  deletion ------ //
-function deletionToStore (eventData: any) {
+function deletionToStore (eventData: Event) {
   if (eventData.deleted === undefined) {
     // undefined => null
     eventData.deleted = null;
   }
   return eventData;
 }
-function deletionFromStore (eventData: any) {
+function deletionFromStore (eventData: Event) {
   if (eventData == null) {
     return eventData;
   }
@@ -99,7 +112,7 @@ const ALL_FIELDS = [
 /**
  * set to null all undefined fields
  */
-function nullifyToStore (eventData: any) {
+function nullifyToStore (eventData: Event) {
   for (const field of ALL_FIELDS) {
     if (eventData[field] === undefined) {
       eventData[field] = null;
@@ -107,7 +120,7 @@ function nullifyToStore (eventData: any) {
   }
   return eventData;
 }
-function nullifyFromStore (eventData: any) {
+function nullifyFromStore (eventData: Event) {
   for (const field of ALL_FIELDS) {
     if (eventData[field] === null && field !== 'endTime') {
       delete eventData[field];
@@ -116,7 +129,7 @@ function nullifyFromStore (eventData: any) {
   return eventData;
 }
 // ------------ storeId ------------- //
-function removeStoreIds (storeId: any, eventData: any) {
+function removeStoreIds (storeId: string, eventData: Event) {
   const original = structuredClone(eventData);
   const [eventStoreId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.id);
   if (eventStoreId !== storeId) {
@@ -146,27 +159,27 @@ function removeStoreIds (storeId: any, eventData: any) {
   }
   return eventData;
 }
-function addStoreId (storeId: any, eventData: any) {
+function addStoreId (storeId: string, eventData: Event) {
   eventData.id = storeDataUtils.getFullItemId(storeId, eventData.id);
   if (eventData.streamIds) {
     eventData.streamIds = eventData.streamIds.map(storeDataUtils.getFullItemId.bind(null, storeId));
   }
   return eventData;
 }
-function removeEmptyAttachments (eventData: any) {
+function removeEmptyAttachments (eventData: Event) {
   if (eventData?.attachments != null && eventData.attachments.length === 0) {
     delete eventData.attachments;
   }
   return eventData;
 }
 // ------------- pack ----------------//
-function convertEventToStore (storeId: any, eventData: any) {
+function convertEventToStore (storeId: string, eventData: Event) {
   const event = structuredClone(eventData);
   if (storeId === storeDataUtils.AccountStoreId) {
     // Account events: extract field name from stream-ID-based event ID
     // ':system:email' → 'email', ':_system:language' → 'language'
-    const lastColon = event.id.lastIndexOf(':');
-    if (lastColon >= 0) event.id = event.id.substring(lastColon + 1);
+    const lastColon = event.id!.lastIndexOf(':');
+    if (lastColon >= 0) event.id = event.id!.substring(lastColon + 1);
   } else {
     removeStoreIds(storeId, event);
   }
@@ -176,7 +189,7 @@ function convertEventToStore (storeId: any, eventData: any) {
   nullifyToStore(event);
   return event;
 }
-function convertEventFromStore (storeId: any, eventData: any) {
+function convertEventFromStore (storeId: string, eventData: Event) {
   const event = structuredClone(eventData);
   endTimeFromStoreToDuration(event);
   stateFromStore(event);
@@ -197,7 +210,7 @@ function convertEventFromStore (storeId: any, eventData: any) {
 /** @extends Transform */
 class ConvertEventFromStoreStream extends Transform {
   storeId;
-  constructor (storeId: any) {
+  constructor (storeId: string) {
     super({ objectMode: true });
     this.storeId = storeId;
   }
@@ -208,7 +221,7 @@ class ConvertEventFromStoreStream extends Transform {
    *     callback();
    *   }
    */
-  _transform = function (this: any, event: any, encoding: any, callback: any) {
+  _transform = function (this: ConvertEventFromStoreStream, event: Event, _encoding: string, callback: () => void) {
     this.push(convertEventFromStore(this.storeId, event));
     callback();
   };
