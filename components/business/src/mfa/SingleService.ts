@@ -21,15 +21,23 @@ const CODE = 'code';
  * The username -> code map is per-instance and TTL-bound (matching the
  * session TTL); no cross-instance sharing in single-core deployments.
  */
+type MFAConfig = {
+  sms: { endpoints: { single: { url: string; method: string; headers: Record<string, unknown>; body: unknown } } };
+  sessions?: { ttlSeconds?: number };
+  [k: string]: unknown;
+};
+type Profile = { content: Record<string, unknown>; [k: string]: unknown };
+type ClientRequest = { body: { code?: string; [k: string]: unknown }; headers?: Record<string, unknown> };
+
 class SingleService extends Service {
-  url: any;
-  apiMethod: any;
-  headers: any;
-  body: any;
-  codes: any;
-  timeouts: any;
-  ttlMilliseconds: any;
-  constructor (mfaConfig: any) {
+  url: string;
+  apiMethod: string;
+  headers: Record<string, unknown>;
+  body: unknown;
+  codes: Map<string, string>;
+  timeouts: Map<string, NodeJS.Timeout>;
+  ttlMilliseconds: number;
+  constructor (mfaConfig: MFAConfig) {
     super(mfaConfig);
     const single = mfaConfig.sms.endpoints.single;
     this.url = single.url;
@@ -43,7 +51,7 @@ class SingleService extends Service {
     this.ttlMilliseconds = (mfaConfig.sessions?.ttlSeconds ?? 1800) * 1000;
   }
 
-  async challenge (username: any, profile: any, _clientRequest: any) {
+  async challenge (username: string, profile: Profile, _clientRequest: ClientRequest) {
     const code = await generateCode(CODE_LENGTH);
     this.setCode(username, code);
     // Make the code available alongside profile.content for templating.
@@ -59,7 +67,7 @@ class SingleService extends Service {
     await this._makeRequest(this.apiMethod, url, headers, body);
   }
 
-  async verify (username: any, _profile: any, clientRequest: any) {
+  async verify (username: string, _profile: Profile, clientRequest: ClientRequest) {
     const code = this.codes.get(username);
     if (code !== clientRequest.body.code) {
       throw errors.invalidParametersFormat(
@@ -70,7 +78,7 @@ class SingleService extends Service {
     this.clearCode(username);
   }
 
-  setCode (username: any, code: any) {
+  setCode (username: string, code: string) {
     this.codes.set(username, code);
     this.timeouts.set(
       username,
@@ -78,7 +86,7 @@ class SingleService extends Service {
     );
   }
 
-  clearCode (username: any) {
+  clearCode (username: string) {
     this.codes.delete(username);
     const t = this.timeouts.get(username);
     if (t) {
