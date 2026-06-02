@@ -30,13 +30,34 @@ const { randomUUID } = require('node:crypto');
 const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
 const SWEEP_INTERVAL_MS = 60_000;
 
-let _masterRunning = false;
-let _store: Map<any, any> | null = null;
-let _sweepTimer: any = null;
-let _ipcHandler: any = null;
-let _log: (...args: any[]) => void = () => {};
+type StoreEntry = { value: unknown; expiresAt: number | null };
+type KvMessage = {
+  type: string;
+  requestId?: string;
+  key?: string;
+  value?: unknown;
+  ttlMs?: number;
+  ok?: boolean;
+  error?: string;
+};
+type WorkerLike = { send: (msg: unknown) => void };
+type ProcessLike = {
+  send?: (msg: unknown) => void;
+  on (event: string, listener: (msg: unknown) => void): unknown;
+  removeListener (event: string, listener: (msg: unknown) => void): unknown;
+};
+type ClusterLike = {
+  on: (event: string, handler: (worker: WorkerLike, msg: KvMessage) => void) => void;
+  removeListener: (event: string, handler: (worker: WorkerLike, msg: KvMessage) => void) => void;
+};
 
-let _cluster: any = null;
+let _masterRunning = false;
+let _store: Map<string, StoreEntry> | null = null;
+let _sweepTimer: NodeJS.Timeout | null = null;
+let _ipcHandler: ((worker: WorkerLike, msg: KvMessage) => void) | null = null;
+let _log: (msg: string) => void = () => {};
+
+let _cluster: ClusterLike | null = null;
 
 /**
  * Initialise the master-side handler. Call once from `bin/master.js` after
@@ -45,17 +66,17 @@ let _cluster: any = null;
  * @param [opts.log] - logger; called with (msg)
  * @param [opts.cluster] - injectable for tests; defaults to `require('node:cluster')`
  */
-function masterStart (opts: any = {}) {
+function masterStart (opts: { log?: (msg: string) => void; cluster?: ClusterLike } = {}) {
   if (_masterRunning) return;
   _masterRunning = true;
   _log = typeof opts.log === 'function' ? opts.log : () => {};
   _store = new Map();
 
   _cluster = opts.cluster || require('node:cluster');
-  _ipcHandler = (worker: any, msg: any) => {
+  _ipcHandler = (worker: WorkerLike, msg: KvMessage) => {
     if (!msg || typeof msg.type !== 'string' || !msg.type.startsWith('kv:')) return;
     if (msg.type === 'kv:reply') return; // master never receives replies
-    const reply = (body: any) => {
+    const reply = (body: Partial<KvMessage>) => {
       try { worker.send({ type: 'kv:reply', requestId: msg.requestId, ...body }); } catch (_) {
         // worker died between request + reply; not fatal
       }
@@ -64,10 +85,10 @@ function masterStart (opts: any = {}) {
       switch (msg.type) {
         case 'kv:get': {
           // _store set before _ipcHandler is registered in masterStart
-          const entry = _store!.get(msg.key);
+          const entry = _store!.get(msg.key!);
           if (!entry) return reply({ ok: true, value: null });
           if (entry.expiresAt != null && Date.now() > entry.expiresAt) {
-            _store!.delete(msg.key);
+            _store!.delete(msg.key!);
             return reply({ ok: true, value: null });
           }
           return reply({ ok: true, value: entry.value });
@@ -76,11 +97,11 @@ function masterStart (opts: any = {}) {
           const expiresAt = (typeof msg.ttlMs === 'number' && msg.ttlMs > 0)
             ? Date.now() + msg.ttlMs
             : null;
-          _store!.set(msg.key, { value: msg.value, expiresAt });
+          _store!.set(msg.key!, { value: msg.value, expiresAt });
           return reply({ ok: true });
         }
         case 'kv:delete':
-          _store!.delete(msg.key);
+          _store!.delete(msg.key!);
           return reply({ ok: true });
         case 'kv:clear':
           _store!.clear();
@@ -88,11 +109,11 @@ function masterStart (opts: any = {}) {
         default:
           return reply({ ok: false, error: 'cluster_kv: unknown op ' + msg.type });
       }
-    } catch (err: any) {
-      reply({ ok: false, error: 'cluster_kv master error: ' + err.message });
+    } catch (err: unknown) {
+      reply({ ok: false, error: 'cluster_kv master error: ' + (err as Error).message });
     }
   };
-  _cluster.on('message', _ipcHandler);
+  _cluster!.on('message', _ipcHandler);
 
   _sweepTimer = setInterval(() => {
     const now = Date.now();
@@ -100,7 +121,7 @@ function masterStart (opts: any = {}) {
       if (entry.expiresAt != null && now > entry.expiresAt) _store!.delete(k);
     }
   }, SWEEP_INTERVAL_MS);
-  _sweepTimer.unref();
+  _sweepTimer!.unref();
   _log('cluster_kv master started');
 }
 
@@ -129,15 +150,16 @@ function _masterStoreForTests () {
 
 // ---------- Worker-side client ----------
 
-function _request (payload: any, processHandle: any, timeoutMs: any) {
+function _request (payload: Partial<KvMessage>, processHandle: ProcessLike, timeoutMs: number) {
   if (typeof processHandle.send !== 'function') {
     return { _noChannel: true };
   }
   const requestId = randomUUID();
   return new Promise((resolve, reject) => {
     let settled = false;
-    const onMsg = (msg: any) => {
+    const onMsg = (raw: unknown) => {
       if (settled) return;
+      const msg = raw as KvMessage | null;
       if (!msg || msg.type !== 'kv:reply' || msg.requestId !== requestId) return;
       settled = true;
       clearTimeout(timer);
@@ -156,13 +178,13 @@ function _request (payload: any, processHandle: any, timeoutMs: any) {
     }, timeoutMs);
     processHandle.on('message', onMsg);
     try {
-      processHandle.send({ ...payload, requestId });
-    } catch (err: any) {
+      processHandle.send!({ ...payload, requestId });
+    } catch (err: unknown) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       processHandle.removeListener('message', onMsg);
-      reject(new Error('cluster_kv send failed: ' + err.message));
+      reject(new Error('cluster_kv send failed: ' + (err as Error).message));
     }
   });
 }
@@ -174,9 +196,9 @@ function _request (payload: any, processHandle: any, timeoutMs: any) {
  * fallback is just a local Map with the same TTL semantics as master.
  */
 class _InProcessStore {
-  store: Map<any, any>;
+  store: Map<string, StoreEntry>;
   constructor () { this.store = new Map(); }
-  _get (key: any): any {
+  _get (key: string): unknown {
     const entry = this.store.get(key);
     if (!entry) return null;
     if (entry.expiresAt != null && Date.now() > entry.expiresAt) {
@@ -186,13 +208,13 @@ class _InProcessStore {
     return entry.value;
   }
 
-  async get (key: any): Promise<any> { return this._get(key); }
-  async set (key: any, value: any, { ttlMs }: { ttlMs?: number } = {}): Promise<void> {
+  async get (key: string): Promise<unknown> { return this._get(key); }
+  async set (key: string, value: unknown, { ttlMs }: { ttlMs?: number } = {}): Promise<void> {
     const expiresAt = (typeof ttlMs === 'number' && ttlMs > 0) ? Date.now() + ttlMs : null;
     this.store.set(key, { value, expiresAt });
   }
 
-  async delete (key: any): Promise<void> { this.store.delete(key); }
+  async delete (key: string): Promise<void> { this.store.delete(key); }
   async clear (): Promise<void> { this.store.clear(); }
 }
 
@@ -210,8 +232,8 @@ const _SHARED_FALLBACK = new _InProcessStore();
  * @param [opts.timeoutMs=5000]
  * @param [opts.fallback=true] - when false, raise instead of using the in-process store.
  */
-function clientFor (opts: any = {}) {
-  const { processHandle = process, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, fallback = true } = opts;
+function clientFor (opts: { processHandle?: ProcessLike; timeoutMs?: number; fallback?: boolean } = {}) {
+  const { processHandle = process as unknown as ProcessLike, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, fallback = true } = opts;
   // Mocha-parallel workers have `process.send` wired to the mocha runner —
   // not to a Pryv cluster master. Any IPC the client would send goes
   // unanswered and times out after 5s, surfacing as 500s in tests like
@@ -245,14 +267,14 @@ function clientFor (opts: any = {}) {
     return _SHARED_FALLBACK;
   }
   return {
-    async get (key: any) {
-      const reply: any = await _request({ type: 'kv:get', key }, processHandle, timeoutMs);
+    async get (key: string) {
+      const reply = await _request({ type: 'kv:get', key }, processHandle, timeoutMs) as { value?: unknown };
       return reply.value ?? null;
     },
-    async set (key: any, value: any, { ttlMs }: { ttlMs?: number } = {}) {
+    async set (key: string, value: unknown, { ttlMs }: { ttlMs?: number } = {}) {
       await _request({ type: 'kv:set', key, value, ttlMs }, processHandle, timeoutMs);
     },
-    async delete (key: any) {
+    async delete (key: string) {
       await _request({ type: 'kv:delete', key }, processHandle, timeoutMs);
     },
     async clear () {
