@@ -14,15 +14,19 @@
 
 import type { Readable } from 'stream';
 
+type QueryClause = { type: string; content: unknown };
+type StreamFilter = unknown;
+type AuditEvent = { id?: string; [k: string]: unknown };
+
 interface QueryParams {
-  query: Array<{ type: string, content: any }>;
+  query: QueryClause[];
   options?: { sort?: Record<string, number>, limit?: number, skip?: number };
-  streams?: any;
+  streams?: StreamFilter;
 }
 
 interface DeleteParams {
-  query: Array<{ type: string, content: any }>;
-  streams?: any;
+  query: QueryClause[];
+  streams?: StreamFilter;
   options?: { limit?: number };
 }
 
@@ -30,27 +34,27 @@ export interface UserAuditDatabase {
   init (): Promise<void>;
   close (): void;
 
-  getEvents (params: QueryParams): any[] | null;
+  getEvents (params: QueryParams): AuditEvent[] | null;
   getEventsStreamed (params: QueryParams): Readable;
   getEventDeletionsStreamed (deletedSince: number): Readable;
-  getOneEvent (eventId: string): any | null;
+  getOneEvent (eventId: string): AuditEvent | null;
   countEvents (): number;
 
-  getAllActions (): any[];
-  getAllAccesses (): any[];
+  getAllActions (): unknown[];
+  getAllAccesses (): unknown[];
 
-  createEvent (event: any): Promise<void>;
-  createEventSync (event: any): void;
-  updateEvent (eventId: string, eventData: any): Promise<any>;
+  createEvent (event: AuditEvent): Promise<void>;
+  createEventSync (event: AuditEvent): void;
+  updateEvent (eventId: string, eventData: AuditEvent): Promise<AuditEvent>;
 
-  getEventHistory (eventId: string): any[];
+  getEventHistory (eventId: string): AuditEvent[];
   minimizeEventHistory (eventId: string, fieldsToRemove: string[]): Promise<void>;
   deleteEventHistory (eventId: string): Promise<void>;
-  deleteEvents (params: DeleteParams): Promise<any>;
+  deleteEvents (params: DeleteParams): Promise<unknown>;
 
   // Migration methods
-  exportAllEvents (): any[];
-  importAllEvents (events: any[]): Promise<void>;
+  exportAllEvents (): AuditEvent[];
+  importAllEvents (events: AuditEvent[]): Promise<void>;
 }
 
 const REQUIRED_METHODS: string[] = [
@@ -75,13 +79,13 @@ const REQUIRED_METHODS: string[] = [
   'importAllEvents'
 ];
 
-function validateUserAuditDatabase (instance: any): UserAuditDatabase {
+function validateUserAuditDatabase (instance: unknown): UserAuditDatabase {
   for (const method of REQUIRED_METHODS) {
-    if (typeof instance[method] !== 'function') {
+    if (typeof (instance as Record<string, unknown>)[method] !== 'function') {
       throw new Error(`UserAuditDatabase implementation missing method: ${method}`);
     }
   }
-  return instance;
+  return instance as UserAuditDatabase;
 }
 
 export { validateUserAuditDatabase, REQUIRED_METHODS };
