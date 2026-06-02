@@ -15,14 +15,32 @@ const { getUsersRepository } = require('business/src/users/index.ts');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 const { BOOT_MESSAGE } = require('./messages.ts');
 
+type WebhookInstance = {
+  id: string;
+  state?: string;
+  setApiVersion (v: string): void;
+  setSerial (s: string): void;
+  setLogger (l: Logger): void;
+  send (msg: string): Promise<unknown>;
+  startListenting (username: string): void;
+  stop (): void;
+};
+type Logger = {
+  info (msg: string): void;
+  warn (msg: string): void;
+  error (msg: string): void;
+};
+type Settings = { get (key: string): unknown };
+type WebhooksMap = Map<string, WebhookInstance[]>;
+
 class WebhooksService {
-  webhooks: any;
-  repository: any;
-  logger: any;
-  apiVersion: any;
-  serial: any;
-  settings: any;
-  constructor (params: any) {
+  webhooks: WebhooksMap = new Map();
+  repository: InstanceType<typeof WebhooksRepository>;
+  logger: Logger;
+  apiVersion: string = '';
+  serial: string = '';
+  settings: Settings;
+  constructor (params: { logger: Logger; storage: { webhooks: unknown; events: unknown; accesses: unknown }; settings: Settings }) {
     this.logger = params.logger;
     this.repository = new WebhooksRepository(params.storage.webhooks, params.storage.events, params.storage.accesses);
     this.settings = params.settings;
@@ -30,7 +48,7 @@ class WebhooksService {
 
   async start () {
     this.apiVersion = await getAPIVersion();
-    this.serial = this.settings.get('service:serial');
+    this.serial = this.settings.get('service:serial') as string;
     this.logger.info('Loading service with version ' +
             this.apiVersion +
             ' and serial ' +
@@ -57,7 +75,7 @@ class WebhooksService {
     let numWebhooks = 0;
     for (const entry of this.webhooks) {
       const userWebhooks = entry[1];
-      userWebhooks.forEach((w: any) => {
+      userWebhooks.forEach((w: WebhookInstance) => {
         w.setApiVersion(this.apiVersion);
         w.setSerial(this.serial);
         w.setLogger(this.logger);
@@ -69,7 +87,7 @@ class WebhooksService {
 
   async sendBootMessage () {
     for (const entry of this.webhooks) {
-      await Promise.all(entry[1].map(async (webhook: any) => {
+      await Promise.all(entry[1].map(async (webhook: WebhookInstance) => {
         await webhook.send(BOOT_MESSAGE);
       }));
     }
@@ -85,7 +103,7 @@ class WebhooksService {
     }
   }
 
-  async onCreate (usernameWebhook: any) {
+  async onCreate (usernameWebhook: UsernameWebhook) {
     const username = usernameWebhook.username;
     const usersRepository = await getUsersRepository();
     const userId = await usersRepository.getUserIdForUsername(username);
@@ -95,15 +113,15 @@ class WebhooksService {
     })));
   }
 
-  onActivate (usernameWebhook: any) {
+  onActivate (usernameWebhook: UsernameWebhook) {
     this.activateWebhook(usernameWebhook.username, usernameWebhook.webhook);
   }
 
-  onStop (usernameWebhook: any) {
+  onStop (usernameWebhook: UsernameWebhook) {
     this.stopWebhook(usernameWebhook.username, usernameWebhook.webhook.id);
   }
 
-  async addWebhook (username: any, webhook: any) {
+  async addWebhook (username: string, webhook: WebhookInstance) {
     let userWebhooks = this.webhooks.get(username);
     if (userWebhooks == null) {
       userWebhooks = [];
@@ -114,13 +132,13 @@ class WebhooksService {
     this.logger.info(`Loaded webhook ${webhook.id} for ${username}`);
   }
 
-  async activateWebhook (username: any, webhook: any) {
+  async activateWebhook (username: string, webhook: WebhookInstance) {
     const userWebhooks = this.webhooks.get(username);
     if (userWebhooks == null) {
       this.logger.warn(`Could not retrieve webhooks for ${username} to activate ${webhook.id}.`);
       return;
     }
-    const stoppedWebhook = userWebhooks.filter((w: any) => w.id === webhook.id)[0];
+    const stoppedWebhook = userWebhooks.filter((w: WebhookInstance) => w.id === webhook.id)[0];
     if (stoppedWebhook == null) {
       this.logger.warn(`Webhook ${webhook.id} not found for ${username}.`);
       return;
@@ -129,7 +147,7 @@ class WebhooksService {
     this.logger.info(`Reactivated webhook ${stoppedWebhook.id} for ${username}`);
   }
 
-  stopWebhook (username: any, webhookId: any) {
+  stopWebhook (username: string, webhookId: string) {
     const [usersWebhooks, webhook, idx] = this.getWebhook(username, webhookId);
     if (webhook == null || usersWebhooks == null || idx == null) {
       this.logger.warn(`Could not retrieve webhook ${webhookId} for ${username} to stop it.`);
@@ -141,7 +159,7 @@ class WebhooksService {
     this.logger.info(`Stopped webhook ${webhookId} for ${username}`);
   }
 
-  getWebhook (username: any, webhookId: any) {
+  getWebhook (username: string, webhookId: string): [WebhookInstance[] | null, WebhookInstance | null, number | null] {
     const usersWebhooks = this.webhooks.get(username);
     if (usersWebhooks == null) {
       return [null, null, null];
@@ -158,7 +176,7 @@ class WebhooksService {
   stop () {
     this.logger.info('Stopping webhooks service');
     for (const usernameWebhooks of this.webhooks) {
-      usernameWebhooks[1].forEach((w: any) => {
+      usernameWebhooks[1].forEach((w: WebhookInstance) => {
         w.stop();
       });
     }
@@ -174,5 +192,5 @@ type UsernameWebhook = {
   username: string;
   // Webhook is imported as a value via require(); typing it
   // would require also importing the class as a type, which isn't exposed.
-  webhook: any;
+  webhook: WebhookInstance;
 };
