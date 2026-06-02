@@ -26,7 +26,13 @@ export { getUsersRepository };
 /**
  * Repository of the users
  */
+type UserData = { id: string; username: string; password?: string; [k: string]: unknown };
+type Operation = { action: string; key: string; value: unknown; isUnique?: boolean; isActive?: boolean; previousValue?: unknown; [k: string]: unknown };
+
 class UsersRepository {
+  // Storage-layer plumbing shapes are not yet modelled in TS — `any` here
+  // until StorageLayer / Sessions / Accesses / UsersLocalIndex / EventFiles
+  // have formal interfaces.
   storageLayer: any;
   sessionsStorage: any;
   accessStorage: any;
@@ -51,8 +57,8 @@ class UsersRepository {
    */
   async getAll () {
     const usersMap = await this.usersIndex.getAllByUsername();
-    const users: any[] = [];
-    for (const [username, userId] of Object.entries(usersMap)) {
+    const users: UserData[] = [];
+    for (const [username, userId] of Object.entries(usersMap) as Array<[string, string]>) {
       const user = await this.getUserById(userId);
       if (user == null) {
         throw new Error(`Repository inconsistency: user index lists user with id: "${userId}" and username: "${username}", but cannot get it with getUserById()`);
@@ -79,18 +85,18 @@ class UsersRepository {
    */
   async getAllUsersIdAndName () {
     const usersMap = await this.usersIndex.getAllByUsername();
-    const users: any[] = [];
-    for (const [username, userId] of Object.entries(usersMap)) {
+    const users: UserData[] = [];
+    for (const [username, userId] of Object.entries(usersMap) as Array<[string, string]>) {
       users.push({ id: userId, username });
     }
     return users;
   }
 
-  async getUserIdForUsername (username: any) {
+  async getUserIdForUsername (username: string) {
     return await this.usersIndex.getUserId(username);
   }
 
-  async getUserById (userId: any) {
+  async getUserById (userId: string) {
     const userAccountStreamsIds = Object.keys(accountStreams.accountMap);
     const query = {
       state: 'all',
@@ -124,11 +130,11 @@ class UsersRepository {
     return user;
   }
 
-  async usernameExists (username: any) {
+  async usernameExists (username: string) {
     return await this.usersIndex.usernameExists(username);
   }
 
-  async getUserByUsername (username: any) {
+  async getUserByUsername (username: string) {
     const userId = await this.getUserIdForUsername(username);
     if (userId) {
       const user = await this.getUserById(userId);
@@ -137,14 +143,14 @@ class UsersRepository {
     return null;
   }
 
-  async getStorageUsedByUserId (userId: any) {
+  async getStorageUsedByUserId (userId: string) {
     return {
       dbDocuments: (await this.getOnePropertyValue(userId, 'dbDocuments')) || 0,
       attachedFiles: (await this.getOnePropertyValue(userId, 'attachedFiles')) || 0
     };
   }
 
-  async getOnePropertyValue (userId: any, propertyKey: any) {
+  async getOnePropertyValue (userId: string, propertyKey: string) {
     const query = {
       limit: 1,
       state: 'all',
@@ -161,11 +167,11 @@ class UsersRepository {
     return userAccountEvents[0].content;
   }
 
-  async createSessionForUser (username: any, appId: any, transactionSession: any) {
-    return await fromCallback((cb: any) => this.sessionsStorage.generate({ username, appId }, { transactionSession }, cb));
+  async createSessionForUser (username: string, appId: string, transactionSession: unknown) {
+    return await fromCallback((cb: (err: Error | null, value?: unknown) => void) => this.sessionsStorage.generate({ username, appId }, { transactionSession }, cb));
   }
 
-  async createPersonalAccessForUser (userId: any, token: any, appId: any, transactionSession: any) {
+  async createPersonalAccessForUser (userId: string, token: string, appId: string, transactionSession: unknown) {
     const accessData = {
       token,
       name: appId,
@@ -175,7 +181,7 @@ class UsersRepository {
       modified: timestamp.now(),
       modifiedBy: UserRepositoryOptions.SYSTEM_USER_ACCESS_ID
     };
-    return await fromCallback((cb: any) => this.accessStorage.insertOne({ id: userId }, accessData, cb, {
+    return await fromCallback((cb: (err: Error | null, value?: unknown) => void) => this.accessStorage.insertOne({ id: userId }, accessData, cb, {
       transactionSession
     }));
   }
@@ -187,9 +193,9 @@ class UsersRepository {
     return true;
   }
 
-  async insertOne (user: any, withSession = false) {
+  async insertOne (user: UserData, withSession = false) {
     // Create the User at a Platform Level
-    const operations: any[] = [];
+    const operations: Operation[] = [];
     for (const key of accountStreams.indexedFieldNames) {
       // use default value is null;
       const value = user[key] != null
@@ -222,8 +228,8 @@ class UsersRepository {
       if (withSession &&
                 this.validateAllStorageObjectsInitialized() &&
                 user.appId != null) {
-        const token = await this.createSessionForUser(user.username, user.appId, localTransaction.transactionSession);
-        const access = await this.createPersonalAccessForUser(user.id, token, user.appId, localTransaction.transactionSession);
+        const token = await this.createSessionForUser(user.username, user.appId as string, localTransaction.transactionSession) as string;
+        const access = await this.createPersonalAccessForUser(user.id, token, user.appId as string, localTransaction.transactionSession) as { id: string; token: string };
         accessId = access?.id;
         user.token = access.token;
       }
@@ -231,7 +237,7 @@ class UsersRepository {
       // add the user to local index
       await this.usersIndex.addUser(user.username, user.id);
       // Store account fields directly in userAccountStorage (Platform already called above)
-      const accountData = user.getFullAccount();
+      const accountData = (user.getFullAccount as () => Record<string, unknown>)();
       const accountLeavesMap = accountStreams.accountLeavesMap;
       const now = timestamp.now();
       for (const [streamId, stream] of Object.entries(accountLeavesMap) as Array<[string, any]>) {
@@ -249,7 +255,7 @@ class UsersRepository {
         await this.userAccountStorage.addPasswordHash(user.id, user.passwordHash, user.accessId);
       } else {
         // regular user creation
-        await this.setUserPassword(user.id, user.password, user.accessId);
+        await this.setUserPassword(user.id, user.password!, user.accessId as string);
       }
     });
     // TODO(B-2026-05-27-5, 2026-05-27): re-enable CMC reserved-parent
@@ -259,7 +265,7 @@ class UsersRepository {
     return user;
   }
 
-  async updateOne (user: any, update: any, accessId: any) {
+  async updateOne (user: UserData, update: Partial<UserData>, accessId: string) {
     // change password into hash if it exists
     if (update.password) {
       await this.setUserPassword(user.id, update.password, accessId);
@@ -291,7 +297,7 @@ class UsersRepository {
     });
   }
 
-  async deleteOne (userId: any, username: any) {
+  async deleteOne (userId: string, username: string) {
     // Fetch user object BEFORE any deletions — platform.deleteUser needs it
     // for unique field cleanup (e.g. email).
     const user = await this.getUserById(userId);
@@ -317,7 +323,7 @@ class UsersRepository {
 
   // -------------------- Password Management ------------------- //
 
-  async checkUserPassword (userId: any, password: any) {
+  async checkUserPassword (userId: string, password: string) {
     const currentPass = await this.userAccountStorage.getPasswordHash(userId);
     let isValid = false;
     if (currentPass != null) {
@@ -330,13 +336,13 @@ class UsersRepository {
    * @param userId  undefined
    * @param password  undefined
    */
-  async setUserPassword (userId: any, password: any, accessId = 'system', modifiedTime?: any) {
+  async setUserPassword (userId: string, password: string, accessId = 'system', modifiedTime?: number) {
     const passwordHash = await encryption.hash(password);
     await this.userAccountStorage.addPasswordHash(userId, passwordHash, accessId, modifiedTime);
   }
 }
 
-let usersRepository: any = null;
+let usersRepository: UsersRepository | null = null;
 let usersRepositoryInitializing = false;
 
 async function getUsersRepository () {
