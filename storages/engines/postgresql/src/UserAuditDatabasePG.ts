@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Readable as ReadableType } from 'node:stream';
 const require = createRequire(import.meta.url);
 
 const { Readable } = require('stream');
@@ -13,12 +14,38 @@ const { Readable } = require('stream');
 const ALL_EVENTS_TAG = '..';
 const IDS_SEPARATOR = ' ';
 
-class UserAuditDatabasePG {
-  db: any;
-  userId: string;
-  logger: any;
+type AuditEvent = {
+  id?: string;
+  streamIds?: string[];
+  time?: number;
+  endTime?: number | null;
+  deleted?: number | null;
+  headId?: string | null;
+  type?: string;
+  content?: unknown;
+  description?: string;
+  clientData?: unknown;
+  integrity?: string;
+  attachments?: unknown;
+  trashed?: boolean;
+  created?: number;
+  createdBy?: string;
+  modified?: number;
+  modifiedBy?: string;
+  [k: string]: unknown;
+};
+type AuditRow = Record<string, unknown> & { eventid?: string | null; stream_ids?: string | null };
+type QueryItem = { type: string; content?: any };
+type Params = { query: QueryItem[]; options?: { sort?: Record<string, number>; limit?: number | string; skip?: number | string }; streams?: unknown };
 
-  constructor (db: any, userId: string, logger: any) {
+type LoggerLike = { getLogger (name: string): unknown };
+
+class UserAuditDatabasePG {
+  db: any; // DatabasePG — not yet typed externally
+  userId: string;
+  logger: unknown;
+
+  constructor (db: any, userId: string, logger: LoggerLike) {
     this.db = db;
     this.userId = userId;
     this.logger = logger.getLogger('audit-user-pg');
@@ -32,7 +59,7 @@ class UserAuditDatabasePG {
     // No-op: connection pool is shared
   }
 
-  async getEvents (params: any): Promise<any[]> {
+  async getEvents (params: Params): Promise<AuditEvent[]> {
     params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
     params.query.push({ type: 'equal', content: { field: 'head_id', value: null } });
     const { sql, values } = buildSelectQuery(this.userId, params);
@@ -40,16 +67,16 @@ class UserAuditDatabasePG {
     return res.rows.map(fromDB);
   }
 
-  getEventsStreamed (params: any): any {
+  getEventsStreamed (params: Params): ReadableType {
     params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
     params.query.push({ type: 'equal', content: { field: 'head_id', value: null } });
     const { sql, values } = buildSelectQuery(this.userId, params);
     const db = this.db;
-    let rows: any[] | null = null;
+    let rows: AuditRow[] | null = null;
     let idx = 0;
     return new Readable({
       objectMode: true,
-      async read (this: any) {
+      async read (this: ReadableType) {
         if (rows === null) {
           const res = await db.query(sql, values);
           rows = res.rows;
@@ -63,14 +90,14 @@ class UserAuditDatabasePG {
     });
   }
 
-  getEventDeletionsStreamed (deletedSince: number): any {
+  getEventDeletionsStreamed (deletedSince: number): ReadableType {
     const db = this.db;
     const userId = this.userId;
-    let rows: any[] | null = null;
+    let rows: AuditRow[] | null = null;
     let idx = 0;
     return new Readable({
       objectMode: true,
-      async read (this: any) {
+      async read (this: ReadableType) {
         if (rows === null) {
           const res = await db.query(
             'SELECT * FROM audit_events WHERE user_id = $1 AND deleted >= $2 ORDER BY deleted DESC',
@@ -87,7 +114,7 @@ class UserAuditDatabasePG {
     });
   }
 
-  async getOneEvent (eventId: string): Promise<any | null> {
+  async getOneEvent (eventId: string): Promise<AuditEvent | null> {
     const res = await this.db.query(
       'SELECT * FROM audit_events WHERE user_id = $1 AND eventid = $2',
       [this.userId, eventId]
@@ -118,11 +145,11 @@ class UserAuditDatabasePG {
       [this.userId, IDS_SEPARATOR]
     );
     return res.rows
-      .filter((r: any) => r.term && r.term.startsWith(prefix))
-      .map((r: any) => ({ term: r.term }));
+      .filter((r: { term?: string }) => r.term && r.term.startsWith(prefix))
+      .map((r: { term: string }) => ({ term: r.term }));
   }
 
-  async createEvent (event: any): Promise<void> {
+  async createEvent (event: AuditEvent): Promise<void> {
     const row = toDB(event);
     await this.db.query(
       `INSERT INTO audit_events (user_id, eventid, head_id, stream_ids, time, deleted, end_time, type, content, description, client_data, integrity, attachments, trashed, created, created_by, modified, modified_by)
@@ -131,11 +158,11 @@ class UserAuditDatabasePG {
     );
   }
 
-  async createEventSync (event: any): Promise<void> {
+  async createEventSync (event: AuditEvent): Promise<void> {
     return this.createEvent(event);
   }
 
-  async updateEvent (eventId: string, eventData: any): Promise<any | null> {
+  async updateEvent (eventId: string, eventData: AuditEvent): Promise<AuditEvent | null> {
     const row = toDB(eventData);
     delete row.eventid;
     if (row.stream_ids == null) row.stream_ids = ALL_EVENTS_TAG;
@@ -145,7 +172,7 @@ class UserAuditDatabasePG {
 
     let idx = 3;
     const setClauses: string[] = [];
-    const values: any[] = [this.userId, eventId];
+    const values: unknown[] = [this.userId, eventId];
     for (const field of fields) {
       setClauses.push(`${field} = $${idx}`);
       values.push(row[field]);
@@ -160,7 +187,7 @@ class UserAuditDatabasePG {
     return fromDB(Object.assign({}, row, { eventid: eventId }));
   }
 
-  async getEventHistory (eventId: string): Promise<any[]> {
+  async getEventHistory (eventId: string): Promise<AuditEvent[]> {
     const res = await this.db.query(
       'SELECT * FROM audit_events WHERE user_id = $1 AND head_id = $2 ORDER BY modified ASC',
       [this.userId, eventId]
@@ -187,7 +214,7 @@ class UserAuditDatabasePG {
     );
   }
 
-  async deleteEvents (params: any): Promise<{ changes: number }> {
+  async deleteEvents (params: Params): Promise<{ changes: number }> {
     if (params.streams) {
       throw new Error('Events DELETE with stream query not supported yet');
     }
@@ -196,7 +223,7 @@ class UserAuditDatabasePG {
     return { changes: res.rowCount };
   }
 
-  async exportAllEvents (): Promise<any[]> {
+  async exportAllEvents (): Promise<AuditRow[]> {
     const res = await this.db.query(
       'SELECT * FROM audit_events WHERE user_id = $1',
       [this.userId]
@@ -204,7 +231,7 @@ class UserAuditDatabasePG {
     return res.rows;
   }
 
-  async importAllEvents (events: any[]): Promise<void> {
+  async importAllEvents (events: AuditRow[]): Promise<void> {
     for (const event of events) {
       const userId = event.user_id || this.userId;
       await this.db.query(
@@ -219,12 +246,12 @@ class UserAuditDatabasePG {
 
 // -- Schema conversion --
 
-function nullIfUndefined (value: any): any {
+function nullIfUndefined<T> (value: T | undefined): T | null {
   return (typeof value !== 'undefined') ? value : null;
 }
 
-function toDB (event: any): any {
-  const row: any = {};
+function toDB (event: AuditEvent): AuditRow {
+  const row: AuditRow = {};
   row.eventid = event.id || null;
   if (event.streamIds == null) {
     row.stream_ids = ALL_EVENTS_TAG;
@@ -250,41 +277,41 @@ function toDB (event: any): any {
   return row;
 }
 
-function fromDB (row: any): any {
-  const event: any = {};
-  event.id = row.eventid;
+function fromDB (row: AuditRow): AuditEvent {
+  const event: AuditEvent = {};
+  event.id = row.eventid as string;
   if (row.stream_ids != null) {
-    const parts = row.stream_ids.split(IDS_SEPARATOR);
+    const parts = (row.stream_ids as string).split(IDS_SEPARATOR);
     parts.pop(); // remove trailing ALL_EVENTS_TAG
     if (parts.length > 0) event.streamIds = parts;
   }
-  if (row.time != null) event.time = row.time;
-  if (row.end_time !== undefined) event.endTime = row.end_time;
-  if (row.deleted != null) event.deleted = row.deleted;
-  if (row.head_id != null) event.headId = row.head_id;
-  if (row.type != null) event.type = row.type;
+  if (row.time != null) event.time = row.time as number;
+  if (row.end_time !== undefined) event.endTime = row.end_time as number | null;
+  if (row.deleted != null) event.deleted = row.deleted as number;
+  if (row.head_id != null) event.headId = row.head_id as string;
+  if (row.type != null) event.type = row.type as string;
   if (row.content != null) {
     event.content = typeof row.content === 'string' ? JSON.parse(row.content) : row.content;
   }
-  if (row.description != null) event.description = row.description;
+  if (row.description != null) event.description = row.description as string;
   if (row.client_data != null) {
-    event.clientData = typeof row.client_data === 'string' ? JSON.parse(row.client_data) : row.client_data;
+    event.clientData = typeof row.client_data === 'string' ? JSON.parse(row.client_data as string) : row.client_data;
   }
-  if (row.integrity != null) event.integrity = row.integrity;
+  if (row.integrity != null) event.integrity = row.integrity as string;
   if (row.attachments != null) {
     event.attachments = typeof row.attachments === 'string' ? JSON.parse(row.attachments) : row.attachments;
   }
   if (row.trashed === true) event.trashed = true;
-  if (row.created != null) event.created = row.created;
-  if (row.created_by != null) event.createdBy = row.created_by;
-  if (row.modified != null) event.modified = row.modified;
-  if (row.modified_by != null) event.modifiedBy = row.modified_by;
+  if (row.created != null) event.created = row.created as number;
+  if (row.created_by != null) event.createdBy = row.created_by as string;
+  if (row.modified != null) event.modified = row.modified as number;
+  if (row.modified_by != null) event.modifiedBy = row.modified_by as string;
   return event;
 }
 
-function fromDBHistory (row: any): any {
+function fromDBHistory (row: AuditRow): AuditEvent {
   const event = fromDB(row);
-  event.id = event.headId;
+  event.id = event.headId!;
   delete event.headId;
   return event;
 }
@@ -306,8 +333,8 @@ function toDBFieldName (field: string): string {
 
 // -- Query builders --
 
-function buildSelectQuery (userId: string, params: any): { sql: string, values: any[] } {
-  const values: any[] = [userId];
+function buildSelectQuery (userId: string, params: Params): { sql: string, values: unknown[] } {
+  const values: unknown[] = [userId];
   let idx = 2;
   const conditions: string[] = ['user_id = $1'];
 
@@ -328,14 +355,14 @@ function buildSelectQuery (userId: string, params: any): { sql: string, values: 
     }
     sql += ' ORDER BY ' + sorts.join(', ');
   }
-  if (params.options?.limit) sql += ' LIMIT ' + parseInt(params.options.limit);
-  if (params.options?.skip) sql += ' OFFSET ' + parseInt(params.options.skip);
+  if (params.options?.limit) sql += ' LIMIT ' + parseInt(String(params.options.limit));
+  if (params.options?.skip) sql += ' OFFSET ' + parseInt(String(params.options.skip));
 
   return { sql, values };
 }
 
-function buildDeleteQuery (userId: string, params: any): { sql: string, values: any[] } {
-  const values: any[] = [userId];
+function buildDeleteQuery (userId: string, params: Params): { sql: string, values: unknown[] } {
+  const values: unknown[] = [userId];
   let idx = 2;
   const conditions: string[] = ['user_id = $1'];
 
@@ -350,7 +377,7 @@ function buildDeleteQuery (userId: string, params: any): { sql: string, values: 
   return { sql: 'DELETE FROM audit_events WHERE ' + conditions.join(' AND '), values };
 }
 
-function convertCondition (item: any, idx: number, values: any[]): { condition: string, nextIdx: number } | null {
+function convertCondition (item: QueryItem, idx: number, values: unknown[]): { condition: string, nextIdx: number } | null {
   const field = toDBFieldName(item.content?.field || '');
   switch (item.type) {
     case 'equal':
