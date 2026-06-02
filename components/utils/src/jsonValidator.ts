@@ -54,7 +54,14 @@ const KEYWORD_TO_ZSCHEMA_CODE: Record<string, string> = {
   const: 'VALUE_NOT_EQUAL'
 };
 
-function paramsToArray (params: any, keyword: any) {
+type AjvError = { keyword?: string; instancePath?: string; message?: string; params?: Record<string, unknown> & { missingProperty?: string; pattern?: string; type?: string; allowedValues?: unknown[]; limit?: number; additionalProperty?: string; allowedValue?: unknown } };
+type ZSchemaError = { code: string; params: unknown[]; message?: string; path: string };
+type JsonSchema = Record<string, unknown>;
+type ValidatorCb = (errs: ZSchemaError[] | null) => void;
+type ValidateOptions = { breakOnFirstError?: boolean; ajv?: Record<string, unknown> };
+type ValidatorFn = { (data: unknown): boolean; errors?: AjvError[] | null };
+
+function paramsToArray (params: AjvError['params'] | null | undefined, keyword: string): unknown[] {
   if (params == null) return [];
   switch (keyword) {
     case 'required': return [params.missingProperty];
@@ -77,8 +84,8 @@ function paramsToArray (params: any, keyword: any) {
   }
 }
 
-function translateError (e: any) {
-  const code = KEYWORD_TO_ZSCHEMA_CODE[e.keyword] || (e.keyword || 'UNKNOWN').toUpperCase();
+function translateError (e: AjvError): ZSchemaError {
+  const code = KEYWORD_TO_ZSCHEMA_CODE[e.keyword!] || (e.keyword || 'UNKNOWN').toUpperCase();
   // z-schema reported `required` errors with a trailing `/` and no field
   // name (e.g. `#/` for root-level missing-required), expecting the consumer
   // (`commonFunctions._addCustomMessage`) to fall back to `params[0]` for
@@ -90,7 +97,7 @@ function translateError (e: any) {
   }
   return {
     code,
-    params: paramsToArray(e.params, e.keyword),
+    params: paramsToArray(e.params, e.keyword!),
     message: e.message,
     path
   };
@@ -105,51 +112,54 @@ function translateError (e: any) {
  * always preserved so self-references (`systemStreamsSchema → $ref:
  * 'systemStreamsSchema'`) keep resolving.
  */
-function stripUnreferencedIds (schema: any) {
+function stripUnreferencedIds (schema: unknown): unknown {
   if (schema == null || typeof schema !== 'object' || Array.isArray(schema)) return schema;
-  const referenced = new Set();
+  const referenced = new Set<string>();
   collectRefs(schema, referenced);
   return cloneStrip(schema, referenced, true);
 }
 
-function collectRefs (node: any, out: any) {
+function collectRefs (node: unknown, out: Set<string>): void {
   if (node == null || typeof node !== 'object') return;
   if (Array.isArray(node)) {
     for (const item of node) collectRefs(item, out);
     return;
   }
-  if (typeof node.$ref === 'string') {
-    out.add(node.$ref);
+  const rec = node as Record<string, unknown>;
+  if (typeof rec.$ref === 'string') {
+    out.add(rec.$ref);
     // Fragment refs like `#error` may target a sub-schema's `id: 'error'`
     // (draft-04 style). Add the bare-id form so stripping doesn't drop it.
-    if (node.$ref.startsWith('#') && !node.$ref.startsWith('#/')) {
-      out.add(node.$ref.slice(1));
+    if (rec.$ref.startsWith('#') && !rec.$ref.startsWith('#/')) {
+      out.add(rec.$ref.slice(1));
     }
   }
-  for (const key of Object.keys(node)) collectRefs(node[key], out);
+  for (const key of Object.keys(rec)) collectRefs(rec[key], out);
 }
 
-function cloneStrip (node: any, referenced: any, isTop: any): any {
+function cloneStrip (node: unknown, referenced: Set<string>, isTop: boolean): unknown {
   if (node == null || typeof node !== 'object') return node;
-  if (Array.isArray(node)) return node.map((item: any) => cloneStrip(item, referenced, false));
-  const result: any = {};
-  for (const key of Object.keys(node)) {
-    if ((key === 'id' || key === '$id') && !isTop && typeof node[key] === 'string') {
+  if (Array.isArray(node)) return node.map((item: unknown) => cloneStrip(item, referenced, false));
+  const rec = node as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(rec)) {
+    const nodeAny = rec as Record<string, string | unknown>;
+    if ((key === 'id' || key === '$id') && !isTop && typeof nodeAny[key] === 'string') {
       // Schema-level id (string value sitting next to type/properties/etc).
       // Keep only if some $ref targets it.
-      if (referenced.has(node[key])) {
-        result[key] = node[key];
+      if (referenced.has(rec[key] as string)) {
+        result[key] = rec[key];
       }
       continue;
     }
     // `id`/`$id` with a non-string value is a property definition (the schema
     // declares a data property called "id"). Recurse normally.
-    result[key] = cloneStrip(node[key], referenced, false);
+    result[key] = cloneStrip(rec[key], referenced, false);
   }
   return result;
 }
 
-function createValidator (options: any = {}) {
+function createValidator (options: ValidateOptions = {}) {
   const ajvOptions = {
     allErrors: !options.breakOnFirstError,
     strict: false,
@@ -158,10 +168,10 @@ function createValidator (options: any = {}) {
     ...(options.ajv || {})
   };
 
-  const compileCache = new WeakMap();
-  let lastErrors: any = null;
+  const compileCache = new WeakMap<JsonSchema, ValidatorFn>();
+  let lastErrors: ZSchemaError[] | null = null;
 
-  function compile (schema: any) {
+  function compile (schema: JsonSchema): ValidatorFn {
     let fn = compileCache.get(schema);
     if (fn != null) return fn;
     // Per-schema fresh ajv. addUsedSchema:true (default) keeps self-refs
@@ -169,12 +179,12 @@ function createValidator (options: any = {}) {
     // collisions between separate validator() callers.
     const ajv = new Ajv(ajvOptions);
     addFormats(ajv);
-    fn = ajv.compile(stripUnreferencedIds(schema));
-    compileCache.set(schema, fn);
-    return fn;
+    const compiled = ajv.compile(stripUnreferencedIds(schema)) as ValidatorFn;
+    compileCache.set(schema, compiled);
+    return compiled;
   }
 
-  function validate (data: any, schema: any, callback: any) {
+  function validate (data: unknown, schema: JsonSchema, callback?: ValidatorCb): boolean | void {
     const fn = compile(schema);
     const valid = fn(data);
     lastErrors = valid ? null : (fn.errors || []).map(translateError);
@@ -186,18 +196,18 @@ function createValidator (options: any = {}) {
     return valid;
   }
 
-  function validateSchema (schema: any) {
+  function validateSchema (schema: JsonSchema): boolean {
     try {
       const ajv = new Ajv(ajvOptions);
       addFormats(ajv);
       ajv.compile(stripUnreferencedIds(schema));
       lastErrors = null;
       return true;
-    } catch (err: any) {
+    } catch (err: unknown) {
       lastErrors = [{
         code: 'SCHEMA_INVALID',
         params: [],
-        message: err.message,
+        message: (err as Error).message,
         path: '#'
       }];
       return false;
