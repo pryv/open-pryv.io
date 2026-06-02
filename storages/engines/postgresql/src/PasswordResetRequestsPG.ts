@@ -12,14 +12,22 @@ const { createId: cuid } = require('@paralleldrive/cuid2');
 
 const DEFAULT_MAX_AGE = 60 * 60 * 1000; // 1 hour
 
+type PgDb = {
+  query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+};
+type ResetRow = { id: string; username: string; expires: Date };
+type ResetDoc = { _id: string; username: string; expires: Date };
+type ImportDoc = { _id?: string; id?: string; username: string; expires: Date | number | string };
+type Cb<T = unknown> = (err: Error | null, result?: T) => void;
+
 /**
  * PostgreSQL implementation of PasswordResetRequests storage.
  */
 class PasswordResetRequestsPG {
-  db: any;
+  db: PgDb;
   options: { maxAge: number };
 
-  constructor (db: any, options?: any) {
+  constructor (db: PgDb, options?: { maxAge?: number }) {
     this.db = db;
     this.options = { maxAge: (options && options.maxAge) || DEFAULT_MAX_AGE };
   }
@@ -27,14 +35,15 @@ class PasswordResetRequestsPG {
   /**
    * Get a password reset request by id and username.
    */
-  get (id: string, username: string, callback: (err: any, result?: any) => void): void {
+  get (id: string, username: string, callback: Cb<ResetDoc | null>): void {
     this.db.query(
       'SELECT id, username, expires FROM password_resets WHERE id = $1 AND username = $2',
       [id, username]
     )
-      .then((res: any) => {
-        if (res.rows.length === 0) return callback(null, null);
-        const row = res.rows[0];
+      .then((res) => {
+        const rows = res.rows as unknown as ResetRow[];
+        if (rows.length === 0) return callback(null, null);
+        const row = rows[0];
         if (new Date() >= new Date(row.expires)) {
           this.destroy(id, username, () => callback(null, null));
           return;
@@ -47,7 +56,7 @@ class PasswordResetRequestsPG {
   /**
    * Create a new password reset request.
    */
-  generate (username: string, callback: (err: any, id?: string) => void): void {
+  generate (username: string, callback: Cb<string>): void {
     const id = cuid();
     const expires = this.getNewExpirationDate();
     this.db.query(
@@ -61,21 +70,21 @@ class PasswordResetRequestsPG {
   /**
    * Delete a password reset request.
    */
-  destroy (id: string, username: string, callback: (err: any, res?: any) => void): void {
+  destroy (id: string, username: string, callback: Cb<unknown>): void {
     this.db.query(
       'DELETE FROM password_resets WHERE id = $1 AND username = $2',
       [id, username]
     )
-      .then((res: any) => callback(null, res))
+      .then((res: unknown) => callback(null, res))
       .catch(callback);
   }
 
   /**
    * Delete all password reset requests.
    */
-  clearAll (callback: (err: any, res?: any) => void): void {
+  clearAll (callback: Cb<unknown>): void {
     this.db.query('DELETE FROM password_resets')
-      .then((res: any) => callback(null, res))
+      .then((res: unknown) => callback(null, res))
       .catch(callback);
   }
 
@@ -85,10 +94,11 @@ class PasswordResetRequestsPG {
 
   // -- Migration methods --
 
-  exportAll (callback: (err: any, docs?: any[]) => void): void {
+  exportAll (callback: Cb<ResetDoc[]>): void {
     this.db.query('SELECT id, username, expires FROM password_resets')
-      .then((res: any) => {
-        const docs = res.rows.map((r: any) => ({
+      .then((res) => {
+        const rows = res.rows as unknown as ResetRow[];
+        const docs = rows.map((r: ResetRow) => ({
           _id: r.id,
           username: r.username,
           expires: r.expires
@@ -98,9 +108,9 @@ class PasswordResetRequestsPG {
       .catch(callback);
   }
 
-  importAll (data: any[], callback: (err: any) => void): void {
+  importAll (data: ImportDoc[], callback: (err: Error | null) => void): void {
     if (!data || data.length === 0) return callback(null);
-    const inserts = data.map((d: any) =>
+    const inserts = data.map((d: ImportDoc) =>
       this.db.query(
         'INSERT INTO password_resets (id, username, expires) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING',
         [d._id || d.id, d.username, d.expires]
