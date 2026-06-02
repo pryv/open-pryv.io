@@ -9,6 +9,8 @@ const require = createRequire(import.meta.url);
 
 const validation = require('./validation.ts');
 
+type FilterEntry = { syslog?: true; storage?: true } | false;
+
 const {
   ALL_METHODS,
   AUDITED_METHODS,
@@ -21,7 +23,7 @@ class AuditFilter {
    * method.id => { syslog: true, storage: true } if any of them is audited
    * method.id => false if none is audited
    */
-  filter: any;
+  filter: { methods: Record<string, FilterEntry> };
 
   /**
    * Builds the syslogFilter & storageFilter maps used by the filter.
@@ -53,10 +55,10 @@ class AuditFilter {
         storageFilterParam.methods.exclude
       )
     };
-    const methodsFullFilter: any = {};
+    const methodsFullFilter: Record<string, FilterEntry> = {};
     for (let i = 0; i < ALL_METHODS.length; i++) {
       const m = ALL_METHODS[i];
-      let methodFilter: any = {};
+      let methodFilter: { syslog?: true; storage?: true } | false = {};
       if (syslogFilter.methods[m]) methodFilter.syslog = true;
       if (storageFilter.methods[m]) methodFilter.storage = true;
       if (Object.keys(methodFilter).length === 0) methodFilter = false;
@@ -65,7 +67,7 @@ class AuditFilter {
 
     this.filter = { methods: methodsFullFilter };
 
-    function buildIncludeMap (baseMethods: any, include: any, exclude: any) {
+    function buildIncludeMap (baseMethods: string[], include: string[], exclude: string[]) {
       include = expandAggregates(include);
       exclude = expandAggregates(exclude);
 
@@ -74,37 +76,37 @@ class AuditFilter {
         if (hasAll(include)) {
           return buildMap(baseMethods);
         } else {
-          return buildMap(baseMethods.filter((m: any) => include.includes(m)));
+          return buildMap(baseMethods.filter((m: string) => include.includes(m)));
         }
       } else if (isOnlyExcludeUsed(include, exclude)) {
         // only exclude
         if (hasAll(exclude)) {
           return {};
         } else {
-          return buildMap(baseMethods.filter((m: any) => !exclude.includes(m)));
+          return buildMap(baseMethods.filter((m: string) => !exclude.includes(m)));
         }
       } else {
         // both included and excluded
         return buildMap(
           baseMethods
-            .filter((m: any) => include.includes(m))
-            .filter((m: any) => !exclude.includes(m))
+            .filter((m: string) => include.includes(m))
+            .filter((m: string) => !exclude.includes(m))
         );
       }
     }
 
-    function isOnlyIncludeUsed (include: any, exclude: any) {
+    function isOnlyIncludeUsed (include: string[], exclude: string[]) {
       return include.length > 0 && exclude.length === 0;
     }
-    function isOnlyExcludeUsed (include: any, exclude: any) {
+    function isOnlyExcludeUsed (include: string[], exclude: string[]) {
       return exclude.length > 0 && include.length === 0;
     }
-    function hasAll (methods: any) {
+    function hasAll (methods: string[]) {
       return methods.includes('all');
     }
-    function expandAggregates (methods: any) {
-      let expandedMethods: any[] = [];
-      methods.forEach((m: any) => {
+    function expandAggregates (methods: string[]) {
+      let expandedMethods: string[] = [];
+      methods.forEach((m: string) => {
         if (!isAggregate(m)) {
           expandedMethods.push(m);
         } else {
@@ -113,16 +115,16 @@ class AuditFilter {
       });
       return expandedMethods;
 
-      function isAggregate (m: any) {
+      function isAggregate (m: string) {
         const parts = m.split('.');
         if (parts.length !== 2) return false;
         if (parts[1] !== 'all') return false;
         return true;
       }
-      function expandAggregate (aggregateMethod: any) {
+      function expandAggregate (aggregateMethod: string) {
         const resource = aggregateMethod.split('.')[0];
-        const expandedMethod: any[] = [];
-        ALL_METHODS.forEach((m: any) => {
+        const expandedMethod: string[] = [];
+        ALL_METHODS.forEach((m: string) => {
           if (m.startsWith(resource + '.')) expandedMethod.push(m);
         });
         return expandedMethod;
@@ -131,9 +133,9 @@ class AuditFilter {
     /**
      * Builds a map with an { i => true } entry for each array element
      */
-    function buildMap (array: any) {
-      const map: any = {};
-      array.forEach((i: any) => {
+    function buildMap (array: string[]) {
+      const map: Record<string, true> = {};
+      array.forEach((i: string) => {
         map[i] = true;
       });
       return map;
@@ -145,7 +147,7 @@ class AuditFilter {
    * otherwise, returns false
    * @param method - the method name. Ex.: events.get
    */
-  isAudited (method: any) {
+  isAudited (method: string) {
     return this.filter.methods[method];
   }
 }
