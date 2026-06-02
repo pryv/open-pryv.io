@@ -147,14 +147,20 @@ describe('[ACCP] Access permissions (sequential)', function () {
       });
 
       it('[P4OM] must validate the custom function at startup time', async () => {
-        const srcPath = path.join(__dirname, 'permissions.fixtures', 'customAuthStepFn.invalid.js');
-        fs.writeFileSync(destPath, fs.readFileSync(srcPath)); // Copy content of srcPath file to destPath
+        const invalidSrc = path.join(__dirname, 'permissions.fixtures', 'customAuthStepFn.invalid.js');
+        // Restore the valid fixture before returning so a worker still mid-fork
+        // from the failed restart can't read the invalid file and emit a fatal
+        // load error that leaks into a later suite.
+        const validBody = fs.readFileSync(srcPath);
+        fs.writeFileSync(destPath, fs.readFileSync(invalidSrc));
         try {
           await server.restartAsync();
         } catch (error) {
           assert.ok(error != null);
           assert.ok(error.message != null);
           assert.ok(/Server failed/.test(error.message));
+        } finally {
+          fs.writeFileSync(destPath, validBody);
         }
       });
     });
