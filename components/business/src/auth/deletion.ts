@@ -15,13 +15,32 @@ const { getLogger } = require('@pryv/boiler');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const setAdminAuditAccessId = setAuditAccessId(AuditAccessIds.ADMIN_TOKEN);
 
+type MethodContext = {
+  user: { id: string; username: string };
+  access?: { isPersonal? (): boolean };
+  authorizationHeader?: string;
+  [k: string]: any;
+};
+type ResultBag = Record<string, unknown>;
+type Next = (err?: unknown) => void;
+type Logger = {
+  info (msg: string): void;
+  warn (msg: string): void;
+  error (a: unknown, b?: unknown): void;
+};
+type Config = { get (key: string): unknown };
+type StorageLayer = {
+  accesses: { removeAll (user: { id: string }, cb: (err: Error | null) => void): void };
+  profile: { removeAll (user: { id: string }, cb: (err: Error | null) => void): void };
+  webhooks: { removeAll (user: { id: string }, cb: (err: Error | null) => void): void };
+  sessions: { remove (query: Record<string, unknown>, cb: (err: Error | null) => void): void };
+};
+
 class Deletion {
-  logger: any;
-
-  storageLayer: any;
-
-  config: any;
-  constructor (logging: any, storageLayer: any, config: any) {
+  logger: Logger;
+  storageLayer: StorageLayer;
+  config: Config;
+  constructor (_logging: unknown, storageLayer: StorageLayer, config: Config) {
     this.logger = getLogger('business:deletion');
     this.storageLayer = storageLayer;
     this.config = config;
@@ -32,8 +51,8 @@ class Deletion {
    * 1- is a valid admin token
    * 2- is a valid personalToken
    */
-  checkIfAuthorized (context: any, params: any, result: any, next: any) {
-    const canDelete = this.config.get('user-account:delete');
+  checkIfAuthorized (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
+    const canDelete = this.config.get('user-account:delete') as string[];
     if (canDelete.includes('adminToken')) {
       if (this.config.get('auth:adminAccessKey') === context.authorizationHeader) {
         return setAdminAuditAccessId(context, params, result, next);
@@ -51,20 +70,19 @@ class Deletion {
     return next(errors.unknownResource());
   }
 
-  async validateUserExists (context: any, params: any, result: any, next: any) {
+  async validateUserExists (context: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
     const usersRepository = await getUsersRepository();
     const user = await usersRepository.getUserByUsername(params.username);
     if (!user || !user.id) {
       return next(errors.unknownResource('user', params.username));
     }
-    context.user = { id: user.id };
-    context.user.username = user.username;
+    context.user = { id: user.id, username: user.username };
     next();
   }
 
-  async validateUserFilepaths (context: any, params: any, result: any, next: any) {
+  async validateUserFilepaths (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const dirPaths = [
-      path.join(this.config.get('storages:engines:filesystem:previewsDirPath'), context.user.id)
+      path.join(this.config.get('storages:engines:filesystem:previewsDirPath') as string, context.user.id)
     ];
     // NOTE User specific paths are constructed by appending the user _id_ to the
     // `paths` constant above.
@@ -80,9 +98,9 @@ class Deletion {
     next();
   }
 
-  async deleteUserFiles (context: any, params: any, result: any, next: any) {
+  async deleteUserFiles (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const dirPaths = [
-      this.config.get('storages:engines:filesystem:previewsDirPath')
+      this.config.get('storages:engines:filesystem:previewsDirPath') as string
     ];
     for (const dirPath of dirPaths) {
       await fs.promises.rm(path.join(dirPath, context.user.id), { recursive: true, force: true });
@@ -90,7 +108,7 @@ class Deletion {
     next();
   }
 
-  async deleteHFData (context: any, params: any, result: any, next: any) {
+  async deleteHFData (_context: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
     const conn = require('storages').seriesConnection;
     if (conn) {
       await conn.dropDatabase(`user.${params.username}`);
@@ -98,7 +116,7 @@ class Deletion {
     next();
   }
 
-  async deleteAuditData (context: any, params: any, result: any, next: any) {
+  async deleteAuditData (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const deleteUserDirectory = require('storage').userLocalDirectory.deleteUserDirectory;
     await deleteUserDirectory(context.user.id);
     next();
@@ -117,9 +135,9 @@ class Deletion {
   //   pseudonymise    — refused at boot by config-validation (depends on the
   //                     not-yet-shipped ALIASES primitive). If somehow seen here
   //                     (override during runtime), fall back to 'erase' + warn-log.
-  async deleteAuditDataStorage (context: any, params: any, result: any, next: any) {
+  async deleteAuditDataStorage (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     try {
-      const mode: string = this.config.get('audit:onUserDelete') || 'erase';
+      const mode: string = (this.config.get('audit:onUserDelete') as string) || 'erase';
       if (mode === 'keep') {
         this.logger.info(
           `audit:onUserDelete=keep — skipping audit erasure for user ${context.user.id} (operator policy)`
@@ -136,13 +154,13 @@ class Deletion {
         await auditStorage.deleteUser(context.user.id);
       }
       next();
-    } catch (err: any) {
+    } catch (err: unknown) {
       this.logger.error(err, err);
       return next(errors.unexpectedError(err));
     }
   }
 
-  async deleteUser (context: any, params: any, result: any, next: any) {
+  async deleteUser (context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
     try {
       const dbCollections = [
         this.storageLayer.accesses,
@@ -150,11 +168,11 @@ class Deletion {
         this.storageLayer.webhooks
       ];
       const removals = dbCollections
-        .map((coll) => fromCallback((cb: any) => coll.removeAll(context.user, cb)));
+        .map((coll) => fromCallback((cb: (err: Error | null) => void) => coll.removeAll(context.user, cb)));
       const usersRepository = await getUsersRepository();
       await usersRepository.deleteOne(context.user.id, context.user.username);
       await Promise.all(removals);
-      await fromCallback((cb: any) => this.storageLayer.sessions.remove({ username: context.user.username }, cb));
+      await fromCallback((cb: (err: Error | null) => void) => this.storageLayer.sessions.remove({ username: context.user.username }, cb));
     } catch (error) {
       this.logger.error(error, error);
       return next(errors.unexpectedError(error));
@@ -164,7 +182,7 @@ class Deletion {
   }
 }
 
-function findNotAccessibleDir (paths: any) {
+function findNotAccessibleDir (paths: string[]): string {
   let notAccessibleDir = '';
   for (const path of paths) {
     let stat;
@@ -174,8 +192,8 @@ function findNotAccessibleDir (paths: any) {
         throw new Error();
       }
       fs.accessSync(path, fs.constants.W_OK + fs.constants.X_OK);
-    } catch (err: any) {
-      if (err.code === 'ENOENT') {
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         // ignore if file does not exist
         continue;
       } else {
