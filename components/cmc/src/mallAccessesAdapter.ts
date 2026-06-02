@@ -39,12 +39,19 @@ const require = createRequire(import.meta.url);
  *     local-apply branch).
  */
 
+type AccessRow = { id: string; token?: string; apiEndpoint?: string; [k: string]: unknown };
+type AccessQuery = Record<string, unknown>;
+type AccessUpdate = Record<string, unknown>;
+type AccessOptions = Record<string, unknown>;
+type UserRef = { id: string };
+type Cb<T = unknown> = (err: Error | null, result?: T) => void;
+
 type StorageLayerAccesses = {
-  insertOne: (user: any, accessData: any, cb: any, opts?: any) => void;
-  findOne?: (user: any, query: any, opts: any, cb: any) => void;
-  find?: (user: any, query: any, opts: any, cb: any) => void;
-  updateOne?: (user: any, query: any, update: any, cb: any) => void;
-  removeOne?: (user: any, query: any, cb: any) => void;
+  insertOne: (user: UserRef, accessData: AccessRow, cb: Cb<AccessRow>, opts?: AccessOptions) => void;
+  findOne?: (user: UserRef, query: AccessQuery, opts: AccessOptions, cb: Cb<AccessRow | null>) => void;
+  find?: (user: UserRef, query: AccessQuery, opts: AccessOptions, cb: Cb<AccessRow[]>) => void;
+  updateOne?: (user: UserRef, query: AccessQuery, update: AccessUpdate, cb: Cb<unknown>) => void;
+  removeOne?: (user: UserRef, query: AccessQuery, cb: Cb<unknown>) => void;
 };
 
 type ApiEndpointBuilder = (username: string, token: string) => string;
@@ -86,13 +93,14 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
      * Create a shared access. Returns the persisted access with
      * `apiEndpoint` populated for outbound delivery.
      */
-    async create (userId: string, params: any): Promise<any> {
+    async create (userId: string, params: Partial<AccessRow> & { name?: string; permissions?: unknown[]; clientData?: Record<string, unknown>; createdBy?: string; modifiedBy?: string; expires?: number }): Promise<AccessRow> {
       const username = await Promise.resolve(resolveUsername(userId));
       if (username == null) {
         throw new Error('cmc-mall-accesses-adapter: cannot resolve username for userId=' + userId);
       }
       const now = Date.now() / 1000;
-      const accessData: any = {
+      const accessData: AccessRow = {
+        id: params.id ?? '',
         token: params.token ?? tokenGen(),
         name: params.name,
         type: params.type ?? 'shared',
@@ -104,10 +112,10 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
         modifiedBy: params.modifiedBy ?? 'system',
       };
       if (params.expires != null) accessData.expires = params.expires;
-      const inserted: any = await fromCallback((cb: any) =>
-        storageAccesses.insertOne({ id: userId }, accessData, cb));
-      const result: any = { ...inserted };
-      result.apiEndpoint = apiEndpointBuild(username, result.token);
+      const inserted = await fromCallback((cb: Cb<AccessRow>) =>
+        storageAccesses.insertOne({ id: userId }, accessData, cb)) as AccessRow;
+      const result: AccessRow = { ...inserted };
+      result.apiEndpoint = apiEndpointBuild(username, result.token as string);
       return result;
     },
 
@@ -116,12 +124,12 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
      * accepts no filters and returns all accesses (CMC code filters
      * client-side on clientData.cmc.role).
      */
-    async get (userId: string, _query?: any): Promise<any[]> {
+    async get (userId: string, _query?: AccessQuery): Promise<AccessRow[]> {
       if (storageAccesses.find == null) {
         throw new Error('cmc-mall-accesses-adapter: storageAccesses.find not available');
       }
-      const accesses: any[] = await fromCallback((cb: any) =>
-        storageAccesses.find!({ id: userId }, {}, { projection: { calls: 0, deleted: 0 } }, cb));
+      const accesses = await fromCallback((cb: Cb<AccessRow[]>) =>
+        storageAccesses.find!({ id: userId }, {}, { projection: { calls: 0, deleted: 0 } }, cb)) as AccessRow[];
       return accesses;
     },
 
@@ -131,13 +139,13 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
      * chain rules — CMC handlers requiring chain validation should
      * call through the api-server's own accesses.update.
      */
-    async update (userId: string, params: any): Promise<any> {
+    async update (userId: string, params: { id: string; update: AccessUpdate }): Promise<AccessRow> {
       if (storageAccesses.updateOne == null) {
         throw new Error('cmc-mall-accesses-adapter: storageAccesses.updateOne not available');
       }
       const username = await Promise.resolve(resolveUsername(userId));
-      const update: any = { ...params.update, modified: Date.now() / 1000 };
-      await fromCallback((cb: any) =>
+      const update: AccessUpdate = { ...params.update, modified: Date.now() / 1000 };
+      await fromCallback((cb: Cb<unknown>) =>
         storageAccesses.updateOne!({ id: userId }, { id: params.id }, update, cb));
       // Cache invalidation — without this the per-user access-logic
       // cache keeps stale permissions and subsequent token-auth
@@ -146,21 +154,21 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
       // fatal.
       try {
         await deps.invalidateAccessCache?.(userId, params.id);
-      } catch (err: any) {
+      } catch (err: unknown) {
         deps.logger?.warn?.('cmc/mall-accesses-adapter: cache invalidation failed (update)', {
-          userId, accessId: params.id, error: String(err?.message || err),
+          userId, accessId: params.id, error: String((err as Error)?.message || err),
         });
       }
       // Re-read the updated access for the caller. Best-effort.
       if (storageAccesses.findOne != null) {
-        const after: any = await fromCallback((cb: any) =>
-          storageAccesses.findOne!({ id: userId }, { id: params.id }, { projection: { calls: 0, deleted: 0 } }, cb));
+        const after = await fromCallback((cb: Cb<AccessRow | null>) =>
+          storageAccesses.findOne!({ id: userId }, { id: params.id }, { projection: { calls: 0, deleted: 0 } }, cb)) as AccessRow | null;
         if (after != null && username != null && after.token != null) {
           after.apiEndpoint = apiEndpointBuild(username, after.token);
         }
-        return after;
+        return after as AccessRow;
       }
-      return { id: params.id, ...update };
+      return { id: params.id, ...update } as AccessRow;
     },
 
     /**
@@ -168,17 +176,17 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
      * is invalidated so a subsequent token-auth resolution doesn't
      * resurrect the access from cache.
      */
-    async delete (userId: string, params: any): Promise<any> {
+    async delete (userId: string, params: { id: string }): Promise<{ id: string }> {
       if (storageAccesses.removeOne == null) {
         throw new Error('cmc-mall-accesses-adapter: storageAccesses.removeOne not available');
       }
-      await fromCallback((cb: any) =>
+      await fromCallback((cb: Cb<unknown>) =>
         storageAccesses.removeOne!({ id: userId }, { id: params.id }, cb));
       try {
         await deps.invalidateAccessCache?.(userId, params.id);
-      } catch (err: any) {
+      } catch (err: unknown) {
         deps.logger?.warn?.('cmc/mall-accesses-adapter: cache invalidation failed (delete)', {
-          userId, accessId: params.id, error: String(err?.message || err),
+          userId, accessId: params.id, error: String((err as Error)?.message || err),
         });
       }
       return { id: params.id };
