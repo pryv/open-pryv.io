@@ -12,9 +12,27 @@ const util = require('util');
 const winston = require('winston');
 require('winston-daily-rotate-file');
 const debugModule = require('debug');
-let winstonInstance: any = null;
-let rootLogger: any = null;
-let customLoggerInstance: any = null;
+
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+type WinstonLogger = {
+  add (transport: unknown): void;
+  debug (msg: string, meta?: unknown): void;
+  info (msg: string, meta?: unknown): void;
+  warn (msg: string, meta?: unknown): void;
+  error (msg: string, meta?: unknown): void;
+  [k: string]: unknown;
+};
+type CustomLogger = {
+  log (level: LogLevel, key: string, message: string, context: unknown): void;
+};
+type BoilerConfig = {
+  get (key: string): any;
+  has? (key: string): boolean;
+};
+
+let winstonInstance: WinstonLogger | null = null;
+let rootLogger: Logger | null = null;
+let customLoggerInstance: CustomLogger | null = null;
 
 // ------ winston formating
 
@@ -24,8 +42,8 @@ let customLoggerInstance: any = null;
  * @param options.time - set to true to for timestamp
  * @param options.align - set to true to allign logs items
  */
-function generateFormat (options: any) {
-  const formats: any[] = [];
+function generateFormat (options: { color?: boolean; time?: boolean; align?: boolean }) {
+  const formats: unknown[] = [];
   if (options.color) {
     formats.push(winston.format.colorize());
   }
@@ -36,10 +54,10 @@ function generateFormat (options: any) {
     formats.push(winston.format.align());
   }
 
-  function printf (info: any) {
+  function printf (info: { timestamp?: string; level: string; message: string; [k: string | symbol]: unknown }) {
     const { timestamp, level, message } = info;
 
-    let items = info[Symbol.for('splat')] || {};
+    let items: any = info[Symbol.for('splat')] || {};
 
     let itemStr = '';
     if (items.length > 0) {
@@ -59,7 +77,7 @@ function generateFormat (options: any) {
     const line = `[${level}]: ${message} ${itemStr}`;
 
     if (options.time) {
-      const ts = timestamp.slice(0, 19).replace('T', ' ');
+      const ts = (timestamp as string).slice(0, 19).replace('T', ' ');
       return ts + ' ' + line;
     } else {
       return line;
@@ -72,7 +90,7 @@ function generateFormat (options: any) {
 /**
  * Helper to pass log instructions to winston
  */
-function globalLog (level: any, key: any, message: any, context: any) {
+function globalLog (level: LogLevel, key: string, message: string, context: unknown) {
   const text = `[${key}] ${message}`;
   if (winstonInstance) {
     winstonInstance[level](text, context);
@@ -88,7 +106,7 @@ function globalLog (level: any, key: any, message: any, context: any) {
  * Config initialize Logger right after beeing loaded
  * This is done by config Only
  */
-async function initLoggerWithConfig (config: any) {
+async function initLoggerWithConfig (config: BoilerConfig) {
   if (winstonInstance) {
     throw new Error('Logger was already initialized');
   }
@@ -105,9 +123,9 @@ async function initLoggerWithConfig (config: any) {
 
   const consoleFormat = generateFormat(logConsole.format);
   const myconsole = new winston.transports.Console({ format: consoleFormat, level: logConsole.level, silent: isSilent });
-  winstonInstance.add(myconsole);
+  winstonInstance!.add(myconsole);
 
-  rootLogger.debug((isSilent ? '** silent ** ' : '') + 'Console with level: ', logConsole.level);
+  rootLogger!.debug((isSilent ? '** silent ** ' : '') + 'Console with level: ', logConsole.level);
 
   // file
   const logFile = config.get('logs:file');
@@ -117,7 +135,7 @@ async function initLoggerWithConfig (config: any) {
       winston.format.json()
     );
 
-    rootLogger.debug('File active: ' + logFile.path);
+    rootLogger!.debug('File active: ' + logFile.path);
     if (logFile.rotation.isActive) {
       const rotatedFiles = new winston.transports.DailyRotateFile({
         filename: logFile.path + '.%DATE%',
@@ -127,7 +145,7 @@ async function initLoggerWithConfig (config: any) {
         maxFiles: logFile.rotation.days ? logFile.rotation.days + 'd' : null,
         format: fileFormat
       });
-      winstonInstance.add(rotatedFiles);
+      winstonInstance!.add(rotatedFiles);
     } else {
       const files = new winston.transports.File({
         filename: logFile.path,
@@ -136,14 +154,14 @@ async function initLoggerWithConfig (config: any) {
         maxFiles: logFile.maxNbFiles || '14d',
         format: fileFormat
       });
-      winstonInstance.add(files);
+      winstonInstance!.add(files);
     }
   }
 
   // custom
   if (config.get('logs:custom:active')) {
     customLoggerInstance = require(config.get('logs:custom:path'));
-    await customLoggerInstance.init(config.get('logs:custom:settings'));
+    await (customLoggerInstance as unknown as { init: (settings: unknown) => Promise<unknown> }).init(config.get('logs:custom:settings'));
   }
 
   // catch all errors.
@@ -154,12 +172,12 @@ async function initLoggerWithConfig (config: any) {
   // this handler ran first and rethrew before mocha saw it.
   if (!config.get('logs:skipUncaughtException') && process.env.NODE_ENV !== 'test') {
     process.on('uncaughtException', function (err) {
-      rootLogger.error('UncaughtException', { message: err.message, name: err.name, stack: err.stack });
+      rootLogger!.error('UncaughtException', { message: err.message, name: err.name, stack: err.stack });
       throw err;
     });
   }
 
-  rootLogger.debug('Logger Initialized');
+  rootLogger!.debug('Logger Initialized');
 }
 
 // --------------- debug utils
@@ -167,12 +185,12 @@ async function initLoggerWithConfig (config: any) {
 /**
  * Dump objects with file and line
  */
-function inspect (...args: any[]): string {
+function inspect (...args: unknown[]): string {
   let line = '';
   try {
     throw new Error();
-  } catch (e: any) {
-    line = e.stack.split(' at ')[2].trim();
+  } catch (e: unknown) {
+    line = (e as Error).stack!.split(' at ')[2].trim();
   }
   let res = '\n * dump at: ' + line;
   for (let i = 0; i < args.length; i++) {
@@ -181,7 +199,7 @@ function inspect (...args: any[]): string {
   return res;
 }
 
-function setGlobalName (name: any) {
+function setGlobalName (name: string) {
   // create root logger
   rootLogger = new Logger(name, null);
   rootLogger.debug('setGlobalName: ' + name);
@@ -189,10 +207,10 @@ function setGlobalName (name: any) {
 
 class Logger {
   name: string;
-  parent: any;
-  debugInstance: any;
+  parent: Logger | null;
+  debugInstance: (...args: unknown[]) => void;
 
-  constructor (name: string, parent: any) {
+  constructor (name: string, parent: Logger | null) {
     this.name = name;
     this.parent = parent;
     this.debugInstance = debugModule('pryv:' + this._name());
@@ -203,10 +221,10 @@ class Logger {
     return this.name;
   }
 
-  log (...args: any[]) {
-    const level = args[0];
-    const message = hideSensitiveValues(args[1]);
-    const context: any[] = [];
+  log (...args: unknown[]) {
+    const level = args[0] as LogLevel;
+    const message = hideSensitiveValues(args[1]) as string;
+    const context: unknown[] = [];
 
     let meta;
     for (let i = 2; i < args.length; i++) {
@@ -220,10 +238,10 @@ class Logger {
     globalLog(level, this._name(), message, meta);
   }
 
-  info (...args: any[]) { this.log('info', ...args); }
-  warn (...args: any[]) { this.log('warn', ...args); }
-  error (...args: any[]) { this.log('error', ...args); }
-  debug (...args: any[]) {
+  info (...args: unknown[]) { this.log('info', ...args); }
+  warn (...args: unknown[]) { this.log('warn', ...args); }
+  error (...args: unknown[]) { this.log('error', ...args); }
+  debug (...args: unknown[]) {
     if (winstonInstance) {
       this.log('debug', ...args);
     }
@@ -234,14 +252,14 @@ class Logger {
     return new Logger(name, this);
   }
 
-  inspect (...args: any[]): string { return inspect(...args); }
+  inspect (...args: unknown[]): string { return inspect(...args); }
 }
 
 /**
  * Get a new logger, or root loggger if no name is provided
  * @param [name]
  */
-function getLogger (name?: any) {
+function getLogger (name?: string) {
   if (!rootLogger) {
     throw new Error('Initalize boiler before using logger');
   }
@@ -255,7 +273,7 @@ export { getLogger, setGlobalName, initLoggerWithConfig, inspectAndHide };
 
 // ----------------- Hide sensite data -------------------- //
 
-function inspectAndHide (o: any) {
+function inspectAndHide (o: unknown): unknown {
   // Bypass values that don't survive JSON.parse(JSON.stringify()) — passing
   // them through would crash the logger (and the caller) on every log call.
   // - functions: JSON.stringify(fn) returns the string 'undefined' (actually undefined),
@@ -276,25 +294,26 @@ function inspectAndHide (o: any) {
   return _inspectAndHide(cloned);
 }
 
-function _inspectAndHide (o: any) {
+function _inspectAndHide (o: unknown): unknown {
   if (typeof o === 'string') {
     return hideSensitiveValues(o);
   }
   if (o !== null && typeof o === 'object') {
     if (Array.isArray(o)) {
-      const res: any[] = [];
+      const res: unknown[] = [];
       for (const item of o) {
         res.push(inspectAndHide(item));
       }
       return res;
     }
 
-    const res: any = {};
-    for (const key of Object.keys(o)) {
+    const res: Record<string, unknown> = {};
+    const obj = o as Record<string, unknown>;
+    for (const key of Object.keys(obj)) {
       if (['password', 'passwordHash', 'newPassword'].includes(key)) {
         res[key] = '(hidden password)';
       } else {
-        res[key] = inspectAndHide(o[key]);
+        res[key] = inspectAndHide(obj[key]);
       }
     }
     return res;
@@ -303,7 +322,7 @@ function _inspectAndHide (o: any) {
 }
 
 // Hides sensitive values (auth tokens and passwords) in log messages
-function hideSensitiveValues (msg: any) {
+function hideSensitiveValues (msg: unknown) {
   if (typeof msg !== 'string') return msg;
   const tokenRegexp = /auth=c([a-z0-9-]*)/g;
   const passwordRegexp = /"(password|passwordHash|newPassword)"[:=]"([^"]*)"/g;
