@@ -192,10 +192,7 @@ describe('[SSDC] SystemStreams config', () => {
     });
   });
   describe('[SD05] When providing a custom system stream that has an invalid type', () => {
-    // SYMPTOM: this assertion checks the SD04 error message
-    // ("cannot be unique and not indexed"), but SD05 tests an invalid
-    // TYPE — wrong error text. Test needs fixing not just unskipping.
-    it.skip('[LU0A] must throw a config error', () => {
+    it('[LU0A] must throw a config error', () => {
       const store = new nconf.Provider();
       store.use('memory');
       store.set('custom:systemStreams:account', [
@@ -204,12 +201,21 @@ describe('[SSDC] SystemStreams config', () => {
           type: 'hellow' // not supporting the (^[a-z0-9-]+/[a-z0-9-]+$) format
         }
       ]);
+      let thrown;
       try {
         systemStreamsConfig.load(store);
         assert.fail('supposed to throw.');
       } catch (err) {
-        assert.ok(err.message.includes('Config error: custom system stream cannot be unique and not indexed. Stream: '));
+        thrown = err;
       }
+      // Schema validation (ajv via in-tree wrapper) throws an array of
+      // validation-detail objects. For a regex-pattern mismatch on the
+      // `type` field, exactly one entry with code 'PATTERN' and a path
+      // ending in `/type` is expected.
+      assert.ok(Array.isArray(thrown), 'expected an array of validation errors, got: ' + typeof thrown);
+      const patternErr = thrown.find((e) => e?.code === 'PATTERN' && /\/type$/.test(String(e?.path || '')));
+      assert.ok(patternErr,
+        'expected a PATTERN validation error on a `/type` path; got: ' + JSON.stringify(thrown));
     });
   });
   describe('[SD06] When providing an "other" custom stream that is unique', () => {
