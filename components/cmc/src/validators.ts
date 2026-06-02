@@ -38,11 +38,11 @@ function fail (...errors: string[]): ValidationResult {
   return { valid: false, errors };
 }
 
-function isPlainObject (v: any): boolean {
+function isPlainObject (v: unknown): v is Record<string, unknown> {
   return v != null && typeof v === 'object' && !Array.isArray(v);
 }
 
-function isLocalizableText (v: any): boolean {
+function isLocalizableText (v: unknown): boolean {
   // { en: 'hello', fr: 'bonjour' } — at least one non-empty string value,
   // all keys 2-3 char lowercase, all values strings.
   if (!isPlainObject(v)) return false;
@@ -55,7 +55,7 @@ function isLocalizableText (v: any): boolean {
   return true;
 }
 
-function isPermissionArray (v: any): { ok: boolean; reason?: string } {
+function isPermissionArray (v: unknown): { ok: boolean; reason?: string } {
   if (!Array.isArray(v)) return { ok: false, reason: 'must be an array' };
   if (v.length === 0) return { ok: false, reason: 'must not be empty' };
   for (let i = 0; i < v.length; i++) {
@@ -74,7 +74,7 @@ function isPermissionArray (v: any): { ok: boolean; reason?: string } {
   return { ok: true };
 }
 
-function checkLocalizable (errors: string[], path: string, v: any, optional = false): void {
+function checkLocalizable (errors: string[], path: string, v: unknown, optional = false): void {
   if (v == null) {
     if (!optional) errors.push(`${path}: required`);
     return;
@@ -86,7 +86,7 @@ function checkLocalizable (errors: string[], path: string, v: any, optional = fa
 
 // --- Per-event-type validators ---
 
-function validateRequest (content: any): ValidationResult {
+function validateRequest (content: unknown): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
@@ -151,7 +151,7 @@ function validateRequest (content: any): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
-function validateAccept (content: any): ValidationResult {
+function validateAccept (content: unknown): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
@@ -201,7 +201,7 @@ function validateAccept (content: any): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
-function validateRefuse (content: any): ValidationResult {
+function validateRefuse (content: unknown): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
@@ -214,7 +214,7 @@ function validateRefuse (content: any): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
-function validateRevoke (content: any): ValidationResult {
+function validateRevoke (content: unknown): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
@@ -227,7 +227,7 @@ function validateRevoke (content: any): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
-function validateChat (content: any): ValidationResult {
+function validateChat (content: unknown): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
@@ -240,7 +240,7 @@ function validateChat (content: any): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
-function validateSystemAlert (content: any): ValidationResult {
+function validateSystemAlert (content: unknown): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
@@ -263,7 +263,7 @@ function validateSystemAlert (content: any): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
-function validateSystemAck (content: any): ValidationResult {
+function validateSystemAck (content: unknown): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
@@ -277,7 +277,7 @@ function validateSystemAck (content: any): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
-function validateSystemScopeRequest (content: any): ValidationResult {
+function validateSystemScopeRequest (content: unknown): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
@@ -292,7 +292,7 @@ function validateSystemScopeRequest (content: any): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
-function validateSystemScopeUpdate (content: any): ValidationResult {
+function validateSystemScopeUpdate (content: unknown): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
@@ -323,16 +323,18 @@ function validateSystemScopeUpdate (content: any): ValidationResult {
 
 // --- Dispatcher ---
 
-function validateBackChannel (content: any): ValidationResult {
-  if (content == null || typeof content !== 'object') {
+function validateBackChannel (raw: unknown): ValidationResult {
+  if (!isPlainObject(raw)) {
     return fail('content: must be an object');
   }
+  const content = raw;
   const errors: string[] = [];
-  if (content.from == null || typeof content.from.username !== 'string' ||
-      typeof content.from.host !== 'string') {
+  const from = content.from as { username?: unknown; host?: unknown } | undefined;
+  if (from == null || typeof from.username !== 'string' ||
+      typeof from.host !== 'string') {
     errors.push('content.from.{username,host}: required strings');
   }
-  if (typeof content.apiEndpoint !== 'string' || content.apiEndpoint.length === 0) {
+  if (typeof content.apiEndpoint !== 'string' || (content.apiEndpoint as string).length === 0) {
     errors.push('content.apiEndpoint: required non-empty string');
   }
   // remoteChatStreamId / remoteCollectorStreamId / appCode are optional
@@ -341,7 +343,7 @@ function validateBackChannel (content: any): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
-const VALIDATORS: { [k: string]: (content: any) => ValidationResult } = {
+const VALIDATORS: { [k: string]: (content: unknown) => ValidationResult } = {
   [C.ET_REQUEST]: validateRequest,
   [C.ET_ACCEPT]: validateAccept,
   [C.ET_REFUSE]: validateRefuse,
@@ -358,7 +360,7 @@ function isKnownEventType (eventType: string): boolean {
   return Object.prototype.hasOwnProperty.call(VALIDATORS, eventType);
 }
 
-function validate (eventType: string, content: any): ValidationResult {
+function validate (eventType: string, content: unknown): ValidationResult {
   if (!isKnownEventType(eventType)) {
     return fail(`unknown cmc event type: ${eventType}`);
   }
