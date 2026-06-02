@@ -23,7 +23,11 @@ const algorithm = config.get('integrity:algorithm');
  * @private
  * mapping algo codes to https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Digest supported codes
  */
-const subResourceCodeToDigestMap: any = {
+type Event = { integrity?: string; [k: string]: unknown };
+type Access = { integrity?: string; [k: string]: unknown };
+type IntegrityResult = { integrity: string; key: string };
+
+const subResourceCodeToDigestMap: Record<string, string> = {
   sha256: 'SHA-256',
   sha512: 'SHA-512',
   sha1: 'SHA',
@@ -33,7 +37,7 @@ const subResourceCodeToDigestMap: any = {
 /**
  * @param subResourceIntegrity in the form of `<algo>-<hash>` example `sha256-uZKmWZ+CQ7UY3GUqFWD4sNPPEUKm8OPcAWr4780Acnk=`
  */
-function getHTTPDigestHeaderForAttachment (subResourceIntegrity: any) {
+function getHTTPDigestHeaderForAttachment (subResourceIntegrity: string): string | null {
   const splitAt = subResourceIntegrity.indexOf('-');
   const algo = subResourceIntegrity.substr(0, splitAt);
   const sum = subResourceIntegrity.substr(splitAt + 1);
@@ -47,7 +51,7 @@ function getHTTPDigestHeaderForAttachment (subResourceIntegrity: any) {
 // IntegrityHash were JSDoc-only references that have no real TS declaration.
 type IntegrityAttachments = {
   isActive: boolean; // Setting: Add integrity hash to attachment if true
-  MulterIntegrityDiskStorage: any;
+  MulterIntegrityDiskStorage: unknown;
 };
 const attachments = {
   isActive: attachmentsIsActive,
@@ -81,27 +85,27 @@ const attachments = {
  */
 
 // Setting and computation tools for a Pryv.io db item
-type IntegrityItem = {
+type IntegrityItem<T> = {
   isActive: boolean; // Setting: Add integrity hash to item if true
-  compute: any; // was IntegrityCompute (JSDoc-only)
-  set: any; // was IntegritySet (JSDoc-only)
-  hash: any; // was IntegrityHash (JSDoc-only)
+  compute: (item: T) => IntegrityResult;
+  set: (item: T) => T | undefined;
+  hash: (item: T) => string;
 };
 // ------------- events ------------------ //
 
-function computeEvent (event: any) {
+function computeEvent (event: Event): IntegrityResult {
   return stableRepresentation.event.compute(event, algorithm);
 }
 
-function keyEvent (event: any) {
+function keyEvent (event: Event): string {
   return stableRepresentation.event.key(event);
 }
 
-function hashEvent (event: any) {
+function hashEvent (event: Event): string {
   return stableRepresentation.event.hash(event, algorithm);
 }
 
-function setOnEvent (event: any) {
+function setOnEvent (event: Event): Event | undefined {
   delete event.integrity;
   if (!eventsIsActive) return;
   event.integrity = hashEvent(event);
@@ -118,19 +122,19 @@ const events = {
 
 // ------------- accesses ------------------ //
 
-function computeAccess (access: any) {
+function computeAccess (access: Access): IntegrityResult {
   return stableRepresentation.access.compute(access, algorithm);
 }
 
-function keyAccess (access: any) {
+function keyAccess (access: Access): string {
   return stableRepresentation.access.key(access);
 }
 
-function hashAccess (access: any) {
+function hashAccess (access: Access): string {
   return stableRepresentation.access.hash(access, algorithm);
 }
 
-function setOnAccess (access: any) {
+function setOnAccess (access: Access): Access | undefined {
   if (!accessesIsActive) return;
   access.integrity = hashAccess(access);
   return access;
