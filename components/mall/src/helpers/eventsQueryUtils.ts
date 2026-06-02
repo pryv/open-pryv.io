@@ -11,6 +11,30 @@ const require = createRequire(import.meta.url);
 
 const storeDataUtils = require('./storeDataUtils.ts');
 
+type StreamId = string;
+type StreamQueryItem = {
+  any?: StreamId[];
+  not?: StreamId[];
+  and?: StreamQueryItem[];
+};
+type EventsParams = {
+  id?: string;
+  headId?: string;
+  streams?: StreamQueryItem[];
+  state?: 'trashed' | 'all' | 'default' | null;
+  types?: string[];
+  fromTime?: number;
+  toTime?: number;
+  modifiedSince?: number;
+  running?: boolean;
+  sortAscending?: boolean;
+  skip?: number;
+  limit?: number;
+  [k: string]: unknown;
+};
+type StoreContext = { storeId: string | null };
+type ParamsByStore = Record<string, EventsParams>;
+
 export { getParamsByStore, getStoreOptionsFromParams, getStoreQueryFromParams, normalizeStreamQuery };
 
 /**
@@ -33,8 +57,8 @@ export { getParamsByStore, getStoreOptionsFromParams, getStoreQueryFromParams, n
  * @throws {Error} if query.id is set and params.streams is querying a different store
  * @throws {Error} if query.streams contains stream queries that implies different stores
  */
-function getParamsByStore (params: any) {
-  let singleStoreId: any, singleStoreEventId: any;
+function getParamsByStore (params: EventsParams): ParamsByStore {
+  let singleStoreId: string | undefined, singleStoreEventId: string | undefined;
   if (params.id) { // a specific event is queried so we have a singleStore query;
     [singleStoreId, singleStoreEventId] = storeDataUtils.parseStoreIdAndStoreItemId(params.id);
   }
@@ -44,13 +68,13 @@ function getParamsByStore (params: any) {
   }
 
   // repack stream queries by store
-  const streamQueriesByStore: any = {};
+  const streamQueriesByStore: Record<string, StreamQueryItem[]> = {};
   if (params.streams) { // must be an array
     for (const streamQuery of params.streams) {
-      const context: { storeId: any } = { storeId: null };
+      const context: StoreContext = { storeId: null };
 
       const resCleanQuery = getStoreStreamQuery(streamQuery, context);
-      const storeId = context.storeId;
+      const storeId = context.storeId!;
 
       if (singleStoreId && singleStoreId !== storeId) throw new Error('streams query must be from the same store than the requested event');
       streamQueriesByStore[storeId] ??= [];
@@ -58,7 +82,7 @@ function getParamsByStore (params: any) {
     }
   }
 
-  const paramsByStore: any = {};
+  const paramsByStore: ParamsByStore = {};
   for (const storeId of Object.keys(streamQueriesByStore)) {
     paramsByStore[storeId] = structuredClone(params);
     paramsByStore[storeId].streams = streamQueriesByStore[storeId];
@@ -80,21 +104,21 @@ function getParamsByStore (params: any) {
   return paramsByStore;
 }
 
-function getStoreStreamQuery (streamQuery: any, context: any) {
-  const storeStreamQuery: any = {};
-  for (const operator of ['any', 'not']) { // for each possible segment of query
+function getStoreStreamQuery (streamQuery: StreamQueryItem, context: StoreContext): StreamQueryItem {
+  const storeStreamQuery: StreamQueryItem = {};
+  for (const operator of ['any', 'not'] as const) { // for each possible segment of query
     if (streamQuery[operator]) {
-      for (const streamId of streamQuery[operator]) {
+      for (const streamId of streamQuery[operator]!) {
         const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamId);
         context.storeId ??= storeId;
         if (context.storeId !== storeId) throw new Error('Streams within a query must belong to the same store');
         storeStreamQuery[operator] ??= [];
-        storeStreamQuery[operator].push(storeStreamId);
+        storeStreamQuery[operator]!.push(storeStreamId);
       }
     }
   }
   if (streamQuery.and) {
-    storeStreamQuery.and = streamQuery.and.map((sq: any) => { return getStoreStreamQuery(sq, context); });
+    storeStreamQuery.and = streamQuery.and.map((sq: StreamQueryItem) => { return getStoreStreamQuery(sq, context); });
   }
   return storeStreamQuery;
 }
@@ -104,18 +128,18 @@ function getStoreStreamQuery (streamQuery: any, context: any) {
  *      `normalizeStreamQuery` is added, the full process should be refactored in order to avoid this step.
  *
  */
-function normalizeStreamQuery (streamQuery: any) {
+function normalizeStreamQuery (streamQuery: StreamQueryItem[] | null | undefined): Array<{ any?: StreamId[]; not?: StreamId[] }>[] | null {
   if (streamQuery == null) return null;
-  const res: any[] = [];
+  const res: Array<{ any?: StreamId[]; not?: StreamId[] }>[] = [];
   for (const streamQueryItem of streamQuery) {
     res.push(normalizeStreamQueryItem(streamQueryItem));
   }
   return res;
 }
 
-function normalizeStreamQueryItem (streamQueryItem: any) {
-  const normalizedStreamQuery: any[] = [];
-  const not: any[] = []; // we need only one "not"
+function normalizeStreamQueryItem (streamQueryItem: StreamQueryItem): Array<{ any?: StreamId[]; not?: StreamId[] }> {
+  const normalizedStreamQuery: Array<{ any?: StreamId[]; not?: StreamId[] }> = [];
+  const not: StreamId[] = []; // we need only one "not"
   if (streamQueryItem.any != null) normalizedStreamQuery.push({ any: streamQueryItem.any });
   if (streamQueryItem.not != null) not.push(...streamQueryItem.not);
   if (streamQueryItem.and != null) {
@@ -127,7 +151,7 @@ function normalizeStreamQueryItem (streamQueryItem: any) {
   if (not.length > 0) normalizedStreamQuery.push({ not });
   return normalizedStreamQuery;
 
-  function addToNots (notItems: any) {
+  function addToNots (notItems: StreamId[]) {
     for (const item of notItems) {
       if (not.indexOf(item) === -1) not.push(item);
     }
@@ -137,7 +161,7 @@ function normalizeStreamQueryItem (streamQueryItem: any) {
 /**
  * Extract options from params
  */
-function getStoreOptionsFromParams (params: any) {
+function getStoreOptionsFromParams (params: EventsParams) {
   const options = {
     sortAscending: params.sortAscending,
     skip: params.skip,
@@ -150,8 +174,8 @@ function getStoreOptionsFromParams (params: any) {
  * Clean API query params to the store query format.
  * To be called on store-level params just before querying the store.
  */
-function getStoreQueryFromParams (params: any) {
-  const query: any = {
+function getStoreQueryFromParams (params: EventsParams) {
+  const query: Record<string, unknown> = {
     state: params.state || 'default'
   };
   if (params.fromTime != null) { query.fromTime = params.fromTime; }
