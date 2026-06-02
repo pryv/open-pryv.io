@@ -47,23 +47,33 @@ const outbound = require('./outbound.ts');
 
 type Counterparty = { username: string; host: string };
 
+type CmcClientData = {
+  role?: string;
+  appCode?: string;
+  counterparty?: { username?: string; host?: string; apiEndpoint?: string };
+  peerAccessId?: string;
+  [k: string]: unknown;
+};
 type AccessLike = {
   id: string;
   type?: string;
-  clientData?: any;
+  clientData?: { cmc?: CmcClientData; [k: string]: unknown };
 };
+type MallParams = Record<string, unknown>;
 
 type MallLike = {
   accesses: {
-    get: (userId: string, params?: any) => Promise<AccessLike[]>;
-    delete?: (userId: string, params: any) => Promise<any>;
+    get: (userId: string, params?: MallParams) => Promise<AccessLike[]>;
+    delete?: (userId: string, params: MallParams) => Promise<unknown>;
   };
 };
 
+type FetchResponse = { status: number; json?: () => Promise<unknown> };
+type FetchInit = { method?: string; headers?: Record<string, string>; body?: unknown };
 type OutboundDeps = {
-  fetch: (url: string, init?: any) => Promise<any>;
+  fetch: (url: string, init?: FetchInit) => Promise<FetchResponse>;
   timeoutMs?: number;
-  logger?: { debug: Function; warn: Function };
+  logger?: { debug?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void };
 };
 
 type RevokeHandlerResult =
@@ -76,7 +86,7 @@ type RevokeHandlerResult =
   | {
       ok: false;
       reason: string;
-      detail?: any;
+      detail?: Record<string, unknown>;
     };
 
 /**
@@ -93,7 +103,7 @@ type RevokeHandlerResult =
  */
 async function handleRevoke (params: {
   userId: string;
-  triggerEvent: { id?: string; type: string; content: any; streamIds?: string[] };
+  triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
   deps: { mall: MallLike } & OutboundDeps;
 }): Promise<RevokeHandlerResult> {
@@ -128,7 +138,7 @@ async function handleRevoke (params: {
   }
   // Inbox / pre-acceptance: take counterparty from content.
   if (counterparty == null && triggerEvent.content?.counterparty != null) {
-    const cp = triggerEvent.content.counterparty;
+    const cp = triggerEvent.content.counterparty as { username?: string; host?: string };
     if (typeof cp?.username === 'string' && typeof cp?.host === 'string') {
       counterparty = { username: cp.username, host: cp.host };
     }
@@ -185,10 +195,10 @@ async function handleRevoke (params: {
     try {
       await mall.accesses.delete(userId, { id: dataGrantAccess.id });
       deletedIds.push(dataGrantAccess.id);
-    } catch (err: any) {
+    } catch (err: unknown) {
       deps.logger?.warn?.('cmc/handleRevoke: failed to delete data-grant access', {
         accessId: dataGrantAccess.id,
-        error: String(err?.message || err),
+        error: String((err as Error)?.message || err),
       });
     }
   }
@@ -216,9 +226,9 @@ async function handleRevoke (params: {
       });
       peerNotified = !!delivery.ok;
       peerDeliveryStatus = delivery.status;
-    } catch (err: any) {
+    } catch (err: unknown) {
       deps.logger?.warn?.('cmc/handleRevoke: peer notify failed', {
-        error: String(err?.message || err),
+        error: String((err as Error)?.message || err),
       });
     }
   }
@@ -228,10 +238,10 @@ async function handleRevoke (params: {
     try {
       await mall.accesses.delete(userId, { id: counterpartyAccess.id });
       deletedIds.push(counterpartyAccess.id);
-    } catch (err: any) {
+    } catch (err: unknown) {
       deps.logger?.warn?.('cmc/handleRevoke: failed to delete counterparty access', {
         accessId: counterpartyAccess.id,
-        error: String(err?.message || err),
+        error: String((err as Error)?.message || err),
       });
     }
   }
@@ -318,9 +328,9 @@ function findPairedDataGrant (
 async function deliverRevokeViaCapability (params: {
   capabilityUrl: string;
   counterparty: Counterparty;
-  reason: any;
+  reason: unknown;
   deps: OutboundDeps;
-}): Promise<any> {
+}): Promise<{ ok: boolean; status?: number; reason?: string }> {
   return outbound.postToPeer({
     apiEndpoint: params.capabilityUrl,
     path: 'events',
