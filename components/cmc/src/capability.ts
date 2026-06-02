@@ -28,13 +28,15 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const slug = require('./slug.ts');
 
+type AccessRow = { id: string; token?: string; apiEndpoint?: string; clientData?: { cmc?: any }; [k: string]: unknown };
+type MallParams = Record<string, unknown>;
 type MallLike = {
-  streams: { create: (userId: string, params: any) => Promise<any> };
-  events:  { create: (userId: string, params: any) => Promise<any> };
-  accesses:{ create: (userId: string, params: any) => Promise<any>;
-             update?: (userId: string, params: any) => Promise<any>;
-             get?:    (userId: string, params?: any) => Promise<any[]>;
-             delete?: (userId: string, params: any) => Promise<any> };
+  streams: { create: (userId: string, params: MallParams) => Promise<unknown>; delete?: (userId: string, params: MallParams) => Promise<unknown> };
+  events:  { create: (userId: string, params: MallParams) => Promise<unknown> };
+  accesses:{ create: (userId: string, params: MallParams) => Promise<AccessRow>;
+             update?: (userId: string, params: MallParams) => Promise<AccessRow>;
+             get?:    (userId: string, params?: MallParams) => Promise<AccessRow[]>;
+             delete?: (userId: string, params: MallParams) => Promise<unknown> };
 };
 
 /**
@@ -68,7 +70,7 @@ type MintDeps = {
 type RequestEventLike = {
   id?: string;
   type: string;       // 'consent/request-cmc'
-  content: any;
+  content: Record<string, unknown> & { capability?: { mode?: string } };
   streamIds?: string[];
 };
 
@@ -187,7 +189,7 @@ async function mintCapability (params: {
   // accepter has the capabilityUrl (which carries only the token) but
   // not the capId, and can't build :_cmc:_internal:responses:<capId>
   // to POST the accept response into.
-  const offerContent: any = { ...(triggerEvent.content || {}) };
+  const offerContent: Record<string, unknown> = { ...(triggerEvent.content || {}) };
   delete offerContent.capabilityRequested;
   delete offerContent.capabilityUrl;
   delete offerContent.capabilityExpiresAt;
@@ -201,7 +203,7 @@ async function mintCapability (params: {
   // Without this, handleIncomingAccept on the requester side falls back
   // to bare :_cmc:apps:<app-code> and chat/system handlers that target
   // a per-request scope can't find the back-channel access.
-  const triggerStreamIds: any[] = Array.isArray(triggerEvent.streamIds) ? triggerEvent.streamIds : [];
+  const triggerStreamIds: string[] = Array.isArray(triggerEvent.streamIds) ? triggerEvent.streamIds : [];
   for (const sid of triggerStreamIds) {
     if (typeof sid === 'string' && sid.startsWith(C.NS_APPS + ':')) {
       offerContent.originStreamId = sid;
@@ -260,7 +262,7 @@ async function mintCapability (params: {
   const capabilityUrl =
     access.apiEndpoint ??
     (deps.serviceUrlBase != null
-      ? buildApiEndpoint(deps.serviceUrlBase, access.token)
+      ? buildApiEndpoint(deps.serviceUrlBase, access.token!)
       : null);
   if (capabilityUrl == null) {
     throw new Error(
@@ -329,7 +331,7 @@ async function setRequestEventIdOnAccess (params: {
   // shape we need to preserve is unknown without a read. accesses.update
   // top-level merge replaces `clientData` whole-sale, so we read first.
   const list = await deps.mall.accesses.get(userId, {});
-  const acc = (list || []).find((a: any) => a?.id === accessId) ?? null;
+  const acc = (list || []).find((a: AccessRow) => a?.id === accessId) ?? null;
   if (acc == null) return { ok: false, reason: 'capability-access-not-found' };
   const cmcCd = acc.clientData?.cmc;
   if (cmcCd?.requestEventId === requestEventId) {
@@ -362,7 +364,7 @@ async function findCapabilityAccess (params: {
   userId: string;
   capabilityId: string;
   deps: { mall: MallLike };
-}): Promise<any | null> {
+}): Promise<AccessRow | null> {
   const { userId, capabilityId, deps } = params;
   if (deps.mall.accesses?.get == null) return null;
   const list = await deps.mall.accesses.get(userId, {});
@@ -446,7 +448,7 @@ async function recordAccepter (params: {
   const now = deps.now ?? defaultNow;
   const incomingKey =
     accepter.username.toLowerCase() + '|' + slug.slugifyHost(accepter.host);
-  const existing: any[] = Array.isArray(cmcCd?.capability?.acceptedBy)
+  const existing: Array<{ username?: string; host?: string; acceptedAt?: number }> = Array.isArray(cmcCd?.capability?.acceptedBy)
     ? cmcCd.capability.acceptedBy
     : [];
   for (const a of existing) {
@@ -525,9 +527,8 @@ async function markCapabilityInvalidated (params: {
   return { ok: true };
 }
 
-async function deleteStream (mall: MallLike, userId: string, streamId: string): Promise<any> {
-  const m: any = mall.streams;
-  if (typeof m.delete === 'function') return m.delete(userId, { id: streamId });
+async function deleteStream (mall: MallLike, userId: string, streamId: string): Promise<unknown> {
+  if (typeof mall.streams.delete === 'function') return mall.streams.delete(userId, { id: streamId });
   // The MallUserStreams class exposes deleteStream / removeStream / etc. in
   // different repo versions; tolerate missing method (tests inject minimal
   // streams.create only).
@@ -537,10 +538,11 @@ async function deleteStream (mall: MallLike, userId: string, streamId: string): 
 async function ignoreNotFound<T> (p: Promise<T>): Promise<T | undefined> {
   try {
     return await p;
-  } catch (err: any) {
-    const id = err?.id || err?.data?.id;
+  } catch (err: unknown) {
+    const e = err as { id?: string; data?: { id?: string }; message?: string };
+    const id = e?.id || e?.data?.id;
     if (id === 'unknown-resource' || id === 'unknown-referenced-resource') return undefined;
-    const msg = String(err?.message || err);
+    const msg = String(e?.message || err);
     if (msg.includes('not found') || msg.includes('unknown')) return undefined;
     throw err;
   }
