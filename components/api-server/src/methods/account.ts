@@ -5,8 +5,16 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
+
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
+
+type MethodContext = BaseMethodContext & {
+  [key: string]: any;
+};
+type ResultBag = Record<string, unknown>;
+type Next = (err?: unknown) => void;
 
 const errors = require('errors').factory;
 const commonFns = require('./helpers/commonFunctions.ts');
@@ -25,7 +33,7 @@ const ErrorIds = require('errors').ErrorIds;
 const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users/index.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
 
-export default async function (api: any) {
+export default async function (api: { register: (...args: unknown[]) => void }) {
   const config = await ready();
   // Lazy getters instead of slice captures. Each call reads the current
   // config singleton via `.get()` — config.set() and injectTestConfig()
@@ -51,7 +59,7 @@ export default async function (api: any) {
     commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.get.params),
     addUserBusinessToContext,
-    async function (context: any, params: any, result: any, next: any) {
+    async function (context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
         result.account = context.userBusiness.getLegacyAccount();
         next();
@@ -78,9 +86,9 @@ export default async function (api: any) {
    * Validate if given parameters are allowed for the edit
    *
    */
-  function validateThatAllFieldsAreEditable (context: any, params: any, result: any, next: any) {
+  function validateThatAllFieldsAreEditable (_context: MethodContext, params: { update: Record<string, unknown> }, _result: ResultBag, next: Next) {
     const accountMap = accountStreams.accountMap;
-    Object.keys(params.update).forEach((streamId: any) => {
+    Object.keys(params.update).forEach((streamId: string) => {
       const streamIdWithPrefix = accountStreams.toStreamId(streamId);
       if (!accountMap[streamIdWithPrefix]?.isEditable) {
         // if user tries to add new streamId from non editable streamsIds
@@ -102,7 +110,7 @@ export default async function (api: any) {
     setPassword
   );
 
-  async function verifyOldPassword (context: any, params: any, result: any, next: any) {
+  async function verifyOldPassword (context: MethodContext, params: { oldPassword: string }, _result: ResultBag, next: Next) {
     try {
       const isValid = await usersRepository.checkUserPassword(context.user.id, params.oldPassword);
       if (!isValid) {
@@ -115,7 +123,7 @@ export default async function (api: any) {
     }
   }
 
-  async function enforcePasswordRules (context: any, params: any, result: any, next: any) {
+  async function enforcePasswordRules (context: MethodContext, params: { newPassword: string }, _result: ResultBag, next: Next) {
     try {
       await passwordRules.checkCurrentPasswordAge(context.user.id);
       await passwordRules.checkNewPassword(context.user.id, params.newPassword);
@@ -137,12 +145,12 @@ export default async function (api: any) {
     setAuditAccessId(AuditAccessIds.PASSWORD_RESET_REQUEST)
   );
 
-  function generatePasswordResetRequest (context: any, params: any, result: any, next: any) {
+  function generatePasswordResetRequest (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const username = context.user.username;
     if (username == null) {
       return next(new Error('AF: username is not empty.'));
     }
-    passwordResetRequestsStorage.generate(username, function (err: any, token: any) {
+    passwordResetRequestsStorage.generate(username, function (err: Error | null, token: string) {
       if (err) {
         return next(errors.unexpectedError(err));
       }
@@ -151,7 +159,7 @@ export default async function (api: any) {
     });
   }
 
-  async function addUserBusinessToContext (context: any, params: any, result: any, next: any) {
+  async function addUserBusinessToContext (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     try {
       // get user details
       const usersRepository = await getUsersRepository();
@@ -163,7 +171,7 @@ export default async function (api: any) {
     next();
   }
 
-  async function setPassword (context: any, params: any, result: any, next: any) {
+  async function setPassword (context: MethodContext, params: { newPassword: string }, _result: ResultBag, next: Next) {
     try {
       const usersRepository = await getUsersRepository();
       await usersRepository.setUserPassword(context.userBusiness.id, params.newPassword, 'system');
@@ -174,7 +182,7 @@ export default async function (api: any) {
     next();
   }
 
-  function sendPasswordResetMail (context: any, params: any, result: any, next: any) {
+  function sendPasswordResetMail (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     // Skip this step if reset mail is deactivated.
     const emailSettings = getEmail();
     const isMailActivated = emailSettings.enabled;
@@ -216,12 +224,12 @@ export default async function (api: any) {
     setAuditAccessId(AuditAccessIds.PASSWORD_RESET_TOKEN)
   );
 
-  function checkResetToken (context: any, params: any, result: any, next: any) {
+  function checkResetToken (context: MethodContext, params: { resetToken: string }, _result: ResultBag, next: Next) {
     const username = context.user.username;
     if (username == null) {
       return next(new Error('AF: username is not empty.'));
     }
-    passwordResetRequestsStorage.get(params.resetToken, username, function (err: any, reqData: any) {
+    passwordResetRequestsStorage.get(params.resetToken, username, function (err: Error | null, reqData: Record<string, unknown> | null) {
       if (err) {
         return next(errors.unexpectedError(err));
       }
@@ -233,10 +241,10 @@ export default async function (api: any) {
     });
   }
 
-  async function updateDataOnPlatform (context: any, params: any, result: any, next: any) {
+  async function updateDataOnPlatform (context: MethodContext, params: { update: Record<string, unknown> }, _result: ResultBag, next: Next) {
     try {
       const accountMap = accountStreams.accountMap;
-      const operations: any[] = [];
+      const operations: Array<Record<string, unknown>> = [];
       for (const [key, value] of Object.entries(params.update)) {
         // get previous value of the field;
         const previousValue = await usersRepository.getOnePropertyValue(context.user.id, key);
@@ -256,7 +264,7 @@ export default async function (api: any) {
     next();
   }
 
-  async function updateAccount (context: any, params: any, result: any, next: any) {
+  async function updateAccount (context: MethodContext, params: { update: Record<string, unknown> }, _result: ResultBag, next: Next) {
     try {
       const accessId = context.access?.id
         ? context.access.id
@@ -269,18 +277,18 @@ export default async function (api: any) {
     next();
   }
 
-  async function destroyPasswordResetToken (context: any, params: any, result: any, next: any) {
+  async function destroyPasswordResetToken (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const id = context.passwordResetRequest._id;
-    await fromCallback((cb: any) => passwordResetRequestsStorage.destroy(id, context.user.username, cb));
+    await fromCallback((cb: (err?: unknown, result?: unknown) => void) => passwordResetRequestsStorage.destroy(id, context.user.username, cb));
     next();
   }
 
   /**
    * Build response body for the account update
    */
-  async function buildResultData (context: any, params: any, result: any, next: any) {
-    Object.keys(params.update).forEach((key: any) => {
-      context.user[key] = params.update[key];
+  async function buildResultData (context: MethodContext, params: { update: Record<string, unknown> }, result: ResultBag, next: Next) {
+    Object.keys(params.update).forEach((key: string) => {
+      (context.user as Record<string, unknown>)[key] = params.update[key];
     });
     result.account = context.userBusiness.getLegacyAccount();
     next();
