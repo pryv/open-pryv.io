@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const timestamp = require('unix-timestamp');
-const treeUtils = require('../../../../shared/treeUtils.ts');
+const { treeUtils } = require('utils');
 const { _internals } = require('../_internals.ts');
 
 class StreamsSQLite extends BaseStorageSQLite {

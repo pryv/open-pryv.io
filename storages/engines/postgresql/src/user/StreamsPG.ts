@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const { BaseStoragePG } = require('./BaseStoragePG.ts');
 const { _internals } = require('../_internals.ts');
 const timestamp = require('unix-timestamp');
-const treeUtils = require('../../../../shared/treeUtils.ts');
+const { treeUtils } = require('utils');
 
 /**
  * PostgreSQL persistence for streams.

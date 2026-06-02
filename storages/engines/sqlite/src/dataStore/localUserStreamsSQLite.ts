@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const assert = require('assert');
 const ds = require('@pryv/datastore');
-const treeUtils = require('../../../../shared/treeUtils.ts');
+const { treeUtils } = require('utils');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const { _internals } = require('../_internals.ts');
 

@@ -41,7 +41,7 @@ function pick<T extends Record<string, unknown>> (obj: T, keys: string[]): Parti
 }
 
 const { _internals } = require('../_internals.ts');
-const treeUtils = require('../../../../shared/treeUtils.ts');
+const { treeUtils } = require('utils');
 
 const STREAM_PROPERTIES = [
   'id', 'name', 'parentId', 'clientData', 'children',
