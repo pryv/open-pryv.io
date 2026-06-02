@@ -56,8 +56,8 @@ type Counterparty = { username: string; host: string };
 
 type AccessLike = {
   id: string;
-  permissions?: any[];
-  clientData?: any;
+  permissions?: Array<Record<string, unknown>>;
+  clientData?: Record<string, unknown>;
 };
 
 type IncomingAcceptResult =
@@ -72,20 +72,20 @@ type IncomingAcceptResult =
   | {
       ok: false;
       reason: string;
-      detail?: any;
+      detail?: unknown;
     };
 
 type MallLike = {
   accesses: {
-    create: (userId: string, params: any) => Promise<any>;
-    update?: (userId: string, params: any) => Promise<any>;
-    get?: (userId: string, params?: any) => Promise<any[]>;
+    create: (userId: string, params: unknown) => Promise<unknown>;
+    update?: (userId: string, params: unknown) => Promise<unknown>;
+    get?: (userId: string, params?: unknown) => Promise<unknown[]>;
   };
   events: {
-    get: (userId: string, params?: any) => Promise<any[]>;
-    update?: (userId: string, params: any) => Promise<any>;
+    get: (userId: string, params?: unknown) => Promise<unknown[]>;
+    update?: (userId: string, params: unknown) => Promise<unknown>;
   };
-  streams: { create: (userId: string, params: any) => Promise<any> };
+  streams: { create: (userId: string, params: unknown) => Promise<unknown> };
 };
 
 type SelfIdentity = { username: string; host: string };
@@ -101,12 +101,12 @@ type SelfIdentity = { username: string; host: string };
  */
 async function handleIncomingAccept (params: {
   userId: string;
-  acceptEvent: { id?: string; type: string; content: any; streamIds?: string[] };
+  acceptEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: SelfIdentity;
   deps: {
     mall: MallLike;
     logger?: { debug: Function; warn: Function };
-    fetch?: (url: string, init?: any) => Promise<any>;
+    fetch?: (url: string, init?: RequestInit) => Promise<Response>;
     timeoutMs?: number;
   };
 }): Promise<IncomingAcceptResult> {
@@ -117,12 +117,12 @@ async function handleIncomingAccept (params: {
     return { ok: false, reason: 'cmc-incoming-accept-wrong-type', detail: { type: acceptEvent.type } };
   }
 
-  const grantedApiEndpoint: string | undefined = acceptEvent.content?.grantedAccess?.apiEndpoint;
+  const grantedApiEndpoint = (acceptEvent.content?.grantedAccess as { apiEndpoint?: string } | undefined)?.apiEndpoint;
   if (typeof grantedApiEndpoint !== 'string' || grantedApiEndpoint.length === 0) {
     return { ok: false, reason: 'cmc-incoming-accept-no-granted-apiendpoint' };
   }
 
-  const cp = acceptEvent.content?.from;
+  const cp = acceptEvent.content?.from as { username?: string; host?: string } | undefined;
   if (cp == null || typeof cp.username !== 'string' || typeof cp.host !== 'string') {
     return { ok: false, reason: 'cmc-incoming-accept-from-missing' };
   }
@@ -164,8 +164,8 @@ async function handleIncomingAccept (params: {
       const lookup = await resolveRequestScope({ userId, acceptEvent, mall });
       scopeStreamId = lookup.scopeStreamId;
       appCode = lookup.appCode;
-    } catch (err: any) {
-      return { ok: false, reason: 'cmc-incoming-accept-scope-lookup-failed', detail: { message: String(err?.message || err) } };
+    } catch (err: unknown) {
+      return { ok: false, reason: 'cmc-incoming-accept-scope-lookup-failed', detail: { message: String((err as Error)?.message || err) } };
     }
     if (scopeStreamId == null || appCode == null) {
       appCode = 'unknown';
@@ -219,7 +219,7 @@ async function handleIncomingAccept (params: {
   // the REQUESTER side can enforce the contract symmetrically with
   // the accepter side (whose data-grant access carries the same
   // field via buildDataGrantPayload). Absent / null → permissive.
-  const negotiatedFeatures: any = acceptEvent?.content?.features ?? null;
+  const negotiatedFeatures: Record<string, unknown> | null = ((acceptEvent?.content as { features?: Record<string, unknown> | null } | undefined)?.features ?? null) as Record<string, unknown> | null;
   const accessParams = {
     type: 'shared',
     name: accessName,
@@ -245,15 +245,15 @@ async function handleIncomingAccept (params: {
   };
   let access: AccessLike;
   try {
-    access = await mall.accesses.create(userId, accessParams);
-  } catch (err: any) {
+    access = (await mall.accesses.create(userId, accessParams)) as AccessLike;
+  } catch (err: unknown) {
     // Duplicate name (re-delivery / re-run) — look up the existing access
     // and update its clientData + permissions to reflect the latest
     // handshake state. This makes re-delivery idempotent and lets us heal
     // accesses that were minted under earlier (buggy) scope rules.
-    const msg = String(err?.message || err);
-    const isDuplicate = err?.id === 'item-already-exists' ||
-      err?.id === 'duplicate-key' ||
+    const msg = String((err as Error)?.message || err);
+    const isDuplicate = (err as { id?: string })?.id === 'item-already-exists' ||
+      (err as { id?: string })?.id === 'duplicate-key' ||
       /duplicate key|already exists|item-already-exists/i.test(msg);
     if (!isDuplicate) {
       return {
@@ -280,14 +280,14 @@ async function handleIncomingAccept (params: {
           },
         });
         access = updated ?? existing;
-      } catch (uerr: any) {
+      } catch (uerr: unknown) {
         // Partial healing — at least surface the existing access id so the
         // chat/system handlers can still find it; permissions might be
         // stale but the resolver matches on (appCode, counterparty) which
         // we just refreshed in-memory below if update succeeded.
         deps.logger?.warn?.('cmc/handleIncomingAccept: existing back-channel access update failed', {
           accessId: existing.id,
-          error: String(uerr?.message || uerr),
+          error: String((uerr as Error)?.message || uerr),
         });
         access = existing;
       }
@@ -303,21 +303,21 @@ async function handleIncomingAccept (params: {
   // invite trigger event id from `consent/request-cmc` — the one the
   // doctor's app uses with `cmc.revokeRelationship({inviteEventId})`).
   const capabilityIdToConsume = acceptEvent?.content?.capabilityId;
-  let capabilityAccess: any = null;
+  let capabilityAccess: { id?: string; token?: string; [k: string]: unknown } | null = null;
   if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
     try {
       capabilityAccess = await capabilityMod.findCapabilityAccess({
         userId, capabilityId: capabilityIdToConsume, deps: { mall },
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       deps.logger?.warn?.('cmc/handleIncomingAccept: capability access lookup failed (non-fatal)', {
         capabilityId: capabilityIdToConsume,
-        error: String(err?.message || err),
+        error: String((err as Error)?.message || err),
       });
     }
   }
   const inviteEventId: string | null =
-    capabilityAccess?.clientData?.cmc?.requestEventId ?? null;
+    ((capabilityAccess?.clientData as { cmc?: { requestEventId?: string } } | undefined)?.cmc?.requestEventId ?? null) as string | null;
 
   // Mirror the accept to :_cmc:inbox so the requester's app sees it via
   // standard inbox subscription (per INTERNALS.md flow 3 step 11). The
@@ -340,7 +340,7 @@ async function handleIncomingAccept (params: {
       //     `clientData.cmc.requestEventId`. Convenience revoke path
       //     (`cmc.revokeRelationship({inviteEventId})`) matches against
       //     this on the inbox event.
-      const mirrorContent: any = {
+      const mirrorContent: Record<string, unknown> = {
         ...(acceptEvent.content || {}),
         backChannelAccessId: access.id,
       };
@@ -351,9 +351,9 @@ async function handleIncomingAccept (params: {
         time: Date.now() / 1000,
         content: mirrorContent,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       deps.logger?.warn?.('cmc/handleIncomingAccept: inbox mirror failed (non-fatal)', {
-        error: String(err?.message || err),
+        error: String((err as Error)?.message || err),
       });
     }
   }
@@ -387,10 +387,10 @@ async function handleIncomingAccept (params: {
         },
         deps: { fetch: (deps as any).fetch, timeoutMs: (deps as any).timeoutMs, logger: deps.logger },
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel info delivery failed (non-fatal)', {
         peerApiEndpoint: grantedApiEndpoint,
-        error: String(err?.message || err),
+        error: String((err as Error)?.message || err),
       });
     }
   }
@@ -409,7 +409,7 @@ async function handleIncomingAccept (params: {
   // (for the inbox-mirror enrichment). Reuse to avoid a second lookup.
   if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
     try {
-      const capabilityMode = capabilityAccess?.clientData?.cmc?.capability?.mode;
+      const capabilityMode = (capabilityAccess?.clientData as { cmc?: { capability?: { mode?: string } } } | undefined)?.cmc?.capability?.mode;
       if (capabilityMode === 'single-use' || capabilityMode == null) {
         // Default 'single-use' for legacy capabilities minted before
         // this field existed.
@@ -429,10 +429,10 @@ async function handleIncomingAccept (params: {
           deps: { mall },
         });
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       deps.logger?.warn?.('cmc/handleIncomingAccept: capability state-flip failed (non-fatal)', {
         capabilityId: capabilityIdToConsume,
-        error: String(err?.message || err),
+        error: String((err as Error)?.message || err),
       });
     }
   }
@@ -459,7 +459,7 @@ async function handleIncomingAccept (params: {
  */
 async function resolveRequestScope (params: {
   userId: string;
-  acceptEvent: any;
+  acceptEvent: { id?: string; type?: string; content?: Record<string, unknown>; streamIds?: string[]; [k: string]: unknown };
   mall: MallLike;
 }): Promise<{ scopeStreamId: string | null; appCode: string | null }> {
   const { userId, acceptEvent, mall } = params;
@@ -469,7 +469,7 @@ async function resolveRequestScope (params: {
   }
   try {
     const events = await mall.events.get(userId, { id: reqId, limit: 1 });
-    const ev = events?.[0];
+    const ev = events?.[0] as { streamIds?: string[] } | undefined;
     const reqStreamIds: string[] = Array.isArray(ev?.streamIds) ? ev.streamIds : [];
     for (const sid of reqStreamIds) {
       const appCode = C.getAppCode(sid);
@@ -496,9 +496,9 @@ async function findAccessByName (params: {
   if (typeof mall.accesses.get !== 'function') return null;
   try {
     const list = await mall.accesses.get(userId, {});
-    const arr: any[] = Array.isArray(list) ? list : (list as any)?.accesses ?? [];
+    const arr: Array<{ id?: string; name?: string; [k: string]: unknown }> = Array.isArray(list) ? list as any[] : ((list as { accesses?: unknown[] })?.accesses ?? []) as any[];
     for (const a of arr) {
-      if (a?.name === name) return a;
+      if (a?.name === name) return a as AccessLike;
     }
   } catch (_e) {
     return null;
