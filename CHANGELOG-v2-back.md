@@ -1,5 +1,29 @@
 # Changelog - Internal (no API impact)
 
+## ci: publish docker image on git tags only
+
+The `docker` job in `.github/workflows/ci.yml` now publishes
+`pryvio/open-pryv.io` to Docker Hub **only on git tag pushes**, not on
+every push to master. Master receives many no-behaviour-change commits
+(TS tightening, lint, comment edits) and publishing an image per
+commit churned the registry without any release-meaningful artefact.
+
+The release flow becomes:
+
+```
+git tag -a 2.0.0-pre.5 -m "..."
+git push --tags
+```
+
+Published tags:
+- `pryvio/open-pryv.io:<git-tag>` — the named release (e.g. `2.0.0-pre.5`)
+- `pryvio/open-pryv.io:2.0.0-pre` — rolling pointer, updated to the
+  latest tag so hosts already pulling `:2.0.0-pre` keep tracking the
+  current release candidate
+
+The per-sha tag `pryvio/open-pryv.io:2.0.0-pre-<sha>` has been
+retired. Pin hosts to a named tag instead.
+
 ## storages/sqlite + test-helpers: SQLite full-matrix parity
 
 `just test-sqlite all` now matches `just test all` (PG) at exit=0,
