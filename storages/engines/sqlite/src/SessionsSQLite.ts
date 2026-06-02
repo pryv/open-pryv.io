@@ -12,6 +12,8 @@ const { createId: cuid } = require('@paralleldrive/cuid2');
 
 const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
+type SessionData = Record<string, unknown>;
+
 const DEFAULT_MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days
 
 /**
@@ -20,19 +22,19 @@ const DEFAULT_MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days
  * `data` is stored as a JSON TEXT column; `expires` as INTEGER (ms since epoch).
  */
 class SessionsSQLite {
-  db: any;
+  db: any; // better-sqlite3 — not modelled
   options: { maxAge: number };
 
-  constructor (database: any, options?: any) {
+  constructor (database: { getDb: () => any }, options?: { maxAge?: number }) {
     this.db = database.getDb();
     this.options = { maxAge: (options && options.maxAge) || DEFAULT_MAX_AGE };
   }
 
-  private rowToData (row: any): any {
+  private rowToData (row: { data: string | Record<string, unknown> }): SessionData {
     return typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
   }
 
-  get (id: string, callback: (err: any, data?: any) => void): void {
+  get (id: string, callback: (err: Error | null, data?: SessionData | null) => void): void {
     try {
       const row = this.db.prepare('SELECT data, expires FROM sessions WHERE id = ?').get(id);
       if (!row) return callback(null, null);
@@ -41,12 +43,12 @@ class SessionsSQLite {
         return;
       }
       callback(null, this.rowToData(row));
-    } catch (err) {
-      callback(err);
+    } catch (err: unknown) {
+      callback(err as Error | null);
     }
   }
 
-  getMatching (data: any, callback: (err: any, id?: any) => void): void {
+  getMatching (data: Record<string, unknown>, callback: (err: Error | null, id?: string | null) => void): void {
     try {
       const keys = Object.keys(data || {});
       if (keys.length === 0) return callback(null, null);
@@ -59,14 +61,14 @@ class SessionsSQLite {
         return;
       }
       callback(null, row.id);
-    } catch (err) {
-      callback(err);
+    } catch (err: unknown) {
+      callback(err as Error | null);
     }
   }
 
-  generate (data: any, options: any, callback?: (err: any, id?: string) => void): void {
+  generate (data: Record<string, unknown>, options: unknown, callback?: (err: Error | null, id?: string) => void): void {
     if (typeof options === 'function') {
-      callback = options;
+      callback = options as (err: Error | null, id?: string) => void;
       options = {};
     }
     const id = cuid();
@@ -80,40 +82,40 @@ class SessionsSQLite {
       .catch(callback!);
   }
 
-  touch (id: string, callback: (err: any, res?: any) => void): void {
+  touch (id: string, callback: (err: Error | null, res?: unknown) => void): void {
     const expires = this.getNewExpirationMs();
     concurrentSafeWrite.execute(() => {
       return this.db.prepare('UPDATE sessions SET expires = ? WHERE id = ?').run(expires, id);
     })
-      .then((res: any) => callback(null, res))
+      .then((res: unknown) => callback(null, res))
       .catch(callback);
   }
 
-  expireNow (id: string, callback: (err: any, res?: any) => void): void {
+  expireNow (id: string, callback: (err: Error | null, res?: unknown) => void): void {
     concurrentSafeWrite.execute(() => {
       return this.db.prepare('UPDATE sessions SET expires = ? WHERE id = ?').run(Date.now(), id);
     })
-      .then((res: any) => callback(null, res))
+      .then((res: unknown) => callback(null, res))
       .catch(callback);
   }
 
-  destroy (id: string, callback: (err: any, res?: any) => void): void {
+  destroy (id: string, callback: (err: Error | null, res?: unknown) => void): void {
     concurrentSafeWrite.execute(() => {
       return this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
     })
-      .then((res: any) => callback(null, res))
+      .then((res: unknown) => callback(null, res))
       .catch(callback);
   }
 
-  clearAll (callback: (err: any, res?: any) => void): void {
+  clearAll (callback: (err: Error | null, res?: unknown) => void): void {
     concurrentSafeWrite.execute(() => {
       return this.db.prepare('DELETE FROM sessions').run();
     })
-      .then((res: any) => callback(null, res))
+      .then((res: unknown) => callback(null, res))
       .catch(callback);
   }
 
-  remove (query: Record<string, string>, callback: (err: any, res?: any) => void): void {
+  remove (query: Record<string, string>, callback: (err: Error | null, res?: unknown) => void): void {
     const keys = Object.keys(query);
     if (keys.length === 0) return this.clearAll(callback);
     const where = keys.map((k) => `json_extract(data, '$.${k}') = ?`).join(' AND ');
@@ -121,7 +123,7 @@ class SessionsSQLite {
     concurrentSafeWrite.execute(() => {
       return this.db.prepare(`DELETE FROM sessions WHERE ${where}`).run(...values);
     })
-      .then((res: any) => callback(null, res))
+      .then((res: unknown) => callback(null, res))
       .catch(callback);
   }
 
@@ -131,27 +133,27 @@ class SessionsSQLite {
 
   // -- Migration methods --
 
-  exportAll (callback: (err: any, docs?: any[]) => void): void {
+  exportAll (callback: (err: Error | null, docs?: Array<{ _id: string; data: SessionData; expires: Date }>) => void): void {
     try {
       const rows = this.db.prepare('SELECT id, data, expires FROM sessions').all();
-      const docs = rows.map((r: any) => ({
+      const docs = rows.map((r: { id: string; data: string | SessionData; expires: number }) => ({
         _id: r.id,
         data: this.rowToData(r),
         expires: new Date(r.expires)
       }));
       callback(null, docs);
-    } catch (err) {
-      callback(err);
+    } catch (err: unknown) {
+      callback(err as Error | null);
     }
   }
 
-  importAll (data: any[], callback: (err: any) => void): void {
+  importAll (data: Array<{ _id?: string; id?: string; data: SessionData | string; expires: Date | number }>, callback: (err: Error | null) => void): void {
     if (!data || data.length === 0) return callback(null);
     concurrentSafeWrite.execute(() => {
       const stmt = this.db.prepare(
         'INSERT INTO sessions (id, data, expires) VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING'
       );
-      const tx = this.db.transaction((items: any[]) => {
+      const tx = this.db.transaction((items: Array<{ _id?: string; id?: string; data: SessionData | string; expires: Date | number }>) => {
         for (const d of items) {
           const id = d._id || d.id;
           const payload = typeof d.data === 'string' ? d.data : JSON.stringify(d.data || {});
