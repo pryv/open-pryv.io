@@ -5,8 +5,14 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+
 const require = createRequire(import.meta.url);
 const methodCallback = require('./methodCallback.ts').default;
+
+type AppLike = { api: { call: (...args: unknown[]) => unknown }; config: { get (key: string): unknown }; storageLayer: unknown };
+type AccessRow = { token: string; [k: string]: unknown };
+type PryvRequest = Request & { context?: any; files?: unknown };
 const encryption = require('utils').encryption;
 const errors = require('errors').factory;
 const Paths = require('./Paths.ts');
@@ -16,13 +22,13 @@ const { setMethodId } = require('middleware');
 const hasFileUpload = require('../middleware/uploads.ts').hasFileUpload;
 const attachmentsAccessMiddlewareFactory = require('../middleware/attachment-access.ts').default;
 // Set up events route handling.
-export default async function (expressApp: any, app: any) {
+export default async function (expressApp: ExpressApp, app: AppLike) {
   const api = app.api;
   const config = app.config;
   const storage = app.storageLayer;
   const filesReadTokenSecret = config.get('auth:filesReadTokenSecret');
   const loadAccessMiddleware = middleware.loadAccess(storage);
-  expressApp.get(Paths.Events + '/', setMethodId('events.get'), loadAccessMiddleware, function (req: any, res: any, next: any) {
+  expressApp.get(Paths.Events + '/', setMethodId('events.get'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     const params = Object.assign({}, req.query);
     tryCoerceStringValues(params, {
       fromTime: 'number',
@@ -39,7 +45,7 @@ export default async function (expressApp: any, app: any) {
     });
     api.call(req.context, params, methodCallback(res, next, 200));
   });
-  expressApp.get(Paths.Events + '/:id', setMethodId('events.getOne'), loadAccessMiddleware, function (req: any, res: any, next: any) {
+  expressApp.get(Paths.Events + '/:id', setMethodId('events.getOne'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     const params = Object.assign({ id: req.params.id }, req.query);
     tryCoerceStringValues(params, {
       includeHistory: 'boolean'
@@ -59,7 +65,7 @@ export default async function (expressApp: any, app: any) {
   // Parses the 'readToken' and verifies that the access referred to by id in
   // the token corresponds to a real access and that the signature is valid.
   //
-  function retrieveAccessFromReadToken (req: any, res: any, next: any) {
+  function retrieveAccessFromReadToken (req: PryvRequest, res: Response, next: NextFunction) {
     // forbid using access tokens in the URL
     if (req.query.auth != null) {
       return next(errors.invalidAccessToken('Query parameter "auth" is forbidden here, ' +
@@ -76,16 +82,16 @@ export default async function (expressApp: any, app: any) {
     const context = req.context;
     context
       .retrieveAccessFromId(storage, accessId)
-      .then((access: any) => {
+      .then((access: AccessRow) => {
         const hmacValid = encryption.isFileReadTokenHMACValid(tokenParts.hmac, req.params.fileId, access.token, filesReadTokenSecret);
         if (!hmacValid) { return next(errors.invalidAccessToken('Invalid read token.')); }
         next();
       })
-      .catch((err: any) => next(errors.unexpectedError(err)));
+      .catch((err: Error) => next(errors.unexpectedError(err)));
     // The promise chain above calls next on all branches.
   }
   // Create an event.
-  expressApp.post(Paths.Events + '/', setMethodId('events.create'), loadAccessMiddleware, hasFileUpload, function (req: any, res: any, next: any) {
+  expressApp.post(Paths.Events + '/', setMethodId('events.create'), loadAccessMiddleware, hasFileUpload, function (req: PryvRequest, res: Response, next: NextFunction) {
     const params = req.body;
     if (req.files) {
       params.files = req.files;
@@ -94,19 +100,19 @@ export default async function (expressApp: any, app: any) {
     }
     api.call(req.context, params, methodCallback(res, next, 201));
   });
-  expressApp.post(Paths.Events + '/start', function (req: any, res: any, next: any) {
+  expressApp.post(Paths.Events + '/start', function (req: PryvRequest, res: Response, next: NextFunction) {
     return next(errors.goneResource());
   });
-  expressApp.put(Paths.Events + '/:id', setMethodId('events.update'), loadAccessMiddleware, function (req: any, res: any, next: any) {
+  expressApp.put(Paths.Events + '/:id', setMethodId('events.update'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, { id: req.params.id, update: req.body }, methodCallback(res, next, 200));
   });
-  expressApp.post(Paths.Events + '/stop', function (req: any, res: any, next: any) {
+  expressApp.post(Paths.Events + '/stop', function (req: PryvRequest, res: Response, next: NextFunction) {
     return next(errors.goneResource());
   });
   // Update an event
-  expressApp.post(Paths.Events + '/:id', setMethodId('events.update'), loadAccessMiddleware, hasFileUpload, function (req: any, res: any, next: any) {
-    const params: any = {
-      id: req.params.id,
+  expressApp.post(Paths.Events + '/:id', setMethodId('events.update'), loadAccessMiddleware, hasFileUpload, function (req: PryvRequest, res: Response, next: NextFunction) {
+    const params: { id: string | undefined; update: Record<string, unknown>; files?: unknown } = {
+      id: req.params.id as string,
       update: {}
     };
     if (req.files) {
@@ -116,10 +122,10 @@ export default async function (expressApp: any, app: any) {
     }
     api.call(req.context, params, methodCallback(res, next, 200));
   });
-  expressApp.delete(Paths.Events + '/:id', setMethodId('events.delete'), loadAccessMiddleware, function (req: any, res: any, next: any) {
+  expressApp.delete(Paths.Events + '/:id', setMethodId('events.delete'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, { id: req.params.id }, methodCallback(res, next, 200));
   });
-  expressApp.delete(Paths.Events + '/:id/:fileId', setMethodId('events.deleteAttachment'), loadAccessMiddleware, function (req: any, res: any, next: any) {
+  expressApp.delete(Paths.Events + '/:id/:fileId', setMethodId('events.deleteAttachment'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, { id: req.params.id, fileId: req.params.fileId }, methodCallback(res, next, 200));
   });
 };
