@@ -10,26 +10,28 @@ const require = createRequire(import.meta.url);
 
 const { createId: cuid } = require('@paralleldrive/cuid2');
 
+type SessionData = Record<string, unknown>;
+
 const DEFAULT_MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days
 
 /**
  * PostgreSQL implementation of Sessions storage.
  */
 class SessionsPG {
-  db: any;
+  db: any; // DatabasePG — not yet modelled
   options: { maxAge: number };
 
-  constructor (db: any, options?: any) {
+  constructor (db: any, options?: { maxAge?: number }) {
     this.db = db;
     this.options = { maxAge: (options && options.maxAge) || DEFAULT_MAX_AGE };
   }
 
-  get (id: string, callback: (err: any, data?: any) => void): void {
+  get (id: string, callback: (err: Error | null, data?: SessionData | null) => void): void {
     this.db.query('SELECT data, expires FROM sessions WHERE id = $1', [id])
-      .then((res: any) => {
+      .then((res: { rows: Array<{ id?: string; data?: SessionData; expires?: Date | string; [k: string]: unknown }>; rowCount?: number }) => {
         if (res.rows.length === 0) return callback(null, null);
         const row = res.rows[0];
-        if (new Date() >= new Date(row.expires)) {
+        if (new Date() >= new Date(row.expires as string | Date)) {
           this.destroy(id, () => callback(null, null));
           return;
         }
@@ -38,13 +40,13 @@ class SessionsPG {
       .catch(callback);
   }
 
-  getMatching (data: any, callback: (err: any, id?: any) => void): void {
+  getMatching (data: Record<string, unknown>, callback: (err: Error | null, id?: string | null) => void): void {
     this.db.query('SELECT id, expires FROM sessions WHERE data @> $1', [JSON.stringify(data)])
-      .then((res: any) => {
+      .then((res: { rows: Array<{ id?: string; data?: SessionData; expires?: Date | string; [k: string]: unknown }>; rowCount?: number }) => {
         if (res.rows.length === 0) return callback(null, null);
         const row = res.rows[0];
-        if (new Date() >= new Date(row.expires)) {
-          this.destroy(row.id, () => callback(null, null));
+        if (new Date() >= new Date(row.expires as string | Date)) {
+          this.destroy(row.id as string, () => callback(null, null));
           return;
         }
         callback(null, row.id);
@@ -52,9 +54,9 @@ class SessionsPG {
       .catch(callback);
   }
 
-  generate (data: any, options: any, callback?: (err: any, id?: string) => void): void {
+  generate (data: Record<string, unknown>, options: unknown, callback?: (err: Error | null, id?: string) => void): void {
     if (typeof options === 'function') {
-      callback = options;
+      callback = options as (err: Error | null, id?: string) => void;
       options = {};
     }
     const id = cuid();
@@ -68,38 +70,38 @@ class SessionsPG {
       .catch(callback!);
   }
 
-  touch (id: string, callback: (err: any, res?: any) => void): void {
+  touch (id: string, callback: (err: Error | null, res?: unknown) => void): void {
     const expires = this.getNewExpirationDate();
     this.db.query('UPDATE sessions SET expires = $1 WHERE id = $2', [expires, id])
-      .then((res: any) => callback(null, res))
+      .then((res: { rows: Array<{ id?: string; data?: SessionData; expires?: Date | string; [k: string]: unknown }>; rowCount?: number }) => callback(null, res))
       .catch(callback);
   }
 
-  expireNow (id: string, callback: (err: any, res?: any) => void): void {
+  expireNow (id: string, callback: (err: Error | null, res?: unknown) => void): void {
     this.db.query('UPDATE sessions SET expires = $1 WHERE id = $2', [new Date(), id])
-      .then((res: any) => callback(null, res))
+      .then((res: { rows: Array<{ id?: string; data?: SessionData; expires?: Date | string; [k: string]: unknown }>; rowCount?: number }) => callback(null, res))
       .catch(callback);
   }
 
-  destroy (id: string, callback: (err: any, res?: any) => void): void {
+  destroy (id: string, callback: (err: Error | null, res?: unknown) => void): void {
     this.db.query('DELETE FROM sessions WHERE id = $1', [id])
-      .then((res: any) => callback(null, res))
+      .then((res: { rows: Array<{ id?: string; data?: SessionData; expires?: Date | string; [k: string]: unknown }>; rowCount?: number }) => callback(null, res))
       .catch(callback);
   }
 
-  clearAll (callback: (err: any, res?: any) => void): void {
+  clearAll (callback: (err: Error | null, res?: unknown) => void): void {
     this.db.query('DELETE FROM sessions')
-      .then((res: any) => callback(null, res))
+      .then((res: { rows: Array<{ id?: string; data?: SessionData; expires?: Date | string; [k: string]: unknown }>; rowCount?: number }) => callback(null, res))
       .catch(callback);
   }
 
-  remove (query: Record<string, string>, callback: (err: any, res?: any) => void): void {
+  remove (query: Record<string, string>, callback: (err: Error | null, res?: unknown) => void): void {
     const keys = Object.keys(query);
     if (keys.length === 0) return this.clearAll(callback);
     const conditions = keys.map((k, i) => `data->>'${k}' = $${i + 1}`);
     const values = keys.map((k) => String(query[k]));
     this.db.query(`DELETE FROM sessions WHERE ${conditions.join(' AND ')}`, values)
-      .then((res: any) => callback(null, res))
+      .then((res: { rows: Array<{ id?: string; data?: SessionData; expires?: Date | string; [k: string]: unknown }>; rowCount?: number }) => callback(null, res))
       .catch(callback);
   }
 
@@ -109,22 +111,22 @@ class SessionsPG {
 
   // -- Migration methods --
 
-  exportAll (callback: (err: any, docs?: any[]) => void): void {
+  exportAll (callback: (err: Error | null, docs?: Array<{ _id: string; data: SessionData; expires: Date }>) => void): void {
     this.db.query('SELECT id, data, expires FROM sessions')
-      .then((res: any) => {
-        const docs = res.rows.map((r: any) => ({
-          _id: r.id,
-          data: r.data,
-          expires: r.expires
+      .then((res: { rows: Array<{ id?: string; data?: SessionData; expires?: Date | string; [k: string]: unknown }>; rowCount?: number }) => {
+        const docs = res.rows.map((r) => ({
+          _id: r.id as string,
+          data: r.data as SessionData,
+          expires: r.expires as Date
         }));
         callback(null, docs);
       })
       .catch(callback);
   }
 
-  importAll (data: any[], callback: (err: any) => void): void {
+  importAll (data: Array<{ _id?: string; id?: string; data: SessionData; expires: Date }>, callback: (err: Error | null) => void): void {
     if (!data || data.length === 0) return callback(null);
-    const inserts = data.map((d: any) =>
+    const inserts = data.map((d: { _id?: string; id?: string; data: SessionData; expires: Date }) =>
       this.db.query(
         'INSERT INTO sessions (id, data, expires) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING',
         [d._id || d.id, JSON.stringify(d.data), d.expires]
