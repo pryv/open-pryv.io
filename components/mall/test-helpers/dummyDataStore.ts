@@ -14,28 +14,37 @@ const timestamp = require('unix-timestamp');
 const { Readable } = require('stream');
 const { localStorePrepareQuery } = require('storage/src/localStoreEventQueries.ts');
 
-let keyValueData: any;
+type KVStore = {
+  set (userId: string, key: string, value: unknown): Promise<unknown>;
+  get (userId: string, key: string): Promise<unknown>;
+};
+type Stream = { id: string; name?: string; children?: Stream[]; [k: string]: unknown };
+type Event = { id: string; type: string; streamIds: string[]; content: unknown; time: number; integrity?: string; [k: string]: unknown };
+type StreamQuery = { parentId?: string | null; [k: string]: unknown };
+type QueryItem = { type?: string; content?: unknown[]; [k: string]: unknown };
+
+let keyValueData: KVStore;
 
 /**
  * Dummy data store serving predictable static data.
  */
-const dummyDataStore: any = ds.createDataStore({
-  async init (params: any) {
+const dummyDataStore = ds.createDataStore({
+  async init (params: { storeKeyValueData: KVStore }) {
     keyValueData = params.storeKeyValueData;
     this.streams = createUserStreams();
     this.events = createUserEvents();
     return this;
   },
 
-  async deleteUser (userId: any) {},
+  async deleteUser (_userId: string) {},
 
-  async getUserStorageInfos (userId: any) { return { }; }
+  async getUserStorageInfos (_userId: string) { return { }; }
 });
 export default dummyDataStore;
 
 function createUserStreams () {
   return ds.createUserStreams({
-    async get (userId: any, query: any) {
+    async get (userId: string, query: StreamQuery) {
       if (query.parentId === '*' || query.parentId == null) {
         return genStreams(userId);
       }
@@ -44,21 +53,21 @@ function createUserStreams () {
       return parent.children;
     },
 
-    async getOne (userId: any, streamId: any, query: any) {
+    async getOne (userId: string, streamId: string, query: StreamQuery) {
       // store last call in keyValueStore for tests
       await keyValueData.set(userId, 'lastStreamCall', Object.assign({ id: streamId }, query));
       const stream = findStream(streamId, genStreams(userId));
       return stream;
     },
 
-    async create (userId: any, streamData: any) {
+    async create (_userId: string, streamData: Stream) {
       if (streamData.id !== 'fluffy') throw ds.errors.unsupportedOperation('streams.create');
       const newStream = structuredClone(streamData);
       newStream.name = 'Bluppy';
       return newStream;
     },
 
-    async update (userId: any, streamData: any) {
+    async update (_userId: string, streamData: Stream) {
       const newStream = structuredClone(streamData);
       newStream.name = 'Bluppy';
       return newStream;
@@ -66,13 +75,13 @@ function createUserStreams () {
 
   });
 
-  function findStream (streamId: any, streams: any): any {
+  function findStream (streamId: string, streams: Stream[]): Stream | null {
     for (const stream of streams) {
       if (stream.id === streamId) {
         return stream;
       }
       if (stream.children) {
-        const found: any = findStream(streamId, stream.children);
+        const found = findStream(streamId, stream.children);
         if (found) {
           return found;
         }
@@ -84,13 +93,13 @@ function createUserStreams () {
 
 function createUserEvents () {
   return ds.createUserEvents({
-    async getStreamed (userId: any, query: any, options: any) {
+    async getStreamed (userId: string, query: unknown, options: unknown) {
       const events = await this.get(userId, query, options);
       const readable = Readable.from(events);
       return readable;
     },
 
-    async create (userId: any, eventData: any) {
+    async create (_userId: string, eventData: Event) {
       const event = structuredClone(eventData);
       event.content = 'Received';
       delete event.integrity;
@@ -98,7 +107,7 @@ function createUserEvents () {
       return event;
     },
 
-    async update (userId: any, eventData: any) {
+    async update (_userId: string, eventData: Event) {
       const event = structuredClone(eventData);
       event.content = 'Updated';
       delete event.integrity;
@@ -106,7 +115,7 @@ function createUserEvents () {
       return event;
     },
 
-    async getOne (userId: any, eventId: any) {
+    async getOne (_userId: string, eventId: string) {
       if (eventId !== 'dummyevent0') throw ds.errors.invalidItemId('Unkown event', { eventId });
       const event = {
         id: 'dummyevent0',
@@ -122,10 +131,10 @@ function createUserEvents () {
     /**
      * @returns Array
      */
-    async get (userId: any, storeQuery: any, options: any) {
-      const query = localStorePrepareQuery(storeQuery);
+    async get (userId: string, storeQuery: unknown, _options: unknown) {
+      const query = localStorePrepareQuery(storeQuery) as QueryItem[];
       const lastStreamCall = await keyValueData.get(userId, 'lastStreamCall');
-      let events = [{
+      let events: Event[] = [{
         id: 'dummyevent0',
         type: 'note/txt',
         streamIds: ['mariana'],
@@ -140,9 +149,9 @@ function createUserEvents () {
       }];
 
       // support stream filtering (only for one "any")
-      const streamQuery = query.filter((i: any) => { return i.type === 'streamsQuery'; });
-      if (streamQuery.length > 0 && streamQuery[0].content[0]) {
-        const firstOrItem = streamQuery[0].content[0];
+      const streamQuery = query.filter((i: QueryItem) => { return i.type === 'streamsQuery'; });
+      if (streamQuery.length > 0 && streamQuery[0].content?.[0]) {
+        const firstOrItem = streamQuery[0].content![0] as Array<{ any?: string[] }>;
         const anyStreamList = firstOrItem[0]?.any || [];
         events = events.filter((e) => anyStreamList.includes(e.streamIds[0]));
       }
@@ -155,7 +164,7 @@ function createUserEvents () {
 /**
  * create a set of streams with a rootstream named with the userId;
  * */
-function genStreams (userId: any) {
+function genStreams (userId: string): Stream[] {
   const streams = [
     {
       id: 'myself',
