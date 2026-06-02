@@ -27,17 +27,32 @@ const slugMod = require('./slug.ts');
 const anchors = require('./anchorStreams.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 
+type OfferShape = {
+  id?: string;
+  type?: string;
+  streamIds?: string[];
+  content?: {
+    features?: Record<string, unknown> | null;
+    reason?: string;
+    requesterMeta?: { username?: string; from?: { username?: string; host?: string }; host?: string; [k: string]: unknown };
+    requesterUsername?: string;
+    requesterHost?: string;
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+};
+
 type MallLike = {
   accesses: {
-    create: (userId: string, params: any) => Promise<any>;
-    delete?: (userId: string, params: any) => Promise<any>;
+    create: (userId: string, params: unknown) => Promise<unknown>;
+    delete?: (userId: string, params: unknown) => Promise<unknown>;
   };
-  events: { update: (userId: string, params: any) => Promise<any> };
-  streams?: { create: (userId: string, params: any) => Promise<any> };
+  events: { update: (userId: string, params: unknown) => Promise<unknown> };
+  streams?: { create: (userId: string, params: unknown) => Promise<unknown> };
 };
 
 type OutboundDeps = {
-  fetch: (url: string, init?: any) => Promise<any>;
+  fetch: (url: string, init?: RequestInit) => Promise<Response>;
   timeoutMs?: number;
   logger?: { debug: Function; warn: Function };
 };
@@ -56,7 +71,7 @@ type AcceptHandlerResult =
   | {
       ok: false;
       reason: string;
-      detail?: any;
+      detail?: unknown;
     };
 
 /**
@@ -76,7 +91,7 @@ type AcceptHandlerResult =
  */
 async function handleAccept (params: {
   userId: string;
-  triggerEvent: { id?: string; type: string; content: any; streamIds?: string[] };
+  triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: { username: string; host: string };
   deps: { mall: MallLike } & OutboundDeps;
 }): Promise<AcceptHandlerResult> {
@@ -86,23 +101,28 @@ async function handleAccept (params: {
   if (triggerEvent.type !== C.ET_ACCEPT) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: triggerEvent.type } };
   }
-  const capabilityUrl: string = triggerEvent.content?.capabilityUrl;
+  const capabilityUrl = (triggerEvent.content as { capabilityUrl?: string })?.capabilityUrl;
   if (typeof capabilityUrl !== 'string' || capabilityUrl.length === 0) {
     return { ok: false, reason: 'cmc-handler-missing-capability-url' };
   }
-  const accessName: string | undefined = triggerEvent.content?.accessName;
-  const features: any = triggerEvent.content?.features ?? null;
+  const accessName = (triggerEvent.content as { accessName?: string })?.accessName;
+  const features: Record<string, unknown> | null = ((triggerEvent.content as { features?: Record<string, unknown> | null })?.features ?? null) as Record<string, unknown> | null;
 
   // 1. Read the offer.
-  let offer: any;
+  let offer: OfferShape | undefined;
   try {
-    offer = await ao.readOfferViaCapability({ capabilityUrl, deps });
-  } catch (err: any) {
+    offer = (await ao.readOfferViaCapability({ capabilityUrl, deps })) as OfferShape | undefined;
+  } catch (err: unknown) {
+    const e = err as { id?: string; message?: string };
     return {
       ok: false,
-      reason: err?.id || 'cmc-handler-offer-read-failed',
-      detail: { message: String(err?.message || err) },
+      reason: e?.id || 'cmc-handler-offer-read-failed',
+      detail: { message: String(e?.message || err) },
     };
+  }
+
+  if (offer == null) {
+    return { ok: false, reason: 'cmc-handler-offer-read-failed' };
   }
 
   // The counterparty (requester) identity needs to be derivable. We use
@@ -154,9 +174,9 @@ async function handleAccept (params: {
   // (handleIncomingAccept on the peer side does this right after they
   // mint the back-channel access; without inbox-create here, that
   // delivery 403s and we never learn the peer's apiEndpoint).
-  let dataGrantPayload: any;
+  let dataGrantPayload: Record<string, unknown> | undefined;
   try {
-    const extraPermissions: any[] = [
+    const extraPermissions: Array<Record<string, unknown>> = [
       { streamId: C.NS_INBOX, level: 'create-only' },
     ];
     if (chatStream != null) extraPermissions.push({ streamId: chatStream, level: 'contribute' });
@@ -169,23 +189,24 @@ async function handleAccept (params: {
       extraPermissions: extraPermissions.length > 0 ? extraPermissions : undefined,
       acceptEventId: triggerEvent?.id,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const e = err as { id?: string; message?: string };
     return {
       ok: false,
-      reason: err?.id || 'cmc-handler-build-data-grant-failed',
-      detail: { message: String(err?.message || err) },
+      reason: e?.id || 'cmc-handler-build-data-grant-failed',
+      detail: { message: String(e?.message || err) },
     };
   }
 
   // 3. Create the local data-grant access.
-  let dataGrantAccess: any;
+  let dataGrantAccess: { id?: string; token?: string; apiEndpoint?: string; [k: string]: unknown } | undefined;
   try {
-    dataGrantAccess = await mall.accesses.create(userId, dataGrantPayload);
-  } catch (err: any) {
+    dataGrantAccess = (await mall.accesses.create(userId, dataGrantPayload)) as { id?: string; token?: string; apiEndpoint?: string; [k: string]: unknown };
+  } catch (err: unknown) {
     return {
       ok: false,
       reason: 'cmc-handler-data-grant-create-failed',
-      detail: { message: String(err?.message || err) },
+      detail: { message: String((err as Error)?.message || err) },
     };
   }
   if (dataGrantAccess?.apiEndpoint == null) {
@@ -196,7 +217,7 @@ async function handleAccept (params: {
   }
 
   // 4. Deliver the accept response back to the requester via capability.
-  const capabilityId: string | null = offer?.content?.capabilityId ?? null;
+  const capabilityId: string | null = ((offer?.content as { capabilityId?: string } | undefined)?.capabilityId ?? null) as string | null;
   if (typeof capabilityId !== 'string' || capabilityId.length === 0) {
     return {
       ok: false,
@@ -212,9 +233,9 @@ async function handleAccept (params: {
   // root). Without this, the back-channel anchors at the bare
   // :_cmc:apps:<app-code> and chat/system handlers can't match the
   // per-request scope the app uses.
-  const requesterAppCode: string | undefined = offer?.content?.requesterMeta?.appId;
-  const originStreamId: string | undefined = offer?.content?.originStreamId;
-  let delivery: any;
+  const requesterAppCode = (offer?.content?.requesterMeta as { appId?: string } | undefined)?.appId;
+  const originStreamId = (offer?.content as { originStreamId?: string } | undefined)?.originStreamId;
+  let delivery: { ok?: boolean; response?: { status?: number; reason?: string; body?: unknown }; [k: string]: unknown } | undefined;
   try {
     delivery = await ao.deliverAcceptViaCapability({
       capabilityUrl,
@@ -227,21 +248,21 @@ async function handleAccept (params: {
       offerEventId: offer?.id,
       deps,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     // Network / unexpected — leave the data-grant in place so a retry
     // can re-deliver. Return retryable-flagged failure.
     return {
       ok: false,
       reason: 'cmc-handler-delivery-threw',
-      detail: { message: String(err?.message || err), dataGrantAccessId: dataGrantAccess.id },
+      detail: { message: String((err as Error)?.message || err), dataGrantAccessId: dataGrantAccess!.id },
     };
   }
 
-  if (!delivery.ok) {
+  if (!delivery?.ok) {
     // 5. 4xx (non-retryable) → roll back the data-grant access so we don't
     // leak a half-formed access pair. 5xx / network → leave the access
     // in place; the outbound retry queue will re-attempt delivery.
-    if (delivery.response?.reason === 'http-4xx') {
+    if (delivery?.response?.reason === 'http-4xx') {
       try {
         if (mall.accesses.delete != null) {
           await mall.accesses.delete(userId, { id: dataGrantAccess.id });
@@ -260,7 +281,7 @@ async function handleAccept (params: {
     return {
       ok: false,
       reason: 'cmc-handler-delivery-failed',
-      detail: { status: delivery.response?.status, reason: delivery.response?.reason },
+      detail: { status: delivery?.response?.status, reason: delivery?.response?.reason },
     };
   }
 
@@ -269,10 +290,10 @@ async function handleAccept (params: {
 
   return {
     ok: true,
-    capabilityId: offer?.content?.capabilityId ?? null,
-    dataGrantAccessId: dataGrantAccess.id,
-    dataGrantApiEndpoint: dataGrantAccess.apiEndpoint,
-    offerEventId: offer.id,
+    capabilityId: ((offer?.content as { capabilityId?: string } | undefined)?.capabilityId ?? null) as string | null,
+    dataGrantAccessId: dataGrantAccess!.id!,
+    dataGrantApiEndpoint: dataGrantAccess!.apiEndpoint!,
+    offerEventId: offer!.id!,
     backChannelApiEndpoint: null, // filled in by a follow-up pass when the requester returns it
     anchorStreamIds: preCreatedAnchorIds,
     // Return the resolved counterparty (the REQUESTER's identity) so the
@@ -319,7 +340,7 @@ function pickScopeFromTrigger (trigger: { streamIds?: string[] }): string | null
  * resolution requires the local provisioned streams to share the
  * remote's path structure.
  */
-function pickScopeFromOfferOrTrigger (offer: any, trigger: { streamIds?: string[] }): string | null {
+function pickScopeFromOfferOrTrigger (offer: OfferShape | undefined, trigger: { streamIds?: string[] }): string | null {
   const fromOffer = offer?.content?.originStreamId;
   if (typeof fromOffer === 'string' && fromOffer.startsWith(C.NS_APPS + ':')) {
     return fromOffer;
@@ -333,16 +354,16 @@ function pickScopeFromOfferOrTrigger (offer: any, trigger: { streamIds?: string[
  */
 async function handleRefuse (params: {
   userId: string;
-  triggerEvent: { id?: string; type: string; content: any };
+  triggerEvent: { id?: string; type: string; content: Record<string, unknown> };
   selfIdentity: { username: string; host: string };
   deps: OutboundDeps;
-}): Promise<{ ok: boolean; reason?: string; detail?: any }> {
+}): Promise<{ ok: boolean; reason?: string; detail?: unknown }> {
   const { triggerEvent, selfIdentity, deps } = params;
 
   if (triggerEvent.type !== C.ET_REFUSE) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: triggerEvent.type } };
   }
-  const capabilityUrl: string = triggerEvent.content?.capabilityUrl;
+  const capabilityUrl = (triggerEvent.content as { capabilityUrl?: string })?.capabilityUrl;
   if (typeof capabilityUrl !== 'string' || capabilityUrl.length === 0) {
     return { ok: false, reason: 'cmc-handler-missing-capability-url' };
   }
@@ -352,8 +373,8 @@ async function handleRefuse (params: {
   // :_cmc:_internal:responses:<capId>, not the parent).
   let capabilityId: string;
   try {
-    const offer = await ao.readOfferViaCapability({ capabilityUrl, deps });
-    const cid = offer?.content?.capabilityId;
+    const offer = await ao.readOfferViaCapability({ capabilityUrl, deps }) as OfferShape | undefined;
+    const cid = (offer?.content as { capabilityId?: string } | undefined)?.capabilityId;
     if (typeof cid !== 'string' || cid.length === 0) {
       return {
         ok: false,
@@ -362,32 +383,34 @@ async function handleRefuse (params: {
       };
     }
     capabilityId = cid;
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const e = err as { id?: string; message?: string };
     return {
       ok: false,
-      reason: err?.id || 'cmc-handler-offer-read-failed',
-      detail: { message: String(err?.message || err) },
+      reason: e?.id || 'cmc-handler-offer-read-failed',
+      detail: { message: String(e?.message || err) },
     };
   }
 
-  let delivery: any;
+  type DeliveryResult = { ok?: boolean; response?: { status?: number; reason?: string }; [k: string]: unknown };
+  let delivery: DeliveryResult | undefined;
   try {
     delivery = await ao.deliverRefuseViaCapability({
       capabilityUrl,
       capabilityId,
       counterparty: selfIdentity,
-      reason: triggerEvent.content?.reason,
+      reason: (triggerEvent.content as { reason?: string })?.reason,
       deps,
     });
-  } catch (err: any) {
-    return { ok: false, reason: 'cmc-handler-delivery-threw', detail: { message: String(err?.message || err) } };
+  } catch (err: unknown) {
+    return { ok: false, reason: 'cmc-handler-delivery-threw', detail: { message: String((err as Error)?.message || err) } };
   }
 
-  if (!delivery.ok) {
+  if (!delivery?.ok) {
     return {
       ok: false,
       reason: 'cmc-handler-delivery-failed',
-      detail: { status: delivery.response?.status, reason: delivery.response?.reason },
+      detail: { status: delivery?.response?.status, reason: delivery?.response?.reason },
     };
   }
 
@@ -409,7 +432,7 @@ async function handleRefuse (params: {
  *
  * The host comes from the capability URL.
  */
-function inferCounterparty (offer: any, capabilityUrl: string): { username: string; host: string } | null {
+function inferCounterparty (offer: OfferShape, capabilityUrl: string): { username: string; host: string } | null {
   const meta = offer?.content?.requesterMeta;
   let username: string | null = null;
   // Prefer the canonical username stamped by the requester's plugin
