@@ -35,13 +35,19 @@ const StandardDimensionsLength = StandardDimensions.length;
  * Routes for retrieving preview images for events.
  *
  */
-export default async function (expressApp: any, initContextMiddleware: any, loadAccessMiddleware: any, logging: any) {
+type ExpressApp = { all: (path: string, ...handlers: unknown[]) => unknown; get: (path: string, handler: (req: any, res: any, next: any) => unknown) => unknown; post: (path: string, handler: (req: any, res: any, next: any) => unknown) => unknown };
+type EventLike = { type: string; modified: number; streamIds: string[]; attachments?: Array<{ id: string; width?: number; height?: number }>; [k: string]: unknown };
+type ImageError = Error & { message: string };
+type Size = { width: number; height: number };
+type Logging = unknown;
+
+export default async function (expressApp: ExpressApp, initContextMiddleware: unknown, loadAccessMiddleware: unknown, _logging: Logging) {
   const mall = await getMall();
   const previewsCacheCleanUpCronTime = (await getConfig()).get('eventFiles:previewsCacheCleanUpCronTime') || '00 00 2 * * *';
   // SERVING PREVIEWS
   expressApp.all('/*', getAuth);
   expressApp.all('/:username/events/*', initContextMiddleware, loadAccessMiddleware);
-  expressApp.get('/:username/events/:id:extension(.jpg|.jpeg|)', async function (req: any, res: any, next: any) {
+  expressApp.get('/:username/events/:id:extension(.jpg|.jpeg|)', async function (req: any, res: any, next: any): Promise<void> {
     let originalSize, previewPath;
     let cached = false;
     const context = req.context;
@@ -118,21 +124,22 @@ export default async function (expressApp: any, initContextMiddleware: any, load
       next(err);
     }
   });
-  function canHavePreview (event: any) {
+  function canHavePreview (event: EventLike): boolean {
     return event.type === 'picture/attached';
   }
-  function getSourceAttachment (event: any) {
+  function getSourceAttachment (event: EventLike) {
     // for now: just return the first attachment
     return event.attachments?.[0];
   }
-  function adjustImageError (err: any) {
+  function adjustImageError (err: unknown) {
+    const e = err as ImageError;
     // sharp throws on corrupt/missing files with specific messages
-    if (err.message && (err.message.includes('Input file is missing') || err.message.includes('unsupported image format'))) {
+    if (e.message && (e.message.includes('Input file is missing') || e.message.includes('unsupported image format'))) {
       return errors.corruptedData('Corrupt event data: expected an attached file.', err);
     }
     return err;
   }
-  function getPreviewSize (original: any, desired: any) {
+  function getPreviewSize (original: Size, desired: { width?: number; height?: number }): Size {
     if (!(desired.width || desired.height)) {
       // return default size
       return {
@@ -140,10 +147,10 @@ export default async function (expressApp: any, initContextMiddleware: any, load
         height: SmallestStandardDimension
       };
     }
-    const originalRatio = original.width / original.height; const result: any = {};
-    if (!desired.height || desired.width / desired.height > originalRatio) {
+    const originalRatio = original.width / original.height; const result: Size = { width: 0, height: 0 };
+    if (!desired.height || desired.width! / desired.height > originalRatio) {
       // reference = width
-      result.width = adjustToStandardDimension(desired.width);
+      result.width = adjustToStandardDimension(desired.width!);
       result.height = result.width / originalRatio;
     } else {
       // reference = height
@@ -159,7 +166,7 @@ export default async function (expressApp: any, initContextMiddleware: any, load
     }
     return result;
   }
-  function adjustToStandardDimension (value: any) {
+  function adjustToStandardDimension (value: number): number {
     for (let i = 0; i < StandardDimensionsLength; i++) {
       if (value < StandardDimensions[i]) {
         return StandardDimensions[i];
@@ -180,7 +187,7 @@ export default async function (expressApp: any, initContextMiddleware: any, load
             ', client IP: ' +
             req.ip +
             ')...');
-    runCacheCleanupWorker(function (err: any) {
+    runCacheCleanupWorker(function (err: Error | null) {
       if (err) {
         return next(errors.unexpectedError(err));
       }
@@ -202,11 +209,11 @@ export default async function (expressApp: any, initContextMiddleware: any, load
   /**
    * @param callback Optional, will be passed an error on failure
    */
-  function runCacheCleanupWorker (callback?: any) {
+  function runCacheCleanupWorker (callback?: (err: Error | null) => void) {
     callback = typeof callback === 'function' ? callback : function () { };
     const worker = childProcess.fork(path.resolve(__dirname, '../runCacheCleanup.ts'), process.argv.slice(2));
     workerRunning = true;
-    worker.on('exit', function (code: any) {
+    worker.on('exit', function (code: number | null) {
       workerRunning = false;
       callback(code !== 0
         ? new Error('Cache cleanup unexpectedly failed (see logs for details)')
