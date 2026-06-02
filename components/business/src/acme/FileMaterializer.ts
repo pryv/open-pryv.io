@@ -34,12 +34,18 @@ const crypto = require('node:crypto');
 
 const { hostnameToDirName } = require('./certUtils.ts');
 
+type CertRecord = { certPem: string; chainPem?: string; keyPem: string; expiresAt: number };
+type CertRenewer = { getCertificate (hostname: string): Promise<CertRecord | null> };
+type OnRotateFn = (certPath: string, keyPath: string, hostname: string) => Promise<unknown>;
+type LogFn = (msg: string) => void;
+type WriteOpts = { mode?: number; [k: string]: unknown };
+
 class FileMaterializer {
-  #certRenewer;
-  #tlsDir;
-  #hostname;
-  #onRotate;
-  #log;
+  #certRenewer: CertRenewer;
+  #tlsDir: string;
+  #hostname: string;
+  #onRotate: OnRotateFn;
+  #log: LogFn;
 
   /**
    * @param opts.certRenewer  - exposes getCertificate(hostname) returning decrypted record
@@ -48,15 +54,15 @@ class FileMaterializer {
    * @param [opts.onRotate] - (certPath, keyPath, hostname) => Promise; called after a successful swap
    * @param [opts.log]      - default: console.log
    */
-  constructor ({ certRenewer, tlsDir, hostname, onRotate, log }: any = {}) {
+  constructor ({ certRenewer, tlsDir, hostname, onRotate, log }: { certRenewer?: CertRenewer; tlsDir?: string; hostname?: string; onRotate?: OnRotateFn; log?: LogFn } = {}) {
     if (certRenewer == null) throw new Error('FileMaterializer: certRenewer is required');
     if (!tlsDir) throw new Error('FileMaterializer: tlsDir is required');
     if (!hostname) throw new Error('FileMaterializer: hostname is required');
-    this.#certRenewer = certRenewer;
-    this.#tlsDir = tlsDir;
-    this.#hostname = hostname;
+    this.#certRenewer = certRenewer!;
+    this.#tlsDir = tlsDir!;
+    this.#hostname = hostname!;
     this.#onRotate = onRotate || (async () => {});
-    this.#log = log || ((msg: any) => console.log('[fm] ' + msg));
+    this.#log = log || ((msg: string) => console.log('[fm] ' + msg));
   }
 
   get hostDir () {
@@ -91,27 +97,27 @@ class FileMaterializer {
 
     try {
       await this.#onRotate(this.certPath, this.keyPath, this.#hostname);
-    } catch (err: any) {
+    } catch (err: unknown) {
       // onRotate failure is the operator's concern — surface it but don't
       // undo the file write (the new cert is valid either way).
-      this.#log(`onRotate hook failed: ${err.message}`);
+      this.#log(`onRotate hook failed: ${(err as Error).message}`);
     }
 
     return { rotated: true, reason: onDisk == null ? 'initial-write' : 'cert-changed' };
   }
 
-  #readIfExists (p: any) {
+  #readIfExists (p: string): string | null {
     try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
   }
 }
 
-function writeAtomic (filePath: any, content: any, opts: any = {}) {
+function writeAtomic (filePath: string, content: string, opts: WriteOpts = {}) {
   const tmp = filePath + '.tmp.' + process.pid + '.' + Date.now();
   fs.writeFileSync(tmp, content, opts);
   fs.renameSync(tmp, filePath);
 }
 
-function sha256 (s: any) {
+function sha256 (s: string): string {
   return crypto.createHash('sha256').update(s).digest('hex');
 }
 
@@ -126,7 +132,7 @@ function sha256 (s: any) {
  * @param opts.keyPath
  * @param [opts.timeoutMs=30000]
  */
-async function runRotateScript ({ scriptPath, hostname, certPath, keyPath, timeoutMs = 30000 }: any) {
+async function runRotateScript ({ scriptPath, hostname, certPath, keyPath, timeoutMs = 30000 }: { scriptPath: string; hostname: string; certPath: string; keyPath: string; timeoutMs?: number }) {
   const { spawn } = require('node:child_process');
   if (!path.isAbsolute(scriptPath)) {
     throw new Error(`onRotateScript must be an absolute path, got ${scriptPath}`);
@@ -141,14 +147,14 @@ async function runRotateScript ({ scriptPath, hostname, certPath, keyPath, timeo
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
-  const stdout: any[] = [];
-  const stderr: any[] = [];
-  child.stdout.on('data', (c: any) => stdout.push(c));
-  child.stderr.on('data', (c: any) => stderr.push(c));
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.stdout.on('data', (c: Buffer) => stdout.push(c));
+  child.stderr.on('data', (c: Buffer) => stderr.push(c));
 
   const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
-  const exitCode = await new Promise(resolve => {
-    child.on('close', (code: any, signal: any) => resolve(signal === 'SIGKILL' ? 124 : (code ?? 0)));
+  const exitCode = await new Promise<number>(resolve => {
+    child.on('close', (code: number | null, signal: string | null) => resolve(signal === 'SIGKILL' ? 124 : (code ?? 0)));
     child.on('error', () => resolve(127));
   });
   clearTimeout(timer);
