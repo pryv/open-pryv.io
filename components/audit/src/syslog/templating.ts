@@ -15,10 +15,15 @@ const path = require('path');
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('audit:syslog:templates');
 
+type AuditEvent = { type: string; content?: Record<string, unknown>; [k: string]: unknown };
+type LogItem = { level: string; message: string };
+type PluginFn = (userId: string, event: AuditEvent) => LogItem;
+type FormatDef = { template?: string; level?: string; plugin?: string };
+
 class SyslogTransform {
-  key: any;
-  constructor (key: any) { this.key = key; }
-  transform (userId: any, event: any) { throw new Error('Transform must be implemented'); }
+  key: string;
+  constructor (key: string) { this.key = key; }
+  transform (_userId: string, _event: AuditEvent): LogItem { throw new Error('Transform must be implemented'); }
 }
 
 /**
@@ -26,17 +31,17 @@ class SyslogTransform {
  * Use external javascript code
  */
 class Plugin extends SyslogTransform {
-  plugin: any;
+  plugin: PluginFn;
 
-  constructor (key: any, format: any) {
+  constructor (key: string, format: FormatDef) {
     super(key);
     // Resolve plugin paths relative to service-core root (config is unified there)
     const rootPath = path.resolve(__dirname, '../../../../');
-    this.plugin = require(path.resolve(rootPath, format.plugin));
+    this.plugin = require(path.resolve(rootPath, format.plugin!));
     logger.debug('Loaded plugin for [' + key + ']: ' + format.plugin);
   }
 
-  transform (userId: any, event: any) {
+  transform (userId: string, event: AuditEvent): LogItem {
     logger.debug('Using plugin ' + this.key);
     return this.plugin(userId, event);
   }
@@ -47,17 +52,17 @@ class Plugin extends SyslogTransform {
  * Transform an event into a syslog message plus level
  */
 class Template extends SyslogTransform {
-  template: any;
-  level: any;
+  template: string;
+  level: string;
 
-  constructor (key: any, format: any) {
+  constructor (key: string, format: FormatDef) {
     super(key);
-    this.template = format.template;
-    this.level = format.level;
+    this.template = format.template!;
+    this.level = format.level!;
     logger.debug('Loaded template for [' + key + ']: ' + format.template);
   }
 
-  transform (userId: any, event: any) {
+  transform (userId: string, event: AuditEvent): LogItem {
     logger.debug('Using template ' + this.key);
     return {
       level: this.level,
@@ -75,15 +80,15 @@ class Template extends SyslogTransform {
 /**
  * Get the Syslog string correspondig to this event
  */
-function logForEvent (userId: any, event: any) {
+function logForEvent (userId: string, event: AuditEvent): LogItem {
   if (event.type in templates) {
     return templates[event.type].transform(userId, event);
   }
   return templates['log/default'].transform(userId, event);
 }
 
-const templates: any = {};
-function loadTemplates (templatesFromConfig: any) {
+const templates: Record<string, SyslogTransform> = {};
+function loadTemplates (templatesFromConfig: Record<string, FormatDef>) {
   for (const key of Object.keys(templatesFromConfig)) {
     const format = templatesFromConfig[key];
     if (format.template) {
@@ -105,23 +110,23 @@ export { loadTemplates, logForEvent };
  * @param template - of the form "{userid} {content.message}"
  * @param userId  - the userid
  */
-function transformFromTemplate (template: any, userId: any, event: any) {
+function transformFromTemplate (template: string, userId: string, event: AuditEvent): string {
   logger.debug('transformFromTemplate', template);
   const result = template.replace('{userid}', userId);
-  return result.replace(/{([^}]*)}/g, function (match: any, key: any) {
-    let res = getKey(key, event) || match;
+  return result.replace(/{([^}]*)}/g, function (match: string, key: string): string {
+    let res: unknown = getKey(key, event) || match;
     if (typeof res === 'object') {
       res = JSON.stringify(res);
     }
-    return res;
+    return String(res);
   });
 }
 
 /**
  * getKey('foo.bar', {foo: { bar: "I want this"}}); //=> "I want this"
  */
-function getKey (key: any, obj: any) {
-  return key.split('.').reduce(function (a: any, b: any) {
-    return a && a[b];
+function getKey (key: string, obj: unknown): unknown {
+  return key.split('.').reduce(function (a: unknown, b: string) {
+    return a && (a as Record<string, unknown>)[b];
   }, obj);
 }
