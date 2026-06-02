@@ -11,23 +11,41 @@ const { getConfig } = require('@pryv/boiler');
 
 const errors = require('errors').factory;
 
-let singleton: any = null;
-let userAccountStorage: any = null;
+type UserAccountStorage = {
+  getCurrentPasswordTime (userId: string): Promise<number>;
+  passwordExistsInHistory (userId: string, password: string, historyLength: number): Promise<boolean>;
+};
+type AuthSettings = {
+  passwordAgeMaxDays?: number;
+  passwordAgeMinDays?: number;
+  passwordComplexityMinLength?: number;
+  passwordComplexityMinCharCategories?: number;
+  passwordPreventReuseHistoryLength?: number;
+  [k: string]: unknown;
+};
+type PasswordRules = {
+  getPasswordExpirationAndChangeTimes (userId: string): Promise<{ passwordExpires?: number; passwordCanBeChanged?: number }>;
+  checkCurrentPasswordAge (userId: string): Promise<void>;
+  checkNewPassword (userId: string | null, password: string): Promise<void>;
+};
+
+let singleton: PasswordRules | null = null;
+let userAccountStorage: UserAccountStorage | null = null;
 
 /**
  * Return the password rules singleton, initializing it with the given settings if needed.
  */
-async function get () {
+async function get (): Promise<PasswordRules> {
   if (!singleton) {
-    singleton = init();
+    singleton = await init();
   }
   return singleton;
 }
 export default get;
 
-async function init () {
+async function init (): Promise<PasswordRules> {
   const { getUserAccountStorage } = require('storage');
-  userAccountStorage = await getUserAccountStorage();
+  userAccountStorage = await getUserAccountStorage() as UserAccountStorage;
   const config = await getConfig();
   const charCategoriesRegExps = {
     lowercase: /[a-z]/,
@@ -41,14 +59,14 @@ async function init () {
     /**
      * @throws {APIError} If the password does not follow the configured rules
      */
-    async checkCurrentPasswordAge (userId: any) {
+    async checkCurrentPasswordAge (userId: string) {
       await checkMinimumAge(userId);
     },
     /**
      * @param userId Optional; if set, will check the user's password history
      * @throws {APIError} If the password does not follow the configured rules
      */
-    async checkNewPassword (userId: any, password: any) {
+    async checkNewPassword (userId: string | null, password: string) {
       checkLength(password);
       checkCharCategories(password);
       if (userId) {
@@ -57,11 +75,11 @@ async function init () {
     }
   };
 
-  async function getPasswordExpirationAndChangeTimes (userId: any) {
-    const maxDays = settings().passwordAgeMaxDays;
-    const minDays = settings().passwordAgeMinDays;
-    const pwdTime = await userAccountStorage.getCurrentPasswordTime(userId);
-    const res: any = {};
+  async function getPasswordExpirationAndChangeTimes (userId: string): Promise<{ passwordExpires?: number; passwordCanBeChanged?: number }> {
+    const maxDays = settings().passwordAgeMaxDays!;
+    const minDays = settings().passwordAgeMinDays!;
+    const pwdTime = await userAccountStorage!.getCurrentPasswordTime(userId);
+    const res: { passwordExpires?: number; passwordCanBeChanged?: number } = {};
     if (maxDays !== 0) {
       res.passwordExpires = timestamp.add(pwdTime, `${maxDays}d`);
     }
@@ -71,20 +89,20 @@ async function init () {
     return res;
   }
 
-  async function checkMinimumAge (userId: any) {
-    const minDays = settings().passwordAgeMinDays;
+  async function checkMinimumAge (userId: string) {
+    const minDays = settings().passwordAgeMinDays!;
     if (minDays === 0) {
       return;
     }
-    const pwdTime = await userAccountStorage.getCurrentPasswordTime(userId);
+    const pwdTime = await userAccountStorage!.getCurrentPasswordTime(userId);
     if (timestamp.now(`-${minDays}d`) < pwdTime) {
       const msg = `The current password was set less than ${minDays} day(s) ago`;
       throw errors.invalidOperation(`The password cannot be changed yet (age rules): ${msg}`);
     }
   }
 
-  function checkLength (password: any) {
-    const minLength = settings().passwordComplexityMinLength;
+  function checkLength (password: string) {
+    const minLength = settings().passwordComplexityMinLength!;
     if (minLength === 0) {
       return;
     }
@@ -95,8 +113,8 @@ async function init () {
     }
   }
 
-  function checkCharCategories (password: any) {
-    const requiredCharCats = settings().passwordComplexityMinCharCategories;
+  function checkCharCategories (password: string) {
+    const requiredCharCats = settings().passwordComplexityMinCharCategories!;
     if (requiredCharCats === 0) {
       return;
     }
@@ -107,25 +125,25 @@ async function init () {
     }
   }
 
-  function countCharCategories (password: any) {
+  function countCharCategories (password: string): number {
     return Object.values(charCategoriesRegExps).reduce(
       (count, regExp) => regExp.test(password) ? count + 1 : count,
       0
     );
   }
 
-  async function checkHistory (userId: any, password: any) {
-    const historyLength = settings().passwordPreventReuseHistoryLength;
+  async function checkHistory (userId: string, password: string) {
+    const historyLength = settings().passwordPreventReuseHistoryLength!;
     if (historyLength === 0) {
       return;
     }
-    if (await userAccountStorage.passwordExistsInHistory(userId, password, settings().passwordPreventReuseHistoryLength)) {
-      const msg = `Password was found in the ${settings().passwordPreventReuseHistoryLength} last used passwords, which is forbidden`;
+    if (await userAccountStorage!.passwordExistsInHistory(userId, password, historyLength)) {
+      const msg = `Password was found in the ${historyLength} last used passwords, which is forbidden`;
       throw errors.invalidOperation(`The new password does not follow reuse rules: ${msg}`);
     }
   }
 
-  function settings () {
-    return config.get('auth');
+  function settings (): AuthSettings {
+    return config.get('auth') as AuthSettings;
   }
 }
