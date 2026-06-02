@@ -5,8 +5,28 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
+
 const require = createRequire(import.meta.url);
 const timestamp = require('unix-timestamp');
+
+type MethodContext = BaseMethodContext & {
+  [key: string]: any;
+};
+type ResultBag = Record<string, unknown>;
+type Next = (err?: unknown) => void;
+type WebhookInstance = {
+  id: string;
+  url: string;
+  accessId: string;
+  forApi (): Record<string, unknown>;
+  save (): Promise<unknown>;
+  update (data: Record<string, unknown>): Promise<unknown>;
+  delete (): Promise<unknown>;
+  makeCall (args: unknown[]): Promise<unknown>;
+};
+type DuplicateError = Error & { isDuplicateIndex (field: string): boolean };
+type AccessLike = { id: string; isPersonal (): boolean };
 
 const errors = require('errors').factory;
 
@@ -30,7 +50,7 @@ type Access = {
   id: string;
   isApp(): Boolean;
 };
-export default async function produceWebhooksApiMethods (api: any) {
+export default async function produceWebhooksApiMethods (api: { register: (...args: unknown[]) => void }) {
   const config = await ready();
   // Lazy getter instead of slice capture.
   const getWebhooks = () => config.get('webhooks');
@@ -47,7 +67,7 @@ export default async function produceWebhooksApiMethods (api: any) {
     findAccessibleWebhooks
   );
 
-  async function findAccessibleWebhooks (context: any, params: any, result: any, next: any) {
+  async function findAccessibleWebhooks (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     const currentAccess = context.access;
     try {
       const webhooks = await webhooksRepository.get(context.user, currentAccess);
@@ -57,7 +77,7 @@ export default async function produceWebhooksApiMethods (api: any) {
     }
     next();
 
-    function forApi (webhook: any) {
+    function forApi (webhook: WebhookInstance) {
       return webhook.forApi();
     }
   }
@@ -68,7 +88,7 @@ export default async function produceWebhooksApiMethods (api: any) {
     findWebhook
   );
 
-  async function findWebhook (context: any, params: any, result: any, next: any) {
+  async function findWebhook (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     const user = context.user;
     const currentAccess = context.access;
     const webhookId = params.id;
@@ -97,7 +117,7 @@ export default async function produceWebhooksApiMethods (api: any) {
     bootWebhook
   );
 
-  async function createWebhook (context: any, params: any, result: any, next: any) {
+  async function createWebhook (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     context.initTrackingProperties(params);
     const webhook = new Webhook(Object.assign({
       user: context.user,
@@ -110,9 +130,9 @@ export default async function produceWebhooksApiMethods (api: any) {
     try {
       await webhook.save();
       result.webhook = webhook.forApi();
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Expecting a duplicate error
-      if (error.isDuplicateIndex('url')) {
+      if ((error as DuplicateError).isDuplicateIndex('url')) {
         return next(errors.itemAlreadyExists('webhook', { url: params.url }));
       }
       return next(errors.unexpectedError(error));
@@ -121,7 +141,7 @@ export default async function produceWebhooksApiMethods (api: any) {
     return next();
   }
 
-  async function bootWebhook (context: any, params: any, result: any, next: any) {
+  async function bootWebhook (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     pubsub.webhooks.emit(pubsub.WEBHOOKS_CREATE, Object.assign({ username: context.user.username }, { webhook: result.webhook }));
     return next();
   }
@@ -137,12 +157,12 @@ export default async function produceWebhooksApiMethods (api: any) {
     reactivateWebhook
   );
 
-  function applyPrerequisitesForUpdate (context: any, params: any, result: any, next: any) {
+  function applyPrerequisitesForUpdate (context: MethodContext, params: { update: Record<string, unknown> }, result: ResultBag, next: Next) {
     context.updateTrackingProperties(params.update);
     next();
   }
 
-  async function updateWebhook (context: any, params: any, result: any, next: any) {
+  async function updateWebhook (context: MethodContext, params: { id: string; update: Record<string, unknown> }, result: ResultBag, next: Next) {
     const user = context.user;
     const currentAccess = context.access;
     const update = params.update;
@@ -166,7 +186,7 @@ export default async function produceWebhooksApiMethods (api: any) {
     next();
   }
 
-  async function reactivateWebhook (context: any, params: any, result: any, next: any) {
+  async function reactivateWebhook (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     pubsub.webhooks.emit(pubsub.WEBHOOKS_ACTIVATE, Object.assign({ username: context.user.username }, { webhook: result.webhook }));
     return next();
   }
@@ -180,7 +200,7 @@ export default async function produceWebhooksApiMethods (api: any) {
     turnOffWebhook
   );
 
-  async function deleteAccess (context: any, params: any, result: any, next: any) {
+  async function deleteAccess (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     const user = context.user;
     const currentAccess = context.access;
     const webhookId = params.id;
@@ -203,7 +223,7 @@ export default async function produceWebhooksApiMethods (api: any) {
     next();
   }
 
-  async function turnOffWebhook (context: any, params: any, result: any, next: any) {
+  async function turnOffWebhook (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     const username = context.user.username;
     const webhookId = params.id;
     pubsub.webhooks.emit(pubsub.WEBHOOKS_DELETE, {
@@ -223,12 +243,12 @@ export default async function produceWebhooksApiMethods (api: any) {
     testWebhook
   );
 
-  async function testWebhook (context: any, params: any, result: any, next: any) {
+  async function testWebhook (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     const TEST_MESSAGE = 'test';
     const user = context.user;
     const currentAccess = context.access;
     const webhookId = params.id;
-    let webhook: any;
+    let webhook: WebhookInstance | null = null;
     try {
       webhook = await webhooksRepository.getById(user, webhookId);
       if (webhook == null) {
@@ -241,11 +261,11 @@ export default async function produceWebhooksApiMethods (api: any) {
       return next(errors.unexpectedError(error));
     }
     try {
-      await webhook.makeCall([TEST_MESSAGE]);
+      await webhook!.makeCall([TEST_MESSAGE]);
     } catch (e) {
-      return next(errors.unknownReferencedResource('webhook', 'url', webhook.url, e));
+      return next(errors.unknownReferencedResource('webhook', 'url', webhook!.url, e));
     }
-    result.webhook = webhook.forApi();
+    result.webhook = webhook!.forApi();
     next();
   }
 
@@ -254,7 +274,7 @@ export default async function produceWebhooksApiMethods (api: any) {
    * If Personnal: yes
    * If App: only if it was used to create the webhook
    */
-  function isWebhookInScope (webhook: any, access: any) {
+  function isWebhookInScope (webhook: WebhookInstance, access: AccessLike): boolean {
     if (access.isPersonal()) { return true; }
     return access.id === webhook.accessId;
   }
