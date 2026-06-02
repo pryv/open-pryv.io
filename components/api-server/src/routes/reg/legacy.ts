@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
+
 const require = createRequire(import.meta.url);
 /**
  * Legacy service-register routes preserved for backward compatibility.
@@ -13,9 +15,12 @@ const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
 
-export default function (expressApp: any, app: any) {
-  const adminAccessKey = app.config.get('auth:adminAccessKey');
-  const domain = app.config.get('dns:domain');
+type App = { config: { get (key: string): unknown }; [k: string]: any };
+type UserCore = { coreId: string; username: string };
+
+export default function (expressApp: ExpressApp, app: App) {
+  const adminAccessKey = app.config.get('auth:adminAccessKey') as string;
+  const domain = app.config.get('dns:domain') as string;
 
   // Lazy-loaded dependencies (avoid circular requires at module load)
   let _usersRepository: any;
@@ -32,7 +37,7 @@ export default function (expressApp: any, app: any) {
   }
 
   // --- Admin auth middleware (same as system routes) ---
-  function checkAdmin (req: any, res: any, next: any) {
+  function checkAdmin (req: Request, _res: Response, next: NextFunction) {
     const secret = req.headers.authorization;
     if (secret == null || secret !== adminAccessKey) {
       return next(errors.unknownResource());
@@ -48,7 +53,7 @@ export default function (expressApp: any, app: any) {
    * GET /:email/username — get username from email.
    * Returns { username } or 404.
    */
-  expressApp.get('/reg/:email/username', async (req: any, res: any, next: any) => {
+  expressApp.get('/reg/:email/username', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const email = req.params.email;
       const platformDB = getPlatformDB();
@@ -67,7 +72,7 @@ export default function (expressApp: any, app: any) {
   /**
    * GET /:email/uid — deprecated alias, returns { uid }.
    */
-  expressApp.get('/reg/:email/uid', async (req: any, res: any, next: any) => {
+  expressApp.get('/reg/:email/uid', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const email = req.params.email;
       const platformDB = getPlatformDB();
@@ -90,9 +95,9 @@ export default function (expressApp: any, app: any) {
   /**
    * GET /:uid/server — redirect to the core hosting this user.
    */
-  expressApp.get('/reg/:uid/server', async (req: any, res: any, next: any) => {
+  expressApp.get('/reg/:uid/server', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const username = req.params.uid;
+      const username = req.params.uid as string;
       // Prefer PlatformDB (rqlite, replicated) over per-core usersLocalIndex —
       // in multi-core mode, a user's SQLite index only exists on their home
       // core, so any core that is NOT the user's home would 404 even though
@@ -113,9 +118,9 @@ export default function (expressApp: any, app: any) {
   /**
    * POST /:uid/server — JSON response with server and alias.
    */
-  expressApp.post('/reg/:uid/server', async (req: any, res: any, next: any) => {
+  expressApp.post('/reg/:uid/server', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const username = req.params.uid;
+      const username = req.params.uid as string;
       const coreUrl = await getCoreUrlForUser(username);
       if (coreUrl == null) {
         return res.status(404).json({
@@ -136,7 +141,7 @@ export default function (expressApp: any, app: any) {
   /**
    * GET /admin/users/:username — get user details (system role).
    */
-  expressApp.get('/reg/admin/users/:username', checkAdmin, async (req: any, res: any, next: any) => {
+  expressApp.get('/reg/admin/users/:username', checkAdmin, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const username = req.params.username;
       const usersRepo = await getUsersRepository();
@@ -147,7 +152,7 @@ export default function (expressApp: any, app: any) {
       }
       const platformDB = getPlatformDB();
       const systemStreams = require('business/src/system-streams/index.ts');
-      const userInfo: any = { username };
+      const userInfo: Record<string, unknown> = { username };
 
       // Collect indexed fields from PlatformDB
       for (const field of systemStreams.indexedFieldNames) {
@@ -169,17 +174,17 @@ export default function (expressApp: any, app: any) {
    * GET /admin/servers — list cores with user counts.
    * Maps to the multi-core PlatformDB.
    */
-  expressApp.get('/reg/admin/servers', checkAdmin, async (req: any, res: any, next: any) => {
+  expressApp.get('/reg/admin/servers', checkAdmin, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
       const cores = await platform.getAllCoreInfos();
       const allUserCores = await getPlatformDB().getAllUserCores();
 
-      const servers: any = {};
+      const servers: Record<string, { userCount: number }> = {};
       for (const core of cores) {
         const coreUrl = platform.coreIdToUrl(core.id);
-        const userCount = allUserCores.filter((uc: any) => uc.coreId === core.id).length;
+        const userCount = allUserCores.filter((uc: UserCore) => uc.coreId === core.id).length;
         servers[coreUrl] = { userCount };
       }
 
@@ -200,7 +205,7 @@ export default function (expressApp: any, app: any) {
   /**
    * GET /admin/servers/:serverName/users — list users on a specific core.
    */
-  expressApp.get('/reg/admin/servers/:serverName/users', checkAdmin, async (req: any, res: any, next: any) => {
+  expressApp.get('/reg/admin/servers/:serverName/users', checkAdmin, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const serverName = req.params.serverName;
       const { getPlatform } = require('platform');
@@ -209,7 +214,7 @@ export default function (expressApp: any, app: any) {
 
       // Find coreId matching this serverName (could be URL or coreId)
       const cores = await platform.getAllCoreInfos();
-      const matchingCore = cores.find((c: any) =>
+      const matchingCore = cores.find((c: { id: string }) =>
         c.id === serverName ||
         platform.coreIdToUrl(c.id).includes(serverName)
       );
@@ -219,8 +224,8 @@ export default function (expressApp: any, app: any) {
       }
 
       const users = allUserCores
-        .filter((uc: any) => uc.coreId === matchingCore.id)
-        .map((uc: any) => ({ username: uc.username }));
+        .filter((uc: UserCore) => uc.coreId === matchingCore.id)
+        .map((uc: UserCore) => ({ username: uc.username }));
 
       res.json({ users });
     } catch (err) {
@@ -232,7 +237,7 @@ export default function (expressApp: any, app: any) {
    * GET /admin/servers/:src/rename/:dst — rename server (migrate users).
    * In multi-core: updates user-to-core mappings in PlatformDB.
    */
-  expressApp.get('/reg/admin/servers/:srcServerName/rename/:dstServerName', checkAdmin, async (req: any, res: any, next: any) => {
+  expressApp.get('/reg/admin/servers/:srcServerName/rename/:dstServerName', checkAdmin, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const srcName = req.params.srcServerName;
       const dstName = req.params.dstServerName;
@@ -260,7 +265,7 @@ export default function (expressApp: any, app: any) {
   /**
    * GET /admin/invitations — list all invitation tokens.
    */
-  expressApp.get('/reg/admin/invitations', checkAdmin, async (req: any, res: any, next: any) => {
+  expressApp.get('/reg/admin/invitations', checkAdmin, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
@@ -275,10 +280,10 @@ export default function (expressApp: any, app: any) {
    * GET /admin/invitations/post — generate new invitation tokens.
    * Query params: count (number), message (optional description).
    */
-  expressApp.get('/reg/admin/invitations/post', checkAdmin, async (req: any, res: any, next: any) => {
+  expressApp.get('/reg/admin/invitations/post', checkAdmin, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const count = parseInt(req.query.count) || 1;
-      const message = req.query.message || '';
+      const count = parseInt(String(req.query.count)) || 1;
+      const message = (req.query.message as string) || '';
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
       const data = await platform.generateInvitationTokens(count, 'admin', message);
@@ -292,7 +297,7 @@ export default function (expressApp: any, app: any) {
   // Helper
   // =====================================================================
 
-  async function getCoreUrlForUser (username: any) {
+  async function getCoreUrlForUser (username: string) {
     const { getPlatform } = require('platform');
     const platform = await getPlatform();
 
