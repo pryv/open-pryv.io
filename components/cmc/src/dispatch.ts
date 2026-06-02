@@ -39,19 +39,42 @@ const retryQueueMod = require('./retryQueue.ts');
 
 type SelfIdentity = { username: string; host: string };
 
+type CmcEvent = {
+  id?: string;
+  type: string;
+  content?: Record<string, unknown> | null;
+  streamIds?: string[];
+  createdBy?: string;
+  [k: string]: unknown;
+};
+
+type CmcAccess = {
+  id?: string;
+  clientData?: { cmc?: { role?: string; [k: string]: unknown }; [k: string]: unknown };
+  [k: string]: unknown;
+};
+
+// Mall proxy types — these methods accept and return runtime payloads that
+// vary by call site (Mongo-style queries, partial events, partial accesses).
+// Keep param/result as `unknown` rather than `any` so consumers get the
+// is-undefined check signal at least, but don't model the deep variants.
 type MallLike = {
   accesses: {
-    create: (userId: string, params: any) => Promise<any>;
-    delete?: (userId: string, params: any) => Promise<any>;
-    update?: (userId: string, params: any) => Promise<any>;
-    get?: (userId: string, params?: any) => Promise<any[]>;
+    create: (userId: string, params: unknown) => Promise<unknown>;
+    delete?: (userId: string, params: unknown) => Promise<unknown>;
+    update?: (userId: string, params: unknown) => Promise<unknown>;
+    get?: (userId: string, params?: unknown) => Promise<CmcAccess[]>;
   };
-  events:   { update: (userId: string, params: any) => Promise<any>; create: (userId: string, params: any) => Promise<any>; get?: (userId: string, params?: any) => Promise<any[]> };
-  streams:  { create: (userId: string, params: any) => Promise<any> };
+  events: {
+    update: (userId: string, params: unknown) => Promise<unknown>;
+    create: (userId: string, params: unknown) => Promise<unknown>;
+    get?: (userId: string, params?: unknown) => Promise<unknown[]>;
+  };
+  streams: { create: (userId: string, params: unknown) => Promise<unknown> };
 };
 
 type OutboundDeps = {
-  fetch: (url: string, init?: any) => Promise<any>;
+  fetch: (url: string, init?: RequestInit) => Promise<Response>;
   timeoutMs?: number;
 };
 
@@ -69,7 +92,7 @@ type DispatchDeps = {
   // the trigger event (status transitions). Lets the api-server emit
   // pubsub.USERNAME_BASED_EVENTS_CHANGED so the app's socket.io
   // subscription sees the status flip. No-op if undefined.
-  notifyEventChanged?: (userId: string, event: any) => void;
+  notifyEventChanged?: (userId: string, event: CmcEvent) => void;
 };
 
 type DispatchResult = {
@@ -77,8 +100,27 @@ type DispatchResult = {
   eventType: string | null;
   status: 'pending' | 'delivered' | 'completed' | 'failed' | 'skipped';
   reason?: string;
-  detail?: any;
+  detail?: unknown;
 };
+
+type HandlerResult = {
+  ok?: boolean;
+  reason?: string;
+  detail?: unknown;
+  dataGrantApiEndpoint?: string;
+  dataGrantAccessId?: string;
+  offerEventId?: string;
+  capabilityId?: string;
+  requesterIdentity?: { username: string; host: string };
+  backChannelAccessId?: string;
+  anchorStreamIds?: string[];
+};
+
+// Middleware-fire-time context shape. The api-server passes its
+// MethodContext here; we only read user.id + leave per-request deps
+// up to buildPerRequestDeps callers.
+type MiddlewareContext = { user?: { id?: string; [k: string]: unknown }; [k: string]: unknown };
+type MiddlewareResult = { event?: CmcEvent; [k: string]: unknown };
 
 /**
  * Dispatch a single CMC trigger event through its handler.
@@ -91,7 +133,7 @@ type DispatchResult = {
  */
 async function dispatch (params: {
   userId: string;
-  event: { id?: string; type: string; content: any; streamIds?: string[] };
+  event: CmcEvent;
   deps: DispatchDeps;
 }): Promise<DispatchResult> {
   const { userId, event, deps } = params;
@@ -112,10 +154,10 @@ async function dispatch (params: {
         content: { ...(event.content || {}), status: 'delivered' },
       });
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* notify is best-effort */ }
-    } catch (err: any) {
+    } catch (err: unknown) {
       deps.logger?.warn('cmc/dispatch: failed to mark trigger as delivered', {
         eventId: event.id,
-        error: String(err?.message || err),
+        error: String((err as Error)?.message ?? err),
       });
     }
   }
@@ -124,9 +166,9 @@ async function dispatch (params: {
   try {
     const resolved = await deps.selfIdentityFor(userId);
     selfIdentity = resolved;
-  } catch (err: any) {
+  } catch (err: unknown) {
     return await markFailed(deps, userId, event, 'cmc-dispatch-self-identity-failed', {
-      message: String(err?.message || err),
+      message: String((err as Error)?.message ?? err),
     });
   }
 
@@ -159,7 +201,7 @@ async function dispatch (params: {
     }
   }
 
-  let result: any;
+  let result: HandlerResult | undefined;
   try {
     switch (event.type) {
       case C.ET_ACCEPT:
@@ -240,9 +282,9 @@ async function dispatch (params: {
       default:
         return { handled: false, eventType: event.type, status: 'skipped', reason: 'unknown-cmc-event' };
     }
-  } catch (err: any) {
+  } catch (err: unknown) {
     return await markFailed(deps, userId, event, 'cmc-dispatch-handler-threw', {
-      message: String(err?.message || err),
+      message: String((err as Error)?.message ?? err),
     });
   }
 
@@ -277,12 +319,12 @@ async function dispatch (params: {
   );
 }
 
-async function markCompleted (deps: DispatchDeps, userId: string, event: any, extra: any): Promise<DispatchResult> {
+async function markCompleted (deps: DispatchDeps, userId: string, event: CmcEvent, extra: Partial<HandlerResult> & Record<string, unknown>): Promise<DispatchResult> {
   if (event.id == null || deps.mall.events.update == null) {
     return { handled: true, eventType: event.type, status: 'completed' };
   }
   try {
-    const cleaned: any = {};
+    const cleaned: Record<string, unknown> = {};
     if (extra != null) {
       for (const [k, v] of Object.entries(extra)) {
         if (v !== undefined) cleaned[k] = v;
@@ -293,10 +335,10 @@ async function markCompleted (deps: DispatchDeps, userId: string, event: any, ex
       content: { ...(event.content || {}), status: 'completed', ...cleaned },
     });
     try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
-  } catch (err: any) {
+  } catch (err: unknown) {
     deps.logger?.warn('cmc/dispatch: failed to mark trigger as completed', {
       eventId: event.id,
-      error: String(err?.message || err),
+      error: String((err as Error)?.message ?? err),
     });
   }
   return { handled: true, eventType: event.type, status: 'completed' };
@@ -305,9 +347,9 @@ async function markCompleted (deps: DispatchDeps, userId: string, event: any, ex
 async function markFailed (
   deps: DispatchDeps,
   userId: string,
-  event: any,
+  event: CmcEvent,
   reason: string,
-  detail?: any
+  detail?: unknown
 ): Promise<DispatchResult> {
   // Auto-enqueue a retry for retryable failures (default on; tests opt out
   // by setting enqueueRetries=false).
@@ -328,10 +370,10 @@ async function markFailed (
           logger: deps.logger,
         },
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       deps.logger?.warn('cmc/dispatch: failed to enqueue retry', {
         eventId: event.id,
-        error: String(err?.message || err),
+        error: String((err as Error)?.message ?? err),
       });
     }
   }
@@ -346,11 +388,11 @@ async function markFailed (
         },
       });
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
-    } catch (err: any) {
+    } catch (err: unknown) {
       deps.logger?.warn('cmc/dispatch: failed to mark trigger as failed', {
         eventId: event.id,
         reason,
-        error: String(err?.message || err),
+        error: String((err as Error)?.message ?? err),
       });
     }
   }
@@ -373,7 +415,7 @@ async function markFailed (
  * a copy to :_cmc:inbox so the requester's app sees the accept via
  * standard inbox subscription.
  */
-function isOnInbox (event: any): boolean {
+function isOnInbox (event: CmcEvent): boolean {
   const ids = Array.isArray(event?.streamIds) ? event.streamIds : [];
   if (ids.includes(C.NS_INBOX)) return true;
   for (const id of ids) {
@@ -436,12 +478,12 @@ async function isPeerDeliveredEvent (
   deps: DispatchDeps
 ): Promise<boolean> {
   if (typeof createdBy !== 'string' || createdBy.length === 0) return false;
-  const mallAccesses: any = deps.mall.accesses;
+  const mallAccesses = deps.mall.accesses;
   if (mallAccesses?.get == null) return false;
   try {
     const list = await mallAccesses.get(userId, {});
     const acc = Array.isArray(list)
-      ? list.find((a: any) => a?.id === createdBy)
+      ? list.find((a) => a?.id === createdBy)
       : null;
     return acc?.clientData?.cmc?.role === 'counterparty';
   } catch (_e) {
@@ -451,9 +493,9 @@ async function isPeerDeliveredEvent (
 
 function createDispatchMiddleware (
   deps: DispatchDeps,
-  buildPerRequestDeps?: (context: any) => Partial<DispatchDeps>
-): (context: any, params: any, result: any, next: any) => any {
-  return function cmcDispatchMiddleware (context: any, _params: any, result: any, next: any) {
+  buildPerRequestDeps?: (context: MiddlewareContext) => Partial<DispatchDeps>
+): (context: MiddlewareContext, params: unknown, result: MiddlewareResult, next: () => void) => unknown {
+  return function cmcDispatchMiddleware (context: MiddlewareContext, _params: unknown, result: MiddlewareResult, next: () => void) {
     // Read the event back from the result (api-server convention).
     const event = result?.event;
     const userId = context?.user?.id;
@@ -468,10 +510,10 @@ function createDispatchMiddleware (
       // reflects the side-effect.
       dispatch({ userId, event, deps: requestDeps })
         .then(() => next())
-        .catch((err: any) => {
+        .catch((err: unknown) => {
           deps.logger?.warn('cmc/dispatch: sync handler failed', {
             type: event.type,
-            error: String(err?.message || err),
+            error: String((err as Error)?.message ?? err),
           });
           // Don't propagate as an events.create failure — the event was
           // persisted; the side-effect failed and is logged. The retry
@@ -486,7 +528,7 @@ function createDispatchMiddleware (
       .then(() => dispatch({ userId, event, deps: requestDeps }))
       .catch((err) => {
         deps.logger?.warn('cmc/dispatch: unexpected uncaught error', {
-          error: String(err?.message || err),
+          error: String((err as Error)?.message ?? err),
         });
       });
     next();
