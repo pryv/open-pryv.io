@@ -22,16 +22,26 @@ const C = require('./constants.ts');
 const validators = require('./validators.ts');
 const provisioning = require('./provisioning.ts');
 
+type ApiError = Error & { id?: string; data?: unknown };
 type ErrorFactory = {
-  invalidOperation: (message: string, details?: any) => any;
-  unknownResource?: (resource: string, id?: any) => any;
+  invalidOperation: (message: string, details?: Record<string, unknown>) => ApiError;
+  unknownResource?: (resource: string, id?: unknown) => ApiError;
 };
 
 type Deps = {
   errors: ErrorFactory;
 };
 
-type Middleware = (context: any, params: any, result: any, next: any) => any | Promise<any>;
+type MethodContext = {
+  newEvent?: { type?: string; content?: Record<string, unknown>; streamIds?: string[]; [k: string]: unknown };
+  user?: { id?: string };
+  access?: { clientData?: { cmc?: { role?: string; counterparty?: { username?: string; host?: string } } } };
+  event?: { streamIds?: string[]; [k: string]: unknown };
+  cmc?: { isCmcEvent?: boolean; eventType?: string; streamIds?: string[]; [k: string]: unknown };
+  [k: string]: unknown;
+};
+type MethodNext = (err?: unknown) => unknown;
+type Middleware = (context: MethodContext, params: any, result: any, next: MethodNext) => unknown | Promise<unknown>;
 
 /**
  * events.create hook — validates cmc/* event content against its schema.
@@ -66,7 +76,7 @@ function createCmcContentValidationHook (deps: Deps): Middleware {
     // cmc-internal/*) so a `startsWith('cmc/')` would miss most of them.
     const isCmcType = C.isCmcEventType(type);
     if (isCmcType) {
-      context.cmc.eventType = type;
+      context.cmc.eventType = type as string;
     }
 
     if (!isCmcType) {
@@ -244,10 +254,10 @@ function createEnsureReservedParentsHook (deps: ProvisionDeps): Middleware {
         userId,
         logger: deps.logger,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       deps.logger?.warn?.('cmc/ensureReservedParents: failed (continuing)', {
         userId,
-        error: String(err?.message || err),
+        error: String((err as Error)?.message || err),
       });
     }
     next();
@@ -275,7 +285,7 @@ function createEnsureReservedParentsHook (deps: ProvisionDeps): Middleware {
 function createEventsGetInternalGuardHook (): Middleware {
   return function cmcEventsGetInternalGuard (_context, params, _result, next) {
     if (params == null || !Array.isArray(params.streams)) return next();
-    params.streams = params.streams.filter((s: any) => {
+    params.streams = params.streams.filter((s: string | { streamId?: string } | null) => {
       if (typeof s === 'string') return !C.isCmcInternalStreamId(s);
       if (s != null && typeof s === 'object' && typeof s.streamId === 'string') {
         return !C.isCmcInternalStreamId(s.streamId);
@@ -303,8 +313,8 @@ function createEventGetOneInternalGuardHook (deps: Deps): Middleware {
   return function cmcEventGetOneInternalGuard (context, params, _result, next) {
     const event = context?.event;
     if (event == null) return next();
-    const streamIds: any[] = Array.isArray(event.streamIds) ? event.streamIds : [];
-    if (streamIds.some((id: any) => C.isCmcInternalStreamId(id))) {
+    const streamIds: string[] = Array.isArray(event.streamIds) ? event.streamIds : [];
+    if (streamIds.some((id: string) => C.isCmcInternalStreamId(id))) {
       // Drop the staged event from context so downstream middleware
       // doesn't render it, then surface 404 (info-leak parity with the
       // existing hidden-system-stream pattern).
@@ -326,9 +336,10 @@ function createEventGetOneInternalGuardHook (deps: Deps): Middleware {
  * Wired AFTER `findAccessibleStreams` populates `result.streams`.
  */
 function createStreamsGetInternalGuardHook (): Middleware {
-  function prune (nodes: any[]): any[] {
+  type StreamNode = { id?: string; children?: StreamNode[]; [k: string]: unknown };
+  function prune (nodes: StreamNode[]): StreamNode[] {
     if (!Array.isArray(nodes)) return nodes;
-    const kept: any[] = [];
+    const kept: StreamNode[] = [];
     for (const n of nodes) {
       if (n != null && typeof n.id === 'string' && C.isCmcInternalStreamId(n.id)) continue;
       if (Array.isArray(n?.children)) n.children = prune(n.children);
@@ -493,12 +504,12 @@ function createAccessUpdateForgePreventionHook (deps: Deps): Middleware {
  */
 
 type Mall = {
-  streams: { create: (userId: string, params: any) => Promise<any> };
+  streams: { create: (userId: string, params: Record<string, unknown>) => Promise<unknown> };
 };
 
 type ProvisionLogger = {
-  debug?: (msg: string, ...rest: any[]) => void;
-  warn?: (msg: string, ...rest: any[]) => void;
+  debug?: (msg: string, ...rest: unknown[]) => void;
+  warn?: (msg: string, ...rest: unknown[]) => void;
 };
 
 type ProvisionDeps = {
@@ -520,7 +531,7 @@ const RESERVED_APP_SEGMENTS = new Set(C.APP_RESERVED_SEGMENTS);
  *
  * Returns a deduped Set so callers can iterate without rework.
  */
-function extractAppScopeLeavesToProvision (permissions: any[]): Set<string> {
+function extractAppScopeLeavesToProvision (permissions: Array<{ streamId?: unknown }>): Set<string> {
   const targets = new Set<string>();
   if (!Array.isArray(permissions)) return targets;
   for (const perm of permissions) {
@@ -546,7 +557,7 @@ function createAccessProvisionAppScopeHook (deps: ProvisionDeps): Middleware {
 
     for (const streamId of targets) {
       const appCode = C.getAppCode(streamId);
-      const payload: any = {
+      const payload: Record<string, unknown> = {
         id: streamId,
         parentId: C.NS_APPS,
         name: appCode,
@@ -561,7 +572,7 @@ function createAccessProvisionAppScopeHook (deps: ProvisionDeps): Middleware {
         deps.logger?.debug?.('cmc: provisioned app-scope root', {
           userId, streamId, accessId: access.id,
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (provisioning.isAlreadyExistsError(err)) {
           deps.logger?.debug?.('cmc: app-scope root already present', { userId, streamId });
           continue;
@@ -570,7 +581,7 @@ function createAccessProvisionAppScopeHook (deps: ProvisionDeps): Middleware {
           userId,
           streamId,
           accessId: access.id,
-          error: err?.message || err,
+          error: (err as Error)?.message || err,
         });
         // Intentional: continue rather than abort. See docstring.
       }
