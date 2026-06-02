@@ -53,6 +53,7 @@ class TestServerContext {
     const port = await portAllocator.allocatePort();
 
     const proxy = this.forkChild();
+    proxy.port = port;
     this.allocated.push(proxy);
 
     // Inherit the parent's effective storage-engine choice when running
@@ -136,12 +137,14 @@ class ProcessProxy {
   started: any;
   exited: any;
   pendingMessages: Map<number, Resolver>;
+  port: number | null;
 
   constructor (childProcess: any) {
     this.childProcess = childProcess;
     this.started = new Fuse();
     this.exited = new Fuse();
     this.pendingMessages = new Map();
+    this.port = null;
     this.registerEvents();
   }
 
@@ -151,6 +154,10 @@ class ProcessProxy {
     child.on('exit', () => {
       logger.debug('child exited');
       this.exited.burn();
+      if (this.port != null) {
+        portAllocator.releasePort(this.port);
+        this.port = null;
+      }
     });
     child.on('message', (wire: any) => {
       if (wire && wire.type === 'test-notification') return;

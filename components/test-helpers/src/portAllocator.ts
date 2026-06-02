@@ -36,11 +36,26 @@ const BASE_PORT_MIN = 10000;
 const BASE_PORT_MAX = 50000;
 let nextPort = BASE_PORT_MIN + Math.floor(Math.random() * (BASE_PORT_MAX - BASE_PORT_MIN));
 
+const allocatedPorts = new Set<number>();
+const freedPorts: number[] = [];
+
 /**
- * Allocates a free port for testing
+ * Allocates a free port for testing.
+ * Reuses freed ports (FIFO) before falling back to monotonic allocation.
  */
 async function allocatePort () {
-  // Keep trying until we find a free port
+  // First try freed-pool: a previously-released port that the OS has
+  // since released too. Skip any that are still bound by a slow consumer.
+  while (freedPorts.length > 0) {
+    const port = freedPorts.shift() as number;
+    if (await isPortAvailable(port)) {
+      allocatedPorts.add(port);
+      getLog().debug(`Reallocated freed port ${port}`);
+      return port;
+    }
+    getLog().debug(`Freed port ${port} still bound, skipping`);
+  }
+  // Fall through to monotonic allocation.
   while (true) {
     const port = nextPort++;
 
@@ -50,11 +65,23 @@ async function allocatePort () {
     }
 
     if (await isPortAvailable(port)) {
+      allocatedPorts.add(port);
       getLog().debug(`Allocated port ${port}`);
       return port;
     }
 
     getLog().debug(`Port ${port} unavailable, trying next`);
+  }
+}
+
+/**
+ * Returns a port to the pool. Safe to call with a port that was never
+ * allocated (no-op). Idempotent on repeat releases.
+ */
+function releasePort (port: number) {
+  if (allocatedPorts.delete(port)) {
+    freedPorts.push(port);
+    getLog().debug(`Released port ${port}`);
   }
 }
 
@@ -96,6 +123,8 @@ async function allocatePorts (count: any) {
  */
 function reset (basePort: any) {
   nextPort = basePort || (BASE_PORT_MIN + Math.floor(Math.random() * (BASE_PORT_MAX - BASE_PORT_MIN)));
+  allocatedPorts.clear();
+  freedPorts.length = 0;
 }
 
-export { allocatePort, allocatePorts, isPortAvailable, reset };
+export { allocatePort, allocatePorts, releasePort, isPortAvailable, reset };

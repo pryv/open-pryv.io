@@ -78,6 +78,10 @@ class DynamicInstanceManager extends EventEmitter {
       }
       this.serverProcess = null;
     }
+    if (this.allocatedHttpPort != null) {
+      portAllocator.releasePort(this.allocatedHttpPort);
+      this.allocatedHttpPort = null;
+    }
   }
 
   private isRunning () {
