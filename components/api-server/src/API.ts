@@ -11,7 +11,10 @@ const errors = require('errors').factory;
 const Result = require('./Result.ts').default;
 const { getConfigSync } = require('@pryv/boiler');
 
-let audit: any, throwIfMethodIsNotDeclared: any, isAuditActive: any;
+type AuditModule = { default?: { validApiCall (ctx: unknown, result: unknown): Promise<void> }; validApiCall? (ctx: unknown, result: unknown): Promise<void> } & { validApiCall (ctx: unknown, result: unknown): Promise<void> };
+type MethodContext = { methodId: string; tracing: { startSpan (n: string, tags?: Record<string, unknown>, parent?: string): void; finishSpan (n: string): void; setError (n: string, err: unknown): void }; username?: string; [k: string]: unknown };
+
+let audit: AuditModule, throwIfMethodIsNotDeclared: (id: string) => void, isAuditActive: boolean;
 
 // When storing full events.get request instead of streaming it, the maximum
 // array size before returning an error.
@@ -39,13 +42,13 @@ class API {
    */
   map;
 
-  filters: any[];
+  filters: Filter[];
 
   constructor () {
     this.map = new Map();
     this.filters = [];
     const config = getConfigSync();
-    isAuditActive = config.get('audit:active');
+    isAuditActive = config.get('audit:active') as boolean;
     if (isAuditActive) {
       audit = require('audit').default;
       throwIfMethodIsNotDeclared =
@@ -71,7 +74,7 @@ class API {
    * - `api.register('events.start', fn1, 'events.create', ...)`
    *
    */
-  register (id: any, ...fns: any[]) {
+  register (id: string, ...fns: ApiFunction[]) {
     if (isAuditActive) { throwIfMethodIsNotDeclared(id); }
 
     const methodMap = this.map;
@@ -81,7 +84,7 @@ class API {
     if (wildcardAt === -1) {
       // Do we need to initialize this method id?
       // if (! methodMap.has(id)) {
-      const methodFns: any[] = [];
+      const methodFns: ApiFunction[] = [];
       methodMap.set(id, methodFns);
 
       // prepend with matching filters registered earlier, if any
@@ -132,7 +135,7 @@ class API {
    * Searches for filters that match `id` and applies them.
    *
    */
-  applyMatchingFilters (id: any) {
+  applyMatchingFilters (id: string) {
     const filters = this.filters;
 
     for (const filter of filters) {
@@ -144,7 +147,7 @@ class API {
    * Searches for existing methods that are matched by this filter.
    *
    */
-  applyToMatchingIds (filter: any) {
+  applyToMatchingIds (filter: Filter) {
     const methodMap = this.map;
 
     for (const id of methodMap.keys()) {
@@ -157,7 +160,7 @@ class API {
    * list of functions of `id`.
    *
    */
-  applyIfMatches (filter: any, id: any) {
+  applyIfMatches (filter: Filter, id: string) {
     if (matches(filter.idFilter, id)) {
       const methodMap = this.map;
       const methodList = methodMap.get(id);
@@ -168,7 +171,7 @@ class API {
 
   // ------------------------------------------------------------ handling calls
 
-  call (context: any, params: any, callback: any) {
+  call (context: MethodContext, params: unknown, callback: ApiCallback) {
     const methodId = context.methodId;
     const methodMap = this.map;
     const methodList = methodMap.get(methodId);
@@ -187,14 +190,14 @@ class API {
 
     let unanmedCount = 0;
     let i = 0;
-    function runNextMethod (err?: any) {
+    function runNextMethod (err?: unknown) {
       if (err != null) return finalize(err);
       if (i >= methodList.length) return finalize(null);
       const currentFn = methodList[i++];
       // -- Tracing by Function
       const fnName = 'fn:' + (currentFn.name || methodId + '.unamed' + unanmedCount++);
       tracing.startSpan(fnName, {}, apiSpanName);
-      const nextCloseSpan = function (err: any) {
+      const nextCloseSpan = function (err?: unknown) {
         if (err != null) tracing.setError(fnName, err);
         tracing.finishSpan(fnName);
         if (err != null) result.closeTracing(); // close open span for result that was left open
@@ -206,7 +209,7 @@ class API {
         nextCloseSpan(err);
       }
     }
-    function finalize (err: any) {
+    function finalize (err: unknown) {
       if (err != null) {
         tracing.setError(apiSpanName, err);
         tracing.finishSpan(apiSpanName);
@@ -233,7 +236,7 @@ class API {
 
 export default API;
 export { API };
-function matches (idFilter: any, id: any) {
+function matches (idFilter: string, id: string): boolean {
   // i.e. check whether the given id starts with the given filter without the
   // wildcard
   const filterWithoutWildcard = idFilter.slice(0, -1);
