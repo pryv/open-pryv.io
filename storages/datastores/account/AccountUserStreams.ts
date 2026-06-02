@@ -10,6 +10,28 @@ const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
 
+type Stream = {
+  id: string;
+  name?: string;
+  parentId?: string | null;
+  clientData?: Record<string, unknown>;
+  children?: Stream[];
+  childrenHidden?: boolean;
+  trashed?: boolean;
+  created?: number;
+  createdBy?: string;
+  modified?: number;
+  modifiedBy?: string;
+  isShown?: boolean;
+  [k: string]: unknown;
+};
+type StreamQuery = {
+  parentId?: string | null;
+  excludedIds?: string[];
+  childrenDepth?: number;
+  [k: string]: unknown;
+};
+
 // Only keep standard stream properties (strip config-only fields like
 // isEditable, isIndexed, isShown, isUnique, type, default, etc.)
 const STREAM_PROPERTIES = new Set([
@@ -20,7 +42,7 @@ const STREAM_PROPERTIES = new Set([
 /**
  * Strip non-stream properties from a stream tree (mutates in place).
  */
-function cleanStreamTree (streams: any) {
+function cleanStreamTree (streams: Stream[]): void {
   for (const s of streams) {
     for (const key of Object.keys(s)) {
       if (!STREAM_PROPERTIES.has(key)) delete s[key];
@@ -36,8 +58,8 @@ function cleanStreamTree (streams: any) {
  * Non-shown streams and their subtrees are removed.
  * Must be called BEFORE cleanStreamTree (which strips isShown).
  */
-function filterShown (streams: any) {
-  const result: any[] = [];
+function filterShown (streams: Stream[]): Stream[] {
+  const result: Stream[] = [];
   for (const s of streams) {
     if (s.isShown === false) continue;
     const clone = Object.assign({}, s);
@@ -56,7 +78,7 @@ function filterShown (streams: any) {
  *
  * @param streamTree - system stream tree (fully built, with prefixed IDs)
  */
-function create (streamTree: any) {
+function create (streamTree: Stream[]) {
   // Build a readable-only tree for get() responses (before stripping config props)
   const readableTree = filterShown(streamTree);
   cleanStreamTree(readableTree);
@@ -68,10 +90,10 @@ function create (streamTree: any) {
   ds.defaults.applyOnStreams(streamTree);
 
   // Build a flat index from the full tree (for getOne lookups)
-  const streamIndex = new Map();
+  const streamIndex: Map<string, Stream> = new Map();
   indexTree(streamTree);
 
-  function indexTree (streams: any) {
+  function indexTree (streams: Stream[]) {
     for (const s of streams) {
       streamIndex.set(s.id, s);
       if (s.children && s.children.length > 0) {
@@ -81,8 +103,8 @@ function create (streamTree: any) {
   }
 
   return ds.createUserStreams({
-    async get (userId: any, query: any) {
-      let streams;
+    async get (_userId: string, query: StreamQuery) {
+      let streams: Stream[];
       if (query.parentId === '*' || query.parentId == null) {
         streams = readableTree;
       } else {
@@ -94,28 +116,28 @@ function create (streamTree: any) {
       return applyQuery(structuredClone(streams), query);
     },
 
-    async getOne (userId: any, streamId: any, query: any) {
+    async getOne (_userId: string, streamId: string, _query: StreamQuery) {
       const stream = streamIndex.get(streamId);
       return stream ? structuredClone(stream) : null;
     },
 
-    async getDeletions (userId: any, deletionsSince: any) {
+    async getDeletions (_userId: string, _deletionsSince: number) {
       return [];
     },
 
-    async create (userId: any, streamData: any) {
+    async create (_userId: string, _streamData: Stream) {
       throw ds.errors.invalidOperation('It is forbidden to modify system streams.');
     },
 
-    async createDeleted (userId: any, streamData: any) {
+    async createDeleted (_userId: string, _streamData: Stream) {
       throw ds.errors.invalidOperation('It is forbidden to modify system streams.');
     },
 
-    async update (userId: any, updateData: any) {
+    async update (_userId: string, _updateData: Stream) {
       throw ds.errors.invalidOperation('It is forbidden to modify system streams.');
     },
 
-    async delete (userId: any, streamId: any) {
+    async delete (_userId: string, _streamId: string) {
       throw ds.errors.invalidOperation('It is forbidden to modify system streams.');
     }
   });
@@ -124,14 +146,14 @@ function create (streamTree: any) {
 /**
  * Apply childrenDepth and excludedIds to a list of streams.
  */
-function applyQuery (streams: any, query: any) {
+function applyQuery (streams: Stream[], query: StreamQuery): Stream[] {
   let result = streams;
   if (query.excludedIds && query.excludedIds.length > 0) {
     const excluded = new Set(query.excludedIds);
-    result = result.filter((s: any) => !excluded.has(s.id));
+    result = result.filter((s: Stream) => !excluded.has(s.id));
   }
   if (query.childrenDepth === 0) {
-    result = result.map((s: any) => Object.assign({}, s, { children: [], childrenHidden: true }));
+    result = result.map((s: Stream) => Object.assign({}, s, { children: [], childrenHidden: true }));
   }
   return result;
 }
