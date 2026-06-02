@@ -14,16 +14,30 @@ const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('messages:pubsub');
 const CONSTANTS = require('./constants.ts');
 
+type PubSubOptions = {
+  transport?: string;
+  forwardToTests?: boolean;
+  forwardToInternal?: boolean;
+};
+type Subscription = { unsubscribe: () => void };
+type Transport = {
+  subscribe (scope: string, target: PubSub): Promise<Subscription>;
+  deliver (scope: string, eventName: string, payload: unknown): void;
+  setTestDeliverHook (hook: (...args: unknown[]) => void): void;
+};
+type TestNotifier = { emit (eventName: string, payload?: unknown): void };
+type Logger = { debug (...args: unknown[]): void; warn? (...args: unknown[]): void; getLogger (name: string): Logger };
+
 // Generic implementation of pub / sub messaging
 
 class PubSub extends EventEmitter {
-  options: any;
-  transport: any;
-  scopeName: any;
-  logger: any;
-  transportSubMap: any; // map that contains transport subscriptions by key
+  options: PubSubOptions;
+  transport!: Transport | null;
+  scopeName: string;
+  logger: Logger;
+  transportSubMap: Record<string, { sub: Subscription; counter: number }>; // map that contains transport subscriptions by key
 
-  constructor (scopeName: any, options: any = {}) {
+  constructor (scopeName: string, options: PubSubOptions = {}) {
     super();
     this.options = Object.assign({
       transport: CONSTANTS.TRANSPORT_MODE_ALL,
@@ -43,11 +57,11 @@ class PubSub extends EventEmitter {
     }
   }
 
-  on (eventName: any, listener: any) {
+  on (eventName: string, listener: (...args: unknown[]) => void) {
     // keyed listeners
     if ((transport != null) && (this.options.transport === CONSTANTS.TRANSPORT_MODE_KEY)) {
       if (this.transportSubMap[eventName] == null) { // not yet listening .. subscribe
-        transport.subscribe(this.scopeName + '.' + eventName, this).then((sub: any) => {
+        transport.subscribe(this.scopeName + '.' + eventName, this).then((sub: Subscription) => {
           this.transportSubMap[eventName] = { sub, counter: 1 };
         });
       } else {
@@ -61,7 +75,7 @@ class PubSub extends EventEmitter {
    * Add-on to EventEmmitter that returns a function to be called to
    * @returns function
    */
-  onAndGetRemovable (eventName: any, listener: any) {
+  onAndGetRemovable (eventName: string, listener: (...args: unknown[]) => void) {
     this.on(eventName, listener);
     return () => {
       this.off(eventName, listener);
@@ -76,7 +90,7 @@ class PubSub extends EventEmitter {
     };
   }
 
-  emit (eventName: any, payload: any) {
+  emit (eventName: string, payload: unknown) {
     this.logger.debug('emit', eventName, payload, this.options);
     if (this.options.forwardToInternal) super.emit(eventName, payload); // forward to internal listener
 
@@ -88,7 +102,7 @@ class PubSub extends EventEmitter {
     }
   }
 
-  _emit (eventName: any, payload: any) {
+  _emit (eventName: string, payload: unknown) {
     super.emit(eventName, payload); // forward to internal listener
     this.logger.debug('_emit', eventName, payload);
   }
@@ -96,7 +110,7 @@ class PubSub extends EventEmitter {
 
 // ----- Transport
 
-let transport: any = null;
+let transport: Transport | null = null;
 function initTransport () {
   if (transport != null) return;
   transport = require('./tcp_pubsub.ts');
@@ -105,19 +119,20 @@ function initTransport () {
 
 // ----- TEST Messaging
 
-const testMessageMap: any = {};
+const testMessageMap: Record<string, string> = {};
 testMessageMap[CONSTANTS.USERNAME_BASED_EVENTS_CHANGED] = 'test-events-changed';
 testMessageMap[CONSTANTS.USERNAME_BASED_STREAMS_CHANGED] = 'test-streams-changed';
 testMessageMap[CONSTANTS.USERNAME_BASED_ACCESSES_CHANGED] = 'test-accesses-changed';
 testMessageMap[CONSTANTS.USERNAME_BASED_ACCOUNT_CHANGED] = 'test-account-changed';
 
-let globalTestNotifier: any = null;
+let globalTestNotifier: TestNotifier | null = null;
 
-function forwardToTests (eventName: any, payload: any) {
+function forwardToTests (eventName: string, payload: unknown) {
+  if (globalTestNotifier == null) return;
   if (eventName === CONSTANTS.SERVER_READY) {
     return globalTestNotifier.emit('test-server-ready');
   }
-  const testMessageKey = testMessageMap[payload];
+  const testMessageKey = testMessageMap[String(payload)];
   if (testMessageKey) {
     globalTestNotifier.emit(testMessageKey, eventName);
   }
@@ -126,11 +141,11 @@ function forwardToTests (eventName: any, payload: any) {
 // ---- Exports
 
 class PubSubFactory {
-  _status: any;
-  _webhooks: any;
-  _series: any;
-  _notifications: any;
-  _cache: any;
+  _status: PubSub | null = null;
+  _webhooks: PubSub | null = null;
+  _series: PubSub | null = null;
+  _notifications: PubSub | null = null;
+  _cache: PubSub | null = null;
   get status () {
     if (this._status == null) this._status = new PubSub('status', { transport: CONSTANTS.TRANSPORT_MODE_NONE, forwardToTests: true });
     this._status.setMaxListeners(1); // 1 is enough
@@ -165,15 +180,15 @@ class PubSubFactory {
     return this._cache;
   }
 
-  setTestNotifier (testNotifier: any) {
+  setTestNotifier (testNotifier: TestNotifier) {
     globalTestNotifier = testNotifier;
   }
 
-  setTestDeliverHook (deliverHook: any) {
+  setTestDeliverHook (deliverHook: (...args: unknown[]) => void) {
     if (transport == null) {
       console.log(new Error('Transport not initialized'));
     }
-    transport.setTestDeliverHook(deliverHook);
+    transport!.setTestDeliverHook(deliverHook);
   }
 
   // used by tests to detect true "OpenSource" setup
