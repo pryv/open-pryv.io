@@ -68,11 +68,12 @@ function parseCollectorStreamId (streamId: string): ParsedCollectorStream | null
 type AccessLike = {
   id: string;
   type?: string;
-  clientData?: any;
+  clientData?: Record<string, unknown>;
+  permissions?: Array<Record<string, unknown>>;
 };
 
 type OutboundDeps = {
-  fetch: (url: string, init?: any) => Promise<any>;
+  fetch: (url: string, init?: RequestInit) => Promise<Response>;
   timeoutMs?: number;
   logger?: { debug: Function; warn: Function };
 };
@@ -87,14 +88,14 @@ type SystemHandlerResult =
   | {
       ok: false;
       reason: string;
-      detail?: any;
+      detail?: unknown;
     };
 
 type DeliverSystemParams = {
   remoteApiEndpoint: string;
   remoteCollectorStreamId: string;
   eventType: string; // notification/alert-cmc or notification/ack-cmc
-  payload: any;
+  payload: Record<string, unknown>;
   selfIdentity: Counterparty;
   deps: OutboundDeps;
 };
@@ -138,10 +139,10 @@ const SYSTEM_EVENT_TYPES = new Set([
 
 async function handleSystemEvent (params: {
   userId: string;
-  triggerEvent: { id?: string; type: string; content: any; streamIds?: string[] };
+  triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
   deps: {
-    mall: { accesses: { get: (userId: string, params?: any) => Promise<AccessLike[]> } };
+    mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } };
     fetch: OutboundDeps['fetch'];
     timeoutMs?: number;
     logger?: { debug: Function; warn: Function };
@@ -174,7 +175,7 @@ async function handleSystemEvent (params: {
   const accessesList = await deps.mall.accesses.get(userId, {});
   let chosen: AccessLike | null = null;
   for (const acc of accessesList) {
-    const cmc = acc?.clientData?.cmc;
+    const cmc = (acc?.clientData as { cmc?: { role?: string; counterparty?: { username?: string; host?: string }; appCode?: string; features?: { systemMessaging?: boolean }; [k: string]: unknown } } | undefined)?.cmc;
     if (cmc?.role !== 'counterparty') continue;
     const cp = cmc?.counterparty;
     if (cp == null) continue;
@@ -182,7 +183,7 @@ async function handleSystemEvent (params: {
     // Confirm the hostSlug matches by re-slugifying the access's host.
     const accHostSlug = slugMod.slugifyHost(cp.host);
     if (accHostSlug !== parsed.counterparty.hostSlug) continue;
-    if (cmc?.appCode != null && cmc.appCode !== parsed.appCode) continue;
+    if ((cmc as { appCode?: string })?.appCode != null && (cmc as { appCode?: string }).appCode !== parsed.appCode) continue;
     chosen = acc;
     break;
   }
@@ -204,12 +205,12 @@ async function handleSystemEvent (params: {
   // governance), not user-level messaging.
   const isUserMessaging = triggerEvent.type === C.ET_SYSTEM_ALERT ||
                           triggerEvent.type === C.ET_SYSTEM_ACK;
-  if (isUserMessaging && cmc?.features?.systemMessaging === false) {
+  if (isUserMessaging && (cmc as { features?: { systemMessaging?: boolean } } | undefined)?.features?.systemMessaging === false) {
     return { ok: false, reason: 'cmc-system-messaging-disabled', detail: { accessId: chosen.id, eventType: triggerEvent.type } };
   }
 
-  const remoteApiEndpoint: string | undefined = cmc?.counterparty?.apiEndpoint;
-  const remoteCollectorStreamId: string | undefined = cmc?.counterparty?.remoteCollectorStreamId;
+  const remoteApiEndpoint = (cmc as { counterparty?: { apiEndpoint?: string } } | undefined)?.counterparty?.apiEndpoint;
+  const remoteCollectorStreamId = (cmc as { counterparty?: { remoteCollectorStreamId?: string } } | undefined)?.counterparty?.remoteCollectorStreamId;
   if (typeof remoteApiEndpoint !== 'string' || remoteApiEndpoint.length === 0) {
     return { ok: false, reason: 'cmc-system-no-remote-apiendpoint', detail: { accessId: chosen.id } };
   }
@@ -217,7 +218,7 @@ async function handleSystemEvent (params: {
     return { ok: false, reason: 'cmc-system-no-remote-collector-stream', detail: { accessId: chosen.id } };
   }
 
-  let delivery: any;
+  let delivery: { ok?: boolean; response?: { status?: number; body?: unknown; reason?: string }; remoteEventId?: string; currentCount?: number; [k: string]: unknown } | undefined;
   try {
     delivery = await deliverSystemToPeer({
       remoteApiEndpoint,
@@ -227,22 +228,22 @@ async function handleSystemEvent (params: {
       selfIdentity,
       deps,
     });
-  } catch (err: any) {
-    return { ok: false, reason: 'cmc-handler-delivery-threw', detail: { message: String(err?.message || err) } };
+  } catch (err: unknown) {
+    return { ok: false, reason: 'cmc-handler-delivery-threw', detail: { message: String((err as Error)?.message || err) } };
   }
 
-  if (!delivery.ok) {
+  if (!delivery?.ok) {
     return {
       ok: false,
       reason: 'cmc-handler-delivery-failed',
-      detail: { status: delivery.status, peerReason: delivery.reason },
+      detail: { status: (delivery as { status?: number } | undefined)?.status, peerReason: (delivery as { reason?: string } | undefined)?.reason },
     };
   }
 
   return {
     ok: true,
     eventType: triggerEvent.type,
-    remoteEventId: delivery.body?.event?.id,
+    remoteEventId: (delivery as { body?: { event?: { id?: string } } } | undefined)?.body?.event?.id,
   };
 }
 
@@ -255,9 +256,9 @@ async function handleSystemEvent (params: {
  */
 async function handleSystemAlert (params: {
   userId: string;
-  triggerEvent: { id?: string; type: string; content: any; streamIds?: string[] };
+  triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: any;
+  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: { debug: Function; warn: Function }; [k: string]: unknown };
 }): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_ALERT) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
@@ -270,9 +271,9 @@ async function handleSystemAlert (params: {
  */
 async function handleSystemAck (params: {
   userId: string;
-  triggerEvent: { id?: string; type: string; content: any; streamIds?: string[] };
+  triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: any;
+  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: { debug: Function; warn: Function }; [k: string]: unknown };
 }): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_ACK) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
@@ -294,9 +295,9 @@ async function handleSystemAck (params: {
  */
 async function handleSystemScopeRequest (params: {
   userId: string;
-  triggerEvent: { id?: string; type: string; content: any; streamIds?: string[] };
+  triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: any;
+  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: { debug: Function; warn: Function }; [k: string]: unknown };
 }): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_SCOPE_REQUEST) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
@@ -320,9 +321,9 @@ async function handleSystemScopeRequest (params: {
  */
 async function handleSystemScopeUpdate (params: {
   userId: string;
-  triggerEvent: { id?: string; type: string; content: any; streamIds?: string[] };
+  triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: any;
+  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: { debug: Function; warn: Function }; [k: string]: unknown };
 }): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_SCOPE_UPDATE) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
@@ -345,36 +346,36 @@ async function handleSystemScopeUpdate (params: {
   // non-machinery perms on top. Callers CAN include CMC perms explicitly
   // — they're filtered out and replaced with whatever the access actually
   // has (the plugin owns these; user input is informational only).
-  const accessId: string | undefined = params.triggerEvent.content?.accessId;
-  const newPermissions: any = params.triggerEvent.content?.newPermissions;
+  const accessId = (params.triggerEvent.content as { accessId?: string })?.accessId;
+  const newPermissions = (params.triggerEvent.content as { newPermissions?: Array<Record<string, unknown>> })?.newPermissions;
   if (typeof accessId === 'string' && Array.isArray(newPermissions) &&
-      params.deps?.mall?.accesses?.update != null) {
+      (params.deps?.mall?.accesses as { update?: unknown })?.update != null) {
     try {
       let mergedPerms = newPermissions;
       if (params.deps?.mall?.accesses?.get != null) {
         const accessList = await params.deps.mall.accesses.get(params.userId, {});
         const acc = Array.isArray(accessList)
-          ? accessList.find((a: any) => a?.id === accessId)
+          ? accessList.find((a: AccessLike) => a?.id === accessId)
           : null;
         if (acc != null && Array.isArray(acc.permissions)) {
-          const isCmcMachinery = (p: any) =>
+          const isCmcMachinery = (p: Record<string, unknown>) =>
             typeof p?.streamId === 'string' && p.streamId.startsWith(':_cmc:');
           const machinery = acc.permissions.filter(isCmcMachinery);
-          const userFacing = newPermissions.filter((p: any) => !isCmcMachinery(p));
+          const userFacing = newPermissions.filter((p: Record<string, unknown>) => !isCmcMachinery(p));
           mergedPerms = [...userFacing, ...machinery];
         }
       }
       await accessesUpdateHookMod.runWithSuppression(async () => {
-        await params.deps.mall.accesses.update(params.userId, {
+        await (params.deps.mall.accesses as unknown as { update: (uid: string, p: unknown) => Promise<unknown> }).update(params.userId, {
           id: accessId,
           update: { permissions: mergedPerms },
         });
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         ok: false,
         reason: 'cmc-scope-update-local-apply-failed',
-        detail: { accessId, message: String(err?.message || err) },
+        detail: { accessId, message: String((err as Error)?.message || err) },
       };
     }
   }
