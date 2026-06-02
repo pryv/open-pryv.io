@@ -19,11 +19,25 @@ const pluginLoader = require('./pluginLoader.ts');
 const internals = require('./internals.ts');
 const { getConfig, getLogger } = require('@pryv/boiler');
 
+type BoilerConfig = { get (key: string): any; has? (key: string): boolean };
+type Instances = {
+  database: unknown;
+  databasePG: unknown;
+  connection: unknown;
+  storageLayer: unknown;
+  userAccountStorage: unknown;
+  usersLocalIndex: unknown;
+  platformDB: unknown;
+  auditStorage: unknown;
+  seriesConnection: unknown;
+  dataStoreModule: unknown;
+};
+
 /**
  * Register all host internals that engines may need.
  * Called once during init(), after database connections are created.
  */
-function registerInternals (config: any, database: any, databasePG: any, storageLayer: any) {
+function registerInternals (config: BoilerConfig, database: unknown, databasePG: unknown, storageLayer: unknown) {
   // Live instances
   if (database) internals.register('database', database);
   if (databasePG) internals.register('databasePG', databasePG);
@@ -53,17 +67,17 @@ function registerInternals (config: any, database: any, databasePG: any, storage
  * The engine name is the folder name under storages/engines/.
  * Config structure: storages.engines.<engineName>.{...fields}
  */
-function getEngineConfig (config: any, engineName: any) {
+function getEngineConfig (config: BoilerConfig, engineName: string) {
   return config.get(`storages:engines:${engineName}`) || {};
 }
 
-function initEngines (config: any) {
+function initEngines (config: BoilerConfig) {
   for (const engineName of pluginLoader.listEngines()) {
     const manifest = pluginLoader.getManifest(engineName);
     if (!manifest) continue;
     const required = manifest.requiredInternals || [];
     // Skip engines whose internals are not all registered
-    if (!required.every((name: any) => internals.isRegistered(name))) continue;
+    if (!required.every((name: string) => internals.isRegistered(name))) continue;
     const resolved = internals.resolve(required, engineName);
     const engineConfig = getEngineConfig(config, engineName);
     const mod = pluginLoader.getEngineModule(engineName);
@@ -73,14 +87,14 @@ function initEngines (config: any) {
   }
 }
 
-let instances: any = null;
+let instances: Instances | null = null;
 let initializing = false;
 
 // Early-published references: set as soon as created during init() so that
 // sub-components calling back into the barrel (e.g. PG userAccountStorage
 // calling getDatabasePG()) can find them before `instances` is assembled.
-let _earlyDatabase: any = null;
-let _earlyDatabasePG: any = null;
+let _earlyDatabase: unknown = null;
+let _earlyDatabasePG: unknown = null;
 
 /**
  * Initialize all storage subsystems eagerly.
@@ -88,11 +102,12 @@ let _earlyDatabasePG: any = null;
  *
  * @param [config] - @pryv/boiler config (fetched if omitted)
  */
-async function init (config?: any) {
+async function init (config?: BoilerConfig) {
   if (instances || initializing) return;
   initializing = true;
   if (!config) config = await getConfig();
-  await pluginLoader.init(config);
+  const cfg = config!;
+  await pluginLoader.init(cfg);
 
   // Pre-populate getLogger and config on all engine _internals so that
   // Database/DatabasePG constructors (step 1) can use them before initEngines (step 3).
@@ -100,7 +115,7 @@ async function init (config?: any) {
     try {
       const { _internals: engineInternals } = require(`./engines/${engineName}/src/_internals.ts`);
       engineInternals.set('getLogger', getLogger);
-      engineInternals.set('config', getEngineConfig(config, engineName));
+      engineInternals.set('config', getEngineConfig(cfg, engineName));
     } catch (e) { /* engine may not have _internals.js */ }
   }
 
@@ -112,7 +127,7 @@ async function init (config?: any) {
   let databasePG = null;
   if (baseEngine === 'postgresql') {
     const { DatabasePG } = require('./engines/postgresql/src/DatabasePG.ts');
-    databasePG = new DatabasePG(config.get('storages:engines:postgresql'));
+    databasePG = new DatabasePG(cfg.get('storages:engines:postgresql'));
   }
   // sqlite: no shared `connection` object; the engine's initStorageLayer
   // creates DatabaseSQLite internally.
@@ -125,10 +140,10 @@ async function init (config?: any) {
 
   // 2. Register internals
   const storageLayer = new StorageLayer();
-  registerInternals(config, database, databasePG, storageLayer);
+  registerInternals(cfg, database, databasePG, storageLayer);
 
   // 3. Initialize engines (must be before storageLayer.init which calls engine.initStorageLayer)
-  initEngines(config);
+  initEngines(cfg);
 
   // 4. StorageLayer
   const integrityAccesses = require('business/src/integrity/index.ts').default.accesses;
@@ -152,18 +167,18 @@ async function init (config?: any) {
   validatePlatformDB(platformDB);
 
   // 7.5 AuditStorage (optional — skip if no engine declares auditStorage)
-  let auditStorage: any = null;
+  let auditStorage: unknown = null;
   const auditEngine = pluginLoader.getEngineFor('auditStorage');
   if (auditEngine) {
     const { validateAuditStorage } = require('storages/interfaces/auditStorage/AuditStorage.ts');
     const auditModule = pluginLoader.getEngineModule(auditEngine);
     auditStorage = auditModule.createAuditStorage();
-    await auditStorage.init();
+    await (auditStorage as { init: () => Promise<void> }).init();
     validateAuditStorage(auditStorage);
   }
 
   // 8. Series connection (skip if engine missing or lacks support)
-  let seriesConnection: any = null;
+  let seriesConnection: unknown = null;
   const seriesEngine = pluginLoader.getEngineFor('seriesStorage');
   if (seriesEngine) {
     let seriesModule;
@@ -171,7 +186,7 @@ async function init (config?: any) {
     if (seriesModule?.createSeriesConnection) {
       const { validateSeriesConnection } = require('storages/interfaces/seriesStorage/SeriesConnection.ts');
       // Pass engine config from manifest + PG connection for postgresql series engine
-      const seriesConfig = getEngineConfig(config, seriesEngine);
+      const seriesConfig = getEngineConfig(cfg, seriesEngine);
       seriesConnection = await seriesModule.createSeriesConnection({
         host: seriesConfig.host,
         port: seriesConfig.port,
@@ -206,7 +221,7 @@ async function init (config?: any) {
  */
 function reset () {
   if (instances?.auditStorage) {
-    try { instances.auditStorage.close(); } catch (e) { /* ignore */ }
+    try { (instances.auditStorage as { close: () => void }).close(); } catch (e) { /* ignore */ }
   }
   instances = null;
   initializing = false;
@@ -223,16 +238,16 @@ function reset () {
 // Node 24 require(esm) the CJS consumer's namespace object exposes them
 // via getter functions backed by these bindings.
 // `undefined` matches the original `instances?.X` getter behavior pre-init.
-let database: any = undefined;
-let databasePG: any = undefined;
-let connection: any = undefined;
-let storageLayer: any = undefined;
-let userAccountStorage: any = undefined;
-let usersLocalIndex: any = undefined;
-let platformDB: any = undefined;
-let auditStorage: any = undefined;
-let seriesConnection: any = undefined;
-let dataStoreModule: any = undefined;
+let database: unknown = undefined;
+let databasePG: unknown = undefined;
+let connection: unknown = undefined;
+let storageLayer: unknown = undefined;
+let userAccountStorage: unknown = undefined;
+let usersLocalIndex: unknown = undefined;
+let platformDB: unknown = undefined;
+let auditStorage: unknown = undefined;
+let seriesConnection: unknown = undefined;
+let dataStoreModule: unknown = undefined;
 
 function _refreshExports (): void {
   database = instances?.database ?? _earlyDatabase ?? undefined;
@@ -254,7 +269,7 @@ function _refreshExports (): void {
  * `Object.defineProperty(storages, 'platformDB', { get })` pattern, which no longer
  * works under ESM because module namespace properties are non-configurable.
  */
-function _setPlatformDBForTest (db: any): void {
+function _setPlatformDBForTest (db: unknown): void {
   platformDB = db;
 }
 
