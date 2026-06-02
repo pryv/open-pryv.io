@@ -8,9 +8,9 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 
-function pick (obj: any, keys: any) {
-  const out: any = {};
-  for (const k of keys) if (k in obj) out[k] = obj[k];
+function pick<T extends object> (obj: T, keys: string[]): Partial<T> {
+  const out: Partial<T> = {};
+  for (const k of keys) if (k in obj) (out as Record<string, unknown>)[k] = (obj as Record<string, unknown>)[k];
   return out;
 }
 const { createId: cuid } = require('@paralleldrive/cuid2');
@@ -53,22 +53,22 @@ class Webhook {
 
   messageBuffer;
 
-  timeout: any;
+  timeout: ReturnType<typeof setTimeout> | null;
 
   isSending;
 
-  user;
+  user: User;
 
-  repository;
+  repository: WebhooksRepository | null;
 
-  apiVersion: any;
+  apiVersion!: string | null;
 
-  serial: any;
+  serial!: string | null;
 
-  logger: any;
+  logger!: Logger | null;
 
-  pubsubTurnOffListener: any;
-  constructor (params: any) {
+  pubsubTurnOffListener!: (() => void) | null;
+  constructor (params: WebhookCtorParams) {
     this.id = params.id || cuid();
     this.accessId = params.accessId;
     this.url = params.url;
@@ -92,11 +92,11 @@ class Webhook {
     this.runsSize = params.runsSize || 50;
   }
 
-  startListenting (username: any) {
+  startListenting (username: string) {
     if (this.pubsubTurnOffListener != null) {
       throw new Error('Cannot listen twice');
     }
-    this.pubsubTurnOffListener = pubsub.notifications.onAndGetRemovable(username, (payload: any) => {
+    this.pubsubTurnOffListener = pubsub.notifications.onAndGetRemovable(username, (payload: { eventName: string; [k: string]: unknown }) => {
       this.send(payload.eventName);
     });
   }
@@ -104,7 +104,7 @@ class Webhook {
   /**
    * Send the message with the throttling and retry mechanics - to use in webhooks service
    */
-  async send (message: any, isRescheduled?: any) {
+  async send (message: WebhookMessage, isRescheduled?: boolean) {
     if (this.state === 'inactive') { return; }
     // Fire-time access-validity check: self-heal orphan webhooks whose
     // access was revoked, including those created before the cascade
@@ -126,15 +126,16 @@ class Webhook {
     this.messageBuffer.add(message);
     if (tooSoon.call(this) || this.isSending) { return reschedule.call(this, message); }
     this.isSending = true;
-    let status;
+    let status: number = 0;
     const sentBuffer = Array.from(this.messageBuffer);
     this.messageBuffer.clear();
     try {
       const res = await this.makeCall(sentBuffer);
       status = res.status;
-    } catch (e: any) {
-      if (e.response != null) {
-        status = e.response.status;
+    } catch (e: unknown) {
+      const err = e as { response?: { status?: number } };
+      if (err.response != null) {
+        status = err.response.status ?? 0;
       } else {
         status = 0;
       }
@@ -144,7 +145,7 @@ class Webhook {
     if (hasError(status)) {
       this.failCount++;
       this.currentRetries++;
-      sentBuffer.forEach((m: any) => {
+      sentBuffer.forEach((m: WebhookMessage) => {
         this.messageBuffer.add(m);
       });
       if (this.currentRetries > this.maxRetries) {
@@ -160,23 +161,23 @@ class Webhook {
     if (hasError(status)) {
       handleRetry.call(this, message);
     }
-    function hasError (status: any) {
+    function hasError (status: number) {
       return status < 200 || status >= 300;
     }
-    function handleRetry (this: any, message: any) {
+    function handleRetry (this: Webhook, message: WebhookMessage) {
       if (this.state === 'inactive') {
         return;
       }
       reschedule.call(this, message);
     }
-    function reschedule (this: any, message: any) {
+    function reschedule (this: Webhook, message: WebhookMessage) {
       if (this.timeout != null) { return; }
       const delay = this.minIntervalMs * (this.currentRetries || 1);
       this.timeout = setTimeout(() => {
         return this.send(message, true);
       }, delay);
     }
-    function tooSoon (this: any) {
+    function tooSoon (this: Webhook) {
       const now = timestamp.now();
       if ((now - this.lastRun.timestamp) * 1000 < this.minIntervalMs) {
         return true;
@@ -189,7 +190,7 @@ class Webhook {
   /**
    * Only make the HTTP call - used for webhook.test API method
    */
-  async makeCall (messages: any) {
+  async makeCall (messages: WebhookMessage[]) {
     const res = await fetch(this.url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -203,7 +204,7 @@ class Webhook {
       })
     });
     if (!res.ok) {
-      const err: any = new Error(`HTTP ${res.status}`);
+      const err: Error & { response?: { status: number } } = new Error(`HTTP ${res.status}`);
       err.response = { status: res.status };
       throw err;
     }
@@ -220,7 +221,7 @@ class Webhook {
     }
   }
 
-  addRun (run: any) {
+  addRun (run: Run) {
     if (this.runCount > this.runsSize) {
       this.runs.splice(-1, 1);
     }
@@ -234,7 +235,7 @@ class Webhook {
     await this.repository.insertOne(this.user, this);
   }
 
-  async update (fieldsToUpdate: any) {
+  async update (fieldsToUpdate: Partial<Webhook>) {
     const fields = Object.keys(fieldsToUpdate);
     deepMerge(this, fieldsToUpdate);
     await makeUpdate(fields, this);
@@ -291,25 +292,25 @@ class Webhook {
     ]);
   }
 
-  setApiVersion (version: any) {
+  setApiVersion (version: string) {
     this.apiVersion = version;
   }
 
-  setSerial (serial: any) {
+  setSerial (serial: string) {
     this.serial = serial;
   }
 
-  setLogger (logger: any) {
+  setLogger (logger: Logger) {
     this.logger = logger;
   }
 }
 export default Webhook;
 export { Webhook };
-function log (webhook: any, msg: any) {
+function log (webhook: Webhook, msg: string) {
   if (webhook.logger == null) { return; }
   webhook.logger.info(msg);
 }
-async function makeUpdate (fields: any, webhook: any) {
+async function makeUpdate (fields: string[] | null, webhook: Webhook) {
   if (webhook.repository == null) {
     throw new Error('repository not set for Webhook object.');
   }
@@ -330,4 +331,34 @@ type WebhookState = 'active' | 'inactive';
 type WebhookUpdate = {
   state: WebhookState;
   currentRetries: number;
+};
+type User = { id: string; username: string; [k: string]: unknown };
+type Logger = { info (msg: string): void; warn? (msg: string): void };
+type WebhookMessage = string;
+type WebhooksRepository = {
+  accessExists?: (user: User, accessId: string) => Promise<boolean>;
+  insertOne (user: User, webhook: Webhook): Promise<unknown>;
+  updateOne (user: User, update: Partial<Webhook>, id: string): Promise<unknown>;
+  deleteOne (user: User, id: string): Promise<unknown>;
+};
+type WebhookCtorParams = {
+  id?: string;
+  accessId: string;
+  url: string;
+  state?: WebhookState;
+  runs?: Run[];
+  lastRun?: Run;
+  runsSize?: number;
+  runCount?: number;
+  failCount?: number;
+  currentRetries?: number;
+  maxRetries?: number;
+  minIntervalMs?: number;
+  created?: number;
+  createdBy?: string;
+  modified?: number;
+  modifiedBy?: string;
+  user: User;
+  webhooksRepository: WebhooksRepository | null;
+  messageBuffer?: Set<WebhookMessage>;
 };
