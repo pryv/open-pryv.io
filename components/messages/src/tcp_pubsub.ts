@@ -11,26 +11,39 @@
 // Protocol: newline-delimited JSON over TCP.
 
 import { createRequire } from 'node:module';
+import type { Socket, Server } from 'node:net';
 const require = createRequire(import.meta.url);
 
 const net = require('node:net');
 const { getConfig, getLogger } = require('@pryv/boiler');
 const logger = getLogger('messages:pubsub:tcp');
 
-let testDeliverHook: any = null;
-let client: any = null;
-let broker: any = null;
-let initPromise: any = null;
+type ClientId = string;
+type Scope = string;
+type Payload = unknown;
+type DeliverHook = (scope: Scope, event: string, payload: Payload) => void;
+type LocalPubsub = { _emit (event: string, payload: Payload): void };
+type WireMessage =
+  | { t: 'welcome'; cid: ClientId }
+  | { t: 'sub'; scope: Scope }
+  | { t: 'unsub'; scope: Scope }
+  | { t: 'pub'; scope: Scope; event: string; payload: Payload }
+  | { t: 'msg'; scope: Scope; event: string; payload: Payload };
+
+let testDeliverHook: DeliverHook | null = null;
+let client: TcpClient | null = null;
+let broker: TcpBroker | null = null;
+let initPromise: Promise<void> | null = null;
 
 // ──────────────────────────────────────────────────────────────────────
 // TcpBroker — net.createServer, tracks clients + subscriptions
 // ──────────────────────────────────────────────────────────────────────
 
 class TcpBroker {
-  server: any;
+  server: Server | null;
   nextCid: number;
-  clients: Map<any, any>;
-  subscriptions: Map<any, any>;
+  clients: Map<ClientId, Socket>;
+  subscriptions: Map<Scope, Set<ClientId>>;
 
   constructor () {
     this.server = null;
@@ -39,28 +52,28 @@ class TcpBroker {
     this.subscriptions = new Map(); // scope → Set<cid>
   }
 
-  listen (port: any) {
+  listen (port: number) {
     return new Promise<void>((resolve, reject) => {
-      this.server = net.createServer((socket: any) => this._onConnection(socket));
-      this.server.once('error', reject);
-      this.server.listen(port, '127.0.0.1', () => {
-        this.server.removeListener('error', reject);
-        this.server.unref(); // don't keep process alive
+      this.server = net.createServer((socket: Socket) => this._onConnection(socket));
+      this.server!.once('error', reject);
+      this.server!.listen(port, '127.0.0.1', () => {
+        this.server!.removeListener('error', reject);
+        this.server!.unref(); // don't keep process alive
         logger.debug('broker listening on port', port);
         resolve();
       });
     });
   }
 
-  _onConnection (socket: any) {
-    const cid = 'c' + (this.nextCid++);
+  _onConnection (socket: Socket) {
+    const cid: ClientId = 'c' + (this.nextCid++);
     this.clients.set(cid, socket);
     socket.unref(); // don't keep process alive
     logger.debug('client connected', cid);
     this._send(socket, { t: 'welcome', cid });
 
     let buffer = '';
-    socket.on('data', (chunk: any) => {
+    socket.on('data', (chunk: Buffer) => {
       buffer += chunk.toString();
       let nl;
       while ((nl = buffer.indexOf('\n')) !== -1) {
@@ -69,8 +82,8 @@ class TcpBroker {
         if (line.length === 0) continue;
         try {
           this._handleMessage(cid, JSON.parse(line));
-        } catch (err: any) {
-          logger.warn('bad message from', cid, err.message);
+        } catch (err: unknown) {
+          logger.warn('bad message from', cid, (err as Error).message);
         }
       }
     });
@@ -79,18 +92,18 @@ class TcpBroker {
     socket.on('close', () => this._removeClient(cid));
   }
 
-  _handleMessage (senderCid: any, msg: any) {
+  _handleMessage (senderCid: ClientId, msg: WireMessage) {
     switch (msg.t) {
       case 'sub': {
         const scope = msg.scope;
         if (!this.subscriptions.has(scope)) this.subscriptions.set(scope, new Set());
-        this.subscriptions.get(scope).add(senderCid);
+        this.subscriptions.get(scope)!.add(senderCid);
         break;
       }
       case 'unsub': {
         const scope = msg.scope;
         if (this.subscriptions.has(scope)) {
-          this.subscriptions.get(scope).delete(senderCid);
+          this.subscriptions.get(scope)!.delete(senderCid);
         }
         break;
       }
@@ -101,7 +114,7 @@ class TcpBroker {
     }
   }
 
-  _route (senderCid: any, scope: any, event: any, payload: any) {
+  _route (senderCid: ClientId, scope: Scope, event: string, payload: Payload) {
     const out = JSON.stringify({ t: 'msg', scope, event, payload }) + '\n';
     const subs = this.subscriptions.get(scope);
     if (subs) {
@@ -113,13 +126,13 @@ class TcpBroker {
     }
   }
 
-  _send (socket: any, obj: any) {
+  _send (socket: Socket, obj: WireMessage) {
     if (!socket.destroyed) {
       socket.write(JSON.stringify(obj) + '\n');
     }
   }
 
-  _removeClient (cid: any) {
+  _removeClient (cid: ClientId) {
     this.clients.delete(cid);
     for (const subs of this.subscriptions.values()) {
       subs.delete(cid);
@@ -144,11 +157,11 @@ class TcpBroker {
 // ──────────────────────────────────────────────────────────────────────
 
 class TcpClient {
-  socket: any;
-  cid: any;
-  localSubs: Map<any, any>;
+  socket: Socket | null;
+  cid: ClientId | null;
+  localSubs: Map<Scope, LocalPubsub>;
   _buffer: string;
-  _welcomeResolve: any;
+  _welcomeResolve: ((value?: unknown) => void) | null;
 
   constructor () {
     this.socket = null;
@@ -158,21 +171,21 @@ class TcpClient {
     this._welcomeResolve = null;
   }
 
-  connect (port: any) {
+  connect (port: number) {
     return new Promise((resolve, reject) => {
       this.socket = net.createConnection({ port, host: '127.0.0.1' }, () => {
-        this.socket.removeListener('error', reject);
-        this.socket.unref(); // don't keep process alive
+        this.socket!.removeListener('error', reject);
+        this.socket!.unref(); // don't keep process alive
         // Wait for welcome message to get cid
         this._welcomeResolve = resolve;
       });
-      this.socket.once('error', reject);
-      this.socket.on('data', (chunk: any) => this._onData(chunk));
-      this.socket.on('error', (err: any) => logger.warn('tcp client error', err.message));
+      this.socket!.once('error', reject);
+      this.socket!.on('data', (chunk: Buffer) => this._onData(chunk));
+      this.socket!.on('error', (err: Error) => logger.warn('tcp client error', err.message));
     });
   }
 
-  _onData (chunk: any) {
+  _onData (chunk: Buffer) {
     this._buffer += chunk.toString();
     let nl;
     while ((nl = this._buffer.indexOf('\n')) !== -1) {
@@ -181,13 +194,13 @@ class TcpClient {
       if (line.length === 0) continue;
       try {
         this._handleMessage(JSON.parse(line));
-      } catch (err: any) {
-        logger.warn('bad message from broker', err.message);
+      } catch (err: unknown) {
+        logger.warn('bad message from broker', (err as Error).message);
       }
     }
   }
 
-  _handleMessage (msg: any) {
+  _handleMessage (msg: WireMessage) {
     switch (msg.t) {
       case 'welcome':
         this.cid = msg.cid;
@@ -207,7 +220,7 @@ class TcpClient {
     }
   }
 
-  send (obj: any) {
+  send (obj: WireMessage) {
     if (this.socket && !this.socket.destroyed) {
       this.socket.write(JSON.stringify(obj) + '\n');
     }
@@ -245,13 +258,13 @@ async function _doInit () {
     broker = new TcpBroker();
     await broker.listen(port);
     logger.debug('acting as broker on port', port);
-  } catch (err: any) {
-    if (err.code === 'EADDRINUSE') {
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
       broker = null;
       logger.debug('port in use, connecting as client only');
     } else {
       broker = null;
-      logger.warn('broker listen failed', err.message);
+      logger.warn('broker listen failed', (err as Error).message);
     }
   }
 
@@ -260,13 +273,13 @@ async function _doInit () {
     client = new TcpClient();
     await client.connect(port);
     logger.debug('connected as client, cid=', client.cid);
-  } catch (err: any) {
+  } catch (err: unknown) {
     client = null;
-    logger.warn('tcp connect failed, local-only mode', err.message);
+    logger.warn('tcp connect failed, local-only mode', (err as Error).message);
   }
 }
 
-async function deliver (scopeName: any, eventName: any, payload: any) {
+async function deliver (scopeName: Scope, eventName: string, payload: Payload) {
   await init();
   if (testDeliverHook != null) testDeliverHook(scopeName, eventName, payload);
   logger.debug('deliver', scopeName, eventName, payload);
@@ -275,33 +288,34 @@ async function deliver (scopeName: any, eventName: any, payload: any) {
   client.send({ t: 'pub', scope: scopeName, event: eventName, payload });
 }
 
-async function subscribe (scopeName: any, pubsub: any) {
+async function subscribe (scopeName: Scope, pubsub: LocalPubsub) {
   await init();
   logger.debug('subscribe', scopeName);
   if (client == null) return { unsubscribe () {} };
-  client.localSubs.set(scopeName, pubsub);
+  const localClient = client;
+  localClient.localSubs.set(scopeName, pubsub);
   if (broker != null) {
     // Same process — register directly on broker (no TCP round-trip)
     if (!broker.subscriptions.has(scopeName)) broker.subscriptions.set(scopeName, new Set());
-    broker.subscriptions.get(scopeName).add(client.cid);
+    broker.subscriptions.get(scopeName)!.add(localClient.cid!);
   } else {
-    client.send({ t: 'sub', scope: scopeName });
+    localClient.send({ t: 'sub', scope: scopeName });
   }
   return {
     unsubscribe () {
-      client.localSubs.delete(scopeName);
+      localClient.localSubs.delete(scopeName);
       if (broker != null) {
         if (broker.subscriptions.has(scopeName)) {
-          broker.subscriptions.get(scopeName).delete(client.cid);
+          broker.subscriptions.get(scopeName)!.delete(localClient.cid!);
         }
       } else {
-        client.send({ t: 'unsub', scope: scopeName });
+        localClient.send({ t: 'unsub', scope: scopeName });
       }
     }
   };
 }
 
-function setTestDeliverHook (deliverHook: any) {
+function setTestDeliverHook (deliverHook: DeliverHook | null) {
   testDeliverHook = deliverHook;
 }
 
