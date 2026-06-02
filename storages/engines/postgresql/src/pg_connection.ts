@@ -10,14 +10,21 @@ const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
 
+type PgDb = {
+  query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
+};
+type Logger = { debug (msg: string): void };
+type FieldsObj = Record<string, unknown>;
+type SeriesPoint = Record<string, unknown> & { time?: number };
+
 /**
  * PostgreSQL implementation of the InfluxConnection interface.
  */
 class PGSeriesConnection {
-  db: any;
-  logger: any;
+  db: PgDb;
+  logger: Logger;
 
-  constructor (db: any) {
+  constructor (db: PgDb) {
     this.db = db;
     this.logger = _internals.getLogger('pg-series');
   }
@@ -34,7 +41,7 @@ class PGSeriesConnection {
     );
   }
 
-  async writeMeasurement (name: string, points: Array<{ fields: any, timestamp: number }>, options: { database: string }): Promise<void> {
+  async writeMeasurement (name: string, points: Array<{ fields: FieldsObj, timestamp: number }>, options: { database: string }): Promise<void> {
     const userId = options.database;
     this.logger.debug(`writeMeasurement: ${name} (${points.length} points)`);
 
@@ -47,7 +54,7 @@ class PGSeriesConnection {
     }));
   }
 
-  async writePoints (points: Array<{ measurement: string, fields: any, timestamp: number }>, options: { database: string }): Promise<void> {
+  async writePoints (points: Array<{ measurement: string, fields: FieldsObj, timestamp: number }>, options: { database: string }): Promise<void> {
     const userId = options.database;
     this.logger.debug(`writePoints: ${points.length} points`);
 
@@ -68,7 +75,7 @@ class PGSeriesConnection {
     );
   }
 
-  async query (queryStr: string, options: { database: string }): Promise<any[]> {
+  async query (queryStr: string, options: { database: string }): Promise<Array<Record<string, unknown>>> {
     const userId = options.database;
     const singleLine = queryStr.replace(/\s+/g, ' ').trim();
     this.logger.debug(`query: ${singleLine}`);
@@ -89,7 +96,7 @@ class PGSeriesConnection {
     }
 
     const conditions: string[] = ['user_id = $1', 'event_id = $2'];
-    const params: any[] = [userId, parsed.measurement];
+    const params: unknown[] = [userId, parsed.measurement];
     let idx = 3;
 
     for (const cond of parsed.conditions) {
@@ -104,9 +111,9 @@ class PGSeriesConnection {
     const res = await this.db.query(sql, params);
 
     // Transform to InfluxDB-like result format
-    return res.rows.map((row: any) => {
-      const result: any = {};
-      result.time = row.delta_time / 1e6;
+    return res.rows.map((row: Record<string, unknown>) => {
+      const result: SeriesPoint = {};
+      result.time = (row.delta_time as number) / 1e6;
       if (row.fields && typeof row.fields === 'object') {
         Object.assign(result, row.fields);
       }
@@ -121,28 +128,28 @@ class PGSeriesConnection {
     const res = await this.db.query(
       'SELECT DISTINCT user_id FROM series_data'
     );
-    return res.rows.map((r: any) => r.user_id);
+    return res.rows.map((r: Record<string, unknown>) => r.user_id as string);
   }
 
   /**
    * Export all measurements and their points from a user's series data.
    */
-  async exportDatabase (name: string): Promise<{ measurements: Array<{ measurement: string, points: any[] }> }> {
+  async exportDatabase (name: string): Promise<{ measurements: Array<{ measurement: string, points: SeriesPoint[] }> }> {
     const measurementRes = await this.db.query(
       'SELECT DISTINCT event_id FROM series_data WHERE user_id = $1',
       [name]
     );
 
-    const measurements: Array<{ measurement: string, points: any[] }> = [];
+    const measurements: Array<{ measurement: string, points: SeriesPoint[] }> = [];
     for (const row of measurementRes.rows) {
-      const eventId = row.event_id;
+      const eventId = row.event_id as string;
       const pointsRes = await this.db.query(
         'SELECT delta_time, fields FROM series_data WHERE user_id = $1 AND event_id = $2 ORDER BY delta_time ASC',
         [name, eventId]
       );
-      const points = pointsRes.rows.map((r: any) => {
-        const point: any = {};
-        point.time = r.delta_time / 1e6;
+      const points = pointsRes.rows.map((r: Record<string, unknown>) => {
+        const point: SeriesPoint = {};
+        point.time = (r.delta_time as number) / 1e6;
         if (r.fields && typeof r.fields === 'object') {
           Object.assign(point, r.fields);
         }
@@ -157,15 +164,15 @@ class PGSeriesConnection {
   /**
    * Import measurements and their points into a user's series data.
    */
-  async importDatabase (name: string, data: { measurements: Array<{ measurement: string, points: any[] }> }): Promise<void> {
+  async importDatabase (name: string, data: { measurements: Array<{ measurement: string, points: SeriesPoint[] }> }): Promise<void> {
     await this.createDatabase(name); // no-op
 
     for (const { measurement, points } of data.measurements) {
       if (!points || points.length === 0) continue;
 
-      const rows = points.map((p: any) => {
-        const fields: any = {};
-        const tags: any = {};
+      const rows = points.map((p: SeriesPoint) => {
+        const fields: FieldsObj = {};
+        const tags: FieldsObj = {};
         for (const [key, value] of Object.entries(p)) {
           if (key === 'time') continue;
           if (typeof value === 'string') {
@@ -217,10 +224,10 @@ function parseInfluxSelect (query: string): { measurement: string, conditions: A
 
 const BATCH_SIZE = 5000;
 
-async function batchUpsert (db: any, rows: any[][]): Promise<void> {
+async function batchUpsert (db: PgDb, rows: unknown[][]): Promise<void> {
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     const chunk = rows.slice(i, i + BATCH_SIZE);
-    const params: any[] = [];
+    const params: unknown[] = [];
     const valueClauses: string[] = [];
     for (let j = 0; j < chunk.length; j++) {
       const base = j * 5;
