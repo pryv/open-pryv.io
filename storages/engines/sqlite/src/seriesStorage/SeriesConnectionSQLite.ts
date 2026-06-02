@@ -35,15 +35,29 @@ const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
 const FILE_PREFIX = 'series';
 
+type Logger = { debug (msg: string): void };
+type FieldsObj = Record<string, unknown>;
+type SeriesPoint = Record<string, unknown> & { time?: number };
+type SeriesRow = { delta_time: number; fields: string | null; [k: string]: unknown };
+type InsertRow = { event_id: string; point_time: number; delta_time: number; fields: string };
+type SeriesDb = {
+  init (): Promise<void>;
+  close (): void;
+  writePoints (rows: InsertRow[]): Promise<unknown>;
+  dropEvent (id: string): Promise<unknown>;
+  listEventIds (): string[];
+  selectRows (sql: string, params: unknown[]): SeriesRow[];
+};
+
 class SeriesConnectionSQLite {
-  logger: any;
-  cache: any;
+  logger: Logger;
+  cache: InstanceType<typeof LRU>;
 
   constructor () {
     this.logger = _internals.getLogger('sqlite-series');
     this.cache = new LRU({
       max: CACHE_SIZE,
-      dispose: (db: any) => db.close()
+      dispose: (db: SeriesDb) => db.close()
     });
   }
 
@@ -72,8 +86,8 @@ class SeriesConnectionSQLite {
     const dbPath = await this.pathForUser(name);
     try {
       await fs.unlink(dbPath);
-    } catch (err: any) {
-      if (err.code !== 'ENOENT') throw err;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
   }
 
@@ -82,7 +96,7 @@ class SeriesConnectionSQLite {
    */
   async writeMeasurement (
     measurement: string,
-    points: Array<{ fields: any, timestamp: number }>,
+    points: Array<{ fields: FieldsObj, timestamp: number }>,
     options: { database: string }
   ): Promise<void> {
     if (points.length === 0) return;
@@ -96,7 +110,7 @@ class SeriesConnectionSQLite {
    * Write points across potentially multiple measurements.
    */
   async writePoints (
-    points: Array<{ measurement: string, fields: any, timestamp: number }>,
+    points: Array<{ measurement: string, fields: FieldsObj, timestamp: number }>,
     options: { database: string }
   ): Promise<void> {
     if (points.length === 0) return;
@@ -119,7 +133,7 @@ class SeriesConnectionSQLite {
    * Run a (simplified) InfluxQL query against the user's file.
    * Supports `SHOW MEASUREMENTS` and `SELECT * FROM "<event>" [WHERE time <cmp> 'ts']`.
    */
-  async query (queryStr: string, options: { database: string }): Promise<any[]> {
+  async query (queryStr: string, options: { database: string }): Promise<SeriesPoint[]> {
     const userId = options.database;
     const singleLine = queryStr.replace(/\s+/g, ' ').trim();
     this.logger.debug(`query: ${singleLine}`);
@@ -136,7 +150,7 @@ class SeriesConnectionSQLite {
     }
 
     const conditions: string[] = ['event_id = ?'];
-    const params: any[] = [parsed.measurement];
+    const params: unknown[] = [parsed.measurement];
     for (const cond of parsed.conditions) {
       if (cond.op === '>=' || cond.op === '<' || cond.op === '>' || cond.op === '<=') {
         conditions.push(`delta_time ${cond.op} ?`);
@@ -147,8 +161,8 @@ class SeriesConnectionSQLite {
     const sql = `SELECT delta_time, fields FROM series_data WHERE ${conditions.join(' AND ')} ORDER BY delta_time ASC`;
     const rows = db.selectRows(sql, params);
 
-    return rows.map((row: any) => {
-      const result: any = { time: row.delta_time / 1e6 };
+    return rows.map((row: SeriesRow) => {
+      const result: SeriesPoint = { time: row.delta_time / 1e6 };
       const parsedFields = row.fields ? JSON.parse(row.fields) : null;
       if (parsedFields && typeof parsedFields === 'object') Object.assign(result, parsedFields);
       return result;
@@ -166,25 +180,25 @@ class SeriesConnectionSQLite {
     try {
       const entries = await collectUserIdsWithSeriesFile(base);
       userIds.push(...entries);
-    } catch (err: any) {
-      if (err.code !== 'ENOENT') throw err;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
     return userIds;
   }
 
   // ----- Backup / restore -------------------------------------------------
 
-  async exportDatabase (name: string): Promise<{ measurements: Array<{ measurement: string, points: any[] }> }> {
+  async exportDatabase (name: string): Promise<{ measurements: Array<{ measurement: string, points: SeriesPoint[] }> }> {
     const db = await this.forUser(name);
     const eventIds = db.listEventIds();
-    const measurements: Array<{ measurement: string, points: any[] }> = [];
+    const measurements: Array<{ measurement: string, points: SeriesPoint[] }> = [];
     for (const eventId of eventIds) {
       const rows = db.selectRows(
         'SELECT delta_time, fields FROM series_data WHERE event_id = ? ORDER BY delta_time ASC',
         [eventId]
       );
-      const points = rows.map((r: any) => {
-        const point: any = { time: r.delta_time / 1e6 };
+      const points = rows.map((r: SeriesRow) => {
+        const point: SeriesPoint = { time: r.delta_time / 1e6 };
         const parsedFields = r.fields ? JSON.parse(r.fields) : null;
         if (parsedFields && typeof parsedFields === 'object') Object.assign(point, parsedFields);
         return point;
@@ -196,15 +210,15 @@ class SeriesConnectionSQLite {
 
   async importDatabase (
     name: string,
-    data: { measurements: Array<{ measurement: string, points: any[] }> }
+    data: { measurements: Array<{ measurement: string, points: SeriesPoint[] }> }
   ): Promise<void> {
     await this.createDatabase(name);
     const db = await this.forUser(name);
     for (const { measurement, points } of data.measurements) {
       if (!points || points.length === 0) continue;
-      const rows = points.map((p: any) => {
-        const fields: any = {};
-        const tags: any = {};
+      const rows = points.map((p: SeriesPoint) => {
+        const fields: FieldsObj = {};
+        const tags: FieldsObj = {};
         for (const [key, value] of Object.entries(p)) {
           if (key === 'time') continue;
           if (typeof value === 'string') tags[key] = value;
@@ -228,7 +242,7 @@ class SeriesConnectionSQLite {
   /**
    * Open (or return cached) SeriesDatabase for the given userId.
    */
-  async forUser (userId: string): Promise<any> {
+  async forUser (userId: string): Promise<SeriesDb> {
     const cached = this.cache.get(userId);
     if (cached) return cached;
 
@@ -253,7 +267,7 @@ class SeriesConnectionSQLite {
  * `delta_time` set to that nanosecond value, matching the PG schema's
  * "point_time = delta_time" convention for the SQLite-as-Influx case.
  */
-function toRow (eventId: string, point: { fields: any, timestamp: number }): any {
+function toRow (eventId: string, point: { fields: FieldsObj, timestamp: number }): InsertRow {
   const tsNs = typeof point.timestamp === 'number' ? point.timestamp : Number(point.timestamp);
   return {
     event_id: eventId,
