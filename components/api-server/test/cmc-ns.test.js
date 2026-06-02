@@ -42,12 +42,13 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
     await user.session(token);
   });
 
-  describe.skip('[CMCNS-AUTO] auto-provisioning on user creation (BLOCKED on regression debug)', function () {
-    // TODO: un-skip when business/src/users/repository.ts re-enables
-    // cmc.provisionUserStreams() — see the TODO there. The regression
-    // is state-dependent (only triggers when AC0* run sequentially);
-    // currently being investigated.
-    it('[CN01] the five reserved parents exist on a fresh user', async function () {
+  describe('[CMCNS-AUTO] auto-provisioning on user creation', function () {
+    it('[CN01] the API-visible reserved parents (root, inbox, apps) exist on a fresh user', async function () {
+      // streams.get filters out `:_cmc:_internal*` (plugin-internal scope),
+      // so the API-visible surface is the 3 outer reserved parents.
+      // The inner two (_internal + _internal:retries) are auto-provisioned
+      // too but exercised via the mall-level coverage in
+      // components/cmc/test/provisioning.test.js.
       const res = await coreRequest
         .get(basePath)
         .set('Authorization', token);
@@ -58,13 +59,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
         if (Array.isArray(s.children)) s.children.forEach(walk);
       }
       (res.body.streams || []).forEach(walk);
-      for (const id of [
-        C.NS,
-        C.NS_INBOX,
-        C.NS_APPS,
-        C.NS_INTERNAL,
-        C.NS_INTERNAL_RETRIES,
-      ]) {
+      for (const id of [C.NS, C.NS_INBOX, C.NS_APPS]) {
         assert.ok(allIds.includes(id), 'expected reserved parent ' + id + ' to exist; got: ' + JSON.stringify(allIds));
       }
     });

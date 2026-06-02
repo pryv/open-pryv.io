@@ -152,7 +152,13 @@ describe('[SYSS] System streams', function () {
         await createUser();
         res = await request.get(basePath).set('authorization', access.token);
 
-        assert.deepStrictEqual(res.body.streams, expectedRes);
+        // Filter out the `:_cmc:*` reserved-parent tree provisioned at
+        // user-creation time — this test's snapshot covers the
+        // account-system-stream surface only.
+        const actualStreams = (res.body.streams || []).filter(
+          (s) => !(s && typeof s.id === 'string' && s.id.startsWith(':_cmc:'))
+        );
+        assert.deepStrictEqual(actualStreams, expectedRes);
       });
     });
   });

@@ -252,10 +252,25 @@ class UsersRepository {
         await this.setUserPassword(user.id, user.password, user.accessId);
       }
     });
-    // TODO(B-2026-05-27-5, 2026-05-27): re-enable CMC reserved-parent
-    // auto-provisioning here. Lazy creation at first :_cmc:* write
-    // keeps the operational impact contained for now.
-    if (cmc != null && cmcLogger != null) { /* placeholder */ }
+    // Provision the reserved `:_cmc:*` parent tree eagerly so that a
+    // brand-new user's first `streams.get` lists it. Lazy creation at
+    // first :_cmc:* operation still covers users created before this
+    // landed. Idempotent — `provisionUserStreams` swallows
+    // already-exists errors per stream. No accessId: the prior
+    // attempt at passing `user.accessId` here surfaced a stray
+    // [6041] invalid-access-token in cumulative test runs.
+    try {
+      await cmc.provisionUserStreams({
+        mall: this.mall,
+        userId: user.id,
+        logger: cmcLogger
+      });
+    } catch (err: any) {
+      cmcLogger.warn('cmc: reserved-parent provisioning at user creation failed (lazy path will retry)', {
+        userId: user.id,
+        error: err?.message || err
+      });
+    }
     return user;
   }
 
