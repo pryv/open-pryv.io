@@ -5,8 +5,17 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
+
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
+
+type MethodContext = BaseMethodContext & {
+  [key: string]: any;
+};
+type ResultBag = Record<string, unknown>;
+type Next = (err?: unknown) => void;
+type AccessRow = { token?: string; [k: string]: unknown };
 const commonFns = require('api-server/src/methods/helpers/commonFunctions.ts');
 const { ApiEndpoint } = require('utils');
 const errors = require('errors').factory;
@@ -24,7 +33,7 @@ const MFA_PROFILE_ID = 'private';
  * Auth API methods implementations.
  *
  */
-export default async function (api: any) {
+export default async function (api: { register: (...args: unknown[]) => void }) {
   const usersRepository = await getUsersRepository();
   const storageLayer = await getStorageLayer();
   const userAccessesStorage = storageLayer.accesses;
@@ -50,7 +59,7 @@ export default async function (api: any) {
     setAdditionalInfo,
     mfaCheckIfActive);
 
-  function applyPrerequisitesForLogin (context: any, params: any, result: any, next: any) {
+  function applyPrerequisitesForLogin (context: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
     const fixedUsername = params.username.toLowerCase();
     if (context.user.username !== fixedUsername) {
       return next(errors.invalidOperation('The username in the path does not match that of ' +
@@ -59,7 +68,7 @@ export default async function (api: any) {
     next();
   }
 
-  async function checkPassword (context: any, params: any, result: any, next: any) {
+  async function checkPassword (context: MethodContext, params: { password: string }, result: ResultBag, next: Next) {
     try {
       const isValid = await usersRepository.checkUserPassword(context.user.id, params.password);
       if (!isValid) {
@@ -80,18 +89,18 @@ export default async function (api: any) {
     }
   }
 
-  function openSession (context: any, params: any, result: any, next: any) {
+  function openSession (context: MethodContext, params: { appId: string }, result: ResultBag, next: Next) {
     context.sessionData = {
       username: context.user.username,
       appId: params.appId
     };
-    sessionsStorage.getMatching(context.sessionData, function (err: any, sessionId: any) {
+    sessionsStorage.getMatching(context.sessionData, function (err: Error | null, sessionId: string | null) {
       if (err) { return next(errors.unexpectedError(err)); }
       if (sessionId) {
         result.token = sessionId;
         next();
       } else {
-        sessionsStorage.generate(context.sessionData, null, function (err: any, sessionId: any) {
+        sessionsStorage.generate(context.sessionData, null, function (err: Error | null, sessionId: string) {
           if (err) { return next(errors.unexpectedError(err)); }
           result.token = sessionId;
           next();
@@ -100,22 +109,22 @@ export default async function (api: any) {
     });
   }
 
-  function updateOrCreatePersonalAccess (context: any, params: any, result: any, next: any) {
+  function updateOrCreatePersonalAccess (context: MethodContext, params: { appId: string }, result: ResultBag, next: Next) {
     context.accessQuery = { name: params.appId, type: 'personal' };
-    findAccess(context, (err: any, access: any) => {
+    findAccess(context, (err: Error | null, access: AccessRow | null) => {
       if (err) { return next(errors.unexpectedError(err)); }
-      const accessData: any = { token: result.token };
+      const accessData: AccessRow = { token: result.token as string | undefined };
       if (access != null) {
         // Access is already existing, updating it with new token (as we have updated the sessions with it earlier).
         updatePersonalAccess(accessData, context, next);
       } else {
         // Access not found, creating it
-        createAccess(accessData, context, (err: any) => {
+        createAccess(accessData, context, (err: (Error & { isDuplicate?: boolean }) | null) => {
           if (err != null) {
             // Concurrency issue, the access is already created
             // by a simultaneous login (happened between a & b), retrieving and updating its modifiedTime, while keeping the same previous token
             if (err.isDuplicate) {
-              findAccess(context, (err: any, access: any) => {
+              findAccess(context, (err: Error | null, access: AccessRow | null) => {
                 if (err || access == null) { return next(errors.unexpectedError(err)); }
                 result.token = access.token;
                 accessData.token = access.token;
@@ -132,30 +141,30 @@ export default async function (api: any) {
       }
     });
 
-    function findAccess (context: any, callback: any) {
+    function findAccess (context: MethodContext, callback: (err: Error | null, access: AccessRow | null) => void) {
       userAccessesStorage.findOne(context.user, context.accessQuery, null, callback);
     }
 
-    function createAccess (access: any, context: any, callback: any) {
+    function createAccess (access: AccessRow, context: MethodContext, callback: (err: (Error & { isDuplicate?: boolean }) | null) => void) {
       Object.assign(access, context.accessQuery);
       context.initTrackingProperties(access, UserRepositoryOptions.SYSTEM_USER_ACCESS_ID);
       userAccessesStorage.insertOne(context.user, access, callback);
     }
 
-    function updatePersonalAccess (access: any, context: any, callback: any) {
+    function updatePersonalAccess (access: AccessRow, context: MethodContext, callback: (err: Error | null) => void) {
       context.updateTrackingProperties(access, UserRepositoryOptions.SYSTEM_USER_ACCESS_ID);
       userAccessesStorage.updateOne(context.user, context.accessQuery, access, callback);
     }
   }
 
-  function addApiEndpoint (context: any, params: any, result: any, next: any) {
+  function addApiEndpoint (context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
     if (result.token) {
       result.apiEndpoint = ApiEndpoint.build(context.user.username, result.token);
     }
     next();
   }
 
-  async function setAdditionalInfo (context: any, params: any, result: any, next: any) {
+  async function setAdditionalInfo (context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
     // get user details
     const usersRepository = await getUsersRepository();
     const userBusiness = await usersRepository.getUserByUsername(context.user.username);
@@ -182,13 +191,13 @@ export default async function (api: any) {
    * When MFA is disabled server-wide OR the user has no `profile.mfa`, this step
    * is a no-op and the original login response is returned unchanged.
    */
-  async function mfaCheckIfActive (context: any, params: any, result: any, next: any) {
+  async function mfaCheckIfActive (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     const mfaCfg = getMfaConfig();
     const mfaService = getMFAService(mfaCfg);
     if (mfaService == null) return next(); // MFA disabled server-wide
     try {
-      const profileSet: any = await fromCallback((cb: any) =>
-        userProfileStorage.findOne(context.user, { id: MFA_PROFILE_ID }, null, cb));
+      const profileSet = await fromCallback((cb: (err?: unknown, res?: unknown) => void) =>
+        userProfileStorage.findOne(context.user, { id: MFA_PROFILE_ID }, null, cb)) as { data?: { mfa?: { content?: Record<string, unknown>; recoveryCodes?: string[] } } } | null;
       const storedMfa = profileSet && profileSet.data && profileSet.data.mfa;
       if (!storedMfa || !storedMfa.content || Object.keys(storedMfa.content).length === 0) {
         // No MFA configured for this user — login response stands as-is.
@@ -223,8 +232,8 @@ export default async function (api: any) {
     commonFns.getParamsValidation(methodsSchema.logout.params),
     destroySession);
 
-  function destroySession (context: any, params: any, result: any, next: any) {
-    sessionsStorage.destroy(context.accessToken, function (err: any) {
+  function destroySession (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    sessionsStorage.destroy(context.accessToken, function (err: Error | null) {
       next(err ? errors.unexpectedError(err) : null);
     });
   }
