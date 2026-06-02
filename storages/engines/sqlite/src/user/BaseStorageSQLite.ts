@@ -6,11 +6,19 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Callback, UserOrId } from '../../../../interfaces/_shared/types.ts';
 const require = createRequire(import.meta.url);
 
 const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const { _internals } = require('../_internals.ts');
+
+type Options = {
+  sort?: Record<string, number>;
+  limit?: number;
+  skip?: number;
+  projection?: Record<string, number | boolean>;
+} | null | undefined;
 
 /**
  * Columns stored as proper SQL columns (vs packed into `data` JSON).
@@ -53,12 +61,12 @@ class BaseStorageSQLite {
 
   // ---- Helpers ----
 
-  getUserIdFromUserOrUserId (userOrUserId: any): string {
+  getUserIdFromUserOrUserId (userOrUserId: UserOrId): string {
     if (typeof userOrUserId === 'string') return userOrUserId;
     return userOrUserId.id;
   }
 
-  getCollectionInfo (userOrUserId: any): { name: string | null, useUserId: string } {
+  getCollectionInfo (userOrUserId: UserOrId): { name: string | null, useUserId: string } {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     return { name: this.tableName, useUserId: userId };
   }
@@ -67,7 +75,7 @@ class BaseStorageSQLite {
     return Object.assign({}, item);
   }
 
-  private async userDb (userOrUserId: any): Promise<any> {
+  private async userDb (userOrUserId: UserOrId): Promise<any> {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const udb = await UserBaseStorageDb.forUser(userId);
     await udb.ensureTable(this.tableName, {
@@ -227,7 +235,7 @@ class BaseStorageSQLite {
     return items;
   }
 
-  find (userOrUserId: any, query: any, options: any, callback: (err: any, items?: any[]) => void): void {
+  find (userOrUserId: UserOrId, query: any, options: any, callback: Callback<any[]>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = this.addImplicitFilters(query || {});
       const { sql: where, params } = this.buildWhere(q);
@@ -239,7 +247,7 @@ class BaseStorageSQLite {
     });
   }
 
-  findIncludingDeletionsAndVersions (userOrUserId: any, query: any, options: any, callback: (err: any, items?: any[]) => void): void {
+  findIncludingDeletionsAndVersions (userOrUserId: UserOrId, query: any, options: any, callback: Callback<any[]>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
       const orderBy = this.buildOrderBy(options);
@@ -250,7 +258,7 @@ class BaseStorageSQLite {
     });
   }
 
-  findOne (userOrUserId: any, query: any, options: any, callback: (err: any, item?: any) => void): void {
+  findOne (userOrUserId: UserOrId, query: any, options: any, callback: Callback<any>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = this.addImplicitFilters(query || {});
       const { sql: where, params } = this.buildWhere(q);
@@ -263,7 +271,7 @@ class BaseStorageSQLite {
     });
   }
 
-  findDeletion (userOrUserId: any, query: any, _options: any, callback: (err: any, item?: any) => void): void {
+  findDeletion (userOrUserId: UserOrId, query: any, _options: any, callback: Callback<any>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = Object.assign({}, query || {}, { deleted: { $ne: null } });
       const { sql: where, params } = this.buildWhere(q);
@@ -273,7 +281,7 @@ class BaseStorageSQLite {
     });
   }
 
-  findDeletions (userOrUserId: any, deletedSince: number, options: any, callback: (err: any, items?: any[]) => void): void {
+  findDeletions (userOrUserId: UserOrId, deletedSince: number, options: any, callback: Callback<any[]>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q: any = { deleted: { $gt: deletedSince } };
       if (this.hasHeadIdCol) q.headId = null;
@@ -286,7 +294,7 @@ class BaseStorageSQLite {
     });
   }
 
-  insertOne (userOrUserId: any, item: any, callback: (err: any, item?: any) => void): void {
+  insertOne (userOrUserId: UserOrId, item: any, callback: Callback<any>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const prepared = this.applyDefaults(item);
       const { id, head_id, deleted, data } = this.itemToRow(prepared);
@@ -305,7 +313,7 @@ class BaseStorageSQLite {
     });
   }
 
-  findOneAndUpdate (userOrUserId: any, query: any, updatedData: any, callback: (err: any, item?: any) => void): void {
+  findOneAndUpdate (userOrUserId: UserOrId, query: any, updatedData: any, callback: Callback<any>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
       const row = udb.db.prepare(`SELECT * FROM ${this.tableName} ${where} LIMIT 1`).get(...params);
@@ -317,11 +325,11 @@ class BaseStorageSQLite {
     });
   }
 
-  updateOne (userOrUserId: any, query: any, updatedData: any, callback: (err: any, item?: any) => void): void {
+  updateOne (userOrUserId: UserOrId, query: any, updatedData: any, callback: Callback<any>): void {
     this.findOneAndUpdate(userOrUserId, query, updatedData, callback);
   }
 
-  updateMany (userOrUserId: any, query: any, updatedData: any, callback: (err: any, res?: any) => void): void {
+  updateMany (userOrUserId: UserOrId, query: any, updatedData: any, callback: Callback<any>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
       const rows = udb.db.prepare(`SELECT * FROM ${this.tableName} ${where}`).all(...params);
@@ -335,12 +343,12 @@ class BaseStorageSQLite {
     });
   }
 
-  delete (userOrUserId: any, query: any, callback: (err: any, res?: any) => void): void {
+  delete (userOrUserId: UserOrId, query: any, callback: Callback<any>): void {
     const now = require('unix-timestamp').now();
     this.updateMany(userOrUserId, query, { $set: { deleted: now } }, callback);
   }
 
-  removeOne (userOrUserId: any, query: any, callback: (err: any, count?: number) => void): void {
+  removeOne (userOrUserId: UserOrId, query: any, callback: Callback<number>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
       const row = udb.db.prepare(`SELECT id FROM ${this.tableName} ${where} LIMIT 1`).get(...params);
@@ -350,7 +358,7 @@ class BaseStorageSQLite {
     });
   }
 
-  removeMany (userOrUserId: any, query: any, callback: (err: any, count?: number) => void): void {
+  removeMany (userOrUserId: UserOrId, query: any, callback: Callback<number>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
       const res = udb.db.prepare(`DELETE FROM ${this.tableName} ${where}`).run(...params);
@@ -358,11 +366,11 @@ class BaseStorageSQLite {
     });
   }
 
-  removeAll (userOrUserId: any, callback: (err: any, count?: number) => void): void {
+  removeAll (userOrUserId: UserOrId, callback: Callback<number>): void {
     this.removeMany(userOrUserId, {}, callback);
   }
 
-  count (userOrUserId: any, query: any, callback: (err: any, n?: number) => void): void {
+  count (userOrUserId: UserOrId, query: any, callback: Callback<number>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = this.addImplicitFilters(query || {});
       const { sql: where, params } = this.buildWhere(q);
@@ -371,7 +379,7 @@ class BaseStorageSQLite {
     });
   }
 
-  countAll (userOrUserId: any, callback: (err: any, n?: number) => void): void {
+  countAll (userOrUserId: UserOrId, callback: Callback<number>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const row = udb.db.prepare(`SELECT COUNT(*) AS cnt FROM ${this.tableName}`).get();
       callback(null, row.cnt);
@@ -394,14 +402,14 @@ class BaseStorageSQLite {
 
   // ---- Migration ----
 
-  exportAll (userOrUserId: any, callback: (err: any, items?: any[]) => void): void {
+  exportAll (userOrUserId: UserOrId, callback: Callback<any[]>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const rows = udb.db.prepare(`SELECT * FROM ${this.tableName}`).all();
       callback(null, this.rowsToItems(rows));
     });
   }
 
-  importAll (userOrUserId: any, items: any[], callback: (err: any) => void): void {
+  importAll (userOrUserId: UserOrId, items: any[], callback: Callback<void>): void {
     if (!items || items.length === 0) return callback(null);
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const cols: string[] = ['id'];
@@ -425,7 +433,7 @@ class BaseStorageSQLite {
     });
   }
 
-  clearAll (userOrUserId: any, callback: (err: any, count?: number) => void): void {
+  clearAll (userOrUserId: UserOrId, callback: Callback<number>): void {
     this.removeAll(userOrUserId, callback);
   }
 
@@ -532,7 +540,7 @@ class BaseStorageSQLite {
 
   // ---- Order/limit ----
 
-  buildOrderBy (options: any): string {
+  buildOrderBy (options: Options): string {
     const sort = options?.sort;
     if (sort && Object.keys(sort).length > 0) {
       const parts = Object.entries(sort).map(([k, v]) => {
@@ -545,7 +553,7 @@ class BaseStorageSQLite {
     return '';
   }
 
-  buildLimitOffset (options: any): { clause: string } {
+  buildLimitOffset (options: Options): { clause: string } {
     let clause = '';
     if (options?.limit) clause += ` LIMIT ${Number(options.limit)}`;
     if (options?.skip) {
@@ -557,7 +565,7 @@ class BaseStorageSQLite {
 
   // ---- Test/extra helpers ----
 
-  findAll (userOrUserId: any, options: any, callback: (err: any, items?: any[]) => void): void {
+  findAll (userOrUserId: UserOrId, options: any, callback: Callback<any[]>): void {
     // Mirror PG's findAll: do NOT apply implicit filters (deleted=null,
     // headId=null), so the result includes deleted + versioned rows.
     // Used by test fixtures (`accesses-app.test.js` etc.) to assert on
@@ -565,23 +573,23 @@ class BaseStorageSQLite {
     this.findIncludingDeletionsAndVersions(userOrUserId, {}, options, callback);
   }
 
-  insertMany (userOrUserId: any, items: any[], callback: (err: any) => void): void {
+  insertMany (userOrUserId: UserOrId, items: any[], callback: Callback<void>): void {
     this.importAll(userOrUserId, items, callback);
   }
 
-  dropCollection (userOrUserId: any, callback: (err: any, count?: number) => void): void {
+  dropCollection (userOrUserId: UserOrId, callback: Callback<number>): void {
     this.removeAll(userOrUserId, callback);
   }
 
-  dropCollectionFully (userOrUserId: any, callback: (err: any, count?: number) => void): void {
+  dropCollectionFully (userOrUserId: UserOrId, callback: Callback<number>): void {
     this.removeAll(userOrUserId, callback);
   }
 
-  listIndexes (_userOrUserId: any, _options: any, callback: (err: any, indexes?: any[]) => void): void {
+  listIndexes (_userOrUserId: UserOrId, _options: any, callback: Callback<any[]>): void {
     callback(null, []);
   }
 
-  findAndUpdateIfNeeded (userOrUserId: any, query: any, options: any, updateIfNeededCallback: (item: any) => any, callback: (err: any, res?: any) => void): void {
+  findAndUpdateIfNeeded (userOrUserId: UserOrId, query: any, options: any, updateIfNeededCallback: (item: any) => any, callback: Callback<any>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
       const orderBy = this.buildOrderBy(options);
@@ -601,7 +609,7 @@ class BaseStorageSQLite {
 
   // ---- Async / write plumbing ----
 
-  private _userDbAnd (userOrUserId: any, callback: any, fn: (udb: any) => void): void {
+  private _userDbAnd (userOrUserId: UserOrId, callback: any, fn: (udb: any) => void): void {
     this.userDb(userOrUserId)
       .then((udb) => {
         try { fn(udb); } catch (err) { callback(err); }
@@ -609,7 +617,7 @@ class BaseStorageSQLite {
       .catch(callback);
   }
 
-  private _userDbAndWrite (userOrUserId: any, callback: any, fn: (udb: any) => any): void {
+  private _userDbAndWrite (userOrUserId: UserOrId, callback: any, fn: (udb: any) => any): void {
     this.userDb(userOrUserId)
       .then(async (udb) => {
         try {
