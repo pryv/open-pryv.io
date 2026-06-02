@@ -18,20 +18,40 @@ const observability = require('business/src/observability/index.ts');
 /**
  * Create (register) a new user
  */
-class Registration {
-  logger: any;
+type Logger = { info (m: string): void; warn (m: string): void; error (a: unknown, b?: unknown): void };
+type Platform = {
+  isSingleCore: boolean;
+  coreId: string;
+  selectCoreForRegistration: (hosting: unknown) => Promise<string | null>;
+  coreIdToUrl: (id: string) => string;
+  validateRegistration: (username: string, invitationToken: unknown, uniqueFields: Record<string, unknown>, hosting: unknown) => Promise<{ redirect?: string } | undefined>;
+  consumeInvitationToken: (token: string, username: string) => Promise<unknown>;
+};
+type ServicesSettings = { email?: { enabled?: boolean | { welcome?: boolean; resetPassword?: boolean }; welcomeTemplate?: string; [k: string]: unknown }; [k: string]: unknown };
+type SystemStreamSettings = { isUnique?: boolean; isShown?: boolean; [k: string]: unknown };
+type MethodContext = {
+  newUser: any;
+  user: { id: string; username: string };
+  [k: string]: unknown;
+};
+type ResultBag = Record<string, unknown> & { forwarded?: boolean; redirect?: string; core?: { url: string }; username?: string; apiEndpoint?: string; id?: string };
+type Next = (err?: unknown) => void;
+type ApiError = Error & { id?: string; httpStatus?: number };
 
-  storageLayer: any;
+class Registration {
+  logger: Logger;
+
+  storageLayer: unknown;
   /** @default accountStreams.accountMap */
-  accountStreamsSettings = accountStreams.accountMap;
+  accountStreamsSettings: Record<string, SystemStreamSettings> = accountStreams.accountMap;
 
   // 0-arg getter returning the current `services` config slice. Stored
   // as a function (not a snapshot object) so the welcome-mail send path
   // reads live config at request time.
-  getServicesSettings: () => any;
+  getServicesSettings: () => ServicesSettings;
 
-  platform: any;
-  constructor (logging: any, storageLayer: any, servicesSettings: any) {
+  platform!: Platform;
+  constructor (_logging: unknown, storageLayer: unknown, servicesSettings: ServicesSettings | (() => ServicesSettings)) {
     this.logger = getLogger('business:registration');
     this.storageLayer = storageLayer;
     // Accept either a literal settings object (legacy) or a 0-arg getter
@@ -52,7 +72,7 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
   /**
    * Do minimal manipulation with data like username conversion to lowercase
    */
-  async prepareUserData (context: any, params: any, result: any, next: any) {
+  async prepareUserData (context: MethodContext, params: any, result: ResultBag, next: Next) {
     context.newUser = new User(params);
     // accept passwordHash at creation only (used by system.createUser)
     context.newUser.passwordHash = params.passwordHash;
@@ -76,7 +96,7 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
    *
    * Downstream chain steps must no-op when `result.forwarded` is set.
    */
-  async forwardIfCrossCore (context: any, params: any, result: any, next: any) {
+  async forwardIfCrossCore (context: MethodContext, params: any, result: ResultBag, next: Next) {
     try {
       if (!this.platform || this.platform.isSingleCore) return next();
       const selectedCoreId = await this.platform.selectCoreForRegistration(params.hosting);
@@ -106,7 +126,7 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
       }
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const err: any = new Error(body?.error?.message || ('Cross-core registration forward failed: ' + response.status));
+        const err: ApiError = new Error(body?.error?.message || ('Cross-core registration forward failed: ' + response.status));
         err.id = body?.error?.id || 'cross-core-registration-failed';
         err.httpStatus = response.status;
         return next(err);
@@ -129,11 +149,11 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
    * - Check reserved usernames
    * - Check username + unique field availability (atomically reserved)
    */
-  async validateOnPlatform (context: any, params: any, result: any, next: any) {
+  async validateOnPlatform (context: MethodContext, params: any, result: ResultBag, next: Next) {
     if (result.forwarded) return next();
     try {
-      const uniqueFields: any = { username: context.newUser.username };
-      for (const [streamIdWithPrefix, streamSettings] of Object.entries(this.accountStreamsSettings) as Array<[string, any]>) {
+      const uniqueFields: Record<string, unknown> = { username: context.newUser.username };
+      for (const [streamIdWithPrefix, streamSettings] of Object.entries(this.accountStreamsSettings)) {
         if (streamSettings?.isUnique) {
           const fieldName = accountStreams.toFieldName(streamIdWithPrefix);
           uniqueFields[fieldName] = context.newUser[fieldName];
@@ -159,7 +179,7 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
   /**
    * Save user to the database, then store indexed fields in PlatformDB
    */
-  async createUser (context: any, params: any, result: any, next: any) {
+  async createUser (context: MethodContext, params: any, result: ResultBag, next: Next) {
     // Multi-core: either legacy redirect flow OR new transparent forward
     // already returned the target's response — nothing to do locally.
     if (result.redirect || result.forwarded) return next();
@@ -184,7 +204,7 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
   /**
    * Build response for user registration
    */
-  async buildResponse (context: any, params: any, result: any, next: any) {
+  async buildResponse (context: MethodContext, params: any, result: ResultBag, next: Next) {
     // Transparent cross-core forward: target's response already in result.
     // Keep `result.forwarded` set so sendWelcomeMail skips (target core
     // already triggered the welcome email); strip it in the final
@@ -216,7 +236,7 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
   /**
    * Send welcome email
    */
-  sendWelcomeMail (context: any, params: any, result: any, next: any) {
+  sendWelcomeMail (context: MethodContext, params: any, result: ResultBag, next: Next) {
     // Multi-core redirect: no user created locally, skip mail
     if (result.core && !result.username) return next();
     // Transparent cross-core forward: target core already sent the mail.
@@ -235,8 +255,8 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
     // already succeeded.
     if (!emailSettings) return next();
     // Skip this step if welcome mail is deactivated
-    const emailActivation = emailSettings.enabled;
-    if (emailActivation?.welcome === false) {
+    const emailActivation = emailSettings.enabled as { welcome?: boolean } | boolean | undefined;
+    if (typeof emailActivation === 'object' && emailActivation?.welcome === false) {
       return next();
     }
     const recipient = {
@@ -248,7 +268,7 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
       USERNAME: context.newUser.username,
       EMAIL: context.newUser.email
     };
-    mailing.sendmail(emailSettings, emailSettings.welcomeTemplate, recipient, substitutions, context.newUser.language, (err: any) => {
+    mailing.sendmail(emailSettings, emailSettings.welcomeTemplate, recipient, substitutions, context.newUser.language, (err: Error | null) => {
       // Don't fail creation process itself (mail isn't critical), just log error
       if (err) {
         errorHandling.logError(err, null, this.logger);
