@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Readable as ReadableType } from 'node:stream';
 const require = createRequire(import.meta.url);
 
 const { Readable } = require('stream');
@@ -16,6 +17,38 @@ const { DatabasePG } = require('../DatabasePG.ts');
 const timestamp = require('unix-timestamp');
 const { DeletionModesFields } = require('../../../../shared/DeletionModesFields.ts');
 const { localStoreEventQueries } = require('../../../../shared/localStoreEventQueries.ts');
+
+type Event = {
+  id: string;
+  type?: string;
+  streamIds?: string[];
+  time?: number;
+  duration?: number | null;
+  content?: unknown;
+  attachments?: Array<{ id?: string }>;
+  deleted?: number;
+  headId?: string;
+  trashed?: boolean;
+  [k: string]: unknown;
+};
+type DeletionSettings = {
+  mode: 'keep-nothing' | 'keep-authors' | 'keep-everything' | string;
+  fields: string[];
+  removeAttachments: boolean;
+};
+type Settings = { versioning?: { deletionMode?: string; forceKeepHistory?: boolean } };
+type SystemStreams = { accountStreamIds?: string[] };
+type QueryFn = (sql: string, params: unknown[]) => Promise<{ rows: any[]; rowCount?: number }>;
+type Transaction = { query: QueryFn } | null | undefined;
+type Store = {
+  db: any; // DatabasePG — not yet typed externally
+  eventsFileStorage: any; // EventFiles — not yet typed
+  settings: Settings;
+  setIntegrityOnEvent: (event: Event) => void;
+  accountStreamIds: string[];
+  deletionSettings: DeletionSettings;
+  keepHistory: boolean;
+};
 
 const COL_MAP: Record<string, string> = {
   headId: 'head_id',
@@ -34,7 +67,7 @@ function toCol (prop: string): string {
   return COL_MAP[prop] || prop;
 }
 
-function toPGValue (col: string, val: any): any {
+function toPGValue (col: string, val: unknown): unknown {
   if (val === undefined) return null;
   if (JSONB_COLS.has(col) && val != null) {
     return JSON.stringify(val);
@@ -42,9 +75,9 @@ function toPGValue (col: string, val: any): any {
   return val;
 }
 
-function rowToEvent (row: any): any | null {
+function rowToEvent (row: Record<string, unknown> | null | undefined): Event | null {
   if (!row) return null;
-  const event: any = {};
+  const event: Record<string, unknown> = {};
   for (const [col, val] of Object.entries(row)) {
     if (col === 'user_id') continue;
     // Reverse map snake_case → camelCase
@@ -68,7 +101,7 @@ function rowToEvent (row: any): any | null {
   if (event.deleted == null) delete event.deleted;
   // Remove headId if null
   if (event.headId == null) delete event.headId;
-  return event;
+  return event as Event;
 }
 
 /**
@@ -83,21 +116,23 @@ const userEvents = ds.createUserEvents({
   keepHistory: false,
   setIntegrityOnEvent: null,
 
-  init (this: any, db: any, eventsFileStorage: any, settings: any, setIntegrityOnEventFn: any, systemStreams: any): void {
+  init (this: Store, db: any, eventsFileStorage: any, settings: Settings, setIntegrityOnEventFn: (event: Event) => void, systemStreams: SystemStreams): void {
     this.db = db;
     this.eventsFileStorage = eventsFileStorage;
     this.settings = settings;
     this.setIntegrityOnEvent = setIntegrityOnEventFn;
     this.accountStreamIds = systemStreams?.accountStreamIds || [];
+    const mode = settings.versioning?.deletionMode || 'keep-nothing';
+    const fields = DeletionModesFields[mode] || ['integrity'];
     this.deletionSettings = {
-      mode: settings.versioning?.deletionMode || 'keep-nothing'
+      mode,
+      fields,
+      removeAttachments: fields.includes('attachments')
     };
-    this.deletionSettings.fields = DeletionModesFields[this.deletionSettings.mode] || ['integrity'];
-    this.deletionSettings.removeAttachments = this.deletionSettings.fields.includes('attachments');
     this.keepHistory = settings.versioning?.forceKeepHistory || false;
   },
 
-  async getOne (this: any, userId: string, eventId: string): Promise<any | null> {
+  async getOne (this: Store, userId: string, eventId: string): Promise<Event | null> {
     // Return the event regardless of deletion status (matching MongoDB behavior).
     // Only exclude versioned copies (head_id IS NULL = current head).
     const res = await this.db.query(
@@ -107,7 +142,7 @@ const userEvents = ds.createUserEvents({
     return res.rows.length > 0 ? rowToEvent(res.rows[0]) : null;
   },
 
-  async get (this: any, userId: string, query: any, options: any): Promise<any[]> {
+  async get (this: Store, userId: string, query: unknown, options: unknown): Promise<Event[]> {
     const localQuery = localStoreEventQueries.localStorePrepareQuery(query);
     const localOptions = localStoreEventQueries.localStorePrepareOptions(options);
     const { sql, params } = buildEventQuery(userId, localQuery, localOptions);
@@ -115,7 +150,7 @@ const userEvents = ds.createUserEvents({
     return res.rows.map(rowToEvent);
   },
 
-  async getStreamed (this: any, userId: string, query: any, options: any): Promise<any> {
+  async getStreamed (this: Store, userId: string, query: unknown, options: unknown): Promise<ReadableType> {
     const localQuery = localStoreEventQueries.localStorePrepareQuery(query);
     const localOptions = localStoreEventQueries.localStorePrepareOptions(options);
     const { sql, params } = buildEventQuery(userId, localQuery, localOptions);
@@ -123,9 +158,9 @@ const userEvents = ds.createUserEvents({
     return readableStreamFromRows(res.rows);
   },
 
-  async getDeletionsStreamed (this: any, userId: string, query: any, options: any): Promise<any> {
+  async getDeletionsStreamed (this: Store, userId: string, query: { deletedSince: number }, options: { sortAscending?: boolean; limit?: number; skip?: number } | null): Promise<ReadableType> {
     const conditions: string[] = ['user_id = $1', 'deleted > $2'];
-    const params: any[] = [userId, query.deletedSince];
+    const params: unknown[] = [userId, query.deletedSince];
     let idx = 3;
     let sql = `SELECT * FROM events WHERE ${conditions.join(' AND ')}`;
     sql += ` ORDER BY deleted ${options?.sortAscending ? 'ASC' : 'DESC'}`;
@@ -135,24 +170,24 @@ const userEvents = ds.createUserEvents({
     return readableStreamFromRows(res.rows);
   },
 
-  async getHistory (this: any, userId: string, eventId: string): Promise<any[]> {
+  async getHistory (this: Store, userId: string, eventId: string): Promise<Event[]> {
     const res = await this.db.query(
       'SELECT * FROM events WHERE user_id = $1 AND head_id = $2 ORDER BY modified ASC',
       [userId, eventId]
     );
-    return res.rows.map((row: any) => {
-      const item = rowToEvent(row);
-      item.id = item.headId;
+    return res.rows.map((row: Record<string, unknown>) => {
+      const item = rowToEvent(row)!;
+      item.id = item.headId!;
       delete item.headId;
       return item;
     });
   },
 
-  async create (this: any, userId: string, event: any, transaction: any): Promise<any> {
+  async create (this: Store, userId: string, event: Event, transaction: Transaction): Promise<Event> {
     try {
-      const queryFn = transaction ? transaction.query.bind(transaction) : this.db.query.bind(this.db);
+      const queryFn: QueryFn = transaction ? transaction.query.bind(transaction) : this.db.query.bind(this.db);
       const cols: string[] = ['user_id'];
-      const vals: any[] = [userId];
+      const vals: unknown[] = [userId];
       const placeholders: string[] = ['$1'];
       let idx = 2;
 
@@ -173,26 +208,27 @@ const userEvents = ds.createUserEvents({
 
       // Populate event_streams junction table
       if (event.streamIds && event.streamIds.length > 0) {
-        await this._syncEventStreams(userId, event.id, event.streamIds, queryFn);
+        await (this as any)._syncEventStreams(userId, event.id, event.streamIds, queryFn);
       }
 
       return event;
-    } catch (err: any) {
+    } catch (err: unknown) {
       DatabasePG.handleDuplicateError(err);
-      if (err.isDuplicateIndex != null && err.isDuplicate) {
+      const e = err as { isDuplicateIndex?: unknown; isDuplicate?: boolean };
+      if (e.isDuplicateIndex != null && e.isDuplicate) {
         throw errors.itemAlreadyExists('event', { id: event.id }, err);
       }
       throw errors.unexpectedError(err);
     }
   },
 
-  async update (this: any, userId: string, eventData: any, transaction: any): Promise<boolean> {
-    const queryFn = transaction ? transaction.query.bind(transaction) : this.db.query.bind(this.db);
-    await this._generateVersionIfNeeded(userId, eventData.id, null, queryFn);
+  async update (this: Store, userId: string, eventData: Event, transaction: Transaction): Promise<boolean> {
+    const queryFn: QueryFn = transaction ? transaction.query.bind(transaction) : this.db.query.bind(this.db);
+    await (this as any)._generateVersionIfNeeded(userId, eventData.id, null, queryFn);
 
     try {
       const setClauses: string[] = [];
-      const params: any[] = [userId, eventData.id];
+      const params: unknown[] = [userId, eventData.id];
       let idx = 3;
 
       for (const [prop, val] of Object.entries(eventData)) {
@@ -210,18 +246,18 @@ const userEvents = ds.createUserEvents({
 
       // Sync event_streams if streamIds changed
       if (eventData.streamIds) {
-        await this._syncEventStreams(userId, eventData.id, eventData.streamIds, queryFn);
+        await (this as any)._syncEventStreams(userId, eventData.id, eventData.streamIds, queryFn);
       }
 
       return res.rowCount === 1;
-    } catch (err: any) {
+    } catch (err: unknown) {
       throw errors.unexpectedError(err);
     }
   },
 
-  async delete (this: any, userId: string, originalEvent: any): Promise<void> {
-    await this._generateVersionIfNeeded(userId, originalEvent.id, originalEvent, this.db.query.bind(this.db));
-    const deletedEventContent: any = structuredClone(originalEvent);
+  async delete (this: Store, userId: string, originalEvent: Event): Promise<void> {
+    await (this as any)._generateVersionIfNeeded(userId, originalEvent.id, originalEvent, this.db.query.bind(this.db));
+    const deletedEventContent: Event = structuredClone(originalEvent);
     const eventId = deletedEventContent.id;
 
     // Remove attachments if configured
@@ -260,7 +296,7 @@ const userEvents = ds.createUserEvents({
 
     // Build replacement update: set remaining fields AND null out deleted fields.
     const setClauses: string[] = [];
-    const params: any[] = [userId, eventId];
+    const params: unknown[] = [userId, eventId];
     let idx = 3;
     const columnsAlreadySet = new Set<string>();
 
@@ -293,9 +329,9 @@ const userEvents = ds.createUserEvents({
     );
   },
 
-  async _generateVersionIfNeeded (this: any, userId: string, eventId: string, originalEvent: any, queryFn: any): Promise<void> {
+  async _generateVersionIfNeeded (this: Store, userId: string, eventId: string, originalEvent: Event | null, queryFn: QueryFn): Promise<void> {
     if (!this.keepHistory) return;
-    let versionItem: any;
+    let versionItem: Event;
     if (originalEvent != null) {
       versionItem = structuredClone(originalEvent);
     } else {
@@ -304,14 +340,14 @@ const userEvents = ds.createUserEvents({
         [userId, eventId]
       );
       if (res.rows.length === 0) return;
-      versionItem = rowToEvent(res.rows[0]);
+      versionItem = rowToEvent(res.rows[0])!;
     }
     versionItem.headId = eventId;
     const versionId = cuid();
-    delete versionItem.id;
+    delete (versionItem as Partial<Event>).id;
 
     const cols: string[] = ['user_id', 'id'];
-    const vals: any[] = [userId, versionId];
+    const vals: unknown[] = [userId, versionId];
     const placeholders: string[] = ['$1', '$2'];
     let idx = 3;
 
@@ -333,7 +369,7 @@ const userEvents = ds.createUserEvents({
    * Sync the event_streams junction table for an event.
    * Replaces all entries for the given event.
    */
-  async _syncEventStreams (this: any, userId: string, eventId: string, streamIds: string[], queryFn: any): Promise<void> {
+  async _syncEventStreams (this: Store, userId: string, eventId: string, streamIds: string[], queryFn: QueryFn): Promise<void> {
     // Delete existing entries
     await queryFn(
       'DELETE FROM event_streams WHERE user_id = $1 AND event_id = $2',
@@ -355,13 +391,13 @@ const userEvents = ds.createUserEvents({
     }
   },
 
-  async _deleteUser (this: any, userId: string): Promise<void> {
+  async _deleteUser (this: Store, userId: string): Promise<void> {
     await this.db.query('DELETE FROM event_streams WHERE user_id = $1', [userId]);
     await this.db.query('DELETE FROM events WHERE user_id = $1', [userId]);
     await this.eventsFileStorage.removeAllForUser(userId);
   },
 
-  async _getStorageInfos (this: any, userId: string): Promise<{ count: number }> {
+  async _getStorageInfos (this: Store, userId: string): Promise<{ count: number }> {
     const res = await this.db.query(
       'SELECT COUNT(*)::int AS cnt FROM events WHERE user_id = $1',
       [userId]
@@ -369,19 +405,19 @@ const userEvents = ds.createUserEvents({
     return { count: res.rows[0].cnt };
   },
 
-  async _getFilesStorageInfos (this: any, userId: string): Promise<{ sizeKb: number }> {
+  async _getFilesStorageInfos (this: Store, userId: string): Promise<{ sizeKb: number }> {
     const sizeKb = await this.eventsFileStorage.getFileStorageInfos(userId);
     return { sizeKb };
   },
 
-  async removeAllNonAccountEventsForUser (this: any, userId: string): Promise<void> {
+  async removeAllNonAccountEventsForUser (this: Store, userId: string): Promise<void> {
     const allAccountStreamIds = this.accountStreamIds;
     if (allAccountStreamIds.length === 0) {
       await this.db.query('DELETE FROM event_streams WHERE user_id = $1', [userId]);
       await this.db.query('DELETE FROM events WHERE user_id = $1', [userId]);
     } else {
       // Delete events that do NOT have any account stream in their streamIds
-      const placeholders = allAccountStreamIds.map((_: any, i: any) => `$${i + 2}`).join(', ');
+      const placeholders = allAccountStreamIds.map((_, i) => `$${i + 2}`).join(', ');
       // Use the junction table to find events with account streams, then delete the rest
       await this.db.query(
         `DELETE FROM event_streams WHERE user_id = $1
@@ -412,9 +448,9 @@ export { userEventsWithRow as userEvents, rowToEvent };
 
 // ---- Query building helpers ----
 
-function buildEventQuery (userId: string, localQuery: any[], localOptions: any): { sql: string, params: any[] } {
+function buildEventQuery (userId: string, localQuery: any[], localOptions: any): { sql: string, params: unknown[] } {
   const conditions: string[] = ['e.user_id = $1', 'e.deleted IS NULL', 'e.head_id IS NULL'];
-  const params: any[] = [userId];
+  const params: unknown[] = [userId];
   let idx = 2;
 
   for (const item of localQuery) {
@@ -450,7 +486,7 @@ function buildEventQuery (userId: string, localQuery: any[], localOptions: any):
   return { sql, params };
 }
 
-function convertQueryItem (item: any, idx: number, params: any[]): { condition: string, nextIdx: number } | null {
+function convertQueryItem (item: any, idx: number, params: unknown[]): { condition: string, nextIdx: number } | null {
   switch (item.type) {
     case 'equal': {
       const col = 'e.' + toCol(item.content.field);
@@ -518,7 +554,7 @@ function convertQueryItem (item: any, idx: number, params: any[]): { condition: 
   }
 }
 
-function convertStreamsQuery (streamQueriesArray: any[], idx: number, params: any[]): { condition: string, nextIdx: number } | null {
+function convertStreamsQuery (streamQueriesArray: any[], idx: number, params: unknown[]): { condition: string, nextIdx: number } | null {
   if (!streamQueriesArray || streamQueriesArray.length === 0) return null;
 
   const orParts: string[] = [];
@@ -563,12 +599,12 @@ function convertStreamsQuery (streamQueriesArray: any[], idx: number, params: an
   return { condition, nextIdx: idx };
 }
 
-function readableStreamFromRows (rows: any[]): any {
+function readableStreamFromRows (rows: Array<Record<string, unknown>>): ReadableType {
   let index = 0;
   const readable = new Readable({
     objectMode: true,
     highWaterMark: 4000,
-    read (this: any) {
+    read (this: ReadableType) {
       while (index < rows.length) {
         const event = rowToEvent(rows[index++]);
         if (!this.push(event)) return; // back-pressure
