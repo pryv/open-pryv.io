@@ -57,6 +57,18 @@ describe('[AUDT] Audit', function () {
     storageSpy.resetHistory();
   }
 
+  // Find the audit-log entry matching the expected errorId among the
+  // returned set. Replaces the brittle `length === 1 && entries[0]`
+  // assertion that flaked under MOCHA_PARALLEL=1 + back-to-back tests
+  // sharing the same per-user audit DB (B-2026-05-29-3) when a prior
+  // test's async audit write landed at or after the current test's
+  // captured `fromTime`.
+  function findAuditLogByErrorId (entries, expectedId) {
+    const log = entries?.find?.((e) => e?.content?.id === expectedId);
+    assert.ok(log, 'expected an audit-log entry with content.id="' + expectedId + '"; got: ' + JSON.stringify(entries));
+    return log;
+  }
+
   after(async function () {
     await fixtures.clean();
   });
@@ -197,10 +209,7 @@ describe('[AUDT] Audit', function () {
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
         const entries = res.body.auditLogs;
-        assert.ok(entries);
-        assert.strictEqual(entries.length, 1);
-        const log = entries[0];
-        assert.strictEqual(log.content.id, 'invalid-request-structure');
+        const log = findAuditLogByErrorId(entries, 'invalid-request-structure');
         assert.deepEqual(log.content.query, query);
         assert.strictEqual(log.type, CONSTANTS.EVENT_TYPE_ERROR);
       });
@@ -225,10 +234,7 @@ describe('[AUDT] Audit', function () {
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
         const entries = res.body.auditLogs;
-        assert.ok(entries);
-        assert.strictEqual(entries.length, 1);
-        const log = entries[0];
-        assert.strictEqual(log.content.id, 'invalid-parameters-format');
+        const log = findAuditLogByErrorId(entries, 'invalid-parameters-format');
         assert.deepEqual(log.content.query, query);
         assert.strictEqual(log.type, CONSTANTS.EVENT_TYPE_ERROR);
       });
@@ -253,10 +259,7 @@ describe('[AUDT] Audit', function () {
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
         const entries = res.body.auditLogs;
-        assert.ok(entries);
-        assert.strictEqual(entries.length, 1);
-        const log = entries[0];
-        assert.strictEqual(log.content.id, 'unknown-referenced-resource');
+        const log = findAuditLogByErrorId(entries, 'unknown-referenced-resource');
         assert.deepEqual(log.content.query, query);
         assert.strictEqual(log.type, CONSTANTS.EVENT_TYPE_ERROR);
       });
@@ -279,10 +282,7 @@ describe('[AUDT] Audit', function () {
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
         const entries = res.body.auditLogs;
-        assert.ok(entries);
-        assert.strictEqual(entries.length, 1);
-        const log = entries[0];
-        assert.strictEqual(log.content.id, 'invalid-access-token');
+        const log = findAuditLogByErrorId(entries, 'invalid-access-token');
         assert.deepEqual(log.streamIds, [addAccessStreamIdPrefix(AuditAccessIds.INVALID), addActionStreamIdPrefix('events.get')]);
         assert.strictEqual(log.type, CONSTANTS.EVENT_TYPE_ERROR);
       });
@@ -310,10 +310,7 @@ describe('[AUDT] Audit', function () {
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
         const entries = res.body.auditLogs;
-        assert.ok(entries);
-        assert.strictEqual(entries.length, 1);
-        const log = entries[0];
-        assert.strictEqual(log.content.id, 'forbidden');
+        const log = findAuditLogByErrorId(entries, 'forbidden');
         assert.strictEqual(log.type, CONSTANTS.EVENT_TYPE_ERROR);
       });
     });
@@ -335,10 +332,7 @@ describe('[AUDT] Audit', function () {
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
         const entries = res.body.auditLogs;
-        assert.ok(entries);
-        assert.strictEqual(entries.length, 1);
-        const log = entries[0];
-        assert.strictEqual(log.content.id, 'unknown-resource');
+        const log = findAuditLogByErrorId(entries, 'unknown-resource');
         assert.strictEqual(log.type, CONSTANTS.EVENT_TYPE_ERROR);
       });
     });
