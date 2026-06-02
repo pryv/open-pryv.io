@@ -21,22 +21,31 @@ const FLUSH_INTERVAL_MS = 500; // flush check frequency
 
 const logger = getLogger('metadata-updater');
 
+type UpdateRequest = {
+  userId: string;
+  eventId: string;
+  author: string;
+  timestamp: number;
+  dataExtent: { from: number; to: number };
+};
+type Logger = { info (msg: string): void; error (msg: string): void };
+
 // --- PendingUpdate ---
 
 class PendingUpdate {
-  request;
-  deadline;
-  cooldown;
+  request: UpdateRequest;
+  deadline: number;
+  cooldown: number;
 
-  static fromUpdateRequest (now: any, req: any) {
+  static fromUpdateRequest (now: number, req: UpdateRequest) {
     return new PendingUpdate(now, req);
   }
 
-  static key (id: any) {
+  static key (id: { userId: string; eventId: string }) {
     return `${id.userId}/${id.eventId}`;
   }
 
-  constructor (now: any, req: any) {
+  constructor (now: number, req: UpdateRequest) {
     this.request = req;
     this.deadline = now + STALE_LIMIT;
     this.cooldown = now + COOLDOWN_TIME;
@@ -49,9 +58,9 @@ class PendingUpdate {
     return `${r.userId}/${r.eventId}`;
   }
 
-  merge (other: any) {
+  merge (other: PendingUpdate) {
     if (this.key() !== other.key()) throw new Error('Key mismatch in merge.');
-    const ts = (e: any) => e.request.timestamp;
+    const ts = (e: PendingUpdate) => e.request.timestamp;
     const later = ts(other) > ts(this) ? other : this;
     this.request.author = later.request.author;
     this.request.timestamp = ts(later);
@@ -71,18 +80,18 @@ class PendingUpdate {
 // --- PendingUpdatesMap ---
 
 class PendingUpdatesMap {
-  map;
-  heap;
+  map: Map<string, PendingUpdate>;
+  heap: InstanceType<typeof Heap>;
 
   constructor () {
     this.map = new Map();
-    this.heap = new Heap((a: any, b: any) => a.flushAt() - b.flushAt());
+    this.heap = new Heap((a: PendingUpdate, b: PendingUpdate) => a.flushAt() - b.flushAt());
   }
 
-  merge (update: any) {
+  merge (update: PendingUpdate) {
     const key = update.key();
     if (this.map.has(key)) {
-      this.map.get(key).merge(update);
+      this.map.get(key)!.merge(update);
       this.heap.updateItem(this.map.get(key));
     } else {
       this.map.set(key, update);
@@ -90,8 +99,8 @@ class PendingUpdatesMap {
     }
   }
 
-  getElapsed (now: any) {
-    const elapsed: any[] = [];
+  getElapsed (now: number): PendingUpdate[] {
+    const elapsed: PendingUpdate[] = [];
     while (this.heap.size() > 0) {
       const head = this.heap.peek();
       if (head.flushAt() > now) break;
@@ -105,7 +114,7 @@ class PendingUpdatesMap {
 
 // --- Flush: writes a pending update to the database ---
 
-async function flush (update: any) {
+async function flush (update: PendingUpdate) {
   const req = update.request;
   const usersRepository = await getUsersRepository();
   const userId = await usersRepository.getUserIdForUsername(req.userId);
@@ -124,8 +133,8 @@ async function flush (update: any) {
 // --- MetadataUpdater: the in-process service ---
 
 class MetadataUpdater {
-  pending;
-  timer: any;
+  pending: PendingUpdatesMap;
+  timer: NodeJS.Timeout | null;
 
   constructor () {
     this.pending = new PendingUpdatesMap();
@@ -144,7 +153,7 @@ class MetadataUpdater {
     }
   }
 
-  async scheduleUpdate (req: any) {
+  async scheduleUpdate (req: { entries: UpdateRequest[] }) {
     const now = Date.now() / 1e3;
     for (const entry of req.entries) {
       const update = PendingUpdate.fromUpdateRequest(now, entry);
@@ -161,8 +170,8 @@ class MetadataUpdater {
     for (const update of updates) {
       try {
         await flush(update);
-      } catch (err: any) {
-        logger.error(`Flush error for ${update.key()}: ${err.message}`);
+      } catch (err: unknown) {
+        logger.error(`Flush error for ${update.key()}: ${(err as Error).message}`);
       }
     }
   }
@@ -171,9 +180,9 @@ class MetadataUpdater {
 // --- MetadataForgetter: noop when metadata updater is not configured ---
 
 class MetadataForgetter {
-  logger;
+  logger: Logger;
 
-  constructor (log: any) {
+  constructor (log: Logger) {
     this.logger = log;
   }
 
