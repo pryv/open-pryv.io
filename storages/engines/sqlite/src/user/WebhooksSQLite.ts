@@ -27,6 +27,31 @@ class WebhooksSQLite extends BaseStorageSQLite {
     return copy;
   }
 
+  /**
+   * Override `insertOne` to enforce the same uniqueness invariant the PG
+   * engine gets from UNIQUE INDEX `idx_webhook_url` on
+   * `(user_id, access_id, url) WHERE deleted IS NULL`. SQLite stores
+   * webhook fields inside a JSON `data` TEXT column, so we can't lean on
+   * a SQLite-side UNIQUE constraint; check at the JS layer before
+   * INSERT and throw an error shaped like PG's so api-server's
+   * `err.isDuplicateIndex('url')` branch keeps matching and emits 409.
+   * Mirrors the AccessesSQLite.insertOne pattern.
+   */
+  insertOne (userOrUserId: any, item: any, callback: (err: any, item?: any) => void): void {
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    const prepared = this.applyDefaults(Object.assign({ deleted: null }, item));
+    this.find(userId, { deleted: null }, null, (err: any, existing: any[]) => {
+      if (err) return callback(err);
+      for (const ex of (existing || [])) {
+        if (ex.id === prepared.id) continue; // same row — defensive
+        if (ex.accessId === prepared.accessId && ex.url === prepared.url) {
+          return callback(duplicateIndexError(['url'], { url: prepared.url }));
+        }
+      }
+      super.insertOne(userId, prepared, callback);
+    });
+  }
+
   delete (userOrUserId: any, query: any, callback: (err: any, res?: any) => void): void {
     this.updateMany(userOrUserId, query, {
       $set: { deleted: timestamp.now() },
@@ -37,6 +62,23 @@ class WebhooksSQLite extends BaseStorageSQLite {
       }
     }, callback);
   }
+}
+
+/**
+ * Build a duplicate-key error that mimics the shape attached by
+ * `DatabasePG.handleDuplicateError`. The api-server methods only call
+ * `err.isDuplicateIndex(key)`, so a thin shim is enough. Identical
+ * shape to the AccessesSQLite helper of the same name.
+ */
+function duplicateIndexError (constraintKeys: string[], data: Record<string, any>): any {
+  const err: any = new Error('duplicate key');
+  err.isDuplicate = true;
+  err.duplicateKeys = constraintKeys;
+  err.data = data;
+  err.isDuplicateIndex = (key: string): boolean => {
+    return constraintKeys.includes(key);
+  };
+  return err;
 }
 
 export { WebhooksSQLite };
