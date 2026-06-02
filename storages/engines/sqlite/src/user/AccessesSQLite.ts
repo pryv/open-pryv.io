@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Callback, UserOrId } from '../../../../interfaces/_shared/types.ts';
 const require = createRequire(import.meta.url);
 
 const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts');
@@ -13,10 +14,14 @@ const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts')
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
 
-class AccessesSQLite extends BaseStorageSQLite {
-  integrityAccesses: any;
+type IntegrityAccesses = { isActive: boolean; set: (access: AccessRow, recompute?: boolean) => void };
+type AccessRow = { id: string; token?: string; name?: string; type?: string; deviceName?: string | null; deleted?: number | null; headId?: string | null; integrity?: string | null; integrityBatchCode?: number; [k: string]: unknown };
+type AccessUpdate = { $set?: Record<string, unknown>; $unset?: Record<string, unknown>; modified?: number; integrity?: string | null; [k: string]: unknown };
 
-  constructor (integrityAccesses?: any) {
+class AccessesSQLite extends BaseStorageSQLite {
+  integrityAccesses: IntegrityAccesses;
+
+  constructor (integrityAccesses?: IntegrityAccesses) {
     super();
     this.tableName = 'accesses';
     this.hasDeletedCol = true;
@@ -25,7 +30,7 @@ class AccessesSQLite extends BaseStorageSQLite {
     this.integrityAccesses = integrityAccesses || { isActive: false, set: () => {} };
   }
 
-  rowToItem (row: any): any | null {
+  rowToItem (row: Record<string, unknown>): AccessRow | null {
     const item = super.rowToItem(row);
     if (item && item.type === 'shared' && !('deviceName' in item)) {
       item.deviceName = null;
@@ -33,8 +38,8 @@ class AccessesSQLite extends BaseStorageSQLite {
     return item;
   }
 
-  applyDefaults (item: any): any {
-    const copy = Object.assign({}, item);
+  applyDefaults (item: Partial<AccessRow>): AccessRow {
+    const copy = Object.assign({}, item) as AccessRow;
     copy.id = copy.id || generateId();
     copy.token = copy.token || generateId();
     if (copy.deleted === undefined) copy.deleted = null;
@@ -49,14 +54,14 @@ class AccessesSQLite extends BaseStorageSQLite {
     return generateId();
   }
 
-  findDeletions (userOrUserId: any, query: any, options: any, callback: (err: any, items?: any) => void): void {
+  findDeletions (userOrUserId: UserOrId, query: Record<string, unknown>, options: unknown, callback: Callback<AccessRow[]>): void {
     const q = Object.assign({}, query || {}, { deleted: { $ne: null } });
     this.findIncludingDeletionsAndVersions(userOrUserId, q, options, callback);
   }
 
-  delete (userOrUserId: any, query: any, callback: (err: any, res?: any) => void): void {
+  delete (userOrUserId: UserOrId, query: Record<string, unknown>, callback: Callback<{ modifiedCount: number; integrityRecomputed?: number }>): void {
     const now = timestamp.now();
-    const updateData: any = {
+    const updateData: AccessUpdate = {
       $set: { deleted: now },
       $unset: { integrity: 1 }
     };
@@ -66,12 +71,12 @@ class AccessesSQLite extends BaseStorageSQLite {
     }
 
     const integrityBatchCode = Math.random();
-    updateData.$set.integrityBatchCode = integrityBatchCode;
+    updateData.$set!.integrityBatchCode = integrityBatchCode;
 
-    this.updateMany(userOrUserId, query, updateData, (err: any, res: any) => {
+    this.updateMany(userOrUserId, query, updateData, (err: Error | null, res: { modifiedCount: number }) => {
       if (err) return callback(err);
       const initial = res.modifiedCount;
-      const updateIfNeeded = (access: any): any => {
+      const updateIfNeeded = (access: AccessRow): AccessUpdate | null => {
         delete access.integrityBatchCode;
         const prev = access.integrity;
         this.integrityAccesses.set(access, true);
@@ -81,14 +86,14 @@ class AccessesSQLite extends BaseStorageSQLite {
           $set: { integrity: access.integrity }
         };
       };
-      this.findAndUpdateIfNeeded(userOrUserId, { integrityBatchCode }, {}, updateIfNeeded, (err2: any, res2: any) => {
+      this.findAndUpdateIfNeeded(userOrUserId, { integrityBatchCode }, {}, updateIfNeeded, (err2: Error | null, res2?: { count?: number }) => {
         if (err2) return callback(err2);
         callback(null, { modifiedCount: initial, integrityRecomputed: res2?.count ?? 0 });
       });
     });
   }
 
-  updateOne (userOrUserId: any, query: any, update: any, callback: (err: any, item?: any) => void): void {
+  updateOne (userOrUserId: UserOrId, query: Record<string, unknown>, update: AccessUpdate, callback: Callback<AccessRow>): void {
     if (update.modified == null || !this.integrityAccesses.isActive) {
       return this.findOneAndUpdate(userOrUserId, query, update, callback);
     }
@@ -96,13 +101,13 @@ class AccessesSQLite extends BaseStorageSQLite {
       if (!update.$unset) update.$unset = {};
       update.$unset.integrity = 1;
     }
-    this.findOneAndUpdate(userOrUserId, query, update, (err: any, accessData: any) => {
-      if (err || accessData?.id == null) return callback(err, accessData);
+    this.findOneAndUpdate(userOrUserId, query, update, (err: Error | null, accessData: AccessRow | null) => {
+      if (err || accessData?.id == null) return callback(err, accessData ?? undefined);
       const before = accessData.integrity;
       try {
         this.integrityAccesses.set(accessData, true);
       } catch (eInt) {
-        return callback(eInt, accessData);
+        return callback(eInt as Error | null, accessData);
       }
       if (before !== accessData.integrity) {
         return this.findOneAndUpdate(userOrUserId, { id: accessData.id },
@@ -112,18 +117,18 @@ class AccessesSQLite extends BaseStorageSQLite {
     });
   }
 
-  async findHistory (userOrUserId: any, baseId: string): Promise<any[]> {
+  async findHistory (userOrUserId: UserOrId, baseId: string): Promise<any[]> {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const udb = await UserBaseStorageDb.forUser(userId);
     await udb.ensureTable(this.tableName, { withDeleted: this.hasDeletedCol, withHeadId: this.hasHeadIdCol });
     const rows = udb.db.prepare(
       `SELECT * FROM ${this.tableName} WHERE head_id = ? ORDER BY json_extract(data, '$.modified') ASC`
     ).all(baseId);
-    return rows.map((r: any) => this.rowToItem(r)).filter((x: any) => x != null);
+    return rows.map((r: Record<string, unknown>) => this.rowToItem(r)).filter((x: AccessRow | null) => x != null);
   }
 
-  snapshotHead (userOrUserId: any, baseId: string, callback: (err: any) => void): void {
-    this.findOne(userOrUserId, { id: baseId }, null, (err: any, head: any) => {
+  snapshotHead (userOrUserId: UserOrId, baseId: string, callback: Callback<void>): void {
+    this.findOne(userOrUserId, { id: baseId }, null, (err: Error | null, head: AccessRow | null) => {
       if (err) return callback(err);
       if (head == null) return callback(new Error('snapshotHead: no live head row for access id ' + JSON.stringify(baseId)));
       const snapshot = Object.assign({}, head);
@@ -131,11 +136,11 @@ class AccessesSQLite extends BaseStorageSQLite {
       snapshot.headId = baseId;
       delete snapshot.integrity;
       delete snapshot.apiEndpoint;
-      this.insertOne(userOrUserId, snapshot, (err2: any) => callback(err2 || null));
+      this.insertOne(userOrUserId, snapshot, (err2: Error | null) => callback(err2 || null));
     });
   }
 
-  insertMany (userOrUserId: any, accesses: any[], callback: (err: any) => void): void {
+  insertMany (userOrUserId: UserOrId, accesses: Array<Partial<AccessRow>>, callback: Callback<void>): void {
     const prepared = accesses.map((a) => {
       if (a.deleted === undefined) return Object.assign({ deleted: null }, a);
       return a;
@@ -152,7 +157,7 @@ class AccessesSQLite extends BaseStorageSQLite {
    * shaped like PG's so api-server's `err.isDuplicateIndex('token')` /
    * `'name'` / `'type'` / `'deviceName'` branches keep matching.
    */
-  insertOne (userOrUserId: any, item: any, callback: (err: any, item?: any) => void): void {
+  insertOne (userOrUserId: UserOrId, item: Partial<AccessRow>, callback: Callback<AccessRow>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const prepared = this.applyDefaults(Object.assign({ deleted: null }, item));
     // Versioned snapshots (headId != null) bypass the uniqueness check —
@@ -162,7 +167,7 @@ class AccessesSQLite extends BaseStorageSQLite {
     if (prepared.headId != null) {
       return super.insertOne(userId, prepared, callback);
     }
-    this.findIncludingDeletionsAndVersions(userId, { deleted: null, headId: null }, null, (err: any, existing: any[]) => {
+    this.findIncludingDeletionsAndVersions(userId, { deleted: null, headId: null }, null, (err: Error | null, existing: AccessRow[]) => {
       if (err) return callback(err);
       for (const ex of (existing || [])) {
         if (ex.id === prepared.id) continue; // same row (shouldn't happen — defensive)
@@ -188,8 +193,8 @@ class AccessesSQLite extends BaseStorageSQLite {
  * `DatabasePG.handleDuplicateError`. The api-server methods only call
  * `err.isDuplicateIndex(key)` (not `err.code`), so a thin shim is enough.
  */
-function duplicateIndexError (constraintKeys: string[], data: Record<string, any>): any {
-  const err: any = new Error('duplicate key');
+function duplicateIndexError (constraintKeys: string[], data: Record<string, unknown>): Error & { isDuplicate: boolean; duplicateKeys: string[]; data: Record<string, unknown>; isDuplicateIndex: (key: string) => boolean } {
+  const err = new Error('duplicate key') as Error & { isDuplicate: boolean; duplicateKeys: string[]; data: Record<string, unknown>; isDuplicateIndex: (key: string) => boolean };
   err.isDuplicate = true;
   err.duplicateKeys = constraintKeys;
   err.data = data;
