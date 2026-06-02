@@ -83,34 +83,47 @@ logger.debug('Loading app');
  * Application is a grab bag of singletons / system services with not many
  * methods of its own. It is the type-safe version of DI.
  */
+type BoilerConfig = { get (key: string): unknown };
+type Logger = unknown;
+type APIInstance = unknown;
+type Database = unknown;
+type StorageLayer = { connection: Database; [k: string]: unknown };
+type ExpressApp = {
+  use: (...args: unknown[]) => unknown;
+  _router?: { stack: ExpressLayer[] };
+};
+type ExpressRoute = { stack: Array<{ handle: { name: string } & ((req: unknown, res: unknown, next: () => void) => void) }>; methods: Record<string, unknown>; path: string };
+type ExpressLayer = { route?: ExpressRoute; name?: string; handle?: { stack: Array<{ route?: ExpressRoute }> } };
+type CustomAuthFn = unknown;
+
 class Application {
   // new config
-  config: any;
-  logging: any;
+  config!: BoilerConfig;
+  logging: Logger;
 
-  initalized;
-  initializing;
+  initalized: boolean;
+  initializing: boolean;
 
   /**
    * Normal user API
    */
-  api: any;
+  api!: APIInstance;
   /**
    * API for system routes.
    */
-  systemAPI: any;
+  systemAPI!: APIInstance;
 
   /** @type {import('storage').Database} */
-  database: any;
+  database!: Database;
 
   /**
    * Storage subsystem
    */
-  storageLayer: any;
+  storageLayer!: StorageLayer;
 
-  expressApp: any;
+  expressApp!: ExpressApp;
 
-  isAuditActive;
+  isAuditActive: boolean;
 
   constructor () {
     this.initalized = false;
@@ -130,7 +143,7 @@ class Application {
     this.produceLogSubsystem();
     logger.debug('Init started');
     this.config = await getConfig();
-    this.isAuditActive = this.config.get('audit:active');
+    this.isAuditActive = this.config.get('audit:active') as boolean;
     await userLocalDirectory.init();
     await require('storages').init(this.config);
     if (this.isAuditActive) {
@@ -163,15 +176,15 @@ class Application {
    * Helps that display all routes and methodId registered
    */
   helperShowRoutes () {
-    const routes: any[] = [];
-    function addRoute (route: any) {
+    const routes: Array<{ methodId: string | undefined; path: string; method: string }> = [];
+    function addRoute (route: ExpressRoute | undefined) {
       if (route) {
-        let methodId;
+        let methodId: string | undefined;
         for (const layer of route.stack) {
           if (layer.handle.name === 'setMethodId') {
-            const fakeReq: any = {};
+            const fakeReq: { context?: { methodId?: string } } = {};
             layer.handle(fakeReq, null, function () { });
-            methodId = fakeReq.context.methodId;
+            methodId = fakeReq.context?.methodId;
           }
         }
         let keys = Object.keys(route.methods);
@@ -180,13 +193,13 @@ class Application {
       }
     }
 
-    this.expressApp._router.stack.forEach(function (middleware: any) {
+    this.expressApp._router!.stack.forEach(function (middleware: ExpressLayer) {
       if (middleware.route) {
         // routes registered directly on the app
         addRoute(middleware.route);
       } else if (middleware.name === 'router') {
         // router middleware
-        middleware.handle.stack.forEach((h: any) => addRoute(h.route));
+        middleware.handle!.stack.forEach((h: { route?: ExpressRoute }) => addRoute(h.route));
       }
     });
     console.log(routes);
@@ -231,13 +244,13 @@ class Application {
   }
 
   customAuthStepLoaded = false;
-  customAuthStepFn: any = null;
+  customAuthStepFn: CustomAuthFn = null;
 
   /**
    * Returns the custom auth function if one was configured. Otherwise returns
    * null.
    */
-  getCustomAuthFunction (from: any) {
+  getCustomAuthFunction (from: string) {
     if (!this.customAuthStepLoaded) {
       this.customAuthStepFn = this.loadCustomExtension();
       this.customAuthStepLoaded = true;
@@ -247,13 +260,13 @@ class Application {
   }
 
   loadCustomExtension () {
-    const defaultFolder = this.config.get('customExtensions:defaultFolder');
+    const defaultFolder = this.config.get('customExtensions:defaultFolder') as string;
     const name = 'customAuthStepFn';
-    const customAuthStepFnPath = this.config.get('customExtensions:customAuthStepFn');
+    const customAuthStepFnPath = this.config.get('customExtensions:customAuthStepFn') as string | undefined;
 
     const loader = new ExtensionLoader(defaultFolder);
 
-    let customAuthStep: any = null;
+    let customAuthStep: { fn: CustomAuthFn } | null = null;
     if (customAuthStepFnPath) {
       logger.debug('Loading CustomAuthStepFn from ' + customAuthStepFnPath);
       customAuthStep = loader.loadFrom(customAuthStepFnPath);
@@ -276,12 +289,12 @@ class Application {
   }
 }
 
-let app: any;
+let app: Application | undefined;
 /**
  * get Application Singleton
  * @param forceNewApp - In TEST mode only, return a new Application for fixtures and mocks
  */
-function getApplication (forceNewApp?: any) {
+function getApplication (forceNewApp?: boolean) {
   if (forceNewApp || !app) {
     app = new Application();
   }
