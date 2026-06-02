@@ -46,10 +46,15 @@ type Permission = {
   name?: string;
 };
 type Access = {
-  type: 'personal' | 'app' | 'shared';
-  permissions: Array<Permission>;
-  expires: number | undefined | null;
-  clientData: {} | undefined | null;
+  id?: string;
+  type?: 'personal' | 'app' | 'shared';
+  permissions?: Array<Permission>;
+  expires?: number | undefined | null;
+  clientData?: {} | undefined | null;
+  integrity?: string | null;
+  createdBy?: string;
+  serial?: number;
+  [k: string]: unknown;
 };
 import type { MethodNext, NodeCallback } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
@@ -61,6 +66,23 @@ type MethodContext = BaseMethodContext & {
 type UpdatesSettingsHolder = {
   ignoreProtectedFields: boolean;
 };
+
+// Per-method param + result shapes mirroring components/api-server/src/schema/accessesMethods.ts.
+// Hand-authored (JSON Schema literals there aren't TS-derived yet). Keep these in sync
+// with that file when the wire schema changes.
+type ItemDeletion = { id: string; deleted?: number };
+type AccessesGetParams = { includeDeletions?: boolean; includeExpired?: boolean };
+type AccessesGetResult = { accesses?: Access[]; accessDeletions?: Access[] } & Record<string, unknown>;
+type AccessesGetOneParams = { id: string; includeHistory?: boolean };
+type AccessesGetOneResult = { access?: Access; current?: string; history?: Access[] } & Record<string, unknown>;
+type AccessesCreateParams = Partial<Access> & { name?: string; permissions?: Permission[]; clientData?: Record<string, unknown>; expireAfter?: number; deviceName?: string | null; [k: string]: unknown };
+type AccessesCreateResult = { access?: Access } & Record<string, unknown>;
+type AccessesUpdateParams = { id: string; update: Partial<Access> & { permissions?: Permission[]; expires?: number | null; expireAfter?: number; clientData?: Record<string, unknown> | null }; targetAccess?: Access; targetBase?: string; [k: string]: unknown };
+type AccessesUpdateResult = { access?: Access } & Record<string, unknown>;
+type AccessesDeleteParams = { id: string; accessToDelete?: Access };
+type AccessesDeleteResult = { accessDeletion?: ItemDeletion; relatedDeletions?: ItemDeletion[] } & Record<string, unknown>;
+type AccessesCheckAppParams = { requestingAppId: string; deviceName?: string; requestedPermissions: Permission[]; clientData?: Record<string, unknown> };
+type AccessesCheckAppResult = { matchingAccess?: Access; mismatchingAccess?: Access; checkedPermissions?: Permission[]; error?: unknown } & Record<string, unknown>;
 
 export default async function produceAccessesApiMethods (api: { register (...args: unknown[]): unknown }) {
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };
@@ -78,7 +100,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     includeDeletionsIfRequested
   );
 
-  async function findAccessibleAccesses (context: MethodContext, params: any, result: any, next: MethodNext) {
+  async function findAccessibleAccesses (context: MethodContext, params: AccessesGetParams, result: AccessesGetResult, next: MethodNext) {
     const currentAccess = context.access;
     const accessesRepository = storageLayer.accesses;
     const query: Record<string, unknown> = {};
@@ -108,7 +130,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     }
   }
 
-  async function includeDeletionsIfRequested (context: MethodContext, params: any, result: any, next: MethodNext) {
+  async function includeDeletionsIfRequested (context: MethodContext, params: AccessesGetParams, result: AccessesGetResult, next: MethodNext) {
     if (params.includeDeletions == null) {
       return next();
     }
@@ -137,7 +159,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     findOneAccess
   );
 
-  async function findOneAccess (context: MethodContext, params: any, result: any, next: MethodNext) {
+  async function findOneAccess (context: MethodContext, params: AccessesGetOneParams, result: AccessesGetOneResult, next: MethodNext) {
     let ref;
     try {
       ref = parseAccessRef(params.id);
@@ -233,16 +255,16 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     addIntegrityToContext
   );
 
-  function applyDefaultsForCreation (context: MethodContext, params: any, result: any, next: MethodNext) {
+  function applyDefaultsForCreation (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     params.type ??= 'shared';
     next();
   }
 
-  async function applyPrerequisitesForCreation (context: MethodContext, params: any, result: any, next: MethodNext) {
+  async function applyPrerequisitesForCreation (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     if (params.type === 'personal') {
       return next(errors.forbidden('Personal accesses are created automatically on login.'));
     }
-    const permissions = params.permissions;
+    const permissions = params.permissions!;
     for (const permission of permissions) {
       if (permission.streamId != null) {
         try {
@@ -289,7 +311,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   /**
    * If user is creating an access for system streams, apply some validations
    */
-  function applyAccountStreamsValidation (context: MethodContext, params: any, result: any, next: MethodNext) {
+  function applyAccountStreamsValidation (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     if (params.permissions == null) { return next(); }
     for (const permission of params.permissions) {
       if (isStreamBasedPermission(permission)) {
@@ -323,10 +345,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // Creates default data structure from permissions if needed, for app
   // authorization.
   //
-  async function createDataStructureFromPermissions (context: MethodContext, params: any, result: any, next: MethodNext) {
+  async function createDataStructureFromPermissions (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     const access = context.access;
     if (!access.isPersonal()) { return next(); } // not needed for personal access
-    for (const permission of params.permissions) {
+    for (const permission of params.permissions!) {
       try {
         await ensureStream(permission);
       } catch (e) {
@@ -392,7 +414,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
    * Strips off the properties in permissions that are used to create the default data structure
    * (for app authorization).
    */
-  function cleanupPermissions (context: MethodContext, params: any, result: any, next: MethodNext) {
+  function cleanupPermissions (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     if (!params.permissions) {
       return next();
     }
@@ -403,7 +425,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     next();
   }
 
-  function createAccess (context: MethodContext, params: any, result: any, next: MethodNext) {
+  function createAccess (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
     if (params.type === 'shared') params.deviceName = null;
     accessesRepository.insertOne(context.user, params, function (err: (Error & { isDuplicateIndex: (k: string) => boolean }) | null, newAccess: { id: string; [k: string]: unknown } | undefined) {
@@ -463,7 +485,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // so callers can pipe `checkApp.checkedPermissions` straight in. The
   // server still doesn't want those app-authorization-UI fields in the
   // stored permission — strip before snapshotAndApplyUpdate persists.
-  function cleanupUpdatePermissions (context: MethodContext, params: any, result: any, next: MethodNext) {
+  function cleanupUpdatePermissions (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
     if (!params.update || !Array.isArray(params.update.permissions)) {
       return next();
     }
@@ -480,7 +502,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
    * when called inside runWithSuppression). Errors are caught inside
    * the hook so we don't propagate to events.create's caller.
    */
-  function cmcAccessesUpdatePostHookMiddleware (context: MethodContext, params: any, result: any, next: MethodNext) {
+  function cmcAccessesUpdatePostHookMiddleware (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
     const before = params.targetAccess;
     const after = result?.access;
     if (after != null && context?.user?.id != null) {
@@ -495,7 +517,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     next();
   }
 
-  async function loadAccessForUpdate (context: MethodContext, params: any, result: any, next: MethodNext) {
+  async function loadAccessForUpdate (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
     // Composite-id parse + conflict-check. The wire-form `id` is either
     // bare cuid (never-updated access) or `<base>:<serial>`. Look up by
     // base; reject stale composites with 409.
@@ -530,13 +552,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (!(await context.access.canUpdateAccess(access))) {
       return next(errors.forbidden('Your access token has insufficient permissions to update this access.'));
     }
-    params.targetAccess = access;
+    params.targetAccess = access as Access;
     params.targetBase = ref.base;
     next();
   }
 
-  async function enforceUpdateChainRules (context: MethodContext, params: any, result: any, next: MethodNext) {
-    const target = params.targetAccess;
+  async function enforceUpdateChainRules (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
+    const target = params.targetAccess!;
     const updates = params.update;
 
     // expireAfter → expires (mirrors create semantics).
@@ -638,8 +660,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     next();
   }
 
-  async function snapshotAndApplyUpdate (context: MethodContext, params: any, result: any, next: MethodNext) {
-    const target = params.targetAccess;
+  async function snapshotAndApplyUpdate (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
+    const target = params.targetAccess!;
     const baseId = params.targetBase;
     const updates = params.update;
     const accessesRepository = storageLayer.accesses;
@@ -679,7 +701,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     next();
   }
 
-  function emitUpdateNotifications (context: MethodContext, params: any, result: any, next: MethodNext) {
+  function emitUpdateNotifications (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
     // Coarse-grained event — existing subscribers refetch on any access
     // change. String payload matches the legacy create/delete shape so
     // `Manager.pubsubMessageToSocket` translates it to `accessesChanged`.
@@ -687,10 +709,11 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // Fine-grained event — payload is a structured `{ type, … }` object
     // so socket.io can forward both the event name (via type) and the
     // data fields (accessId, serial) to subscribers.
+    const plan66 = result.__plan66 as { compositeId: string; serial: number };
     pubsub.notifications.emit(context.user.username, {
       type: pubsub.ACCESS_UPDATED,
-      accessId: result.__plan66.compositeId,
-      serial: result.__plan66.serial
+      accessId: plan66.compositeId,
+      serial: plan66.serial
     });
     delete result.__plan66;
     next();
@@ -706,7 +729,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     deleteAccesses
   );
 
-  async function checkAccessForDeletion (context: MethodContext, params: any, result: any, next: MethodNext) {
+  async function checkAccessForDeletion (context: MethodContext, params: AccessesDeleteParams, result: AccessesDeleteResult, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
     const currentAccess = context.access;
     if (currentAccess == null) { return next(new Error('AF: currentAccess cannot be null.')); }
@@ -741,12 +764,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // Subsequent stages address the access by its bare base id (storage
     // doesn't accept composite ids).
     params.id = ref.base;
-    params.accessToDelete = access;
+    params.accessToDelete = (access ?? undefined) as Access | undefined;
     next();
   }
 
-  async function findRelatedAccesses (context: MethodContext, params: any, result: any, next: MethodNext) {
-    const accessToDelete = params.accessToDelete;
+  async function findRelatedAccesses (context: MethodContext, params: AccessesDeleteParams, result: AccessesDeleteResult, next: MethodNext) {
+    const accessToDelete = params.accessToDelete!;
     const accessesRepository = storageLayer.accesses;
     // Deleting a personal access does NOT delete the app/shared accesses it
     // created — the user keeps the apps they granted while logged in. Only
@@ -754,7 +777,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (accessToDelete.type === 'personal') {
       return next();
     }
-    let accesses: any;
+    let accesses: Access[] = [];
     try {
       accesses = await fromCallback((cb: NodeCallback) => {
         accessesRepository.find(context.user, { createdBy: params.id }, dbFindOptions, cb);
@@ -763,16 +786,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       return next(errors.unexpectedError(err));
     }
     if (accesses.length === 0) { return next(); }
-    accesses = accesses.filter((a: Access & { id?: string }) => a.id !== params.id);
-    accesses = accesses.filter((a: Access) => !isAccessExpired(a));
-    accesses = accesses.map((a: Access & { id?: string }) => {
-      return { id: a.id };
-    });
-    result.relatedDeletions = accesses;
+    accesses = accesses.filter((a) => a.id !== params.id);
+    accesses = accesses.filter((a) => !isAccessExpired(a));
+    result.relatedDeletions = accesses.map((a) => ({ id: a.id! }));
     next();
   }
 
-  async function deleteAccesses (context: MethodContext, params: any, result: any, next: MethodNext) {
+  async function deleteAccesses (context: MethodContext, params: AccessesDeleteParams, result: AccessesDeleteResult, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
     let idsToDelete = [{ id: params.id }];
     if (result.relatedDeletions != null) {
@@ -815,25 +835,25 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     checkApp
   );
 
-  function checkApp (context: MethodContext, params: any, result: any, next: MethodNext) {
+  function checkApp (context: MethodContext, params: AccessesCheckAppParams, result: AccessesCheckAppResult, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
     const query = {
       type: 'app',
       name: params.requestingAppId,
       deviceName: params.deviceName || null
     };
-    accessesRepository.findOne(context.user, query, dbFindOptions, function (err: any, access: any) {
+    accessesRepository.findOne(context.user, query, dbFindOptions, function (err: Error | null, access: Access | null) {
       if (err != null) { return next(errors.unexpectedError(err)); }
       // Do we have a match?
-      if (accessMatches(access, params.requestedPermissions, params.clientData)) {
+      if (access != null && accessMatches(access, params.requestedPermissions, params.clientData)) {
         result.matchingAccess = composeWireAccess(access);
         return next();
       }
       // No, we don't have a match. Return other information:
       if (access != null) { result.mismatchingAccess = composeWireAccess(access); }
-      checkPermissions(context, params.requestedPermissions, function (err: any, checkedPermissions: any, checkError: any) {
+      checkPermissions(context, params.requestedPermissions, function (err: Error | null, checkedPermissions?: Permission[] | null, checkError?: unknown) {
         if (err != null) { return next(err); }
-        result.checkedPermissions = checkedPermissions;
+        result.checkedPermissions = checkedPermissions ?? undefined;
         if (checkError != null) {
           result.error = checkError;
         }
@@ -844,18 +864,20 @@ export default async function produceAccessesApiMethods (api: { register (...arg
 
   // Returns true if the given access' permissions match the `requestedPermissions`.
   //
-  function accessMatches (access: any, requestedPermissions: any, clientData: any) {
+  function accessMatches (access: Access, requestedPermissions: Permission[], clientData?: Record<string, unknown>) {
+    const accessPerms = access.permissions;
     if (access == null ||
             access.type !== 'app' ||
-            access.permissions.length !== requestedPermissions.length) {
+            accessPerms == null ||
+            accessPerms.length !== requestedPermissions.length) {
       return false;
     }
     // If the access is there but is expired, we consider it a mismatch.
     if (isAccessExpired(access)) { return false; }
     // Compare permissions
     let accessPerm, reqPerm;
-    for (let i = 0, ni = access.permissions.length; i < ni; i++) {
-      accessPerm = access.permissions[i];
+    for (let i = 0, ni = accessPerms.length; i < ni; i++) {
+      accessPerm = accessPerms[i];
       reqPerm = findByStreamId(requestedPermissions, accessPerm.streamId);
       if (!reqPerm || reqPerm.level !== accessPerm.level) {
         return false;
@@ -866,8 +888,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       return false;
     }
     return true;
-    function findByStreamId (permissions: any, streamId: any) {
-      return permissions.find((perm: any) => perm.streamId === streamId);
+    function findByStreamId (permissions: Permission[], streamId: string) {
+      return permissions.find((perm) => perm.streamId === streamId);
     }
   }
 
@@ -875,15 +897,15 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // with the actual `name` of existing streams. When defined, the callback's
   // `checkError` param signals issues with the requested permissions.
   //
-  function checkPermissions (context: any, permissions: any, callback: any) {
+  function checkPermissions (context: MethodContext, permissions: Permission[], callback: (err: Error | null, checked?: Permission[] | null, checkError?: unknown) => void) {
     // modify permissions in-place, assume no side fx
     const checkedPermissions = permissions;
-    let checkError: any = null;
+    let checkError: unknown = null;
     let i = 0;
-    function nextPermission (err?: any) {
+    function nextPermission (err?: unknown) {
       if (err != null) {
         return err instanceof APIError
-          ? callback(err)
+          ? callback(err as Error)
           : callback(errors.unexpectedError(err));
       }
       if (i >= checkedPermissions.length) return callback(null, checkedPermissions, checkError);
@@ -891,7 +913,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     }
     nextPermission();
 
-    function checkPermission (permission: any, done: any) {
+    function checkPermission (permission: Permission, done: (err?: unknown) => void) {
       if (permission.streamId === '*') {
         // cleanup ignored properties just in case
         delete permission.defaultName;
@@ -903,7 +925,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
                     '" (and maybe others) is ' +
                     'missing the required "defaultName".'));
       }
-      let permissionStream: any;
+      let permissionStream: { id: string; name?: string; trashed?: boolean; [k: string]: unknown } | null = null;
       (async () => {
         try {
           // checkId
@@ -921,7 +943,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
               state: 'all',
               includeTrashed: true
             });
-            const rootStreamsNames = rootStreams.map((stream: any) => stream.name);
+            const rootStreamsNames = rootStreams.map((stream: { name: string }) => stream.name);
             const defaultBaseName = permission.defaultName;
             for (let suffixNum = 1; rootStreamsNames.indexOf(permission.defaultName) !== -1; suffixNum++) {
               permission.defaultName = `${defaultBaseName} (${suffixNum})`;
@@ -949,12 +971,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // business model about accesses. There is one more such check in MethodContext,
   // called `checkAccessValid`.
   //
-  function isAccessExpired (access: any, nowParam?: any) {
+  function isAccessExpired (access: { expires?: number | null }, nowParam?: number) {
     const now = nowParam || timestamp.now();
     return access.expires != null && now > access.expires;
   }
 
-  function addIntegrityToContext (context: MethodContext, params: any, result: any, next: MethodNext) {
+  function addIntegrityToContext (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     if (result?.access?.integrity != null) {
       context.auditIntegrityPayload = {
         key: integrity.accesses.key(result.access),
