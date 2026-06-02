@@ -22,17 +22,21 @@ const { pluginLoader } = require('storages');
  * Engine selection is handled by the pluginLoader — each engine plugin
  * provides an `initStorageLayer()` method that populates this instance.
  */
+type Logger = { info (m: string): void; debug?: (m: string) => void; warn?: (m: string) => void; error?: (e: unknown) => void };
+type Connection = { waitForConnection: () => Promise<unknown> };
+type IntegrityOpts = { integrityAccesses?: unknown };
+
 class StorageLayer {
-  connection: any;
-  engine: any;
-  passwordResetRequests: any;
-  sessions: any;
-  accesses: any;
-  profile: any;
-  streams: any;
-  events: any;
-  webhooks: any;
-  logger: any;
+  connection: Connection | null = null;
+  engine: string = '';
+  passwordResetRequests: unknown = null;
+  sessions: unknown = null;
+  accesses: unknown = null;
+  profile: unknown = null;
+  streams: unknown = null;
+  events: unknown = null;
+  webhooks: unknown = null;
+  logger!: Logger;
 
   /**
    * Initialize the storage layer.
@@ -41,7 +45,7 @@ class StorageLayer {
    * @param [options] - Additional options from the barrel.
    * @param [options.integrityAccesses] - Integrity module for accesses.
    */
-  async init (connection: any, options: any = {}) {
+  async init (connection: Connection | null, options: IntegrityOpts = {}) {
     if (this.connection != null) {
       this.logger.info('Already initialized');
       return;
@@ -75,7 +79,7 @@ class StorageLayer {
 
   async waitForConnection () {
     const database = this.connection;
-    return await database.waitForConnection();
+    return await database!.waitForConnection();
   }
 }
 export { StorageLayer };
