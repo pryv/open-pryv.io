@@ -26,7 +26,7 @@ async function storeSeriesBatch (ctx: any, req: any, res: any) {
   if (accessToken == null) { throw errors.missingHeader(ApiConstants.AUTH_HEADER); }
   // Parse the data and resolve access rights and types.
   trace.start('parseData');
-  const resolver = new EventMetaDataCache(userName, accessToken, ctx);
+  const resolver = new EventMetaDataCache(userName, accessToken, ctx, req.ip);
   const data = await parseData(body, resolver);
   trace.finish('parseData');
   // Iterate over all separate namespaces and store the data:
@@ -86,11 +86,14 @@ class EventMetaDataCache {
 
   ctx;
 
+  clientIp;
+
   cache;
-  constructor (userName: any, accessToken: any, ctx: any) {
+  constructor (userName: any, accessToken: any, ctx: any, clientIp?: string | null) {
     this.userName = userName;
     this.accessToken = accessToken;
     this.ctx = ctx;
+    this.clientIp = clientIp ?? null;
     this.cache = new LRU({ max: METADATA_CACHE_SIZE });
   }
 
@@ -119,7 +122,7 @@ class EventMetaDataCache {
   async getSeriesMeta (eventId: any) {
     const ctx = this.ctx;
     const loader = ctx.metadata;
-    return this.fromCacheOrProduce(eventId, () => loader.forSeries(this.userName, eventId, this.accessToken));
+    return this.fromCacheOrProduce(eventId, () => loader.forSeries(this.userName, eventId, this.accessToken, this.clientIp));
   }
 
   // Handles memoisation through the cache in `this.cache`.

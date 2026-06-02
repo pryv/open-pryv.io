@@ -78,7 +78,7 @@ class MetadataCache {
   }
 
   // cache logic
-  async forSeries (userName: string, eventId: string, accessToken: string) {
+  async forSeries (userName: string, eventId: string, accessToken: string, clientIp?: string | null) {
     const cache = this.cache;
     const key = [userName, eventId, accessToken].join('/');
     // to make sure we update the tokenList "recently used info" cache we also get eventKey
@@ -91,7 +91,7 @@ class MetadataCache {
       logger.debug(`Using cached credentials for ${userName} / ${eventId}.`);
       return cachedValue;
     }
-    const newValue = await this.loader.forSeries(userName, eventId, accessToken);
+    const newValue = await this.loader.forSeries(userName, eventId, accessToken, clientIp);
     // new event we add it to the list
     if (cachedTokenListForEvent != null) {
       cache.set(eventKey, cachedTokenListForEvent.concat(accessToken));
@@ -120,14 +120,15 @@ class MetadataLoader {
     this.storage = await storage.getStorageLayer();
   }
 
-  forSeries (userName: string, eventId: string, accessToken: string) {
+  forSeries (userName: string, eventId: string, accessToken: string, clientIp?: string | null) {
     const storage = this.storage;
     const mall = this.mall;
-    // Retrieve Access (including accessLogic)
+    // Retrieve Access (including accessLogic). `ip` defaults to null when
+    // the caller didn't pass a request — downstream audit writers can
+    // distinguish "no IP captured" from a real address.
     const contextSource = {
       name: 'hf',
-      // TODO(B-2026-05-27-9, 2026-05-27): pass real client IP from express req — currently emits literal 'TODO' into audit context
-      ip: 'TODO'
+      ip: clientIp ?? null
     };
     const customAuthStep = null;
     const methodContext = new MethodContext(contextSource, userName, accessToken, customAuthStep);

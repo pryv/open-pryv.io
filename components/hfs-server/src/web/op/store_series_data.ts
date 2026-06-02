@@ -32,7 +32,7 @@ async function storeSeriesData (ctx: any, req: any, res: any) {
   if (eventId == null) { throw errors.invalidItemId(); }
   // Access check: Can user write to this series?
   trace.start('seriesMeta/load');
-  const seriesMeta = await metadata.forSeries(userName, eventId, accessToken);
+  const seriesMeta = await metadata.forSeries(userName, eventId, accessToken, req.ip);
   trace.finish('seriesMeta/load');
   // Trashed or Deleted: Abort.
   if (seriesMeta.isTrashedOrDeleted()) {

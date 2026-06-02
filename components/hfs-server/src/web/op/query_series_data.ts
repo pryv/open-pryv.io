@@ -30,7 +30,7 @@ async function querySeriesData (ctx: any, req: any, res: any) {
   // If required params are not there, abort.
   if (accessToken == null) { throw errors.missingHeader(AUTH_HEADER, 401); }
   if (eventId == null) { throw errors.invalidItemId(); }
-  const seriesMeta = await verifyAccess(username, eventId, accessToken, metadata);
+  const seriesMeta = await verifyAccess(username, eventId, accessToken, metadata, req.ip);
   const query = coerceStringParams(structuredClone(req.query));
   applyDefaultValues(query);
   validateQuery(query);
@@ -55,8 +55,8 @@ function validateQuery (query: any) {
   if (isNaN(query.to)) { throw errors.invalidParametersFormat("'to' must contain seconds since epoch."); }
   if (query.from != null && query.to != null && query.to < query.from) { throw errors.invalidParametersFormat("'to' must be >= 'from'."); }
 }
-async function verifyAccess (username: any, eventId: any, authToken: any, metadata: any) {
-  const seriesMeta = await metadata.forSeries(username, eventId, authToken);
+async function verifyAccess (username: any, eventId: any, authToken: any, metadata: any, clientIp?: string | null) {
+  const seriesMeta = await metadata.forSeries(username, eventId, authToken, clientIp);
   if (!seriesMeta.canRead()) { throw errors.forbidden(); }
   return seriesMeta;
 }
