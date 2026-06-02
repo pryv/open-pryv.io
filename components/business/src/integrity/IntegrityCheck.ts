@@ -12,10 +12,26 @@ const { fromCallback } = require('utils');
  * Per-user and system-wide integrity verification.
  * Recomputes hashes on events and accesses and compares against stored values.
  */
+type StorageLayer = { accesses: { exportAll: (user: { id: string }, cb: (err: Error | null, items?: Access[]) => void) => void } };
+type Integrity = {
+  events: { isActive: boolean; compute (e: Event): { integrity: string } };
+  accesses: { isActive: boolean; compute (a: Access): { integrity: string } };
+};
+type Logger = { info (m: string): void };
+type Event = { id?: string; _id?: unknown; __v?: unknown; userId?: string; user_id?: string; integrity?: string; headId?: string; [k: string]: unknown };
+type Access = { id?: string; _id?: unknown; __v?: unknown; userId?: string; user_id?: string; integrity?: string; [k: string]: unknown };
+type Report = {
+  userId: string;
+  username?: string;
+  ok: boolean;
+  events: { checked: number; errors: Array<Record<string, unknown>> };
+  accesses: { checked: number; errors: Array<Record<string, unknown>> };
+};
+
 class IntegrityCheck {
-  storageLayer: any;
-  integrity: any;
-  logger: any;
+  storageLayer: StorageLayer | null;
+  integrity: Integrity | null;
+  logger: Logger | null;
 
   constructor () {
     this.storageLayer = null;
@@ -35,19 +51,19 @@ class IntegrityCheck {
   /**
    * Run integrity check on a single user.
    */
-  async checkUser (userId: any) {
-    const report: any = {
+  async checkUser (userId: string): Promise<Report> {
+    const report: Report = {
       userId,
       events: { checked: 0, errors: [] },
       accesses: { checked: 0, errors: [] },
       ok: true
     };
 
-    if (this.integrity.events.isActive) {
+    if (this.integrity!.events.isActive) {
       await this._checkUserEvents(userId, report);
     }
 
-    if (this.integrity.accesses.isActive) {
+    if (this.integrity!.accesses.isActive) {
       await this._checkUserAccesses(userId, report);
     }
 
@@ -59,14 +75,14 @@ class IntegrityCheck {
    * Run integrity check on all users.
    * @param [onUserComplete] - callback(userId, report) after each user
    */
-  async checkAllUsers (onUserComplete?: any) {
+  async checkAllUsers (onUserComplete?: (userId: string, report: Report) => void): Promise<Report[]> {
     const { getUsersLocalIndex } = require('storage');
     const usersIndex = await getUsersLocalIndex();
-    const allUsers = await usersIndex.getAllByUsername();
-    const reports: any[] = [];
+    const allUsers = await usersIndex.getAllByUsername() as Record<string, string>;
+    const reports: Report[] = [];
 
     for (const [username, userId] of Object.entries(allUsers)) {
-      this.logger.info(`Checking integrity for user: ${username} (${userId})`);
+      this.logger!.info(`Checking integrity for user: ${username} (${userId})`);
       const report = await this.checkUser(userId);
       report.username = username;
       reports.push(report);
@@ -80,22 +96,22 @@ class IntegrityCheck {
   // Events
   // -------------------------------------------------------------------------
 
-  async _checkUserEvents (userId: any, report: any) {
+  async _checkUserEvents (userId: string, report: Report) {
     const storages = require('storages');
     const database = storages.database || storages.databasePG;
     if (!database) return;
 
-    let events;
+    let events: Event[] | undefined;
     if (storages.database) {
-      events = await fromCallback((cb: any) =>
+      events = await fromCallback((cb: (err: Error | null, items?: Event[]) => void) =>
         database.find({ name: 'events' }, { userId }, {}, cb)
-      );
+      ) as Event[];
     } else {
       // PostgreSQL path
       events = await database.query(
         'SELECT * FROM events WHERE user_id = $1',
         [userId]
-      );
+      ) as Event[];
     }
 
     if (!events) return;
@@ -103,7 +119,7 @@ class IntegrityCheck {
     for (const event of events) {
       // Normalize _id -> id for MongoDB raw docs
       if (event._id != null && event.id == null) {
-        event.id = typeof event._id === 'object' ? event._id.toString() : event._id;
+        event.id = typeof event._id === 'object' ? String(event._id) : event._id as string;
       }
 
       // Skip history entries without integrity
@@ -123,7 +139,7 @@ class IntegrityCheck {
     }
   }
 
-  _verifyEventIntegrity (event: any, report: any, originalId?: any) {
+  _verifyEventIntegrity (event: Event, report: Report, originalId?: string) {
     if (event.integrity === undefined) {
       report.events.errors.push({
         eventId: originalId || event.id,
@@ -139,7 +155,7 @@ class IntegrityCheck {
     delete clean.userId;
     delete clean.user_id;
 
-    const computed = this.integrity.events.compute(clean);
+    const computed = this.integrity!.events.compute(clean);
     if (computed.integrity !== event.integrity) {
       report.events.errors.push({
         eventId: originalId || event.id,
@@ -154,18 +170,18 @@ class IntegrityCheck {
   // Accesses
   // -------------------------------------------------------------------------
 
-  async _checkUserAccesses (userId: any, report: any) {
+  async _checkUserAccesses (userId: string, report: Report) {
     const user = { id: userId };
-    const accesses = await fromCallback((cb: any) =>
-      this.storageLayer.accesses.exportAll(user, cb)
-    );
+    const accesses = await fromCallback((cb: (err: Error | null, items?: Access[]) => void) =>
+      this.storageLayer!.accesses.exportAll(user, cb)
+    ) as Access[];
 
     if (!accesses) return;
 
     for (const access of accesses) {
       // Normalize _id -> id for MongoDB raw docs
       if (access._id != null && access.id == null) {
-        access.id = typeof access._id === 'object' ? access._id.toString() : access._id;
+        access.id = typeof access._id === 'object' ? String(access._id) : access._id as string;
       }
 
       report.accesses.checked++;
@@ -184,7 +200,7 @@ class IntegrityCheck {
       delete clean.userId;
       delete clean.user_id;
 
-      const computed = this.integrity.accesses.compute(clean);
+      const computed = this.integrity!.accesses.compute(clean);
       if (computed.integrity !== access.integrity) {
         report.accesses.errors.push({
           accessId: access.id,
