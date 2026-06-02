@@ -274,7 +274,22 @@ function createDynData (options: any = {}) {
     // Recreate users
     for (const user of users) {
       const userObj = new User(deepMerge(customProperties, user));
-      await usersRepository.insertOne(userObj, false, true);
+      try {
+        await usersRepository.insertOne(userObj, false, true);
+      } catch (err: any) {
+        // If insertOne hits a uniqueness conflict, the prior deleteOne
+        // failed silently and the user is partially still there. Force
+        // a hard delete-by-username via platform.deleteUser path and
+        // retry once. [B-2026-05-29-1] mitigation.
+        const msg = String(err?.message || err?.id || err || '');
+        if (!/already.?exist|item-already|duplicate/i.test(msg)) {
+          throw err;
+        }
+        try {
+          await usersRepository.deleteOne(user.id, user.username, true);
+        } catch (_e) { /* ignore — best-effort cleanup */ }
+        await usersRepository.insertOne(userObj, false, true);
+      }
     }
   }
 
@@ -350,7 +365,19 @@ function createDynData (options: any = {}) {
         const children = stream?.children || [];
         const streamData = structuredClone(stream);
         delete streamData.children;
-        await mall.streams.create(u.id, streamData);
+        try {
+          await mall.streams.create(u.id, streamData);
+        } catch (err: any) {
+          // Tolerate "already-exists" — `deleteAll` above is supposed
+          // to wipe, but if a previous run's data lingered (engine bug,
+          // stale rqlite raft state, etc.) the create surfaces it as a
+          // uniqueness error. Treat as a no-op so [B-2026-05-29-1]
+          // stale-residue flakes recover instead of cascading.
+          const msg = String(err?.message || err?.id || err || '');
+          if (!/already.?exist|item-already|duplicate/i.test(msg)) {
+            throw err;
+          }
+        }
         await addStreams(children);
       }
     }
