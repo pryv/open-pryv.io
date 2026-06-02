@@ -13,7 +13,7 @@ Requires:
 
 ## Quick Start
 
-From the `macroPryv/` root:
+From the workspace root (one level above this repo):
 
 ```bash
 # 1. Clean databases (server stopped)
@@ -38,7 +38,7 @@ _local/scripts/perf-vs.sh --users 3 --events 10000 --duration 15
 
 ## Helper Scripts
 
-All scripts run from `macroPryv/` root.
+All scripts run from the workspace root.
 
 | Script | Purpose |
 |--------|---------|
