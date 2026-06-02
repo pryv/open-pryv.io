@@ -5,8 +5,17 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
+
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
+
+type MethodContext = BaseMethodContext & {
+  [key: string]: any;
+};
+type ResultBag = Record<string, unknown>;
+type Next = (err?: unknown) => void;
+type AccessRow = { id?: string; type?: string; name?: string; lastUsed?: number; calls?: Record<string, number>; [k: string]: unknown };
 const commonFns = require('./helpers/commonFunctions.ts');
 const Registration = require('business/src/auth/registration.ts').default;
 const methodsSchema = require('../schema/systemMethods.ts');
@@ -23,7 +32,7 @@ const { platform } = require('platform');
 /**
  * @param api The user-facing API, used to compute usage stats per method
  */
-export default async function (systemAPI: any, api: any) {
+export default async function (systemAPI: { register: (...args: unknown[]) => void }, api: { getMethodKeys: () => string[] }) {
   const config = await ready();
   const logger = getLogger('system');
   const storageLayer = await getStorageLayer();
@@ -56,7 +65,7 @@ export default async function (systemAPI: any, api: any) {
     getUserInfoSetAccessStats
   );
 
-  async function loadUserToMinimalMethodContext (minimalMethodContext: any, params: any, result: any, next: any) {
+  async function loadUserToMinimalMethodContext (minimalMethodContext: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
     try {
       const userId = await usersRepository.getUserIdForUsername(params.username);
       if (userId == null) {
@@ -72,7 +81,7 @@ export default async function (systemAPI: any, api: any) {
     }
   }
 
-  async function getUserInfoInit (context: any, params: any, result: any, next: any) {
+  async function getUserInfoInit (context: MethodContext, _params: unknown, result: ResultBag & { userInfo?: Record<string, unknown> }, next: Next) {
     const newStorageUsed = await usersRepository.getStorageUsedByUserId(context.user.id);
     result.userInfo = {
       username: context.user.username,
@@ -81,22 +90,22 @@ export default async function (systemAPI: any, api: any) {
     next();
   }
 
-  function getUserInfoSetAccessStats (context: any, params: any, result: any, next: any) {
+  function getUserInfoSetAccessStats (context: MethodContext, _params: unknown, result: ResultBag & { userInfo?: any }, next: Next) {
     const info = result.userInfo ??= {};
     info.lastAccess ??= 0;
     info.callsTotal ??= 0;
     info.callsDetail ??= {};
     info.callsPerAccess ??= {};
 
-    getAPIMethodKeys().forEach(function (methodKey: any) {
+    getAPIMethodKeys().forEach(function (methodKey: string) {
       info.callsDetail[methodKey] = 0;
     });
 
-    userAccessesStorage.find(context.user, {}, null, function (err: any, accesses: any) {
+    userAccessesStorage.find(context.user, {}, null, function (err: Error | null, accesses: AccessRow[]) {
       if (err) { return next(errors.unexpectedError(err)); }
 
-      accesses.forEach(function (access: any) {
-        if (access.lastUsed > info.lastAccess) {
+      accesses.forEach(function (access: AccessRow) {
+        if ((access.lastUsed ?? 0) > info.lastAccess) {
           info.lastAccess = access.lastUsed;
         }
 
@@ -120,10 +129,10 @@ export default async function (systemAPI: any, api: any) {
   // --------------------------------------------------------------- listUsers
   systemAPI.register('system.listUsers',
     setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
-    async function listUsers (context: any, params: any, result: any, next: any) {
+    async function listUsers (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
         const usersMap: Record<string, string> = await usersIndex.getAllByUsername();
-        const users: any[] = [];
+        const users: Array<{ username: string; id: string; email: string; language: string; core?: string | null }> = [];
         for (const [username, userId] of Object.entries(usersMap)) {
           const user = await usersRepository.getUserById(userId);
           if (user == null) continue;
@@ -151,12 +160,12 @@ export default async function (systemAPI: any, api: any) {
   // --------------------------------------------------------------- listCores
   systemAPI.register('system.listCores',
     setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
-    async function listCores (context: any, params: any, result: any, next: any) {
+    async function listCores (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
-        const allCores = await platform.getAllCoreInfos();
+        const allCores = await platform.getAllCoreInfos() as Array<{ id: string; hosting?: string; available?: boolean }>;
         // Count users per core from PlatformDB
-        const allMappings = await platform.getAllUserCores();
-        const counts: any = {};
+        const allMappings = await platform.getAllUserCores() as Array<{ coreId: string }>;
+        const counts: Record<string, number> = {};
         for (const core of allCores) {
           counts[core.id] = 0;
         }
@@ -165,7 +174,7 @@ export default async function (systemAPI: any, api: any) {
             counts[mapping.coreId]++;
           }
         }
-        result.cores = allCores.map((core: any) => ({
+        result.cores = allCores.map((core: { id: string; hosting?: string; available?: boolean }) => ({
           id: core.id,
           url: platform.coreIdToUrl(core.id),
           hosting: core.hosting || null,
@@ -181,7 +190,7 @@ export default async function (systemAPI: any, api: any) {
 
   // --------------------------------------------------------------- checks
   systemAPI.register('system.checkPlatformIntegrity',
-    async function performSystemsChecks (context: any, params: any, result: any, next: any) {
+    async function performSystemsChecks (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
         result.checks = [
           await platform.checkIntegrity(),
@@ -202,9 +211,9 @@ export default async function (systemAPI: any, api: any) {
     deactivateMfa
   );
 
-  async function deactivateMfa (context: any, params: any, result: any, next: any) {
+  async function deactivateMfa (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     try {
-      await fromCallback((cb: any) => userProfileStorage.findOneAndUpdate(
+      await fromCallback((cb: (err?: unknown, res?: unknown) => void) => userProfileStorage.findOneAndUpdate(
         context.user,
         {},
         { $unset: { 'data.mfa': '' } },
@@ -215,16 +224,16 @@ export default async function (systemAPI: any, api: any) {
     next();
   }
 
-  function getAPIMethodKeys () {
+  function getAPIMethodKeys (): string[] {
     return api.getMethodKeys().map(string.sanitizeFieldKey);
   }
 
-  function getAccessStatsKey (access: any) {
+  function getAccessStatsKey (access: AccessRow): string {
     if (access.type === 'shared') {
       // don't leak user private data
       return 'shared';
     } else {
-      return access.name;
+      return access.name ?? '';
     }
   }
 };
