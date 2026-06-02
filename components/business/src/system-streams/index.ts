@@ -22,19 +22,33 @@ const CUSTOMER_PREFIX = ':system:';
 const STREAM_ID_ACCOUNT = PRYV_PREFIX + 'account';
 const ALL = 'all';
 
+type SystemStream = {
+  id: string;
+  name?: string;
+  children?: SystemStream[];
+  isShown?: boolean;
+  isIndexed?: boolean;
+  isUnique?: boolean;
+  isEditable?: boolean;
+  isRequiredInValidation?: boolean;
+  [k: string]: unknown;
+};
+type StreamsMap = Record<string, SystemStream>;
+type Config = { get (key: string): unknown };
+
 // Module-level state — all set by initializeState()
 let initialized = false;
-let streamIdWithPrefixToWithout: any = null;
-let accountStreamIdWithoutPrefixToWith: any = null;
+let streamIdWithPrefixToWithout: Record<string, string> | null = null;
+let accountStreamIdWithoutPrefixToWith: Record<string, string> | null = null;
 
 // Live exports — reassigned by initializeState()
-let allAsTree: any = null;
-let accountChildren: any = null;
-let accountMap: any = null;
-let accountLeavesMap: any = null;
-let hiddenStreamIds: any = null;
-let indexedFieldNames: any = null;
-let uniqueFieldNames: any = null;
+let allAsTree: SystemStream[] | null = null;
+let accountChildren: SystemStream[] | null = null;
+let accountMap: StreamsMap | null = null;
+let accountLeavesMap: StreamsMap | null = null;
+let hiddenStreamIds: string[] | null = null;
+let indexedFieldNames: string[] | null = null;
+let uniqueFieldNames: string[] | null = null;
 
 // ── Init ──────────────────────────────────────────────────────────
 
@@ -53,37 +67,37 @@ async function init () {
  * Test-only — reloads from a custom config.
  * See "config.default-streams.test.js" (V9QB, 5T5S, ARD9).
  */
-async function reloadForTests (config: any) {
-  config = config || (await getConfig());
-  if (config.get('NODE_ENV') !== 'test') {
+async function reloadForTests (config?: Config) {
+  config = config || (await getConfig()) as Config;
+  if (config!.get('NODE_ENV') !== 'test') {
     console.error('this is meant to be used in test only');
     process.exit(1);
   }
-  initializeState(config.get('systemStreams'));
+  initializeState(config!.get('systemStreams') as SystemStream[]);
   initialized = true;
 }
 
 // ── Pre-computed data (all set at init) ───────────────────────────
 
-function initializeState (settings: any) {
+function initializeState (settings: SystemStream[]) {
   allAsTree = settings;
   accountChildren = treeUtils.findById(settings, STREAM_ID_ACCOUNT).children;
 
   // Account stream maps (flat)
-  accountMap = filterMapStreams(accountChildren, ALL);
-  accountLeavesMap = buildLeavesMap(accountChildren);
+  accountMap = filterMapStreams(accountChildren!, ALL);
+  accountLeavesMap = buildLeavesMap(accountChildren!);
   // ID arrays
   const accountStreamIds = Object.keys(accountMap);
-  const readableIds = Object.keys(filterMapStreams(accountChildren, IS_SHOWN));
+  const readableIds = Object.keys(filterMapStreams(accountChildren!, IS_SHOWN));
   const readableSet = new Set(readableIds);
   hiddenStreamIds = accountStreamIds.filter(k => !readableSet.has(k));
-  indexedFieldNames = Object.keys(filterMapStreams(accountChildren, IS_INDEXED)).map(stripPrefix);
-  uniqueFieldNames = Object.keys(filterMapStreams(accountChildren, IS_UNIQUE)).map(stripPrefix);
+  indexedFieldNames = Object.keys(filterMapStreams(accountChildren!, IS_INDEXED)).map(stripPrefix);
+  uniqueFieldNames = Object.keys(filterMapStreams(accountChildren!, IS_UNIQUE)).map(stripPrefix);
 
   // Prefix translation maps
   streamIdWithPrefixToWithout = {};
   accountStreamIdWithoutPrefixToWith = {};
-  const allStreamIds = treeUtils.flattenTree(settings).map((s: any) => s.id);
+  const allStreamIds = treeUtils.flattenTree(settings).map((s: SystemStream) => s.id);
   for (const prefixed of allStreamIds) {
     const unprefixed = stripPrefix(prefixed);
     streamIdWithPrefixToWithout[prefixed] = unprefixed;
@@ -93,9 +107,9 @@ function initializeState (settings: any) {
   }
 }
 
-function buildLeavesMap (children: any) {
+function buildLeavesMap (children: SystemStream[]): StreamsMap {
   const flatList = treeUtils.flattenTreeWithoutParents(children);
-  const map: any = {};
+  const map: StreamsMap = {};
   for (const stream of flatList) {
     map[stream.id] = stream;
   }
@@ -104,12 +118,12 @@ function buildLeavesMap (children: any) {
 
 // ── Prefix utilities ──────────────────────────────────────────────
 
-function toFieldName (streamIdWithPrefix: any) {
-  return streamIdWithPrefixToWithout[streamIdWithPrefix] || streamIdWithPrefix;
+function toFieldName (streamIdWithPrefix: string): string {
+  return streamIdWithPrefixToWithout![streamIdWithPrefix] || streamIdWithPrefix;
 }
 
-function toStreamId (fieldName: any) {
-  const prefixed = accountStreamIdWithoutPrefixToWith[fieldName];
+function toStreamId (fieldName: string): string {
+  const prefixed = accountStreamIdWithoutPrefixToWith![fieldName];
   if (prefixed == null) {
     throw new Error('trying to call toStreamId() with non-account fieldName: ' + fieldName);
   }
@@ -118,10 +132,10 @@ function toStreamId (fieldName: any) {
 
 // ── Internal helpers ──────────────────────────────────────────────
 
-function filterMapStreams (streams: any, filter = IS_SHOWN) {
-  const streamsMap: any = {};
+function filterMapStreams (streams: SystemStream[], filter: string = IS_SHOWN): StreamsMap {
+  const streamsMap: StreamsMap = {};
   if (!Array.isArray(streams)) { return streamsMap; }
-  const flatList = treeUtils.flattenTree(streams);
+  const flatList = treeUtils.flattenTree(streams) as SystemStream[];
   for (const stream of flatList) {
     if (filter === ALL || stream[filter]) {
       streamsMap[stream.id] = stream;
@@ -130,7 +144,7 @@ function filterMapStreams (streams: any, filter = IS_SHOWN) {
   return streamsMap;
 }
 
-function stripPrefix (streamId: any) {
+function stripPrefix (streamId: string): string {
   if (streamId.startsWith(PRYV_PREFIX)) { return streamId.substring(PRYV_PREFIX.length); }
   if (streamId.startsWith(CUSTOMER_PREFIX)) { return streamId.substring(CUSTOMER_PREFIX.length); }
   throw new Error('accountStreams initialization: stripPrefix(streamId) should be called with a prefixed streamId');
