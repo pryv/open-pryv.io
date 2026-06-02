@@ -21,11 +21,28 @@ const logger = getLogger('methods:streams');
 const { getMall, storeDataUtils } = require('mall');
 const { pubsub } = require('messages');
 const Readable = require('stream').Readable;
+
+import type { MethodNext } from './_types.ts';
+import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
+type MethodContext = BaseMethodContext & { [key: string]: any };
+type Stream = {
+  id?: string;
+  name?: string;
+  parentId?: string | null;
+  clientData?: Record<string, unknown> | null;
+  children?: Stream[];
+  trashed?: boolean;
+  deleted?: number;
+  [k: string]: unknown;
+};
+type StreamsParams = { id?: string; parentId?: string | null; includeDeletionsSince?: number | null; state?: string; expandChildren?: boolean; storeId?: string; includeTrashed?: boolean; update?: Partial<Stream>; mergeEventsWithParent?: boolean | null; [k: string]: unknown };
+type StreamsResult = { streams?: Stream[]; stream?: Stream; streamDeletions?: Array<{ id: string }>; addStream?: (name: string, stream: unknown) => void; [k: string]: unknown };
+
 /**
  * Event streams API methods implementation.
  *
  */
-export default async function (api: any) {
+export default async function (api: { register (...args: unknown[]): unknown }) {
   const config = await ready();
   // Lazy getter instead of slice capture.
   const getUpdates = () => config.get('updates');
@@ -35,12 +52,12 @@ export default async function (api: any) {
   // from the response tree as a last step.
   const cmcStreamsGetInternalGuard = cmc.createStreamsGetInternalGuardHook();
   api.register('streams.get', commonFns.getParamsValidation(methodsSchema.get.params), checkAuthorization, applyDefaultsForRetrieval, findAccessibleStreams, includeDeletionsIfRequested, cmcStreamsGetInternalGuard);
-  function applyDefaultsForRetrieval (context: any, params: any, result: any, next: any) {
+  function applyDefaultsForRetrieval (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     params.parentId ??= null;
     params.includeDeletionsSince ??= null;
     next();
   }
-  async function checkAuthorization (context: any, params: any, result: any, next: any) {
+  async function checkAuthorization (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     if (params.parentId && params.id) {
       throw errors.invalidRequestStructure('Do not mix "parentId" and "id" parameter in request');
     }
@@ -51,7 +68,7 @@ export default async function (api: any) {
     }
     return next();
   }
-  async function findAccessibleStreams (context: any, params: any, result: any, next: any) {
+  async function findAccessibleStreams (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     let streamId = params.id || params.parentId || '*';
     let storeId = params.storeId; // might me null
     if (storeId == null) {
@@ -81,7 +98,7 @@ export default async function (api: any) {
        *  - pass a list of streamIds to store.streams.get() to get a consolidated answer
        *********************************/
       const listables = context.access.getListableStreamIds();
-      const filteredStreams: any[] = [];
+      const filteredStreams: Stream[] = [];
       for (const listable of listables) {
         const listableFullStreamId = storeDataUtils.getFullItemId(listable.storeId, listable.streamId);
         const inResult = treeUtils.findById(streams, listableFullStreamId);
@@ -118,7 +135,7 @@ export default async function (api: any) {
     result.streams = streams;
     next();
   }
-  async function includeDeletionsIfRequested (context: any, params: any, result: any, next: any) {
+  async function includeDeletionsIfRequested (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     if (params.includeDeletionsSince == null) {
       return next();
     }
@@ -150,11 +167,11 @@ export default async function (api: any) {
     applyPrerequisitesForCreation,
     createStream);
 
-  function applyDefaultsForCreation (context: any, params: any, result: any, next: any) {
+  function applyDefaultsForCreation (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     params.parentId ??= null;
     next();
   }
-  async function applyPrerequisitesForCreation (context: any, params: any, result: any, next: any) {
+  async function applyPrerequisitesForCreation (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     if (!(await context.access.canCreateChildOnStream(params.parentId))) {
       return process.nextTick(next.bind(null, errors.forbidden()));
     }
@@ -195,7 +212,7 @@ export default async function (api: any) {
     context.initTrackingProperties(params);
     next();
   }
-  async function createStream (context: any, params: any, result: any, next: any) {
+  async function createStream (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     try {
       const newStream = await mall.streams.create(context.user.id, params);
       result.stream = newStream;
@@ -211,12 +228,12 @@ export default async function (api: any) {
   }
   // UPDATE
   api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), commonFns.catchForbiddenUpdate(streamSchema('update'), () => getUpdates().ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
-  async function applyPrerequisitesForUpdate (context: any, params: any, result: any, next: any) {
+  async function applyPrerequisitesForUpdate (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     if (params?.update?.parentId === params.id) {
       return next(errors.invalidOperation('The provided "parentId" is the same as the stream\'s "id".', params.update));
     }
     // check stream
-    const stream = await context.streamForStreamId(params.id);
+    const stream = await context.streamForStreamId(params.id!, null);
     if (!stream) {
       return process.nextTick(next.bind(null, errors.unknownResource('stream', params.id)));
     }
@@ -224,41 +241,41 @@ export default async function (api: any) {
       return process.nextTick(next.bind(null, errors.forbidden()));
     }
     // check parent (even if null for root )
-    if (!(await context.access.canCreateChildOnStream(params.update.parentId))) {
+    if (!(await context.access.canCreateChildOnStream(params.update!.parentId))) {
       return process.nextTick(next.bind(null, errors.forbidden()));
     }
     // check target parent if needed
-    if (params.update.parentId && params.update.parentId !== stream.parentId) {
+    if (params.update!.parentId && params.update!.parentId !== stream.parentId) {
       const targetParentArray = await mall.streams.get(context.user.id, {
-        id: params.update.parentId,
+        id: params.update!.parentId,
         includeTrashed: true,
         childrenDepth: 1
       });
       if (targetParentArray.length === 0) {
         // no parent
-        return next(errors.unknownReferencedResource('parent stream', 'parentId', params.update.parentId));
+        return next(errors.unknownReferencedResource('parent stream', 'parentId', params.update!.parentId));
       }
       const targetParent = targetParentArray[0];
       if (targetParent.trashed != null) {
         // trashed parent
-        return next(errors.invalidOperation('parent stream is trashed', 'parentId', params.update.parentId));
+        return next(errors.invalidOperation('parent stream is trashed', 'parentId', params.update!.parentId));
       }
       if (targetParent.children != null) {
         for (const child of targetParent.children) {
-          if (child.name === params.update.name) {
+          if (child.name === params.update!.name) {
             return next(errors.itemAlreadyExists('sibling stream', {
-              name: params.update.name
+              name: params.update!.name
             }));
           }
         }
       }
     }
-    context.updateTrackingProperties(params.update);
+    context.updateTrackingProperties(params.update!);
     next();
   }
-  async function updateStream (context: any, params: any, result: any, next: any) {
+  async function updateStream (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     try {
-      const updateData = structuredClone(params.update);
+      const updateData: Partial<Stream> = structuredClone(params.update!);
       updateData.id = params.id;
       const updatedStream = await mall.streams.update(context.user.id, updateData);
       result.stream = updatedStream;
@@ -280,9 +297,9 @@ export default async function (api: any) {
   // owned (not permission-shaped) and surfaces a stable error id.
   const cmcStreamDeleteHook = cmc.createStreamDeleteReservedRootHook({ errors });
   api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), cmcStreamDeleteHook, verifyStreamExistenceAndPermissions, deleteStream);
-  async function verifyStreamExistenceAndPermissions (context: any, params: any, result: any, next: any) {
+  async function verifyStreamExistenceAndPermissions (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     params.mergeEventsWithParent ??= null;
-    context.stream = await context.streamForStreamId(params.id);
+    context.stream = await context.streamForStreamId(params.id!, null);
     if (context.stream == null) {
       return process.nextTick(next.bind(null, errors.unknownResource('stream', params.id)));
     }
@@ -291,7 +308,7 @@ export default async function (api: any) {
     }
     next();
   }
-  function deleteStream (context: any, params: any, result: any, next: any) {
+  function deleteStream (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     if (context.stream.trashed == null) {
       // move to trash
       flagAsTrashed(context, params, result, next);
@@ -300,8 +317,8 @@ export default async function (api: any) {
       deleteWithData(context, params, result, next);
     }
   }
-  async function flagAsTrashed (context: any, params: any, result: any, next: any) {
-    const updatedData: any = { trashed: true };
+  async function flagAsTrashed (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
+    const updatedData: Partial<Stream> = { trashed: true };
     context.updateTrackingProperties(updatedData);
     updatedData.id = params.id;
     try {
@@ -316,7 +333,7 @@ export default async function (api: any) {
       return next(errors.unexpectedError(err));
     }
   }
-  async function deleteWithData (context: any, params: any, result: any, next: any) {
+  async function deleteWithData (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(params.id);
     // Load stream and chlidren (context.stream does not have expanded children tree)
     const streamToDeleteSingleArray = await mall.streams.get(context.user.id, {
@@ -331,7 +348,7 @@ export default async function (api: any) {
     // keep stream and children to delete in next step
     context.streamToDeleteAndDescendantIds = streamAndDescendantIds;
     const parentId = streamToDelete.parentId;
-    const cleanDescendantIds = streamAndDescendantIds.map((s: any) => storeDataUtils.parseStoreIdAndStoreItemId(s)[1]);
+    const cleanDescendantIds = streamAndDescendantIds.map((s: string) => storeDataUtils.parseStoreIdAndStoreItemId(s)[1]);
     // check if root stream and linked events exist
     if (params.mergeEventsWithParent === true && parentId == null) {
       return next(errors.invalidOperation('Deleting a root stream with mergeEventsWithParent=true is rejected ' +
@@ -353,9 +370,9 @@ export default async function (api: any) {
     // --- all tests are passed
     // --- create result streams and start send result as they come
     const updatedEventsStream = new ItemsStream();
-    result.addStream('updatedEvents', updatedEventsStream);
+    result.addStream!('updatedEvents', updatedEventsStream);
     const singleItemDeletedStream = new ItemsStream();
-    result.addStream('streamDeletion', singleItemDeletedStream, false);
+    (result.addStream as unknown as (n: string, s: unknown, keep: boolean) => void)('streamDeletion', singleItemDeletedStream, false);
     next(); // <== call next here to avoid await blocking
 
     if (hasLinkedEvents) {
@@ -367,7 +384,7 @@ export default async function (api: any) {
         await mall.events.updateMany(context.user.id, query, {
           addStreams: [parentId],
           removeStreams: streamAndDescendantIds
-        }, function (event: any) {
+        }, function (event: { streamIds?: string[]; [k: string]: unknown }) {
           if (event == null) return;
           updatedEventsStream.add({ action: 'mergedToParent', id: event.id });
         });
@@ -375,7 +392,7 @@ export default async function (api: any) {
         // case  mergeEventsWithParent = false
         const eventsStream = await mall.events.getStreamedWithParamsByStore(context.user.id, { [storeId]: { streams: [{ any: cleanDescendantIds }] } });
         for await (const event of eventsStream) {
-          const remaningStreamsIds = event.streamIds.filter((id: any) => !streamAndDescendantIds.includes(id));
+          const remaningStreamsIds = event.streamIds!.filter((id: string) => !streamAndDescendantIds.includes(id));
           if (remaningStreamsIds.length === 0) { // no more streams deleted event
             await mall.events.delete(context.user.id, event);
             updatedEventsStream.add({ action: 'deleted', id: event.id });
@@ -404,13 +421,13 @@ export default async function (api: any) {
 };
 
 class ItemsStream extends Readable {
-  buffer: any[];
+  buffer: unknown[];
   constructor () {
     super({ objectMode: true });
     this.buffer = [];
   }
 
-  add (item: any) { this.push(item); }
+  add (item: unknown) { this.push(item); }
 
   _read () {
     let push = true;
