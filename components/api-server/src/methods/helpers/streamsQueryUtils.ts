@@ -21,37 +21,45 @@ const { findForbiddenChar } = require('../../schema/streamId.ts');
  * @property {Array} nonAuthorizedStreams - The list of stream that have been unAuthorized
  */
 type StreamQuery = {
-  any: Array<StreamId>|'*'; // Any of the streamIds should match or "*" for all accessible streams
-  all: Array<StreamId>; // All of the streamIds should match
-  not: Array<StreamId>; // All of the streamIds should match
+  any?: Array<StreamId>; // Any of the streamIds should match or "*" for all accessible streams
+  all?: Array<StreamId>; // All of the streamIds should match
+  not?: Array<StreamId>; // All of the streamIds should match
+  storeId?: string;
 };
 // A streamId
 type StreamId = string;
+type ExpandSetFn = (streamIds: StreamId[], storeId: string, excludedIds?: StreamId[]) => Promise<StreamId[]>;
+type ExpandStreamFn = (streamId: StreamId, storeId: string, excludedIds?: StreamId[]) => Promise<StreamId[]>;
+type ExpandedQuery = {
+  storeId?: string;
+  any?: StreamId[];
+  and?: Array<{ any?: StreamId[]; not?: StreamId[] }>;
+};
 /**
  * For backwardCompatibility with older streams parameter ['A', 'B'] transform it to streams query [{any: ['A', 'B']}]
  * Takes care of grouping by store. ['A', 'B', ':_audit:xx'] => [{any: ['A', 'B']}, {any: ':audit:xx'}]
  * @throws - Error if mixed strings and other are found in array
  */
-function transformArrayOfStringsToStreamsQuery (arrayOfQueries: any) {
+function transformArrayOfStringsToStreamsQuery (arrayOfQueries: Array<StreamId | StreamQuery>) {
   const { numStreamIds, streamIds } = countStreamIds(arrayOfQueries);
   if (numStreamIds === 0) { return arrayOfQueries; }
   if (numStreamIds !== arrayOfQueries.length) {
     throw new Error("Error in 'streams' parameter: streams queries and streamIds cannot be mixed");
   }
   // group streamIds per "store"
-  const map: any = {};
+  const map: Record<string, StreamId[]> = {};
   for (const streamId of streamIds) {
     const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(streamId);
     if (map[storeId] == null) { map[storeId] = []; }
     map[storeId].push(streamId);
   }
-  const arrayOfStreamQueries: any[] = [];
+  const arrayOfStreamQueries: StreamQuery[] = [];
   for (const v of Object.values(map)) {
     arrayOfStreamQueries.push({ any: v });
   }
   return arrayOfStreamQueries;
-  function countStreamIds (arrayOfQueries: any) {
-    const streamIds = arrayOfQueries.filter((item: any) => typeof item === 'string');
+  function countStreamIds (arrayOfQueries: Array<StreamId | StreamQuery>) {
+    const streamIds = arrayOfQueries.filter((item): item is StreamId => typeof item === 'string');
     return {
       numStreamIds: streamIds.length,
       streamIds
@@ -63,8 +71,8 @@ export { transformArrayOfStringsToStreamsQuery };
  * @param arrayOfQueries  undefined
  * @throws - Error if query does not respect the schema
  */
-function validateStreamsQueriesAndSetStore (arrayOfQueries: any) {
-  arrayOfQueries.forEach((streamQuery: any) => {
+function validateStreamsQueriesAndSetStore (arrayOfQueries: StreamQuery[]) {
+  arrayOfQueries.forEach((streamQuery: StreamQuery) => {
     validateStreamsQuerySchemaAndSetStore(arrayOfQueries, streamQuery);
   });
   return arrayOfQueries;
@@ -76,12 +84,12 @@ export { validateStreamsQueriesAndSetStore };
  * @param arrayOfQueries  - the full request for error message
  * @param streamQuery  undefined
  */
-function validateStreamsQuerySchemaAndSetStore (arrayOfQueries: any, streamQuery: any) {
+function validateStreamsQuerySchemaAndSetStore (arrayOfQueries: StreamQuery[], streamQuery: StreamQuery) {
   /**
    * Get StoreID, add storeId property to query and remove eventual storeId from streamId
    * @param fullStreamId - a streamId with its store prefix
    */
-  function validateAndAttachStore (fullStreamId: any) {
+  function validateAndAttachStore (fullStreamId: StreamId) {
     // queries must be grouped by store
     const [thisStoreId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(fullStreamId);
     if (streamQuery.storeId == null) { streamQuery.storeId = thisStoreId; }
@@ -121,7 +129,7 @@ function validateStreamsQuerySchemaAndSetStore (arrayOfQueries: any, streamQuery
                 objectToString(arrayOfStreamIds) +
                 "'");
     }
-    const arrayOfCleanStreamIds: any[] = [];
+    const arrayOfCleanStreamIds: StreamId[] = [];
     for (const item of arrayOfStreamIds) {
       if (typeof item !== 'string') {
         throw new Error("Error in 'streams' parameter[" +
@@ -163,7 +171,7 @@ function validateStreamsQuerySchemaAndSetStore (arrayOfQueries: any, streamQuery
       }
       const cleanStreamid = validateAndAttachStore(item);
       arrayOfCleanStreamIds.push(cleanStreamid);
-      streamQuery[property] = arrayOfCleanStreamIds;
+      (streamQuery as Record<string, unknown>)[property] = arrayOfCleanStreamIds;
     }
   }
   if (hasAnyStar && streamQuery.all != null) {
@@ -176,33 +184,33 @@ function validateStreamsQuerySchemaAndSetStore (arrayOfQueries: any, streamQuery
 /**
  * @param excludedIds - Array of streams to exclude from expand
  */
-function uniqueStreamIds (arrayOfStreamiIs: any) {
+function uniqueStreamIds (arrayOfStreamiIs: StreamId[]): StreamId[] {
   return [...new Set(arrayOfStreamiIs)];
 }
-export const expandAndTransformStreamQueries = async function expandAndTransformStreamQueries (streamQueries: any, expandStream: any) {
-      async function expandSet (streamIds: any, storeId: any, excludedIds: any[] = []) {
-        const expandedSet = new Set(); // use a Set to avoid duplicate entries;
+export const expandAndTransformStreamQueries = async function expandAndTransformStreamQueries (streamQueries: StreamQuery[], expandStream: ExpandStreamFn) {
+      async function expandSet (streamIds: StreamId[], storeId: string, excludedIds: StreamId[] = []): Promise<StreamId[]> {
+        const expandedSet = new Set<StreamId>(); // use a Set to avoid duplicate entries;
         for (const streamId of streamIds) {
           // skip streamId presents in exluded set
           if (!excludedIds.includes(streamId)) {
-            (await expandStream(streamId, storeId, excludedIds)).forEach((item: any) => expandedSet.add(item));
+            (await expandStream(streamId, storeId, excludedIds)).forEach((item: StreamId) => expandedSet.add(item));
           }
         }
         return Array.from(expandedSet);
       }
-      const res: any[] = [];
+      const res: ExpandedQuery[] = [];
       for (const streamQuery of streamQueries) {
         const expandedQuery = await expandAndTransformStreamQuery(streamQuery, expandSet);
         if (expandedQuery) { res.push(expandedQuery); }
       }
       return res;
     };
-async function expandAndTransformStreamQuery (streamQuery: any, expandSet: any) {
+async function expandAndTransformStreamQuery (streamQuery: StreamQuery, expandSet: ExpandSetFn): Promise<ExpandedQuery | null> {
   let containsAtLeastOneInclusion = false;
-  const res: any = { storeId: streamQuery.storeId };
+  const res: ExpandedQuery = { storeId: streamQuery.storeId };
   // any
   if (streamQuery.any) {
-    const expandedSet = await expandSet(streamQuery.any, streamQuery.storeId, streamQuery.not);
+    const expandedSet = await expandSet(streamQuery.any, streamQuery.storeId!, streamQuery.not);
     if (expandedSet.length > 0) {
       containsAtLeastOneInclusion = true;
       res.any = uniqueStreamIds(expandedSet);
@@ -211,7 +219,7 @@ async function expandAndTransformStreamQuery (streamQuery: any, expandSet: any) 
   // all
   if (streamQuery.all) {
     for (const streamId of streamQuery.all) {
-      const expandedSet = await expandSet([streamId], streamQuery.storeId, streamQuery.not);
+      const expandedSet = await expandSet([streamId], streamQuery.storeId!, streamQuery.not);
       if (expandedSet.length === 0) { continue; } // escape
       if (!res.and) { res.and = []; }
       containsAtLeastOneInclusion = true;
@@ -220,9 +228,9 @@ async function expandAndTransformStreamQuery (streamQuery: any, expandSet: any) 
   }
   // not
   if (streamQuery.not) {
-    const not: any[] = [];
+    const not: StreamId[] = [];
     for (const streamId of streamQuery.not) {
-      const expandedSet = await expandSet([streamId], streamQuery.storeId, streamQuery.any);
+      const expandedSet = await expandSet([streamId], streamQuery.storeId!, streamQuery.any);
       if (expandedSet.length === 0) { continue; } // escape
       not.push(...expandedSet);
     }
@@ -237,6 +245,6 @@ async function expandAndTransformStreamQuery (streamQuery: any, expandSet: any) 
 /**
  * for nice error message with clear query content
  */
-function objectToString (object: any) {
+function objectToString (object: unknown) {
   return util.inspect(object, { depth: 5 });
 }
