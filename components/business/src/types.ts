@@ -14,10 +14,22 @@ const SeriesRowType = require('./types/series_row_type.ts').default;
 const BasicType = require('./types/basic_type.ts').default;
 const ComplexType = require('./types/complex_type.ts').default;
 const SERIES_PREFIX = 'series:';
+
+type EventLike = { type: string; content?: unknown; [k: string]: unknown };
+type JsonSchema = Record<string, unknown>;
+type EventTypeInstance = {
+  callValidator (v: TypeValidator, content: unknown): unknown;
+};
+type Validator = {
+  validate (content: unknown, schema: JsonSchema, cb: (err: Error | null) => void): void;
+  validateSchema (s: unknown): boolean;
+  lastReport?: unknown;
+};
+
 // Returns true if the name given refers to a series type. Currently this means
 // that the name starts with SERIES_PREFIX.
 //
-function isSeriesType (name: any) {
+function isSeriesType (name: string): boolean {
   return name.startsWith(SERIES_PREFIX);
 }
 // A validator that can check values against a types JSON Schema.
@@ -26,14 +38,14 @@ function isSeriesType (name: any) {
 class TypeValidator {
   // Validates the given event type against its schema.
   //
-  validate (type: any, content: any) {
+  validate (type: EventTypeInstance, content: unknown) {
     return type.callValidator(this, content);
   }
 
-  async validateWithSchema (content: any, schema: any) {
-    const validator = jsonValidator();
+  async validateWithSchema (content: unknown, schema: JsonSchema) {
+    const validator = jsonValidator() as Validator;
     await new Promise<void>((resolve, reject) => {
-      validator.validate(content, schema, (err: any) => err ? reject(err) : resolve());
+      validator.validate(content, schema, (err: Error | null) => err ? reject(err) : resolve());
     });
     return content;
   }
@@ -67,9 +79,9 @@ class TypeValidator {
 //
 
 class TypeRepository {
-  _validator;
+  _validator: Validator;
   constructor () {
-    this._validator = jsonValidator();
+    this._validator = jsonValidator() as Validator;
   }
 
   /**
@@ -82,11 +94,11 @@ class TypeRepository {
    *
    * The old path: lookup(), then validator() are too heavy
    */
-  async validate (event: any) {
+  async validate (event: EventLike) {
     const content = event.content != null ? event.content : null;
-    const schema = defaultTypes.types[event.type];
+    const schema = defaultTypes.types[event.type] as JsonSchema | undefined;
     if (schema == null) { throw new Error(`Event type validation was used on the unknown type "${event.type}".`); }
-    return fromCallback((cb: any) => this._validator.validate(content, schema, cb))
+    return fromCallback((cb: (err: Error | null) => void) => this._validator.validate(content, schema, cb))
       .then(() => content);
   }
 
@@ -94,7 +106,7 @@ class TypeRepository {
   // it needs to be part of our standard types list that we load on startup
   // (#tryUpdate).
   //
-  isKnown (name: any): any {
+  isKnown (name: string): boolean {
     if (isSeriesType(name)) {
       const leafTypeName = name.slice(SERIES_PREFIX.length);
       return this.isKnown(leafTypeName);
@@ -106,7 +118,7 @@ class TypeRepository {
   // complex ('position/wgs84'). Leaf types are listed in
   // `event-types.default.json`.
   //
-  lookupLeafType (name: any) {
+  lookupLeafType (name: string) {
     if (!this.isKnown(name)) { throw new errors.TypeDoesNotExistError(`Type '${name}' does not exist in this Pryv instance.`); }
     const typeSchema = defaultTypes.types[name];
     if (typeSchema.type === 'object') {
@@ -121,7 +133,7 @@ class TypeRepository {
   //
   // @throw {TypeDoesNotExistError} when name doesn't refer to a built in type.
   //
-  lookup (name: any) {
+  lookup (name: string) {
     if (isSeriesType(name)) {
       const leafTypeName = name.slice(SERIES_PREFIX.length);
       const leafType = this.lookupLeafType(leafTypeName);
@@ -140,24 +152,24 @@ class TypeRepository {
   // Tries to update the stored type definitions with a file found on the
   // internet.
   //
-  async tryUpdate (sourceURL: any, apiVersion: any) {
-    function unavailableError (err: any) {
+  async tryUpdate (sourceURL: string, apiVersion: string) {
+    function unavailableError (err: unknown) {
       throw new Error('Could not update event types from ' +
                 sourceURL +
                 '\nError: ' +
-                err.message);
+                (err as Error).message);
     }
-    function invalidError (err: any) {
+    function invalidError (err: unknown) {
       throw new Error('Invalid event types schema returned from ' +
                 sourceURL +
                 '\nErrors: ' +
-                err.errors);
+                (err as { errors?: unknown })?.errors);
     }
     const FILE_PROTOCOL = 'file://';
-    function isFileUrl (url: any) {
+    function isFileUrl (url: string) {
       return url.startsWith(FILE_PROTOCOL);
     }
-    function removeFileProtocol (url: any) {
+    function removeFileProtocol (url: string) {
       return url.substring(FILE_PROTOCOL.length);
     }
     let eventTypesDefinition;
