@@ -44,39 +44,54 @@ const MAX_DELAY_MS = 10 * 60 * 1000; // 10 min
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MULTIPLIER = 5;
 
-type Logger = { debug: Function; warn: Function; info?: Function };
+type Logger = { debug?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void; info?: (...args: unknown[]) => void };
 
 type EventLike = {
   id?: string;
   streamIds?: string[];
   type: string;
-  content: any;
+  content: Record<string, unknown>;
   time?: number;
 };
 
+type RetryEvent = EventLike & { content: RetryContent };
+type RetryContent = {
+  originalEventId?: string | null;
+  originalType?: string;
+  originalStreamIds?: string[];
+  originalContent?: Record<string, unknown> | null;
+  attempts?: number;
+  lastFailureReason?: string;
+  lastFailureDetail?: unknown;
+  nextAttemptAfter?: number;
+  status: 'pending' | 'succeeded' | 'failed-permanent';
+  [k: string]: unknown;
+};
+
+type MallParams = Record<string, unknown>;
 type MallLike = {
   events: {
-    create: (userId: string, params: any) => Promise<any>;
-    update: (userId: string, params: any) => Promise<any>;
-    get: (userId: string, params?: any) => Promise<any[]>;
+    create: (userId: string, params: MallParams) => Promise<EventLike>;
+    update: (userId: string, params: MallParams) => Promise<unknown>;
+    get: (userId: string, params?: MallParams) => Promise<RetryEvent[]>;
   };
 };
 
 type DispatchFn = (params: {
   userId: string;
   event: EventLike;
-  deps: any;
+  deps: unknown;
 }) => Promise<{
   handled: boolean;
   status: string;
   reason?: string;
-  detail?: any;
+  detail?: { peerReason?: string } | null;
 }>;
 
 type RetryDeps = {
   mall: MallLike;
   dispatch: DispatchFn;
-  dispatchDeps: any;          // forwarded into dispatch
+  dispatchDeps: unknown;          // forwarded into dispatch
   now?: () => number;
   logger?: Logger;
 };
@@ -109,9 +124,9 @@ async function enqueueRetry (params: {
   userId: string;
   trigger: EventLike;
   failureReason: string;
-  failureDetail?: any;
+  failureDetail?: { peerReason?: string } | null;
   deps: RetryDeps;
-}): Promise<any | null> {
+}): Promise<EventLike | null> {
   const { userId, trigger, failureReason, failureDetail, deps } = params;
 
   // Non-retryable: skip.
@@ -120,7 +135,7 @@ async function enqueueRetry (params: {
   }
 
   const now = (deps.now ?? Date.now)();
-  const content: any = {
+  const content: RetryContent = {
     originalEventId: trigger.id ?? null,
     originalType: trigger.type,
     originalStreamIds: trigger.streamIds ?? [],
@@ -155,7 +170,7 @@ async function enqueueRetry (params: {
  */
 async function processRetryEvent (params: {
   userId: string;
-  retryEvent: any;
+  retryEvent: RetryEvent;
   deps: RetryDeps;
 }): Promise<{
   outcome: 'succeeded' | 'rescheduled' | 'failed-permanent' | 'skipped-not-due' | 'skipped-non-pending';
@@ -176,7 +191,7 @@ async function processRetryEvent (params: {
   const syntheticTrigger: EventLike = {
     id: c.originalEventId ?? undefined,
     streamIds: c.originalStreamIds ?? [],
-    type: c.originalType,
+    type: c.originalType!,
     content: c.originalContent ?? {},
   };
 
@@ -273,10 +288,10 @@ async function runRetryLoop (params: {
       else if (r.outcome === 'rescheduled') summary.rescheduled += 1;
       else if (r.outcome === 'failed-permanent') summary.failedPermanent += 1;
       else summary.skipped += 1;
-    } catch (err: any) {
+    } catch (err: unknown) {
       deps.logger?.warn?.('cmc/retry: processing threw', {
         retryEventId: ev.id,
-        error: String(err?.message || err),
+        error: String((err as Error)?.message || err),
       });
     }
   }
@@ -325,7 +340,7 @@ const NON_RETRYABLE_REASONS = new Set([
   'cmc-revoke-counterparty-access-not-found',
 ]);
 
-function isRetryableReason (reason: string, detail?: any): boolean {
+function isRetryableReason (reason: string, detail?: { peerReason?: string } | null): boolean {
   if (NON_RETRYABLE_REASONS.has(reason)) return false;
   // detail.peerReason carries the underlying outbound classification when
   // the dispatch wrapper converts it.
