@@ -38,18 +38,34 @@ const outbound = require('./outbound.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 
 type Permission = { streamId: string; level: string };
+type OfferContent = {
+  request?: { permissions?: Array<{ streamId: unknown; level: unknown }> };
+  requesterMeta?: { appId?: string };
+  [k: string]: unknown;
+};
 
 type OfferEvent = {
   id: string;
   type: string;
-  content: any;
+  content: OfferContent;
 };
 
-type CapabilityDeps = {
-  fetch: (url: string, init?: any) => Promise<any>;
-  timeoutMs?: number;
-  logger?: { debug: Function; warn: Function };
+type FetchResponse = {
+  status: number;
+  json: () => Promise<unknown>;
 };
+type FetchInit = {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+  signal?: AbortSignal | null;
+};
+type CapabilityDeps = {
+  fetch: (url: string, init?: FetchInit) => Promise<FetchResponse>;
+  timeoutMs?: number;
+  logger?: { debug: (msg: string, ...rest: unknown[]) => void; warn: (msg: string, ...rest: unknown[]) => void };
+};
+type ApiError = Error & { status?: number; body?: unknown; id?: string };
 
 /**
  * Read the offer event through a capability connection.
@@ -79,7 +95,7 @@ async function readOfferViaCapability (params: {
 
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timeoutMs = deps.timeoutMs ?? outbound.DEFAULT_TIMEOUT_MS;
-  let timer: any;
+  let timer: NodeJS.Timeout | undefined;
   if (controller != null) timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
@@ -91,7 +107,7 @@ async function readOfferViaCapability (params: {
     if (timer != null) clearTimeout(timer);
     if (res.status < 200 || res.status >= 300) {
       const body = await safeJson(res);
-      const err: any = new Error('cmc/accept: capability events.get failed: ' + res.status);
+      const err: ApiError = new Error('cmc/accept: capability events.get failed: ' + res.status);
       err.status = res.status;
       err.body = body;
       // 401 covers "never existed" + "expired past TTL" (auth
@@ -105,25 +121,25 @@ async function readOfferViaCapability (params: {
       }
       throw err;
     }
-    const body = await safeJson(res);
+    const body = await safeJson(res) as { events?: OfferEvent[] } | null;
     const events = body?.events ?? [];
     if (events.length === 0) {
-      const err: any = new Error('cmc/accept: capability returned no offer events');
+      const err: ApiError = new Error('cmc/accept: capability returned no offer events');
       err.id = CmcErrorIds.CAPABILITY_EMPTY;
       throw err;
     }
     if (events.length > 1) {
-      const err: any = new Error(
+      const err: ApiError = new Error(
         'cmc/accept: capability returned ' + events.length + ' offer events; expected 1'
       );
       err.id = CmcErrorIds.CAPABILITY_MULTIPLE_OFFERS;
       throw err;
     }
     return events[0];
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (timer != null) clearTimeout(timer);
-    if (err?.name === 'AbortError') {
-      const t: any = new Error('cmc/accept: capability events.get timed out');
+    if ((err as Error)?.name === 'AbortError') {
+      const t: ApiError = new Error('cmc/accept: capability events.get timed out');
       t.id = CmcErrorIds.CAPABILITY_TIMEOUT;
       throw t;
     }
@@ -140,12 +156,12 @@ async function readOfferViaCapability (params: {
 function permissionsFromOffer (offerEvent: OfferEvent): Permission[] {
   const perms = offerEvent?.content?.request?.permissions;
   if (!Array.isArray(perms) || perms.length === 0) {
-    const err: any = new Error('cmc/accept: offer has no permissions');
+    const err: ApiError = new Error('cmc/accept: offer has no permissions');
     err.id = CmcErrorIds.OFFER_EMPTY_PERMISSIONS;
     throw err;
   }
   // Pass-through; the access-creation API validates further.
-  return perms.map((p: any) => ({ streamId: String(p.streamId), level: String(p.level) }));
+  return perms.map((p: { streamId: unknown; level: unknown }) => ({ streamId: String(p.streamId), level: String(p.level) }));
 }
 
 /**
@@ -173,7 +189,7 @@ function buildDataGrantPayload (params: {
   // instead of disambiguating by accessName (which collides across
   // re-runs from the same app/counterparty pair).
   acceptEventId?: string;
-}): any {
+}): Record<string, unknown> {
   const { offerEvent, counterparty, accessName, features, extraPermissions, acceptEventId } = params;
   const meta = offerEvent?.content?.requesterMeta ?? {};
   const computedName = accessName ??
@@ -223,7 +239,7 @@ async function deliverAcceptViaCapability (params: {
   requesterOriginStreamId?: string;
   offerEventId?: string;
   deps: CapabilityDeps;
-}): Promise<{ ok: boolean; response: any }> {
+}): Promise<{ ok: boolean; response: unknown }> {
   // The capability access has create-only on the per-capability
   // responses stream — :_cmc:_internal:responses:<capId>, not the
   // parent. Build the leaf id from capabilityId (carried in the
@@ -265,9 +281,9 @@ async function deliverRefuseViaCapability (params: {
   capabilityUrl: string;
   capabilityId: string;
   counterparty: { username: string; host: string };
-  reason?: any;
+  reason?: unknown;
   deps: CapabilityDeps;
-}): Promise<{ ok: boolean; response: any }> {
+}): Promise<{ ok: boolean; response: unknown }> {
   const responsesStreamId = C.responsesStreamIdFor(params.capabilityId);
   const r = await outbound.postToPeer({
     apiEndpoint: params.capabilityUrl,
@@ -289,7 +305,7 @@ async function deliverRefuseViaCapability (params: {
   return { ok: r.ok, response: r };
 }
 
-async function safeJson (res: any): Promise<any> {
+async function safeJson (res: FetchResponse): Promise<unknown> {
   try { return await res.json(); } catch (_e) { return null; }
 }
 
