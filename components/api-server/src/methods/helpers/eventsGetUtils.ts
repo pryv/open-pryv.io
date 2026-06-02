@@ -21,7 +21,24 @@ const accountStreams = require('business/src/system-streams/index.ts');
 const integrity = require('business/src/integrity/index.ts').default;
 import type { MethodNext } from '../_types.ts';
 
-let mall: any;
+type MethodContext = {
+  user: { id: string };
+  access: any;
+  tracing: { startSpan (n: string): void; finishSpan (n: string): void };
+  acceptStreamsQueryNonStringified?: boolean;
+  streamForStreamId: (streamId: string, storeId: string) => Promise<unknown>;
+  [k: string]: unknown;
+};
+type ResultBag = Record<string, unknown> & { addToConcatArrayStream: (key: string, stream: unknown) => void; closeConcatArrayStream: (key: string) => void; events?: unknown[] };
+type Mall = {
+  streams: { get: (userId: string, query: Record<string, unknown>) => Promise<Array<{ id: string; trashed?: boolean; [k: string]: unknown }>> };
+  events: {
+    getWithParamsByStore: (userId: string, params: Record<string, unknown>) => Promise<Array<{ time: number; attachments?: Array<{ id: string; readToken?: string }>; [k: string]: unknown }>>;
+    generateStreamsWithParamsByStore: (userId: string, params: Record<string, unknown>, cb: (storeSettings: unknown, stream: unknown) => void) => Promise<unknown>;
+  };
+};
+
+let mall: Mall;
 
 export { init, applyDefaultsForRetrieval, coerceStreamsParam, validateStreamsQueriesAndSetStore, transformArrayOfStringsToStreamsQuery, streamQueryCheckPermissionsAndReplaceStars, streamQueryAddForcedAndForbiddenStreams, streamQueryExpandStreams, streamQueryAddHiddenStreams, findEventsFromStore };
 /**
@@ -68,7 +85,7 @@ export { init, applyDefaultsForRetrieval, coerceStreamsParam, validateStreamsQue
  *      - "not" is expanded in third and added to `and` -- !! we exclude streamIds that are in 'any' as some authorization might have been given on child now expanded
  *          example: `{all: ['A'], not['B', 'C']}` =>  `{and: [{any: [...expand('A')]}, {not: [...expand('B')...expand('C')]}]}
  */
-function coerceStreamsParam (context: any, params: any, result: any, next: MethodNext) {
+function coerceStreamsParam (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
   if (params.streams == null) {
     return next();
   }
@@ -100,9 +117,9 @@ function coerceStreamsParam (context: any, params: any, result: any, next: Metho
     params.streams = [params.streams];
   }
   next();
-  function parseStreamsParams (input: any) {
+  function parseStreamsParams (input: unknown) {
     try {
-      return JSON.parse(input);
+      return JSON.parse(input as string);
     } catch (e) {
       throw errors.invalidRequestStructure('Invalid "streams" parameter. It should be an array of streamIds or JSON logical query. Error while parsing JSON ' +
                 e, input);
@@ -112,10 +129,10 @@ function coerceStreamsParam (context: any, params: any, result: any, next: Metho
    * we detect if it's JSON by looking at first char.
    * Note: since RFC 7159 JSON can also starts with ", true, false or number - this does not apply in this case.
    */
-  function isStringifiedJSON (input: any) {
+  function isStringifiedJSON (input: unknown) {
     return typeof input === 'string' && ['[', '{'].includes(input.substr(0, 1));
   }
-  function isStringOrArrayOfStrings (input: any) {
+  function isStringOrArrayOfStrings (input: unknown) {
     if (typeof input === 'string') { return true; }
     if (!Array.isArray(input)) { return false; }
     for (const item of input) {
@@ -124,7 +141,7 @@ function coerceStreamsParam (context: any, params: any, result: any, next: Metho
     return true;
   }
 }
-async function applyDefaultsForRetrieval (context: any, params: any, result: any, next: MethodNext) {
+async function applyDefaultsForRetrieval (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
   params.streams ??= [{ any: ['*'] }];
   params.types ??= null;
   params.fromTime ??= null;
@@ -149,7 +166,7 @@ async function applyDefaultsForRetrieval (context: any, params: any, result: any
   }
   next();
 }
-function transformArrayOfStringsToStreamsQuery (context: any, params: any, result: any, next: MethodNext) {
+function transformArrayOfStringsToStreamsQuery (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
   try {
     params.arrayOfStreamQueries =
             streamsQueryUtils.transformArrayOfStringsToStreamsQuery(params.streams);
@@ -158,7 +175,7 @@ function transformArrayOfStringsToStreamsQuery (context: any, params: any, resul
   }
   next();
 }
-function validateStreamsQueriesAndSetStore (context: any, params: any, result: any, next: MethodNext) {
+function validateStreamsQueriesAndSetStore (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
   try {
     streamsQueryUtils.validateStreamsQueriesAndSetStore(params.arrayOfStreamQueries);
     params.arrayOfStreamQueriesWithStoreId = params.arrayOfStreamQueries;
@@ -168,7 +185,7 @@ function validateStreamsQueriesAndSetStore (context: any, params: any, result: a
   next();
 }
 // the two tasks are joined as '*' replaced have their permissions checked
-async function streamQueryCheckPermissionsAndReplaceStars (context: any, params: any, result: any, next: MethodNext) {
+async function streamQueryCheckPermissionsAndReplaceStars (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
   context.tracing.startSpan('streamQueries');
   const unAuthorizedStreamIds: string[] = [];
   const unAccessibleStreamIds: string[] = [];
@@ -256,7 +273,7 @@ async function streamQueryCheckPermissionsAndReplaceStars (context: any, params:
 /**
  * Add "forced" and "none" events from permissions
  */
-function streamQueryAddForcedAndForbiddenStreams (context: any, params: any, result: any, next: MethodNext) {
+function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
   for (const streamQuery of params.arrayOfStreamQueriesWithStoreId) {
     // ------------ ALL --------------- //
     // add forced Streams if exists
@@ -284,7 +301,7 @@ function streamQueryAddForcedAndForbiddenStreams (context: any, params: any, res
   }
   next();
 }
-async function streamQueryExpandStreams (context: any, params: any, result: any, next: MethodNext) {
+async function streamQueryExpandStreams (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
   try {
     params.arrayOfStreamQueriesWithStoreId =
             await streamsQueryUtils.expandAndTransformStreamQueries(params.arrayOfStreamQueriesWithStoreId, expandStreamInContext);
@@ -330,7 +347,7 @@ function stripDoNotExpandMarker (streamIdWithDoNotExpandMarker: string) {
 /**
  * Add Hidden StreamsId (System) to local queries and eventually trashed streams if state !== 'all'
  */
-async function streamQueryAddHiddenStreams (context: any, params: any, result: any, next: MethodNext) {
+async function streamQueryAddHiddenStreams (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
   // forbidden stream
   const forbiddenStreamIds = accountStreams.hiddenStreamIds;
   for (const streamQuery of params.arrayOfStreamQueriesWithStoreId) {
@@ -368,7 +385,7 @@ async function streamQueryAddHiddenStreams (context: any, params: any, result: a
 // 0-arg getter function. When a getter is passed, the value is resolved
 // per-request from the live config singleton — config.set() and
 // injectTestConfig() reach this api-register-time-bound callsite.
-async function findEventsFromStore (secretOrGetter: any, context: any, params: any, result: any, next: any) {
+async function findEventsFromStore (secretOrGetter: string | (() => string), context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
   const filesReadTokenSecret = typeof secretOrGetter === 'function' ? secretOrGetter() : secretOrGetter;
   if (params.arrayOfStreamQueriesWithStoreId?.length === 0) {
     result.events = [];
@@ -396,9 +413,10 @@ async function findEventsFromStore (secretOrGetter: any, context: any, params: a
    * Will be called by "mall" for each store of events that need to be streamed to result
    * @param eventsStream of "Events"
    */
-  function addEventsStreamFromStore (storeSettings: any, eventsStream: any) {
+  function addEventsStreamFromStore (storeSettings: unknown, eventsStream: any) {
+    const ss = storeSettings as { attachments?: { setFileReadToken?: boolean } } | null;
     let stream = eventsStream;
-    if (storeSettings?.attachments?.setFileReadToken) {
+    if (ss?.attachments?.setFileReadToken) {
       stream = stream.pipe(new SetFileReadTokenStream({
         access: context.access,
         filesReadTokenSecret
@@ -477,18 +495,19 @@ async function init () {
 // StreamQuery + StreamQueryWithStoreId were JSDoc-only types
 // (declared in references/events-typedef.js, not imported as TS types).
 type GetEventsParams = {
-  streams?: Array<string> | string | any | Array<any>;
-  arrayOfStreamQueries?: Array<any>;
-  arrayOfStreamQueriesWithStoreId?: Array<any>;
-  types?: Array<string>;
-  fromTime?: number;
-  toTime?: number;
+  streams?: any;
+  arrayOfStreamQueries: any[];
+  arrayOfStreamQueriesWithStoreId: any[];
+  types?: Array<string> | null;
+  fromTime?: number | null;
+  toTime?: number | null;
   sortAscending?: boolean;
-  skip?: number;
-  limit?: number;
-  state?: 'default' | 'all' | 'trashed';
-  modifiedSince?: number;
+  skip?: number | null;
+  limit?: number | null;
+  state?: 'default' | 'all' | 'trashed' | null;
+  modifiedSince?: number | null;
   includeDeletions?: boolean;
+  [k: string]: unknown;
 };
 type StoreQuery = {
   id: string;
