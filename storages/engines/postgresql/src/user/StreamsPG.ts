@@ -6,7 +6,25 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Callback, UserOrId } from 'storages/interfaces/_shared/types.ts';
+
 const require = createRequire(import.meta.url);
+
+type Stream = {
+  id: string;
+  parentId?: string | null;
+  name?: string;
+  path?: string;
+  deleted?: number | null;
+  trashed?: boolean;
+  singleActivity?: boolean;
+  [k: string]: unknown;
+};
+type StreamRow = Record<string, unknown>;
+type Query = Record<string, unknown>;
+type Options = Record<string, unknown> | null;
+type Update = Record<string, unknown>;
+type PgDb = { query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
 
 const { BaseStoragePG } = require('./BaseStoragePG.ts');
 const { _internals } = require('../_internals.ts');
@@ -17,7 +35,8 @@ const { treeUtils } = require('utils');
  * PostgreSQL persistence for streams.
  */
 class StreamsPG extends BaseStoragePG {
-  constructor (db: any) {
+  declare db: PgDb;
+  constructor (db: PgDb) {
     super(db);
     this.tableName = 'streams';
     this.hasDeletedCol = true;
@@ -25,8 +44,8 @@ class StreamsPG extends BaseStoragePG {
     this.defaultSort = 'name ASC';
   }
 
-  rowToItem (row: any): any | null {
-    const item = super.rowToItem(row);
+  rowToItem (row: StreamRow): Stream | null {
+    const item = super.rowToItem(row) as Stream | null;
     if (item) {
       delete item.path;
       if (item.trashed === false) delete item.trashed;
@@ -38,7 +57,7 @@ class StreamsPG extends BaseStoragePG {
     return item;
   }
 
-  _findInternal (userId: string, query: any, options: any, callback: (err: any, items?: any) => void): void {
+  _findInternal (userId: string, query: Query, options: Options, callback: Callback<Stream[]>): void {
     const { select, excludeProps } = this.buildSelect(options);
     const where = this.buildWhere(userId, query);
     const orderBy = this.buildOrderBy(options);
@@ -46,18 +65,18 @@ class StreamsPG extends BaseStoragePG {
 
     const sql = `SELECT ${select} FROM ${this.tableName} ${where.text} ${orderBy}${limitOffset}`;
     this.db.query(sql, where.params)
-      .then((res: any) => {
+      .then((res: { rows: StreamRow[] }) => {
         const items = this.applyExclusions(this.rowsToItems(res.rows), excludeProps);
         callback(null, treeUtils.buildTree(items));
       })
       .catch(callback);
   }
 
-  countAll (userOrUserId: any, callback: (err: any, n?: number) => void): void {
+  countAll (userOrUserId: UserOrId, callback: Callback<number>): void {
     this.count(userOrUserId, {}, callback);
   }
 
-  insertOne (userOrUserId: any, stream: any, callback: (err: any, item?: any) => void): void {
+  insertOne (userOrUserId: UserOrId, stream: Stream, callback: Callback<Stream>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     _internals.cache.unsetUserData(userId);
     if (!stream.path) {
@@ -69,7 +88,7 @@ class StreamsPG extends BaseStoragePG {
     super.insertOne(userOrUserId, stream, callback);
   }
 
-  async _computePath (userId: string, stream: any): Promise<void> {
+  async _computePath (userId: string, stream: Stream): Promise<void> {
     if (stream.parentId) {
       const res = await this.db.query(
         'SELECT path FROM streams WHERE user_id = $1 AND id = $2',
@@ -82,7 +101,7 @@ class StreamsPG extends BaseStoragePG {
     }
   }
 
-  updateOne (userOrUserId: any, query: any, updatedData: any, callback: (err: any, item?: any) => void): void {
+  updateOne (userOrUserId: UserOrId, query: Query, updatedData: Update & { parentId?: unknown }, callback: Callback<Stream>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (typeof updatedData.parentId !== 'undefined') {
       _internals.cache.unsetUserData(userId);
@@ -92,7 +111,7 @@ class StreamsPG extends BaseStoragePG {
     super.updateOne(userOrUserId, query, updatedData, callback);
   }
 
-  delete (userOrUserId: any, query: any, callback: (err: any, res?: any) => void): void {
+  delete (userOrUserId: UserOrId, query: Query, callback: Callback<unknown>): void {
     const userId = (typeof userOrUserId === 'string') ? userOrUserId : userOrUserId.id;
     _internals.cache.unsetUserData(userId);
     this.updateMany(userOrUserId, query, {
@@ -110,10 +129,10 @@ class StreamsPG extends BaseStoragePG {
     }, callback);
   }
 
-  insertMany (userOrUserId: any, items: any[], callback: (err: any) => void): void {
-    let flatItems: any[] = treeUtils.flattenTree(items);
+  insertMany (userOrUserId: UserOrId, items: Stream[], callback: Callback<unknown>): void {
+    let flatItems: Stream[] = treeUtils.flattenTree(items);
     const pathMap: Record<string, string> = {};
-    flatItems = flatItems.map((s: any) => {
+    flatItems = flatItems.map((s: Stream) => {
       const copy = Object.assign({}, s);
       if (copy.deleted) {
         delete copy.parentId;
