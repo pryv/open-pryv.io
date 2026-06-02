@@ -19,7 +19,31 @@ const { _internals } = require('./_internals.ts');
 /**
  * Receive host internals from the barrel.
  */
-function init (config: Record<string, any>, getLogger: (name: string) => any, internals: Record<string, any>): void {
+type Logger = { debug (msg: string): void; info (msg: string): void; warn (msg: string): void; error (a: unknown, b?: unknown): void };
+type PgConnection = { query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
+type StorageLayer = {
+  connection?: unknown;
+  passwordResetRequests?: unknown;
+  sessions?: unknown;
+  accesses?: unknown;
+  profile?: unknown;
+  streams?: unknown;
+  webhooks?: unknown;
+  events?: { importAll: (u: UserOrId, items: EventRow[], cb: (err: Error | null) => void) => unknown; clearAll: (u: UserOrId, cb: (err: Error | null) => void) => unknown };
+  iterateAllEvents?: () => AsyncIterableIterator<unknown>;
+  getAllUserIdsFromCollection?: (col: string) => Promise<string[]>;
+  clearCollection?: (col: string) => Promise<void>;
+};
+type InitOptions = {
+  passwordResetRequestMaxAge?: number;
+  sessionMaxAge?: number;
+  integrityAccesses?: unknown;
+  [k: string]: unknown;
+};
+type EventRow = { id: string; streamIds?: string[]; [k: string]: unknown };
+type UserOrId = string | { id: string };
+
+function init (config: Record<string, unknown>, getLogger: (name: string) => Logger, internals: Record<string, unknown>): void {
   _internals.set('config', config);
   _internals.set('getLogger', getLogger);
   for (const [key, value] of Object.entries(internals)) {
@@ -29,7 +53,7 @@ function init (config: Record<string, any>, getLogger: (name: string) => any, in
 
 // -- BaseStorage --------------------------------------------------------
 
-function initStorageLayer (storageLayer: any, connection: any, options: any): void {
+function initStorageLayer (storageLayer: StorageLayer, connection: PgConnection, options: InitOptions): void {
   const { PasswordResetRequestsPG } = require('./PasswordResetRequestsPG.ts');
   const { SessionsPG } = require('./SessionsPG.ts');
   const { AccessesPG } = require('./user/AccessesPG.ts');
@@ -50,7 +74,7 @@ function initStorageLayer (storageLayer: any, connection: any, options: any): vo
   // Events import/clear for backup restore (not used in normal operation —
   // normal event CRUD goes through the DataStore/Mall layer).
   storageLayer.events = {
-    importAll (userOrUserId: any, items: any[], callback: (err: any) => void) {
+    importAll (userOrUserId: UserOrId, items: EventRow[], callback: (err: Error | null) => void) {
       const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
       if (!items || items.length === 0) return callback(null);
 
@@ -64,7 +88,7 @@ function initStorageLayer (storageLayer: any, connection: any, options: any): vo
       };
       const JSONB_COLS = new Set(['stream_ids', 'tags', 'content', 'client_data', 'attachments']);
       const mapCol = (prop: string): string => COL_MAP[prop] || prop;
-      const mapVal = (col: string, val: any): any => {
+      const mapVal = (col: string, val: unknown): unknown => {
         if (val === undefined) return null;
         if (JSONB_COLS.has(col) && val != null) return JSON.stringify(val);
         return val;
@@ -73,7 +97,7 @@ function initStorageLayer (storageLayer: any, connection: any, options: any): vo
       (async () => {
         for (const event of items) {
           const cols: string[] = ['user_id'];
-          const vals: any[] = [userId];
+          const vals: unknown[] = [userId];
           const placeholders: string[] = ['$1'];
           let idx = 2;
 
@@ -108,7 +132,7 @@ function initStorageLayer (storageLayer: any, connection: any, options: any): vo
       })().then(() => callback(null)).catch(callback);
     },
 
-    clearAll (userOrUserId: any, callback: (err: any) => void) {
+    clearAll (userOrUserId: UserOrId, callback: (err: Error | null) => void) {
       const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
       (async () => {
         await connection.query('DELETE FROM event_streams WHERE user_id = $1', [userId]);
@@ -127,7 +151,7 @@ function initStorageLayer (storageLayer: any, connection: any, options: any): vo
 
   storageLayer.getAllUserIdsFromCollection = async function (collectionName: string): Promise<string[]> {
     const res = await connection.query(`SELECT DISTINCT user_id FROM ${collectionName}`);
-    return res.rows.map((r: any) => r.user_id);
+    return res.rows.map((r: Record<string, unknown>) => r.user_id as string);
   };
 
   storageLayer.clearCollection = async function (collectionName: string): Promise<void> {
@@ -135,30 +159,30 @@ function initStorageLayer (storageLayer: any, connection: any, options: any): vo
   };
 }
 
-function getUserAccountStorage (): any {
+function getUserAccountStorage (): unknown {
   return require('./userAccountStorage.ts').userAccountStorage;
 }
 
-function getUsersLocalIndex (): any {
+function getUsersLocalIndex (): unknown {
   return require('./usersLocalIndex.ts').UsersLocalIndexPG;
 }
 
 // -- DataStore ----------------------------------------------------------
 
-function getDataStoreModule (): any {
+function getDataStoreModule (): unknown {
   return require('./dataStore/index.ts').dataStore;
 }
 
 // -- PlatformStorage ----------------------------------------------------
 
-function createPlatformDB (): any {
+function createPlatformDB (): unknown {
   const { DBpostgresql: DB } = require('./DBpostgresql.ts');
   return new DB();
 }
 
 // -- SeriesStorage (PostgreSQL) -----------------------------------------
 
-async function createSeriesConnection (config: any): Promise<any> {
+async function createSeriesConnection (config: { databasePG?: unknown; [k: string]: unknown }): Promise<unknown> {
   const { PGSeriesConnection } = require('./pg_connection.ts');
   // Use provided databasePG (from barrel init) or fall back to storage
   const pgDb = config.databasePG || _internals.databasePG;
@@ -167,7 +191,7 @@ async function createSeriesConnection (config: any): Promise<any> {
 
 // -- AuditStorage (PostgreSQL) ------------------------------------------
 
-function createAuditStorage (): any {
+function createAuditStorage (): unknown {
   const { AuditStoragePG } = require('./AuditStoragePG.ts');
   const { DatabasePG } = require('./DatabasePG.ts');
   // Dedicated pool for audit: same DB, smaller pool size to avoid
@@ -188,7 +212,7 @@ function createAuditStorage (): any {
  * Build the migrations capability for the engine-agnostic MigrationRunner.
  * Returns null when the engine hasn't been initialized yet (databasePG not registered).
  */
-function getMigrationsCapability (): any | null {
+function getMigrationsCapability (): unknown | null {
   if (!_internals.databasePG) return null;
   const { buildMigrationsCapability } = require('./SchemaMigrations.ts');
   return buildMigrationsCapability();
