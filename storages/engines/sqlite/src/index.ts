@@ -26,7 +26,38 @@ const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
 
-function init (config: Record<string, any>, getLogger: (name: string) => any, internals: Record<string, any>): void {
+interface Logger {
+  debug: (...args: unknown[]) => void;
+  info: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+}
+
+interface StorageLayerLike {
+  connection?: unknown;
+  sessions?: unknown;
+  passwordResetRequests?: unknown;
+  accesses?: unknown;
+  profile?: unknown;
+  streams?: unknown;
+  webhooks?: unknown;
+  events?: unknown;
+  iterateAllEvents?: () => AsyncIterableIterator<unknown>;
+  getAllUserIdsFromCollection?: (name: string) => Promise<string[]>;
+  clearCollection?: (name: string) => Promise<void>;
+  [k: string]: unknown;
+}
+
+interface InitOptions {
+  sessionMaxAge?: number;
+  passwordResetRequestMaxAge?: number;
+  integrityAccesses?: unknown;
+  [k: string]: unknown;
+}
+
+type UserOrId = string | { id: string };
+
+function init (config: Record<string, unknown>, getLogger: (name: string) => Logger, internals: Record<string, unknown>): void {
   _internals.set('config', config);
   _internals.set('getLogger', getLogger);
   for (const [key, value] of Object.entries(internals)) {
@@ -36,8 +67,8 @@ function init (config: Record<string, any>, getLogger: (name: string) => any, in
 
 // -- BaseStorage --------------------------------------------------------
 
-function buildStub (label: string, methods: string[]): any {
-  const stub: Record<string, any> = {};
+function buildStub (label: string, methods: string[]): Record<string, (...args: unknown[]) => never> {
+  const stub: Record<string, (...args: unknown[]) => never> = {};
   for (const m of methods) {
     stub[m] = function () {
       throw new Error(`SQLite ${label}.${m}() not yet implemented`);
@@ -62,7 +93,7 @@ const PRR_METHODS = [
   'get', 'generate', 'destroy', 'clearAll', 'exportAll', 'importAll'
 ];
 
-async function initStorageLayer (storageLayer: any, _connection: any, options: any): Promise<void> {
+async function initStorageLayer (storageLayer: StorageLayerLike, _connection: unknown, options: InitOptions): Promise<void> {
   const { DatabaseSQLite } = require('./DatabaseSQLite.ts');
   const { SessionsSQLite } = require('./SessionsSQLite.ts');
   const { PasswordResetRequestsSQLite } = require('./PasswordResetRequestsSQLite.ts');
@@ -83,21 +114,21 @@ async function initStorageLayer (storageLayer: any, _connection: any, options: a
   storageLayer.webhooks = new WebhooksSQLite();
 
   storageLayer.events = {
-    importAll (_userOrUserId: any, _items: any[], callback: (err: any) => void) {
+    importAll (_userOrUserId: UserOrId, _items: unknown[], callback: (err: Error | null) => void) {
       // No-op: events are routed through the dataStore layer for the
       // SQLite engine. Backup-restore goes via the user-events dataStore
       // path; nothing in the live code path calls this.
       callback(null);
     },
-    async clearAll (userOrUserId: any, callback: (err: any) => void) {
+    async clearAll (userOrUserId: UserOrId, callback: (err: Error | null) => void) {
       const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
       try {
         const { UserBaseStorageDb } = require('./userBaseStorage/UserBaseStorageDb.ts');
         const udb = await UserBaseStorageDb.forUser(userId);
         try { udb.db.prepare('DELETE FROM events').run(); } catch (_e) { /* table may not exist */ }
         callback(null);
-      } catch (e: any) {
-        callback(e);
+      } catch (e) {
+        callback(e as Error);
       }
     }
   };
@@ -111,9 +142,9 @@ async function initStorageLayer (storageLayer: any, _connection: any, options: a
       const udb = await openUserBaseStorageDbSafe(userId);
       if (!udb) continue;
       try {
-        const rows = udb.db.prepare('SELECT * FROM events').all();
+        const rows = udb.db.prepare('SELECT * FROM events').all() as Array<Record<string, unknown>>;
         for (const row of rows) {
-          const event: any = row.data ? JSON.parse(row.data) : {};
+          const event: Record<string, unknown> = row.data ? JSON.parse(row.data as string) : {};
           event.id = row.id;
           if (row.head_id != null) event.headId = row.head_id;
           if (row.deleted != null) event.deleted = row.deleted;
@@ -171,7 +202,7 @@ async function initStorageLayer (storageLayer: any, _connection: any, options: a
     }
   }
 
-  async function openUserBaseStorageDbSafe (userId: string): Promise<any | null> {
+  async function openUserBaseStorageDbSafe (userId: string): Promise<{ db: { prepare: (sql: string) => { all: () => unknown[]; run: () => unknown } } } | null> {
     try {
       const { UserBaseStorageDb } = require('./userBaseStorage/UserBaseStorageDb.ts');
       return await UserBaseStorageDb.forUser(userId);
@@ -206,7 +237,7 @@ function createAuditStorage () {
 
 // -- SeriesStorage (SQLite, per-user file) ------------------------------
 
-function createSeriesConnection (config: any): any {
+function createSeriesConnection (config: Record<string, unknown>): unknown {
   return require('./seriesStorage/index.ts').createSeriesConnection(config);
 }
 
