@@ -21,23 +21,33 @@ const require = createRequire(import.meta.url);
  * fake. Returns `{ ok, status, body? }` discriminated unions per outcome.
  */
 
-type FetchLike = (url: string, init?: any) => Promise<{
+type FetchInit = {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  signal?: AbortSignal;
+  [k: string]: unknown;
+};
+
+type FetchLike = (url: string, init?: FetchInit) => Promise<{
   status: number;
   ok?: boolean;
-  json: () => Promise<any>;
+  json: () => Promise<unknown>;
   text: () => Promise<string>;
 }>;
+
+type LoggerLike = { debug: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
 
 type OutboundDeps = {
   fetch: FetchLike;
   timeoutMs?: number;
-  logger?: { debug: Function; warn: Function };
+  logger?: LoggerLike;
 };
 
 type DeliverResult =
-  | { ok: true; status: number; body: any }
-  | { ok: false; reason: 'http-4xx'; status: number; body: any }
-  | { ok: false; reason: 'http-5xx'; status: number; body: any }
+  | { ok: true; status: number; body: unknown }
+  | { ok: false; reason: 'http-4xx'; status: number; body: unknown }
+  | { ok: false; reason: 'http-5xx'; status: number; body: unknown }
   | { ok: false; reason: 'network'; status: 0; error: string }
   | { ok: false; reason: 'timeout'; status: 0 };
 
@@ -91,7 +101,7 @@ const DEFAULT_TIMEOUT_MS = 15 * 1000;
 async function postToPeer (params: {
   apiEndpoint: string;
   path: string;
-  body: any;
+  body: unknown;
   deps: OutboundDeps;
 }): Promise<DeliverResult> {
   const { apiEndpoint, path, body, deps } = params;
@@ -100,7 +110,7 @@ async function postToPeer (params: {
 
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  let timer: any;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   if (controller != null) {
     timer = setTimeout(() => controller.abort(), timeoutMs);
   }
@@ -118,7 +128,7 @@ async function postToPeer (params: {
 
     if (timer != null) clearTimeout(timer);
 
-    let parsed: any;
+    let parsed: unknown;
     try {
       parsed = await res.json();
     } catch (_e) {
@@ -134,15 +144,16 @@ async function postToPeer (params: {
     }
     deps.logger?.warn('cmc/outbound: peer 5xx', { host: base, status: res.status });
     return { ok: false, reason: 'http-5xx', status: res.status, body: parsed };
-  } catch (err: any) {
+  } catch (err) {
     if (timer != null) clearTimeout(timer);
-    const isAbort = err?.name === 'AbortError' || err?.code === 'ABORT_ERR';
+    const errObj = err as { name?: string; code?: string; message?: string } | null;
+    const isAbort = errObj?.name === 'AbortError' || errObj?.code === 'ABORT_ERR';
     if (isAbort) {
       deps.logger?.warn('cmc/outbound: timeout', { host: base, timeoutMs });
       return { ok: false, reason: 'timeout', status: 0 };
     }
     deps.logger?.warn('cmc/outbound: network failure', { host: base, error: String(err) });
-    return { ok: false, reason: 'network', status: 0, error: String(err?.message || err) };
+    return { ok: false, reason: 'network', status: 0, error: String(errObj?.message || err) };
   }
 }
 
