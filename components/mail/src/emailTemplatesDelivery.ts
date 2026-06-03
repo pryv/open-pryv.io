@@ -38,7 +38,23 @@ const logger = getLogger('mail-delivery');
  *   tmpDir: string
  * }>}
  */
-async function createEmailTemplatesDelivery (opts: any) {
+type TemplateRow = { type: string; lang: string; part: string; pug: string };
+type MailFrom = string | { name?: string; address: string };
+type DeliveryOpts = {
+  getAllMailTemplates: () => Promise<TemplateRow[]>;
+  smtp: Record<string, unknown>;
+  from?: MailFrom;
+  tmpDirRoot?: string;
+};
+type DeliveryReturn = {
+  send: (...args: unknown[]) => Promise<unknown>;
+  templateExists: (...args: unknown[]) => boolean | Promise<boolean>;
+  refresh: () => Promise<void>;
+  close: () => Promise<void>;
+  tmpDir: string;
+};
+
+async function createEmailTemplatesDelivery (opts: DeliveryOpts): Promise<DeliveryReturn> {
   const { getAllMailTemplates, smtp, from } = opts;
   if (typeof getAllMailTemplates !== 'function') {
     throw new Error('emailTemplatesDelivery: getAllMailTemplates function is required');
@@ -77,7 +93,7 @@ async function createEmailTemplatesDelivery (opts: any) {
  * Walk the PlatformDB template rows and write them to disk mirroring the
  * `<type>/<lang>/<part>.pug` layout `email-templates` expects.
  */
-async function materialiseTemplates (tmpDir: any, getAllMailTemplates: any) {
+async function materialiseTemplates (tmpDir: string, getAllMailTemplates: () => Promise<TemplateRow[]>): Promise<void> {
   const rows = await getAllMailTemplates();
   if (!Array.isArray(rows)) {
     throw new Error('emailTemplatesDelivery: getAllMailTemplates must return an array');
@@ -97,14 +113,14 @@ async function materialiseTemplates (tmpDir: any, getAllMailTemplates: any) {
   logger.debug(`materialised ${count} template file(s)`);
 }
 
-async function clearDir (dir: any) {
+async function clearDir (dir: string): Promise<void> {
   const entries = await fs.readdir(dir, { withFileTypes: true });
-  for (const e of entries) {
+  for (const e of entries as Array<{ name: string }>) {
     await fs.rm(path.join(dir, e.name), { recursive: true, force: true });
   }
 }
 
-function formatFrom (from: any) {
+function formatFrom (from: MailFrom | undefined): string | undefined {
   if (!from) return undefined;
   if (typeof from === 'string') return from;
   if (from.name && from.address) return `"${from.name}" <${from.address}>`;
