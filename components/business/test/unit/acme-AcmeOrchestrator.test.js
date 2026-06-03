@@ -250,7 +250,10 @@ describe('[ACMEORCH] AcmeOrchestrator', function () {
     it('immediately triggers one renew check on start when isRenewer=true', async () => {
       const renewer = makeFakeRenewer();
       const orch = new AcmeOrchestrator({
-        hostSpec: { commonName: 'h.test', altNames: [], challenge: 'http-01' },
+        // dns-01: orchestrator's start() guard now refuses http-01 (the only
+        // challenge type this codebase doesn't implement) — pick dns-01 so the
+        // renew chain actually runs.
+        hostSpec: { commonName: 'h.test', altNames: [], challenge: 'dns-01' },
         certRenewer: renewer,
         fileMaterializer: makeFakeFm(),
         dnsWriter: dummyDnsWriter,
@@ -260,8 +263,12 @@ describe('[ACMEORCH] AcmeOrchestrator', function () {
         log: () => {}
       });
       orch.start();
-      // Let both initial async paths resolve (materialize + renew)
-      await new Promise(resolve => setTimeout(resolve, 50));
+      // Poll for the renew callback — survives slow CI runners / contended
+      // event loops better than a fixed setTimeout.
+      const deadline = Date.now() + 500;
+      while (renewer._calls.length < 1 && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
       assert.equal(renewer._calls.length, 1);
       orch.stop();
     });
