@@ -19,7 +19,7 @@ const errors = require('errors').factory;
  * @param lang: user prefered language
  * @param callback(err,res): called once the email is sent
  */
-export const sendmail = function (emailSettings: any, template: any, recipient: any, subs: any, lang: any, callback: any) {
+export const sendmail = function (emailSettings: EmailSettings, template: string, recipient: Recipient, subs: Substitutions, lang: string, callback: Callback): void {
   const mailingMethod = emailSettings.method;
   switch (mailingMethod) {
     case 'in-process':
@@ -33,7 +33,7 @@ export const sendmail = function (emailSettings: any, template: any, recipient: 
     case 'microservice':
       {
         const url = new URL(template + '/' + lang, emailSettings.url).toString();
-        const data = {
+        const data: MicroserviceData = {
           key: emailSettings.key,
           to: recipient,
           substitutions: subs
@@ -44,14 +44,14 @@ export const sendmail = function (emailSettings: any, template: any, recipient: 
     case 'mandrill':
       {
         const url = emailSettings.url;
-        const subsArray: any[] = [];
+        const subsArray: MandrillSubstitution[] = [];
         for (const key of Object.keys(subs)) {
           subsArray.push({
             name: key,
             content: subs[key]
           });
         }
-        const data = {
+        const data: MandrillData = {
           key: emailSettings.key,
           template_name: template,
           template_content: [],
@@ -78,7 +78,7 @@ export const sendmail = function (emailSettings: any, template: any, recipient: 
  * already treat mail failures as non-fatal.
  *
  */
-function _sendmailInProcess (emailSettings: any, template: any, recipient: any, subs: any, lang: any, callback: any) {
+function _sendmailInProcess (emailSettings: EmailSettings, template: string, recipient: Recipient, subs: Substitutions, lang: string, callback: Callback): void {
   (async () => {
     const mail = require('mail');
     if (!mail.isActive()) {
@@ -113,25 +113,27 @@ function _sendmailInProcess (emailSettings: any, template: any, recipient: any, 
     }
   );
 }
-function _sendmail (url: any, data: any, cb: any) {
+type MailResponse = { ok: boolean; status: number; body: unknown };
+
+function _sendmail (url: string, data: MicroserviceData | MandrillData, cb: Callback): void {
   fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
   }).then(async (res) => {
-    let body = null;
+    let body: unknown = null;
     try { body = await res.json(); } catch (_) { /* non-JSON response */ }
     if (!res.ok) return cb(parseError(url, null, { ok: res.ok, status: res.status, body }));
     cb(null, { ok: res.ok, status: res.status, body });
-  }, (err) => {
+  }, (err: Error) => {
     cb(parseError(url, err, null));
   });
 }
-function parseError (url: any, err: any, res: any) {
+function parseError (url: string, err: Error | null, res: MailResponse | null): Error {
   // 1. Mail service answered with an error payload
-  if (res != null && res.body != null && res.body.error != null) {
+  if (res != null && res.body != null && typeof res.body === 'object' && 'error' in res.body && (res.body as { error: unknown }).error != null) {
     const baseMsg = 'Sending email failed, mail-service answered with the following error:\n';
-    return errors.unexpectedError(baseMsg + res.body.error);
+    return errors.unexpectedError(baseMsg + String((res.body as { error: unknown }).error));
   }
   // 2. HTTP-layer failure (fetch reject or non-2xx without error body)
   const errorMsg = err != null ? err.message : `HTTP ${res?.status ?? 'unknown'}`;
@@ -144,7 +146,7 @@ function parseError (url: any, err: any, res: any) {
   return errors.unexpectedError(baseMsg + errorMsg);
 }
 
-type Callback = (error?: Error | null, res?: any | null) => any;
+type Callback = (error?: Error | null, res?: MailResponse | null) => unknown;
 type Recipient = {
   email: string;
   name: string;
@@ -156,6 +158,9 @@ type EmailSettings = {
   key: string;
   welcomeTemplate: string;
   resetPasswordTemplate: string;
+  smtp?: { host?: string; [k: string]: unknown };
+  from?: string;
+  defaultLang?: string;
 };
 type EmailMethod = 'mandrill' | 'microservice' | 'in-process';
 type MandrillData = {
