@@ -29,15 +29,17 @@ const C = require('./constants.ts');
 const capabilityMod = require('./capability.ts');
 
 type MallLike = {
-  streams: { create: (userId: string, params: any) => Promise<any> };
-  events:  { create: (userId: string, params: any) => Promise<any> };
-  accesses:{ create: (userId: string, params: any) => Promise<any> };
+  streams: { create: (userId: string, params: Record<string, unknown>) => Promise<unknown> };
+  events:  { create: (userId: string, params: Record<string, unknown>) => Promise<unknown> };
+  accesses:{ create: (userId: string, params: Record<string, unknown>) => Promise<unknown> };
 };
 
 type ErrorFactory = {
-  invalidOperation: (message: string, details?: any) => any;
-  unexpectedError?: (err: any) => any;
+  invalidOperation: (message: string, details?: Record<string, unknown>) => Error;
+  unexpectedError?: (err: unknown) => Error;
 };
+
+type LoggerLike = { debug: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
 
 type Deps = {
   mall: MallLike;
@@ -45,7 +47,7 @@ type Deps = {
   idGen?: () => string;
   now?: () => number;
   serviceUrlBase?: string;
-  logger?: { debug: Function; warn: Function };
+  logger?: LoggerLike;
   // Optional: when present, the resolved {username, host} is stamped on
   // the offer event as content.requesterHost so the accepter's
   // handleAccept can compute the counterparty's CANONICAL host (e.g.
@@ -56,7 +58,14 @@ type Deps = {
   selfIdentityFor?: (userId: string) => Promise<{ username: string; host: string }> | { username: string; host: string };
 };
 
-type Middleware = (context: any, params: any, result: any, next: any) => any | Promise<any>;
+type MwContext = {
+  user?: { id?: string; [k: string]: unknown };
+  newEvent?: { id?: string; type?: string; content?: Record<string, unknown>; [k: string]: unknown };
+  cmc?: Record<string, unknown>;
+  [k: string]: unknown;
+};
+type MwNext = (err?: unknown) => unknown;
+type Middleware = (context: MwContext, params: unknown, result: unknown, next: MwNext) => unknown | Promise<unknown>;
 
 /**
  * Returns a middleware that fires for consent/request-cmc events with
@@ -87,7 +96,7 @@ function createCapabilityPostCreateHook (deps: Deps): Middleware {
     if (event.type !== C.ET_REQUEST) return next();
     if (event.content?.capabilityRequested !== true) return next();
     if (typeof event.id !== 'string' || event.id.length === 0) return next();
-    const accessId: string | undefined = event.content?.capabilityAccessId;
+    const accessId = event.content?.capabilityAccessId as string | undefined;
     if (typeof accessId !== 'string' || accessId.length === 0) return next();
     const userId = context.user?.id;
     if (typeof userId !== 'string') return next();
@@ -98,12 +107,13 @@ function createCapabilityPostCreateHook (deps: Deps): Middleware {
         requestEventId: event.id,
         deps: { mall: deps.mall },
       });
-    } catch (err: any) {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       deps.logger?.warn?.('cmc/capability-post-create: requestEventId stamp failed (non-fatal)', {
         userId,
         accessId,
         eventId: event.id,
-        error: String(err?.message || err),
+        error: message,
       });
     }
     next();
@@ -143,7 +153,7 @@ function createCapabilityMintHook (deps: Deps): Middleware {
     // Absent / non-number → fall through to mintCapability's
     // DEFAULT_TTL_SECONDS (7d).
     let ttlSeconds: number | undefined;
-    const callerExpiresAt = event.content?.request?.expiresAt;
+    const callerExpiresAt = (event.content?.request as { expiresAt?: number } | undefined)?.expiresAt;
     if (typeof callerExpiresAt === 'number' && Number.isFinite(callerExpiresAt)) {
       const now = (deps.now ?? (() => Date.now() / 1000))();
       const computed = Math.floor(callerExpiresAt - now);
@@ -199,16 +209,17 @@ function createCapabilityMintHook (deps: Deps): Middleware {
       };
 
       next();
-    } catch (err: any) {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       deps.logger?.warn?.('cmc/capability-mint: failed', {
         userId,
-        error: String(err?.message || err),
+        error: message,
       });
       const wrap = deps.errors.unexpectedError
         ? deps.errors.unexpectedError(err)
         : deps.errors.invalidOperation(
-            'CMC capability mint failed: ' + (err?.message || String(err)),
-            { id: 'cmc-mint-failed', error: String(err?.message || err) }
+            'CMC capability mint failed: ' + message,
+            { id: 'cmc-mint-failed', error: message }
           );
       next(wrap);
     }
