@@ -16,21 +16,25 @@ const utils = require('utils');
  *        params.access {Object} Access with which the API call was made
  *        params.filesReadTokenSecret {String} available in authSettings
  */
+type AccessLike = { id: string; token: string; [k: string]: unknown };
+type AttachmentLike = { id: string; readToken?: string; [k: string]: unknown };
+type EventLike = { attachments?: AttachmentLike[]; [k: string]: unknown };
+
 class SetFileReadTokenStream extends Transform {
-  access: any;
+  access: AccessLike;
   filesReadTokenSecret: string;
 
-  constructor (params: any) {
+  constructor (params: { access: AccessLike; filesReadTokenSecret: string }) {
     super({ objectMode: true });
     this.access = params.access;
     this.filesReadTokenSecret = params.filesReadTokenSecret;
   }
 
-  _transform (event: any, encoding: any, callback: any) {
+  _transform (event: EventLike, encoding: BufferEncoding, callback: (err?: Error | null) => void): void {
     if (!event.attachments) {
       this.push(event);
     } else {
-      event.attachments.forEach((att: any) => {
+      event.attachments.forEach((att: AttachmentLike) => {
         att.readToken = utils.encryption.fileReadToken(
           att.id, this.access.id, this.access.token,
           this.filesReadTokenSecret);
