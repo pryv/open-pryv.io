@@ -35,10 +35,12 @@ const outbound = require('./outbound.ts');
 
 // One process-wide suppression context. CMC handlers enter via
 // runWithSuppression(); the post-hook reads via isSuppressed().
-// `AsyncLocalStorage` is loaded via require() (CJS interop) so TS
-// sees it as untyped — cast to `any` to attach a typed-store shape
-// inline. Functional behaviour identical; build-time only.
-const suppressionStorage: any = new (AsyncLocalStorage as any)();
+interface SuppressionStore { suppressed?: boolean }
+interface AsyncStorageLike<T> {
+  getStore (): T | undefined;
+  run<R> (store: T, fn: () => R): R;
+}
+const suppressionStorage = new AsyncLocalStorage() as AsyncStorageLike<SuppressionStore>;
 
 function isSuppressed (): boolean {
   return suppressionStorage.getStore()?.suppressed === true;
@@ -48,21 +50,33 @@ function runWithSuppression<T> (fn: () => Promise<T>): Promise<T> {
   return suppressionStorage.run({ suppressed: true }, fn);
 }
 
+type CmcAccessClientData = {
+  cmc?: {
+    role?: string;
+    appCode?: string;
+    counterparty?: { username?: string; host?: string; apiEndpoint?: string; [k: string]: unknown };
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+};
+
 type AccessLike = {
   id: string;
-  permissions?: any[];
-  clientData?: any;
+  permissions?: unknown[];
+  clientData?: CmcAccessClientData;
 };
 
 type MallLike = {
-  events: { create: (userId: string, params: any) => Promise<any> };
-  accesses?: { get: (userId: string, params?: any) => Promise<AccessLike[]> };
+  events: { create: (userId: string, params: Record<string, unknown>) => Promise<{ id?: string; [k: string]: unknown }> };
+  accesses?: { get: (userId: string, params?: Record<string, unknown>) => Promise<AccessLike[]> };
 };
 
+type LoggerLike = { debug: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
+
 type OutboundDeps = {
-  fetch: (url: string, init?: any) => Promise<any>;
+  fetch: (url: string, init?: Record<string, unknown>) => Promise<{ status: number; [k: string]: unknown }>;
   timeoutMs?: number;
-  logger?: { debug: Function; warn: Function };
+  logger?: LoggerLike;
 };
 
 type PostHookDeps = {
@@ -141,10 +155,11 @@ function createAccessesUpdatePostHook (deps: PostHookDeps) {
           content: payload,
         });
         localAuditEventId = ev?.id;
-      } catch (err: any) {
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         deps.logger?.warn?.('cmc/accessesUpdateHook: local audit-event create failed', {
           accessId: after.id,
-          error: String(err?.message || err),
+          error: message,
         });
       }
     }
@@ -169,14 +184,15 @@ function createAccessesUpdatePostHook (deps: PostHookDeps) {
       if (!peerNotified) {
         deps.logger?.warn?.('cmc/accessesUpdateHook: peer delivery failed', {
           accessId: after.id,
-          reason: (delivery as any).reason,
+          reason: (delivery as { reason?: string }).reason,
           status: delivery.status,
         });
       }
-    } catch (err: any) {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       deps.logger?.warn?.('cmc/accessesUpdateHook: peer delivery threw', {
         accessId: after.id,
-        error: String(err?.message || err),
+        error: message,
       });
     }
 
