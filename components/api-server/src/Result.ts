@@ -31,50 +31,51 @@ const { DummyTracing } = require('tracing');
 //
 
 class Result {
-  _private!: any;
+  _private!: ResultPrivate;
 
-  meta: any;
+  meta?: unknown;
   // These are used by the various methods to store the result objects.
   // Never assume these are filled in...
   // Exercise to the reader: How can we get rid of this mixed bag of things?
 
-  accesses: any;
+  accesses?: unknown;
 
-  access: any;
+  access?: unknown;
 
-  accessDeletion: any;
+  accessDeletion?: unknown;
 
-  accessDeletions: any;
+  accessDeletions?: unknown;
 
-  relatedDeletions: any;
+  relatedDeletions?: unknown;
 
-  matchingAccess: any;
+  matchingAccess?: unknown;
 
-  mismatchingAccess: any;
+  mismatchingAccess?: unknown;
 
-  checkedPermissions: any;
+  checkedPermissions?: unknown;
 
-  error: any;
+  error?: unknown;
 
-  event: any;
+  event?: unknown;
 
-  events: any;
+  events?: unknown;
 
-  type: any;
+  type?: unknown;
 
-  name: any;
+  name?: unknown;
 
-  permissions: any;
+  permissions?: unknown;
 
-  results: any;
+  results?: unknown;
 
-  webhook: any;
+  webhook?: unknown;
 
-  webhooks: any;
+  webhooks?: unknown;
 
-  webhookDeletion: any;
+  webhookDeletion?: unknown;
 
-  auditLogs: any;
+  auditLogs?: unknown;
+  [key: string]: unknown;
   constructor (params: ResultOptions | undefined) {
     this._private = {
       init: false,
@@ -94,13 +95,13 @@ class Result {
   }
 
   closeTracing () {
-    this._private.tracing.finishSpan(this._private.tracingId);
+    this._private.tracing.finishSpan(this._private.tracingId!);
   }
 
   // Array concat stream
   addToConcatArrayStream (arrayName: string, stream: Readable) {
     if (!this._private.streamsConcatArrays[arrayName]) {
-      this._private.streamsConcatArrays[arrayName] = new StreamConcatArray(this._private.tracing, this._private.tracingId);
+      this._private.streamsConcatArrays[arrayName] = new StreamConcatArray(this._private.tracing, this._private.tracingId!);
     }
     this._private.streamsConcatArrays[arrayName].add(stream);
     this._private.tracing.startSpan('addToConcatArrayStream:' + arrayName);
@@ -140,7 +141,7 @@ class Result {
   writeToHttpResponse (res: Response, successCode: number) {
     const onEndCallBack = this._private.onEndCallback;
     if (this.isStreamResult()) {
-      const writeTracingId = this._private.tracing.startSpan('writeToHttpResponse', {}, this._private.tracingId);
+      const writeTracingId = this._private.tracing.startSpan('writeToHttpResponse', {}, this._private.tracingId!);
       const stream = this.writeStreams(res, successCode);
       stream.on('close', () => {
         if (onEndCallBack) { onEndCallBack(); }
@@ -170,12 +171,12 @@ class Result {
     }
 
     return new MultiStream(streams)
-      .pipe(new ResultStream(this._private.tracing, this._private.tracingId))
+      .pipe(new ResultStream(this._private.tracing, this._private.tracingId!))
       .pipe(res);
   }
 
   writeSingle (res: Response, successCode: number) {
-    delete this._private;
+    delete (this as Record<string, unknown>)._private;
     res.status(successCode).json(commonMeta.setCommonMeta(this));
   }
 
@@ -211,7 +212,7 @@ class Result {
   }
 
   toObjectSingle (callback: ToObjectCallback) {
-    delete this._private;
+    delete (this as Record<string, unknown>)._private;
     callback(null, this);
   }
 }
@@ -220,10 +221,10 @@ class Result {
 /** @extends Transform */
 class ResultStream extends Transform {
   isStart: boolean;
-  tracing: any;
+  tracing: Tracing;
   tracingId: string;
   debugString: string;
-  constructor (tracing: any, parentTracingId: string) {
+  constructor (tracing: Tracing, parentTracingId: string) {
     super({ writableObjectMode: true });
     this.isStart = true;
     this.tracing = tracing;
@@ -265,10 +266,10 @@ class StreamConcatArray {
 
   isClosed: boolean;
 
-  tracing: any;
+  tracing: Tracing;
 
   tracingName: string;
-  constructor (tracing: any, parentTracingId: string) {
+  constructor (tracing: Tracing, parentTracingId: string) {
     // holds pending stream not yet taken by
     this.streamsToAdd = [];
     this.nextFactoryCallBack = null;
@@ -319,14 +320,32 @@ class StreamConcatArray {
 
 type ResultOptions = {
   arrayLimit?: number;
-  tracing?: object;
+  tracing?: Tracing;
 };
 type StreamDescriptor = {
   name: string;
-  // Readable was a JSDoc Node-stream reference, not imported as TS type here.
-  stream: any;
+  stream: Readable;
+  isArray: boolean;
 };
-type APIResult = { [x: string]: any } | { [x: string]: Array<any> };
+type APIResult = Record<string, unknown>;
+
+interface Tracing {
+  startSpan: (name: string, opts?: Record<string, unknown>, parentId?: string) => string;
+  finishSpan: (id: string) => void;
+  logForSpan: (id: string, info: Record<string, unknown>) => void;
+}
+
+interface ResultPrivate {
+  init: boolean;
+  first: boolean;
+  arrayLimit: number;
+  isStreamResult: boolean;
+  streamsArray: StreamDescriptor[];
+  onEndCallback: (() => void) | null;
+  streamsConcatArrays: Record<string, StreamConcatArray>;
+  tracing: Tracing;
+  tracingId: string | null;
+}
 type ToObjectCallback = (err?: Error | null, res?: APIResult | null) => unknown;
 type doneCallBack = () => unknown;
 type itemDeletion = {
