@@ -33,12 +33,12 @@ class MetadataCache {
   //  - username/eventId/accessToken -> SeriesMetadataImpl
   cache: InstanceType<typeof LRU>;
 
-  series: any; // SeriesConnection — not yet typed.
+  series: { connection: { dropMeasurement: (...args: unknown[]) => unknown }; [k: string]: unknown };
 
-  mall: any;
+  mall: unknown;
 
-  config: any;
-  constructor (series: any, metadataLoader: MetadataLoader, config: any) {
+  config: { get: (key: string) => unknown };
+  constructor (series: { connection: { dropMeasurement: (...args: unknown[]) => unknown }; [k: string]: unknown }, metadataLoader: MetadataLoader, config: { get: (key: string) => unknown }) {
     this.loader = metadataLoader;
     this.series = series;
     this.config = config;
@@ -111,9 +111,9 @@ class MetadataCache {
 /** Loads metadata related to a series from the main database.
  */
 class MetadataLoader {
-  storage: any;
+  storage: unknown;
 
-  mall: any;
+  mall: unknown;
 
   async init (mall: unknown, _logger: unknown) {
     this.mall = mall;
@@ -136,14 +136,14 @@ class MetadataLoader {
         await methodContext.init();
         await methodContext.retrieveExpandedAccess(storage);
         const user = methodContext.user;
-        const event = await mall.events.getOne(user.id, eventId);
+        const event = await (mall as { events: { getOne: (userId: string, eventId: string) => Promise<unknown> } }).events.getOne(user.id, eventId);
         const access = methodContext.access;
         // Because we called retrieveExpandedAccess above.
         if (access == null) { throw new Error('AF: access != null'); }
         // Because user was retrieved above.
         if (user == null) { throw new Error('AF: user != null'); }
-        if (event === null) { return returnValueCallback(errors.unknownResource('event', eventId)); }
-        const serieMetadata = new SeriesMetadataImpl(access, user, event);
+        if (event == null) { return returnValueCallback(errors.unknownResource('event', eventId)); }
+        const serieMetadata = new SeriesMetadataImpl(access, user, event as EventModel);
         serieMetadata.init().then(() => {
           returnValueCallback(null, serieMetadata);
         }, (error: unknown) => {
@@ -216,7 +216,7 @@ class SeriesMetadataImpl {
   }
 
   // Return the InfluxDB row type for the given event.
-  produceRowType (repo: { lookup (type: string): any }) {
+  produceRowType (repo: { lookup (type: string): InstanceType<typeof SeriesRowType> & { isSeries: () => boolean; setSeriesMeta: (m: unknown) => void } }) {
     const type = repo.lookup(this.eventType);
 
     // NOTE: the instanceof check here serves to make the type system happy
