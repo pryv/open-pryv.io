@@ -54,7 +54,7 @@ const TAG_BYTES = 16;
  * @param purpose       - label, e.g. 'pryv-at-rest-tls-v1'
  * @param [salt]        - optional salt; default: empty (acceptable because source has entropy)
  */
-function deriveKey (source: any, purpose: any, salt: any = Buffer.alloc(0)) {
+function deriveKey (source: string | Buffer, purpose: string, salt: Buffer = Buffer.alloc(0)): Buffer {
   if (source == null || (Buffer.isBuffer(source) && source.length === 0) ||
       (typeof source === 'string' && source.length === 0)) {
     throw new Error('AtRestEncryption.deriveKey: source is required');
@@ -73,7 +73,7 @@ function deriveKey (source: any, purpose: any, salt: any = Buffer.alloc(0)) {
  *
  * @param key - 32 bytes
  */
-function encrypt (plaintext: any, key: any) {
+function encrypt (plaintext: string | Buffer, key: Buffer): string {
   if (plaintext == null) {
     throw new Error('AtRestEncryption.encrypt: plaintext is required');
   }
@@ -95,14 +95,14 @@ function encrypt (plaintext: any, key: any) {
  *
  * @param key - 32 bytes
  */
-function decrypt (encoded: any, key: any) {
+function decrypt (encoded: string, key: Buffer): Buffer {
   if (typeof encoded !== 'string' || encoded.length === 0) {
     throw new Error('AtRestEncryption.decrypt: encoded is required');
   }
   if (!Buffer.isBuffer(key) || key.length !== KEY_BYTES) {
     throw new Error(`AtRestEncryption.decrypt: key must be a ${KEY_BYTES}-byte Buffer`);
   }
-  let envelope: any;
+  let envelope: Buffer;
   try { envelope = Buffer.from(encoded, 'base64'); } catch {
     throw new Error('AtRestEncryption.decrypt: invalid base64');
   }
@@ -130,14 +130,14 @@ function decrypt (encoded: any, key: any) {
 /**
  * Convenience: encrypt a JS object as JSON and return the envelope.
  */
-function encryptJson (obj: any, key: any) {
+function encryptJson (obj: unknown, key: Buffer): string {
   return encrypt(JSON.stringify(obj), key);
 }
 
 /**
  * Convenience: decrypt and JSON.parse. Throws if the plaintext isn't valid JSON.
  */
-function decryptJson (encoded: any, key: any) {
+function decryptJson (encoded: string, key: Buffer): unknown {
   const pt = decrypt(encoded, key);
   try { return JSON.parse(pt.toString('utf8')); } catch {
     throw new Error('AtRestEncryption.decryptJson: decrypted payload is not valid JSON');
