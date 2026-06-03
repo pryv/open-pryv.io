@@ -18,7 +18,13 @@ const logger = _internals.lazyLogger('sqlite-storage-migration');
 
 export { migrateUserDBsIfNeeded };
 
-async function migrateUserDBsIfNeeded (storage: any): Promise<{ migrated: number, skipped: number } | undefined> {
+type StorageLike = {
+  getVersion: () => number | string;
+  dbgetPathForUser: (userId: string) => Promise<string>;
+};
+type Logger = { debug: (msg: string) => void; info: (msg: string) => void; warn: (msg: string) => void; error: (msg: unknown) => void };
+
+async function migrateUserDBsIfNeeded (storage: StorageLike): Promise<{ migrated: number, skipped: number } | undefined> {
   const usersBaseDirectory = _internals.userLocalDirectory.getBasePath();
   if (!fs.existsSync(usersBaseDirectory)) {
     fs.mkdirSync(usersBaseDirectory, { recursive: true });
@@ -62,8 +68,9 @@ async function migrateUserDBsIfNeeded (storage: any): Promise<{ migrated: number
       logger.info('Migrated ' + resMigrate.count + ' records for ' + userId);
       v1user.close();
       result.migrated++;
-    } catch (err: any) {
-      logger.error('ERROR during Migration V0 to V1: ' + err.message + ' >> For User: ' + userId + '>>> Check Dbs in: ' + userDir);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('ERROR during Migration V0 to V1: ' + message + ' >> For User: ' + userId + '>>> Check Dbs in: ' + userDir);
       logger.error(err);
       await fs.promises.unlink(v1dbPath);
       process.exit(1);
@@ -71,7 +78,7 @@ async function migrateUserDBsIfNeeded (storage: any): Promise<{ migrated: number
   }
 }
 
-async function foreachUserDirectory (asyncCallBack: (uid: string, path: string) => Promise<void>, userDataPath: string, logger: any): Promise<void> {
+async function foreachUserDirectory (asyncCallBack: (uid: string, path: string) => Promise<void>, userDataPath: string, logger: Logger): Promise<void> {
   await loop(userDataPath, '');
 
   async function loop (loopPath: string, tail: string): Promise<void> {

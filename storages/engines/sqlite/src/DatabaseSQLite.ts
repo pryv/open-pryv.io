@@ -23,10 +23,13 @@ const { _internals } = require('./_internals.ts');
  *
  * The shared file lives at `<sqlite.path>/_shared/baseStorage.sqlite`.
  */
+type SqliteDb = { prepare: (sql: string) => { run: (...args: unknown[]) => unknown }; close: () => void; [k: string]: unknown };
+type Logger = { debug?: Function; info?: Function; warn?: Function; error?: Function; [k: string]: unknown };
+
 class DatabaseSQLite {
-  db: any;
+  db!: SqliteDb;
   dbPath: string;
-  logger: any;
+  logger: Logger;
   initialized: boolean = false;
 
   constructor () {
@@ -75,7 +78,7 @@ class DatabaseSQLite {
     this.initialized = true;
   }
 
-  getDb (): any {
+  getDb (): SqliteDb {
     if (!this.initialized) throw new Error('DatabaseSQLite not initialized');
     return this.db;
   }
@@ -87,7 +90,7 @@ class DatabaseSQLite {
   close (): void {
     if (this.db) {
       this.db.close();
-      this.db = null;
+      this.db = null as unknown as SqliteDb;
       this.initialized = false;
     }
   }
