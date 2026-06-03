@@ -5,25 +5,32 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction } from 'express';
 const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
 const business = require('business');
 const cls = require('../tracing/cls.ts').default;
-function mount (ctx: any, handler: any) {
-  return catchAndNext(handler.bind(null, ctx));
+
+type HfsContext = unknown;
+type ControllerHandler = (ctx: HfsContext, req: Request, res: Response, next: NextFunction) => Promise<unknown> | unknown;
+type ExpressHandler = (req: Request, res: Response, next: NextFunction) => Promise<unknown> | unknown;
+
+function mount (ctx: HfsContext, handler: ControllerHandler): ExpressHandler {
+  return catchAndNext(handler.bind(null, ctx) as ExpressHandler);
 }
-function catchAndNext (handler: any) {
-  return async (req: any, res: any, next: any) => {
+function catchAndNext (handler: ExpressHandler): ExpressHandler {
+  return async (req: Request, res: Response, next: NextFunction) => {
     try {
       return await handler(req, res, next);
-    } catch (err: any) {
+    } catch (err) {
       storeErrorInTrace(err);
-      if (err.constructor.name === 'ServiceNotAvailableError') {
-        return next(errors.apiUnavailable(err.message));
+      const e = err as Error & { constructor: { name: string } };
+      if (e.constructor.name === 'ServiceNotAvailableError') {
+        return next(errors.apiUnavailable(e.message));
       }
       if (err instanceof business.types.errors.InputTypeError) {
-        return next(errors.invalidRequestStructure(err.message));
+        return next(errors.invalidRequestStructure(e.message));
       }
       next(err);
     }
@@ -36,18 +43,19 @@ const TAG_ERROR_MESSAGE = 'error.message';
 //
 // NOTE This method should not throw an error!
 //
-function storeErrorInTrace (err: any) {
+function storeErrorInTrace (err: unknown): void {
   try {
     const root = cls.getRootSpan();
     if (root == null) { return; }
     root.setTag('error', true);
-    if (err.message != null) { root.setTag(TAG_ERROR_MESSAGE, err.message); }
+    const e = err as { message?: string };
+    if (e.message != null) { root.setTag(TAG_ERROR_MESSAGE, e.message); }
   } catch (err) {
     // IGNORE
   }
 }
 // --------------------------------------------------------------------- factory
-export default function (ctx: any) {
+export default function (ctx: HfsContext) {
   return {
     storeSeriesData: mount(ctx, require('./op/store_series_data.ts').default),
     querySeriesData: mount(ctx, require('./op/query_series_data.ts').default),
