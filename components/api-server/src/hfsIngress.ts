@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { IncomingMessage, ServerResponse } from 'http';
 const require = createRequire(import.meta.url);
 
 /**
@@ -49,21 +50,23 @@ function isHfsPath (url: string): boolean {
  * if the request matches an HFS path the dispatcher proxies it,
  * otherwise it invokes `fallback(req, res)` to pass to express.
  */
-function buildHfsIngress (opts: { hfsHost: string, hfsPort: number, logger: any }) {
+type Logger = { warn: (msg: string) => void; info?: (msg: string) => void; debug?: (msg: string) => void; error?: (msg: string) => void };
+
+function buildHfsIngress (opts: { hfsHost: string, hfsPort: number, logger: Logger }) {
   const { hfsHost, hfsPort, logger } = opts;
 
-  function proxy (req: any, res: any): void {
+  function proxy (req: IncomingMessage, res: ServerResponse): void {
     const proxyReq = http.request({
       host: hfsHost,
       port: hfsPort,
       method: req.method,
       path: req.url,
       headers: req.headers
-    }, (proxyRes: any) => {
-      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+    }, (proxyRes: IncomingMessage) => {
+      res.writeHead(proxyRes.statusCode ?? 500, proxyRes.headers);
       proxyRes.pipe(res);
     });
-    proxyReq.on('error', (err: any) => {
+    proxyReq.on('error', (err: Error) => {
       logger.warn(`[hfs-ingress] upstream error ${req.method} ${req.url}: ${err.message}`);
       if (!res.headersSent) {
         res.writeHead(502, { 'content-type': 'application/json' });
@@ -80,7 +83,7 @@ function buildHfsIngress (opts: { hfsHost: string, hfsPort: number, logger: any 
     req.pipe(proxyReq);
   }
 
-  return function dispatch (req: any, res: any, fallback: (req: any, res: any) => void): void {
+  return function dispatch (req: IncomingMessage, res: ServerResponse, fallback: (req: IncomingMessage, res: ServerResponse) => void): void {
     if (req.url && isHfsPath(req.url)) {
       proxy(req, res);
       return;
