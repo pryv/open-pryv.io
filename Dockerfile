@@ -49,4 +49,8 @@ ENV NODE_ENV=production
 # similar PaaS use it to know which container ports may be published.
 EXPOSE 80 443 3000 3001 4000 53/udp
 
-CMD ["node", "bin/master.js"]
+# Entry-point dispatcher: no args → normal master.js boot;
+# `init <path>` → interactive config wizard; `check-config <path>` → validate
+# existing config; anything else → exec passthrough.
+ENTRYPOINT ["./scripts/docker-entrypoint.sh"]
+CMD []

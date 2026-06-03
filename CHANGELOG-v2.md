@@ -4,6 +4,17 @@
 
 First Release Candidate of open-pryv.io v2. The runtime has been production-deployed since 2026-04-23 on pryv.me (two-core cluster, 14 real users, 28K events, 264 attachments). lib-js conformance against deployed infra: 168/169 (the missing one is the documented HF case on raw deploys without nginx ingress, see "Known gaps in v2.0.0" below).
 
+### New in `2.0.0-rc.1`: install wizard
+
+```bash
+docker run -it -v /host/config:/app/config -v /host/data:/app/data \
+  pryvio/open-pryv.io init /app/config/override-config.yml
+```
+
+Interactive single-core install wizard that generates a complete `override-config.yml` from prompts (DNS topology, storage engine, secrets, TLS, auth-UI URL, …) and validates the host environment before writing. Companion subcommand `check-config <path>` runs the same structural checks against an existing config — useful for catching the half-configured cases (`access.defaultAuthUrl` missing, `services.email` half-set, etc.) before the first boot.
+
+No-arg `docker run pryvio/open-pryv.io` continues to behave exactly as before (boots `bin/master.js`). Anything else passes through (`node --version`, `bash`, …).
+
 ### What an implementer pinning to `2.0.0-rc.1` gets
 
 - **Single-binary topology.** One `bin/master.js` process manages API + HFS + Previews workers in one Docker image (`pryvio/open-pryv.io:2.0.0-rc.1`). No more MongoDB, no separate `service-register` / `service-mfa` / `service-mail` containers — all merged into core.
