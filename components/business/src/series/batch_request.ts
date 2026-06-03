@@ -8,13 +8,30 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const DataMatrix = require('./data_matrix.ts').default;
 const { error, ParseFailure } = require('./errors.ts');
+
+type SeriesRowType = unknown;
+type TypeResolveFunction = (eventId: string) => Promise<SeriesRowType>;
+type DataMatrixInstance = unknown;
+
+interface SeriesBatchEnvelope {
+  format?: string;
+  data?: unknown[];
+  [k: string]: unknown;
+}
+
+interface SeriesBatchElement {
+  eventId?: unknown;
+  data?: unknown;
+  [k: string]: unknown;
+}
+
 // A `BatchRequest` is a collection of batch elements. Each of those in turn
 // will contain a series meta data descriptor and a data matrix to input into
 // that series.
 //
 
 class BatchRequest {
-  list: any[];
+  list: BatchRequestElement[];
   // Parses an object and verifies that its structure corresponds to a series
   // batch, as described in the documentation ('seriesBatch'). If the input
   // object contains an error, it is thrown as a `ParseFailure`.
@@ -24,7 +41,7 @@ class BatchRequest {
    * @param {TypeResolveFunction} resolver
    * @returns {Promise<BatchRequest>}
    */
-  static parse (jsonObj: any, resolver: any) {
+  static parse (jsonObj: unknown, resolver: TypeResolveFunction): Promise<BatchRequest> {
     const parser = new Parser(resolver);
     return parser.parse(jsonObj);
   }
@@ -35,17 +52,17 @@ class BatchRequest {
 
   // Append an element to the list of elements in this BatchRequest.
   //
-  append (element: any) {
+  append (element: BatchRequestElement): void {
     this.list.push(element);
   }
 
   // Returns the amount of batch elements stored here.
   //
-  length () {
+  length (): number {
     return this.list.length;
   }
 
-  * elements () {
+  * elements (): IterableIterator<BatchRequestElement> {
     // No arr.values() in node yet...
     for (const el of this.list) {
       yield el;
@@ -57,20 +74,20 @@ class BatchRequest {
 //
 
 class BatchRequestElement {
-  eventId;
+  eventId: string;
 
-  data;
+  data: DataMatrixInstance;
   /** @static
    * @param {unknown} obj
    * @param {TypeResolveFunction} resolver
    * @returns {Promise<BatchRequestElement>}
    */
-  static parse (obj: any, resolver: any) {
+  static parse (obj: unknown, resolver: TypeResolveFunction): Promise<BatchRequestElement> {
     const parser = new ElementParser();
     return parser.parse(obj, resolver);
   }
 
-  constructor (eventId: any, data: any) {
+  constructor (eventId: string, data: DataMatrixInstance) {
     this.eventId = eventId;
     this.data = data;
   }
@@ -81,17 +98,17 @@ const SERIES_BATCH = 'seriesBatch';
 //
 
 class Parser {
-  resolver;
-  constructor (resolver: any) {
+  resolver: TypeResolveFunction;
+  constructor (resolver: TypeResolveFunction) {
     this.resolver = resolver;
   }
 
-  parse (jsonObj: any) {
+  parse (jsonObj: unknown): Promise<BatchRequest> {
     if (jsonObj == null || typeof jsonObj !== 'object') { throw error('Request body needs to be in JSON format.'); }
-    return this.parseSeriesBatch(jsonObj);
+    return this.parseSeriesBatch(jsonObj as SeriesBatchEnvelope);
   }
 
-  async parseSeriesBatch (obj: any) {
+  async parseSeriesBatch (obj: SeriesBatchEnvelope): Promise<BatchRequest> {
     const resolver = this.resolver;
     const out = new BatchRequest();
     if (obj.format !== SERIES_BATCH) { throw error('Envelope "format" must be "seriesBatch"'); }
@@ -104,13 +121,14 @@ class Parser {
 }
 
 class ElementParser {
-  async parse (obj: any, resolver: any) {
+  async parse (obj: unknown, resolver: TypeResolveFunction): Promise<BatchRequestElement> {
     if (obj == null || typeof obj !== 'object') { throw error('Batch element must be an object with properties.'); }
-    const eventId = obj.eventId;
+    const el = obj as SeriesBatchElement;
+    const eventId = el.eventId;
     if (typeof eventId !== 'string') { throw error('Batch element must contain an eventId of the series event.'); }
     const type = await resolver(eventId);
-    return new BatchRequestElement(eventId, DataMatrix.parse(obj.data, type));
+    return new BatchRequestElement(eventId, DataMatrix.parse(el.data, type));
   }
 }
 export { BatchRequest, BatchRequestElement, ParseFailure };
-type TypeResolveFunction = (eventId: string) => Promise<any> /* JSDoc-only SeriesRowType */;
+export type { TypeResolveFunction };
