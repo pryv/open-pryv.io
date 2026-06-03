@@ -33,7 +33,13 @@ const logger = getLogger('mail-template-seeder');
  * @param opts.platformDB     — the PlatformDB instance (setMailTemplate + getAllMailTemplates)
  * @param opts.templatesRootDir — absolute path to the Pug root
  */
-async function seedIfEmpty ({ platformDB, templatesRootDir }: any) {
+type PlatformDBLike = {
+  getAllMailTemplates: () => Promise<unknown[]>;
+  setMailTemplate: (type: string, lang: string, part: string, pug: string) => Promise<unknown>;
+};
+type SeedResult = { seeded: boolean; count: number; reason?: string };
+
+async function seedIfEmpty ({ platformDB, templatesRootDir }: { platformDB: PlatformDBLike; templatesRootDir: string }): Promise<SeedResult> {
   if (!platformDB) throw new Error('TemplateSeeder: platformDB is required');
   if (!templatesRootDir) {
     return { seeded: false, count: 0, reason: 'templatesRootDir-not-set' };
@@ -71,9 +77,11 @@ async function seedIfEmpty ({ platformDB, templatesRootDir }: any) {
   return { seeded: true, count };
 }
 
-async function listDirs (parent: any) {
+type DirEntLike = { name: string; isDirectory: () => boolean };
+
+async function listDirs (parent: string): Promise<string[]> {
   const entries = await fs.readdir(parent, { withFileTypes: true });
-  return entries.filter((e: any) => e.isDirectory()).map((e: any) => e.name);
+  return (entries as DirEntLike[]).filter((e: DirEntLike) => e.isDirectory()).map((e: DirEntLike) => e.name);
 }
 
 export { seedIfEmpty };

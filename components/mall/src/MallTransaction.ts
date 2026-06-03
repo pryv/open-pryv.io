@@ -8,25 +8,29 @@
 
 import type {} from 'node:fs';
 
-class MallTransaction {
-  mall;
-  storeTransactions;
+type StoreTransactionLike = { exec: (func: () => unknown | Promise<unknown>) => Promise<unknown> };
+type DataStoreLike = { newTransaction?: () => Promise<StoreTransactionLike> };
+type MallLike = { storesById: Map<string, DataStoreLike> };
 
-  constructor (mall: any) {
+class MallTransaction {
+  mall: MallLike;
+  storeTransactions: Map<string, StoreTransactionLike>;
+
+  constructor (mall: MallLike) {
     this.mall = mall;
     this.storeTransactions = new Map();
   }
 
-  async getStoreTransaction (storeId: any) {
+  async getStoreTransaction (storeId: string): Promise<StoreTransactionLike | undefined> {
     if (this.storeTransactions.has(storeId)) {
       return this.storeTransactions.get(storeId);
     }
     const store = this.mall.storesById.get(storeId);
     // stubbing transaction when not supported (not yet documented in DataStore)
-    if (store.newTransaction == null) {
+    if (store!.newTransaction == null) {
       return new StoreTransactionStub();
     }
-    const transaction = await store.newTransaction();
+    const transaction = await store!.newTransaction();
     this.storeTransactions.set(storeId, transaction);
     return transaction;
   }
@@ -36,5 +40,5 @@ export default MallTransaction;
 export { MallTransaction };
 
 class StoreTransactionStub {
-  async exec (func: any) { return await func(); }
+  async exec (func: () => unknown | Promise<unknown>): Promise<unknown> { return await func(); }
 }

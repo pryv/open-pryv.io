@@ -5,15 +5,18 @@
  * Refer to LICENSE file
  */
 import type {} from 'node:fs';
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
+
+type PryvRequest = Request & { context?: { retrieveExpandedAccess: (sl: unknown) => Promise<void>; access?: { id: string } | null } };
 
 // Returns a middleware function that loads the access into `req.context.access`.
 // The access is loaded from the token previously extracted by the `initContext` middleware.
 // Also, it adds the corresponding access id as a specific response header.
 //
-export default function loadAccess (storageLayer: any) {
-  return async function (req: any, res: any, next: any) {
+export default function loadAccess (storageLayer: unknown): RequestHandler {
+  return async function (req: PryvRequest, res: Response, next: NextFunction) {
     try {
-      await req.context.retrieveExpandedAccess(storageLayer);
+      await req.context!.retrieveExpandedAccess(storageLayer);
       // Add access id header
       setAccessIdHeader(req, res);
       next();
@@ -22,7 +25,7 @@ export default function loadAccess (storageLayer: any) {
       setAccessIdHeader(req, res);
       next(err);
     }
-  };
+  } as RequestHandler;
 };
 /**
  * Adds the id of the access (if any was used during API call)
@@ -32,7 +35,7 @@ export default function loadAccess (storageLayer: any) {
  * @param req  Current express request.
  * @param res  Current express response. MODIFIED IN PLACE.
  */
-function setAccessIdHeader (req: any, res: any) {
+function setAccessIdHeader (req: PryvRequest, res: Response): Response {
   if (req != null) {
     const requestCtx = req.context;
     if (requestCtx != null && requestCtx.access != null) {
