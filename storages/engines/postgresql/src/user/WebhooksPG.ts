@@ -12,25 +12,29 @@ const { BaseStoragePG } = require('./BaseStoragePG.ts');
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
 
+type UserOrId = string | { id: string };
+type WebhookItem = Record<string, unknown> & { id?: string; deleted?: number | null };
+type Query = Record<string, unknown>;
+
 /**
  * PostgreSQL persistence for webhooks.
  */
 class WebhooksPG extends BaseStoragePG {
-  constructor (db: any) {
+  constructor (db: unknown) {
     super(db);
     this.tableName = 'webhooks';
     this.hasDeletedCol = true;
     this.hasHeadIdCol = false;
   }
 
-  applyDefaults (item: any): any {
+  applyDefaults (item: WebhookItem): WebhookItem {
     const copy = Object.assign({}, item);
     copy.id = copy.id || generateId();
     if (copy.deleted === undefined) copy.deleted = null;
     return copy;
   }
 
-  delete (userOrUserId: any, query: any, callback: (err: any, res?: any) => void): void {
+  delete (userOrUserId: UserOrId, query: Query, callback: (err: Error | null, res?: unknown) => void): void {
     this.updateMany(userOrUserId, query, {
       $set: { deleted: timestamp.now() },
       $unset: {
@@ -52,12 +56,12 @@ class WebhooksPG extends BaseStoragePG {
     }, callback);
   }
 
-  insertOne (userOrUserId: any, item: any, callback: (err: any, item?: any) => void, _options?: any): void {
+  insertOne (userOrUserId: UserOrId, item: WebhookItem, callback: (err: Error | null, item?: WebhookItem) => void, _options?: unknown): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const prepared = this.applyDefaults(item);
 
     const cols: string[] = ['user_id'];
-    const vals: any[] = [userId];
+    const vals: unknown[] = [userId];
     const placeholders: string[] = ['$1'];
     let idx = 2;
 
@@ -71,12 +75,12 @@ class WebhooksPG extends BaseStoragePG {
 
     const sql = `INSERT INTO ${this.tableName} (${cols.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
     this.db.query(sql, vals)
-      .then((res: any) => {
-        const result = this.rowToItem(res.rows[0]);
+      .then((res: { rows: Array<Record<string, unknown>> }) => {
+        const result = this.rowToItem(res.rows[0]) as WebhookItem;
         delete result.deleted;
         callback(null, result);
       })
-      .catch((err: any) => {
+      .catch((err: Error) => {
         const { DatabasePG } = require('../DatabasePG.ts');
         DatabasePG.handleDuplicateError(err);
         callback(err);
