@@ -36,16 +36,26 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 
+type StreamCreateParams = {
+  id: string;
+  parentId: string | null;
+  name: string;
+  clientData?: Record<string, unknown>;
+  createdBy?: string;
+  modifiedBy?: string;
+  [k: string]: unknown;
+};
+
 type Mall = {
   streams: {
-    create (userId: string, params: any): Promise<any>;
-    getOne?: (userId: string, params: any) => Promise<any>;
+    create (userId: string, params: StreamCreateParams): Promise<unknown>;
+    getOne?: (userId: string, params: Record<string, unknown>) => Promise<unknown>;
   };
 };
 
 type ProvisionLogger = {
-  debug: (msg: string, ...rest: any[]) => void;
-  warn: (msg: string, ...rest: any[]) => void;
+  debug: (msg: string, ...rest: unknown[]) => void;
+  warn: (msg: string, ...rest: unknown[]) => void;
 };
 
 /**
@@ -60,12 +70,13 @@ const RESERVED_TREE: Array<{ id: string; parentId: string | null; name: string }
   { id: C.NS_INTERNAL_RETRIES, parentId: C.NS_INTERNAL, name: 'CMC retry queue' },
 ];
 
-function isAlreadyExistsError (err: any): boolean {
+function isAlreadyExistsError (err: unknown): boolean {
   if (err == null) return false;
-  const msg = String(err.message || err);
+  const e = err as { message?: string; id?: string; data?: { id?: string } };
+  const msg = String(e.message || err);
   if (msg.includes('already exists') || msg.includes('item-already-exists')) return true;
-  if (err.id === 'item-already-exists') return true;
-  if (err.data?.id === 'item-already-exists') return true;
+  if (e.id === 'item-already-exists') return true;
+  if (e.data?.id === 'item-already-exists') return true;
   // mall throws APIError with id; be tolerant of multiple shapes.
   return false;
 }
@@ -86,7 +97,7 @@ async function provisionUserStreams (params: {
   const created: string[] = [];
 
   for (const stream of RESERVED_TREE) {
-    const payload: any = {
+    const payload: StreamCreateParams = {
       id: stream.id,
       parentId: stream.parentId,
       name: stream.name,
@@ -102,15 +113,16 @@ async function provisionUserStreams (params: {
       await mall.streams.create(userId, payload);
       created.push(stream.id);
       logger?.debug('cmc: provisioned reserved parent stream', { userId, streamId: stream.id });
-    } catch (err: any) {
+    } catch (err) {
       if (isAlreadyExistsError(err)) {
         logger?.debug('cmc: reserved parent already present', { userId, streamId: stream.id });
         continue;
       }
+      const message = err instanceof Error ? err.message : String(err);
       logger?.warn('cmc: failed to provision reserved parent stream', {
         userId,
         streamId: stream.id,
-        error: err?.message || err,
+        error: message,
       });
       throw err;
     }
