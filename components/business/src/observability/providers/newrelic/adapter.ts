@@ -18,32 +18,49 @@ const require = createRequire(import.meta.url);
  * so tests can pass a mock without touching the global agent.
  */
 
-function createAdapter (newrelicAgent: any) {
+type NewRelicTransaction = { end?: () => void };
+type NewRelicAgent = {
+  setTransactionName: (name: string) => void;
+  noticeError: (err: unknown, attrs?: Record<string, unknown>) => void;
+  recordCustomEvent: (type: string, attrs?: Record<string, unknown>) => void;
+  startBackgroundTransaction: (name: string, handler: () => Promise<void>) => void;
+  getTransaction: () => NewRelicTransaction;
+};
+
+type ObservabilityAdapter = {
+  id: string;
+  setTransactionName: (name: string) => void;
+  recordError: (err: unknown, attrs?: Record<string, unknown>) => void;
+  recordCustomEvent: (type: string, attrs?: Record<string, unknown>) => void;
+  startBackgroundTransaction: <T> (name: string, fn: () => T | Promise<T>) => Promise<T>;
+};
+
+function createAdapter (newrelicAgent: NewRelicAgent): ObservabilityAdapter {
   if (!newrelicAgent) {
     throw new Error('newrelic adapter: newrelicAgent is required');
   }
   return {
     id: 'newrelic',
-    setTransactionName (name: any) {
+    setTransactionName (name: string): void {
       newrelicAgent.setTransactionName(name);
     },
-    recordError (err: any, attrs: any) {
+    recordError (err: unknown, attrs?: Record<string, unknown>): void {
       newrelicAgent.noticeError(err, attrs || {});
     },
-    recordCustomEvent (type: any, attrs: any) {
+    recordCustomEvent (type: string, attrs?: Record<string, unknown>): void {
       // New Relic insists event-type names be alphanumeric; callers should
       // stick to something like 'PryvLog' / 'PryvForward' / 'PryvBackup'.
       newrelicAgent.recordCustomEvent(type, attrs || {});
     },
-    async startBackgroundTransaction (name: any, fn: any) {
-      return new Promise((resolve, reject) => {
+    async startBackgroundTransaction<T> (name: string, fn: () => T | Promise<T>): Promise<T> {
+      return new Promise<T>((resolve, reject) => {
         newrelicAgent.startBackgroundTransaction(name, async () => {
           const tx = newrelicAgent.getTransaction();
           try {
             const result = await fn();
             resolve(result);
           } catch (err) {
-            reject(err);
+            reject(err as Error);
           } finally {
             if (tx && typeof tx.end === 'function') tx.end();
           }
