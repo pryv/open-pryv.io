@@ -33,11 +33,22 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const capabilityMod = require('./capability.ts');
 
+type AccessLike = {
+  id: string;
+  clientData?: { cmc?: { capability?: { mode?: string; [k: string]: unknown }; [k: string]: unknown }; [k: string]: unknown };
+  [k: string]: unknown;
+};
+
 type MallLike = {
   accesses: {
-    update?: (userId: string, params: any) => Promise<any>;
-    get?: (userId: string, params?: any) => Promise<any[]>;
+    update?: (userId: string, params: Record<string, unknown>) => Promise<unknown>;
+    get?: (userId: string, params?: Record<string, unknown>) => Promise<AccessLike[]>;
   };
+};
+
+type InvalidateLinkEventContent = {
+  capabilityId?: unknown;
+  reason?: unknown;
 };
 
 type InvalidateLinkResult =
@@ -50,7 +61,7 @@ type InvalidateLinkResult =
   | {
       ok: false;
       reason: string;
-      detail?: any;
+      detail?: unknown;
     };
 
 /**
@@ -62,7 +73,7 @@ type InvalidateLinkResult =
  */
 async function handleInvalidateLink (params: {
   userId: string;
-  triggerEvent: { id?: string; type: string; content: any; streamIds?: string[] };
+  triggerEvent: { id?: string; type: string; content: InvalidateLinkEventContent; streamIds?: string[] };
   deps: { mall: MallLike; logger?: { debug?: Function; warn?: Function } };
 }): Promise<InvalidateLinkResult> {
   const { userId, triggerEvent, deps } = params;
