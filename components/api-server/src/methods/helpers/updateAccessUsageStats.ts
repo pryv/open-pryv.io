@@ -12,8 +12,19 @@ const string = require('./string.ts');
 const timestamp = require('unix-timestamp');
 const { getLogger, ready } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
-let singleton: any = null;
-export default async function getUpdateAccessUsageStats () {
+type MwContext = {
+  user: { id: string; username?: string };
+  access?: { id: string; [k: string]: unknown };
+  methodId?: string;
+  disableAccessUsageStats?: boolean;
+  accessUsageStats?: Record<string, number>;
+};
+type MwNext = (err?: unknown) => void;
+type StatsUpdate = { lastUsed: number; $inc: Record<string, number> };
+type Middleware = (context: MwContext, params: unknown, result: unknown, next: MwNext) => void;
+
+let singleton: Middleware | null = null;
+export default async function getUpdateAccessUsageStats (): Promise<Middleware> {
   if (singleton != null) { return singleton; }
   const logger = getLogger('methods:trackingFunctions');
   const storageLayer = await getStorageLayer();
@@ -22,7 +33,7 @@ export default async function getUpdateAccessUsageStats () {
   const isActive = !!config.get('accessTracking:isActive');
   singleton = updateAccessUsageStats;
   return singleton;
-  function updateAccessUsageStats (context: any, params: any, result: any, next: any) {
+  function updateAccessUsageStats (context: MwContext, params: unknown, result: unknown, next: MwNext): void {
     // don't make callers wait on this to get their reply
     next();
     if (!isActive || context.disableAccessUsageStats) { return; } // callBatch will flush all stats at the end
@@ -30,7 +41,7 @@ export default async function getUpdateAccessUsageStats () {
     try {
       const access = context?.access;
       if (access) {
-        const update: any = { lastUsed: timestamp.now(), $inc: {} };
+        const update: StatsUpdate = { lastUsed: timestamp.now(), $inc: {} };
         if (context.accessUsageStats == null) {
           // standard call
           const calledMethodKey = string.sanitizeFieldKey(context.methodId);
@@ -43,7 +54,7 @@ export default async function getUpdateAccessUsageStats () {
                             context.accessUsageStats[methodId];
           }
         }
-        userAccessesStorage.updateOne(context.user, { id: context.access.id }, update, function (err: any) {
+        userAccessesStorage.updateOne(context.user, { id: access.id }, update, function (err: unknown) {
           if (err) {
             errorHandling.logError(errors.unexpectedError(err), {
               url: context.user.username,
