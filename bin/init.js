@@ -136,6 +136,20 @@ async function main () {
     console.error('      pryvio/open-pryv.io init /app/config/override-config.yml');
     process.exit(2);
   }
+  if (!dirWritable(configDirPrelim)) {
+    console.error(`init: parent directory exists but is NOT writable: ${configDirPrelim}`);
+    console.error('  Likely causes (and fixes):');
+    console.error('    - The path was not bind-mounted from a host directory; the in-image');
+    console.error('      directory is read-only / owned by root. Mount a writable host dir:');
+    console.error('        docker run -it --rm -v /host/pryv/config:/app/config \\');
+    console.error('          pryvio/open-pryv.io init /app/config/override-config.yml');
+    console.error('    - The mount IS present but the HOST directory is not writable by the');
+    console.error('      container user. On the host:');
+    console.error('        sudo chown -R $(id -u):$(id -g) /host/pryv/config');
+    console.error('        chmod 755 /host/pryv/config');
+    console.error(`    - Or pick a config path under a directory that already is writable.`);
+    process.exit(2);
+  }
   if (fs.existsSync(absConfigPath)) {
     console.error(`init: ${absConfigPath} already exists.`);
     console.error('  Move it aside or pick a different path. (init never overwrites.)');
