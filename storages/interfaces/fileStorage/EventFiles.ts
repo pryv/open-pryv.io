@@ -15,7 +15,7 @@ export interface EventFiles {
   removeAttachment (userId: string, eventId: string, fileId: string): Promise<void>;
   removeAllForEvent (userId: string, eventId: string): Promise<void>;
   removeAllForUser (userId: string): Promise<void>;
-  attachToEventStore (es: any, setIntegrityOnEvent: Function): void;
+  attachToEventStore (es: unknown, setIntegrityOnEvent: Function): void;
 }
 
 /**
@@ -37,7 +37,7 @@ const EventFiles: EventFiles = {
 
   async removeAllForUser (userId: string): Promise<void> { throw new Error('Not implemented'); },
 
-  attachToEventStore (es: any, setIntegrityOnEvent: Function): void { throw new Error('Not implemented'); }
+  attachToEventStore (es: unknown, setIntegrityOnEvent: Function): void { throw new Error('Not implemented'); }
 };
 
 // Limit tampering on existing properties
@@ -54,13 +54,14 @@ function createEventFiles (implementation: Partial<EventFiles>): EventFiles {
 
 const REQUIRED_METHODS: string[] = Object.getOwnPropertyNames(EventFiles);
 
-function validateEventFiles (instance: any): EventFiles {
+function validateEventFiles (instance: unknown): EventFiles {
+  const obj = instance as Record<string, unknown>;
   for (const method of REQUIRED_METHODS) {
-    if (typeof instance[method] !== 'function') {
+    if (typeof obj[method] !== 'function') {
       throw new Error(`EventFiles implementation missing method: ${method}`);
     }
   }
-  return instance;
+  return obj as unknown as EventFiles;
 }
 
 export { EventFiles, createEventFiles, validateEventFiles };
