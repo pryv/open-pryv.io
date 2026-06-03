@@ -21,17 +21,24 @@ const errors = require('errors').factory;
  * Session storage is intentionally NOT in this class — see `SessionStore` for
  * the in-memory mfaToken → session map shared across MFA service instances.
  */
-class Service {
-  config: any;
-  logger: any;
+type Logger = { error (msg: string, ctx?: Record<string, unknown>): void; info?: (m: string) => void; warn?: (m: string) => void };
+type MFAConfig = Record<string, unknown>;
+type Profile = { content: Record<string, unknown>; [k: string]: unknown };
+type ClientRequest = { headers: Record<string, unknown>; body: Record<string, unknown> };
+type Headers = Record<string, unknown>;
+type FetchInit = { method: string; headers: Headers; body?: string | Record<string, unknown> };
 
-  static replaceAll: (text: string, key: string, value: any) => any;
-  static replaceRecursively: (obj: any, key: string, value: any) => any;
+class Service {
+  config: MFAConfig;
+  logger: Logger;
+
+  static replaceAll: (text: string, key: string, value: unknown) => string;
+  static replaceRecursively: (obj: unknown, key: string, value: unknown) => unknown;
 
   /**
    * @param mfaConfig - the `services.mfa` config block
    */
-  constructor (mfaConfig: any) {
+  constructor (mfaConfig: MFAConfig) {
     this.config = mfaConfig;
     this.logger = getLogger('mfa-service');
   }
@@ -39,20 +46,20 @@ class Service {
   /**
    * @param clientRequest - { headers, body, ... } — the MFA HTTP request context
    */
-  async challenge (_username: any, _profile: any, _clientRequest: any) {
+  async challenge (_username: string, _profile: Profile, _clientRequest: ClientRequest) {
     throw new Error('override challenge() in a Service subclass');
   }
 
-  async verify (_username: any, _profile: any, _clientRequest: any) {
+  async verify (_username: string, _profile: Profile, _clientRequest: ClientRequest) {
     throw new Error('override verify() in a Service subclass');
   }
 
   /**
    * Make a POST or GET request to an SMS provider endpoint.
    */
-  async _makeRequest (method: any, url: any, headers: any, body: any) {
+  async _makeRequest (method: string, url: string, headers: Headers, body: unknown) {
     try {
-      const init: any = { method, headers: { ...headers } };
+      const init: FetchInit = { method, headers: { ...headers } };
       if (method === 'POST') {
         if (body != null && typeof body !== 'string') {
           init.body = JSON.stringify(body);
@@ -60,22 +67,23 @@ class Service {
             init.headers['Content-Type'] = 'application/json';
           }
         } else {
-          init.body = body;
+          init.body = body as string;
         }
       }
-      const res = await fetch(url, init);
+      const res = await fetch(url, init as RequestInit);
       if (!res.ok) {
         const errBody = await res.text().catch(() => '');
         throw new Error(`HTTP ${res.status} ${res.statusText}${errBody ? ` — ${errBody}` : ''}`);
       }
       return res;
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const e = error as Error;
       this.logger.error(
         `MFA SMS provider request failed: ${method} ${url}`,
-        { error: error.message }
+        { error: e.message }
       );
       throw errors.invalidOperation(
-        `MFA SMS provider error: ${error.message}`,
+        `MFA SMS provider error: ${e.message}`,
         { id: 'mfa-sms-provider-error' }
       );
     }
@@ -88,7 +96,7 @@ class Service {
  */
 Service.replaceAll = function replaceAll (text, key, value) {
   if (typeof text !== 'string') return text;
-  return text.split(`{{ ${key} }}`).join(value);
+  return text.split(`{{ ${key} }}`).join(String(value));
 };
 
 /**
@@ -100,9 +108,10 @@ Service.replaceRecursively = function replaceRecursively (obj, key, value) {
   if (typeof obj === 'string') return Service.replaceAll(obj, key, value);
   if (Array.isArray(obj)) return obj.map(item => Service.replaceRecursively(item, key, value));
   if (typeof obj === 'object') {
-    const out: any = {};
-    for (const k of Object.keys(obj)) {
-      out[k] = Service.replaceRecursively(obj[k], key, value);
+    const out: Record<string, unknown> = {};
+    const rec = obj as Record<string, unknown>;
+    for (const k of Object.keys(rec)) {
+      out[k] = Service.replaceRecursively(rec[k], key, value);
     }
     return out;
   }
