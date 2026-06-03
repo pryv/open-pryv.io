@@ -20,10 +20,44 @@ const errors = ds.errors;
 
 const ATTACHMENT_DIRNAME = 'attachments';
 
+interface EventFilesInstance {
+  settings: unknown;
+  logger: { debug: (msg: string) => void; [k: string]: unknown };
+  init: () => Promise<void>;
+  getFileStorageInfos: (userId: string) => Promise<number>;
+  saveAttachmentFromStream: (s: Readable, userId: string, eventId: string, fileId?: string) => Promise<string>;
+  getAttachmentStream: (userId: string, eventId: string, fileId: string) => Promise<Readable>;
+  removeAttachment: (userId: string, eventId: string, fileId: string) => Promise<void>;
+  removeAllForEvent: (userId: string, eventId: string) => Promise<void>;
+  removeAllForUser: (userId: string) => Promise<void>;
+  attachToEventStore: (es: EventStoreLike, setIntegrityOnEvent: (event: EventWithAttachments) => void) => void;
+}
+
+interface AttachmentItem {
+  id?: string;
+  attachmentData: Readable;
+  [k: string]: unknown;
+}
+
+interface EventWithAttachments {
+  id?: string;
+  attachments?: Array<{ id?: string; [k: string]: unknown }>;
+  [k: string]: unknown;
+}
+
+interface EventStoreLike {
+  getAttachment?: (userId: string, eventId: string, fileId: string) => Promise<Readable>;
+  addAttachment?: (userId: string, eventId: string, item: AttachmentItem, transaction: unknown) => Promise<EventWithAttachments>;
+  deleteAttachment?: (userId: string, eventId: string, fileId: string, transaction: unknown) => Promise<EventWithAttachments>;
+  getOne: (userId: string, eventId: string) => Promise<EventWithAttachments>;
+  update: (userId: string, event: EventWithAttachments, transaction: unknown) => Promise<unknown>;
+  [k: string]: unknown;
+}
+
 /**
  * Manages files storage for events (attachments & previews).
  */
-function EventFiles (this: any): void { }
+function EventFiles (this: EventFilesInstance): void { }
 
 EventFiles.prototype.init = async function (): Promise<void> {
   this.settings = _internals.config;
@@ -80,17 +114,17 @@ EventFiles.prototype.removeAllForUser = async function (userId: string): Promise
 
 // -------------------- attach to store --------- //
 
-EventFiles.prototype.attachToEventStore = function (es: any, setIntegrityOnEvent: (event: any) => void): void {
+EventFiles.prototype.attachToEventStore = function (es: EventStoreLike, setIntegrityOnEvent: (event: EventWithAttachments) => void): void {
   const eventFiles = this;
   es.getAttachment = async function getAttachment (userId: string, eventId: string, fileId: string) {
     return await eventFiles.getAttachmentStream(userId, eventId, fileId);
   };
 
-  es.addAttachment = async function addAttachment (userId: string, eventId: string, attachmentItem: any, transaction: any) {
+  es.addAttachment = async function addAttachment (userId: string, eventId: string, attachmentItem: AttachmentItem, transaction: unknown) {
     delete attachmentItem.id;
     const fileId = await eventFiles.saveAttachmentFromStream(attachmentItem.attachmentData, userId, eventId);
     const attachment = Object.assign({ id: fileId }, attachmentItem);
-    delete attachment.attachmentData;
+    delete (attachment as { attachmentData?: unknown }).attachmentData;
     const event = await es.getOne(userId, eventId);
     event.attachments ??= [];
     event.attachments.push(attachment);
@@ -99,9 +133,9 @@ EventFiles.prototype.attachToEventStore = function (es: any, setIntegrityOnEvent
     return event;
   };
 
-  es.deleteAttachment = async function deleteAttachment (userId: string, eventId: string, fileId: string, transaction: any) {
+  es.deleteAttachment = async function deleteAttachment (userId: string, eventId: string, fileId: string, transaction: unknown) {
     const event = await es.getOne(userId, eventId);
-    event.attachments = event.attachments.filter((attachment: any) => {
+    event.attachments = event.attachments?.filter((attachment) => {
       return attachment.id !== fileId;
     });
     await eventFiles.removeAttachment(userId, eventId, fileId);
@@ -116,7 +150,7 @@ EventFiles.prototype.attachToEventStore = function (es: any, setIntegrityOnEvent
 async function getDirectorySize (dirPath: string): Promise<number> {
   const files = await fs.promises.readdir(dirPath, { withFileTypes: true });
 
-  const paths = files.map(async (file: any) => {
+  const paths = files.map(async (file: { name: string; isDirectory: () => boolean; isFile: () => boolean }) => {
     const filePath = path.join(dirPath, file.name);
     if (file.isDirectory()) {
       return await getDirectorySize(filePath);
