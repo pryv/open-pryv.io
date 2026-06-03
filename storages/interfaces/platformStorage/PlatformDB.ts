@@ -39,7 +39,7 @@ export interface CoreInfo {
   cname?: string;
   hosting?: string;
   available?: boolean;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface UserCoreMapping {
@@ -52,7 +52,7 @@ export interface DnsRecord {
   cname?: string;
   a?: string;
   aaaa?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface DnsRecordEntry {
@@ -69,7 +69,7 @@ export interface MailTemplateEntry {
 
 export interface ObservabilityEntry { key: string; value: string }
 
-export interface AccessStateEntry { value: any; expiresAt: number }
+export interface AccessStateEntry { value: unknown; expiresAt: number }
 
 export interface InvitationTokenInfo {
   createdAt: number;
@@ -141,7 +141,7 @@ export interface PlatformDB {
   deleteMailTemplate (type: string, lang: string, part?: string): Promise<void>;
 
   // --- Access-request state (cluster-wide ephemeral) --------------
-  setAccessState (key: string, value: any, expiresAt: number): Promise<void>;
+  setAccessState (key: string, value: unknown, expiresAt: number): Promise<void>;
   getAccessState (key: string): Promise<AccessStateEntry | null>;
   deleteAccessState (key: string): Promise<void>;
   sweepExpiredAccessStates (now?: number): Promise<{ removed: number }>;
@@ -254,7 +254,7 @@ const PlatformDB: PlatformDB = {
 
   // --- Access-request state --- //
 
-  async setAccessState (key: string, value: any, expiresAt: number): Promise<void> { throw new Error('Not implemented'); },
+  async setAccessState (key: string, value: unknown, expiresAt: number): Promise<void> { throw new Error('Not implemented'); },
 
   async getAccessState (key: string): Promise<AccessStateEntry | null> { throw new Error('Not implemented'); },
 
@@ -282,13 +282,14 @@ for (const propName of Object.getOwnPropertyNames(PlatformDB)) {
 
 const REQUIRED_METHODS: string[] = Object.getOwnPropertyNames(PlatformDB);
 
-function validatePlatformDB (instance: any): PlatformDB {
+function validatePlatformDB (instance: unknown): PlatformDB {
+  const inst = instance as Record<string, unknown>;
   for (const method of REQUIRED_METHODS) {
-    if (typeof instance[method] !== 'function') {
+    if (typeof inst[method] !== 'function') {
       throw new Error(`PlatformDB implementation missing method: ${method}`);
     }
   }
-  return instance;
+  return inst as unknown as PlatformDB;
 }
 
 export { PlatformDB, validatePlatformDB };
