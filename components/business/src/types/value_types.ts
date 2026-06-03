@@ -11,7 +11,7 @@ const errors = require('./errors.ts');
 //
 
 class NumberType {
-  coerce (value: any) {
+  coerce (value: unknown): number {
     switch (typeof value) {
       case 'string':
         return this.coerceString(value);
@@ -21,7 +21,7 @@ class NumberType {
     throw new errors.InputTypeError(`Unknown outer type (${typeof value}).`);
   }
 
-  coerceString (str: any) {
+  coerceString (str: string): number {
     const reNumber = /^\d+(\.\d+)?$/;
     if (!reNumber.test(str)) {
       throw new errors.InputTypeError(`Doesn't look like a valid number: '${str}'.`);
@@ -31,27 +31,30 @@ class NumberType {
 }
 
 class BooleanType {
-  coerce (value: any) {
+  coerce (value: unknown): boolean {
     if (value === true) { return true; }
     if (value === false) { return false; }
     if (value === 'true') { return true; }
     if (value === 'false') { return false; }
-    throw new errors.InputTypeError(`Doesn't look like a valid boolean: '${value}'.`);
+    throw new errors.InputTypeError(`Doesn't look like a valid boolean: '${String(value)}'.`);
   }
 }
 
 class StringType {
-  coerce (value: any) {
+  coerce (value: unknown): string {
     return '' + value;
   }
 }
 
 class NullType {
-  coerce /* value: any */() {
+  coerce (): null {
     return null;
   }
 }
-function produceInner (type: any) {
+
+type ValueType = NumberType | StringType | NullType | BooleanType;
+
+function produceInner (type: string): ValueType {
   switch (type) {
     case 'number':
       return new NumberType();
@@ -66,4 +69,3 @@ function produceInner (type: any) {
 }
 export default produceInner;
 export { produceInner };
-type ValueType = Object;
