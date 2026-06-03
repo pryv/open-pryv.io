@@ -119,13 +119,20 @@ class CertRenewer {
    *
    * @param opts.hostname                - e.g. '*.mc.example.com'
    * @param [opts.altNames=[]]           - e.g. ['mc.example.com']
-   * @param opts.dnsWriter               - { create(name, value), remove(name) }; see PlatformDBDnsWriter
+   * @param [opts.dnsWriter]             - { create(name, value), remove(name) }; see PlatformDBDnsWriter. Required for DNS-01.
+   * @param [opts.http01Store]           - Http01ChallengeStore (set/delete). Required for HTTP-01.
    * @param [opts.challengePriority]     - default ['dns-01']
    */
-  async renew ({ hostname, altNames = [], dnsWriter, challengePriority }: { hostname?: string; altNames?: string[]; dnsWriter?: DnsWriter; challengePriority?: string[] } = {}) {
+  async renew ({ hostname, altNames = [], dnsWriter, http01Store, challengePriority }: { hostname?: string; altNames?: string[]; dnsWriter?: DnsWriter; http01Store?: { set: (token: string, ka: string) => void; delete: (token: string) => void }; challengePriority?: string[] } = {}) {
     if (!hostname) throw new Error('CertRenewer.renew: hostname is required');
-    if (dnsWriter == null || typeof dnsWriter.create !== 'function' || typeof dnsWriter.remove !== 'function') {
-      throw new Error('CertRenewer.renew: dnsWriter { create, remove } is required');
+    // We need ONE of dnsWriter or http01Store, depending on what
+    // challengePriority asks for. We can't tell which the ACME server
+    // will actually offer up front, so require both consumers to be
+    // structurally sane if they're passed in.
+    const hasDns = dnsWriter != null && typeof dnsWriter.create === 'function' && typeof dnsWriter.remove === 'function';
+    const hasHttp = http01Store != null && typeof http01Store.set === 'function' && typeof http01Store.delete === 'function';
+    if (!hasDns && !hasHttp) {
+      throw new Error('CertRenewer.renew: at least one of dnsWriter / http01Store is required');
     }
 
     // Wrap as a named background transaction so LE issuance + renewal
@@ -140,13 +147,29 @@ class CertRenewer {
           account,
           challengePriority,
           directoryUrl: this.#directoryUrl,
-          challengeCreateFn: async (authz: AcmeAuthz, _challenge: unknown, keyAuthorization: string) => {
-            const name = acmeChallengeName(authz.identifier.value);
-            await dnsWriter!.create(name, keyAuthorization);
+          challengeCreateFn: async (authz: AcmeAuthz, challenge: any, keyAuthorization: string) => {
+            const type = (challenge && challenge.type) || 'dns-01';
+            if (type === 'dns-01') {
+              if (!hasDns) throw new Error('CertRenewer.renew: dns-01 challenge but no dnsWriter provided');
+              const name = acmeChallengeName(authz.identifier.value);
+              await dnsWriter!.create(name, keyAuthorization);
+            } else if (type === 'http-01') {
+              if (!hasHttp) throw new Error('CertRenewer.renew: http-01 challenge but no http01Store provided');
+              http01Store!.set(challenge.token, keyAuthorization);
+            } else {
+              throw new Error(`CertRenewer.renew: unsupported challenge type "${type}"`);
+            }
           },
-          challengeRemoveFn: async (authz: AcmeAuthz, _challenge: unknown, keyAuthorization: string) => {
-            const name = acmeChallengeName(authz.identifier.value);
-            await dnsWriter!.remove(name, keyAuthorization);
+          challengeRemoveFn: async (authz: AcmeAuthz, challenge: any, keyAuthorization: string) => {
+            const type = (challenge && challenge.type) || 'dns-01';
+            if (type === 'dns-01') {
+              if (!hasDns) return;
+              const name = acmeChallengeName(authz.identifier.value);
+              await dnsWriter!.remove(name, keyAuthorization);
+            } else if (type === 'http-01') {
+              if (!hasHttp) return;
+              http01Store!.delete(challenge.token);
+            }
           },
           acmeLib: this.#acmeLib
         });

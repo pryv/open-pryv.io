@@ -37,7 +37,7 @@ const DEFAULT_MATERIALIZE_INTERVAL_MS = 60 * 1000;
 
 type LogFn = (msg: string) => void;
 type CertRenewerLike = {
-  renew: (opts: { hostname: string; altNames: string[]; dnsWriter: unknown; challengePriority?: string[] }) => Promise<{ hostname: string; expiresAt: number; [k: string]: unknown }>;
+  renew: (opts: { hostname: string; altNames: string[]; dnsWriter?: unknown; http01Store?: unknown; challengePriority?: string[] }) => Promise<{ hostname: string; expiresAt: number; [k: string]: unknown }>;
   getCertificate: (hostname: string) => Promise<{ expiresAt: number; [k: string]: unknown } | null>;
 };
 type FileMaterializerLike = {
@@ -45,12 +45,14 @@ type FileMaterializerLike = {
 };
 type HostSpec = { commonName: string; altNames: string[]; challenge: string };
 type DnsWriterLike = unknown;
+type Http01StoreLike = unknown;
 
 interface AcmeOrchestratorOpts {
   hostSpec: HostSpec;
   certRenewer: CertRenewerLike;
   fileMaterializer: FileMaterializerLike;
   dnsWriter: DnsWriterLike;
+  http01Store?: Http01StoreLike;
   isRenewer?: boolean;
   renewBeforeDays?: number;
   renewIntervalMs?: number;
@@ -67,6 +69,7 @@ class AcmeOrchestrator {
   #renewIntervalMs: number;
   #materializeIntervalMs: number;
   #dnsWriter: DnsWriterLike;
+  #http01Store: Http01StoreLike | undefined;
   #log: LogFn;
   #renewTimer: NodeJS.Timeout | null = null;
   #materializeTimer: NodeJS.Timeout | null = null;
@@ -83,7 +86,7 @@ class AcmeOrchestrator {
    * @param [opts.log]
    */
   constructor ({
-    hostSpec, certRenewer, fileMaterializer, dnsWriter,
+    hostSpec, certRenewer, fileMaterializer, dnsWriter, http01Store,
     isRenewer = false,
     renewBeforeDays = 30,
     renewIntervalMs = DEFAULT_RENEW_INTERVAL_MS,
@@ -102,6 +105,7 @@ class AcmeOrchestrator {
     this.#renewIntervalMs = renewIntervalMs;
     this.#materializeIntervalMs = materializeIntervalMs;
     this.#dnsWriter = dnsWriter;
+    this.#http01Store = http01Store;
     this.#log = log || ((msg: string) => console.log('[acme] ' + msg));
   }
 
@@ -114,46 +118,22 @@ class AcmeOrchestrator {
     }
     this.#log(`starting (host=${this.#hostSpec.commonName} challenge=${this.#hostSpec.challenge} renewer=${this.#isRenewer})`);
 
-    // HARD CHECK: this orchestrator's challengeCreateFn only writes DNS
-    // TXT records (DNS-01). HTTP-01 challenges would require an HTTP
-    // server on :80 serving /.well-known/acme-challenge/<token>, which
-    // is NOT implemented anywhere in the codebase today. Without this
-    // explicit refusal, acme-client.auto() would call our DNS-writer
-    // for an HTTP challenge, LE would fail to validate, and acme-client
-    // would either retry silently for minutes or hang — leaving the
-    // operator with only the 1-day self-signed placeholder cert and no
-    // visible failure mode.
-    //
-    // Operators hitting this need one of:
-    //   1. dns.active=true + dns.domain=<theirs> (gives wildcard via DNS-01)
-    //   2. bring their own cert via http.ssl.{keyFile,certFile} (no letsEncrypt)
-    //   3. front with nginx/caddy + certbot, disable the in-process letsEncrypt
-    if (this.#isRenewer && this.#hostSpec.challenge === 'http-01') {
+    // HTTP-01 challenge requires an Http01ChallengeStore passed in by the
+    // master process (which also runs the :80 challenge server reading
+    // from it). If the operator selects http-01 (typically via
+    // dnsLess.isActive=true) but the master didn't wire a store, the
+    // ACME flow would silently hang at validation. Refuse loudly instead.
+    if (this.#isRenewer && this.#hostSpec.challenge === 'http-01' && this.#http01Store == null) {
       const banner = '═'.repeat(70);
       this.#log(banner);
-      this.#log('FATAL: HTTP-01 challenge type is NOT IMPLEMENTED in open-pryv.io.');
+      this.#log('FATAL: HTTP-01 challenge selected but no Http01ChallengeStore wired.');
+      this.#log(`host=${this.#hostSpec.commonName}`);
       this.#log('');
-      this.#log(`Your config selects challenge=http-01 for host=${this.#hostSpec.commonName}`);
-      this.#log('because the topology resolves to dnsLess.isActive=true (or DNSless core.url),');
-      this.#log('but the orchestrator only implements DNS-01. ACME would silently hang.');
-      this.#log('');
-      this.#log('Options (pick one):');
-      this.#log('  (a) Switch to DNS-01: set dns.active=true + dns.domain=<your.tld>');
-      this.#log('      (requires NS delegation of the domain to this host + port 53/udp open);');
-      this.#log('      removes dnsLess.isActive=true from the config.');
-      this.#log('  (b) Bring your own cert: drop the letsEncrypt block, set');
-      this.#log('      http.ssl.keyFile + http.ssl.certFile to your cert paths.');
-      this.#log('  (c) Front the container with nginx + certbot (or Cloudflare TLS),');
-      this.#log('      keep open-pryv.io on plain http (port 3000, no http.ssl).');
-      this.#log('');
-      this.#log('Refusing to start the ACME orchestrator. The 1-day self-signed placeholder');
-      this.#log('cert remains on :443 so the container does not crash, but it will NEVER');
-      this.#log('be replaced by a real LE cert until one of the options above is applied.');
+      this.#log('This is an internal wiring bug — the master process should have created');
+      this.#log('the store + bound the challenge server on :80 before constructing the');
+      this.#log('AcmeOrchestrator. Check bin/master.js letsEncrypt setup block.');
       this.#log(banner);
-      // Do NOT start the renew loop. Materialize loop still runs so existing
-      // certs (from a previous successful issuance, before this check landed)
-      // continue to surface to disk.
-      // Continue to start the materialize loop below; just skip the renewer.
+      // Do not start the renew loop; placeholder stays on :443.
     }
 
     // Always materialize — every core publishes the current cert to disk.
@@ -164,7 +144,11 @@ class AcmeOrchestrator {
     // for its first cert write.
     this.triggerMaterialize().catch(err => this.#log('initial materialize error: ' + err.message));
 
-    if (this.#isRenewer && this.#hostSpec.challenge !== 'http-01') {
+    // Only start the renew loop if (renewer AND we have what we need for the
+    // configured challenge type). http-01 needs the store; dns-01 needs the
+    // writer (which is always present).
+    const canRunHttp01 = this.#hostSpec.challenge !== 'http-01' || this.#http01Store != null;
+    if (this.#isRenewer && canRunHttp01) {
       this.#renewTimer = setInterval(() => {
         this.triggerRenewCheck().catch(err => this.#logRenewError('renew tick', err));
       }, this.#renewIntervalMs);
@@ -189,7 +173,9 @@ class AcmeOrchestrator {
         this.#log(`  _acme-challenge.${this.#hostSpec.commonName} — check that NS records for`);
         this.#log('  the zone point at this host and UDP/53 is reachable from LE.');
       } else if (this.#hostSpec.challenge === 'http-01') {
-        this.#log('Hint (HTTP-01): NOT supported in this codebase. See the FATAL banner above.');
+        this.#log('Hint (HTTP-01): LE GETs http://' + this.#hostSpec.commonName + '/.well-known/acme-challenge/<token>');
+        this.#log('  Ensure TCP/80 is published (-p 80:80) AND reachable from the public internet');
+        this.#log('  (firewall / security group / NAT). For AWS: open inbound :80 to 0.0.0.0/0.');
       }
     }
     if (/rate ?limit|too many|429/i.test(msg)) {
@@ -284,6 +270,7 @@ class AcmeOrchestrator {
       // pointing at a different hostname falls back to defaults.
       altNames: isPrimary ? this.#hostSpec.altNames : [],
       dnsWriter: this.#dnsWriter,
+      http01Store: this.#http01Store,
       challengePriority: isPrimary ? [this.#hostSpec.challenge] : undefined
     });
     this.#log(`issued ${result.hostname} (expires ${new Date(result.expiresAt).toISOString()})`);
@@ -312,13 +299,14 @@ interface BuildOpts {
   platformDB: unknown;
   atRestKey: unknown;
   dnsServer?: unknown;
+  http01Store?: unknown;
   onRotate?: (certPath: string, keyPath: string, hostname: string) => Promise<void> | void;
   acmeLib?: unknown;
   log?: LogFn;
 }
 
 function build (opts: BuildOpts = {} as BuildOpts) {
-  const { config, platformDB, atRestKey, dnsServer, onRotate, acmeLib, log } = opts;
+  const { config, platformDB, atRestKey, dnsServer, http01Store, onRotate, acmeLib, log } = opts;
   if (config == null) throw new Error('AcmeOrchestrator.build: config is required');
 
   const hostSpec = deriveHostnames(config);
@@ -372,6 +360,7 @@ function build (opts: BuildOpts = {} as BuildOpts) {
     certRenewer,
     fileMaterializer,
     dnsWriter,
+    http01Store,
     isRenewer,
     renewBeforeDays,
     log
