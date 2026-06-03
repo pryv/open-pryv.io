@@ -28,12 +28,27 @@ const observability = require('../observability/index.ts');
 
 const AT_REST_PURPOSE = 'pryv-at-rest-tls-v1';
 
+type PlatformDB = {
+  getAcmeAccount (): Promise<{ accountKey: Buffer; accountUrl: string; email: string } | null>;
+  setAcmeAccount (acc: { accountKey: Buffer; accountUrl: string; email: string }): Promise<unknown>;
+  getCertificate (hostname: string): Promise<{ certPem: string; chainPem?: string; keyPem: Buffer; issuedAt: number; expiresAt: number } | null>;
+  setCertificate (hostname: string, cert: { certPem: string; chainPem?: string; keyPem: Buffer; issuedAt: number; expiresAt: number }): Promise<unknown>;
+  listCertificates? (): Promise<unknown[]>;
+  getDnsRecord (name: string): Promise<{ txt?: string[]; [k: string]: unknown } | null>;
+  setDnsRecord (name: string, record: Record<string, unknown>): Promise<unknown>;
+  deleteDnsRecord (name: string): Promise<unknown>;
+};
+type DnsServerLike = { refreshFromPlatform?: () => Promise<unknown> };
+type DnsWriter = { create (name: string, value: string): Promise<unknown>; remove (name: string, value: string): Promise<unknown> };
+type Account = { accountKey: string; accountUrl: string; email: string };
+type AcmeAuthz = { identifier: { value: string } };
+
 class CertRenewer {
-  #platformDB;
-  #atRestKey;
-  #email;
-  #directoryUrl;
-  #acmeLib;
+  #platformDB: PlatformDB;
+  #atRestKey: Buffer;
+  #email: string;
+  #directoryUrl: string;
+  #acmeLib: unknown;
 
   /**
    * @param opts.platformDB   - needs setAcmeAccount/getAcmeAccount/setCertificate/getCertificate/listCertificates
@@ -42,15 +57,15 @@ class CertRenewer {
    * @param [opts.directoryUrl] - default: LE production
    * @param [opts.acmeLib]    - default: require('acme-client'); injectable for tests
    */
-  constructor ({ platformDB, atRestKey, email, directoryUrl, acmeLib }: any = {}) {
+  constructor ({ platformDB, atRestKey, email, directoryUrl, acmeLib }: { platformDB?: PlatformDB; atRestKey?: Buffer; email?: string; directoryUrl?: string; acmeLib?: unknown } = {}) {
     if (platformDB == null) throw new Error('CertRenewer: platformDB is required');
     if (!Buffer.isBuffer(atRestKey) || atRestKey.length !== 32) {
       throw new Error('CertRenewer: atRestKey must be a 32-byte Buffer');
     }
     if (!email) throw new Error('CertRenewer: email is required');
-    this.#platformDB = platformDB;
-    this.#atRestKey = atRestKey;
-    this.#email = email;
+    this.#platformDB = platformDB!;
+    this.#atRestKey = atRestKey!;
+    this.#email = email!;
     this.#directoryUrl = directoryUrl || AcmeClient.DIRECTORY_PRODUCTION;
     this.#acmeLib = acmeLib;
   }
@@ -107,7 +122,7 @@ class CertRenewer {
    * @param opts.dnsWriter               - { create(name, value), remove(name) }; see PlatformDBDnsWriter
    * @param [opts.challengePriority]     - default ['dns-01']
    */
-  async renew ({ hostname, altNames = [], dnsWriter, challengePriority }: any = {}) {
+  async renew ({ hostname, altNames = [], dnsWriter, challengePriority }: { hostname?: string; altNames?: string[]; dnsWriter?: DnsWriter; challengePriority?: string[] } = {}) {
     if (!hostname) throw new Error('CertRenewer.renew: hostname is required');
     if (dnsWriter == null || typeof dnsWriter.create !== 'function' || typeof dnsWriter.remove !== 'function') {
       throw new Error('CertRenewer.renew: dnsWriter { create, remove } is required');
@@ -125,13 +140,13 @@ class CertRenewer {
           account,
           challengePriority,
           directoryUrl: this.#directoryUrl,
-          challengeCreateFn: async (authz: any, _challenge: any, keyAuthorization: any) => {
+          challengeCreateFn: async (authz: AcmeAuthz, _challenge: unknown, keyAuthorization: string) => {
             const name = acmeChallengeName(authz.identifier.value);
-            await dnsWriter.create(name, keyAuthorization);
+            await dnsWriter!.create(name, keyAuthorization);
           },
-          challengeRemoveFn: async (authz: any, _challenge: any, keyAuthorization: any) => {
+          challengeRemoveFn: async (authz: AcmeAuthz, _challenge: unknown, keyAuthorization: string) => {
             const name = acmeChallengeName(authz.identifier.value);
-            await dnsWriter.remove(name, keyAuthorization);
+            await dnsWriter!.remove(name, keyAuthorization);
           },
           acmeLib: this.#acmeLib
         });
@@ -160,7 +175,7 @@ class CertRenewer {
    * (certPem, chainPem) pass through unchanged.
    *
    */
-  async getCertificate (hostname: any) {
+  async getCertificate (hostname: string) {
     const stored = await this.#platformDB.getCertificate(hostname);
     if (!stored) return null;
     return {
@@ -180,12 +195,12 @@ class CertRenewer {
  * need during the Phase 1 spike was ~15s.
  */
 class PlatformDBDnsWriter {
-  #platformDB;
-  #dnsServer: any;
-  #waitMs;
-  constructor ({ platformDB, dnsServer = null, waitMs = 15000 }: any) {
+  #platformDB: PlatformDB;
+  #dnsServer: DnsServerLike | null;
+  #waitMs: number;
+  constructor ({ platformDB, dnsServer = null, waitMs = 15000 }: { platformDB?: PlatformDB; dnsServer?: DnsServerLike | null; waitMs?: number }) {
     if (platformDB == null) throw new Error('PlatformDBDnsWriter: platformDB is required');
-    this.#platformDB = platformDB;
+    this.#platformDB = platformDB!;
     this.#dnsServer = dnsServer;
     this.#waitMs = waitMs;
   }
@@ -201,7 +216,7 @@ class PlatformDBDnsWriter {
    * after the next periodic refresh (default 30s), often causing LE to
    * time out on "No TXT records found". Surfaced on
    */
-  async create (name: any, value: any) {
+  async create (name: string, value: string) {
     const existing = await this.#platformDB.getDnsRecord(name);
     const priorTxt = (existing && Array.isArray(existing.txt)) ? existing.txt : [];
     const merged = priorTxt.includes(value) ? priorTxt : [...priorTxt, value];
@@ -212,10 +227,10 @@ class PlatformDBDnsWriter {
     if (this.#waitMs > 0) await new Promise(resolve => setTimeout(resolve, this.#waitMs));
   }
 
-  async remove (name: any, value: any) {
+  async remove (name: string, value: string) {
     const existing = await this.#platformDB.getDnsRecord(name);
     if (!existing) return;
-    const txt = (existing.txt || []).filter((v: any) => v !== value);
+    const txt = (existing.txt || []).filter((v: string) => v !== value);
     if (txt.length === 0) {
       await this.#platformDB.deleteDnsRecord(name);
     } else {
@@ -249,7 +264,7 @@ class PlatformDBDnsWriter {
 // record, with multiple values. Argument kept for API stability + future
 // multi-zone extensions.
 
-function acmeChallengeName (identifierValue: any) {
+function acmeChallengeName (_identifierValue: string): string {
   return '_acme-challenge';
 }
 
