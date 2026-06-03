@@ -42,11 +42,11 @@ export interface UserStorage {
   findDeletions (userOrUserId: UserOrId, deletedSince: number, options: Record<string, any> | null, callback: Callback<any[]>): void;
 
   // Cross-user iteration
-  iterateAll (callback: (item: any, done: () => void) => void, doneCallback: Callback<any>): void;
+  iterateAll (callback: (item: unknown, done: () => void) => void, doneCallback: Callback<unknown>): void;
 
   // Migration methods — operate directly on the database, bypassing converters
-  exportAll (userOrUserId: UserOrId, callback: Callback<any[]>): void;
-  importAll (userOrUserId: UserOrId, data: any[], callback: Callback<any>): void;
+  exportAll (userOrUserId: UserOrId, callback: Callback<unknown[]>): void;
+  importAll (userOrUserId: UserOrId, data: unknown[], callback: Callback<unknown>): void;
   clearAll (userOrUserId: UserOrId, callback: Callback<any>): void;
 }
 
@@ -73,13 +73,14 @@ const REQUIRED_METHODS: string[] = [
   'clearAll'
 ];
 
-function validateUserStorage (instance: any): UserStorage {
+function validateUserStorage (instance: unknown): UserStorage {
+  const obj = instance as Record<string, unknown>;
   for (const method of REQUIRED_METHODS) {
-    if (typeof instance[method] !== 'function') {
+    if (typeof obj[method] !== 'function') {
       throw new Error(`UserStorage implementation missing method: ${method}`);
     }
   }
-  return instance;
+  return obj as unknown as UserStorage;
 }
 
 export { validateUserStorage, REQUIRED_METHODS };
