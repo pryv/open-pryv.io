@@ -11,6 +11,18 @@
  * Here 'tree' means a recursive array of objects with a 'children' property.
  */
 
+interface TreeItem {
+  id: string;
+  parentId?: string | null;
+  children?: TreeItem[];
+  deleted?: unknown;
+  [k: string]: unknown;
+}
+
+type Predicate<T extends TreeItem> = (item: T) => boolean;
+type AsyncPredicate<T extends TreeItem> = (item: T) => Promise<boolean>;
+type Iter<T extends TreeItem, R> = (item: T) => R;
+
 /**
  * Items whose parent id refer to an item absent from the array are filtered out.
  * Items with no parent id are just left as they are.
@@ -18,19 +30,19 @@
  *
  * @param stripParentIds Optional, default: false
  */
-function buildTree (array: any, stripParentIds: any) {
+function buildTree<T extends TreeItem> (array: T[], stripParentIds?: boolean): T[] {
   if (!Array.isArray(array)) {
     throw new Error('Invalid argument: expected an array');
   }
-  const map: any = {};
-  array.forEach(function (item: any) {
+  const map: Record<string, T> = {};
+  array.forEach(function (item: T) {
     verifyFlatItem(item);
-    const clone = structuredClone(item);
+    const clone = structuredClone(item) as T;
     if (clone.deleted == null) clone.children = [];
     map[item.id] = clone;
   });
-  const result: any[] = [];
-  array.forEach(function (item: any) {
+  const result: T[] = [];
+  array.forEach(function (item: T) {
     const clone = map[item.id];
     if (clone.hasOwnProperty('parentId') && clone.parentId) {
       // child
@@ -39,7 +51,7 @@ function buildTree (array: any, stripParentIds: any) {
         return;
       }
       if (map[clone.parentId].children == null) { map[clone.parentId].children = []; }
-      map[clone.parentId].children.push(clone);
+      (map[clone.parentId].children as T[]).push(clone);
     } else {
       // root
       result.push(clone);
@@ -51,7 +63,7 @@ function buildTree (array: any, stripParentIds: any) {
   return result;
 }
 
-function verifyFlatItem (item: any) {
+function verifyFlatItem (item: TreeItem): void {
   if (!item.hasOwnProperty('id')) {
     throw new Error('Invalid object structure: expected property "id"');
   }
@@ -60,22 +72,22 @@ function verifyFlatItem (item: any) {
 /**
  * The result is made from copies of the original items (which are left untouched).
  */
-function flattenTreeWithoutParents (array: any) {
+function flattenTreeWithoutParents<T extends TreeItem> (array: T[]): T[] {
   if (!Array.isArray(array)) {
     throw new Error('Invalid argument: expected an array');
   }
-  const result: any[] = [];
+  const result: T[] = [];
   flattenRecursiveWithoutParents(array, null, result);
   return result;
 }
 
-function flattenRecursiveWithoutParents (originalArray: any, parentId: any, resultArray: any) {
-  originalArray.forEach(function (item: any) {
-    const clone = structuredClone(item);
+function flattenRecursiveWithoutParents<T extends TreeItem> (originalArray: T[], parentId: string | null, resultArray: T[]): void {
+  originalArray.forEach(function (item: T) {
+    const clone = structuredClone(item) as T;
     clone.parentId = parentId; // WTF
     const children = clone.children;
     if (Array.isArray(children) && children.length > 0) {
-      flattenRecursive(clone.children, clone.id, resultArray);
+      flattenRecursive(clone.children as T[], clone.id, resultArray);
       delete clone.children; // WTF #2
     } else {
       resultArray.push(clone);
@@ -99,20 +111,20 @@ function flattenRecursiveWithoutParents (originalArray: any, parentId: any, resu
  *  attachedFiles: 3
  * }
  */
-function flattenSimpleObject (object: any) {
+function flattenSimpleObject (object: Record<string, unknown>): Record<string, unknown> {
   if (!(object instanceof Object)) {
     throw new Error('Invalid argument: expected an object');
   }
-  const result: any[] = [];
+  const result: Record<string, unknown> = {};
   flattenRecursiveSimpleObject(object, result);
-  return result;
+  return result as Record<string, unknown>;
 }
 
-function flattenRecursiveSimpleObject (originalObject: any, resultArray: any) {
-  Object.keys(originalObject).forEach(function (key: any) {
+function flattenRecursiveSimpleObject (originalObject: Record<string, unknown>, resultArray: Record<string, unknown>): void {
+  Object.keys(originalObject).forEach(function (key: string) {
     const value = structuredClone(originalObject[key]);
     if (typeof value === 'object') {
-      flattenRecursiveSimpleObject(value, resultArray);
+      flattenRecursiveSimpleObject(value as Record<string, unknown>, resultArray);
     } else {
       resultArray[key] = value;
     }
@@ -122,18 +134,18 @@ function flattenRecursiveSimpleObject (originalObject: any, resultArray: any) {
 /**
  * The result is made from copies of the original items (which are left untouched).
  */
-function flattenTree (array: any) {
+function flattenTree<T extends TreeItem> (array: T[]): T[] {
   if (!Array.isArray(array)) {
     throw new Error('Invalid argument: expected an array');
   }
-  const result: any[] = [];
+  const result: T[] = [];
   flattenRecursive(array, null, result);
   return result;
 }
 
-function flattenRecursive (originalArray: any, parentId: any, resultArray: any) {
-  originalArray.forEach(function (item: any) {
-    const clone = structuredClone(item);
+function flattenRecursive<T extends TreeItem> (originalArray: T[], parentId: string | null, resultArray: T[]): void {
+  originalArray.forEach(function (item: T) {
+    const clone = structuredClone(item) as T;
     // When recursing into a parent's `children` array, the tree position
     // is authoritative — overwrite parentId with the parent's id.
     // At the root call (parentId === null), preserve any pre-existing
@@ -148,14 +160,14 @@ function flattenRecursive (originalArray: any, parentId: any, resultArray: any) 
     }
     resultArray.push(clone);
     if (clone.hasOwnProperty('children')) {
-      flattenRecursive(clone.children, clone.id, resultArray);
+      flattenRecursive(clone.children as T[], clone.id, resultArray);
       delete clone.children;
     }
   });
 }
 
-function findById (array: any, id: any) {
-  return findInTree(array, function (item: any) {
+function findById<T extends TreeItem> (array: T[], id: string): T | null {
+  return findInTree(array, function (item: T) {
     return item.id === id;
   });
 }
@@ -163,7 +175,7 @@ function findById (array: any, id: any) {
 /**
  * @param iterator Arguments: ({Object}), return value: {Boolean}
  */
-function findInTree (array: any, iterator: any): any {
+function findInTree<T extends TreeItem> (array: T[], iterator: Predicate<T>): T | null {
   for (let i = 0, n = array.length; i < n; i++) {
     const item = array[i];
     // check if item matches
@@ -172,7 +184,7 @@ function findInTree (array: any, iterator: any): any {
     }
     // if not check its children if any
     if (item.hasOwnProperty('children')) {
-      const childrenFind = findInTree(item.children, iterator);
+      const childrenFind = findInTree(item.children as T[], iterator);
       if (childrenFind) {
         return childrenFind;
       }
@@ -186,10 +198,10 @@ function findInTree (array: any, iterator: any): any {
  * Iterate on Tree, if iterator returns false, do not inspect children
  * @param iterator Arguments: ({Object}), return value: {Boolean}
  */
-async function iterateOnPromise (array: any, iterator: any) {
+async function iterateOnPromise<T extends TreeItem> (array: T[] | null | undefined, iterator: AsyncPredicate<T>): Promise<void> {
   if (!array) { return; }
   for (const stream of array) {
-    if ((await iterator(stream)) && stream.children) { await iterateOnPromise(stream.children, iterator); }
+    if ((await iterator(stream)) && stream.children) { await iterateOnPromise(stream.children as T[], iterator); }
   }
 }
 
@@ -198,18 +210,18 @@ async function iterateOnPromise (array: any, iterator: any) {
  * @param keepOrphans Whether to take into account the children of filtered-out items
  *                              (if yes, the tree structure may be modified)
  */
-async function filterTreeOnPromise (array: any, keepOrphans: any, iterator: any) {
-  const filteredArray: any[] = [];
+async function filterTreeOnPromise<T extends TreeItem> (array: T[], keepOrphans: boolean, iterator: AsyncPredicate<T>): Promise<T[]> {
+  const filteredArray: T[] = [];
   for (let i = 0, n = array.length; i < n; i++) {
     const item = array[i];
     if (await iterator(item)) {
-      const clone = structuredClone(item);
+      const clone = structuredClone(item) as T;
       filteredArray.push(clone);
       if (clone.hasOwnProperty('children')) {
-        clone.children = await filterTreeOnPromise(clone.children, keepOrphans, iterator);
+        clone.children = await filterTreeOnPromise(clone.children as T[], keepOrphans, iterator);
       }
     } else if (item.hasOwnProperty('children') && keepOrphans) {
-      const res = await filterTreeOnPromise(item.children, keepOrphans, iterator);
+      const res = await filterTreeOnPromise(item.children as T[], keepOrphans, iterator);
       filteredArray.push(...res);
     }
   }
@@ -222,58 +234,58 @@ async function filterTreeOnPromise (array: any, keepOrphans: any, iterator: any)
  *                              (if yes, the tree structure may be modified)
  * @param iterator Arguments: ({Object}), return value: {Boolean}
  */
-function filterTree (array: any, keepOrphans: any, iterator: any) {
-  const filteredArray: any[] = [];
+function filterTree<T extends TreeItem> (array: T[], keepOrphans: boolean, iterator: Predicate<T>): T[] {
+  const filteredArray: T[] = [];
   for (let i = 0, n = array.length; i < n; i++) {
     const item = array[i];
     if (iterator(item)) {
-      const clone = structuredClone(item);
+      const clone = structuredClone(item) as T;
       filteredArray.push(clone);
       if (clone.hasOwnProperty('children')) {
-        clone.children = filterTree(clone.children, keepOrphans, iterator);
+        clone.children = filterTree(clone.children as T[], keepOrphans, iterator);
       }
     } else if (item.hasOwnProperty('children') && keepOrphans) {
-      filteredArray.push.apply(filteredArray, filterTree(item.children, keepOrphans, iterator));
+      filteredArray.push.apply(filteredArray, filterTree(item.children as T[], keepOrphans, iterator));
     }
   }
   return filteredArray;
 }
 
-function collect (array: any, iterator: any) {
+function collect<T extends TreeItem, R> (array: T[], iterator: Iter<T, R>): R[] {
   if (!Array.isArray(array)) {
     throw new Error('Invalid argument: expected an array');
   }
-  const result: any[] = [];
+  const result: R[] = [];
   collectRecursive(array, result, iterator);
   return result;
 }
 
-function collectFromRootItem (item: any, iterator: any) {
+function collectFromRootItem<T extends TreeItem, R> (item: T, iterator: Iter<T, R>): R[] {
   if (Array.isArray(item)) {
     throw new Error('Invalid argument: expected a single item');
   }
-  const result = [iterator(item)];
-  collectRecursive(item.children, result, iterator);
+  const result: R[] = [iterator(item)];
+  collectRecursive(item.children as T[], result, iterator);
   return result;
 }
 
-function collectRecursive (originalArray: any, resultArray: any, iterator: any) {
-  originalArray.forEach(function (item: any) {
+function collectRecursive<T extends TreeItem, R> (originalArray: T[], resultArray: R[], iterator: Iter<T, R>): void {
+  originalArray.forEach(function (item: T) {
     resultArray.push(iterator(item));
     if (item.hasOwnProperty('children')) {
-      collectRecursive(item.children, resultArray, iterator);
+      collectRecursive(item.children as T[], resultArray, iterator);
     }
   });
 }
 
-function collectPluck (array: any, propertyName: any) {
-  return collect(array, function (item: any) {
+function collectPluck<T extends TreeItem> (array: T[], propertyName: string): unknown[] {
+  return collect(array, function (item: T) {
     return item[propertyName];
   });
 }
 
-function collectPluckFromRootItem (item: any, propertyName: any) {
-  return collectFromRootItem(item, function (item: any) {
+function collectPluckFromRootItem<T extends TreeItem> (item: T, propertyName: string): unknown[] {
+  return collectFromRootItem(item, function (item: T) {
     return item[propertyName];
   });
 }
@@ -283,10 +295,10 @@ function collectPluckFromRootItem (item: any, propertyName: any) {
  * including `null` if present.
  *
  */
-function expandIds (array: any, ids: any) {
-  const expandedIds: any[] = [];
-  ids.forEach(function (id: any) {
-    let currentExpIds;
+function expandIds<T extends TreeItem> (array: T[], ids: Array<string | null>): Array<string | null> {
+  const expandedIds: Array<string | null> = [];
+  ids.forEach(function (id: string | null) {
+    let currentExpIds: Array<string | null>;
     if (id === null) {
       // just keep it
       currentExpIds = [null];
@@ -295,7 +307,7 @@ function expandIds (array: any, ids: any) {
       if (!item) {
         return;
       }
-      currentExpIds = collectPluckFromRootItem(item, 'id');
+      currentExpIds = collectPluckFromRootItem(item, 'id') as Array<string | null>;
     }
     expandedIds.push.apply(expandedIds, currentExpIds);
   });
@@ -305,10 +317,10 @@ function expandIds (array: any, ids: any) {
 /**
  * Applies "iterator" function to all elements of the array and its children.
  */
-function cloneAndApply (array: any, iterator: any) {
-  const result: any[] = [];
-  array.forEach((item: any) => {
-    const clone = structuredClone(item);
+function cloneAndApply<T extends TreeItem> (array: T[], iterator: Iter<T, T>): T[] {
+  const result: T[] = [];
+  array.forEach((item: T) => {
+    const clone = structuredClone(item) as T;
     result.push(applyRecursive(iterator(clone), iterator));
   });
   return result;
@@ -317,10 +329,10 @@ function cloneAndApply (array: any, iterator: any) {
 /**
  * Mutates the given data.
  */
-function applyRecursive (item: any, iterator: any) {
+function applyRecursive<T extends TreeItem> (item: T, iterator: Iter<T, T>): T {
   if (!Array.isArray(item.children) || item.children.length === 0) { return item; }
-  const result: any[] = [];
-  item.children.forEach((child: any) => {
+  const result: T[] = [];
+  (item.children as T[]).forEach((child: T) => {
     result.push(applyRecursive(iterator(child), iterator));
   });
   item.children = result;
@@ -332,18 +344,18 @@ function applyRecursive (item: any, iterator: any) {
  * @param properties to display ['id', ..]
  * @param depth  - private
  */
-function debug (streams: any, properties: any, depth: any) {
+function debug<T extends TreeItem> (streams: T[], properties?: string[], depth?: number): void {
   const myddepth = depth ? depth + 1 : 1;
   if (!properties) { properties = []; }
   const base = '-'.padStart(myddepth * 2, ' ');
   for (const stream of streams) {
     let line = base + stream.id;
     for (const p of properties) {
-      line += ' | ' + p + ': ' + stream[p];
+      line += ' | ' + p + ': ' + String(stream[p]);
     }
     console.log(line);
     if (stream.children) {
-      debug(stream.children, properties, myddepth);
+      debug(stream.children as T[], properties, myddepth);
     }
   }
 }
@@ -386,3 +398,4 @@ export {
   cloneAndApply,
   debug
 };
+export type { TreeItem };
