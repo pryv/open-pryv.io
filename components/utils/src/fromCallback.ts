@@ -12,9 +12,9 @@
  *
  *   await fromCallback((cb) => storage.findOne(user, query, cb));
  */
-function fromCallback (fn: any) {
+function fromCallback (fn: (cb: (err: unknown, value: unknown) => void) => void) {
   return new Promise((resolve, reject) => {
-    fn((err: any, value: any) => {
+    fn((err: unknown, value: unknown) => {
       if (err) reject(err);
       else resolve(value);
     });

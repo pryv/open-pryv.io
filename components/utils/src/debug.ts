@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 
 const util = require('util');
 
-function log (...args: any[]) {
+function log (...args: unknown[]) {
   for (let i = 0; i < args.length; i++) {
     console.log(util.inspect(args[i], { depth: 12, colors: true }));
   }
@@ -22,7 +22,7 @@ function stack (start = 0, length = 100) {
   return (e.stack ?? '').split('\n').filter(l => l.indexOf('node_modules') < 0).slice(start + 1, start + length + 1);
 }
 
-function logstack (...args: any[]) {
+function logstack (...args: unknown[]) {
   log(...args, stack(2, 4));
 }
 

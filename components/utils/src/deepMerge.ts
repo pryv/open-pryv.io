@@ -16,7 +16,7 @@
  *
  * @template T
  */
-function deepMerge (target: any, ...sources: any[]) {
+function deepMerge (target: Record<string, unknown> | null | undefined, ...sources: Array<Record<string, unknown> | null | undefined>): Record<string, unknown> {
   if (target == null) target = {};
   for (const source of sources) {
     if (source == null) continue;
@@ -38,7 +38,7 @@ function deepMerge (target: any, ...sources: any[]) {
   return target;
 }
 
-function isPlainObject (v: any) {
+function isPlainObject (v: unknown): v is Record<string, unknown> {
   if (v === null || typeof v !== 'object') return false;
   if (Array.isArray(v)) return false;
   const proto = Object.getPrototypeOf(v);
