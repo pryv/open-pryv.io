@@ -37,10 +37,28 @@ const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 
 type ErrorFactory = {
-  invalidOperation: (message: string, details?: any) => any;
+  invalidOperation: (message: string, details?: Record<string, unknown>) => Error;
 };
 
-type Middleware = (context: any, params: any, result: any, next: any) => any | Promise<any>;
+type AcceptedByEntry = { username?: string; host?: string; acceptedAt?: number; [k: string]: unknown };
+type CapabilityCd = {
+  state?: string;
+  mode?: string;
+  stateChangedAt?: number;
+  acceptedBy?: AcceptedByEntry[];
+  [k: string]: unknown;
+};
+type NewEventLike = {
+  streamIds?: string[];
+  content?: { from?: { username?: string; host?: string } };
+};
+type MwContext = {
+  newEvent?: NewEventLike;
+  access?: { clientData?: { cmc?: { capability?: CapabilityCd; [k: string]: unknown }; [k: string]: unknown }; [k: string]: unknown };
+  [k: string]: unknown;
+};
+type MwNext = (err?: unknown) => void;
+type Middleware = (context: MwContext, params: unknown, result: unknown, next: MwNext) => unknown | Promise<unknown>;
 
 const { CmcErrorIds } = require('./errorIds.ts');
 
@@ -84,7 +102,7 @@ function createCapabilityResponseHook (deps: { errors: ErrorFactory }): Middlewa
     // app distinguish "I already clicked this" from "this is a fresh
     // invite still claimable by someone else."
     if (state === 'open' && capabilityCd.mode === 'open-link') {
-      const acceptedBy: any[] = Array.isArray(capabilityCd.acceptedBy)
+      const acceptedBy: AcceptedByEntry[] = Array.isArray(capabilityCd.acceptedBy)
         ? capabilityCd.acceptedBy
         : [];
       const from = event?.content?.from;
@@ -92,7 +110,7 @@ function createCapabilityResponseHook (deps: { errors: ErrorFactory }): Middlewa
           typeof from.username === 'string' && from.username.length > 0 &&
           typeof from.host === 'string' && from.host.length > 0) {
         const fromKey = from.username.toLowerCase() + '|' + slugMod.slugifyHost(from.host);
-        const match = acceptedBy.find((a: any) =>
+        const match = acceptedBy.find((a: AcceptedByEntry) =>
           a != null && typeof a === 'object' &&
           typeof a.username === 'string' && typeof a.host === 'string' &&
           (a.username.toLowerCase() + '|' + slugMod.slugifyHost(a.host)) === fromKey
