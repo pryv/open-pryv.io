@@ -31,12 +31,14 @@ YAML config files, loaded in order (last wins):
 For a fresh single-core install, the docker image ships an interactive wizard that produces a complete `override-config.yml` from prompts (DNS topology, storage engine, secrets, TLS strategy, app-web-auth3 URL, …) and validates the host environment before writing.
 
 ```bash
-mkdir -p /host/pryv/config
+mkdir -p /host/pryv
 docker run -it --rm \
-  -v /host/pryv/config:/app/config \
+  -v /host/pryv:/etc/pryv \
   pryvio/open-pryv.io \
-  init /app/config/override-config.yml
+  init /etc/pryv/override-config.yml
 ```
+
+The mount **target** (right of the `:`) must not be `/app/config` — that directory is owned by the image and holds the bundled config plugins (`systemStreams`, `paths-config`, …); a directory mount over it would mask them and master.js would refuse to boot. `/etc/pryv` is the conventional non-conflicting choice; any path you control is fine.
 
 The wizard:
 - Prompts for ~15 deployment-specific choices; defaults are pre-filled and accepted with enter.
@@ -60,9 +62,9 @@ If you prefer hand-crafting the YAML (or already have one), skip to **Minimal pr
 
 ```bash
 docker run --rm \
-  -v /host/pryv/config:/app/config \
+  -v /host/pryv:/etc/pryv \
   pryvio/open-pryv.io \
-  check-config /app/config/override-config.yml
+  check-config /etc/pryv/override-config.yml
 ```
 
 Exit 0 = all required-at-boot checks passed. Exit 1 = at least one problem (printed). Warnings (e.g. missing `access.defaultAuthUrl`) print but don't fail.
