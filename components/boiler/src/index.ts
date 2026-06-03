@@ -78,11 +78,24 @@ const boiler = {
   init
 };
 
-let logger: any;
-let configInitialized = false;
-let configInitCalledWithName: any = null;
+type Logger = { info: (msg: string) => void; warn: (msg: string) => void; debug: (msg: string) => void; error: (msg: string) => void };
+type ConfigInstance = InstanceType<typeof Config>;
+type InitOptions = {
+  appName: string;
+  appNameWithoutPostfix?: string;
+  baseConfigDir?: string;
+  baseFilesDir?: string;
+  extraConfigs?: unknown[];
+  skipOverrideConfig?: boolean;
+  [k: string]: unknown;
+};
+type LoadedCallback = (config: ConfigInstance) => void;
 
-function init (options: any, fullyLoadedCallback?: any) {
+let logger!: Logger;
+let configInitialized = false;
+let configInitCalledWithName: string | null = null;
+
+function init (options: InitOptions, fullyLoadedCallback?: LoadedCallback) {
   if (configInitCalledWithName) {
     logger.warn('Skipping initalization! boiler is already initialized with appName: ' + configInitCalledWithName);
     return boiler;
@@ -114,7 +127,7 @@ function init (options: any, fullyLoadedCallback?: any) {
 
   logger = logging.getLogger('boiler');
 
-  config.initASync().then((config: any) => {
+  config.initASync().then((config: ConfigInstance) => {
     configInitialized = true;
     if (fullyLoadedCallback) fullyLoadedCallback(config);
   });
@@ -183,7 +196,7 @@ function getConfigSync () {
  *
  * Anywhere else, use `getConfigSync()`.
  */
-function getConfigUnsafe (warnOnly?: any) {
+function getConfigUnsafe (warnOnly?: boolean): ConfigInstance {
   if (!configInitCalledWithName) {
     throw (new Error('boiler must be initialized with init() before using getConfigUnsafe()'));
   }
