@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Application as ExpressApp, Request, Response } from 'express';
+import type { Server as HttpServer } from 'node:http';
 const require = createRequire(import.meta.url);
 
 const http = require('http');
@@ -17,32 +19,41 @@ const getAuth = require('middleware/src/getAuth.ts').default;
 const KEY_IP = 'http:ip';
 const KEY_PORT = 'http:hfsPort';
 const { getConfig, getLogger } = require('@pryv/boiler');
+
+interface ConfigLike { get: (key: string) => unknown }
+interface LoggerLike {
+  info: (msg: string) => void;
+  debug: (msg: string) => void;
+  error: (msg: string) => void;
+  getLogger: (name: string) => LoggerLike;
+}
+
 /**
  * HTTP server responsible for the REST api that the HFS server exposes.
  */
 class Server {
   // Server settings.
 
-  config;
+  config: ConfigLike;
   // The express application.
 
-  expressApp: any;
+  expressApp!: ExpressApp;
   // base url for any access to this server.
 
-  baseUrl: any;
+  baseUrl!: string;
   /**
    * http server object
    */
-  server: any;
+  server!: HttpServer;
   // Logger used here.
 
-  logger;
+  logger: LoggerLike;
 
-  errorLogger;
+  errorLogger: LoggerLike;
   // Web request context
 
-  context;
-  constructor (config: any, context: any) {
+  context: unknown;
+  constructor (config: ConfigLike, context: unknown) {
     this.logger = getLogger('server');
     this.errorLogger = this.logger.getLogger('errors');
     this.config = config;
@@ -73,8 +84,8 @@ class Server {
    * @param {any} arg
    * @returns {Promise<any>}
    */
-  logStarted (arg: any) {
-    const addr = this.server.address();
+  logStarted<T> (arg: T): T {
+    const addr = this.server.address() as { address: string; port: number };
     this.logger.info(`started. (http://${addr.address}:${addr.port})`);
     // passthrough of our single argument
     return arg;
@@ -118,7 +129,7 @@ class Server {
    * @param {express$Application} app
    * @returns {void}
    */
-  defineApplication (app: any) {
+  defineApplication (app: ExpressApp) {
     const ctx = this.context;
     const c = controllerFactory(ctx);
     app.get('/system/status', systemStatus);
@@ -133,7 +144,7 @@ class Server {
  * @param {express$Response} res
  * @returns {void}
  */
-function systemStatus (req: any, res: any) {
+function systemStatus (_req: Request, res: Response) {
   res.status(200).json({
     status: 'ok'
   });
