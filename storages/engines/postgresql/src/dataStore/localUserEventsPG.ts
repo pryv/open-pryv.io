@@ -38,17 +38,41 @@ type DeletionSettings = {
 };
 type Settings = { versioning?: { deletionMode?: string; forceKeepHistory?: boolean } };
 type SystemStreams = { accountStreamIds?: string[] };
-type QueryFn = (sql: string, params: unknown[]) => Promise<{ rows: any[]; rowCount?: number }>;
+type QueryResult = { rows: Array<Record<string, unknown>>; rowCount?: number };
+type QueryFn = (sql: string, params: unknown[]) => Promise<QueryResult>;
 type Transaction = { query: QueryFn } | null | undefined;
+interface DbLike { query: QueryFn }
+interface EventsFileStorageLike {
+  removeAllForEvent: (userId: string, eventId: string) => Promise<void>;
+  removeAllForUser: (userId: string) => Promise<void>;
+  getFileStorageInfos: (userId: string) => Promise<number>;
+}
 type Store = {
-  db: any; // DatabasePG — not yet typed externally
-  eventsFileStorage: any; // EventFiles — not yet typed
+  db: DbLike;
+  eventsFileStorage: EventsFileStorageLike;
   settings: Settings;
   setIntegrityOnEvent: (event: Event) => void;
   accountStreamIds: string[];
   deletionSettings: DeletionSettings;
   keepHistory: boolean;
 };
+
+interface LocalQueryItem {
+  type: string;
+  content: unknown;
+  [k: string]: unknown;
+}
+interface LocalOptions {
+  sort?: Record<string, number>;
+  skip?: number;
+  limit?: number;
+  [k: string]: unknown;
+}
+interface StreamFilterItem {
+  any?: string[];
+  not?: string[];
+  [k: string]: unknown;
+}
 
 const COL_MAP: Record<string, string> = {
   headId: 'head_id',
@@ -116,7 +140,7 @@ const userEvents = ds.createUserEvents({
   keepHistory: false,
   setIntegrityOnEvent: null,
 
-  init (this: Store, db: any, eventsFileStorage: any, settings: Settings, setIntegrityOnEventFn: (event: Event) => void, systemStreams: SystemStreams): void {
+  init (this: Store, db: DbLike, eventsFileStorage: EventsFileStorageLike, settings: Settings, setIntegrityOnEventFn: (event: Event) => void, systemStreams: SystemStreams): void {
     this.db = db;
     this.eventsFileStorage = eventsFileStorage;
     this.settings = settings;
@@ -147,7 +171,7 @@ const userEvents = ds.createUserEvents({
     const localOptions = localStoreEventQueries.localStorePrepareOptions(options);
     const { sql, params } = buildEventQuery(userId, localQuery, localOptions);
     const res = await this.db.query(sql, params);
-    return res.rows.map(rowToEvent);
+    return res.rows.map(rowToEvent).filter((e): e is Event => e !== null);
   },
 
   async getStreamed (this: Store, userId: string, query: unknown, options: unknown): Promise<ReadableType> {
@@ -402,7 +426,7 @@ const userEvents = ds.createUserEvents({
       'SELECT COUNT(*)::int AS cnt FROM events WHERE user_id = $1',
       [userId]
     );
-    return { count: res.rows[0].cnt };
+    return { count: res.rows[0].cnt as number };
   },
 
   async _getFilesStorageInfos (this: Store, userId: string): Promise<{ sizeKb: number }> {
@@ -448,7 +472,7 @@ export { userEventsWithRow as userEvents, rowToEvent };
 
 // ---- Query building helpers ----
 
-function buildEventQuery (userId: string, localQuery: any[], localOptions: any): { sql: string, params: unknown[] } {
+function buildEventQuery (userId: string, localQuery: LocalQueryItem[], localOptions: LocalOptions): { sql: string, params: unknown[] } {
   const conditions: string[] = ['e.user_id = $1', 'e.deleted IS NULL', 'e.head_id IS NULL'];
   const params: unknown[] = [userId];
   let idx = 2;
@@ -486,50 +510,52 @@ function buildEventQuery (userId: string, localQuery: any[], localOptions: any):
   return { sql, params };
 }
 
-function convertQueryItem (item: any, idx: number, params: unknown[]): { condition: string, nextIdx: number } | null {
+function convertQueryItem (item: LocalQueryItem, idx: number, params: unknown[]): { condition: string, nextIdx: number } | null {
+  const content = item.content as { field: string; value: unknown };
   switch (item.type) {
     case 'equal': {
-      const col = 'e.' + toCol(item.content.field);
-      if (item.content.value === null) {
+      const col = 'e.' + toCol(content.field);
+      if (content.value === null) {
         return { condition: `${col} IS NULL`, nextIdx: idx };
       }
-      if (item.content.value === true) {
+      if (content.value === true) {
         return { condition: `${col} = TRUE`, nextIdx: idx };
       }
-      if (item.content.value === false) {
+      if (content.value === false) {
         // trashed=false means trashed IS NULL or trashed = false
         return { condition: `(${col} IS NULL OR ${col} = FALSE)`, nextIdx: idx };
       }
-      params.push(item.content.value);
+      params.push(content.value);
       return { condition: `${col} = $${idx}`, nextIdx: idx + 1 };
     }
     case 'greater': {
-      const col = 'e.' + toCol(item.content.field);
-      params.push(item.content.value);
+      const col = 'e.' + toCol(content.field);
+      params.push(content.value);
       return { condition: `${col} > $${idx}`, nextIdx: idx + 1 };
     }
     case 'greaterOrEqual': {
-      const col = 'e.' + toCol(item.content.field);
-      params.push(item.content.value);
+      const col = 'e.' + toCol(content.field);
+      params.push(content.value);
       return { condition: `${col} >= $${idx}`, nextIdx: idx + 1 };
     }
     case 'lowerOrEqual': {
-      const col = 'e.' + toCol(item.content.field);
-      params.push(item.content.value);
+      const col = 'e.' + toCol(content.field);
+      params.push(content.value);
       return { condition: `${col} <= $${idx}`, nextIdx: idx + 1 };
     }
     case 'greaterOrEqualOrNull': {
-      const col = 'e.' + toCol(item.content.field);
-      params.push(item.content.value);
+      const col = 'e.' + toCol(content.field);
+      params.push(content.value);
       return {
         condition: `(${col} >= $${idx} OR ${col} IS NULL)`,
         nextIdx: idx + 1
       };
     }
     case 'typesList': {
-      if (item.content.length === 0) return null;
+      const typesContent = item.content as string[];
+      if (typesContent.length === 0) return null;
       const typeConditions: string[] = [];
-      for (const requestedType of item.content as string[]) {
+      for (const requestedType of typesContent) {
         const wildcardIndex = requestedType.indexOf('/*');
         if (wildcardIndex > 0) {
           // Wildcard: note/* → type LIKE 'note/%'
@@ -547,14 +573,14 @@ function convertQueryItem (item: any, idx: number, params: unknown[]): { conditi
       };
     }
     case 'streamsQuery': {
-      return convertStreamsQuery(item.content, idx, params);
+      return convertStreamsQuery(item.content as StreamFilterItem[][], idx, params);
     }
     default:
       return null;
   }
 }
 
-function convertStreamsQuery (streamQueriesArray: any[], idx: number, params: unknown[]): { condition: string, nextIdx: number } | null {
+function convertStreamsQuery (streamQueriesArray: StreamFilterItem[][], idx: number, params: unknown[]): { condition: string, nextIdx: number } | null {
   if (!streamQueriesArray || streamQueriesArray.length === 0) return null;
 
   const orParts: string[] = [];
