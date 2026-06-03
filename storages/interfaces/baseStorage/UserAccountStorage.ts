@@ -6,9 +6,9 @@
  */
 
 export interface StoreKeyValueData {
-  getAll (userId: string): Promise<Record<string, any>>;
-  get (userId: string, key: string): Promise<any>;
-  set (userId: string, key: string, value: any): Promise<void>;
+  getAll (userId: string): Promise<Record<string, unknown>>;
+  get (userId: string, key: string): Promise<unknown>;
+  set (userId: string, key: string, value: unknown): Promise<void>;
 }
 
 export interface PasswordEntry {
@@ -19,14 +19,14 @@ export interface PasswordEntry {
 
 export interface AccountFieldEntry {
   field: string;
-  value: any;
+  value: unknown;
   time: number;
   createdBy: string;
 }
 
 export interface UserAccountStorageExport {
   passwords: PasswordEntry[];
-  storeKeyValues: Array<{ storeId: string, key: string, value: any }>;
+  storeKeyValues: Array<{ storeId: string, key: string, value: unknown }>;
   accountFields?: AccountFieldEntry[];
 }
 
@@ -40,10 +40,10 @@ export interface UserAccountStorage {
   getKeyValueDataForStore (storeId: string): StoreKeyValueData;
 
   // Account fields
-  getAccountFields (userId: string): Promise<Record<string, any>>;
-  getAccountField (userId: string, field: string): Promise<any>;
-  setAccountField (userId: string, field: string, value: any, createdBy: string, time?: number): Promise<AccountFieldEntry>;
-  getAccountFieldHistory (userId: string, field: string, limit?: number): Promise<Array<{ value: any, time: number, createdBy: string }>>;
+  getAccountFields (userId: string): Promise<Record<string, unknown>>;
+  getAccountField (userId: string, field: string): Promise<unknown>;
+  setAccountField (userId: string, field: string, value: unknown, createdBy: string, time?: number): Promise<AccountFieldEntry>;
+  getAccountFieldHistory (userId: string, field: string, limit?: number): Promise<Array<{ value: unknown, time: number, createdBy: string }>>;
   deleteAccountField (userId: string, field: string): Promise<void>;
 
   // Migration methods
@@ -73,13 +73,13 @@ const UserAccountStorage: UserAccountStorage = {
 
   // --- Account fields --- //
 
-  async getAccountFields (userId: string): Promise<Record<string, any>> { throw new Error('Not implemented'); },
+  async getAccountFields (userId: string): Promise<Record<string, unknown>> { throw new Error('Not implemented'); },
 
-  async getAccountField (userId: string, field: string): Promise<any> { throw new Error('Not implemented'); },
+  async getAccountField (userId: string, field: string): Promise<unknown> { throw new Error('Not implemented'); },
 
-  async setAccountField (userId: string, field: string, value: any, createdBy: string, time?: number): Promise<AccountFieldEntry> { throw new Error('Not implemented'); },
+  async setAccountField (userId: string, field: string, value: unknown, createdBy: string, time?: number): Promise<AccountFieldEntry> { throw new Error('Not implemented'); },
 
-  async getAccountFieldHistory (userId: string, field: string, limit?: number): Promise<Array<{ value: any, time: number, createdBy: string }>> { throw new Error('Not implemented'); },
+  async getAccountFieldHistory (userId: string, field: string, limit?: number): Promise<Array<{ value: unknown, time: number, createdBy: string }>> { throw new Error('Not implemented'); },
 
   async deleteAccountField (userId: string, field: string): Promise<void> { throw new Error('Not implemented'); },
 
