@@ -30,6 +30,27 @@ const path = require('path');
 const fs = require('fs');
 const { validateManifest, VALID_STORAGE_TYPES } = require('./manifest-schema.ts');
 
+interface EngineManifest {
+  entrypoint: string;
+  storageTypes: string[];
+  [k: string]: unknown;
+}
+
+interface EngineEntry {
+  manifest: EngineManifest;
+  dir: string;
+  module: Record<string, unknown> | null;
+}
+
+interface ConfigLike {
+  has: (key: string) => boolean;
+  get: (key: string) => unknown;
+}
+
+interface ResolvedConfig {
+  [storageType: string]: { engine: string } | undefined;
+}
+
 const ENGINES_DIR = path.join(__dirname, 'engines');
 
 // storageType → required exported methods
@@ -45,12 +66,12 @@ const REQUIRED_EXPORTS = {
 /**
  * Engine registry: engineName → { manifest, module, dir }
  */
-const engines: Record<string, any> = {};
+const engines: Record<string, EngineEntry> = {};
 
 /**
  * Resolved config: storageType → { engine: string, config: object }
  */
-let resolvedConfig: any = null;
+let resolvedConfig: ResolvedConfig | null = null;
 
 let initialized = false;
 
@@ -113,7 +134,7 @@ function validateEngineExports () {
 /**
  * Get the module for an engine, loading it if needed.
  */
-function getEngineModule (engineName: any) {
+function getEngineModule (engineName: string): Record<string, unknown> {
   const engine = engines[engineName];
   if (!engine) {
     throw new Error(`Unknown storage engine "${engineName}". Discovered: ${Object.keys(engines).join(', ') || '(none)'}`);
@@ -121,7 +142,7 @@ function getEngineModule (engineName: any) {
   if (!engine.module) {
     engine.module = require(path.join(engine.dir, engine.manifest.entrypoint));
   }
-  return engine.module;
+  return engine.module!;
 }
 
 /**
@@ -162,16 +183,16 @@ const SHORT_NAMES = {
  *
  * @param config - @pryv/boiler config instance
  */
-function resolveConfig (config: any) {
+function resolveConfig (config: ConfigLike): void {
   resolvedConfig = {};
 
   for (const storageType of VALID_STORAGE_TYPES) {
-    const shortName = (SHORT_NAMES as any)[storageType];
-    let engineName;
+    const shortName = (SHORT_NAMES as Record<string, string>)[storageType];
+    let engineName: string | undefined;
 
     // Config: storages.<shortName>.engine
     if (shortName && config.has(`storages:${shortName}:engine`)) {
-      engineName = config.get(`storages:${shortName}:engine`);
+      engineName = config.get(`storages:${shortName}:engine`) as string | undefined;
     }
 
     if (engineName) {
@@ -186,7 +207,7 @@ function resolveConfig (config: any) {
       const engineMeta = engines[engineName];
       if (engineMeta && !engineMeta.manifest.storageTypes.includes(storageType)) {
         const supporters = Object.entries(engines)
-          .filter(([_, m]) => (m as any).manifest.storageTypes.includes(storageType))
+          .filter(([_, m]) => m.manifest.storageTypes.includes(storageType))
           .map(([name, _]) => name);
         throw new Error(
           `Configured engine "${engineName}" for storages.${shortName}.engine ` +
@@ -203,7 +224,7 @@ function resolveConfig (config: any) {
  * Initialize the plugin loader: discover engines, resolve config.
  * @param config - @pryv/boiler config instance
  */
-async function init (config: any) {
+async function init (config: ConfigLike): Promise<void> {
   if (initialized) return;
   discover();
   validateEngineExports();
@@ -214,7 +235,7 @@ async function init (config: any) {
 /**
  * Get the resolved engine name for a storageType.
  */
-function getEngineFor (storageType: any) {
+function getEngineFor (storageType: string): string | null {
   if (!resolvedConfig) {
     throw new Error('pluginLoader not initialized. Call init(config) first.');
   }
@@ -232,7 +253,7 @@ function listEngines () {
 /**
  * Get manifest for a discovered engine.
  */
-function getManifest (engineName: any) {
+function getManifest (engineName: string): EngineManifest | null {
   const engine = engines[engineName];
   return engine ? engine.manifest : null;
 }
