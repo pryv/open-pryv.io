@@ -21,14 +21,43 @@ const timestamp = require('unix-timestamp');
 /**
  * EventEmitter interface is just for tests syncing for now
  */
+type Tracing = { startSpan (n: string): void; finishSpan (n: string): void; logForSpan (n: string, ctx: Record<string, unknown>): void };
+type Access = { id: string; serial?: string | null };
+type MethodContext = {
+  methodId: string;
+  user?: { id?: string };
+  access: Access;
+  tracing: Tracing;
+  source?: unknown;
+  originalQuery?: unknown;
+  auditIntegrityPayload?: unknown;
+  callerId?: string;
+};
+type AuditEvent = {
+  id?: string;
+  createdBy?: string;
+  modifiedBy?: string;
+  streamIds?: string[];
+  time?: number;
+  endTime?: number;
+  created?: number;
+  modified?: number;
+  trashed?: boolean;
+  type?: string;
+  content: { record?: unknown; source?: unknown; action?: string; query?: unknown; id?: string; message?: string; callerId?: string };
+};
+type AuditFilterLike = { isAudited (methodId: string): { syslog?: boolean; storage?: boolean } | boolean };
+type SyslogLike = { eventForUser (userId: string | undefined, event: AuditEvent): unknown };
+type AuditStorage = { forUser (userId: string): Promise<{ createEvent (e: AuditEvent): Promise<unknown> }> };
+
 class Audit {
-  _storage: any;
+  _storage: AuditStorage | undefined;
 
-  _syslog: any;
+  _syslog: SyslogLike | undefined;
 
-  filter: any;
+  filter!: AuditFilterLike;
 
-  tracer: any;
+  tracer: unknown;
   /**
    * Requires to call async init() to use
    */
@@ -56,12 +85,12 @@ class Audit {
     logger.info('Audit started');
   }
 
-  async validApiCall (context: any, result: any) {
+  async validApiCall (context: MethodContext, _result: unknown) {
     const methodId = context.methodId;
     if (!this.filter.isAudited(methodId)) { return; }
     context.tracing.startSpan('audit.validApiCall');
     const userId = context?.user?.id;
-    const event: any = buildDefaultEvent(context);
+    const event: AuditEvent = buildDefaultEvent(context);
     if (context.auditIntegrityPayload != null) {
       event.content.record = context.auditIntegrityPayload;
     }
@@ -75,7 +104,7 @@ class Audit {
     context.tracing.finishSpan('audit.validApiCall');
   }
 
-  async errorApiCall (context: any, error: any) {
+  async errorApiCall (context: MethodContext, error: { id?: string; message?: string }) {
     const methodId = context.methodId;
     if (!this.filter.isAudited(methodId)) { return; }
     context.tracing.startSpan('audit.errorApiCall');
@@ -83,7 +112,7 @@ class Audit {
     if (context.access?.id == null) {
       context.access = { id: AuditAccessIds.INVALID };
     }
-    const event: any = buildDefaultEvent(context);
+    const event: AuditEvent = buildDefaultEvent(context);
     event.type = CONSTANTS.EVENT_TYPE_ERROR;
     event.content.id = error.id;
     event.content.message = error.message;
@@ -91,12 +120,12 @@ class Audit {
     context.tracing.finishSpan('audit.errorApiCall');
   }
 
-  async eventForUser (userId: any, event: any, _methodId?: any) {
+  async eventForUser (userId: string | undefined, event: AuditEvent, _methodId?: string) {
     logger.debug('eventForUser: ' +
             userId +
             ' ' +
             util.inspect(event, { breakLength: Infinity, colors: true }));
-    const methodId = event.content.action;
+    const methodId = event.content.action!;
     // replace this with api-server's validation or remove completely as we are prpoducing it in house.
     let isValid = false;
     if (WITHOUT_USER_METHODS_MAP[methodId]) {
@@ -109,12 +138,12 @@ class Audit {
         cause: { userId, event }
       });
     }
-    const isAudited = this.filter.isAudited(methodId);
+    const isAudited = this.filter.isAudited(methodId) as { syslog?: boolean; storage?: boolean };
     if (this.syslog && isAudited.syslog) {
       this.syslog.eventForUser(userId, event);
     }
     if (this.storage && isAudited.storage) {
-      const userStorage = await this.storage.forUser(userId);
+      const userStorage = await this.storage.forUser(userId!);
       await userStorage.createEvent(event);
     }
   }
@@ -129,7 +158,7 @@ class Audit {
 }
 export default Audit;
 export { Audit };
-function buildDefaultEvent (context: any) {
+function buildDefaultEvent (context: MethodContext): AuditEvent {
   const time = timestamp.now();
   // When the caller's access has been versioned (serial non-null),
   // emit BOTH `access-<base>` and `access-<base>:<serial>` streamIds.
@@ -148,7 +177,7 @@ function buildDefaultEvent (context: any) {
   }
   streamIds.push(CONSTANTS.ACTION_STREAM_ID_PREFIX + context.methodId);
 
-  const event: any = {
+  const event: AuditEvent = {
     id: cuid(),
     createdBy: 'system',
     modifiedBy: 'system',
