@@ -14,18 +14,18 @@ const Transform = require('stream').Transform;
  * @param objectName {String} array name that will prefix the array
  */
 class SingleObjectSerializationStream extends Transform {
-  name;
-  constructor (objectName: any) {
+  name: string;
+  constructor (objectName: string) {
     super({ writableObjectMode: true });
     this.name = objectName;
   }
 
-  _transform = function (this: any, item: any, encoding: any, callback: any) {
+  _transform = function (this: SingleObjectSerializationStream, item: unknown, encoding: BufferEncoding, callback: (error?: Error | null) => void) {
     this.push('"' + this.name + '": ' + JSON.stringify(item) + ', ');
     callback();
   };
 
-  _flush = function (callback: any) {
+  _flush = function (callback: (error?: Error | null) => void) {
     callback();
   };
 }

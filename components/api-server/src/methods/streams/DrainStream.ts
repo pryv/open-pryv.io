@@ -18,15 +18,18 @@ const errors = require('errors').factory;
  * @param callback {Function} called when all items have been drained in the internal array
  *                            or the limit was reached, generating an error
  */
+interface DrainParams { limit?: number; isArray?: boolean }
+type DrainCallback = (err: Error | null, result?: unknown) => void;
+
 class DrainStream extends Writable {
   limit: number;
-  array: any[];
+  array: unknown[];
   size: number;
 
-  constructor (params: any, callback: any) {
+  constructor (params: DrainParams, callback: DrainCallback) {
     super({ objectMode: true });
 
-    this.limit = (params && params.limit > 0) ? params.limit : 100000;
+    this.limit = (params?.limit && params.limit > 0) ? params.limit : 100000;
     this.array = [];
     this.size = 0;
 
@@ -45,7 +48,7 @@ class DrainStream extends Writable {
     this.on('error', callback);
   }
 
-  _write (object: any, enc: any, next: any) {
+  _write (object: unknown, enc: BufferEncoding, next: (error?: Error | null) => void) {
     this.size++;
     if (this.size > this.limit) {
       return next(errors.tooManyResults(this.limit));
