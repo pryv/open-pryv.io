@@ -15,30 +15,55 @@ import type {} from 'node:fs';
 //    await batch.store();
 //
 
-class NamespaceBatch {
-  connection;
+type IPoint = {
+  tags: string[];
+  fields: Record<string, unknown>;
+  timestamp: number;
+  measurement: string;
+};
 
-  namespace;
-  constructor (conn: any, namespace: any) {
+type Row = {
+  toStruct: () => Record<string, unknown>;
+  get: (field: string) => number;
+};
+
+type BatchElement = {
+  eventId: string;
+  data: { eachRow: (cb: (row: Row) => void) => void };
+};
+
+type BatchRequest = { elements: () => Iterable<BatchElement> };
+
+type Connection = {
+  writePoints: (points: IPoint[], opts: { database: string }) => Promise<unknown>;
+};
+
+type MeasurementNameResolver = (eventId: string) => Promise<string>;
+
+class NamespaceBatch {
+  connection: Connection;
+
+  namespace: string;
+  constructor (conn: Connection, namespace: string) {
     this.connection = conn;
     this.namespace = namespace;
   }
 
   // Stores a batch request into InfluxDB and returns a promise that will
   // resolve once the request completes successfully.
-  async store (data: any, resolver: any) {
+  async store (data: BatchRequest, resolver: MeasurementNameResolver): Promise<unknown> {
     // These options will apply to all the points:
     const appendOptions = {
       database: this.namespace
     };
-    const points: any[] = [];
+    const points: IPoint[] = [];
     // Loop through all batch requests and convert each row into an IPoint
     // structure.
     for (const element of data.elements()) {
       const eventId = element.eventId;
       const data = element.data;
       const measurementName = await resolver(eventId);
-      data.eachRow((row: any) => {
+      data.eachRow((row: Row) => {
         points.push(toIPoint(eventId, row, measurementName));
       });
     }
@@ -46,7 +71,7 @@ class NamespaceBatch {
     return conn.writePoints(points, appendOptions);
 
     // Converts a single `Row` of data into an IPoint structure.
-    function toIPoint (eventId: any, row: any, measurementName: any) {
+    function toIPoint (eventId: string, row: Row, measurementName: string): IPoint {
       const struct = row.toStruct();
       delete struct.deltaTime;
 
@@ -62,4 +87,3 @@ class NamespaceBatch {
 }
 export default NamespaceBatch;
 export { NamespaceBatch };
-type MeasurementNameResolver = (eventId: string) => Promise<string>;
