@@ -35,17 +35,19 @@ type AuditEvent = {
   [k: string]: unknown;
 };
 type AuditRow = Record<string, unknown> & { eventid?: string | null; stream_ids?: string | null };
-type QueryItem = { type: string; content?: any };
+type QueryItem = { type: string; content: Record<string, any> };
 type Params = { query: QueryItem[]; options?: { sort?: Record<string, number>; limit?: number | string; skip?: number | string }; streams?: unknown };
 
 type LoggerLike = { getLogger (name: string): unknown };
 
+type DbLike = Record<string, any>; // DatabasePG — wide alias until generic refactor
+
 class UserAuditDatabasePG {
-  db: any; // DatabasePG — not yet typed externally
+  db: DbLike; // DatabasePG — not yet typed externally
   userId: string;
   logger: unknown;
 
-  constructor (db: any, userId: string, logger: LoggerLike) {
+  constructor (db: DbLike, userId: string, logger: LoggerLike) {
     this.db = db;
     this.userId = userId;
     this.logger = logger.getLogger('audit-user-pg');
