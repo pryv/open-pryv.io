@@ -45,6 +45,20 @@ type Logger = {
   error (msg: string): void;
 };
 
+type DnsAnswer = Record<string, unknown>;
+type DnsQuestion = { name: string; type: number };
+type DnsRequest = { questions: DnsQuestion[] };
+type DnsResponse = { answers: DnsAnswer[]; header: { rcode: number; [k: string]: unknown }; [k: string]: unknown };
+type DnsSendFn = (resp: DnsResponse) => void;
+type Dns2EventHandler = (...args: unknown[]) => void;
+interface Dns2Server {
+  on: (event: string, handler: Dns2EventHandler) => void;
+  listen: (opts: { udp: { port: number; address: string; type: string } } | number, ip?: string) => Promise<void>;
+  close: () => Promise<void> | void;
+  addresses: () => { udp?: { address: string; port: number }; tcp?: { address: string; port: number } };
+  _udp6?: Dns2Server;
+}
+
 type DnsRecordEntry = {
   a?: string | string[];
   aaaa?: string | string[];
@@ -65,7 +79,7 @@ class DnsServer {
   #config: BoilerConfig;
   #platform: PlatformLike;
   #logger: Logger;
-  #server: any;
+  #server!: Dns2Server;
   #domain: string;
   #ttl: number;
   #rootRecords: Record<string, unknown>;
@@ -103,16 +117,18 @@ class DnsServer {
   async start ({ port, ip, ip6 }: { port: number; ip: string; ip6?: string | null }) {
     this.#server = dns2.createServer({
       udp: true,
-      handle: (request: any, send: (resp: any) => void, rinfo: unknown) => {
+      handle: (request: DnsRequest, send: DnsSendFn, rinfo: unknown) => {
         this.#handleRequest(request, send, rinfo);
       }
     });
 
-    this.#server.on('requestError', (err: Error) => {
+    this.#server.on('requestError', (...args: unknown[]) => {
+      const err = args[0] as Error;
       this.#logger.warn('DNS request parse error: ' + err.message);
     });
 
-    this.#server.on('error', (err: Error) => {
+    this.#server.on('error', (...args: unknown[]) => {
+      const err = args[0] as Error;
       this.#logger.error('DNS server error: ' + err.message);
     });
 
@@ -126,10 +142,11 @@ class DnsServer {
     // If IPv6 is configured, start a second UDP6 server
     if (ip6) {
       this.#server._udp6 = dns2.createUDPServer({ type: 'udp6' });
-      this.#server._udp6.on('request', (request: any, send: (resp: any) => void, rinfo: unknown) => {
+      this.#server._udp6!.on('request', (...args: unknown[]) => {
+        const [request, send, rinfo] = args as [DnsRequest, DnsSendFn, unknown];
         this.#handleRequest(request, send, rinfo);
       });
-      await this.#server._udp6.listen(port, ip6);
+      await this.#server._udp6!.listen(port, ip6);
       this.#logger.info(`DNS server listening on [${ip6}]:${port} (IPv6)`);
     }
 
@@ -250,7 +267,7 @@ class DnsServer {
   /**
    * Handle an incoming DNS request.
    */
-  async #handleRequest (request: any, send: (resp: any) => void, _rinfo: unknown) {
+  async #handleRequest (request: DnsRequest, send: DnsSendFn, _rinfo: unknown) {
     const response = Packet.createResponseFromRequest(request);
     const question = request.questions[0];
     if (!question) {
@@ -304,8 +321,10 @@ class DnsServer {
   /**
    * Answer root domain queries with configured records.
    */
-  #answerRoot (response: any, qname: string, qtype: number) {
-    const root = this.#rootRecords as Record<string, any>;
+  #answerRoot (response: DnsResponse, qname: string, qtype: number) {
+    const root = this.#rootRecords as Record<string, unknown> & {
+      a?: string[]; aaaa?: string[]; ns?: string[]; mx?: Array<{ exchange: string; priority?: number }>; txt?: string[]; caa?: Array<{ flags?: number; tag: string; value: string }>; soa?: Record<string, unknown>;
+    };
     const ttl = this.#ttl;
 
     if (qtype === Packet.TYPE.A || qtype === Packet.TYPE.ANY) {
@@ -348,7 +367,7 @@ class DnsServer {
   /**
    * Answer lsc.{domain} — return all core IPs for rqlite cluster discovery.
    */
-  async #answerClusterDiscovery (response: any, qname: string, qtype: number) {
+  async #answerClusterDiscovery (response: DnsResponse, qname: string, qtype: number) {
     const cores = await this.#platform.getAllCoreInfos();
     const ttl = this.#ttl;
 
@@ -365,7 +384,7 @@ class DnsServer {
   /**
    * Answer a static subdomain entry.
    */
-  #answerStatic (response: any, qname: string, qtype: number, entry: DnsRecordEntry) {
+  #answerStatic (response: DnsResponse, qname: string, qtype: number, entry: DnsRecordEntry) {
     const ttl = this.#ttl;
 
     if (entry.cname && (qtype === Packet.TYPE.CNAME || qtype === Packet.TYPE.A || qtype === Packet.TYPE.ANY)) {
@@ -397,7 +416,7 @@ class DnsServer {
   /**
    * Answer {username}.{domain} — look up user's core, return its IP or CNAME.
    */
-  async #answerUsername (response: any, qname: string, qtype: number, username: string) {
+  async #answerUsername (response: DnsResponse, qname: string, qtype: number, username: string) {
     const coreId = await this.#platform.getUserCore(username);
     if (coreId == null) {
       this.#setNxdomain(response);
@@ -423,7 +442,7 @@ class DnsServer {
    * — and used for inter-core HTTP routing in multi-core — is unreachable
    * via the embedded DNS unless the operator pre-populates `dns.staticEntries`.
    */
-  async #tryAnswerCoreInfo (response: any, qname: string, qtype: number, prefix: string) {
+  async #tryAnswerCoreInfo (response: DnsResponse, qname: string, qtype: number, prefix: string) {
     const coreInfo = await this.#platform.getCoreInfo(prefix);
     if (coreInfo == null) return false;
     this.#emitCoreInfoRecords(response, qname, qtype, coreInfo);
@@ -433,7 +452,7 @@ class DnsServer {
   /**
    * Emit A / AAAA / CNAME from a coreInfo row.
    */
-  #emitCoreInfoRecords (response: any, qname: string, qtype: number, coreInfo: CoreInfo) {
+  #emitCoreInfoRecords (response: DnsResponse, qname: string, qtype: number, coreInfo: CoreInfo) {
     const ttl = this.#ttl;
 
     if (coreInfo.ip && (qtype === Packet.TYPE.A || qtype === Packet.TYPE.ANY)) {
