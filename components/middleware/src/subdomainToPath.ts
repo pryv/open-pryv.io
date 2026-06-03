@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
 const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
@@ -17,9 +18,9 @@ const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers.ts');
  *
  * @param ignoredPaths Paths for which no translation is needed
  */
-export default function (ignoredPaths: any, ignoredSubdomains: any) {
-  ignoredSubdomains = ignoredSubdomains || [];
-  return function (req: any, res: any, next: any) {
+export default function (ignoredPaths: string[], ignoredSubdomains?: string[]): RequestHandler {
+  const subdomains: string[] = ignoredSubdomains || [];
+  return function (req: Request, res: Response, next: NextFunction): void {
     if (isIgnoredPath(req.url)) {
       return next();
     }
@@ -32,20 +33,20 @@ export default function (ignoredPaths: any, ignoredSubdomains: any) {
     const firstChunk = hostChunks[0];
     if (!looksLikeUsername(firstChunk)) { return next(); }
     // Skip core's own subdomain in multi-core mode
-    if (ignoredSubdomains.includes(firstChunk)) { return next(); }
+    if (subdomains.includes(firstChunk)) { return next(); }
     // Skip if it is already in the path.
     const pathPrefix = `/${firstChunk}`;
     if (req.url.startsWith(pathPrefix)) { return next(); }
     req.url = pathPrefix + req.url;
     next();
   };
-  function isIgnoredPath (url: any) {
-    return ignoredPaths.some(function (ignoredPath: any) {
+  function isIgnoredPath (url: string): boolean {
+    return ignoredPaths.some(function (ignoredPath: string) {
       return url.startsWith(ignoredPath);
     });
   }
 };
-function looksLikeUsername (candidate: any) {
+function looksLikeUsername (candidate: string): boolean {
   const reUsername = new RegExp(USERNAME_REGEXP_STR);
   const lowercasedUsername = candidate.toLowerCase(); // for retro-compatibility
   return reUsername.test(lowercasedUsername);
