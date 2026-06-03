@@ -92,9 +92,11 @@ const WITH_USER_METHODS = AUDITED_METHODS.filter(m => !WITHOUT_USER_METHODS.incl
 
 const allMethodsMap = buildMap(ALL_METHODS);
 
-function throwIfMethodIsNotDeclared (methodId: any) {
+type MethodsMap = Record<string, true>;
+
+function throwIfMethodIsNotDeclared (methodId: string): void {
   if (methodId.includes('*')) return; // including to register for wildcards such as "*"
-  if ((allMethodsMap as any)[methodId]) return;
+  if (allMethodsMap[methodId]) return;
   throw new Error('Attempting to add a method not declared in audit, methodId: "' + methodId + '". Please add it to components/audit/src/ApiMethods.js#ALL_METHODS');
 }
 
@@ -106,9 +108,9 @@ export { AUDITED_METHODS, AUDITED_METHODS_MAP, ALL_METHODS, ALL_METHODS_MAP, WIT
 /**
  * Builds a map with an { i => true } entry for each array element
  */
-function buildMap (array: any) {
-  const map: any = {};
-  array.forEach((i: any) => {
+function buildMap (array: string[]): MethodsMap {
+  const map: MethodsMap = {};
+  array.forEach((i: string) => {
     map[i] = true;
   });
   return map;
