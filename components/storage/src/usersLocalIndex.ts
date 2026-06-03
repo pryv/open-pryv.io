@@ -12,6 +12,8 @@ const require = createRequire(import.meta.url);
  * Contains UserName >> UserId Mapping
  */
 
+import type { UsersLocalIndexDB } from 'storages/interfaces/baseStorage/UsersLocalIndexDB.ts';
+
 const { getLogger } = require('@pryv/boiler');
 const cache = require('cache').default;
 const { validateUsersLocalIndexDB } = require('storages/interfaces/baseStorage/UsersLocalIndexDB.ts');
@@ -20,8 +22,8 @@ const { pluginLoader } = require('storages');
 const logger = getLogger('users:local-index');
 
 class UsersLocalIndex {
-  initialized;
-  db: any;
+  initialized: boolean;
+  db!: UsersLocalIndexDB;
 
   constructor () {
     this.initialized = false;
@@ -45,10 +47,10 @@ class UsersLocalIndex {
   /**
    * Check the integrity of the userIndex compared to the username events in SystemStreams
    */
-  async checkIntegrity () {
-    const errors: any[] = [];
-    const infos: any = {};
-    const checkedMap: any = {};
+  async checkIntegrity (): Promise<{ title: string; infos: Record<string, number>; errors: string[] }> {
+    const errors: string[] = [];
+    const infos: Record<string, number> = {};
+    const checkedMap: Record<string, boolean> = {};
 
     for (const collectionName of ['events', 'streams', 'accesses', 'profile', 'webhooks']) {
       const userIds = await getAllKnownUserIdsFromDB(collectionName);
@@ -71,18 +73,18 @@ class UsersLocalIndex {
     };
   }
 
-  async addUser (username: any, userId: any) {
+  async addUser (username: string, userId: string): Promise<void> {
     await this.db.addUser(username, userId);
     logger.debug('addUser', username, userId);
   }
 
-  async usernameExists (username: any) {
+  async usernameExists (username: string): Promise<boolean> {
     const res = ((await this.getUserId(username)) != null);
     logger.debug('usernameExists', username, res);
     return res;
   }
 
-  async getUserId (username: any) {
+  async getUserId (username: string): Promise<string | undefined> {
     let userId = cache.getUserId(username);
     if (userId == null) {
       userId = await this.db.getIdForName(username);
@@ -94,13 +96,13 @@ class UsersLocalIndex {
     return userId;
   }
 
-  async getUsername (userId: any) {
+  async getUsername (userId: string): Promise<string | undefined> {
     const res = await this.db.getNameForId(userId);
     logger.debug('nameForId', userId, res);
     return res;
   }
 
-  async getAllByUsername () {
+  async getAllByUsername (): Promise<Record<string, string>> {
     logger.debug('getAllByUsername');
     return await this.db.getAllByUsername();
   }
@@ -108,19 +110,19 @@ class UsersLocalIndex {
   /**
    * Reset everything – used by tests only
    */
-  async deleteAll () {
+  async deleteAll (): Promise<void> {
     logger.debug('deleteAll');
     cache.clear();
     return await this.db.deleteAll();
   }
 
-  async deleteById (userId: any) {
+  async deleteById (userId: string): Promise<void> {
     logger.debug('deleteById', userId);
     return await this.db.deleteById(userId);
   }
 }
 
-async function getAllKnownUserIdsFromDB (collectionName: any) {
+async function getAllKnownUserIdsFromDB (collectionName: string): Promise<string[]> {
   const storage = require('storage'); // placed here to avoid some circular dependency
   const storageLayer = await storage.getStorageLayer();
   return await storageLayer.getAllUserIdsFromCollection(collectionName);
