@@ -29,9 +29,26 @@ type Platform = {
 };
 type ServicesSettings = { email?: { enabled?: boolean | { welcome?: boolean; resetPassword?: boolean }; welcomeTemplate?: string; [k: string]: unknown }; [k: string]: unknown };
 type SystemStreamSettings = { isUnique?: boolean; isShown?: boolean; [k: string]: unknown };
+type NewUserLike = {
+  id: string;
+  username: string;
+  password?: string;
+  passwordHash?: string;
+  [k: string]: unknown;
+};
 type MethodContext = {
-  newUser: any;
+  newUser: NewUserLike;
   user: { id: string; username: string };
+  [k: string]: unknown;
+};
+type RegisterParams = {
+  username?: string;
+  password?: string;
+  passwordHash?: string;
+  appId?: string;
+  email?: string;
+  hosting?: unknown;
+  invitationToken?: unknown;
   [k: string]: unknown;
 };
 type ResultBag = Record<string, unknown> & { forwarded?: boolean; redirect?: string; core?: { url: string }; username?: string; apiEndpoint?: string; id?: string };
@@ -72,7 +89,7 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
   /**
    * Do minimal manipulation with data like username conversion to lowercase
    */
-  async prepareUserData (context: MethodContext, params: any, result: ResultBag, next: Next) {
+  async prepareUserData (context: MethodContext, params: RegisterParams, result: ResultBag, next: Next) {
     context.newUser = new User(params);
     // accept passwordHash at creation only (used by system.createUser)
     context.newUser.passwordHash = params.passwordHash;
@@ -96,7 +113,7 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
    *
    * Downstream chain steps must no-op when `result.forwarded` is set.
    */
-  async forwardIfCrossCore (context: MethodContext, params: any, result: ResultBag, next: Next) {
+  async forwardIfCrossCore (context: MethodContext, params: RegisterParams, result: ResultBag, next: Next) {
     try {
       if (!this.platform || this.platform.isSingleCore) return next();
       const selectedCoreId = await this.platform.selectCoreForRegistration(params.hosting);
@@ -149,7 +166,7 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
    * - Check reserved usernames
    * - Check username + unique field availability (atomically reserved)
    */
-  async validateOnPlatform (context: MethodContext, params: any, result: ResultBag, next: Next) {
+  async validateOnPlatform (context: MethodContext, params: RegisterParams, result: ResultBag, next: Next) {
     if (result.forwarded) return next();
     try {
       const uniqueFields: Record<string, unknown> = { username: context.newUser.username };
@@ -179,7 +196,7 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
   /**
    * Save user to the database, then store indexed fields in PlatformDB
    */
-  async createUser (context: MethodContext, params: any, result: ResultBag, next: Next) {
+  async createUser (context: MethodContext, params: RegisterParams, result: ResultBag, next: Next) {
     // Multi-core: either legacy redirect flow OR new transparent forward
     // already returned the target's response — nothing to do locally.
     if (result.redirect || result.forwarded) return next();
@@ -204,7 +221,7 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
   /**
    * Build response for user registration
    */
-  async buildResponse (context: MethodContext, params: any, result: ResultBag, next: Next) {
+  async buildResponse (context: MethodContext, params: RegisterParams, result: ResultBag, next: Next) {
     // Transparent cross-core forward: target's response already in result.
     // Keep `result.forwarded` set so sendWelcomeMail skips (target core
     // already triggered the welcome email); strip it in the final
@@ -224,19 +241,19 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
     // Consume invitation token on successful registration
     if (context.newUser.invitationToken) {
       await this.platform.consumeInvitationToken(
-        context.newUser.invitationToken,
+        context.newUser.invitationToken as string,
         context.newUser.username
       );
     }
     result.username = context.newUser.username;
-    result.apiEndpoint = ApiEndpoint.build(context.newUser.username, context.newUser.token);
+    result.apiEndpoint = ApiEndpoint.build(context.newUser.username, context.newUser.token as string | undefined);
     next();
   }
 
   /**
    * Send welcome email
    */
-  sendWelcomeMail (context: MethodContext, params: any, result: ResultBag, next: Next) {
+  sendWelcomeMail (context: MethodContext, params: RegisterParams, result: ResultBag, next: Next) {
     // Multi-core redirect: no user created locally, skip mail
     if (result.core && !result.username) return next();
     // Transparent cross-core forward: target core already sent the mail.
