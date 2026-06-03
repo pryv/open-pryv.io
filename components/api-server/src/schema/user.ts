@@ -13,8 +13,10 @@ const require = createRequire(import.meta.url);
 const Action = require('./Action.ts');
 const helpers = require('./helpers.ts');
 
-export default function (action: any) {
-  const schema: any = {
+type SchemaObj = { properties: Record<string, unknown>; required?: string[]; additionalProperties?: boolean; [k: string]: unknown };
+
+export default function (action: string) {
+  const schema: SchemaObj = {
     id: helpers.getTypeURI('user', action),
     type: 'object',
     additionalProperties: false,

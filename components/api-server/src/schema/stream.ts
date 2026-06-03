@@ -20,8 +20,10 @@ const boolean = helpers.boolean;
 /**
  * @param ignoreChildren Whether to ignore `children` property
  */
-export default function (action: any, ignoreChildren: any, refToStreamSchema: any) {
-  const schema: any = {
+type SchemaObj = { properties: Record<string, unknown>; required?: string[]; alterableProperties?: string[]; [k: string]: unknown };
+
+export default function (action: string, ignoreChildren: boolean, refToStreamSchema?: string) {
+  const schema: SchemaObj = {
     id: helpers.getTypeURI('stream', action),
     type: 'object',
     additionalProperties: false,
