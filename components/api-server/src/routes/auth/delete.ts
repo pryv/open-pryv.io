@@ -5,14 +5,25 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const methodCallback = require('../methodCallback.ts').default;
 const middleware = require('middleware');
 
+type AppLike = {
+  api: { call: (...args: unknown[]) => unknown };
+  storageLayer: unknown;
+};
+type PryvContext = {
+  user: { username?: string };
+  authorizationHeader?: string | string[];
+};
+type PryvRequest = Request & { context?: PryvContext };
+
 /**
  * Routes for users
  */
-export default function (expressApp: any, app: any) {
+export default function (expressApp: ExpressApp, app: AppLike): void {
   const api = app.api;
   const initContextMiddleware = middleware.initContext(app.storageLayer);
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);
@@ -20,15 +31,17 @@ export default function (expressApp: any, app: any) {
     middleware.getAuth,
     initContextMiddleware,
     middleware.setMethodId('auth.delete'),
-    function (req: any, res: any, next: any) {
-      loadAccessMiddleware(req, res, function (err: any) { // eslint-disable-line n/handle-callback-err
+    function (req: PryvRequest, res: Response, next: NextFunction) {
+      loadAccessMiddleware(req, res, function (err: unknown) { // eslint-disable-line n/handle-callback-err
         // ignore errors as a valid adminAuthentication token might be presented
         next();
       });
     },
-    function callMethodAuthDelete (req: any, res: any, next: any) {
-      req.context.user.username = req.params.username;
-      req.context.authorizationHeader = req.headers.authorization;
+    function callMethodAuthDelete (req: PryvRequest, res: Response, next: NextFunction) {
+      // express @types narrow params/headers slightly — both behave as `string`
+      // at runtime here (single-valued path param + standard Authorization header).
+      req.context!.user.username = req.params.username as string;
+      req.context!.authorizationHeader = req.headers.authorization;
       api.call(req.context, req.params, methodCallback(res, next, 200));
     }
   );
