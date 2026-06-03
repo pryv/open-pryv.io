@@ -13,8 +13,31 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
+interface PgQueryResult { rows: Array<Record<string, unknown>>; rowCount?: number | null }
+interface DbLike {
+  ensureConnect: () => Promise<void>;
+  query: (text: string, params?: unknown[]) => Promise<PgQueryResult>;
+}
+
+interface PlatformFieldEntry {
+  isUnique: boolean;
+  field: string;
+  value: string;
+  username: string;
+}
+
+interface CoreInfoLike {
+  id?: string;
+  ip?: string;
+  ipv6?: string;
+  cname?: string;
+  hosting?: string;
+  available?: boolean;
+  [k: string]: unknown;
+}
+
 class DBpostgresql {
-  db: any;
+  db!: DbLike;
   closed: boolean = false;
 
   async init (): Promise<void> {
@@ -80,7 +103,7 @@ class DBpostgresql {
       'SELECT value FROM platform_indexed_fields WHERE username = $1 AND field = $2',
       [username, field]
     );
-    return res.rows.length > 0 ? res.rows[0].value : null;
+    return res.rows.length > 0 ? (res.rows[0].value as string) : null;
   }
 
   async getUsersUniqueField (field: string, value: string): Promise<string | null> {
@@ -88,31 +111,31 @@ class DBpostgresql {
       'SELECT username FROM platform_unique_fields WHERE field = $1 AND value = $2',
       [field, value]
     );
-    return res.rows.length > 0 ? res.rows[0].username : null;
+    return res.rows.length > 0 ? (res.rows[0].username as string) : null;
   }
 
-  async getAllWithPrefix (_prefix: string): Promise<any[]> {
+  async getAllWithPrefix (_prefix: string): Promise<PlatformFieldEntry[]> {
     const uniqueRes = await this.db.query(
       'SELECT field, value, username FROM platform_unique_fields'
     );
     const indexedRes = await this.db.query(
       'SELECT field, value, username FROM platform_indexed_fields'
     );
-    const result: any[] = [];
+    const result: PlatformFieldEntry[] = [];
     for (const row of uniqueRes.rows) {
       result.push({
         isUnique: true,
-        field: row.field,
-        value: row.value,
-        username: row.username
+        field: row.field as string,
+        value: row.value as string,
+        username: row.username as string
       });
     }
     for (const row of indexedRes.rows) {
       result.push({
         isUnique: false,
-        field: row.field,
-        value: row.value,
-        username: row.username
+        field: row.field as string,
+        value: row.value as string,
+        username: row.username as string
       });
     }
     return result;
@@ -133,11 +156,11 @@ class DBpostgresql {
 
   // -- Migration methods --
 
-  async exportAll (): Promise<any[]> {
+  async exportAll (): Promise<PlatformFieldEntry[]> {
     return await this.getAllWithPrefix('');
   }
 
-  async importAll (data: any[]): Promise<void> {
+  async importAll (data: PlatformFieldEntry[]): Promise<void> {
     if (!data || data.length === 0) return;
     for (const entry of data) {
       if (entry.isUnique) {
@@ -166,28 +189,28 @@ class DBpostgresql {
     const res = await this.db.query(
       "SELECT username, value FROM platform_indexed_fields WHERE field = '_core'"
     );
-    return res.rows.map((row: any) => ({
-      username: row.username,
-      coreId: row.value
+    return res.rows.map((row: Record<string, unknown>) => ({
+      username: row.username as string,
+      coreId: row.value as string
     }));
   }
 
   // --- Core registration --- //
 
-  async setCoreInfo (coreId: string, info: any): Promise<void> {
+  async setCoreInfo (coreId: string, info: CoreInfoLike): Promise<void> {
     await this.setUserIndexedField('__cores__', coreId, JSON.stringify(info));
   }
 
-  async getCoreInfo (coreId: string): Promise<any | null> {
+  async getCoreInfo (coreId: string): Promise<CoreInfoLike | null> {
     const val = await this.getUserIndexedField('__cores__', coreId);
-    return val != null ? JSON.parse(val) : null;
+    return val != null ? JSON.parse(val) as CoreInfoLike : null;
   }
 
-  async getAllCoreInfos (): Promise<any[]> {
+  async getAllCoreInfos (): Promise<CoreInfoLike[]> {
     const res = await this.db.query(
       "SELECT value FROM platform_indexed_fields WHERE username = '__cores__'"
     );
-    return res.rows.map((row: any) => JSON.parse(row.value));
+    return res.rows.map((row: Record<string, unknown>) => JSON.parse(row.value as string) as CoreInfoLike);
   }
 }
 
