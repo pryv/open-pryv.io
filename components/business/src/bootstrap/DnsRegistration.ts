@@ -31,6 +31,37 @@ import type {} from 'node:fs';
 
 const LSC_SUBDOMAIN = 'lsc';
 
+type DnsRecord = { a?: string[]; [k: string]: unknown };
+type CoreInfo = {
+  id: string;
+  ip: string;
+  url: string | null;
+  hosting: string | null;
+  available: boolean;
+};
+type PlatformDBLike = {
+  setCoreInfo: (coreId: string, info: CoreInfo) => Promise<unknown>;
+  getCoreInfo: (coreId: string) => Promise<CoreInfo | null>;
+  deleteCoreInfo?: (coreId: string) => Promise<unknown>;
+  getDnsRecord: (subdomain: string) => Promise<DnsRecord | null>;
+  setDnsRecord: (subdomain: string, rec: DnsRecord) => Promise<unknown>;
+  deleteDnsRecord: (subdomain: string) => Promise<unknown>;
+};
+
+type RegisterOpts = {
+  platformDB: PlatformDBLike;
+  coreId: string;
+  ip: string;
+  url?: string | null;
+  hosting?: string | null;
+};
+type UnregisterOpts = {
+  platformDB: PlatformDBLike;
+  coreId: string;
+  ip: string;
+};
+type RequireOpts = { platformDB: PlatformDBLike | null | undefined; coreId: string; ip: string };
+
 /**
  * Pre-register a new core in PlatformDB and publish its DNS entries.
  * Idempotent: re-running with the same inputs leaves the state unchanged.
@@ -41,7 +72,7 @@ const LSC_SUBDOMAIN = 'lsc';
  * @param [opts.url=null]     - explicit core.url (DNSless multi-core); optional
  * @param [opts.hosting=null] - hosting region, e.g. 'us-east-1'
  */
-async function registerNewCore ({ platformDB, coreId, ip, url = null, hosting = null }: any) {
+async function registerNewCore ({ platformDB, coreId, ip, url = null, hosting = null }: RegisterOpts): Promise<{ coreInfo: CoreInfo; perCoreAAdded: boolean; lscIpsAfter: string[] }> {
   requireInput({ platformDB, coreId, ip });
 
   const coreInfo = {
@@ -84,7 +115,7 @@ async function registerNewCore ({ platformDB, coreId, ip, url = null, hosting = 
  * @param opts.coreId
  * @param opts.ip
  */
-async function unregisterNewCore ({ platformDB, coreId, ip }: any) {
+async function unregisterNewCore ({ platformDB, coreId, ip }: UnregisterOpts): Promise<{ coreInfoDeleted: boolean; perCoreDeleted: boolean; lscIpsAfter: string[] }> {
   requireInput({ platformDB, coreId, ip });
 
   // Only remove the core-info row if it still belongs to this coreId and
@@ -115,7 +146,7 @@ async function unregisterNewCore ({ platformDB, coreId, ip }: any) {
   // (other cores may still be listed).
   const lsc = await platformDB.getDnsRecord(LSC_SUBDOMAIN);
   const lscIpsBefore = (lsc && Array.isArray(lsc.a)) ? lsc.a : [];
-  const lscIpsAfter = lscIpsBefore.filter((x: any) => x !== ip);
+  const lscIpsAfter = lscIpsBefore.filter((x: string) => x !== ip);
   if (lscIpsAfter.length !== lscIpsBefore.length) {
     if (lscIpsAfter.length === 0) {
       await platformDB.deleteDnsRecord(LSC_SUBDOMAIN);
@@ -127,13 +158,13 @@ async function unregisterNewCore ({ platformDB, coreId, ip }: any) {
   return { coreInfoDeleted, perCoreDeleted, lscIpsAfter };
 }
 
-function requireInput ({ platformDB, coreId, ip }: any) {
+function requireInput ({ platformDB, coreId, ip }: RequireOpts): void {
   if (platformDB == null) throw new Error('DnsRegistration: platformDB is required');
   if (!coreId) throw new Error('DnsRegistration: coreId is required');
   if (!ip) throw new Error('DnsRegistration: ip is required');
 }
 
-function arraysEqual (a: any, b: any) {
+function arraysEqual (a: unknown, b: unknown): boolean {
   if (!Array.isArray(a) || !Array.isArray(b)) return false;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
