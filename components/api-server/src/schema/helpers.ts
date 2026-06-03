@@ -20,11 +20,16 @@ export { USERNAME_MIN_LENGTH };
 export { USERNAME_MAX_LENGTH };
 export { USERNAME_REGEXP_STR };
 
+type SchemaOptions = { nullable?: boolean; [k: string]: unknown };
+type BaseSchema = { type: string[]; [k: string]: unknown };
+type ObjectSchema = BaseSchema & { properties: Record<string, unknown> };
+type ArraySchema = BaseSchema & { items: unknown };
+
 /**
  * Gets the full core type URI for the given type name and action (read, create, etc.)
  *
  */
-export const getTypeURI = function (name: any, action: any) {
+export const getTypeURI = function (name: string, action?: string): string {
   return 'pryv.core.' + name + (action ? '-' + action : '');
 };
 
@@ -33,7 +38,7 @@ export const getTypeURI = function (name: any, action: any) {
  *
  * @param options Extra properties to merge into the returned object definition
  */
-export const object = function (propertiesDef: any, options: any) {
+export const object = function (propertiesDef: Record<string, unknown>, options?: SchemaOptions): ObjectSchema {
   return Object.assign(getBaseSchema('object', options), { properties: propertiesDef });
 };
 
@@ -42,7 +47,7 @@ export const object = function (propertiesDef: any, options: any) {
  *
  * @param options Extra properties to merge into the returned array definition
  */
-export const array = function (itemsDef: any, options: any) {
+export const array = function (itemsDef: unknown, options?: SchemaOptions): ArraySchema {
   return Object.assign(getBaseSchema('array', options), { items: itemsDef });
 };
 
@@ -91,8 +96,8 @@ export const username = getBaseSchema('string', { pattern: USERNAME_REGEXP_STR }
 
 export { getBaseSchema };
 
-function getBaseSchema (type: any, options: any) {
-  const result = {
+function getBaseSchema (type: string, options?: SchemaOptions): BaseSchema {
+  const result: BaseSchema = {
     type: [type]
   };
 
@@ -111,7 +116,7 @@ function getBaseSchema (type: any, options: any) {
  * Adds `created`, `createdBy`, `modified`, `modifiedBy` property definitions to the given schema.
  *
  */
-export const addTrackingProperties = function (schema: any) {
+export const addTrackingProperties = function (schema: ObjectSchema): void {
   schema.properties.created = { type: 'number' };
   schema.properties.createdBy = { type: 'string' };
   schema.properties.modified = { type: 'number' };
