@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { IncomingMessage } from 'node:http';
 const require = createRequire(import.meta.url);
 /**
  * Bootstrap-mode driver for `bin/master.js --bootstrap`.
@@ -33,6 +34,30 @@ const { URL } = require('node:url');
 
 const applyBundleMod = require('./applyBundle.ts');
 
+interface HttpResponse {
+  statusCode: number | undefined;
+  body: unknown;
+}
+type HttpClient = (url: string, payload: Record<string, unknown>, caCertPem: string) => Promise<HttpResponse>;
+
+interface ConsumeOpts {
+  bundlePath: string;
+  passphrase?: string;
+  passphraseFile?: string;
+  configDir: string;
+  tlsDir: string;
+  httpClient?: HttpClient;
+  log?: (msg: string) => void;
+}
+
+interface ConsumeResult {
+  coreId: string;
+  ackResponse: unknown;
+  overridePath: string;
+  tlsPaths: Record<string, string>;
+  bundleDeleted: boolean;
+}
+
 /**
  * @param opts.bundlePath - path to the armored .json.age (or any name) file
  * @param [opts.passphrase] - if given, used directly (test path)
@@ -49,12 +74,12 @@ const applyBundleMod = require('./applyBundle.ts');
  *   bundleDeleted: boolean
  * }>}
  */
-async function consume (opts: any) {
+async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
   const {
     bundlePath, passphrase, passphraseFile, configDir, tlsDir,
     httpClient = defaultHttpClient,
-    log = (m: any) => console.log('[bootstrap] ' + m)
-  } = opts || {};
+    log = (m: string) => console.log('[bootstrap] ' + m)
+  } = opts || ({} as ConsumeOpts);
 
   if (!bundlePath) throw new Error('consume: bundlePath is required');
   if (!configDir) throw new Error('consume: configDir is required');
@@ -89,15 +114,17 @@ async function consume (opts: any) {
       JSON.stringify(ackResponse.body)
     );
   }
-  log(`Ack accepted; cluster has ${ackResponse.body?.cluster?.cores?.length ?? '?'} core(s)`);
+  const ackBody = ackResponse.body as { cluster?: { cores?: unknown[] } } | null;
+  log(`Ack accepted; cluster has ${ackBody?.cluster?.cores?.length ?? '?'} core(s)`);
 
   let bundleDeleted = false;
   try {
     fs.unlinkSync(bundlePath);
     bundleDeleted = true;
     log(`Deleted bundle file ${bundlePath} (token has been burned).`);
-  } catch (err: any) {
-    log(`Warning: could not delete bundle file ${bundlePath}: ${err.message}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`Warning: could not delete bundle file ${bundlePath}: ${message}`);
   }
 
   return {
@@ -109,7 +136,7 @@ async function consume (opts: any) {
   };
 }
 
-function resolvePassphrase ({ passphrase, passphraseFile }: any) {
+function resolvePassphrase ({ passphrase, passphraseFile }: { passphrase?: string; passphraseFile?: string }): string {
   if (typeof passphrase === 'string' && passphrase.length > 0) return passphrase;
   if (passphraseFile) {
     if (!fs.existsSync(passphraseFile)) {
@@ -129,13 +156,13 @@ function resolvePassphrase ({ passphrase, passphraseFile }: any) {
  * Default httpClient — POSTs JSON over HTTPS (or HTTP for dev) with the
  * bundled CA cert pinned. Resolves with `{ statusCode, body }`.
  */
-function defaultHttpClient (url: any, payload: any, caCertPem: any) {
+function defaultHttpClient (url: string, payload: Record<string, unknown>, caCertPem: string): Promise<HttpResponse> {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const isHttps = u.protocol === 'https:';
     const lib = isHttps ? https : http;
     const body = Buffer.from(JSON.stringify(payload), 'utf8');
-    const options: any = {
+    const options: Record<string, unknown> = {
       method: 'POST',
       hostname: u.hostname,
       port: u.port || (isHttps ? 443 : 80),
@@ -149,12 +176,12 @@ function defaultHttpClient (url: any, payload: any, caCertPem: any) {
       options.ca = caCertPem;
       options.rejectUnauthorized = true;
     }
-    const req = lib.request(options, (res: any) => {
-      const chunks: any[] = [];
-      res.on('data', (c: any) => chunks.push(c));
+    const req = lib.request(options, (res: IncomingMessage) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
       res.on('end', () => {
         const raw = Buffer.concat(chunks).toString('utf8');
-        let parsed: any = null;
+        let parsed: unknown = null;
         if (raw.length > 0) {
           try { parsed = JSON.parse(raw); } catch { parsed = { raw }; }
         }
