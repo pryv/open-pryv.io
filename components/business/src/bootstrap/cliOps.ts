@@ -27,6 +27,42 @@ const BundleEncryption = require('./BundleEncryption.ts');
 const TokenStore = require('./TokenStore.ts').default;
 const DnsRegistration = require('./DnsRegistration.ts');
 
+interface PlatformDBLike {
+  [k: string]: unknown;
+}
+
+interface NewCoreOpts {
+  platformDB: PlatformDBLike;
+  caDir: string;
+  tokensPath: string;
+  dnsDomain?: string | null;
+  ackUrlBase: string;
+  secrets: {
+    adminAccessKey: string;
+    filesReadTokenSecret: string;
+    letsEncryptAtRestKey?: string | null;
+  };
+  rqlite: { raftPort: number; httpPort: number };
+  coreId: string;
+  ip: string;
+  url?: string | null;
+  hosting?: string | null;
+  outPath: string;
+  ttlMs?: number;
+}
+
+interface InitCaHolderOpts {
+  caDir: string;
+  tlsDir: string;
+  coreId: string;
+  ip?: string | null;
+  hostname?: string | null;
+  writeConfig?: boolean;
+  overridePath?: string | null;
+}
+
+interface TlsPaths { caFile: string; certFile: string; keyFile: string }
+
 const ACK_PATH = '/system/admin/cores/ack';
 const TLS_FILE_NAMES = { ca: 'ca.crt', cert: 'node.crt', key: 'node.key' };
 const OVERRIDE_HEADER_PREFIX =
@@ -62,8 +98,8 @@ const OVERRIDE_HEADER_SUFFIX =
  * @param opts.outPath
  * @param [opts.ttlMs] - token TTL; undefined = TokenStore default (24h)
  */
-async function newCore (opts: any) {
-  requireOpts(opts, ['platformDB', 'caDir', 'tokensPath', 'ackUrlBase', 'secrets', 'rqlite', 'coreId', 'ip', 'outPath']);
+async function newCore (opts: NewCoreOpts) {
+  requireOpts(opts as unknown as Record<string, unknown>, ['platformDB', 'caDir', 'tokensPath', 'ackUrlBase', 'secrets', 'rqlite', 'coreId', 'ip', 'outPath']);
   const {
     platformDB, caDir, tokensPath, dnsDomain = null, ackUrlBase,
     secrets, rqlite, coreId, ip, url = null, hosting = null, outPath, ttlMs
@@ -89,7 +125,7 @@ async function newCore (opts: any) {
     registered = true;
 
     const ackUrl = ackUrlBase.replace(/\/+$/, '') + ACK_PATH;
-    const platformSecrets: any = {
+    const platformSecrets: { auth: { adminAccessKey: string; filesReadTokenSecret: string }; letsEncrypt?: { atRestKey: string } } = {
       auth: {
         adminAccessKey: secrets.adminAccessKey,
         filesReadTokenSecret: secrets.filesReadTokenSecret
@@ -136,7 +172,7 @@ async function newCore (opts: any) {
 /**
  * @param opts.tokensPath
  */
-function listTokens ({ tokensPath }: any) {
+function listTokens ({ tokensPath }: { tokensPath: string }) {
   if (!tokensPath) throw new Error('listTokens: tokensPath is required');
   return new TokenStore({ path: tokensPath }).listActive();
 }
@@ -150,7 +186,7 @@ function listTokens ({ tokensPath }: any) {
  * @param [opts.platformDB]
  * @param [opts.ip]
  */
-async function revokeToken ({ tokensPath, coreId, platformDB = null, ip = null }: any) {
+async function revokeToken ({ tokensPath, coreId, platformDB = null, ip = null }: { tokensPath: string; coreId: string; platformDB?: PlatformDBLike | null; ip?: string | null }) {
   if (!tokensPath) throw new Error('revokeToken: tokensPath is required');
   if (!coreId) throw new Error('revokeToken: coreId is required');
 
@@ -191,8 +227,8 @@ async function revokeToken ({ tokensPath, coreId, platformDB = null, ip = null }
  *   tlsPaths: { caFile: string, certFile: string, keyFile: string }
  * }>}
  */
-async function initCaHolder (opts: any) {
-  requireOpts(opts, ['caDir', 'tlsDir', 'coreId']);
+async function initCaHolder (opts: InitCaHolderOpts) {
+  requireOpts(opts as unknown as Record<string, unknown>, ['caDir', 'tlsDir', 'coreId']);
   const {
     caDir, tlsDir, coreId,
     ip = null, hostname = null,
@@ -224,7 +260,7 @@ async function initCaHolder (opts: any) {
 
   let configUpdated = false;
   if (writeConfig) {
-    configUpdated = mergeRqliteTlsIntoOverride(overridePath, tlsPaths);
+    configUpdated = mergeRqliteTlsIntoOverride(overridePath!, tlsPaths);
   }
 
   return {
@@ -240,12 +276,12 @@ async function initCaHolder (opts: any) {
  * with the supplied paths and `verifyClient: true`. Preserves any existing
  * keys. Returns true when the file was created or its contents changed.
  */
-function mergeRqliteTlsIntoOverride (overridePath: any, tlsPaths: any) {
-  let current: any = {};
+function mergeRqliteTlsIntoOverride (overridePath: string, tlsPaths: TlsPaths): boolean {
+  let current: { storages?: { engines?: { rqlite?: { tls?: TlsPaths & { verifyClient?: boolean }; [k: string]: unknown }; [k: string]: unknown }; [k: string]: unknown }; [k: string]: unknown } = {};
   if (fs.existsSync(overridePath)) {
     const raw = fs.readFileSync(overridePath, 'utf8');
     const parsed = yaml.load(raw);
-    if (parsed != null && typeof parsed === 'object') current = parsed;
+    if (parsed != null && typeof parsed === 'object') current = parsed as typeof current;
   } else {
     fs.mkdirSync(path.dirname(overridePath), { recursive: true });
   }
@@ -258,9 +294,9 @@ function mergeRqliteTlsIntoOverride (overridePath: any, tlsPaths: any) {
   };
 
   current.storages ??= {};
-  current.storages.engines ??= {};
-  current.storages.engines.rqlite ??= {};
-  const existing = current.storages.engines.rqlite.tls;
+  current.storages!.engines ??= {};
+  current.storages!.engines!.rqlite ??= {};
+  const existing = current.storages!.engines!.rqlite!.tls;
   const alreadyMatches = existing != null &&
     existing.caFile === desired.caFile &&
     existing.certFile === desired.certFile &&
@@ -268,7 +304,7 @@ function mergeRqliteTlsIntoOverride (overridePath: any, tlsPaths: any) {
     existing.verifyClient === true;
   if (alreadyMatches) return false;
 
-  current.storages.engines.rqlite.tls = Object.assign({}, existing, desired);
+  current.storages!.engines!.rqlite!.tls = Object.assign({}, existing, desired);
   const header = OVERRIDE_HEADER_PREFIX + new Date().toISOString() + OVERRIDE_HEADER_SUFFIX;
   fs.writeFileSync(
     overridePath,
@@ -278,7 +314,7 @@ function mergeRqliteTlsIntoOverride (overridePath: any, tlsPaths: any) {
   return true;
 }
 
-function requireOpts (opts: any, keys: any) {
+function requireOpts (opts: Record<string, unknown> | null | undefined, keys: string[]) {
   if (opts == null || typeof opts !== 'object') {
     throw new Error('cliOps: opts is required');
   }
