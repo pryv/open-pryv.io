@@ -103,7 +103,7 @@ class ClusterCA {
    * @param [opts.ip=null] - optional IP SAN (e.g. '1.2.3.4').
    * @param [opts.hostname=null] - optional extra hostname SAN (e.g. 'core-b.mc.example.com').
    */
-  issueNodeCert ({ coreId, ip = null, hostname = null }: any) {
+  issueNodeCert ({ coreId, ip = null, hostname = null }: { coreId: string; ip?: string | null; hostname?: string | null }): { certPem: string; keyPem: string } {
     if (!coreId) throw new Error('issueNodeCert: coreId is required');
     this.ensure();
 
@@ -149,7 +149,7 @@ class ClusterCA {
   }
 }
 
-function buildSanExtfile ({ coreId, ip, hostname }: any) {
+function buildSanExtfile ({ coreId, ip, hostname }: { coreId: string; ip?: string | null; hostname?: string | null }): string {
   const sans = [`DNS:${coreId}`];
   if (hostname != null && hostname !== coreId) sans.push(`DNS:${hostname}`);
   if (ip != null) sans.push(`IP:${ip}`);
@@ -161,12 +161,13 @@ function buildSanExtfile ({ coreId, ip, hostname }: any) {
  * exit. Swallowing stderr unless the command fails keeps the test output
  * clean while preserving diagnostics when something goes wrong.
  */
-function openssl (args: any) {
+function openssl (args: string[]): void {
   try {
     execFileSync('openssl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  } catch (err: any) {
-    const stderr = err.stderr ? err.stderr.toString() : '';
-    throw new Error(`openssl ${args[0]} failed: ${err.message}\n${stderr}`);
+  } catch (err: unknown) {
+    const e = err as { stderr?: Buffer | string; message?: string };
+    const stderr = e.stderr ? e.stderr.toString() : '';
+    throw new Error(`openssl ${args[0]} failed: ${e.message ?? String(err)}\n${stderr}`);
   }
 }
 
