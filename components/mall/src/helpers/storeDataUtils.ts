@@ -29,7 +29,7 @@ export { LocalStoreId, AccountStoreId, parseStoreIdAndStoreItemId, getFullItemId
  * - `account`: items keep their `:_system:` / `:system:` prefix as-is
  *
  */
-function isPassthroughStore (storeId: any) {
+function isPassthroughStore (storeId: string): boolean {
   return storeId === LOCAL_STORE_ID || storeId === ACCOUNT_STORE_ID;
 }
 
@@ -37,7 +37,7 @@ function isPassthroughStore (storeId: any) {
  * Extract the store id and the in-store item id (without the store reference) from the given item id.
  * For streams, converts the store's root pseudo-stream id (`:store:`) to `*`.
  */
-function parseStoreIdAndStoreItemId (fullItemId: any) {
+function parseStoreIdAndStoreItemId (fullItemId: string): [string, string] {
   if (!fullItemId.startsWith(STORE_ID_MARKER)) return [LOCAL_STORE_ID, fullItemId];
 
   const endMarkerIndex = fullItemId.indexOf(STORE_ID_MARKER, 1);
@@ -53,7 +53,7 @@ function parseStoreIdAndStoreItemId (fullItemId: any) {
   // also covers :_cmc: without forcing CMC to register its own storage backend.
   if (storeId === '_cmc') return [LOCAL_STORE_ID, fullItemId];
 
-  let storeItemId;
+  let storeItemId: string;
   if (endMarkerIndex === (fullItemId.length - 1)) { // ':storeId:', i.e. pseudo-stream representing store root
     storeItemId = '*';
   } else {
@@ -66,7 +66,7 @@ function parseStoreIdAndStoreItemId (fullItemId: any) {
  * Get full item id from the given store id and in-store item id.
  * For streams, converts the `*` id to the store's root pseudo-stream (`:store:`).
  */
-function getFullItemId (storeId: any, storeItemId: any) {
+function getFullItemId (storeId: string, storeItemId: string): string {
   // Passthrough stores: store-internal IDs ARE the external IDs
   if (isPassthroughStore(storeId)) return storeItemId;
   return STORE_ID_MARKER + storeId + STORE_ID_MARKER + (storeItemId === '*' ? '' : storeItemId);
@@ -76,15 +76,13 @@ function getFullItemId (storeId: any, storeItemId: any) {
  * Handle the given error from a data store, wrapping it as an API error if needed
  * before throwing it further.
  */
-function throwAPIError (err: any, storeId: any) {
-  if (!(err instanceof Error)) {
-    err = new Error(err);
-  }
-  if (!(err instanceof APIError)) {
-    err = apiErrors.unexpectedError(err);
+function throwAPIError (err: unknown, storeId: string | null): never {
+  let e: Error = err instanceof Error ? err : new Error(String(err));
+  if (!(e instanceof APIError)) {
+    e = apiErrors.unexpectedError(e);
   }
   if (storeId != null) {
-    err.message = `Error from data store "${storeId}": ${err.message}`;
+    e.message = `Error from data store "${storeId}": ${e.message}`;
   }
-  throw err;
+  throw e;
 }
