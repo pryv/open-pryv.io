@@ -10,13 +10,21 @@
  * Both InfluxConnection and PGSeriesConnection must implement these methods.
  */
 
+export type SeriesPoint = {
+  measurement?: string;
+  tags?: Record<string, string>;
+  fields?: Record<string, unknown>;
+  timestamp?: number;
+  [k: string]: unknown;
+};
+
 export interface SeriesConnection {
   createDatabase (name: string): Promise<void> | void;
   dropDatabase (name: string): Promise<void> | void;
-  writeMeasurement (measurement: string, points: any[]): Promise<void> | void;
+  writeMeasurement (measurement: string, points: SeriesPoint[]): Promise<void> | void;
   dropMeasurement (measurement: string): Promise<void> | void;
-  writePoints (points: any[]): Promise<void> | void;
-  query (q: string | object): Promise<any> | any;
+  writePoints (points: SeriesPoint[]): Promise<void> | void;
+  query (q: string | object): Promise<unknown> | unknown;
   getDatabases (): Promise<string[]> | string[];
 }
 
@@ -30,13 +38,14 @@ const REQUIRED_METHODS: string[] = [
   'getDatabases'
 ];
 
-function validateSeriesConnection (instance: any): SeriesConnection {
+function validateSeriesConnection (instance: unknown): SeriesConnection {
+  const obj = instance as Record<string, unknown>;
   for (const method of REQUIRED_METHODS) {
-    if (typeof instance[method] !== 'function') {
+    if (typeof obj[method] !== 'function') {
       throw new Error(`SeriesConnection implementation missing method: ${method}`);
     }
   }
-  return instance;
+  return obj as unknown as SeriesConnection;
 }
 
 export { validateSeriesConnection, REQUIRED_METHODS };
