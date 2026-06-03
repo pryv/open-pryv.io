@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 /**
  * OAuth-style access authorization routes.
@@ -17,11 +18,16 @@ const require = createRequire(import.meta.url);
 
 const accessState = require('./accessState.ts');
 
-export default function (expressApp: any, app: any) {
+type AppLike = {
+  config: { get: (key: string) => unknown };
+};
+type PryvRequest = Request;
+
+export default function (expressApp: ExpressApp, app: AppLike) {
   /**
    * POST /reg/access — Create a new access request.
    */
-  expressApp.post('/reg/access', async (req: any, res: any, next: any) => {
+  expressApp.post('/reg/access', async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { requestingAppId, requestedPermissions } = req.body;
 
@@ -44,8 +50,8 @@ export default function (expressApp: any, app: any) {
       // https://reg.pryv.me/...) would round-robin across cores and
       // cause `unknown-access-key`.
       //
-      const serviceInfo = app.config.get('service') || {};
-      const coreUrl = app.config.get('core:url');
+      const serviceInfo = (app.config.get('service') || {}) as Record<string, unknown> & { register?: string; api?: string };
+      const coreUrl = app.config.get('core:url') as string | undefined;
       // core:url may be operator-supplied with or without trailing slash;
       // normalize so we don't emit `https://core.x//reg/...`.
       const coreUrlSlash = coreUrl
@@ -58,8 +64,8 @@ export default function (expressApp: any, app: any) {
       // for the user to sign in. Base URL comes from `access.defaultAuthUrl`
       // in config — operators deploy app-web-auth3 (or an equivalent auth UI)
       // at that address and set the config.
-      const defaultAuthUrl = app.config.get('access:defaultAuthUrl');
-      let authUrl: any = null;
+      const defaultAuthUrl = app.config.get('access:defaultAuthUrl') as string | undefined;
+      let authUrl: string | null = null;
       if (defaultAuthUrl) {
         const sep = defaultAuthUrl.indexOf('?') >= 0 ? '&' : '?';
         const params = [
@@ -100,7 +106,7 @@ export default function (expressApp: any, app: any) {
   /**
    * GET /reg/access/:key — Poll access request state.
    */
-  expressApp.get('/reg/access/:key', async (req: any, res: any, next: any) => {
+  expressApp.get('/reg/access/:key', async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const state = await accessState.get(req.params.key);
       if (!state) {
@@ -109,7 +115,7 @@ export default function (expressApp: any, app: any) {
         });
       }
 
-      const response: any = {
+      const response: Record<string, unknown> = {
         status: state.status
       };
 
@@ -151,7 +157,7 @@ export default function (expressApp: any, app: any) {
   /**
    * POST /reg/access/:key — Update access request (accept or refuse).
    */
-  expressApp.post('/reg/access/:key', async (req: any, res: any, next: any) => {
+  expressApp.post('/reg/access/:key', async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { status } = req.body;
 
@@ -184,7 +190,7 @@ export default function (expressApp: any, app: any) {
         });
       }
 
-      const response: any = {
+      const response: Record<string, unknown> = {
         status: state.status
       };
       if (state.status === 'ACCEPTED') {
@@ -206,7 +212,7 @@ export default function (expressApp: any, app: any) {
    * POST /access/invitationtoken/check — Check validity of an invitation token.
    * Returns plain text 'true' or 'false'.
    */
-  expressApp.post('/access/invitationtoken/check', async (req: any, res: any) => {
+  expressApp.post('/access/invitationtoken/check', async (req: PryvRequest, res: Response) => {
     const token = req.body.invitationtoken;
     const { getPlatform } = require('platform');
     const platform = await getPlatform();
