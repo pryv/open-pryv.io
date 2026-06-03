@@ -1,5 +1,48 @@
 # Changelog - API Changes
 
+## 2.0.0-rc.1 — 2026-06-03
+
+First Release Candidate of open-pryv.io v2. The runtime has been production-deployed since 2026-04-23 on pryv.me (two-core cluster, 14 real users, 28K events, 264 attachments). lib-js conformance against deployed infra: 168/169 (the missing one is the documented HF case on raw deploys without nginx ingress, see "Known gaps in v2.0.0" below).
+
+### What an implementer pinning to `2.0.0-rc.1` gets
+
+- **Single-binary topology.** One `bin/master.js` process manages API + HFS + Previews workers in one Docker image (`pryvio/open-pryv.io:2.0.0-rc.1`). No more MongoDB, no separate `service-register` / `service-mfa` / `service-mail` containers — all merged into core.
+- **Two production-grade user-data engines.** PostgreSQL (default, cross-user queries via shared tables) or SQLite (per-user files, cleaner GDPR Art.17 erasure semantics). Both pass the same 2351-test matrix at parity.
+- **Multi-core cluster bootstrap.** `bin/bootstrap.js new-core` issues a passphrase-encrypted bundle on an existing core; new core boots and joins over mTLS-protected Raft. DNS discovery + LE wildcard cert auto-renewal across the cluster, hot-swap via cluster IPC.
+- **Built-in observability.** Opt-in New Relic APM provider via `letsEncrypt.atRestKey`-protected secret store (provider façade; second concrete provider plugs in cleanly).
+- **Cross-account Messaging & Consent (CMC) plugin.** Federated consent + chat + system notifications between two Pryv accounts. `pryv@3.5.0` + `@pryv/cmc@1.0.1` on npm.
+- **Versioned accesses.** `accesses.update` is back with composite-id versioning + audit history; `accesses.getOne` accepts `?includeHistory=true`. socket.io emits `accessUpdated` events.
+- **Engine-agnostic schema migrations.** `bin/migrate.js status` / `up` primitive; per-engine `schema_migrations` tracking. Forward-only, integer-versioned, timestamp-named.
+- **v1 → v2 migration path.** `dev-migrate-v1-v2` repo + `bin/backup.js --restore`. Production-validated on pryv.me (14 users restored from v1.9.0).
+
+### BREAKING changes since `2.0.0-pre`
+
+Two breaking surface changes have landed since the rolling `:2.0.0-pre` line and the implementer should plan for them up-front. Both have full migration guides below:
+
+- **`/reg/access` polling endpoint response shapes trimmed.** SDK callers using `pryv@>=3.5.0` are unaffected (the SDK speaks the new shape). Pre-3.5.0 SDKs that read `body.url` / `body.returnUrl` / `body.code` / `body.reasonID` need to switch to `authUrl` / `returnURL` / HTTP status / `reasonId`. See the dedicated entry below.
+- **MongoDB removed as a user-data storage engine.** Operators running MongoDB-backed deployments must export via `bin/backup.js --export` and re-import into a fresh PostgreSQL (or SQLite) deployment via `bin/backup.js --restore`. See the dedicated entry below.
+
+Additional smaller breaking changes already landed in `2.0.0-pre`: `accesses.create` managed-shared expiry now capped by parent, ID minting algorithm changed cuid v1 → cuid2, `accesses.delete` personal-access no longer cascades, `/reg/hostings` returns slash-terminated URLs. All documented in the per-feature entries.
+
+### Recommended SDK pin
+
+- `pryv@3.5.0` (npm) — handles both `/reg/access` shape changes and the cuid2 ID format.
+- `@pryv/cmc@1.0.1` if using CMC.
+- `@pryv/monitor@3.5.0` + `@pryv/socket.io@3.5.0` for live updates including the new `accessUpdated` event.
+
+### Known gaps in `2.0.0-rc.1`
+
+- HF-series ingress on raw deploys requires the optional in-process dispatcher (Plan 67) or an nginx vhost (sample at `docs/nginx-ingress-sample.conf`). The deployed-infra lib-js `[CHFA]` case fails without one; the in-process dispatcher closes it for low-volume deployments. Documented in `faq-infra.md`.
+- `[ASTE][AS02][TJ8S]` audit time-range test is an intermittent matrix flake (passes in isolation, fires occasionally in the full sequential matrix). Same family as the existing `[ZD22]` baseline noise. Not a runtime bug. Tracked in workspace bug log.
+- `[CMCHS-AP][AP01]` CMC back-channel access integrity test is an intermittent matrix flake (~1/2 on test infra; runtime behaviour on deployed infra is unverified pending the RC cut's deploy-validation pass).
+- OAuth2 RFC 6749 surface is deferred to post-v2. The current `/reg/access` flow is Pryv-native; OAuth2 will be additive.
+
+### Compliance posture
+
+Compliance-matrix work (regulator-row coverage, primitive-citation lattice) is a parallel deliverable. The latest published matrix lives at https://pryv.github.io/compliance-matrix/.
+
+---
+
 ## **BREAKING** — `/reg/access` polling endpoint response shapes trimmed
 
 The access-request polling endpoints have been narrowed to expose only the fields each consumer audience actually needs. SDKs (lib-js + downstream apps) get the minimum needed to drive the flow; the auth UI (app-web-auth3 + equivalents) keeps a richer poll response.

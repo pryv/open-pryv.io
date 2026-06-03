@@ -1,5 +1,13 @@
 # Changelog - Internal (no API impact)
 
+## 2.0.0-rc.1 — 2026-06-03
+
+First Release Candidate divider. All entries below this line up to the next `## 2.0.0-*` divider were landed during the `2.0.0-pre` rolling line and are now sealed under the RC tag. Internal changes are no-API-impact; see `CHANGELOG-v2.md` for implementer-facing changes.
+
+Notable internal work since `2.0.0-pre` open: SQLite full-matrix parity (Plan 76 close, both engines at 2351/0/7), TypeScript + ESM migration foundation (Plan 57 + Plan 64 strict-mode + Plan 65 noImplicitAny + ongoing Plan 80 type tightening), test-isolation hardening (`[P4OM]` customAuthStepFn race fixed), docker publish gated on git tags only.
+
+---
+
 ## ci: publish docker image on git tags only
 
 The `docker` job in `.github/workflows/ci.yml` now publishes
