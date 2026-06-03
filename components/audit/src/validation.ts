@@ -32,13 +32,27 @@ const filterSchema = helpers.object({
   additionalProperties: false
 });
 
-function eventForUser (userId: any, event: any) {
+interface AuditEvent {
+  type?: string;
+  createdBy?: string;
+  streamIds?: string[];
+  [k: string]: unknown;
+}
+
+interface AuditFilter {
+  methods: {
+    include: string[];
+    exclude: string[];
+  };
+}
+
+function eventForUser (userId: string | null | undefined, event: AuditEvent | null | undefined): string | true {
   // validate uiserid
   if (!userId) return 'missing userId passed in validation';
   return eventWithoutUser(event);
 }
 
-function eventWithoutUser (event: any) {
+function eventWithoutUser (event: AuditEvent | null | undefined): string | true {
   if (!event) return 'event is null';
   if (!event.type) return 'event.type is missisng';
   if (!event.createdBy) return 'event.createBy is missing';
@@ -52,7 +66,7 @@ function eventWithoutUser (event: any) {
   return true;
 }
 
-function filter (filter: any) {
+function filter (filter: AuditFilter): void {
   const isValid = validator.validate(filter, filterSchema);
   if (!isValid) {
     throw new Error('Invalid "audit:filter" configuration parameter: \n' +
@@ -62,20 +76,20 @@ function filter (filter: any) {
   }
   validateFunctions(filter.methods.include);
   validateFunctions(filter.methods.exclude);
-  function validateFunctions (methods: any) {
-    methods.forEach((m: any) => {
+  function validateFunctions (methods: string[]): void {
+    methods.forEach((m: string) => {
       if (isMethodAggregate(m)) return isValidAggregate(m);
       return ALL_METHODS_MAP[m];
     });
 
-    function isMethodAggregate (m: any) {
+    function isMethodAggregate (m: string): boolean {
       const parts = m.split('.');
       if (parts.length !== 2) return false;
       if (parts[1] !== 'all') return false;
       return true;
     }
 
-    function isValidAggregate (m: any) {
+    function isValidAggregate (m: string): boolean {
       const parts = m.split('.');
       for (let i = 0; i < ALL_METHODS.length; i++) {
         if (ALL_METHODS[i].startsWith(parts[0])) return true;
