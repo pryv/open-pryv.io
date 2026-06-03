@@ -11,13 +11,17 @@
  * All engine files import { _internals } from './_internals.ts'.
  */
 
-const registry: Record<string, any> = {};
+type Logger = { debug?: (...args: unknown[]) => void; info?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void; error?: (...args: unknown[]) => void };
+type UserLocalDirectoryLike = { ensureUserDirectory: (userId: string) => Promise<string> };
+type ConfigLike = { get: (key: string) => unknown };
+
+const registry: Record<string, unknown> = {};
 
 const _internals = {
-  set (name: string, value: any): void { registry[name] = value; },
-  get userLocalDirectory (): any { return registry.userLocalDirectory; },
-  get getLogger (): (name: string) => any { return registry.getLogger; },
-  get config (): any { return registry.config; }
+  set (name: string, value: unknown): void { registry[name] = value; },
+  get userLocalDirectory (): UserLocalDirectoryLike { return registry.userLocalDirectory as UserLocalDirectoryLike; },
+  get getLogger (): (name: string) => Logger { return registry.getLogger as (name: string) => Logger; },
+  get config (): ConfigLike { return registry.config as ConfigLike; }
 };
 
 export { _internals };

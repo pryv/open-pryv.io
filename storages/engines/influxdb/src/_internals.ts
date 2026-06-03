@@ -11,23 +11,26 @@
  * All engine files use require('./_internals.ts') instead of host require() calls.
  */
 
-const registry: Record<string, any> = {};
+type Logger = { debug?: Function; info?: Function; warn?: Function; error?: Function; [k: string]: unknown };
+
+const registry: Record<string, unknown> = {};
 
 const _internals = {
-  set (name: string, value: any): void { registry[name] = value; },
+  set (name: string, value: unknown): void { registry[name] = value; },
   /** Create a logger proxy that defers getLogger() until first use (safe at module scope). */
-  lazyLogger (name: string): any {
-    let _log: any;
+  lazyLogger (name: string): Logger {
+    let _log: Logger | undefined;
     const noop = (): void => {};
     return new Proxy({}, {
-      get: (_, prop) => {
+      get: (_, prop: string) => {
         if (!_log) {
-          _log = registry.getLogger ? registry.getLogger(name) : { debug: noop, info: noop, warn: noop, error: noop };
+          const getLog = registry.getLogger as ((n: string) => Logger) | undefined;
+          _log = getLog ? getLog(name) : { debug: noop, info: noop, warn: noop, error: noop };
         }
-        const val = _log[prop];
-        return typeof val === 'function' ? val.bind(_log) : val;
+        const val = (_log as Record<string, unknown>)[prop];
+        return typeof val === 'function' ? (val as Function).bind(_log) : val;
       }
-    });
+    }) as Logger;
   },
   get getLogger () { return registry.getLogger; },
   get config () { return registry.config; }
