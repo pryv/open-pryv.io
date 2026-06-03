@@ -5,26 +5,34 @@
  * Refer to LICENSE file
  */
 
-/**
- * Output usual objects as string, e.g. when logging.
- */
-const toString: any = {};
-export { toString };
-toString.id = function (id: any) {
-  return '"' + id + '"';
-};
-toString.path = function (path: any) {
-  return '"' + path + '"';
-};
-toString.property = function (propertyKey: any) {
-  return '`' + propertyKey + '`';
-};
-toString.user = function (user: any) {
-  return '"' + user.username + '" (' + (user.id || user._id || 'n/a') + ')';
-};
-
 type User = {
   username: string;
   id?: string;
   _id?: string;
 };
+
+type ToString = {
+  id: (id: string) => string;
+  path: (path: string) => string;
+  property: (propertyKey: string) => string;
+  user: (user: User) => string;
+};
+
+/**
+ * Output usual objects as string, e.g. when logging.
+ */
+const toString: ToString = {
+  id (id: string): string {
+    return '"' + id + '"';
+  },
+  path (path: string): string {
+    return '"' + path + '"';
+  },
+  property (propertyKey: string): string {
+    return '`' + propertyKey + '`';
+  },
+  user (user: User): string {
+    return '"' + user.username + '" (' + (user.id || user._id || 'n/a') + ')';
+  }
+};
+export { toString };
