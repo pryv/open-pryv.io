@@ -16,10 +16,16 @@ const object = helpers.object;
 const array = helpers.array;
 const string = helpers.string;
 
-function accessSchema (action: any) {
+type AccessSchemaShape = {
+  id: string;
+  anyOf: unknown[];
+  alterableProperties?: string[];
+};
+
+function accessSchema (action: string): AccessSchemaShape {
   if (action === Action.STORE) { action = Action.READ; } // read items === stored items
 
-  const base: any = object({
+  const base: Record<string, unknown> & { properties: Record<string, unknown> } = object({
     token: string({ minLength: 1 }),
     apiEndpoint: string({ minLength: 1 }),
     name: string({ minLength: 1 }),
@@ -100,7 +106,7 @@ function accessSchema (action: any) {
       break;
   }
 
-  const res: any = {
+  const res: AccessSchemaShape = {
     id: helpers.getTypeURI('access', action),
     anyOf: [personal, app, shared]
   };
@@ -117,7 +123,7 @@ function accessSchema (action: any) {
 const permissionLevel = string({ enum: ['read', 'contribute', 'manage', 'create-only', 'none'] });
 const featureSetting = string({ enum: ['forbidden'] });
 
-function permissions (action: any) {
+function permissions (action: string): unknown {
   const streamPermission = object({
     streamId: {
       type: ['string', 'null']
