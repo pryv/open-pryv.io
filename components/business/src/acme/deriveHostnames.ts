@@ -31,7 +31,7 @@ import type {} from 'node:fs';
  *
  * @param config - thing with `.get(key)` (e.g. @pryv/boiler)
  */
-function deriveHostnames (config: any) {
+function deriveHostnames (config: { get: (key: string) => unknown }) {
   const dnsLessActive = config.get('dnsLess:isActive');
   const dnsLessUrl = config.get('dnsLess:publicUrl');
 
@@ -40,7 +40,7 @@ function deriveHostnames (config: any) {
     return { commonName: hostnameFromUrl(dnsLessUrl), altNames: [], challenge: 'http-01' };
   }
 
-  const domain = config.get('dns:domain');
+  const domain = config.get('dns:domain') as string | undefined;
   const dnsActive = config.get('dns:active');
   const hasDomain = typeof domain === 'string' && domain.length > 0 && domain !== 'REPLACE ME';
 
@@ -67,7 +67,7 @@ function deriveHostnames (config: any) {
   );
 }
 
-function hostnameFromUrl (url: any) {
+function hostnameFromUrl (url: string) {
   try {
     return new URL(url).hostname;
   } catch {
