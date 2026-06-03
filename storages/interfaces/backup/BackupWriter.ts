@@ -24,15 +24,15 @@ export interface UserBackupWriter {
   writeSeries (items: AsyncIterable<any> | any[]): Promise<void>;
   writeAttachment (eventId: string, fileId: string, readStream: Readable): Promise<void>;
   /** Account data as returned by UserAccountStorage.exportAll(). */
-  writeAccountData (data: any): Promise<void>;
+  writeAccountData (data: unknown): Promise<void>;
   /** Returns the user manifest (userId, username, chunk inventory, stats). */
-  close (): Promise<any>;
+  close (): Promise<unknown>;
 }
 
 export interface BackupWriteManifestParams {
   coreVersion: string;
-  config: Record<string, any>;
-  userManifests: any[];
+  config: Record<string, unknown>;
+  userManifests: unknown[];
   backupType: string;
   /** Consistency cutoff: items modified after this are excluded. */
   snapshotBefore?: number;
@@ -78,13 +78,14 @@ function createBackupWriter (implementation: Partial<BackupWriter>): BackupWrite
 
 const REQUIRED_METHODS: string[] = Object.getOwnPropertyNames(BackupWriter);
 
-function validateBackupWriter (instance: any): BackupWriter {
+function validateBackupWriter (instance: unknown): BackupWriter {
+  const obj = instance as Record<string, unknown>;
   for (const method of REQUIRED_METHODS) {
-    if (typeof instance[method] !== 'function') {
+    if (typeof obj[method] !== 'function') {
       throw new Error(`BackupWriter implementation missing method: ${method}`);
     }
   }
-  return instance;
+  return obj as unknown as BackupWriter;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,8 +101,8 @@ const UserBackupWriter: UserBackupWriter = {
   async writeAudit (items: AsyncIterable<any> | any[]): Promise<void> { throw new Error('Not implemented'); },
   async writeSeries (items: AsyncIterable<any> | any[]): Promise<void> { throw new Error('Not implemented'); },
   async writeAttachment (eventId: string, fileId: string, readStream: Readable): Promise<void> { throw new Error('Not implemented'); },
-  async writeAccountData (data: any): Promise<void> { throw new Error('Not implemented'); },
-  async close (): Promise<any> { throw new Error('Not implemented'); }
+  async writeAccountData (data: unknown): Promise<void> { throw new Error('Not implemented'); },
+  async close (): Promise<unknown> { throw new Error('Not implemented'); }
 };
 
 for (const propName of Object.getOwnPropertyNames(UserBackupWriter)) {
@@ -114,13 +115,14 @@ function createUserBackupWriter (implementation: Partial<UserBackupWriter>): Use
 
 const USER_REQUIRED_METHODS: string[] = Object.getOwnPropertyNames(UserBackupWriter);
 
-function validateUserBackupWriter (instance: any): UserBackupWriter {
+function validateUserBackupWriter (instance: unknown): UserBackupWriter {
+  const obj = instance as Record<string, unknown>;
   for (const method of USER_REQUIRED_METHODS) {
-    if (typeof instance[method] !== 'function') {
+    if (typeof obj[method] !== 'function') {
       throw new Error(`UserBackupWriter implementation missing method: ${method}`);
     }
   }
-  return instance;
+  return obj as unknown as UserBackupWriter;
 }
 
 export { BackupWriter,
