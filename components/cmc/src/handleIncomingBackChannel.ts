@@ -33,35 +33,68 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 
-type Counterparty = { username: string; host: string };
+type Counterparty = {
+  username: string;
+  host: string;
+  apiEndpoint?: string;
+  remoteChatStreamId?: string;
+  remoteCollectorStreamId?: string;
+};
+
+type CmcAccessClientData = {
+  role?: string;
+  counterparty?: Counterparty;
+  appCode?: string;
+  backChannelApiEndpoint?: string;
+  [k: string]: unknown;
+};
+
+type AccessClientData = {
+  cmc?: CmcAccessClientData;
+  [k: string]: unknown;
+};
 
 type AccessLike = {
   id: string;
-  clientData?: any;
+  clientData?: AccessClientData;
+};
+
+type AccessGetParams = Record<string, unknown>;
+type AccessUpdateParams = {
+  id: string;
+  update: { clientData: AccessClientData };
 };
 
 type MallLike = {
   accesses: {
-    get?: (userId: string, params?: any) => Promise<AccessLike[]>;
-    update?: (userId: string, params: any) => Promise<any>;
+    get?: (userId: string, params?: AccessGetParams) => Promise<AccessLike[]>;
+    update?: (userId: string, params: AccessUpdateParams) => Promise<unknown>;
   };
+};
+
+type BackChannelEventContent = {
+  from?: { username?: unknown; host?: unknown };
+  apiEndpoint?: unknown;
+  remoteChatStreamId?: string;
+  remoteCollectorStreamId?: string;
+  appCode?: string;
 };
 
 type IncomingBackChannelResult =
   | {
       ok: true;
       dataGrantAccessId: string;
-      counterparty: Counterparty;
+      counterparty: { username: string; host: string };
     }
   | {
       ok: false;
       reason: string;
-      detail?: any;
+      detail?: unknown;
     };
 
 async function handleIncomingBackChannel (params: {
   userId: string;
-  event: { type: string; content: any; streamIds?: string[] };
+  event: { type: string; content: BackChannelEventContent; streamIds?: string[] };
   deps: {
     mall: MallLike;
     logger?: { debug: Function; warn: Function };
@@ -73,11 +106,13 @@ async function handleIncomingBackChannel (params: {
     return { ok: false, reason: 'cmc-back-channel-wrong-type', detail: { type: event.type } };
   }
 
-  const c = event.content || {};
+  const c: BackChannelEventContent = event.content || {};
   const from = c.from;
   if (from == null || typeof from.username !== 'string' || typeof from.host !== 'string') {
     return { ok: false, reason: 'cmc-back-channel-from-missing' };
   }
+  const fromUsername: string = from.username;
+  const fromHost: string = from.host;
   const apiEndpoint = c.apiEndpoint;
   if (typeof apiEndpoint !== 'string' || apiEndpoint.length === 0) {
     return { ok: false, reason: 'cmc-back-channel-no-apiendpoint' };
@@ -94,13 +129,13 @@ async function handleIncomingBackChannel (params: {
   // counterparty {username, host} we're being told about.
   const accesses = await deps.mall.accesses.get(userId, {});
   let chosen: AccessLike | null = null;
-  const fromHostSlug = slugMod.slugifyHost(from.host);
+  const fromHostSlug = slugMod.slugifyHost(fromHost);
   for (const acc of accesses) {
-    const cmc = (acc as any)?.clientData?.cmc;
+    const cmc = acc?.clientData?.cmc;
     if (cmc?.role !== 'counterparty') continue;
     const cp = cmc?.counterparty;
     if (cp == null) continue;
-    if (cp.username !== from.username) continue;
+    if (cp.username !== fromUsername) continue;
     if (slugMod.slugifyHost(cp.host) !== fromHostSlug) continue;
     if (typeof c.appCode === 'string' && c.appCode.length > 0 &&
         cmc.appCode != null && cmc.appCode !== c.appCode) continue;
@@ -119,18 +154,18 @@ async function handleIncomingBackChannel (params: {
     return { ok: false, reason: 'cmc-back-channel-mall-no-update' };
   }
 
-  const existingCmc = (chosen as any).clientData?.cmc || {};
-  const existingCp = existingCmc.counterparty || {};
-  const updatedCp = {
+  const existingCmc: CmcAccessClientData = chosen.clientData?.cmc || {};
+  const existingCp: Counterparty = existingCmc.counterparty || { username: fromUsername, host: fromHost };
+  const updatedCp: Counterparty = {
     ...existingCp,
-    username: from.username,
-    host: from.host,
+    username: fromUsername,
+    host: fromHost,
     apiEndpoint,
     remoteChatStreamId: remoteChatStreamId ?? existingCp.remoteChatStreamId,
     remoteCollectorStreamId: remoteCollectorStreamId ?? existingCp.remoteCollectorStreamId,
   };
-  const updatedClientData = {
-    ...((chosen as any).clientData || {}),
+  const updatedClientData: AccessClientData = {
+    ...(chosen.clientData || {}),
     cmc: {
       ...existingCmc,
       counterparty: updatedCp,
@@ -143,18 +178,19 @@ async function handleIncomingBackChannel (params: {
       id: chosen.id,
       update: { clientData: updatedClientData },
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
       reason: 'cmc-back-channel-update-failed',
-      detail: { accessId: chosen.id, message: String(err?.message || err) },
+      detail: { accessId: chosen.id, message },
     };
   }
 
   return {
     ok: true,
     dataGrantAccessId: chosen.id,
-    counterparty: { username: from.username, host: from.host },
+    counterparty: { username: fromUsername, host: fromHost },
   };
 }
 
