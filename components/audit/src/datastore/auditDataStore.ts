@@ -11,10 +11,21 @@ const ds = require('@pryv/datastore');
 const auditUserEvents = require('./auditUserEvents.ts').default;
 const auditUserStreams = require('./auditUserStreams.ts').default;
 
+type AuditDataStore = {
+  id: string;
+  name: string;
+  init: () => Promise<unknown>;
+  streams: unknown;
+  events: unknown;
+  deleteUser: (userId: string) => Promise<void>;
+  getUserStorageInfos: (userId: string) => Promise<Record<string, unknown>>;
+  [k: string]: unknown;
+};
+
 /**
  * Audit data store.
  */
-const auditDataStore: any = ds.createDataStore({
+const auditDataStore: AuditDataStore = ds.createDataStore({
   id: '_audit',
   name: 'Audit store',
 
@@ -25,9 +36,9 @@ const auditDataStore: any = ds.createDataStore({
   streams: auditUserStreams,
   events: auditUserEvents,
 
-  async deleteUser (userId: any) {},
+  async deleteUser (userId: string) {},
 
-  async getUserStorageInfos (userId: any) {
+  async getUserStorageInfos (userId: string) {
     return { };
   }
 });

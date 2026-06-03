@@ -18,10 +18,13 @@ type AccessLike = { id: string; isApp: () => boolean };
 /**
  * Repository of all Webhooks in this Pryv.io instance.
  */
+type WebhooksStorageLike = Record<string, any>; // wide alias — concrete iface deferred
+type AccessesStorageLike = Record<string, any>;
+
 class Repository {
-  storage: any;
-  accessesStorage: any;
-  constructor (webhooksStorage: any, eventsStorage?: any, accessesStorage?: any) {
+  storage: WebhooksStorageLike;
+  accessesStorage: AccessesStorageLike | undefined;
+  constructor (webhooksStorage: WebhooksStorageLike, eventsStorage?: unknown, accessesStorage?: AccessesStorageLike) {
     this.storage = webhooksStorage;
     this.accessesStorage = accessesStorage;
   }
@@ -127,7 +130,7 @@ class Repository {
   async accessExists (user: User, accessId: string): Promise<boolean> {
     if (this.accessesStorage == null) return true;
     const access: { deleted?: unknown } | null = await fromCallback((cb: NodeCallback) =>
-      this.accessesStorage.findOne(user, { id: accessId }, {}, cb));
+      this.accessesStorage!.findOne(user, { id: accessId }, {}, cb));
     return access != null && access.deleted == null;
   }
 }

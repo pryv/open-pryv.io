@@ -20,7 +20,7 @@ const LEAF_END_MARKER = '-----END CERTIFICATE-----';
  * issuer chain (possibly empty if there's only one cert).
  *
  */
-function splitCertChain (bundlePem: any) {
+function splitCertChain (bundlePem: string): { leafPem: string; chainPem: string } {
   if (typeof bundlePem !== 'string' || !bundlePem.includes(LEAF_END_MARKER)) {
     throw new Error('splitCertChain: input is not a PEM certificate bundle');
   }
@@ -35,7 +35,7 @@ function splitCertChain (bundlePem: any) {
 /**
  * Parse a single PEM cert and return its validity dates as Unix ms.
  */
-function parseValidity (pem: any) {
+function parseValidity (pem: string): { issuedAt: number; expiresAt: number; subject: string } {
   if (typeof pem !== 'string') throw new Error('parseValidity: pem is required');
   const cert = new X509Certificate(pem);
   return {
@@ -51,7 +51,7 @@ function parseValidity (pem: any) {
  * tlsDir/<hostname>/… layout on disk.
  *
  */
-function hostnameToDirName (hostname: any) {
+function hostnameToDirName (hostname: string): string {
   if (typeof hostname !== 'string' || hostname.length === 0) {
     throw new Error('hostnameToDirName: hostname is required');
   }
