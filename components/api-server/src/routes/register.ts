@@ -5,14 +5,19 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const methodCallback = require('./methodCallback.ts').default;
 const { setMethodId } = require('middleware');
 const { getConfigSync } = require('@pryv/boiler');
-export default function (expressApp: any, app: any) {
+
+type AppLike = { api: { call: (...args: unknown[]) => unknown } };
+type PryvRequest = Request & { context?: unknown };
+
+export default function (expressApp: ExpressApp, app: AppLike) {
   const api = app.api;
   // dnsLess compatible route
-  expressApp.get('/reg/service/info', setMethodId('service.info'), function (req: any, res: any, next: any) {
+  expressApp.get('/reg/service/info', setMethodId('service.info'), function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, req.query, methodCallback(res, next, 200));
   });
   // Multi-core (dnsLess=false): also serve /service/info at the root so that
@@ -23,7 +28,7 @@ export default function (expressApp: any, app: any) {
   // post-`await getConfig()` — so the no-warnOnly variant is safe.
   const config = getConfigSync();
   if (!config.get('dnsLess:isActive')) {
-    expressApp.get('/service/info', setMethodId('service.info'), function (req: any, res: any, next: any) {
+    expressApp.get('/service/info', setMethodId('service.info'), function (req: PryvRequest, res: Response, next: NextFunction) {
       api.call(req.context, req.query, methodCallback(res, next, 200));
     });
   }

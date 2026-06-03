@@ -4,8 +4,9 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import type { Request, Response, Application as ExpressApp } from 'express';
 
+type AppLike = { config: { get: (key: string) => unknown } };
 
 /**
  * GET /apps — list applications linked to this service.
@@ -13,16 +14,16 @@ import type {} from 'node:fs';
  * Config-based: reads from config 'appList'.
  */
 
-export default function (expressApp: any, app: any) {
-  const appsList = app.config.get('appList') || {};
+export default function (expressApp: ExpressApp, app: AppLike) {
+  const appsList = (app.config.get('appList') || {}) as Record<string, Record<string, unknown>>;
 
-  expressApp.get('/apps', (req: any, res: any) => {
-    const data = (Object.entries(appsList) as Array<[string, any]>).map(([id, info]) => ({ id, ...info }));
+  expressApp.get('/apps', (req: Request, res: Response) => {
+    const data = Object.entries(appsList).map(([id, info]) => ({ id, ...info }));
     res.json({ apps: data });
   });
 
-  expressApp.get('/apps/:appid', (req: any, res: any) => {
-    const appid = req.params.appid;
+  expressApp.get('/apps/:appid', (req: Request, res: Response) => {
+    const appid = req.params.appid as string;
     const info = appsList[appid];
     if (!info) {
       return res.status(404).json({
