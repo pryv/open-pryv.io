@@ -17,8 +17,8 @@
 class MailError extends Error {
   id: string;
   httpStatus: number;
-  data: any;
-  constructor (id: string, message: string, status?: number, data?: any) {
+  data?: unknown;
+  constructor (id: string, message: string, status?: number, data?: unknown) {
     super();
     this.id = id;
     this.message = message;
@@ -33,8 +33,8 @@ const ErrorIds = Object.freeze({
   UnknownResource: 'unknown-resource'
 });
 
-const invalidRequestStructure = (message: any) => new MailError(ErrorIds.InvalidRequestStructure, message, 400);
-const forbidden = (message: any) => new MailError(ErrorIds.Forbidden, message, 403);
-const unknownResource = (message: any) => new MailError(ErrorIds.UnknownResource, message, 404);
+const invalidRequestStructure = (message: string): MailError => new MailError(ErrorIds.InvalidRequestStructure, message, 400);
+const forbidden = (message: string): MailError => new MailError(ErrorIds.Forbidden, message, 403);
+const unknownResource = (message: string): MailError => new MailError(ErrorIds.UnknownResource, message, 404);
 
 export { MailError, ErrorIds, invalidRequestStructure, forbidden, unknownResource };
