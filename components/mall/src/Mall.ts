@@ -20,16 +20,25 @@ const eventsUtils = require('./helpers/eventsUtils.ts');
  * Under the hood, manages the different data stores (built-in and custom),
  * dispatching data requests for each one.
  */
+type StoreDescription = { id: string; includeInStarPermission?: boolean; [k: string]: unknown };
+type DataStore = {
+  init: (params: Record<string, unknown>) => Promise<unknown>;
+  deleteUser: (userId: string) => Promise<unknown>;
+  getUserStorageInfos?: (userId: string) => Promise<unknown>;
+  [k: string]: unknown;
+};
+type IntegrityModule = { events: { compute (e: unknown): { integrity: string } } };
+
 class Mall {
-  storesById = new Map();
-  storeDescriptionsByStore = new Map();
+  storesById: Map<string, DataStore> = new Map();
+  storeDescriptionsByStore: Map<DataStore, StoreDescription> = new Map();
   /**
    * Contains the list of stores included in star permissions.
    */
-  includedInStarPermissions: any[] = [];
+  includedInStarPermissions: string[] = [];
 
-  _events: any;
-  _streams: any;
+  _events!: InstanceType<typeof MallUserEvents>;
+  _streams!: InstanceType<typeof MallUserStreams>;
 
   initialized = false;
 
@@ -44,7 +53,7 @@ class Mall {
   /**
    * Register a DataStore
    */
-  addStore (store: any, storeDescription: any) {
+  addStore (store: DataStore, storeDescription: StoreDescription) {
     if (this.initialized) { throw new Error('Sources cannot be added after init()'); }
     this.storesById.set(storeDescription.id, store);
     this.storeDescriptionsByStore.set(store, storeDescription);
@@ -74,7 +83,7 @@ class Mall {
 
     for (const [storeId, store] of this.storesById) {
       const storeKeyValueData = userAccountStorage.getKeyValueDataForStore(storeId);
-      const params: any = {
+      const params: Record<string, unknown> = {
         ...this.storeDescriptionsByStore.get(store),
         storeKeyValueData,
         logger: getLogger(`mall:${storeId}`),
@@ -85,7 +94,7 @@ class Mall {
       }
       if (storeId === 'account' && accountRoot) {
         const streamTree = [structuredClone(accountRoot)];
-        params.settings = Object.assign({}, params.settings, { streamTree });
+        params.settings = Object.assign({}, params.settings as Record<string, unknown> | undefined, { streamTree });
       }
       await store.init(params);
     }
@@ -94,7 +103,7 @@ class Mall {
     return this;
   }
 
-  async deleteUser (userId: any) {
+  async deleteUser (userId: string) {
     for (const [storeId, store] of this.storesById) {
       try {
         await store.deleteUser(userId);
@@ -107,8 +116,8 @@ class Mall {
   /**
    * Return storage informations per store Id.
   */
-  async getUserStorageInfos (userId: any) {
-    const storageInfos: any = { };
+  async getUserStorageInfos (userId: string) {
+    const storageInfos: Record<string, unknown> = { };
     for (const [storeId, store] of this.storesById) {
       try {
         if (store.getUserStorageInfos != null) {
@@ -132,8 +141,8 @@ export { Mall };
 /**
  * Get store-specific integrity calculation function
 */
-function getEventIntegrityFn (storeId: any, integrity: any) {
-  return function setIntegrityForEvent (storeEventData: any) {
+function getEventIntegrityFn (storeId: string, integrity: IntegrityModule) {
+  return function setIntegrityForEvent (storeEventData: Record<string, unknown>) {
     const event = eventsUtils.convertEventFromStore(storeId, storeEventData);
     storeEventData.integrity = integrity.events.compute(event).integrity;
   };
