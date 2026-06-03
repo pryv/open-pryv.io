@@ -4,15 +4,15 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import type { Request, Response, NextFunction } from 'express';
 
 // Middleware that verifies the presence of an authorization token
 //
-export default (req: any, res: any, next: any) => {
-  req.headers.authorization = getAuth(req);
+export default (req: Request, res: Response, next: NextFunction) => {
+  (req.headers as { authorization?: string | null }).authorization = getAuth(req);
   next();
 };
-function getAuth (req: any) {
+function getAuth (req: Request): string | null {
   let authorizationHeader = req.header('authorization');
   if (authorizationHeader != null) {
     const basic = authorizationHeader.split(' ');
@@ -25,7 +25,7 @@ function getAuth (req: any) {
     return authorizationHeader;
   }
   // assert: no authorization in header, let's check query:
-  const authFromQuery = req.query.auth;
+  const authFromQuery = req.query.auth as string | string[] | undefined;
   if (authFromQuery == null) { return null; }
   if (Array.isArray(authFromQuery)) { return authFromQuery[0]; }
   return authFromQuery;

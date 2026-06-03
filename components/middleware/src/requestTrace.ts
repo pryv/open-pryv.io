@@ -9,9 +9,9 @@ const require = createRequire(import.meta.url);
 
 const morgan = require('morgan');
 const { getLogger } = require('@pryv/boiler');
-export default function (express: any) {
+export default function (express: unknown) {
   const logger = getLogger('request-trace');
-  const morganLoggerStreamWrite = (msg: any) => logger.info(msg);
+  const morganLoggerStreamWrite = (msg: string) => logger.info(msg);
   return morgan('combined', {
     stream: {
       write: morganLoggerStreamWrite

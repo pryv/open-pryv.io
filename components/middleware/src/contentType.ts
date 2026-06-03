@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction } from 'express';
 const require = createRequire(import.meta.url);
 
 /**
@@ -17,9 +18,9 @@ const errors = require('errors').factory;
 /**
  * Accepts a variable number of content types as arguments.
  */
-function checkContentType (...acceptedTypes: any[]) {
+function checkContentType (...acceptedTypes: string[]) {
   const count = acceptedTypes.length;
-  return function (req: any, res: any, next: any) {
+  return function (req: Request, res: Response, next: NextFunction) {
     if (count < 1) { return next(); }
 
     const contentType = req.headers['content-type'];

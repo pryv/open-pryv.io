@@ -5,7 +5,15 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction } from 'express';
 const require = createRequire(import.meta.url);
+
+type PlatformLike = {
+  isSingleCore: boolean;
+  coreId: string;
+  getUserCore: (username: string) => Promise<string | null>;
+  coreIdToUrl: (coreId: string) => string;
+};
 
 /**
  * Wrong-core middleware (DNSless multi-core).
@@ -39,18 +47,18 @@ const require = createRequire(import.meta.url);
  *   }
  */
 
-let _platformPromise: any = null;
+let _platformPromise: Promise<PlatformLike> | null = null;
 
 /**
  * Lazily resolve the Platform singleton. Cached so the first request after
  * boot pays the cost once.
  */
-async function getPlatformLazy () {
+async function getPlatformLazy (): Promise<PlatformLike> {
   if (_platformPromise == null) {
     const { getPlatform } = require('platform');
     _platformPromise = getPlatform();
   }
-  return _platformPromise;
+  return _platformPromise!;
 }
 
 /**
@@ -63,9 +71,9 @@ function _resetPlatformCache () {
 /**
  * Express middleware. Mount once on `/:username/*`.
  */
-async function checkUserCore (req: any, res: any, next: any) {
+async function checkUserCore (req: Request, res: Response, next: NextFunction) {
   try {
-    const username = req.params && req.params.username;
+    const username = req.params && (req.params.username as string);
     if (!username) return next();
 
     const platform = await getPlatformLazy();

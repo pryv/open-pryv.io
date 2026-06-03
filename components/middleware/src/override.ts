@@ -5,20 +5,23 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction } from 'express';
 const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
+
+type PryvRequest = Request & { originalMethod?: string; originalBody?: unknown };
 /**
  * Middleware to allow overriding HTTP method, "Authorization" header and JSON
  * body content by sending them as fields in urlencoded requests. Does not
  * perform request body parsing (expects req.body to exist), so must be executed
  * after e.g. bodyParser middleware.
  */
-function normalizeRequest (req: any, res: any, next: any) {
+function normalizeRequest (req: PryvRequest, res: Response, next: NextFunction) {
   if (!req.is('application/x-www-form-urlencoded')) {
     return next();
   }
-  const body = req.body;
+  const body = req.body as Record<string, string>;
   if (body == null || typeof body !== 'object') { return next(); }
   if (typeof body._method === 'string') {
     req.originalMethod = req.originalMethod || req.method;
@@ -36,8 +39,8 @@ function normalizeRequest (req: any, res: any, next: any) {
     req.originalBody = req.originalBody || body;
     try {
       req.body = JSON.parse(body._json);
-    } catch (err: any) {
-      return next(errors.invalidRequestStructure(err.message));
+    } catch (err) {
+      return next(errors.invalidRequestStructure((err as Error).message));
     }
   }
   next();
