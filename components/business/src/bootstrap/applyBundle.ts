@@ -31,6 +31,26 @@ const yaml = require('js-yaml');
 const Bundle = require('./Bundle.ts');
 const BundleEncryption = require('./BundleEncryption.ts');
 
+interface BundleShape {
+  node: { id: string; url: string; ip?: string; hosting?: string; certPem: string; keyPem: string };
+  cluster: { ca: { certPem: string }; ackUrl: string; joinToken: string; domain?: string };
+  rqlite: { raftPort: number; httpPort: number };
+  platformSecrets: {
+    auth: { adminAccessKey: string; filesReadTokenSecret: string };
+    letsEncrypt?: { atRestKey?: string };
+  };
+  [k: string]: unknown;
+}
+
+interface TlsPaths { caFile: string; certFile: string; keyFile: string }
+
+interface ApplyBundleOpts {
+  armoredBundle: string;
+  passphrase: string;
+  configDir: string;
+  tlsDir: string;
+}
+
 const TLS_FILE_NAMES = {
   ca: 'ca.crt',
   cert: 'node.crt',
@@ -51,7 +71,7 @@ const TLS_FILE_NAMES = {
  *   coreId: string
  * }>}
  */
-async function applyBundle ({ armoredBundle, passphrase, configDir, tlsDir }: any) {
+async function applyBundle ({ armoredBundle, passphrase, configDir, tlsDir }: ApplyBundleOpts) {
   if (typeof armoredBundle !== 'string' || armoredBundle.length === 0) {
     throw new Error('applyBundle: armoredBundle is required');
   }
@@ -79,7 +99,7 @@ async function applyBundle ({ armoredBundle, passphrase, configDir, tlsDir }: an
   };
 }
 
-function writeTlsFiles (tlsDir: any, bundle: any) {
+function writeTlsFiles (tlsDir: string, bundle: BundleShape): TlsPaths {
   fs.mkdirSync(tlsDir, { recursive: true, mode: 0o700 });
   const caFile = path.join(tlsDir, TLS_FILE_NAMES.ca);
   const certFile = path.join(tlsDir, TLS_FILE_NAMES.cert);
@@ -90,11 +110,11 @@ function writeTlsFiles (tlsDir: any, bundle: any) {
   return { caFile, certFile, keyFile };
 }
 
-function writeOverrideConfig (configDir: any, bundle: any, tlsPaths: any) {
+function writeOverrideConfig (configDir: string, bundle: BundleShape, tlsPaths: TlsPaths): string {
   fs.mkdirSync(configDir, { recursive: true });
   const overridePath = path.join(configDir, 'override-config.yml');
 
-  const override: any = {
+  const override: Record<string, unknown> = {
     core: pruneNull({
       id: bundle.node.id,
       url: bundle.node.url,
@@ -148,22 +168,22 @@ function writeOverrideConfig (configDir: any, bundle: any, tlsPaths: any) {
   return overridePath;
 }
 
-function pruneNull (obj: any) {
-  const out: any = {};
+function pruneNull (obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
     if (v != null) out[k] = v;
   }
   return out;
 }
 
-function sha256Fingerprint (pem: any) {
+function sha256Fingerprint (pem: string): string {
   // Match the canonical OpenSSL "SHA256 Fingerprint=AA:BB:..." format.
   const der = pemToDer(pem);
   const hex = crypto.createHash('sha256').update(der).digest('hex').toUpperCase();
-  return hex.match(/.{2}/g).join(':');
+  return hex.match(/.{2}/g)!.join(':');
 }
 
-function pemToDer (pem: any) {
+function pemToDer (pem: string): Buffer {
   const b64 = pem
     .replace(/-----BEGIN [^-]+-----/, '')
     .replace(/-----END [^-]+-----/, '')
