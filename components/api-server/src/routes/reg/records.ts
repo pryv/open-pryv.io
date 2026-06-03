@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 /**
  * /reg/records — admin endpoints for managing runtime DNS entries.
@@ -23,21 +24,23 @@ const require = createRequire(import.meta.url);
 
 const { getPlatform } = require('platform');
 
-export default function (expressApp: any, app: any) {
-  const adminAccessKey = app.config.get('auth:adminAccessKey');
+type AppLike = { config: { get: (key: string) => unknown } };
 
-  function isAuthorized (req: any) {
+export default function (expressApp: ExpressApp, app: AppLike) {
+  const adminAccessKey = app.config.get('auth:adminAccessKey') as string | undefined;
+
+  function isAuthorized (req: Request): boolean {
     const secret = req.headers.authorization;
     return secret != null && secret === adminAccessKey;
   }
 
-  function nudgeMaster (subdomain: any) {
+  function nudgeMaster (subdomain: string): void {
     if (typeof process.send === 'function') {
       process.send({ type: 'dns:updateRecords', data: { subdomain } });
     }
   }
 
-  expressApp.post('/reg/records', async (req: any, res: any) => {
+  expressApp.post('/reg/records', async (req: Request, res: Response) => {
     if (!isAuthorized(req)) {
       return res.status(403).json({
         error: { id: 'forbidden', message: 'Invalid admin authorization' }
@@ -59,9 +62,10 @@ export default function (expressApp: any, app: any) {
     try {
       const platform = await getPlatform();
       await platform.setDnsRecord(subdomain, records);
-    } catch (err: any) {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       return res.status(500).json({
-        error: { id: 'unexpected', message: 'Failed to persist DNS record: ' + err.message }
+        error: { id: 'unexpected', message: 'Failed to persist DNS record: ' + message }
       });
     }
 
@@ -69,7 +73,7 @@ export default function (expressApp: any, app: any) {
     res.status(200).json({ subdomain, records, status: 'ok' });
   });
 
-  expressApp.delete('/reg/records/:subdomain', async (req: any, res: any) => {
+  expressApp.delete('/reg/records/:subdomain', async (req: Request, res: Response) => {
     if (!isAuthorized(req)) {
       return res.status(403).json({
         error: { id: 'forbidden', message: 'Invalid admin authorization' }
@@ -92,9 +96,10 @@ export default function (expressApp: any, app: any) {
         });
       }
       await platform.deleteDnsRecord(subdomain);
-    } catch (err: any) {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       return res.status(500).json({
-        error: { id: 'unexpected', message: 'Failed to delete DNS record: ' + err.message }
+        error: { id: 'unexpected', message: 'Failed to delete DNS record: ' + message }
       });
     }
 
