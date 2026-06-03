@@ -28,11 +28,28 @@ const ds = require('@pryv/datastore');
 const AccountUserStreams = require('./AccountUserStreams.ts');
 const AccountUserEvents = require('./AccountUserEvents.ts');
 
-let userAccountStorage: any = null;
-let fieldStreamMap: any = null;
+interface SystemStream {
+  id: string;
+  type?: string;
+  children?: SystemStream[];
+  [k: string]: unknown;
+}
 
-const accountStore = ds.createDataStore({
-  async init (params: any) {
+interface UserAccountStorageLike {
+  _clearAll: (userId: string) => Promise<void>;
+  [k: string]: unknown;
+}
+
+interface InitParams {
+  settings?: { streamTree?: SystemStream[]; [k: string]: unknown };
+  [k: string]: unknown;
+}
+
+let userAccountStorage: UserAccountStorageLike | null = null;
+let fieldStreamMap: Map<string, SystemStream> | null = null;
+
+const accountStore = (ds.createDataStore as (impl: unknown) => unknown)({
+  async init (this: { streams: unknown; events: unknown }, params: InitParams) {
     const { settings } = params;
     if (!settings || !settings.streamTree) {
       throw new Error('accountStore requires settings.streamTree (system streams config)');
@@ -63,13 +80,13 @@ const accountStore = ds.createDataStore({
   streams: null,
   events: null,
 
-  async deleteUser (userId: any) {
+  async deleteUser (userId: string) {
     if (userAccountStorage) {
       await userAccountStorage._clearAll(userId);
     }
   },
 
-  async getUserStorageInfos (userId: any) {
+  async getUserStorageInfos (_userId: string) {
     return {};
   }
 });
@@ -85,12 +102,12 @@ export default accountStore;
  * (or empty children array).
  *
  */
-function buildFieldStreamMap (streamTree: any) {
-  const map = new Map();
+function buildFieldStreamMap (streamTree: SystemStream[]): Map<string, SystemStream> {
+  const map = new Map<string, SystemStream>();
   collectLeaves(streamTree);
   return map;
 
-  function collectLeaves (streams: any) {
+  function collectLeaves (streams: SystemStream[]) {
     for (const s of streams) {
       if (s.children && s.children.length > 0) {
         collectLeaves(s.children);
@@ -111,7 +128,7 @@ function buildFieldStreamMap (streamTree: any) {
  * ':system:phone' → 'phone'
  * 'email' → 'email' (already unprefixed)
  */
-function extractFieldName (streamId: any) {
+function extractFieldName (streamId: string): string {
   const lastColon = streamId.lastIndexOf(':');
   if (lastColon >= 0) {
     return streamId.substring(lastColon + 1);
