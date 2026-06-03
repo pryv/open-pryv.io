@@ -27,11 +27,16 @@ const require = createRequire(import.meta.url);
 const SQLite3 = require('better-sqlite3');
 const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 
-class SeriesDatabase {
-  db: any;
-  logger: any;
+type SqliteStmt = { run: (...args: unknown[]) => unknown; all: (...args: unknown[]) => Array<Record<string, unknown>>; get: (...args: unknown[]) => Record<string, unknown> | undefined };
+type SqliteDb = { prepare: (sql: string) => SqliteStmt; transaction: <T>(fn: (batch: T) => void) => (batch: T) => void; close: () => void };
+type Logger = { debug?: (m: string) => void; info?: (m: string) => void; warn?: (m: string) => void; error?: (e: unknown) => void };
+type InsertRow = { event_id: string; point_time: number; delta_time: number; fields: string };
 
-  constructor (logger: any, params: { dbPath: string }) {
+class SeriesDatabase {
+  db: SqliteDb;
+  logger: Logger;
+
+  constructor (logger: Logger, params: { dbPath: string }) {
     this.logger = logger;
     this.db = new SQLite3(params.dbPath, {});
   }
@@ -67,16 +72,16 @@ class SeriesDatabase {
     this.countStmt = this.db.prepare('SELECT COUNT(*) AS count FROM series_data');
   }
 
-  insertStmt: any;
-  deleteByEventStmt: any;
-  deleteAllStmt: any;
-  distinctEventsStmt: any;
-  countStmt: any;
+  insertStmt!: SqliteStmt;
+  deleteByEventStmt!: SqliteStmt;
+  deleteAllStmt!: SqliteStmt;
+  distinctEventsStmt!: SqliteStmt;
+  countStmt!: SqliteStmt;
 
-  async writePoints (rows: Array<{ event_id: string, point_time: number, delta_time: number, fields: string }>): Promise<void> {
+  async writePoints (rows: InsertRow[]): Promise<void> {
     if (rows.length === 0) return;
     await concurrentSafeWrite.execute(() => {
-      const insertMany = this.db.transaction((batch: any[]) => {
+      const insertMany = this.db.transaction((batch: InsertRow[]) => {
         for (const row of batch) this.insertStmt.run(row);
       });
       insertMany(rows);
@@ -96,19 +101,19 @@ class SeriesDatabase {
   }
 
   listEventIds (): string[] {
-    return this.distinctEventsStmt.all().map((r: any) => r.event_id);
+    return this.distinctEventsStmt.all().map((r: Record<string, unknown>) => r.event_id as string);
   }
 
   /**
    * Run a parameterised SELECT and return raw rows.
    * Callers shape the SQL; we accept a single statement string + params array.
    */
-  selectRows (sql: string, params: any[] = []): any[] {
+  selectRows (sql: string, params: unknown[] = []): Array<Record<string, unknown>> {
     return this.db.prepare(sql).all(...params);
   }
 
   count (): number {
-    return this.countStmt.get().count;
+    return (this.countStmt.get() as { count: number }).count;
   }
 
   close (): void {
