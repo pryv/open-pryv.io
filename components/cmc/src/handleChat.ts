@@ -34,16 +34,30 @@ const chatOrch = require('./chatOrchestration.ts');
 
 type Counterparty = { username: string; host: string };
 
+type CmcClientData = {
+  cmc?: {
+    role?: string;
+    appCode?: string;
+    features?: { chat?: boolean; [k: string]: unknown };
+    counterparty?: { username?: string; host?: string; apiEndpoint?: string; remoteChatStreamId?: string; [k: string]: unknown };
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+};
+
 type AccessLike = {
   id: string;
   type?: string;
-  clientData?: any;
+  clientData?: CmcClientData;
 };
 
+type LoggerLike = { debug: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
+type FetchLike = (url: string, init?: Record<string, unknown>) => Promise<{ status: number; body?: unknown; ok?: boolean; [k: string]: unknown }>;
+
 type OutboundDeps = {
-  fetch: (url: string, init?: any) => Promise<any>;
+  fetch: FetchLike;
   timeoutMs?: number;
-  logger?: { debug: Function; warn: Function };
+  logger?: LoggerLike;
 };
 
 type ChatHandlerResult =
@@ -55,21 +69,30 @@ type ChatHandlerResult =
   | {
       ok: false;
       reason: string;
-      detail?: any;
+      detail?: Record<string, unknown>;
     };
+
+type ChatContent = { content?: unknown; [k: string]: unknown };
+type ParsedChatStreamId = {
+  appCode: string;
+  counterpartySlug: string;
+  counterparty: { username: string; hostSlug: string; [k: string]: unknown };
+  [k: string]: unknown;
+};
+type DeliveryResult = { ok: boolean; status?: number; reason?: string; body?: { event?: { id?: string; [k: string]: unknown } } & Record<string, unknown> };
 
 /**
  * Handle a `message/chat-cmc` trigger event.
  */
 async function handleChat (params: {
   userId: string;
-  triggerEvent: { id?: string; type: string; content: any; streamIds?: string[] };
+  triggerEvent: { id?: string; type: string; content: ChatContent; streamIds?: string[] };
   selfIdentity: Counterparty;
   deps: {
-    mall: { accesses: { get: (userId: string, params?: any) => Promise<AccessLike[]> } };
-    fetch: OutboundDeps['fetch'];
+    mall: { accesses: { get: (userId: string, params?: Record<string, unknown>) => Promise<AccessLike[]> } };
+    fetch: FetchLike;
     timeoutMs?: number;
-    logger?: { debug: Function; warn: Function };
+    logger?: LoggerLike;
   };
 }): Promise<ChatHandlerResult> {
   const { userId, triggerEvent, selfIdentity, deps } = params;
@@ -80,7 +103,7 @@ async function handleChat (params: {
 
   // Pick the chat stream from the trigger's streamIds.
   const streamIds = Array.isArray(triggerEvent.streamIds) ? triggerEvent.streamIds : [];
-  let parsed: any = null;
+  let parsed: ParsedChatStreamId | null = null;
   for (const sid of streamIds) {
     parsed = chatOrch.parseChatStreamId(sid);
     if (parsed != null) break;
@@ -136,7 +159,7 @@ async function handleChat (params: {
   // Body shape mirrors chatOrchestration.deliverChatToPeer but we pass the
   // full payload through so apps can attach metadata (attachments, etc.).
   const content = triggerEvent.content?.content;
-  let delivery: any;
+  let delivery: DeliveryResult;
   try {
     delivery = await chatOrch.deliverChatToPeer({
       remoteApiEndpoint,
@@ -145,8 +168,9 @@ async function handleChat (params: {
       selfIdentity,
       deps,
     });
-  } catch (err: any) {
-    return { ok: false, reason: 'cmc-handler-delivery-threw', detail: { message: String(err?.message || err) } };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, reason: 'cmc-handler-delivery-threw', detail: { message } };
   }
 
   if (!delivery.ok) {
