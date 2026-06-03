@@ -5,22 +5,47 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const { getConfig } = require('@pryv/boiler');
 const getHTTPDigestHeaderForAttachment = require('business').integrity.attachments.getHTTPDigestHeaderForAttachment;
 const { getMall } = require('mall');
+
+type ConfigLike = { get: (key: string) => unknown };
+type AccessLike = { canGetEventsOnStream: (streamId: string, scope: string) => Promise<boolean> };
+type ContextLike = { user: { id: string }; access: AccessLike; originalQuery?: unknown };
+type AttachmentLike = {
+  id: string;
+  type: string;
+  size: number;
+  fileName: string;
+  integrity?: unknown;
+};
+type EventLike = {
+  streamIds: string[];
+  attachments?: AttachmentLike[];
+};
+type MallLike = {
+  events: {
+    getOne: (userId: string, id: string) => Promise<EventLike | null>;
+    getAttachment: (userId: string, event: EventLike, fileId: string) => Promise<NodeJS.ReadableStream & { unpipe: (dest: unknown) => void; on: (ev: string, fn: (...args: unknown[]) => void) => void; pipe: (dest: NodeJS.WritableStream) => NodeJS.WritableStream }>;
+  };
+};
+type AuditLike = { validApiCall: (context: ContextLike, err: unknown) => Promise<void> };
+type PryvRequest = Request & { context: ContextLike; params: { id: string; fileId: string } & Request['params'] };
+
 let initialized = false;
-let config: any = null;
-let mall: any = null;
+let config: ConfigLike | null = null;
+let mall: MallLike | null = null;
 let isAuditActive = false;
-let audit: any = null;
-async function middlewareFactory () {
-  if (initialized) { return attachmentsAccessMiddleware; }
+let audit: AuditLike | null = null;
+async function middlewareFactory (): Promise<RequestHandler> {
+  if (initialized) { return attachmentsAccessMiddleware as unknown as RequestHandler; }
   config = await getConfig();
   mall = await getMall();
   // -- Audit
-  isAuditActive = config.get('audit:active');
+  isAuditActive = !!config!.get('audit:active');
   if (isAuditActive) {
     const throwIfMethodIsNotDeclared = require('audit/src/ApiMethods.ts').throwIfMethodIsNotDeclared;
     throwIfMethodIsNotDeclared('events.getAttachment');
@@ -28,7 +53,7 @@ async function middlewareFactory () {
   }
   // -- end Audit
   initialized = true;
-  return attachmentsAccessMiddleware;
+  return attachmentsAccessMiddleware as unknown as RequestHandler;
 }
 export default middlewareFactory;
 export { middlewareFactory };
@@ -36,8 +61,8 @@ export { middlewareFactory };
 // translates the request's resource path to match the actual physical path for
 // static-serving the file.
 //
-async function attachmentsAccessMiddleware (req: any, res: any, next: any) {
-  const event = await mall.events.getOne(req.context.user.id, req.params.id);
+async function attachmentsAccessMiddleware (req: PryvRequest, res: Response, next: NextFunction): Promise<void> {
+  const event = await mall!.events.getOne(req.context.user.id, req.params.id);
   if (!event) {
     return next(errors.unknownResource('event', req.params.id));
   }
@@ -53,13 +78,13 @@ async function attachmentsAccessMiddleware (req: any, res: any, next: any) {
   }
   // set response content type (we can't rely on the filename)
   const attachment = event.attachments
-    ? event.attachments.find((att: any) => att.id === req.params.fileId)
+    ? event.attachments.find((att: AttachmentLike) => att.id === req.params.fileId)
     : null;
   if (!attachment) {
     return next(errors.unknownResource('attachment', req.params.fileId));
   }
   res.header('Content-Type', attachment.type);
-  res.header('Content-Length', attachment.size);
+  res.header('Content-Length', String(attachment.size));
   res.header('Content-Disposition', "attachment; filename*=UTF-8''" + encodeURIComponent(attachment.fileName));
   if (attachment.integrity != null) {
     const digest = getHTTPDigestHeaderForAttachment(attachment.integrity);
@@ -67,12 +92,12 @@ async function attachmentsAccessMiddleware (req: any, res: any, next: any) {
       res.header('Digest', digest);
     }
   }
-  const fileReadStream = await mall.events.getAttachment(req.context.user.id, event, req.params.fileId);
+  const fileReadStream = await mall!.events.getAttachment(req.context.user.id, event, req.params.fileId);
   // for Audit
   req.context.originalQuery = req.params;
   const pipedStream = fileReadStream.pipe(res);
   let streamHasErrors = false;
-  fileReadStream.on('error', async (err: any) => {
+  fileReadStream.on('error', async (err: unknown) => {
     streamHasErrors = true;
     try {
       fileReadStream.unpipe(res);
@@ -83,7 +108,7 @@ async function attachmentsAccessMiddleware (req: any, res: any, next: any) {
   });
   pipedStream.on('finish', async () => {
     if (streamHasErrors) { return; }
-    if (isAuditActive) { await audit.validApiCall(req.context, null); }
+    if (isAuditActive) { await audit!.validApiCall(req.context, null); }
     // do not call "next()"
   });
 }
