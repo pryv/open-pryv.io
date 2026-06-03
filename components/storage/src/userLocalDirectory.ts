@@ -21,12 +21,14 @@ const { getConfig } = require('@pryv/boiler');
 
 export { init, ensureUserDirectory, getPathForUser, deleteUserDirectory, getBasePath, setBasePathTestOnly };
 
-let config: any;
-let basePath: any;
+interface ConfigLike { get: (key: string) => unknown }
+
+let config: ConfigLike;
+let basePath: string | undefined;
 
 // temporarly set baseBath for tests;
-function setBasePathTestOnly (path: any) {
-  basePath = path || config.get('storages:engines:sqlite:path');
+function setBasePathTestOnly (path: string | undefined) {
+  basePath = path || (config.get('storages:engines:sqlite:path') as string);
 }
 
 /**
@@ -36,7 +38,7 @@ function setBasePathTestOnly (path: any) {
 async function init () {
   if (basePath) return;
   config = await getConfig();
-  const candidateBasePath = config.get('storages:engines:sqlite:path');
+  const candidateBasePath = config.get('storages:engines:sqlite:path') as string | undefined;
   if (!candidateBasePath || candidateBasePath === 'REPLACE ME') {
     throw new Error('storages:engines:sqlite:path is not configured (still "REPLACE ME"). Load the paths-config plugin or set an explicit path.');
   }
@@ -49,7 +51,7 @@ async function init () {
  * @param userId -- user id (cuid format)
  * @param [extraPath] -- Optional, extra path
  */
-async function ensureUserDirectory (userId: any, extraPath = '') {
+async function ensureUserDirectory (userId: string, extraPath = '') {
   const resultPath = getPathForUser(userId, extraPath);
   await fs.mkdir(resultPath, { recursive: true });
   return resultPath;
@@ -60,7 +62,7 @@ async function ensureUserDirectory (userId: any, extraPath = '') {
  * @param userId -- user id (cuid format)
  * @param [extraPath] -- Optional, extra path
  */
-function getPathForUser (userId: any, extraPath = '') {
+function getPathForUser (userId: string, extraPath = ''): string {
   if (basePath == null) {
     throw new Error('Run init() first');
   }
@@ -79,7 +81,7 @@ function getPathForUser (userId: any, extraPath = '') {
  *
  * @param userId -- user id
  */
-async function deleteUserDirectory (userId: any) {
+async function deleteUserDirectory (userId: string): Promise<void> {
   const userFolder = getPathForUser(userId);
   await fs.rm(userFolder, { recursive: true, force: true });
 }
