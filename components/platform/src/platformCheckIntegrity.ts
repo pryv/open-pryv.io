@@ -11,12 +11,16 @@ const require = createRequire(import.meta.url);
 
 const accountStreams = require('business/src/system-streams/index.ts');
 
-export default async function platformCheckIntegrity (platformWideDB: any) {
+type PlatformEntry = { field: string; username?: string; value: unknown; isUnique: boolean };
+type PlatformDBLike = { getAllWithPrefix: (prefix: string) => Promise<PlatformEntry[]> };
+type PerUserEntries = Record<string, Record<string, { value: unknown; isUnique: boolean }>>;
+
+export default async function platformCheckIntegrity (platformWideDB: PlatformDBLike) {
   const { getUsersRepository } = require('business/src/users/repository.ts'); // to avoid some circular import
 
   // --- platformDB
   const allEntries = await platformWideDB.getAllWithPrefix('user');
-  const platformEntryByUser: any = {};
+  const platformEntryByUser: PerUserEntries = {};
   for (const entry of allEntries) {
     // Skip internal fields (e.g. _core for multi-core mapping)
     if (entry.field && entry.field.startsWith('_')) continue;
@@ -28,7 +32,7 @@ export default async function platformCheckIntegrity (platformWideDB: any) {
     platformEntryByUser[entry.username][entry.field] = { value: entry.value, isUnique: entry.isUnique };
   }
 
-  const errors: any[] = [];
+  const errors: string[] = [];
   // Retrieve all existing users
   const usersRepository = await getUsersRepository();
   const usersFromRepository = await usersRepository.getAll();

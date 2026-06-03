@@ -10,23 +10,26 @@ import type {} from 'node:fs';
 // above.
 //
 
-class TracedOperations {
-  ongoingOps;
+type TracerSpan = { finish: () => void; [k: string]: unknown };
+type ContextLike = { childSpan: (name: string, opts?: Record<string, unknown>) => TracerSpan };
 
-  context;
-  constructor (context: any) {
+class TracedOperations {
+  ongoingOps: Map<string, TracerSpan>;
+
+  context: ContextLike;
+  constructor (context: ContextLike) {
     this.ongoingOps = new Map();
     this.context = context;
   }
 
-  start (name: any, opts: any) {
+  start (name: string, opts?: Record<string, unknown>): void {
     const ongoing = this.ongoingOps;
     const ctx = this.context;
     const span = ctx.childSpan(name, opts);
     ongoing.set(name, span);
   }
 
-  finish (name: any) {
+  finish (name: string): void {
     const ongoing = this.ongoingOps;
     const span = ongoing.get(name);
     if (span == null) { throw new Error(`Tried to finish span '${name}', but no such ongoing span.`); }

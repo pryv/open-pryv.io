@@ -40,7 +40,7 @@ class ProjectVersion {
   version () {
     const version = this.readStaticVersion();
     if (version != null && version !== '1.2.3') { return version; }
-    let versionFromGitTag: any = null;
+    let versionFromGitTag: string | null = null;
     try {
       const options = { stdio: 'pipe' }; // in order to mute stderr from console stdout. https://stackoverflow.com/a/45578119/3967660
       versionFromGitTag = execSync('git describe --tags', options).toString();
@@ -62,7 +62,7 @@ class ProjectVersion {
     //      consumers expecting a `1.2.3`-shaped version string).
     // process.mainModule was deprecated and removed from @types/node;
     // the fallback chain is intentional for legacy CJS contexts.
-    const mainModule: any = (process as any).mainModule || require.main;
+    const mainModule: { paths?: string[] } | undefined = (process as { mainModule?: { paths?: string[] } }).mainModule || require.main;
     const searchPaths: string[] = (mainModule && mainModule.paths) || [];
     for (const current of searchPaths) {
       const rootPath = path.dirname(current);
@@ -85,7 +85,7 @@ class ProjectVersion {
     return null;
   }
 }
-let version: any = null;
+let version: string | null = null;
 async function getAPIVersion (forceRefresh = false) {
   if (!version || forceRefresh) {
     const pv = new ProjectVersion();
