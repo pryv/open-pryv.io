@@ -5,7 +5,21 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response } from 'express';
 const require = createRequire(import.meta.url);
+
+type SeriesMetaLike = {
+  isTrashedOrDeleted: () => boolean;
+  canWrite: () => boolean;
+  namespaceAndName: () => [string, string];
+  produceRowType: (typeRepo: unknown) => unknown;
+};
+type CtxLike = {
+  series: { get: (namespace: string, name: string) => Promise<{ append: (data: unknown) => Promise<unknown> }> };
+  metadata: { forSeries: (userName: string, eventId: string, accessToken: unknown) => Promise<SeriesMetaLike> };
+  typeRepository: unknown;
+  metadataUpdater: { scheduleUpdate: (req: unknown) => Promise<unknown> };
+};
 
 //  POST /events/:event_id/series - Store data in a series.
 const errors = require('errors').factory;
@@ -19,13 +33,13 @@ const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts')
  * @param {express$Response} res
  * @returns {Promise<void>}
  */
-async function storeSeriesData (ctx: any, req: any, res: any) {
+async function storeSeriesData (ctx: CtxLike, req: Request, res: Response) {
   const trace = new TracedOperations(ctx);
   const series = ctx.series;
   const metadata = ctx.metadata;
   // Extract parameters from request:
-  const userName = req.params.user_name;
-  const eventId = req.params.event_id;
+  const userName = req.params.user_name as string;
+  const eventId = req.params.event_id as string;
   const accessToken = req.headers[ApiConstants.AUTH_HEADER];
   // If params are not there, abort.
   if (accessToken == null) { throw errors.missingHeader(ApiConstants.AUTH_HEADER); }
@@ -72,13 +86,13 @@ async function storeSeriesData (ctx: any, req: any, res: any) {
 // Parses request data into a data matrix that can be used as input to the
 // influx store. You should give this method the `req.body`.
 //
-function parseData (createRequest: any, meta: any, typeRepo: any) {
+function parseData (createRequest: unknown, meta: SeriesMetaLike, typeRepo: unknown): DataMatrix | null {
   try {
     const type = meta.produceRowType(typeRepo);
     return business.series.DataMatrix.parse(createRequest, type);
-  } catch (err: any) {
+  } catch (err) {
     if (err instanceof business.series.ParseFailure) {
-      throw errors.invalidRequestStructure(err.message);
+      throw errors.invalidRequestStructure((err as Error).message);
     }
     throw err;
   }
@@ -86,4 +100,4 @@ function parseData (createRequest: any, meta: any, typeRepo: any) {
 export default storeSeriesData;
 export { storeSeriesData };
 
-type DataMatrix = any; // was business.series.DataMatrix (JSDoc namespace)
+type DataMatrix = { minmax: () => unknown }; // shape of business.series.DataMatrix used here

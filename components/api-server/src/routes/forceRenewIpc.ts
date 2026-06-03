@@ -20,6 +20,26 @@ const { randomUUID } = require('node:crypto');
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 
+type ForceRenewReply = {
+  type?: string;
+  requestId?: string;
+  ok?: boolean;
+  hostname?: string;
+  issuedAt?: number;
+  expiresAt?: number;
+  error?: string;
+};
+type ProcessLike = {
+  send?: (msg: unknown) => boolean;
+  on: (ev: string, fn: (msg: unknown) => void) => unknown;
+  removeListener: (ev: string, fn: (msg: unknown) => void) => unknown;
+};
+type ForceRenewOpts = {
+  hostname?: string;
+  timeoutMs?: number;
+  processHandle?: ProcessLike;
+};
+
 /**
  * @param opts.hostname - optional override; master falls back to primary.
  * @param [opts.timeoutMs=180000] - generous default; ACME with DNS-01 + 15s propagate wait can take a couple of minutes.
@@ -31,7 +51,7 @@ const DEFAULT_TIMEOUT_MS = 180_000;
  *   error?: string
  * }>}
  */
-async function forceRenew ({ hostname, timeoutMs = DEFAULT_TIMEOUT_MS, processHandle = process }: any = {}) {
+async function forceRenew ({ hostname, timeoutMs = DEFAULT_TIMEOUT_MS, processHandle = process }: ForceRenewOpts = {}) {
   if (typeof processHandle.send !== 'function') {
     return { ok: false, error: 'force-renew unavailable: process not running under cluster (no IPC channel)' };
   }
@@ -39,18 +59,19 @@ async function forceRenew ({ hostname, timeoutMs = DEFAULT_TIMEOUT_MS, processHa
 
   return await new Promise((resolve) => {
     let settled = false;
-    const onMsg = (msg: any) => {
+    const onMsg = (msg: unknown) => {
       if (settled) return;
-      if (!msg || msg.type !== 'acme:force-renew:reply' || msg.requestId !== requestId) return;
+      const reply = msg as ForceRenewReply | null;
+      if (!reply || reply.type !== 'acme:force-renew:reply' || reply.requestId !== requestId) return;
       settled = true;
       clearTimeout(timer);
       processHandle.removeListener('message', onMsg);
       resolve({
-        ok: !!msg.ok,
-        hostname: msg.hostname,
-        issuedAt: msg.issuedAt,
-        expiresAt: msg.expiresAt,
-        error: msg.error
+        ok: !!reply.ok,
+        hostname: reply.hostname,
+        issuedAt: reply.issuedAt,
+        expiresAt: reply.expiresAt,
+        error: reply.error
       });
     };
     const timer = setTimeout(() => {
@@ -61,13 +82,13 @@ async function forceRenew ({ hostname, timeoutMs = DEFAULT_TIMEOUT_MS, processHa
     }, timeoutMs);
     processHandle.on('message', onMsg);
     try {
-      processHandle.send({ type: 'acme:force-renew', requestId, hostname: hostname || null });
-    } catch (err: any) {
+      processHandle.send!({ type: 'acme:force-renew', requestId, hostname: hostname || null });
+    } catch (err) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       processHandle.removeListener('message', onMsg);
-      resolve({ ok: false, error: 'force-renew IPC send failed: ' + err.message });
+      resolve({ ok: false, error: 'force-renew IPC send failed: ' + (err as Error).message });
     }
   });
 }

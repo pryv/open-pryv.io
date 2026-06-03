@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Server as HttpServer } from 'node:http';
+import type { CustomAuthFunction } from 'business/src/MethodContext.ts';
 const require = createRequire(import.meta.url);
 /**
  * Note: Debug tests with: DEBUG=engine,socket.io* npm test --grep="Socket"
@@ -28,9 +30,18 @@ const Manager = require('./Manager.ts').default;
 const Paths = require('../routes/Paths.ts');
 const { getLogger } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
+type SocketLike = {
+  nsp: { name: string };
+  handshake: {
+    query: Record<string, string | undefined>;
+    headers: Record<string, string | string[] | undefined>;
+  };
+  request: { connection: { remoteAddress?: string } };
+  methodContext?: unknown;
+};
 // Initializes the SocketIO subsystem.
 //
-async function setupSocketIO (server: any, api: any, customAuthStepFn: any) {
+async function setupSocketIO (server: HttpServer, api: { call: (...args: unknown[]) => unknown }, customAuthStepFn: CustomAuthFunction) {
   const logger = getLogger('socketIO');
   const storageLayer = await getStorageLayer();
   const io = socketIO.listen(server, {
@@ -40,13 +51,13 @@ async function setupSocketIO (server: any, api: any, customAuthStepFn: any) {
   const manager = new Manager(logger, io, api, storageLayer, customAuthStepFn);
   // dynamicNamspaces allow to "auto" create namespaces
   // when connected pass the socket to Manager
-  const dynamicNamespace = io.of(/^\/.+$/).on('connect', async (socket: any) => {
+  const dynamicNamespace = io.of(/^\/.+$/).on('connect', async (socket: SocketLike) => {
     const nameSpaceContext = await manager.ensureInitNamespace(socket.nsp.name);
     nameSpaceContext.onConnect(socket);
   });
     // add a middelware for authentication
     // add middelware for authentication
-  dynamicNamespace.use(async (socket: any, next: any) => {
+  dynamicNamespace.use(async (socket: SocketLike, next: (err: unknown, success?: boolean) => void) => {
     try {
       const nsName = socket.nsp.name;
       const query = socket.handshake.query;
