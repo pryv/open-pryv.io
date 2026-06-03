@@ -484,7 +484,11 @@ async function main () {
     },
     http: {
       ip: '0.0.0.0',
-      port: 3000
+      // When TLS is on, workers bind HTTPS on this port. With LE / custom
+      // certs the public API + HFS + previews all route through the same
+      // TLS port (in-process dispatchers per INSTALL.md Option C). With
+      // tls=none we stay on the legacy :3000 plain-HTTP convention.
+      port: tlsStrategy === 'none' ? 3000 : 443
     },
     service: {
       name: serviceName,
@@ -524,6 +528,18 @@ async function main () {
 
   if (tlsStrategy === 'letsEncrypt') {
     config.letsEncrypt = leConfig;
+    // master.js's selfSignedPlaceholder + ACME orchestrator both need
+    // `http.ssl.keyFile` + `http.ssl.certFile` set so they know where to
+    // write the first-boot placeholder cert + where ACME materialises the
+    // real cert later (workers read these paths at boot). Without this,
+    // master.js silently skips placeholder generation, workers never bind
+    // :443, ACME's HTTP-01 server never starts, and the public URL stays
+    // dark. Default to under the data folder so it persists across container
+    // restarts.
+    config.http.ssl = {
+      keyFile: `${dataFolder}/tls/key.pem`,
+      certFile: `${dataFolder}/tls/cert.pem`
+    };
   } else if (tlsStrategy === 'custom') {
     config.http.ssl = customSsl;
   }
@@ -543,12 +559,16 @@ async function main () {
   // anywhere. CONFIG_DIR is the script's own dir; DATA_DIR defaults
   // to a sibling `data` dir but is overridable via $PRYV_DATA_DIR.
   // Image tag is overridable via $PRYV_IMAGE.
+  // Public-port surface: clients only hit the api port (HFS + previews are
+  // dispatched in-process per INSTALL.md Option C). Publish 80 only when
+  // ACME needs HTTP-01. Publish 53/udp only when the embedded DNS is on.
   const dockerPorts = [];
   if (tlsStrategy === 'letsEncrypt' || tlsStrategy === 'custom') {
-    dockerPorts.push('-p 80:80', '-p 443:443');
+    dockerPorts.push('-p 443:443');
+    if (tlsStrategy === 'letsEncrypt') dockerPorts.push('-p 80:80');
+  } else {
+    dockerPorts.push('-p 3000:3000');
   }
-  dockerPorts.push('-p 3000:3000', '-p 3001:3001');
-  if (hfsWorkers > 0) dockerPorts.push('-p 4000:4000');
   if (!dnsLess) dockerPorts.push('-p 53:53/udp');
 
   const configFileName = path.basename(absConfigPath);
