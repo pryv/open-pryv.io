@@ -22,22 +22,33 @@ const require = createRequire(import.meta.url);
 
 const observability = require('./index.ts');
 
-const LEVEL_ORDER: any = { error: 0, warn: 1, info: 2, debug: 3 };
+type LogLevel = 'error' | 'warn' | 'info' | 'debug';
+type LogFn = (msg: unknown, ...rest: unknown[]) => unknown;
+type BoilerLogger = {
+  error: LogFn;
+  warn: LogFn;
+  info: LogFn;
+  debug: LogFn;
+};
 
-let forwardLogLevel = 'error';
+const LEVEL_ORDER: Record<LogLevel, number> = { error: 0, warn: 1, info: 2, debug: 3 };
+
+let forwardLogLevel: LogLevel = 'error';
 
 /**
  * Update the minimum log level forwarded to the provider.
  * Values outside the allowed set are clamped to `error`.
  */
-function setLogLevel (level: any) {
-  forwardLogLevel = LEVEL_ORDER[level] != null ? level : 'error';
+function setLogLevel (level: string): void {
+  forwardLogLevel = ((LEVEL_ORDER as Record<string, number>)[level] != null
+    ? level
+    : 'error') as LogLevel;
 }
 
-function shouldForward (level: any) {
+function shouldForward (level: string): boolean {
   if (!observability.isActive()) return false;
   const target = LEVEL_ORDER[forwardLogLevel];
-  const event = LEVEL_ORDER[level];
+  const event = (LEVEL_ORDER as Record<string, number>)[level];
   if (target == null || event == null) return false;
   return event <= target;
 }
@@ -47,10 +58,10 @@ function shouldForward (level: any) {
  * provider before (or after) calling the original. Existing boiler
  * behaviour is preserved; this is a pure add-on.
  */
-function wrap (logger: any, loggerName: any) {
-  const wrapped = Object.create(logger);
+function wrap (logger: BoilerLogger, loggerName: string): BoilerLogger {
+  const wrapped: BoilerLogger = Object.create(logger);
 
-  wrapped.error = function (msg: any, ...rest: any[]) {
+  wrapped.error = function (msg: unknown, ...rest: unknown[]): unknown {
     try {
       if (shouldForward('error')) {
         const err = msg instanceof Error ? msg : new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
@@ -60,8 +71,8 @@ function wrap (logger: any, loggerName: any) {
     return logger.error(msg, ...rest);
   };
 
-  for (const level of ['warn', 'info', 'debug']) {
-    wrapped[level] = function (msg: any, ...rest: any[]) {
+  for (const level of ['warn', 'info', 'debug'] as const) {
+    wrapped[level] = function (msg: unknown, ...rest: unknown[]): unknown {
       try {
         if (shouldForward(level)) {
           observability.recordCustomEvent('PryvLog', {
