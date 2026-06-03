@@ -40,8 +40,11 @@ class MethodContext {
    * Custom auth function, if one was configured.
    */
   customAuthStepFn: CustomAuthFunction | null;
-  // mall: any — Mall instance; will tighten once a Mall interface is exported
-  mall: any;
+  // Loose Mall slot — full Mall interface lives across mall/src/* and isn't
+  // exported as a single named contract yet. Narrowed here to the methods
+  // this class actually invokes (streams.getOneWithNoChildren) plus the
+  // commonly-touched sub-stores callers reach via context.mall.{events, streams}.
+  mall: MallLike;
   _tracing: unknown;
   /**
    * Used in events.get
@@ -133,7 +136,7 @@ class MethodContext {
    * a subclass of APIError.
    *
    */
-  async retrieveExpandedAccess (storage: any) { // storage layer; not modelled
+  async retrieveExpandedAccess (storage: StorageLike) { // storage layer; not modelled
     try {
       if (this.access == null) { await this.retrieveAccessFromToken(storage); }
       const access = this.access;
@@ -158,7 +161,7 @@ class MethodContext {
   /**
    * Generic retrieve access
    */
-  async _retrieveAccess (storage: any, query: Record<string, unknown>) {
+  async _retrieveAccess (storage: StorageLike, query: Record<string, unknown>) {
     const access = await fromCallback((cb: NodeCallback) => storage.accesses.findOne(this.user, query, null, cb));
     if (access == null) { throw errors.invalidAccessToken('Cannot find access from token.', 403); }
     this.access = new AccessLogic(this.user.id, access);
@@ -168,7 +171,7 @@ class MethodContext {
   /**
    * Internal: Loads `this.access`.
    */
-  async retrieveAccessFromToken (storage: any) { // storage layer
+  async retrieveAccessFromToken (storage: StorageLike) { // storage layer
     const token = this.accessToken;
     if (token == null) {
       throw errors.invalidAccessToken('The access token is missing: expected an ' +
@@ -200,7 +203,7 @@ class MethodContext {
    * Loads an access by id or throw an error. On success, assigns to
    * `this.access` and `this.accessToken`.
    */
-  async retrieveAccessFromId (storage: any, accessId: string) {
+  async retrieveAccessFromId (storage: StorageLike, accessId: string) {
     this.access = cache.getAccessLogicForId(this.user.id, accessId);
     if (this.access == null) {
       await this._retrieveAccess(storage, { id: accessId });
@@ -213,7 +216,7 @@ class MethodContext {
   /**
    * Loads session and touches it (personal sessions only)
    */
-  async checkSessionValid (storage: any) { // storage layer
+  async checkSessionValid (storage: StorageLike) { // storage layer
     const access = this.access;
     if (access == null) { throw new Error('AF: access != null'); }
     // Only 'personal' tokens expire - if it is not personal, abort.
@@ -251,7 +254,7 @@ class MethodContext {
    * @param storeId  - If storeId is null streamId should be fully scoped
    */
   async streamForStreamId (streamId: string, storeId: string | null) {
-    return await this.mall.streams.getOneWithNoChildren(this.user.id, streamId, storeId);
+    return await this.mall!.streams.getOneWithNoChildren(this.user.id as string, streamId, storeId);
   }
 
   initTrackingProperties (item: { created?: number; createdBy?: string; modified?: number; modifiedBy?: string; [k: string]: unknown }, authorOverride?: string | null) {
@@ -294,6 +297,17 @@ type ContextSource = {
 type UserDef = {
   id: string | undefined | null;
   username: string;
+};
+type StreamLike = { id?: string; parentId?: string | null; trashed?: boolean; children?: StreamLike[]; [k: string]: unknown };
+type MallLike = {
+  streams: { getOneWithNoChildren: (userId: string, streamId: string, storeId: string | null) => Promise<StreamLike | null>; [k: string]: unknown };
+  events: { [k: string]: unknown };
+  [k: string]: unknown;
+} | null;
+type StorageLike = {
+  accesses: { findOne: (user: UserDef, query: Record<string, unknown>, opts: unknown, cb: NodeCallback) => void; [k: string]: unknown };
+  sessions: { get: (token: string, cb: NodeCallback) => void; touch: (token: string, cb: NodeCallback) => void; [k: string]: unknown };
+  [k: string]: unknown;
 };
 type AuthenticationData = {
   accessToken: string;
