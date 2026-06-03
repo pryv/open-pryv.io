@@ -37,10 +37,36 @@ const errors = require('./errors.ts');
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('mail');
 
-let state: any = null;
-let ipcListener: any = null;
+type Delivery = {
+  templateExists: (type: string, lang: string) => boolean;
+  refresh: () => Promise<void>;
+  close: () => Promise<void>;
+  tmpDir: string;
+};
+type TemplateRepositoryLike = { find: (type: string, lang: string) => Promise<unknown> };
+type SenderLike = { renderAndSend: (template: unknown, substitutions: Record<string, unknown>, recipient: Recipient) => Promise<unknown> };
+type MailState = { delivery: Delivery; templateRepository: TemplateRepositoryLike; sender: SenderLike };
+type Recipient = { email: string; name?: string; type?: string };
+type MailInitOpts = {
+  getAllMailTemplates: () => Promise<unknown>;
+  smtp: { host?: string; [k: string]: unknown };
+  from?: string;
+  defaultLang?: string;
+  tmpDirRoot?: string;
+};
+type SendParams = {
+  type: string;
+  lang?: string;
+  recipient: Recipient;
+  substitutions?: Record<string, unknown>;
+};
+type IpcMessage = { type?: string; [k: string]: unknown };
+type IpcListener = (msg: IpcMessage) => void;
 
-async function init (opts: any) {
+let state: MailState | null = null;
+let ipcListener: IpcListener | null = null;
+
+async function init (opts: MailInitOpts): Promise<void> {
   if (state) {
     logger.warn('mail.init called twice — ignoring');
     return;
@@ -53,9 +79,9 @@ async function init (opts: any) {
     tmpDirRoot
   } = opts || {};
 
-  const delivery = await createEmailTemplatesDelivery({ getAllMailTemplates, smtp, from, tmpDirRoot });
-  const templateRepository = new TemplateRepository(defaultLang, delivery.templateExists);
-  const sender = new Sender(delivery);
+  const delivery: Delivery = await createEmailTemplatesDelivery({ getAllMailTemplates, smtp, from, tmpDirRoot });
+  const templateRepository: TemplateRepositoryLike = new TemplateRepository(defaultLang, delivery.templateExists);
+  const sender: SenderLike = new Sender(delivery);
 
   state = { delivery, templateRepository, sender };
 
@@ -64,9 +90,9 @@ async function init (opts: any) {
   // admin-API PUT/DELETE on this core. Other cores pick up the same row
   // change via rqlite replication + their master's periodic refresh.
   if (typeof process.send === 'function') {
-    ipcListener = (msg: any) => {
+    ipcListener = (msg: IpcMessage) => {
       if (msg && msg.type === 'mail:template-invalidate') {
-        refresh().catch((err) => {
+        refresh().catch((err: Error) => {
           logger.warn('mail:template-invalidate refresh failed: ' + err.message);
         });
       }
@@ -77,27 +103,27 @@ async function init (opts: any) {
   logger.info(`ready (defaultLang=${defaultLang}, tmpDir=${delivery.tmpDir})`);
 }
 
-function isActive () {
+function isActive (): boolean {
   return state != null;
 }
 
-async function send ({ type, lang, recipient, substitutions }: any) {
+async function send ({ type, lang, recipient, substitutions }: SendParams): Promise<{ sent: boolean; skipped?: string; result?: unknown }> {
   if (!state) return { sent: false, skipped: 'not-active' };
   if (!type || !recipient || !recipient.email) {
     throw errors.invalidRequestStructure('send: { type, recipient.email } are required');
   }
-  const template = await state.templateRepository.find(type, lang);
+  const template = await state.templateRepository.find(type, lang || 'en');
   const result = await state.sender.renderAndSend(template, substitutions || {}, recipient);
   return { sent: true, result };
 }
 
-async function refresh () {
+async function refresh (): Promise<void> {
   if (!state) return;
   await state.delivery.refresh();
   logger.info('templates refreshed from PlatformDB');
 }
 
-async function close () {
+async function close (): Promise<void> {
   if (ipcListener != null) {
     try { process.off('message', ipcListener); } catch (_) { /* never attached */ }
     ipcListener = null;
