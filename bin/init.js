@@ -51,9 +51,13 @@ async function ask (question, defaultValue) {
   if (next.done) {
     // Stdin closed mid-wizard. Don't loop silently — surface a clean error
     // so piped tests with too-few answers fail fast instead of OOM-ing
-    // inside an askNonEmpty retry loop.
+    // inside an askNonEmpty retry loop. Most common cause in practice:
+    // `docker run` invoked without `-it` (no TTY → stdin closes on the
+    // first read). The startup TTY check covers that case, so by the
+    // time this fires we are either in piped-input testing or stdin
+    // was closed by something else mid-run.
     process.stdout.write('\n');
-    throw new Error('init: input stream closed before all prompts were answered (EOF on stdin)');
+    throw new Error('init: input stream closed before all prompts were answered (EOF on stdin). If you piped answers in, you ran out of lines; if you launched with docker, ensure `-it` is set.');
   }
   const v = (next.value || '').trim();
   return v === '' && defaultValue !== undefined ? defaultValue : v;
@@ -104,7 +108,34 @@ async function main () {
     console.error('Example: init /app/config/override-config.yml');
     process.exit(1);
   }
+
+  // Refuse to run without an interactive TTY. Without `-it` on docker run,
+  // stdin is closed and the very first prompt EOFs — surface that here
+  // with the actual fix (`docker run -it …`) rather than a stack trace.
+  if (!process.stdin.isTTY) {
+    console.error('init: no interactive TTY attached to stdin.');
+    console.error('  The wizard needs to prompt you — re-run docker with `-it`:');
+    console.error('');
+    console.error('    docker run -it --rm \\');
+    console.error('      -v /host/pryv/config:/app/config \\');
+    console.error('      pryvio/open-pryv.io \\');
+    console.error('      init /app/config/override-config.yml');
+    console.error('');
+    console.error('  (Substitute /host/pryv/config with the host directory where you want');
+    console.error('   override-config.yml + run-pryv.sh to land.)');
+    process.exit(2);
+  }
+
   const absConfigPath = path.resolve(configPath);
+  const configDirPrelim = path.dirname(absConfigPath);
+  if (!fs.existsSync(configDirPrelim)) {
+    console.error(`init: parent directory does not exist: ${configDirPrelim}`);
+    console.error('  This usually means the host config directory was not mounted into');
+    console.error('  the container. Re-run with a -v mount, e.g.');
+    console.error('    docker run -it --rm -v /host/pryv/config:/app/config \\');
+    console.error('      pryvio/open-pryv.io init /app/config/override-config.yml');
+    process.exit(2);
+  }
   if (fs.existsSync(absConfigPath)) {
     console.error(`init: ${absConfigPath} already exists.`);
     console.error('  Move it aside or pick a different path. (init never overwrites.)');
