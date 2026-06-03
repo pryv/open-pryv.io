@@ -114,6 +114,48 @@ class AcmeOrchestrator {
     }
     this.#log(`starting (host=${this.#hostSpec.commonName} challenge=${this.#hostSpec.challenge} renewer=${this.#isRenewer})`);
 
+    // HARD CHECK: this orchestrator's challengeCreateFn only writes DNS
+    // TXT records (DNS-01). HTTP-01 challenges would require an HTTP
+    // server on :80 serving /.well-known/acme-challenge/<token>, which
+    // is NOT implemented anywhere in the codebase today. Without this
+    // explicit refusal, acme-client.auto() would call our DNS-writer
+    // for an HTTP challenge, LE would fail to validate, and acme-client
+    // would either retry silently for minutes or hang — leaving the
+    // operator with only the 1-day self-signed placeholder cert and no
+    // visible failure mode.
+    //
+    // Operators hitting this need one of:
+    //   1. dns.active=true + dns.domain=<theirs> (gives wildcard via DNS-01)
+    //   2. bring their own cert via http.ssl.{keyFile,certFile} (no letsEncrypt)
+    //   3. front with nginx/caddy + certbot, disable the in-process letsEncrypt
+    if (this.#isRenewer && this.#hostSpec.challenge === 'http-01') {
+      const banner = '═'.repeat(70);
+      this.#log(banner);
+      this.#log('FATAL: HTTP-01 challenge type is NOT IMPLEMENTED in open-pryv.io.');
+      this.#log('');
+      this.#log(`Your config selects challenge=http-01 for host=${this.#hostSpec.commonName}`);
+      this.#log('because the topology resolves to dnsLess.isActive=true (or DNSless core.url),');
+      this.#log('but the orchestrator only implements DNS-01. ACME would silently hang.');
+      this.#log('');
+      this.#log('Options (pick one):');
+      this.#log('  (a) Switch to DNS-01: set dns.active=true + dns.domain=<your.tld>');
+      this.#log('      (requires NS delegation of the domain to this host + port 53/udp open);');
+      this.#log('      removes dnsLess.isActive=true from the config.');
+      this.#log('  (b) Bring your own cert: drop the letsEncrypt block, set');
+      this.#log('      http.ssl.keyFile + http.ssl.certFile to your cert paths.');
+      this.#log('  (c) Front the container with nginx + certbot (or Cloudflare TLS),');
+      this.#log('      keep open-pryv.io on plain http (port 3000, no http.ssl).');
+      this.#log('');
+      this.#log('Refusing to start the ACME orchestrator. The 1-day self-signed placeholder');
+      this.#log('cert remains on :443 so the container does not crash, but it will NEVER');
+      this.#log('be replaced by a real LE cert until one of the options above is applied.');
+      this.#log(banner);
+      // Do NOT start the renew loop. Materialize loop still runs so existing
+      // certs (from a previous successful issuance, before this check landed)
+      // continue to surface to disk.
+      // Continue to start the materialize loop below; just skip the renewer.
+    }
+
     // Always materialize — every core publishes the current cert to disk.
     this.#materializeTimer = setInterval(() => {
       this.triggerMaterialize().catch(err => this.#log('materialize tick error: ' + err.message));
@@ -122,11 +164,45 @@ class AcmeOrchestrator {
     // for its first cert write.
     this.triggerMaterialize().catch(err => this.#log('initial materialize error: ' + err.message));
 
-    if (this.#isRenewer) {
+    if (this.#isRenewer && this.#hostSpec.challenge !== 'http-01') {
       this.#renewTimer = setInterval(() => {
-        this.triggerRenewCheck().catch(err => this.#log('renew tick error: ' + err.message));
+        this.triggerRenewCheck().catch(err => this.#logRenewError('renew tick', err));
       }, this.#renewIntervalMs);
-      this.triggerRenewCheck().catch(err => this.#log('initial renew error: ' + err.message));
+      this.triggerRenewCheck().catch(err => this.#logRenewError('initial renew', err));
+    }
+  }
+
+  // Verbose error logger for renew failures: prints the full error message
+  // PLUS the most common causes for HTTP-01 / DNS-01 failures so the
+  // operator doesn't have to grep through acme-client's terse "Could not
+  // validate authorization" with no context.
+  #logRenewError (phase: string, err: any) {
+    const msg = err && err.message ? err.message : String(err);
+    const banner = '─'.repeat(60);
+    this.#log(banner);
+    this.#log(`${phase} ERROR for host=${this.#hostSpec.commonName}`);
+    this.#log(`challenge=${this.#hostSpec.challenge}`);
+    this.#log(`message: ${msg}`);
+    if (/authorization|invalid|validation|unauthorized/i.test(msg)) {
+      if (this.#hostSpec.challenge === 'dns-01') {
+        this.#log('Hint (DNS-01): the embedded DNS server must answer TXT queries for');
+        this.#log(`  _acme-challenge.${this.#hostSpec.commonName} — check that NS records for`);
+        this.#log('  the zone point at this host and UDP/53 is reachable from LE.');
+      } else if (this.#hostSpec.challenge === 'http-01') {
+        this.#log('Hint (HTTP-01): NOT supported in this codebase. See the FATAL banner above.');
+      }
+    }
+    if (/rate ?limit|too many|429/i.test(msg)) {
+      this.#log('Hint: LE production rate limit hit. Set letsEncrypt.staging=true temporarily,');
+      this.#log('  fix the validation path, then flip staging=false once issuance succeeds.');
+    }
+    if (/timeout|ETIMEDOUT|ECONNREFUSED|ENOTFOUND/i.test(msg)) {
+      this.#log('Hint: network reachability — verify the challenge endpoint is reachable from');
+      this.#log('  the public internet (firewall, security group, NAT, DNS record).');
+    }
+    this.#log(banner);
+    if (process.env.DEBUG) {
+      this.#log(err && err.stack ? err.stack : '(no stack available)');
     }
   }
 
