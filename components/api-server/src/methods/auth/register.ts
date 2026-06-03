@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { MethodContext } from 'business/src/MethodContext.ts';
+import type { MethodNext } from '../_types.ts';
 const require = createRequire(import.meta.url);
 const commonFns = require('./../helpers/commonFunctions.ts');
 const errors = require('errors').factory;
@@ -16,12 +18,23 @@ const { ready } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 const { getPasswordRules, getUsersRepository } = require('business').users;
 
+type RegisterParams = { username?: string; password?: string; email?: string; [k: string]: unknown };
+type CheckUsernameParams = { username: string };
+type CheckUniqueParams = Record<string, string>;
+type CoresParams = { username?: string; email?: string };
+type HostingsParams = Record<string, unknown>;
+type ResultBag = Record<string, unknown> & {
+  reserved?: boolean;
+  core?: { url: string };
+  regions?: Record<string, unknown>;
+};
+
 // Match serviceInfo.{register,api,access} convention (slash-terminated).
 // Naive `host + 'users'` concatenation in clients/tests would otherwise
 // produce `https://single.example.devusers`. coreIdToUrl() normalizes
 // internally; this helper covers the two ApiEndpoint.build() fallback
 // sites below that bypass it.
-function withTrailingSlash (url: any) {
+function withTrailingSlash (url: string | null | undefined): string | null | undefined {
   if (url == null || url === '') return url;
   return url.endsWith('/') ? url : url + '/';
 }
@@ -30,7 +43,7 @@ function withTrailingSlash (url: any) {
  * Auth API methods implementations.
  *
  */
-export default async function (api: any) {
+export default async function (api: { register: (...args: unknown[]) => void }) {
   const config = await ready();
   const storageLayer = await getStorageLayer();
   // Pass a lazy getter to Registration instead of a captured slice so
@@ -58,7 +71,7 @@ export default async function (api: any) {
     registration.buildResponse.bind(registration),
     registration.sendWelcomeMail.bind(registration));
 
-  async function enforcePasswordRules (context: any, params: any, result: any, next: any) {
+  async function enforcePasswordRules (_context: MethodContext, params: RegisterParams, _result: ResultBag, next: MethodNext) {
     try {
       await passwordRules.checkNewPassword(null, params.password);
       next();
@@ -82,7 +95,7 @@ export default async function (api: any) {
   /**
    * Check if username is taken
    */
-  async function checkUsername (context: any, params: any, result: any, next: any) {
+  async function checkUsername (_context: MethodContext, params: CheckUsernameParams, result: ResultBag, next: MethodNext) {
     result.reserved = await usersRepository.usernameExists(params.username);
     if (result.reserved == null) {
       return next(errors.unexpectedError('username reserved cannot be null'));
@@ -93,7 +106,7 @@ export default async function (api: any) {
   /**
    * Check if a unique field value is already taken (email, etc.)
    */
-  async function checkUniqueField (context: any, params: any, result: any, next: any) {
+  async function checkUniqueField (_context: MethodContext, params: CheckUniqueParams, result: ResultBag, next: MethodNext) {
     result.reserved = false;
     const field = Object.keys(params)[0];
     if (field === 'username') {
@@ -115,7 +128,7 @@ export default async function (api: any) {
     setAuditAccessId(AuditAccessIds.PUBLIC),
     coresLookup);
 
-  async function coresLookup (context: any, params: any, result: any, next: any) {
+  async function coresLookup (_context: MethodContext, params: CoresParams, result: ResultBag, next: MethodNext) {
     if (params.username == null && params.email == null) {
       return next(errors.invalidParametersFormat('provide "username" or "email" as query parameter'));
     }
@@ -130,7 +143,7 @@ export default async function (api: any) {
       username = await platform.getUsersUniqueField('email', params.email);
       if (username == null) {
         // Unknown email — return self URL (client can attempt registration)
-        result.core = { url: withTrailingSlash(platform.coreUrl || ApiEndpoint.build('', null)) };
+        result.core = { url: (withTrailingSlash(platform.coreUrl || ApiEndpoint.build('', null)) || '') as string };
         return next();
       }
     }
@@ -159,13 +172,13 @@ export default async function (api: any) {
     setAuditAccessId(AuditAccessIds.PUBLIC),
     hostingsLookup);
 
-  async function hostingsLookup (context: any, params: any, result: any, next: any) {
+  async function hostingsLookup (_context: MethodContext, _params: HostingsParams, result: ResultBag, next: MethodNext) {
     try {
-      const configHostings = config.get('hostings');
-      const allCores = await platform.getAllCoreInfos();
+      const configHostings = config.get('hostings') as { regions?: Record<string, unknown> } | undefined;
+      const allCores = await platform.getAllCoreInfos() as Array<{ id: string; hosting?: string; available?: boolean; [k: string]: unknown }>;
 
       // Build hosting → available core URL map
-      const hostingCores: any = {};
+      const hostingCores: Record<string, Array<{ id: string; [k: string]: unknown }>> = {};
       for (const core of allCores) {
         if (core.available === false) continue;
         const h = core.hosting || 'default';
