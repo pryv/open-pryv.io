@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction } from 'express';
 const require = createRequire(import.meta.url);
 'use strict';
 // A middleware that allows checking uploads and that will at the same time
@@ -24,7 +25,7 @@ const storage = MulterDiskStorage({
 });
 const uploadMiddlewareFactory = multer({
   storage,
-  fileFilter: (req: any, file: any, cb: any) => {
+  fileFilter: (req: Request, file: { originalname: string }, cb: (error: Error | null, acceptFile: boolean) => void) => {
     file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
     cb(null, true);
   }
@@ -40,9 +41,9 @@ export { filesUploadSupport, hasFileUpload };
  * @param {express$NextFunction} next
  * @returns {void}
  */
-function hasFileUpload (req: any, res: any, next: any) {
+function hasFileUpload (req: Request, res: Response, next: NextFunction) {
   const uploadMiddleware = uploadMiddlewareFactory.any();
-  uploadMiddleware(req, res, (err: any) => {
+  uploadMiddleware(req, res, (err: Error | null) => {
     if (err) { return next(err); }
     filesUploadSupport(req, res, next);
   });
