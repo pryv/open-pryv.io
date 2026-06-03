@@ -36,22 +36,29 @@ const Server = require('./server.ts').default;
 const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
 
+interface ConfigLike { get: (key: string) => unknown }
+interface LoggerLike {
+  info: (msg: string) => void;
+  debug: (msg: string) => void;
+  error: (msg: string) => void;
+}
+
 // Tracing shim. See components/tracing/src/Tracing.ts for the rationale
 // — New Relic APM is the active observability path; this layer
 // preserves the architectural slot.
 class NoopSpan {
-  operationName;
-  constructor (name: any) { this.operationName = name; }
+  operationName: string;
+  constructor (name: string) { this.operationName = name; }
   setTag () {}
   log () {}
   finish () {}
 }
 class NoopTracer {
-  startSpan (name: any) { return new NoopSpan(name); }
+  startSpan (name: string) { return new NoopSpan(name); }
   inject () {}
 }
 
-async function createContext (config: any) {
+async function createContext (config: ConfigLike) {
   const storages = require('storages');
   await storages.init(config);
   const influx = storages.seriesConnection;
@@ -71,13 +78,13 @@ async function createContext (config: any) {
 //
 
 class Application {
-  logger: any;
+  logger!: LoggerLike;
 
-  context: any;
+  context!: unknown;
 
-  server: any;
+  server!: { start: () => Promise<void> };
 
-  config: any;
+  config!: ConfigLike;
   async init () {
     this.logger = getLogger('application');
     this.config = await getConfig();
