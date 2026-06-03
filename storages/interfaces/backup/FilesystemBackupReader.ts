@@ -18,8 +18,10 @@ const { createBackupReader, createUserBackupReader } = require('./BackupReader.t
 /**
  * Create a FilesystemBackupReader that reads a backup tree rooted at `inputPath`.
  */
+type Manifest = { compressed?: boolean; [k: string]: unknown };
+
 function createFilesystemBackupReader (inputPath: string): BackupReader {
-  let manifest: any = null;
+  let manifest: Manifest | null = null;
 
   return createBackupReader({
     async readManifest () {
@@ -69,7 +71,7 @@ function createFilesystemBackupReader (inputPath: string): BackupReader {
 // FilesystemUserBackupReader
 // ---------------------------------------------------------------------------
 
-function createFilesystemUserBackupReader (userDir: string, manifest: any): UserBackupReader {
+function createFilesystemUserBackupReader (userDir: string, manifest: Manifest | null): UserBackupReader {
   const compressed = manifest?.compressed !== false;
 
   return createUserBackupReader({
@@ -119,7 +121,7 @@ function createFilesystemUserBackupReader (userDir: string, manifest: any): User
       const filePath = path.join(userDir, jsonlFileName('account', compressed));
       if (!fs.existsSync(filePath)) return null;
       // Account data is a single JSON object stored as one JSONL line
-      const items: any[] = [];
+      const items: unknown[] = [];
       for await (const item of readJsonlFile(filePath, compressed)) {
         items.push(item);
       }
@@ -178,7 +180,7 @@ async function * readChunkedJsonl (dir: string, baseName: string, compressed: bo
  * Iterate attachment files from the attachments directory.
  * Maps fileIds back to eventIds using event JSONL data.
  */
-async function * readAttachmentsFromDir (attachDir: string, userDir: string): AsyncGenerator<{ eventId: string, fileId: string, stream: any }> {
+async function * readAttachmentsFromDir (attachDir: string, userDir: string): AsyncGenerator<{ eventId: string, fileId: string, stream: NodeJS.ReadableStream }> {
   // Build fileId -> eventId mapping from events data
   const fileIdToEventId = await buildFileIdMapping(userDir);
 
@@ -218,7 +220,7 @@ async function buildFileIdMapping (userDir: string): Promise<Map<string, string>
   return map;
 }
 
-async function * emptyIterator (): AsyncGenerator<any> {
+async function * emptyIterator (): AsyncGenerator<unknown> {
   // yields nothing
 }
 
