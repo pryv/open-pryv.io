@@ -190,11 +190,14 @@ async function main () {
   }
   console.log();
 
-  // 3. DB engine
+  // 3. DB engine — SQLite default: lighter footprint, no extra service to
+  // run, cleaner GDPR Art.17 erasure semantics (per-user file unlink).
+  // PostgreSQL is the choice when you want a single DB to back up + one
+  // schema to manage across many users.
   console.log('▸ User-data storage engine');
-  console.log('  postgresql → shared tables keyed by user_id (cheap cross-user queries; one pg_dump)');
-  console.log('  sqlite     → one file per user (per-user backups; cleaner GDPR Art.17 deletion)');
-  const dbEngine = await askChoice('Choose:', ['postgresql', 'sqlite'], 0);
+  console.log('  sqlite     → one file per user; no extra service; cleaner GDPR Art.17 erasure');
+  console.log('  postgresql → shared tables keyed by user_id; one DB to back up + administer');
+  const dbEngine = await askChoice('Choose:', ['sqlite', 'postgresql'], 0);
   console.log();
 
   let pgConfig = null;
