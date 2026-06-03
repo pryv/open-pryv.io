@@ -35,18 +35,41 @@ const DAY_MS = 24 * 3600 * 1000;
 const DEFAULT_RENEW_INTERVAL_MS = DAY_MS;
 const DEFAULT_MATERIALIZE_INTERVAL_MS = 60 * 1000;
 
+type LogFn = (msg: string) => void;
+type CertRenewerLike = {
+  renew: (opts: { hostname: string; altNames: string[]; dnsWriter: unknown; challengePriority?: string[] }) => Promise<{ hostname: string; expiresAt: number; [k: string]: unknown }>;
+  getCertificate: (hostname: string) => Promise<{ expiresAt: number; [k: string]: unknown } | null>;
+};
+type FileMaterializerLike = {
+  checkOnce: () => Promise<{ rotated: boolean; reason?: string; [k: string]: unknown }>;
+};
+type HostSpec = { commonName: string; altNames: string[]; challenge: string };
+type DnsWriterLike = unknown;
+
+interface AcmeOrchestratorOpts {
+  hostSpec: HostSpec;
+  certRenewer: CertRenewerLike;
+  fileMaterializer: FileMaterializerLike;
+  dnsWriter: DnsWriterLike;
+  isRenewer?: boolean;
+  renewBeforeDays?: number;
+  renewIntervalMs?: number;
+  materializeIntervalMs?: number;
+  log?: LogFn;
+}
+
 class AcmeOrchestrator {
-  #certRenewer;
-  #fileMaterializer;
-  #hostSpec;
-  #isRenewer;
-  #renewBeforeMs;
-  #renewIntervalMs;
-  #materializeIntervalMs;
-  #dnsWriter;
-  #log;
-  #renewTimer: any;
-  #materializeTimer: any;
+  #certRenewer: CertRenewerLike;
+  #fileMaterializer: FileMaterializerLike;
+  #hostSpec: HostSpec;
+  #isRenewer: boolean;
+  #renewBeforeMs: number;
+  #renewIntervalMs: number;
+  #materializeIntervalMs: number;
+  #dnsWriter: DnsWriterLike;
+  #log: LogFn;
+  #renewTimer: NodeJS.Timeout | null = null;
+  #materializeTimer: NodeJS.Timeout | null = null;
 
   /**
    * @param opts.hostSpec           - output of deriveHostnames()
@@ -66,7 +89,7 @@ class AcmeOrchestrator {
     renewIntervalMs = DEFAULT_RENEW_INTERVAL_MS,
     materializeIntervalMs = DEFAULT_MATERIALIZE_INTERVAL_MS,
     log
-  }: any = {}) {
+  }: AcmeOrchestratorOpts = {} as AcmeOrchestratorOpts) {
     if (hostSpec == null) throw new Error('AcmeOrchestrator: hostSpec is required');
     if (certRenewer == null) throw new Error('AcmeOrchestrator: certRenewer is required');
     if (fileMaterializer == null) throw new Error('AcmeOrchestrator: fileMaterializer is required');
@@ -79,7 +102,7 @@ class AcmeOrchestrator {
     this.#renewIntervalMs = renewIntervalMs;
     this.#materializeIntervalMs = materializeIntervalMs;
     this.#dnsWriter = dnsWriter;
-    this.#log = log || ((msg: any) => console.log('[acme] ' + msg));
+    this.#log = log || ((msg: string) => console.log('[acme] ' + msg));
   }
 
   /**
@@ -132,7 +155,7 @@ class AcmeOrchestrator {
    *
    * @param [hostname] - defaults to the core's primary hostname.
    */
-  async forceRenew (hostname: any) {
+  async forceRenew (hostname?: string) {
     if (!this.#isRenewer) {
       throw new Error('AcmeOrchestrator.forceRenew: not the certRenewer core');
     }
@@ -175,7 +198,7 @@ class AcmeOrchestrator {
     return this.#issue();
   }
 
-  async #issue (hostname?: any) {
+  async #issue (hostname?: string) {
     const target = hostname ?? this.#hostSpec.commonName;
     const isPrimary = target === this.#hostSpec.commonName;
     const result = await this.#certRenewer.renew({
@@ -208,7 +231,17 @@ class AcmeOrchestrator {
  * @param [opts.acmeLib]
  * @param [opts.log]
  */
-function build (opts: any = {}) {
+interface BuildOpts {
+  config: { get: (key: string) => unknown };
+  platformDB: unknown;
+  atRestKey: unknown;
+  dnsServer?: unknown;
+  onRotate?: (certPath: string, keyPath: string, hostname: string) => Promise<void> | void;
+  acmeLib?: unknown;
+  log?: LogFn;
+}
+
+function build (opts: BuildOpts = {} as BuildOpts) {
   const { config, platformDB, atRestKey, dnsServer, onRotate, acmeLib, log } = opts;
   if (config == null) throw new Error('AcmeOrchestrator.build: config is required');
 
@@ -218,14 +251,14 @@ function build (opts: any = {}) {
     throw new Error('AcmeOrchestrator.build: letsEncrypt.email is required');
   }
   const staging = !!config.get('letsEncrypt:staging');
-  const renewBeforeDays = config.get('letsEncrypt:renewBeforeDays') ?? 30;
-  const tlsDir = config.get('letsEncrypt:tlsDir') || 'var-pryv/tls';
+  const renewBeforeDays = (config.get('letsEncrypt:renewBeforeDays') ?? 30) as number;
+  const tlsDir = (config.get('letsEncrypt:tlsDir') || 'var-pryv/tls') as string;
   const isRenewer = !!config.get('letsEncrypt:certRenewer');
-  const onRotateScript = config.get('letsEncrypt:onRotateScript') || null;
-  const directoryUrl = config.get('letsEncrypt:directoryUrl') ||
+  const onRotateScript = (config.get('letsEncrypt:onRotateScript') || null) as string | null;
+  const directoryUrl = (config.get('letsEncrypt:directoryUrl') ||
     (staging
       ? 'https://acme-staging-v02.api.letsencrypt.org/directory'
-      : 'https://acme-v02.api.letsencrypt.org/directory');
+      : 'https://acme-v02.api.letsencrypt.org/directory')) as string;
 
   const certRenewer = new CertRenewer({
     platformDB, atRestKey, email, directoryUrl, acmeLib
@@ -235,10 +268,11 @@ function build (opts: any = {}) {
     certRenewer,
     tlsDir,
     hostname: hostSpec.commonName,
-    onRotate: async (certPath: any, keyPath: any, hostname: any) => {
+    onRotate: async (certPath: string, keyPath: string, hostname: string) => {
       if (typeof onRotate === 'function') {
-        try { await onRotate(certPath, keyPath, hostname); } catch (err: any) {
-          (log || console.log)('[acme] onRotate (caller) failed: ' + err.message);
+        try { await onRotate(certPath, keyPath, hostname); } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          (log || console.log)('[acme] onRotate (caller) failed: ' + message);
         }
       }
       if (onRotateScript) {
@@ -246,8 +280,9 @@ function build (opts: any = {}) {
           const r = await runRotateScript({ scriptPath: onRotateScript, hostname, certPath, keyPath });
           (log || console.log)(`[acme] onRotateScript ${onRotateScript} exit=${r.exitCode}`);
           if (r.stderr) (log || console.log)('[acme] onRotateScript stderr: ' + r.stderr.trim());
-        } catch (err: any) {
-          (log || console.log)('[acme] onRotateScript spawn failed: ' + err.message);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          (log || console.log)('[acme] onRotateScript spawn failed: ' + message);
         }
       }
     },
