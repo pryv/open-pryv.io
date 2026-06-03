@@ -47,7 +47,7 @@ const ARMOR_END = '-----END PRYV BOOTSTRAP BUNDLE-----';
  *
  * @param bundle - the plain bundle (see Bundle.js)
  */
-function encrypt (bundle: any, passphrase: any) {
+function encrypt (bundle: Record<string, unknown>, passphrase: string): string {
   if (bundle == null || typeof bundle !== 'object') {
     throw new Error('BundleEncryption.encrypt: bundle must be an object');
   }
@@ -77,7 +77,7 @@ function encrypt (bundle: any, passphrase: any) {
  *
  * @param armored - ASCII-armored ciphertext (as produced by encrypt)
  */
-function decrypt (armored: any, passphrase: any) {
+function decrypt (armored: string, passphrase: string): unknown {
   if (typeof armored !== 'string' || !armored.includes(ARMOR_BEGIN)) {
     throw new Error('BundleEncryption.decrypt: input is not an armored bundle');
   }
@@ -86,7 +86,7 @@ function decrypt (armored: any, passphrase: any) {
   }
 
   const b64 = deArmor(armored);
-  let envelope;
+  let envelope: Buffer;
   try {
     envelope = Buffer.from(b64, 'base64');
   } catch {
@@ -113,7 +113,7 @@ function decrypt (armored: any, passphrase: any) {
   const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
   decipher.setAuthTag(tag);
 
-  let plaintext;
+  let plaintext: Buffer;
   try {
     plaintext = Buffer.concat([decipher.update(ct), decipher.final()]);
   } catch (err) {
@@ -134,15 +134,15 @@ function decrypt (armored: any, passphrase: any) {
  * 4-char chunks separated by dashes so operators can type it without
  * losing their place.
  */
-function generatePassphrase () {
-  const raw = crypto.randomBytes(16).toString('base64url');
+function generatePassphrase (): string {
+  const raw: string = crypto.randomBytes(16).toString('base64url');
   // e.g. AbCd-EfGh-IjKl-MnOp-QrSt-Uv
-  return raw.match(/.{1,4}/g).join('-');
+  return (raw.match(/.{1,4}/g) || []).join('-');
 }
 
 // --- internal helpers ---------------------------------------------------
 
-function scryptKey (passphrase: any, salt: any) {
+function scryptKey (passphrase: string, salt: Buffer): Buffer {
   // Synchronous scryptSync is fine here: bundle encryption is a CLI-time
   // operation and only runs once per new-core provisioning.
   return crypto.scryptSync(passphrase, salt, KEY_BYTES, {
@@ -150,12 +150,12 @@ function scryptKey (passphrase: any, salt: any) {
   });
 }
 
-function armor (b64: any) {
+function armor (b64: string): string {
   const lines = b64.match(/.{1,64}/g) || [''];
   return [ARMOR_BEGIN, ...lines, ARMOR_END].join('\n') + '\n';
 }
 
-function deArmor (armored: any) {
+function deArmor (armored: string): string {
   const start = armored.indexOf(ARMOR_BEGIN);
   const end = armored.indexOf(ARMOR_END);
   if (start < 0 || end < 0 || end < start) {
