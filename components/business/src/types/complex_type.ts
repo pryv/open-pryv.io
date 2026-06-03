@@ -11,11 +11,13 @@ const valueTypes = require('./value_types.ts').default;
 // A complex type like 'position/wgs84' that has several subfields.
 //
 
-class ComplexType {
-  _schema;
+type ValidatorLike = { validateWithSchema: (value: unknown, schema: JSONSchema) => Promise<unknown> | unknown };
 
-  _outerType;
-  constructor (outerType: any, schema: any) {
+class ComplexType {
+  _schema: JSONSchema;
+
+  _outerType: string;
+  constructor (outerType: string, schema: JSONSchema) {
     // We only handle this kind of schema
     assert.ok(schema.type === 'object');
     // Complex types have a list of required fields and a schema for the object
@@ -46,15 +48,15 @@ class ComplexType {
     return Object.keys(this._schema.properties);
   }
 
-  forField (name: any) {
+  forField (name: string) {
     const PATH_SEPARATOR = '.';
     const parts = name.split(PATH_SEPARATOR);
     if (parts.length <= 0) { throw new Error(`Cannot resolve field, path is empty for '${name}'.`); }
     const schema = this._schema;
     const outerType = this._outerType;
-    let properties = schema.properties;
+    let properties: Record<string, any> | undefined = schema.properties as Record<string, any> | undefined;
     while (parts.length > 0) {
-      const lookupField = parts.shift();
+      const lookupField = parts.shift()!;
       if (properties == null || typeof properties !== 'object') { throw new Error('AF: schema postulates an object here.'); }
       const isSafeForAccess = properties[lookupField] != null && {}.propertyIsEnumerable.call(properties, lookupField);
       if (!isSafeForAccess) { throw new Error(`This type (${outerType}) has no such field (${name} @ ${lookupField})`); }
@@ -80,7 +82,7 @@ class ComplexType {
     return false;
   }
 
-  callValidator (validator: any, content: any) {
+  callValidator (validator: ValidatorLike, content: unknown) {
     // NOTE We don't currently perform coercion on leaf types of complex
     // named types. We could though - and this is where we would do it.
     return validator.validateWithSchema(content, this._schema);

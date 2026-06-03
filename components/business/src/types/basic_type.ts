@@ -12,52 +12,56 @@ const valueTypes = require('./value_types.ts').default;
 // using the column name 'value'.
 //
 
+type JSONSchema = { type: string };
+type InnerType = { coerce: (value: unknown) => unknown };
+type ValidatorLike = { validateWithSchema: (value: unknown, schema: JSONSchema) => Promise<unknown> | unknown };
+
 class BasicType {
-  _schema;
+  _schema: JSONSchema;
 
-  _outerType;
+  _outerType: string;
 
-  _innerType;
+  _innerType: InnerType;
   /**
    * Construct a basic type.
    *
    * @param outerType {string} Type name such as 'mass/kg'
    * @param schema {JSONSchema} Schema to verify content against.
    */
-  constructor (outerType: any, schema: any) {
+  constructor (outerType: string, schema: JSONSchema) {
     this._schema = schema;
     this._outerType = outerType;
     this._innerType = valueTypes(schema.type);
   }
 
-  typeName () {
+  typeName (): string {
     return this._outerType;
   }
 
-  requiredFields () {
+  requiredFields (): string[] {
     return ['value'];
   }
 
-  optionalFields () {
+  optionalFields (): string[] {
     return [];
   }
 
-  fields () {
+  fields (): string[] {
     return this.requiredFields();
   }
 
-  forField (name: any) {
+  forField (name: string): InnerType {
     // NOTE BasicType only represents types that are not composed of multiple
     // fields. So the name MUST be 'value' here.
     assert.ok(name === 'value');
     return this._innerType;
   }
 
-  isSeries () {
+  isSeries (): boolean {
     return false;
   }
 
-  async callValidator (validator: any, content: any) {
+  async callValidator (validator: ValidatorLike, content: unknown): Promise<unknown> {
     // Perform coercion into target type first. Then verify using the
     // validator. This saves us one roundtrip.
     const value = this._innerType.coerce(content);
@@ -66,6 +70,3 @@ class BasicType {
 }
 export default BasicType;
 export { BasicType };
-type JSONSchema = {
-  type: string;
-};

@@ -12,12 +12,12 @@ const assert = require('assert');
  * to reference individual rows.
  */
 class Row {
-  values;
+  values: unknown[];
 
-  columnNames;
+  columnNames: string[];
   /** Constructs a row - internal constructor. Use DataMatrix to produce rows.
    */
-  constructor (values: any, columnNames: any) {
+  constructor (values: unknown[], columnNames: string[]) {
     this.values = values;
     this.columnNames = columnNames;
   }
@@ -30,8 +30,8 @@ class Row {
    *
    * @return {any} The current row in object (struct) form.
    */
-  toStruct () {
-    const result: any = {};
+  toStruct (): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
     for (let i = 0; i < this.columnNames.length; i++) {
       const v = this.values[i];
       if (v !== null) result[this.columnNames[i]] = v;
@@ -46,7 +46,7 @@ class Row {
    * @param {string} column
    * @returns {any}
    */
-  get (column: any) {
+  get (column: string): unknown {
     const idx = this.columnNames.indexOf(column);
     if (idx < 0) { throw new Error(`No such column ${column}.`); }
     assert.ok(idx < this.values.length);
