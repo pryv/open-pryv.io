@@ -15,18 +15,32 @@ const { _internals } = require('./_internals.ts');
 const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
 
+type Logger = { info: (msg: string) => void; warn: (msg: string) => void; debug: (msg: string) => void; error: (msg: string) => void };
+type DbLike = {
+  ensureConnect: () => Promise<void>;
+  query: (sql: string, params?: unknown[]) => Promise<unknown>;
+  close: () => Promise<void>;
+};
+type UserAuditDbLike = { init: () => Promise<void>; close: () => void };
+type UserDbsLRU = {
+  get: (key: string) => UserAuditDbLike | undefined;
+  set: (key: string, value: UserAuditDbLike) => void;
+  delete: (key: string) => void;
+  clear: () => void;
+};
+
 class AuditStoragePG {
   initialized: boolean = false;
-  userDBsCache: any = null;
-  db: any = null;
-  logger: any = null;
+  userDBsCache: UserDbsLRU;
+  db: DbLike;
+  logger: Logger;
 
-  constructor (db: any) {
+  constructor (db: DbLike) {
     this.db = db;
     this.logger = _internals.getLogger('audit-storage-pg');
     this.userDBsCache = new LRU({
       max: CACHE_SIZE,
-      dispose: function (db: any) { db.close(); }
+      dispose: function (db: UserAuditDbLike) { db.close(); }
     });
   }
 
@@ -46,15 +60,15 @@ class AuditStoragePG {
     if (!this.initialized) throw new Error('Initialize db component before using it');
   }
 
-  async forUser (userId: string): Promise<any> {
+  async forUser (userId: string): Promise<UserAuditDbLike> {
     this.checkInitialized();
     let userDb = this.userDBsCache.get(userId);
     if (!userDb) {
       userDb = new UserAuditDatabasePG(this.db, userId, this.logger);
-      await userDb.init();
-      this.userDBsCache.set(userId, userDb);
+      await userDb!.init();
+      this.userDBsCache.set(userId, userDb!);
     }
-    return userDb;
+    return userDb!;
   }
 
   async deleteUser (userId: string): Promise<void> {
