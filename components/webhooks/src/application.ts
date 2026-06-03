@@ -36,13 +36,17 @@ const services = {
   WebhooksService: require('./service.ts').WebhooksService
 };
 
+type Logger = { debug: (msg: string) => void; info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
+type Settings = { get: (key: string) => unknown };
+type WebhooksServiceLike = { start: () => Promise<void>; stop: () => Promise<void> };
+
 class Application {
-  logger: any;
+  logger!: Logger;
 
-  settings: any;
+  settings!: Settings;
 
-  webhooksService: any;
-  async setup () {
+  webhooksService!: WebhooksServiceLike;
+  async setup (): Promise<void> {
     await this.initSettings();
     this.initLogger();
     assert(this.logger != null);
@@ -50,23 +54,23 @@ class Application {
     this.logger.debug('setup done');
   }
 
-  async initSettings () {
+  async initSettings (): Promise<void> {
     this.settings = await getConfig();
     await accountStreams.init();
   }
 
-  initLogger () {
+  initLogger (): void {
     this.logger = getLogger('application');
   }
 
-  async run () {
+  async run (): Promise<void> {
     const logger = this.logger;
     logger.info('Webhooks service is mounting services');
     const settings = this.settings;
     // Connect to MongoDB
     const storageLayer = await storage.getStorageLayer();
     // Construct the service
-    const service = new services.WebhooksService({
+    const service: WebhooksServiceLike = new services.WebhooksService({
       storage: storageLayer,
       logger: getLogger('webhooks_service'),
       settings
@@ -77,7 +81,7 @@ class Application {
     await service.start();
   }
 
-  stop () {
+  stop (): Promise<void> {
     return this.webhooksService.stop();
   }
 }
