@@ -13,7 +13,24 @@ const DataMatrix = require('./data_matrix.ts').default;
  * for InfluxQL / series WHERE clauses.
  * @param v - timestamp in seconds or ISO date string
  */
-function timestampToDateString (v: any) {
+type Timestamp = number;
+type Query = {
+  from?: Timestamp;
+  to?: Timestamp;
+};
+type SeriesConnection = {
+  writeMeasurement: (measurement: string, points: unknown[], options: { database: string }) => Promise<unknown>;
+  query: (statement: string, options: { database: string }) => Promise<unknown[]>;
+};
+type Row = {
+  toStruct (): Record<string, unknown> & { deltaTime?: number };
+  get (field: string): unknown;
+};
+type SeriesData = {
+  eachRow (cb: (row: Row) => void): void;
+};
+
+function timestampToDateString (v: number | string): string {
   const date = new Date(typeof v === 'number' ? v * 1000 : v);
   return "'" + date.toISOString().replace('T', ' ').replace('Z', '000000') + "'";
 }
@@ -24,15 +41,15 @@ function timestampToDateString (v: any) {
  * manipulated through this interface.
  */
 class Series {
-  namespace;
+  namespace: string;
 
-  name;
+  name: string;
 
-  connection;
+  connection: SeriesConnection;
   /** Internal constructor, creates a series with a given name in the namespace
    * given.
    */
-  constructor (conn: any, namespace: any, name: any) {
+  constructor (conn: SeriesConnection, namespace: string, name: string) {
     this.connection = conn;
     this.namespace = namespace;
     this.name = name;
@@ -47,14 +64,14 @@ class Series {
    * @param {DataMatrix} data  - data to store to the series
    * @return {Promise<any>} - promise that resolves once the data is stored
    */
-  append (data: any) {
+  append (data: SeriesData) {
     const appendOptions = {
       database: this.namespace
     };
-    const points: any[] = [];
+    const points: Array<{ tags: unknown[]; fields: Record<string, unknown>; timestamp: unknown }> = [];
     // Transform all data rows into a measurement point. Transform of rows
     // is done via toStruct in DataMatrix.Row.
-    const toMeasurement = (row: any) => {
+    const toMeasurement = (row: Row) => {
       const struct = row.toStruct();
 
       delete struct.deltaTime;
@@ -65,7 +82,7 @@ class Series {
         timestamp: deltaTime
       };
     };
-    data.eachRow((row: any) => {
+    data.eachRow((row: Row) => {
       points.push(toMeasurement(row));
     });
     return this.connection.writeMeasurement(this.name, points, appendOptions);
@@ -75,7 +92,7 @@ class Series {
    * @param {Query} query
    * @returns {Promise<any>}
    */
-  query (query: any) {
+  query (query: Query) {
     const queryOptions = { database: this.namespace };
     const measurementName = this.name;
     const condition = this.buildExpression(query);
@@ -87,23 +104,23 @@ class Series {
     `;
     return this.connection
       .query(statement, queryOptions)
-      .then(this.transformResult.bind(this));
+      .then((rows) => this.transformResult(rows as Array<Record<string, unknown>>));
   }
 
   /** Transforms an IResult object into a data matrix.
    * @param {IResults} result
    * @returns {any}
    */
-  transformResult (result: any) {
+  transformResult (result: Array<Record<string, unknown>>) {
     if (result.length <= 0) { return DataMatrix.empty(); }
     // assert: result.length > 0
     const headers = Object.keys(result[0]);
-    const data = result.map((e: any) => headers.map((h) => e[h]));
+    const data = result.map((e: Record<string, unknown>) => headers.map((h) => e[h]));
     // Replace influx 'time' with 'deltaTime'
     const idx = headers.indexOf('time');
     if (idx >= 0) { headers[idx] = 'deltaTime'; }
     for (const row of data) {
-      row[idx] = +row[idx] / 1000;
+      row[idx] = +(row[idx] as number) / 1000;
     }
     return new DataMatrix(headers, data);
   }
@@ -112,8 +129,8 @@ class Series {
    * @param {Query} query
    * @returns {string[]}
    */
-  buildExpression (query: any) {
-    const subConditions: any[] = [];
+  buildExpression (query: Query): string[] {
+    const subConditions: string[] = [];
     if (query.from) {
       subConditions.push(`time >= ${timestampToDateString(query.from)}`);
     }
@@ -125,8 +142,3 @@ class Series {
 }
 export default Series;
 export { Series };
-type Timestamp = number;
-type Query = {
-  from?: Timestamp;
-  to?: Timestamp;
-};
