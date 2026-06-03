@@ -14,17 +14,32 @@ const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
 const { _internals } = require('./_internals.ts');
 
+interface SqliteStmt {
+  get: (...params: unknown[]) => Record<string, unknown> | undefined;
+  run: (...params: unknown[]) => RunResult;
+  iterate: (...params: unknown[]) => Iterable<Record<string, unknown>>;
+}
+
+interface SqliteDb {
+  prepare: (sql: string) => SqliteStmt;
+}
+
+interface RunResult {
+  changes: number;
+  lastInsertRowid: number | bigint;
+}
+
 class DBIndex {
-  db: any;
-  queryGetIdForName: any;
-  queryGetNameForId: any;
-  queryGetAll: any;
-  queryInsert: any;
-  queryDeleteAll: any;
-  queryDeleteById: any;
+  db!: SqliteDb;
+  queryGetIdForName!: SqliteStmt;
+  queryGetNameForId!: SqliteStmt;
+  queryGetAll!: SqliteStmt;
+  queryInsert!: SqliteStmt;
+  queryDeleteAll!: SqliteStmt;
+  queryDeleteById!: SqliteStmt;
 
   async init (): Promise<void> {
-    const basePath = _internals.config.path;
+    const basePath = (_internals.config as { path: string }).path;
     fs.mkdirSync(basePath, { recursive: true });
 
     this.db = new SQLite3(basePath + '/user-index.db');
@@ -46,15 +61,15 @@ class DBIndex {
   }
 
   async getIdForName (username: string): Promise<string | undefined> {
-    return this.queryGetIdForName.get(username)?.userId;
+    return this.queryGetIdForName.get(username)?.userId as string | undefined;
   }
 
   async getNameForId (userId: string): Promise<string | undefined> {
-    return this.queryGetNameForId.get(userId)?.username;
+    return this.queryGetNameForId.get(userId)?.username as string | undefined;
   }
 
-  async addUser (username: string, userId: string): Promise<any> {
-    let result: any = null;
+  async addUser (username: string, userId: string): Promise<RunResult | null> {
+    let result: RunResult | null = null;
     await concurrentSafeWrite.execute(() => {
       result = this.queryInsert.run({ username, userId });
     });
