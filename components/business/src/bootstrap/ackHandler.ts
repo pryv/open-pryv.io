@@ -30,15 +30,28 @@ import type {} from 'node:fs';
 
 const VALID_REASONS = new Set(['unknown', 'expired', 'already-consumed', 'invalid-format']);
 
+type CoreInfo = { id: string; url?: string | null; hosting?: string | null; available?: boolean; [k: string]: unknown };
+type DnsRecord = { a?: string[]; [k: string]: unknown };
+type TokenVerdict = { ok: true; coreId: string } | { ok: false; reason: string };
+type TokenStoreLike = { consume: (token: string, opts: { consumerIp: string | null }) => TokenVerdict };
+type PlatformDBLike = {
+  getCoreInfo: (coreId: string) => Promise<CoreInfo | null>;
+  setCoreInfo: (coreId: string, info: CoreInfo) => Promise<unknown>;
+  getAllCoreInfos?: () => Promise<CoreInfo[]>;
+  getDnsRecord?: (subdomain: string) => Promise<DnsRecord | null>;
+};
+type AckRequest = { body?: { coreId?: unknown; token?: unknown }; ip?: string };
+type AckResponse = { statusCode: number; body: Record<string, unknown> };
+
 /**
  * @param deps.tokenStore - business/src/bootstrap/TokenStore instance
  * @param deps.platformDB - exposes getCoreInfo / setCoreInfo / getAllCoreInfos / getDnsRecord
  */
-function makeHandler ({ tokenStore, platformDB }: any) {
+function makeHandler ({ tokenStore, platformDB }: { tokenStore: TokenStoreLike; platformDB: PlatformDBLike }) {
   if (tokenStore == null) throw new Error('ackHandler: tokenStore is required');
   if (platformDB == null) throw new Error('ackHandler: platformDB is required');
 
-  return async function handle (req: any) {
+  return async function handle (req: AckRequest): Promise<AckResponse> {
     const body = req && req.body ? req.body : {};
     const consumerIp = req && req.ip ? req.ip : null;
 
@@ -48,7 +61,7 @@ function makeHandler ({ tokenStore, platformDB }: any) {
       return errResponse(400, 'invalid-body', 'coreId and token are required');
     }
 
-    const verdict = tokenStore.consume(token, { consumerIp });
+    const verdict: TokenVerdict = tokenStore.consume(token, { consumerIp });
     if (!verdict.ok) {
       // Map TokenStore reasons to a single 401 — we deliberately don't tell
       // the caller *why* the token failed (no oracle for guessing).
@@ -83,7 +96,7 @@ function makeHandler ({ tokenStore, platformDB }: any) {
         ok: true,
         coreId,
         cluster: {
-          cores: allCores.map((c: any) => ({
+          cores: allCores.map((c: CoreInfo) => ({
             id: c.id,
             url: c.url ?? null,
             hosting: c.hosting ?? null,
@@ -96,7 +109,7 @@ function makeHandler ({ tokenStore, platformDB }: any) {
   };
 }
 
-function errResponse (statusCode: any, id: any, message: any, extra = {}) {
+function errResponse (statusCode: number, id: string, message: string, extra: Record<string, unknown> = {}): AckResponse {
   return {
     statusCode,
     body: { error: { id, message, ...extra } }
