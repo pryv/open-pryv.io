@@ -16,6 +16,17 @@ const logger = getLogger('audit:syslog');
 
 const templates = require('./templating.ts');
 
+type WinstonLoggerLike = {
+  log: (item: unknown) => void;
+  add: (transport: unknown) => void;
+};
+
+type WinstonFormat = unknown;
+
+type SyslogFormatOptions = {
+  format?: { color?: boolean; time?: boolean; align?: boolean };
+};
+
 /**
  * Supported messages are:
  * - emerg : Emergency
@@ -26,9 +37,9 @@ const templates = require('./templating.ts');
  * - notice: Notice
  */
 class Syslog {
-  syslogger: any;
+  syslogger?: WinstonLoggerLike;
 
-  async init () {
+  async init (): Promise<void> {
     if (this.syslogger) {
       throw new Error('Syslog logger was already initialized');
     }
@@ -40,7 +51,7 @@ class Syslog {
     templates.loadTemplates(templateSetings);
 
     // console
-    const syslogger = winston.createLogger({
+    const syslogger: WinstonLoggerLike = winston.createLogger({
       levels: winston.config.syslog.levels,
       format: generateFormat(options.format)
     });
@@ -53,7 +64,7 @@ class Syslog {
     // listener, Writable.emit('error', err) throws synchronously, crashing
     // the api-server worker on the first audited request. Best-effort
     // observability instead of a load-bearing path.
-    syslogTransport.on('error', (err: any) => logger.warn('audit syslog dropped', err));
+    syslogTransport.on('error', (err: unknown) => logger.warn('audit syslog dropped', err));
     syslogger.add(syslogTransport);
 
     this.syslogger = syslogger;
@@ -63,11 +74,11 @@ class Syslog {
   /**
    * send an new event for syslog
    */
-  eventForUser (userId: any, event: any) {
+  eventForUser (userId: string, event: unknown): void {
     logger.debug('eventForUser', userId);
     const logItem = templates.logForEvent(userId, event);
     if (logItem != null) {
-      this.syslogger.log(logItem);
+      this.syslogger?.log(logItem);
     }
   }
 }
@@ -81,9 +92,9 @@ export { Syslog };
  * @param options.time - set to true to for timestamp
  * @param options.align - set to true to allign logs items
  */
-function generateFormat (options: any) {
-  const formats: any[] = [];
-  function printf (info: any) {
+function generateFormat (options: SyslogFormatOptions['format']): WinstonFormat {
+  const formats: WinstonFormat[] = [];
+  function printf (info: { message: string }): string {
     return info.message;
   }
   formats.push(winston.format.printf(printf));
