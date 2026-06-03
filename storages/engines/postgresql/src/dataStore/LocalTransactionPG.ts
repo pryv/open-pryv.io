@@ -8,11 +8,17 @@
 /**
  * PostgreSQL transaction wrapper for the DataStore.
  */
-class LocalTransactionPG {
-  db: any;
-  client: any;
+type PgClient = {
+  query: (text: string, params?: unknown[]) => Promise<unknown>;
+  release: () => void;
+};
+type DbLike = { getClient: () => Promise<PgClient> };
 
-  constructor (db: any) {
+class LocalTransactionPG {
+  db: DbLike;
+  client: PgClient | null;
+
+  constructor (db: DbLike) {
     this.db = db;
     this.client = null;
   }
@@ -25,18 +31,18 @@ class LocalTransactionPG {
   async exec (func: (tx: LocalTransactionPG) => Promise<void>): Promise<void> {
     try {
       await func(this);
-      await this.client.query('COMMIT');
+      await this.client!.query('COMMIT');
     } catch (err) {
-      await this.client.query('ROLLBACK');
+      await this.client!.query('ROLLBACK');
       throw err;
     } finally {
-      this.client.release();
+      this.client!.release();
       this.client = null;
     }
   }
 
-  async query (text: string, params?: any[]): Promise<any> {
-    return this.client.query(text, params);
+  async query (text: string, params?: unknown[]): Promise<unknown> {
+    return this.client!.query(text, params);
   }
 }
 
