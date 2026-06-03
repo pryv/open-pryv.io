@@ -203,6 +203,8 @@ if (cluster.isPrimary) {
         const placeholder = ensurePlaceholder({ config, log });
         if (placeholder.written) {
           log(`[acme] placeholder cert in place at ${placeholder.certFile}`);
+        } else if (placeholder.restored) {
+          log(`[acme] real LE cert restored at ${placeholder.certFile} from ${placeholder.source}`);
         }
       } catch (err) {
         log('[acme] placeholder cert generation FAILED: ' + err.message + ' (workers may crash on first boot until ACME completes)');
@@ -251,6 +253,31 @@ if (cluster.isPrimary) {
           dnsServer,
           http01Store,
           onRotate: async (certPath, keyPath, hostname) => {
+            // Workers' reloadTls() re-reads from `http.ssl.{certFile,keyFile}`
+            // (Server.buildHttpsOptions) — it does NOT use the certPath/keyPath
+            // carried on the IPC message. So we land the rotated cert at the
+            // configured ssl paths BEFORE the IPC fanout. The materializer
+            // writes the per-host layout (`<tlsDir>/<host>/{fullchain,privkey}.pem`);
+            // we mirror it to the single-path layout the workers actually read.
+            // Without this, in-memory hot-swap silently re-loads the
+            // placeholder and the workers serve self-signed permanently.
+            try {
+              const sslKeyFile = config.get('http:ssl:keyFile');
+              const sslCertFile = config.get('http:ssl:certFile');
+              if (sslKeyFile && sslCertFile) {
+                const fs = require('node:fs');
+                const path = require('node:path');
+                fs.mkdirSync(path.dirname(sslKeyFile), { recursive: true });
+                fs.mkdirSync(path.dirname(sslCertFile), { recursive: true });
+                fs.copyFileSync(certPath, sslCertFile);
+                fs.copyFileSync(keyPath, sslKeyFile);
+                fs.chmodSync(sslCertFile, 0o644);
+                fs.chmodSync(sslKeyFile, 0o600);
+                log(`[acme] copied rotated cert ${certPath} -> ${sslCertFile}`);
+              }
+            } catch (err) {
+              log(`[acme] failed to mirror rotated cert to ssl paths: ${err.message} (workers will still serve the OLD cert until next rotation)`);
+            }
             // Broadcast to every live worker so their HTTPS servers
             // hot-swap to the rotated cert. Workers that aren't serving
             // HTTPS (hfs, previews, and api-server in http-only mode)

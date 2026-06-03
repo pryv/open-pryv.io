@@ -7,11 +7,18 @@ First Release Candidate of open-pryv.io v2. The runtime has been production-depl
 ### New in `2.0.0-rc.1`: install wizard
 
 ```bash
-docker run -it -v /host/config:/app/config -v /host/data:/app/data \
-  pryvio/open-pryv.io init /app/config/override-config.yml
+mkdir -p /opt/pryv && cd /opt/pryv
+docker run -it --rm -v "$(pwd):/app/pryv" \
+  pryvio/open-pryv.io:2.0.0-rc.1 init
 ```
 
-Interactive single-core install wizard that generates a complete `override-config.yml` from prompts (DNS topology, storage engine, secrets, TLS, auth-UI URL, …) and validates the host environment before writing. Companion subcommand `check-config <path>` runs the same structural checks against an existing config — useful for catching the half-configured cases (`access.defaultAuthUrl` missing, `services.email` half-set, etc.) before the first boot.
+Interactive single-core install wizard. Hardcodes the in-container mount target to `/app/pryv` (avoids the `/app/config` collision that masks the image's bundled config plugins), auto-discovers the host path from `/proc/self/mountinfo`, and writes three artefacts into the operator's chosen directory:
+
+- `pryv-config.yml` — section-grouped + commented YAML covering service identity, DNS topology (dnsLess or dns-active), HTTP+TLS, Let's Encrypt, auth secrets, app-web-auth3 integration, cluster sizing, and storage engines. Followed by a commented-out optional-sections block (`services.email`, `services.mfa`, `hostings`, `custom.systemStreams`, `observability`, …) operators can uncomment in place.
+- `run-pryv.sh` — self-locating launcher (`cd "$(dirname "$0")" && pwd`) that mounts the install dir to `/app/pryv` and runs master.js.
+- `check-config.sh` — sibling launcher that validates the config without booting; companion subcommand `check-config <path>` runs the same structural checks (REQUIRED service fields, REQUIRED_WHEN auth secrets, dnsLess vs dns.active, PG creds when applicable).
+
+User-data lives under `<install-dir>/data/` (sibling to the config); the wizard auto-derives this path so the operator answers fewer questions. Both directories ride the same single `-v` mount.
 
 No-arg `docker run pryvio/open-pryv.io` continues to behave exactly as before (boots `bin/master.js`). Anything else passes through (`node --version`, `bash`, …).
 

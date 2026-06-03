@@ -6,6 +6,32 @@ First Release Candidate divider. All entries below this line up to the next `## 
 
 Notable internal work since `2.0.0-pre` open: SQLite full-matrix parity (Plan 76 close, both engines at 2351/0/7), TypeScript + ESM migration foundation (Plan 57 + Plan 64 strict-mode + Plan 65 noImplicitAny + ongoing Plan 80 type tightening), test-isolation hardening (`[P4OM]` customAuthStepFn race fixed), docker publish gated on git tags only.
 
+## fix(acme): TLS hot-swap actually works on first-boot + container restart
+
+Two adjacent bugs in the embedded ACME flow that produced the same operator-visible symptom (workers serving a 1-day self-signed cert even after Let's Encrypt successfully issued the real one):
+
+1. **First-boot hot-swap silently re-loaded the placeholder.** The `onRotate` IPC fanout in `bin/master.js` sent `{type:'acme:rotate', certPath, keyPath}` with the FileMaterializer's paths (`<tlsDir>/<hostname>/{fullchain,privkey}.pem`), but workers' `Server.reloadTls()` ignores the message paths and re-reads from `http.ssl.{certFile,keyFile}` (the configured boot-time paths) — which still held the placeholder. Fix: master copies the rotated cert over `http.ssl.{certFile,keyFile}` BEFORE the IPC fanout. New log line `[acme] copied rotated cert <materializer-path> -> <ssl-file>` precedes the worker reload.
+
+2. **Container restart re-overwrote with a stale placeholder.** `selfSignedPlaceholder.ensure()` checked whether the configured ssl files existed and short-circuited "cert-files-already-exist" — leaving the stale placeholder in place. Even though FileMaterializer had a real LE cert at `<tlsDir>/<hostname>/`, the placeholder code never looked there. Fix: reorder the function to check the materializer's per-hostname dir FIRST. If a real cert is present, copy it over `http.ssl.{certFile,keyFile}` before workers fork. New return field `{ restored: true, source: <materializer-path> }` + log line `[acme] restored materialized LE cert for <host> from <materializer-path> -> <ssl-file>` on the restart path.
+
+The wizard now pins `letsEncrypt.tlsDir: <install-dir>/data/tls` so the materializer's per-hostname dir lives on the same operator-mounted persistent volume as `http.ssl.*` — both paths converge cleanly on container restart. Operators with custom `tlsDir` paths get the same behaviour as long as the directory is persisted across container removal.
+
+3 new unit tests pin the behaviour: `[SS20]` (dnsLess + http-01 restore), `[SS21]` (dns-01 wildcard restore — `wildcard.<host>` dir name), `[SS22]` (half-materialized state — only `fullchain.pem` present — falls through to placeholder rather than serving an incomplete cert).
+
+## feat(init): wizard UX overhaul — no-arg, `/app/pryv` mount, sectioned YAML
+
+`bin/init.js` reshaped for the `docker run -v "$(pwd):/app/pryv" pryvio init` UX. Concrete changes:
+
+- **No argument.** Hardcoded in-container config dir is `/app/pryv`. Host path discovered via `/proc/self/mountinfo`. Local-dev escape hatch: `PRYV_CONFIG_DIR=/tmp/x node bin/init.js`.
+- **Fixed config filename.** Wizard writes `pryv-config.yml` (was: operator-named). Run-pryv.sh + check-config.sh launchers reference this filename verbatim, so the in-container `--config` arg in the generated `docker run` matches the on-disk filename without operator action.
+- **Auto-derived data folder.** `<install-dir>/data` (sibling to the config). One operator-mounted volume covers both. The data-folder prompt is dropped.
+- **`letsEncrypt.tlsDir` pinned.** `<dataFolder>/tls`, on the same persistent mount as `http.ssl.{certFile,keyFile}` — see the ACME fix above.
+- **`check-config.sh` companion launcher.** Mirrors `run-pryv.sh`'s self-locating + overwrite-on-exists pattern. Validates without booting.
+- **Section-grouped YAML output.** Generated `pryv-config.yml` now opens with a banner + `# ── Section ───` dividers + per-section docstring comments. Logical top-down read order: identity → topology → HTTP+TLS → LE → auth → web-auth3 → cluster → storage. Ends with a commented-out optional-sections appendix (`services.email`, `services.mfa`, `hostings`, `custom.systemStreams`, `observability`, `eventFiles`, `webhooks`, `cluster.discoveryEnabled`, `core.url`).
+- **Wizard UX polish.** No "Write config to X?" prompt (the wizard's whole purpose); `run-pryv.sh` + `check-config.sh` are created unconditionally on a fresh install, asks before overwriting an existing one. "Next steps" hints quote `./run-pryv.sh` + `./check-config.sh` (relative); fallback docker-run snippets use `$(pwd)` for the host-path source so the snippet pastes correctly from any cwd.
+
+Maintenance directive: the optional-sections appendix in `buildOptionalAppendix()` must stay in sync with `config/default-config.yml` + `config/production-config.yml`. New top-level sections an operator commonly tunes need a mirror edit there.
+
 ---
 
 ## ci: publish docker image on git tags only

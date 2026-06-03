@@ -9,21 +9,28 @@
 // Interactive single-core install wizard.
 //
 // Usage:
-//   docker run -it -v /host/pryv:/etc/pryv \
-//     pryvio/open-pryv.io init /etc/pryv/override-config.yml
+//   docker run -it -v /host/pryv:/app/pryv \
+//     pryvio/open-pryv.io init
 //
-// The mount target inside the container must NOT be /app/config — that
-// directory is owned by the image and holds the bundled config plugins
-// (systemStreams, paths-config, …). Mounting over it masks them and
-// master.js dies at boot with "Cannot find module '../config/plugins/…'".
-// Pick any other path; /etc/pryv is conventional.
+// No argument. The wizard hardcodes `/app/pryv` as the in-container
+// config directory and discovers the host path from
+// /proc/self/mountinfo, so the generated `run-pryv.sh` carries the
+// operator's REAL on-disk host path — no env-var override needed for
+// the common case.
 //
-// Or locally during development:
-//   node bin/init.js /tmp/test-override.yml
+// `/app/pryv` is deliberate: mounting over /app/config would mask the
+// image's bundled config plugins (systemStreams, paths-config, …) and
+// master.js would die at boot with "Cannot find module
+// '../config/plugins/…'". /app/pryv is the conventional, safe target.
 //
-// Refuses to overwrite an existing file. After collecting answers the wizard
-// validates the host environment (writable paths, plausible values) and only
-// writes the YAML if no fatal problems are found.
+// The wizard writes `pryv-config.yml` inside it, plus a sibling
+// `run-pryv.sh` launcher. The user-data folder is auto-derived to
+// `<host-dir>/data` — both ride a single host -v mount.
+//
+// Or locally during development (no docker):
+//   PRYV_CONFIG_DIR=/tmp/test1 node bin/init.js
+//
+// Refuses to overwrite an existing pryv-config.yml.
 
 'use strict';
 
@@ -107,87 +114,299 @@ function dirWritable (dir) {
 
 function bar (n = 50) { return '─'.repeat(n); }
 
-async function main () {
-  const configPath = process.argv[2];
-  if (!configPath) {
-    console.error('Usage: init <config-path>');
-    console.error('Example: init /etc/pryv/override-config.yml');
-    console.error('  (the path must point inside a host dir bind-mounted into the container');
-    console.error('   — anywhere except /app/config which is owned by the image)');
-    process.exit(1);
+/**
+ * Emit a YAML section: header banner + per-line doc-comments + yaml.dump
+ * of the data subtree. The header banner is sized to a stable width so
+ * the file scans well in a text editor.
+ *
+ * Generated output:
+ *   ── Section title ─────────────────────────────────
+ *   # one or more docstring lines
+ *   key: value
+ *   ...
+ */
+function section (yaml, title, doc, obj) {
+  const HEADER_WIDTH = 60;
+  const headerPad = Math.max(3, HEADER_WIDTH - title.length - 4);
+  const header = '# ── ' + title + ' ' + '─'.repeat(headerPad);
+  const docBlock = (Array.isArray(doc) ? doc : [doc]).map(l => '# ' + l).join('\n');
+  const body = yaml.dump(obj, { lineWidth: 100, noRefs: true });
+  return '\n' + header + '\n' + docBlock + '\n' + body;
+}
+
+/**
+ * Returns a commented-out YAML appendix appended to every generated
+ * pryv-config.yml. Surfaces the most-commonly-needed optional config
+ * sections the wizard does NOT prompt for, so operators can uncomment
+ * + tweak in place rather than hunting through default-config.yml.
+ *
+ * MAINTENANCE: keep in sync with `config/default-config.yml` and
+ * `config/production-config.yml`. New top-level config sections that an
+ * operator typically tunes (email, MFA, hostings, observability, custom
+ * extensions, multi-core CLI paths, …) should land here as commented-out
+ * blocks. Field-level changes to existing sections (added keys,
+ * renamed keys, default-value flips) need a mirror edit here. Unit
+ * coverage for the appendix is at `bin/test/init-appendix.test.js` (TODO
+ * — currently exercised only by manual smoke tests).
+ */
+function buildOptionalAppendix ({ dnsLess, dataFolder }) {
+  const HOSTINGS_BLOCK = dnsLess
+    ? `# # hostings — single-core dnsLess deployments don't need this; the
+# # auto-generated hostings hierarchy in /reg/hostings is sufficient.
+# # For multi-core or multi-region setups, declare explicit hostings:
+# # hostings:
+# #   regions:
+# #     europe:
+# #       name: Europe
+# #       zones:
+# #         eu-west:
+# #           name: Western Europe
+# #           hostings:
+# #             aws-eu-west-1:
+# #               name: AWS Frankfurt
+# #               url: ${dnsLess ? 'https://eu.example.com' : 'https://core.eu.example.com'}
+# #               available: true`
+    : `# # hostings — declares regions/zones surfaced via /reg/hostings so the SDK
+# # picks the closest core per user. Auto-generated when unset; for multi-
+# # region deployments, declare explicitly:
+# # hostings:
+# #   regions:
+# #     america:
+# #       name: America
+# #       zones:
+# #         usa-east:
+# #           name: USA East
+# #           hostings:
+# #             aws-us-east-1:
+# #               name: AWS Virginia
+# #               url: https://core-use1.example.com
+# #               available: true
+# #     europe:
+# #       name: Europe
+# #       zones:
+# #         eu-central:
+# #           name: Germany Stuttgart
+# #           hostings:
+# #             aws-eu-central-1:
+# #               name: AWS Frankfurt
+# #               url: https://core-euc1.example.com
+# #               available: true`;
+
+  return `
+# ─────────────────────────────────────────────────────────────────────
+# Optional sections — wizard did NOT prompt for these. Uncomment + edit
+# the blocks you want to enable. See config/default-config.yml in the
+# image for the complete field surface + defaults.
+# ─────────────────────────────────────────────────────────────────────
+
+# # services.email — password-reset + welcome emails over in-process SMTP.
+# # Skip the wizard's microservice path unless you run a separate service-mail
+# # container. The 'in-process' method renders + sends from the api-server.
+# services:
+#   email:
+#     enabled:
+#       welcome: true
+#       resetPassword: true
+#     method: in-process
+#     fromName: 'My Pryv'
+#     fromEmail: 'no-reply@example.com'
+#     smtp:
+#       host: smtp.example.com
+#       port: 587
+#       secure: false
+#       auth:
+#         user: smtp-user
+#         pass: smtp-password
+
+# # services.mfa — SMS-based two-factor for app + personal accesses.
+# # mode: disabled | single (combined challenge+verify) | challenge-verify (two endpoints).
+# # services:
+# #   mfa:
+# #     mode: single
+# #     sms:
+# #       endpoints:
+# #         single:
+# #           url: https://sms-gateway.example.com/send
+# #           method: POST
+# #           headers: { Authorization: 'Bearer <api-token>' }
+# #           bodyTemplate: '{"to": "{{phoneNumber}}", "text": "{{message}}"}'
+
+${HOSTINGS_BLOCK}
+
+# # custom.systemStreams — extend the account schema (e.g. add 'phone',
+# # 'address', 'organization' alongside the built-in 'username' / 'email').
+# # custom:
+# #   systemStreams:
+# #     account:
+# #       - id: phone
+# #         type: phone/number
+# #         isIndexed: true
+# #         isUnique: true
+# #         isShown: true
+# #         isEditable: true
+# #       - id: organization
+# #         type: string/string
+# #         isIndexed: false
+# #         isShown: true
+# #         isEditable: true
+
+# # observability — opt-in APM (New Relic today; framework supports more).
+# # The license key is stored encrypted in PlatformDB via bin/observability.js;
+# # set 'enabled: true' here to flip the feature on without re-deploying.
+# # observability:
+# #   enabled: false
+# #   provider: newrelic
+# #   appName: 'open-pryv.io'
+# #   logLevel: error
+# #   newrelic:
+# #     licenseKey: ''   # leave blank; set via 'bin/observability.js newrelic set-license-key'
+
+# # eventFiles — attachments + previews size limits.
+# # eventFiles:
+# #   attachmentSizeMaxKB: 10240   # 10 MiB per attachment
+# #   previewsCacheMaxAgeMs: 86400000
+
+# # webhooks — global delivery tuning. Default cooldownMs is generous.
+# # webhooks:
+# #   cooldownMs: 5000
+# #   maxRetries: 5
+
+# # cluster.discoveryEnabled — set true on multi-core deployments using
+# # DNS-based rqlite joiners (-disco-mode dns). Leave OFF on single-core.
+# # cluster:
+# #   discoveryEnabled: false
+
+# # core.url — pin this core's externally-reachable URL when 'dns.active'
+# # is false but you still want a stable identity (DNSless multi-core).
+# # core:
+# #   id: core-use1
+# #   url: https://core-use1.example.com
+`;
+}
+
+// Fixed in-container filename. The wizard ALWAYS writes
+// `<configDir>/pryv-config.yml`; operators don't pick the name. This keeps
+// the generated `run-pryv.sh` self-locating + the docker mount semantics
+// trivially predictable.
+const CONFIG_FILENAME = 'pryv-config.yml';
+// Fixed in-container target the operator MUST mount to. Hardcoded so the
+// wizard takes no argument: `docker run -v /host/dir:/app/pryv pryvio init`.
+// /app/pryv avoids the /app/config collision (which would mask the image's
+// bundled config plugins and crash master.js at boot).
+const CONTAINER_CONFIG_DIR = '/app/pryv';
+
+/**
+ * Discover the host-side path bind-mounted at the given in-container
+ * path by parsing /proc/self/mountinfo. Returns null when no matching
+ * mount is found (e.g. running locally without docker, or the mount
+ * target doesn't exist).
+ *
+ * mountinfo per-line format (kernel ABI):
+ *   mountID parentID major:minor ROOT MOUNT_POINT mount_opts - fs source super_opts
+ * For bind mounts of a regular host directory, ROOT carries the host
+ * absolute path on the underlying device (modulo any sub-volume
+ * rewriting on btrfs/zfs, which we don't try to invert).
+ */
+function discoverHostPath (containerPath) {
+  let mi;
+  try {
+    mi = fs.readFileSync('/proc/self/mountinfo', 'utf8');
+  } catch (_) {
+    return null;
   }
+  // Walk in reverse so the most recent (= operator-supplied) mount wins
+  // over earlier overlay/system mounts at the same point.
+  const lines = mi.split('\n').filter(Boolean).reverse();
+  for (const line of lines) {
+    const parts = line.split(' ');
+    // ROOT is field 4 (1-indexed). MOUNT_POINT is field 5.
+    const root = parts[3];
+    const mountPoint = parts[4];
+    if (mountPoint === containerPath) {
+      // Unescape kernel-encoded space/tab/newline/backslash in the path.
+      return root.replace(/\\(\d{3})/g, (_, oct) => String.fromCharCode(parseInt(oct, 8)));
+    }
+  }
+  return null;
+}
+
+async function main () {
+  // Local-dev escape hatch: skip /app/pryv when PRYV_CONFIG_DIR is set so
+  // contributors can run the wizard outside docker without juggling mounts.
+  // Inside the image the env var is never set; operators get the
+  // hardcoded path + auto-discovery flow.
+  const localDevDir = process.env.PRYV_CONFIG_DIR;
+  const absConfigDir = localDevDir ? path.resolve(localDevDir) : CONTAINER_CONFIG_DIR;
+  const hostConfigDir = localDevDir ? absConfigDir : discoverHostPath(CONTAINER_CONFIG_DIR);
 
   // Refuse to run without an interactive TTY. Without `-it` on docker run,
   // stdin is closed and the very first prompt EOFs — surface that here
   // with the actual fix (`docker run -it …`) rather than a stack trace.
   if (!process.stdin.isTTY) {
     console.error('init: no interactive TTY attached to stdin.');
-    console.error('  The wizard needs to prompt you — re-run docker with `-it` and');
-    console.error('  mount a writable host directory to a path that does NOT collide with');
-    console.error('  /app/config (which is owned by the image and holds its bundled config');
-    console.error('  plugins). /etc/pryv or any path you control is fine:');
+    console.error('  The wizard needs to prompt you — re-run docker with `-it`:');
     console.error('');
     console.error('    docker run -it --rm \\');
-    console.error('      -v /host/pryv:/etc/pryv \\');
-    console.error('      pryvio/open-pryv.io \\');
-    console.error('      init /etc/pryv/override-config.yml');
+    console.error(`      -v /host/path:${CONTAINER_CONFIG_DIR} \\`);
+    console.error('      pryvio/open-pryv.io init');
     console.error('');
-    console.error('  (Substitute /host/pryv with the host directory where you want');
-    console.error('   override-config.yml + run-pryv.sh to land.)');
+    console.error('  (Substitute /host/path with the host directory where you want');
+    console.error(`   ${CONFIG_FILENAME} + run-pryv.sh to land.)`);
     process.exit(2);
   }
 
-  const absConfigPath = path.resolve(configPath);
-  const configDirPrelim = path.dirname(absConfigPath);
-  if (!fs.existsSync(configDirPrelim)) {
-    console.error(`init: parent directory does not exist inside the container: ${configDirPrelim}`);
-    console.error(`  Most likely no host directory was mounted to ${configDirPrelim}.`);
-    console.error('  Re-run with `-it` and a `-v` mount targeting that container path:');
+  if (!fs.existsSync(absConfigDir)) {
+    console.error(`init: ${absConfigDir} does not exist inside the container.`);
+    console.error(`  Mount a writable host directory at ${absConfigDir}:`);
     console.error('');
     console.error('    docker run -it --rm \\');
-    console.error(`      -v /host/path:${configDirPrelim} \\`);
-    console.error(`      pryvio/open-pryv.io init ${absConfigPath}`);
-    console.error('');
-    console.error('  (substitute /host/path with the host directory where you want the');
-    console.error('   generated config + run-pryv.sh to land. /tmp/pryv-config is fine for a');
-    console.error('   first test.)');
+    console.error(`      -v /host/path:${CONTAINER_CONFIG_DIR} \\`);
+    console.error('      pryvio/open-pryv.io init');
     process.exit(2);
   }
-  if (!dirWritable(configDirPrelim)) {
-    console.error(`init: parent directory exists but is NOT writable: ${configDirPrelim}`);
-    console.error('  Three likely causes (and the fix for each):');
+  if (!dirWritable(absConfigDir)) {
+    console.error(`init: ${absConfigDir} exists but is NOT writable.`);
+    console.error('  Most likely the host directory you mounted is not writable by the');
+    console.error('  container user. On the host:');
     console.error('');
-    console.error('  (a) Nothing was bind-mounted to that container path — the in-image');
-    console.error('      directory is owned by root / read-only. Mount a writable host dir:');
-    console.error('');
-    console.error('        docker run -it --rm \\');
-    console.error(`          -v /host/path:${configDirPrelim} \\`);
-    console.error(`          pryvio/open-pryv.io init ${absConfigPath}`);
-    console.error('');
-    console.error('  (b) A mount IS present but the HOST directory is not writable by the');
-    console.error('      container user. On the host, run:');
-    console.error('');
-    console.error('        sudo chown -R $(id -u):$(id -g) /host/path');
-    console.error('        chmod 755 /host/path');
-    console.error('');
-    console.error('  (c) Pick a different config path under a directory that is already');
-    console.error('      writable (most images leave /tmp world-writable):');
-    console.error('');
-    console.error('        docker run -it --rm pryvio/open-pryv.io init /tmp/override-config.yml');
-    console.error('      (then copy the file out of the container before it exits)');
+    console.error('      sudo chown -R $(id -u):$(id -g) /host/path');
+    console.error('      chmod 755 /host/path');
     process.exit(2);
   }
+  // hostConfigDir is informational. The generated run-pryv.sh always
+  // self-locates via `cd "$(dirname "$0")" && pwd`, so even if we can't
+  // discover the host path here (unusual filesystem, non-docker run, etc.)
+  // the launcher still works — operators just run it from its own dir.
+  const absConfigPath = path.join(absConfigDir, CONFIG_FILENAME);
   if (fs.existsSync(absConfigPath)) {
     console.error(`init: ${absConfigPath} already exists.`);
-    console.error('  Move it aside or pick a different path. (init never overwrites.)');
+    if (hostConfigDir) console.error(`  On the host: ${hostConfigDir}/${CONFIG_FILENAME}`);
+    console.error('  Move it aside or pick a different mount. (init never overwrites.)');
     process.exit(1);
   }
+
+  // Data folder lives under the same operator-mounted tree, sibling to
+  // the config file. Container-side: `<configDir>/data`. The run-pryv.sh
+  // launcher mounts the host's `<host-config-dir>/data` to the same
+  // in-container path, so config + data ride a single -v host mount and
+  // every TLS / rqlite / sqlite / attachment path the operator sees in
+  // the YAML is also a real on-disk host path.
+  const dataFolder = path.join(absConfigDir, 'data');
+  const hostDataFolder = hostConfigDir ? path.join(hostConfigDir, 'data') : null;
 
   console.log();
   console.log('open-pryv.io configuration wizard');
   console.log(bar());
-  console.log('Producing a single-core override-config.yml at:');
-  console.log(`  ${absConfigPath}`);
+  console.log('Producing a single-core install:');
+  if (hostConfigDir) {
+    console.log(`  host:      ${hostConfigDir}/${CONFIG_FILENAME}  ← config`);
+    console.log(`             ${hostDataFolder}/  ← user data (auto)`);
+    console.log(`  container: ${absConfigPath}`);
+    console.log(`             ${dataFolder}/`);
+  } else {
+    console.log(`  container: ${absConfigPath}  ← config`);
+    console.log(`             ${dataFolder}/  ← user data (auto)`);
+  }
   console.log();
 
   // 1. dnsLess mode — default OFF (matches canonical Pryv URL shape +
@@ -246,10 +465,8 @@ async function main () {
   const serviceName = await askNonEmpty('  Service display name', 'My Pryv Instance');
   console.log();
 
-  // 5. Data folder
-  console.log('▸ User-data folder (must be mounted in the container)');
-  const dataFolder = await ask('  User data folder', '/app/data');
-  console.log();
+  // (data folder is no longer prompted — derived above as sibling to the
+  // config file. Both ride a single -v mount in run-pryv.sh.)
 
   // 6. Secrets
   console.log('▸ Secrets');
@@ -307,8 +524,8 @@ async function main () {
   } else if (tlsStrategy === 'custom') {
     console.log('▸ Custom TLS cert');
     customSsl = {
-      keyFile: await ask('  Path to TLS key file (inside container)', `${configDirPrelim}/tls/key.pem`),
-      certFile: await ask('  Path to TLS cert file (inside container)', `${configDirPrelim}/tls/cert.pem`)
+      keyFile: await ask('  Path to TLS key file (inside container)', `${absConfigDir}/tls/key.pem`),
+      certFile: await ask('  Path to TLS cert file (inside container)', `${absConfigDir}/tls/cert.pem`)
     };
     console.log();
   }
@@ -456,13 +673,9 @@ async function main () {
     console.log(`      pryvio/open-pryv.io check-config ${absConfigPath}`);
   }
 
-  console.log();
-  const confirm = await askYesNo(`Write config to ${absConfigPath}?`, true);
-  if (!confirm) {
-    console.log('Aborted. No file written.');
-    rl.close();
-    process.exit(0);
-  }
+  // No "write the config?" prompt — that's the wizard's whole purpose.
+  // Problems above are surfaced; operator can hand-edit afterwards or
+  // re-run with the config moved aside.
 
   // ── BUILD YAML ────────────────────────────────────────────────
   const config = {
@@ -527,7 +740,6 @@ async function main () {
   }
 
   if (tlsStrategy === 'letsEncrypt') {
-    config.letsEncrypt = leConfig;
     // master.js's selfSignedPlaceholder + ACME orchestrator both need
     // `http.ssl.keyFile` + `http.ssl.certFile` set so they know where to
     // write the first-boot placeholder cert + where ACME materialises the
@@ -540,6 +752,19 @@ async function main () {
       keyFile: `${dataFolder}/tls/key.pem`,
       certFile: `${dataFolder}/tls/cert.pem`
     };
+    // Pin tlsDir to a path on the same operator-mounted volume as
+    // http.ssl.{keyFile,certFile}. The FileMaterializer writes the real
+    // LE cert to `<tlsDir>/<hostnameDir>/{fullchain,privkey}.pem`; on
+    // the next container restart, selfSignedPlaceholder.ensure() reads
+    // those files and copies them over http.ssl.{certFile,keyFile} so
+    // workers fork up serving the real LE cert immediately (no
+    // self-signed placeholder window between restart and rotation IPC).
+    // Without this override the materializer defaults to relative
+    // `var-pryv/tls` which resolves inside container-ephemeral storage.
+    config.letsEncrypt = {
+      ...leConfig,
+      tlsDir: `${dataFolder}/tls`
+    };
   } else if (tlsStrategy === 'custom') {
     config.http.ssl = customSsl;
   }
@@ -549,7 +774,77 @@ async function main () {
   }
 
   fs.mkdirSync(configDir, { recursive: true });
-  fs.writeFileSync(absConfigPath, yaml.dump(config, { lineWidth: 100, noRefs: true }));
+  // Emit YAML in logical sections with header dividers + per-section
+  // docstrings instead of a flat alphabetised dump. The order below is
+  // tuned for a top-down read: identity → topology → network/TLS →
+  // secrets → auth-UI integration → cluster → storage → (optional
+  // services). The same `config` object also serves as the structural
+  // truth for `check-config`; we're only reshaping the serialisation.
+  let yamlBody = '# Pryv.io configuration — generated by `pryvio/open-pryv.io init`\n';
+  yamlBody += '# ' + new Date().toISOString().slice(0, 10) + '\n';
+  yamlBody += '#\n# Edit freely. Re-validate any time with `./check-config.sh`.\n';
+
+  yamlBody += section(yaml, 'Service identity',
+    'What the SDK + /reg/service/info expose to clients.',
+    { service: config.service });
+
+  if (config.dnsLess) {
+    yamlBody += section(yaml, 'DNS topology — dnsLess (single FQDN)',
+      ['All users share one host: https://<publicUrl>/<username>/<path>.',
+        'HTTP-01 LE challenge works on this single host (no DNS server needed).'],
+      { dnsLess: config.dnsLess });
+  } else {
+    yamlBody += section(yaml, 'DNS topology — dns.active (subdomain per user)',
+      ['Each user gets a subdomain: https://<user>.<domain>/events.',
+        'Requires embedded DNS server + delegated zone + port 53/udp on the host',
+        'and DNS-01 (wildcard) LE challenge.'],
+      { dns: config.dns });
+  }
+
+  const httpDoc = ['Workers bind on `port`.'];
+  if (config.http.ssl) {
+    httpDoc.push('http.ssl.{keyFile,certFile} are populated at first boot by master.js',
+      '(selfSignedPlaceholder seeds them; ACME rotates them on issuance).');
+  }
+  yamlBody += section(yaml, 'HTTP + TLS', httpDoc, { http: config.http });
+
+  if (config.letsEncrypt) {
+    yamlBody += section(yaml, "Let's Encrypt",
+      ['Embedded ACME client. tlsDir lives on the operator-mounted volume so',
+        'materialised certs survive container restarts.',
+        '`staging: true` issues from the LE staging CA (untrusted by browsers) — flip to false for production.'],
+      { letsEncrypt: config.letsEncrypt });
+  }
+
+  yamlBody += section(yaml, 'Auth secrets + trusted apps',
+    ['adminAccessKey + filesReadTokenSecret MUST be backed up — losing them locks',
+      'you out of audit + cert decryption. trustedApps controls which origins',
+      'can use /reg/access (the app-web-auth3 popup-frame flow).'],
+    { auth: config.auth });
+
+  yamlBody += section(yaml, 'app-web-auth3 integration',
+    ['URL of the Vue.js popup-frame that hosts /access + password-reset pages.',
+      'Defaults to the canonical Pryv-hosted public build; fork to rebrand.'],
+    { access: config.access });
+
+  yamlBody += section(yaml, 'Cluster sizing',
+    ['apiWorkers + hfsWorkers + previewsWorker each fork a worker process.',
+      'Tune for your CPU count; defaults are conservative.'],
+    { cluster: config.cluster });
+
+  yamlBody += section(yaml, 'Storage engines',
+    ['Per-area engine selection + per-engine connection params.',
+      'Wizard picked: base + series = ' + dbEngine + '; platform = rqlite; audit = sqlite.'],
+    { storages: config.storages });
+
+  if (config.services) {
+    yamlBody += section(yaml, 'External services',
+      'Email / MFA gateway configuration. Wizard wrote the bits you opted into.',
+      { services: config.services });
+  }
+
+  const appendix = buildOptionalAppendix({ dnsLess, dataFolder });
+  fs.writeFileSync(absConfigPath, yamlBody + appendix);
 
   console.log();
   console.log(`✓ Wrote ${absConfigPath}`);
@@ -576,63 +871,115 @@ async function main () {
   let wroteRunScript = false;
 
   console.log();
-  const saveRunScript = await askYesNo(`Save a run-pryv.sh launcher next to the config (${runScriptPath})?`, true);
-  if (saveRunScript) {
-    if (fs.existsSync(runScriptPath)) {
-      console.log(`  ⚠ ${runScriptPath} already exists — leaving it alone (move it aside to regenerate).`);
-    } else {
-      // The image bundles its own config tree at /app/config/ (including
-      // config/plugins/systemStreams etc.) so mounting the operator's
-      // config dir to /app/config would mask it and master.js dies with
-      // "Cannot find module '../config/plugins/systemStreams'". Mount to
-      // the in-container path the operator picked at init time instead;
-      // master.js's `--config` is absolute so anywhere outside /app/config
-      // is fine.
-      const containerConfigDir = configDir; // path.dirname(absConfigPath)
-      const runScript = [
-        '#!/bin/sh',
-        '# Auto-generated by `pryvio/open-pryv.io init`.',
-        '# Lives sibling to override-config.yml. Run it from anywhere.',
-        '#',
-        '# Overrides:',
-        '#   PRYV_DATA_DIR  host path mounted at /app/data (default: $CONFIG_DIR/../data)',
-        '#   PRYV_IMAGE     docker image tag (default: pryvio/open-pryv.io:2.0.0-rc.1)',
-        '#   PRYV_NAME      container name (default: pryvio)',
-        'set -e',
-        '',
-        'CONFIG_DIR="$(cd "$(dirname "$0")" && pwd)"',
-        `CONFIG_FILE="$CONFIG_DIR/${configFileName}"`,
-        // eslint-disable-next-line no-template-curly-in-string -- shell-variable expansions in the emitted script body
-        'DATA_DIR="${PRYV_DATA_DIR:-$CONFIG_DIR/../data}"',
-        // eslint-disable-next-line no-template-curly-in-string
-        'IMAGE="${PRYV_IMAGE:-pryvio/open-pryv.io:2.0.0-rc.1}"',
-        // eslint-disable-next-line no-template-curly-in-string
-        'NAME="${PRYV_NAME:-pryvio}"',
-        '',
-        'mkdir -p "$DATA_DIR"',
-        '',
-        '# Remove any prior container with the same name so the script is',
-        '# idempotent. The data lives in the mounted $DATA_DIR; the container',
-        '# is just a process wrapper, safe to drop and re-create.',
-        // eslint-disable-next-line no-template-curly-in-string -- `${NAME}` is a shell expansion in the emitted script
-        'if docker ps -a --format "{{.Names}}" | grep -q "^${NAME}$"; then',
-        '  echo "Removing existing container $NAME …"',
-        '  docker rm -f "$NAME" >/dev/null',
-        'fi',
-        '',
-        'exec docker run -d --name "$NAME" \\',
-        `  -v "$CONFIG_DIR":${containerConfigDir} \\`,
-        '  -v "$DATA_DIR":/app/data \\',
-        `  ${dockerPorts.join(' ')} \\`,
-        '  -e PRYV_DATADIR=/app/data \\',
-        '  "$IMAGE" \\',
-        `  node bin/master.js --config ${absConfigPath}`,
-        ''
-      ].join('\n');
-      fs.writeFileSync(runScriptPath, runScript, { mode: 0o755 });
-      wroteRunScript = true;
-      console.log(`✓ Wrote ${runScriptPath}`);
+  let shouldWriteRunScript = true;
+  if (fs.existsSync(runScriptPath)) {
+    // run-pryv.sh exists — only ASK in this case; default no so the
+    // operator can keep their customised launcher. The fresh-install
+    // path (no existing launcher) is unconditional.
+    shouldWriteRunScript = await askYesNo(`${runScriptPath} already exists — overwrite it?`, false);
+    if (!shouldWriteRunScript) {
+      console.log(`  ✓ Kept existing ${runScriptPath}`);
     }
+  }
+  if (shouldWriteRunScript) {
+    // The image bundles its own config tree at /app/config/ (including
+    // config/plugins/systemStreams etc.) so mounting the operator's
+    // config dir to /app/config would mask it and master.js dies with
+    // "Cannot find module '../config/plugins/systemStreams'". Mount to
+    // the in-container path the operator picked at init time instead;
+    // master.js's `--config` is absolute so anywhere outside /app/config
+    // is fine.
+    const containerConfigDir = configDir; // === absConfigDir
+    const containerDataDir = dataFolder; // === absConfigDir + '/data'
+    const runScript = [
+      '#!/bin/sh',
+      '# Auto-generated by `pryvio/open-pryv.io init`.',
+      '# Lives sibling to override-config.yml. Run it from anywhere.',
+      '#',
+      '# Overrides:',
+      `#   PRYV_DATA_DIR  host path mounted at ${dataFolder} (default: $CONFIG_DIR/data — sibling to ${configFileName})`,
+      '#   PRYV_IMAGE     docker image tag (default: pryvio/open-pryv.io:2.0.0-rc.1)',
+      '#   PRYV_NAME      container name (default: pryvio)',
+      'set -e',
+      '',
+      'CONFIG_DIR="$(cd "$(dirname "$0")" && pwd)"',
+      `CONFIG_FILE="$CONFIG_DIR/${configFileName}"`,
+      // eslint-disable-next-line no-template-curly-in-string -- shell-variable expansions in the emitted script body
+      'DATA_DIR="${PRYV_DATA_DIR:-$CONFIG_DIR/data}"',
+      // eslint-disable-next-line no-template-curly-in-string
+      'IMAGE="${PRYV_IMAGE:-pryvio/open-pryv.io:2.0.0-rc.1}"',
+      // eslint-disable-next-line no-template-curly-in-string
+      'NAME="${PRYV_NAME:-pryvio}"',
+      '',
+      'mkdir -p "$DATA_DIR"',
+      '',
+      '# Remove any prior container with the same name so the script is',
+      '# idempotent. The data lives in the mounted $DATA_DIR; the container',
+      '# is just a process wrapper, safe to drop and re-create.',
+      // eslint-disable-next-line no-template-curly-in-string -- `${NAME}` is a shell expansion in the emitted script
+      'if docker ps -a --format "{{.Names}}" | grep -q "^${NAME}$"; then',
+      '  echo "Removing existing container $NAME …"',
+      '  docker rm -f "$NAME" >/dev/null',
+      'fi',
+      '',
+      'exec docker run -d --name "$NAME" \\',
+      `  -v "$CONFIG_DIR":${containerConfigDir} \\`,
+      // Data dir is always mounted at the in-container path the YAML
+      // refers to (sibling to the config). In the default case
+      // ($DATA_DIR == $CONFIG_DIR/data) this overlaps the config mount;
+      // Docker handles the nested mount fine. In the override case
+      // (PRYV_DATA_DIR=/some/other/host/path) the in-container view
+      // still resolves to the YAML's data paths.
+      `  -v "$DATA_DIR":${containerDataDir} \\`,
+      `  ${dockerPorts.join(' ')} \\`,
+      '  "$IMAGE" \\',
+      `  node bin/master.js --config ${absConfigPath}`,
+      ''
+    ].join('\n');
+    fs.writeFileSync(runScriptPath, runScript, { mode: 0o755 });
+    wroteRunScript = true;
+    console.log(`✓ Wrote ${runScriptPath}`);
+  }
+
+  // ── check-config.sh launcher ─────────────────────────────────
+  // Same overwrite policy as run-pryv.sh: unconditional create on a
+  // fresh install, asks before overwriting an existing one.
+  const checkScriptPath = path.join(configDir, 'check-config.sh');
+  let wroteCheckScript = false;
+  let shouldWriteCheckScript = true;
+  if (fs.existsSync(checkScriptPath)) {
+    shouldWriteCheckScript = await askYesNo(`${checkScriptPath} already exists — overwrite it?`, false);
+    if (!shouldWriteCheckScript) {
+      console.log(`  ✓ Kept existing ${checkScriptPath}`);
+    }
+  }
+  if (shouldWriteCheckScript) {
+    const checkScript = [
+      '#!/bin/sh',
+      '# Auto-generated by `pryvio/open-pryv.io init`.',
+      '# Validates the sibling pryv-config.yml without booting the server.',
+      '# Exit 0 = required-at-boot checks passed. Exit 1 = at least one',
+      '# problem (printed).',
+      '#',
+      '# Overrides:',
+
+      '#   PRYV_IMAGE     docker image tag (default: pryvio/open-pryv.io:2.0.0-rc.1)',
+      'set -e',
+      '',
+      'CONFIG_DIR="$(cd "$(dirname "$0")" && pwd)"',
+      `CONFIG_FILE="$CONFIG_DIR/${configFileName}"`,
+      // eslint-disable-next-line no-template-curly-in-string
+      'IMAGE="${PRYV_IMAGE:-pryvio/open-pryv.io:2.0.0-rc.1}"',
+      '',
+      'exec docker run --rm \\',
+      `  -v "$CONFIG_DIR":${configDir} \\`,
+      '  "$IMAGE" \\',
+      `  check-config ${absConfigPath}`,
+      ''
+    ].join('\n');
+    fs.writeFileSync(checkScriptPath, checkScript, { mode: 0o755 });
+    wroteCheckScript = true;
+    console.log(`✓ Wrote ${checkScriptPath}`);
   }
 
   // ── NEXT STEPS ────────────────────────────────────────────────
@@ -648,20 +995,32 @@ async function main () {
     }
     console.log();
   }
+  // The hint paths below quote the launcher RELATIVELY (./foo.sh) — the
+  // operator runs the wizard from inside the install dir (the same dir
+  // they bind-mounted to /app/pryv), so `./` resolves on their host the
+  // same way `<configDir>/` resolves in-container.
   console.log('Verify the config with check-config:');
-  console.log(`  docker run --rm -v ${configDir}:/app/config \\`);
-  console.log(`    pryvio/open-pryv.io check-config ${absConfigPath}`);
+  if (wroteCheckScript) {
+    console.log('  ./check-config.sh');
+  } else {
+    // Fallback when the operator declined to overwrite. Use `$(pwd)` on
+    // the LHS so the snippet works as-pasted from any cwd on the host
+    // (assuming they're in the install dir).
+    console.log('  docker run --rm \\');
+    console.log(`    -v "$(pwd)":${configDir} \\`);
+    console.log('    pryvio/open-pryv.io \\');
+    console.log(`    check-config ${absConfigPath}`);
+  }
   console.log();
   console.log('Start the server:');
   if (wroteRunScript) {
-    console.log(`  ${runScriptPath}`);
+    console.log('  ./run-pryv.sh');
     console.log('    (override host data dir with: PRYV_DATA_DIR=/host/path ./run-pryv.sh)');
   } else {
     console.log('  docker run -d --name pryvio \\');
-    console.log(`    -v ${configDir}:${configDir} \\`);
-    console.log(`    -v ${dataFolder}:/app/data \\`);
+    console.log(`    -v "$(pwd)":${configDir} \\`);
+    console.log(`    -v "$(pwd)/data":${dataFolder} \\`);
     console.log(`    ${dockerPorts.join(' ')} \\`);
-    console.log('    -e PRYV_DATADIR=/app/data \\');
     console.log('    pryvio/open-pryv.io:2.0.0-rc.1 \\');
     console.log(`    node bin/master.js --config ${absConfigPath}`);
   }

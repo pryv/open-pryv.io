@@ -106,13 +106,41 @@ function ensure ({ config, deriveHostnames: deriveHostnamesFn, log = (_: any) =>
   if (!keyFile || !certFile) {
     return { written: false, reason: 'ssl-paths-not-configured' };
   }
-  if (fs.existsSync(keyFile) && fs.existsSync(certFile)) {
-    // Real cert already on disk (previous ACME issuance survived restart).
-    return { written: false, reason: 'cert-files-already-exist' };
-  }
-
   const derive = deriveHostnamesFn || require('./deriveHostnames.ts').deriveHostnames;
   const { commonName, altNames } = derive(config);
+
+  // Restore branch: check the materialized layout FIRST, before any
+  // existence check on the configured ssl paths. The bug we're closing
+  // (B-2026-06-03 RC.1 blocker): on every container restart, the
+  // worker-config paths (`http.ssl.*`) may still hold a stale placeholder
+  // from a previous boot's selfSignedPlaceholder.ensure() (which was
+  // never overwritten by the in-memory hot-swap — that only mutates
+  // SecureContext, not on-disk files). If the FileMaterializer has a
+  // real LE cert at `<tlsDir>/<hostnameDir>/{fullchain,privkey}.pem`,
+  // copy it over the worker paths so workers fork up with the real
+  // cert immediately.
+  const { hostnameToDirName } = require('./certUtils.ts');
+  const tlsDir = config.get('letsEncrypt:tlsDir') || 'var-pryv/tls';
+  const materializedDir = path.join(tlsDir, hostnameToDirName(commonName));
+  const materializedCert = path.join(materializedDir, 'fullchain.pem');
+  const materializedKey = path.join(materializedDir, 'privkey.pem');
+  if (fs.existsSync(materializedCert) && fs.existsSync(materializedKey)) {
+    fs.mkdirSync(path.dirname(keyFile), { recursive: true });
+    fs.mkdirSync(path.dirname(certFile), { recursive: true });
+    fs.copyFileSync(materializedCert, certFile);
+    fs.copyFileSync(materializedKey, keyFile);
+    fs.chmodSync(certFile, 0o644);
+    fs.chmodSync(keyFile, 0o600);
+    log(`[acme] restored materialized LE cert for ${commonName} from ${materializedCert} -> ${certFile} (skipping self-signed placeholder; rotation IPC will still fanout on next ACME tick if cert changes)`);
+    return { written: false, restored: true, reason: 'materialized-cert-restored', keyFile, certFile, source: materializedCert };
+  }
+
+  if (fs.existsSync(keyFile) && fs.existsSync(certFile)) {
+    // SSL paths populated but no materialized cert — most likely an
+    // operator-managed cert (custom TLS strategy or hand-renewed LE).
+    // Leave it alone.
+    return { written: false, reason: 'cert-files-already-exist' };
+  }
 
   const { keyPem, certPem } = generate({ commonName, altNames });
 

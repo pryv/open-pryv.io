@@ -28,30 +28,36 @@ YAML config files, loaded in order (last wins):
 
 ### Quickest path: `docker run … init` (interactive wizard)
 
-For a fresh single-core install, the docker image ships an interactive wizard that produces a complete `override-config.yml` from prompts (DNS topology, storage engine, secrets, TLS strategy, app-web-auth3 URL, …) and validates the host environment before writing.
+For a fresh single-core install, the docker image ships an interactive wizard that produces a complete `pryv-config.yml` from prompts (DNS topology, storage engine, secrets, TLS strategy, app-web-auth3 URL, …) and validates the host environment before writing.
+
+Pick (or create) the host directory where you want your install to live, `cd` into it, and run:
 
 ```bash
-mkdir -p /host/pryv
+mkdir -p /opt/pryv && cd /opt/pryv
 docker run -it --rm \
-  -v /host/pryv:/etc/pryv \
-  pryvio/open-pryv.io \
-  init /etc/pryv/override-config.yml
+  -v "$(pwd):/app/pryv" \
+  pryvio/open-pryv.io:2.0.0-rc.1 init
 ```
 
-The mount **target** (right of the `:`) must not be `/app/config` — that directory is owned by the image and holds the bundled config plugins (`systemStreams`, `paths-config`, …); a directory mount over it would mask them and master.js would refuse to boot. `/etc/pryv` is the conventional non-conflicting choice; any path you control is fine.
+After the wizard finishes, `$PWD` contains `pryv-config.yml` + `run-pryv.sh` + a `data/` folder for user data. Start the server with `./run-pryv.sh`.
+
+The mount **target** (right of the `:`) must not be `/app/config` — that directory is owned by the image and holds the bundled config plugins (`systemStreams`, `paths-config`, …); a directory mount over it would mask them and master.js would refuse to boot. `/app/pryv` is the conventional non-conflicting choice and is hardcoded in the wizard; no path argument is needed.
 
 The wizard:
+- Auto-discovers the host path from `/proc/self/mountinfo` so the generated `run-pryv.sh` carries the operator's real on-disk path. No env-var override needed in the common case.
 - Prompts for ~15 deployment-specific choices; defaults are pre-filled and accepted with enter.
+- Auto-derives the user-data folder to `<pwd>/data` (sibling to the config). No prompt.
+- Pins `letsEncrypt.tlsDir: <pwd>/data/tls` so the ACME-issued cert lives on the same operator-mounted volume as the workers' `http.ssl.{certFile,keyFile}` paths — survives container restarts cleanly.
 - Generates random secrets (`auth.adminAccessKey`, `auth.filesReadTokenSecret`, `letsEncrypt.atRestKey`) — *back these up before discarding the container output, losing them locks you out of audit + cert decryption*.
 - For `dnsLess: false` (multi-core / subdomain-per-user), prints a host pre-flight block with the commands to free UDP/53 on the host (disable `systemd-resolved` on Ubuntu 24+ / Fedora / modern Debian).
-- Refuses to overwrite an existing config — move the file aside to re-run.
-- Offers to write a sibling `run-pryv.sh` launcher that pins the image, mounts the config + data folders, and publishes the right ports for the configuration you chose:
+- Refuses to overwrite an existing `pryv-config.yml` — move the file aside to re-run.
+- Writes a sibling `run-pryv.sh` launcher that pins the image, self-locates via `cd "$(dirname "$0")" && pwd`, mounts config + data, and publishes the right ports for the configuration you chose:
 
 ```bash
-# Sibling to override-config.yml. Self-locating.
-/host/pryv/config/run-pryv.sh
+# Inside the install dir created above:
+./run-pryv.sh
 # Override the host data dir if you want it elsewhere:
-PRYV_DATA_DIR=/srv/pryv/data /host/pryv/config/run-pryv.sh
+PRYV_DATA_DIR=/srv/pryv/data ./run-pryv.sh
 ```
 
 If you prefer hand-crafting the YAML (or already have one), skip to **Minimal production config** below. The wizard's output matches that shape exactly.
@@ -62,9 +68,9 @@ If you prefer hand-crafting the YAML (or already have one), skip to **Minimal pr
 
 ```bash
 docker run --rm \
-  -v /host/pryv:/etc/pryv \
-  pryvio/open-pryv.io \
-  check-config /etc/pryv/override-config.yml
+  -v "$(pwd):/app/pryv" \
+  pryvio/open-pryv.io:2.0.0-rc.1 \
+  check-config /app/pryv/pryv-config.yml
 ```
 
 Exit 0 = all required-at-boot checks passed. Exit 1 = at least one problem (printed). Warnings (e.g. missing `access.defaultAuthUrl`) print but don't fail.
@@ -373,7 +379,7 @@ docker run \
   -e NODE_ENV=production \
   -e PRYV_DATADIR=/app/data \
   -p 3000:3000 \
-  pryvio/open-pryv.io
+  pryvio/open-pryv.io:2.0.0-rc.1
 ```
 
 The default entrypoint dispatches on the first arg: no args boots `bin/master.js` (the normal server); `init <path>` runs the wizard; `check-config <path>` runs the validator; anything else passes through (e.g. `docker run pryvio/open-pryv.io node --version`).
@@ -387,7 +393,7 @@ docker run \
   ... \
   -p 443:443/tcp \
   -p 80:80/tcp \
-  pryvio/open-pryv.io
+  pryvio/open-pryv.io:2.0.0-rc.1
 ```
 
 The Dockerfile already declares `EXPOSE 80 443 3000 3001 4000 53/udp`; the
