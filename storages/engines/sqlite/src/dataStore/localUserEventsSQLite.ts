@@ -36,9 +36,13 @@ type Settings = { versioning?: { deletionMode?: string; forceKeepHistory?: boole
 type SystemStreams = { accountStreamIds?: string[] };
 type StoreQuery = unknown;
 type StoreOptions = unknown;
+type UserDbLike = Record<string, any>;
+type StorageFactory = { forUser: (userId: string) => Promise<UserDbLike> };
+type EventsFileStorageLike = Record<string, any>;
+
 type Store = {
-  storage: any; // UserBaseStorageDb factory — not yet modelled
-  eventsFileStorage: any; // EventFiles — not yet modelled
+  storage: StorageFactory;
+  eventsFileStorage: EventsFileStorageLike;
   settings: Settings;
   setIntegrityOnEvent: (event: Event) => void;
   accountStreamIds: string[];
@@ -56,7 +60,7 @@ const userEvents = ds.createUserEvents({
   keepHistory: null,
   setIntegrityOnEvent: null,
 
-  init (this: Store, storage: any, eventsFileStorage: any, settings: Settings, setIntegrityOnEventFn: (event: Event) => void, systemStreams: SystemStreams): void {
+  init (this: Store, storage: StorageFactory, eventsFileStorage: EventsFileStorageLike, settings: Settings, setIntegrityOnEventFn: (event: Event) => void, systemStreams: SystemStreams): void {
     this.storage = storage;
     this.eventsFileStorage = eventsFileStorage;
     this.settings = settings;
@@ -153,7 +157,7 @@ const userEvents = ds.createUserEvents({
     return await db.updateEvent(eventId, deletedEventContent);
   },
 
-  async _generateVersionIfNeeded (this: Store, db: any, eventId: string, originalEvent: Event | null = null, _transaction: unknown = null): Promise<void> {
+  async _generateVersionIfNeeded (this: Store, db: UserDbLike, eventId: string, originalEvent: Event | null = null, _transaction: unknown = null): Promise<void> {
     if (!this.keepHistory) return;
     let versionItem: Event;
     if (originalEvent != null) {
