@@ -23,6 +23,30 @@ const Profile = require('./Profile.ts').default;
  * worker-symmetric within a single core. For cross-core MFA flows (a future
  * need; not today) swap the backing for PlatformDB.
  */
+interface KvClientLike {
+  get: (key: string) => Promise<unknown>;
+  set: (key: string, value: unknown, opts?: { ttlMs?: number }) => Promise<void>;
+  delete: (key: string) => Promise<void>;
+  clear: () => Promise<void>;
+}
+
+interface SessionStoreOpts {
+  kvClient?: KvClientLike;
+  namespace?: string;
+}
+
+interface ProfileLike {
+  content?: Record<string, unknown>;
+  recoveryCodes?: string[];
+  [k: string]: unknown;
+}
+
+interface StoredSession {
+  id: string;
+  profile: { content: Record<string, unknown>; recoveryCodes: string[] };
+  context: unknown;
+}
+
 class SessionStore {
   /**
    * @param ttlSeconds - session lifetime in seconds (default 1800)
@@ -32,10 +56,10 @@ class SessionStore {
    * @param [opts.namespace='mfa-session/'] - key prefix in cluster_kv.
    */
   ttlMilliseconds: number;
-  kv: any;
+  kv: KvClientLike;
   namespace: string;
 
-  constructor (ttlSeconds = 1800, opts: any = {}) {
+  constructor (ttlSeconds = 1800, opts: SessionStoreOpts = {}) {
     this.ttlMilliseconds = ttlSeconds * 1000;
     const clusterKv = require('messages/src/cluster_kv.ts');
     this.kv = opts.kvClient || clusterKv.clientFor();
@@ -48,11 +72,11 @@ class SessionStore {
    * @param profile - the MFA profile (with content + recoveryCodes)
    * @param context - opaque per-flow context (e.g. the resolved user, login params)
    */
-  async create (profile: any, context: any) {
+  async create (profile: ProfileLike | null | undefined, context: unknown): Promise<string> {
     const id = uuidv4();
     // Profile is stored as a plain shape so it survives JSON round-trips
     // through the IPC channel; `get()` rehydrates the Profile class.
-    const stored = {
+    const stored: StoredSession = {
       id,
       profile: { content: profile?.content || {}, recoveryCodes: profile?.recoveryCodes || [] },
       context
@@ -61,12 +85,12 @@ class SessionStore {
     return id;
   }
 
-  async has (id: any) {
+  async has (id: string): Promise<boolean> {
     return (await this.kv.get(this.namespace + id)) != null;
   }
 
-  async get (id: any) {
-    const session = await this.kv.get(this.namespace + id);
+  async get (id: string): Promise<{ id: string; profile: InstanceType<typeof Profile>; context: unknown } | undefined> {
+    const session = await this.kv.get(this.namespace + id) as StoredSession | null | undefined;
     if (!session) return undefined;
     const profile = new Profile(
       session.profile?.content || {},
@@ -78,7 +102,7 @@ class SessionStore {
   /**
    * Clear a session immediately. Idempotent — safe to call on an unknown id.
    */
-  async clear (id: any) {
+  async clear (id: string): Promise<boolean> {
     const existed = (await this.kv.get(this.namespace + id)) != null;
     await this.kv.delete(this.namespace + id);
     return existed;
