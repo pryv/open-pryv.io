@@ -22,15 +22,18 @@ const logger = getLogger('mail-template-repository');
  * `templateExists` — in the merged module this probes PlatformDB-backed
  * template rows; in the standalone service-mail origin it probed disk.
  */
+type TemplateExistsFn = (mailType: string, language: string) => boolean | Promise<boolean>;
+type TemplateLike = { exists: () => Promise<boolean> };
+
 class TemplateRepository {
-  defaultLanguage: any;
-  templateExists: any;
-  constructor (defaultLanguage: any, templateExists: any) {
+  defaultLanguage: string;
+  templateExists: TemplateExistsFn;
+  constructor (defaultLanguage: string, templateExists: TemplateExistsFn) {
     this.defaultLanguage = defaultLanguage;
     this.templateExists = templateExists;
   }
 
-  async find (mailType: any, requestedLanguage: any) {
+  async find (mailType: string, requestedLanguage: string): Promise<TemplateLike> {
     const candidateLanguages = [requestedLanguage, this.defaultLanguage];
     for (const currentLanguage of candidateLanguages) {
       if (currentLanguage == null) continue;
@@ -41,8 +44,8 @@ class TemplateRepository {
     throw errors.unknownResource('No template found.');
   }
 
-  async produceTemplate (mailType: any, language: any) {
-    const template = new Template(mailType, language, this.templateExists);
+  async produceTemplate (mailType: string, language: string): Promise<TemplateLike | null> {
+    const template: TemplateLike = new Template(mailType, language, this.templateExists);
     if (!await template.exists()) return null;
     return template;
   }
