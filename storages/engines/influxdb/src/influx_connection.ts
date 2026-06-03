@@ -11,20 +11,59 @@ const require = createRequire(import.meta.url);
 const influx = require('influx');
 const { _internals } = require('./_internals.ts');
 
+interface InfluxPoint {
+  measurement?: string;
+  tags?: Record<string, string>;
+  fields?: Record<string, unknown>;
+  timestamp?: unknown;
+  [k: string]: unknown;
+}
+
+interface InfluxWriteOptions {
+  database?: string;
+  precision?: string;
+  [k: string]: unknown;
+}
+
+interface InfluxQueryOptions {
+  database?: string;
+  [k: string]: unknown;
+}
+
+type InfluxQueryRow = Record<string, unknown>;
+type InfluxQueryResult = InfluxQueryRow[];
+
+interface InfluxDbClient {
+  createDatabase: (name: string) => Promise<unknown>;
+  dropDatabase: (name: string) => Promise<void>;
+  writeMeasurement: (name: string, points: InfluxPoint[], options?: InfluxWriteOptions) => Promise<void>;
+  dropMeasurement: (name: string, dbName: string) => Promise<void>;
+  writePoints: (points: InfluxPoint[], options?: InfluxWriteOptions) => Promise<void>;
+  query: (query: string, options?: InfluxQueryOptions) => Promise<InfluxQueryResult>;
+  getDatabaseNames: () => Promise<string[]>;
+}
+
+interface Logger {
+  debug: (...args: unknown[]) => void;
+  info: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+}
+
 /**
  * Connection to the influx database. Adds error handling and logging on top
  * of our database driver.
  */
 class InfluxConnection {
-  conn: any;
-  logger: any;
+  conn: InfluxDbClient;
+  logger: Logger;
 
-  constructor (connectionSettings: Record<string, any>) {
+  constructor (connectionSettings: Record<string, unknown>) {
     this.conn = new influx.InfluxDB(connectionSettings);
     this.logger = _internals.lazyLogger('influx');
   }
 
-  createDatabase (name: string): Promise<any> {
+  createDatabase (name: string): Promise<unknown> {
     this.logger.debug(`Creating database ${name}.`);
     return this.conn.createDatabase(name);
   }
@@ -34,7 +73,7 @@ class InfluxConnection {
     return this.conn.dropDatabase(name);
   }
 
-  writeMeasurement (name: string, points: any[], options?: any): Promise<void> {
+  writeMeasurement (name: string, points: InfluxPoint[], options?: InfluxWriteOptions): Promise<void> {
     this.logger.debug(`Write -> ${name}: ${points.length} points.`);
     return this.conn.writeMeasurement(name, points, options);
   }
@@ -44,12 +83,12 @@ class InfluxConnection {
     return this.conn.dropMeasurement(name, dbName);
   }
 
-  writePoints (points: any[], options?: any): Promise<void> {
+  writePoints (points: InfluxPoint[], options?: InfluxWriteOptions): Promise<void> {
     this.logger.debug(`Write -> (multiple): ${points.length} points.`);
     return this.conn.writePoints(points, options);
   }
 
-  query (query: string, options?: any): Promise<any> {
+  query (query: string, options?: InfluxQueryOptions): Promise<InfluxQueryResult> {
     const singleLine = query.replace(/\s+/g, ' ');
     this.logger.debug(`Query: ${singleLine}`);
     return this.conn.query(query, options);
@@ -65,11 +104,11 @@ class InfluxConnection {
   /**
    * Export all measurements and their points from the given database.
    */
-  async exportDatabase (name: string): Promise<{ measurements: Array<{ measurement: string, points: any[] }> }> {
+  async exportDatabase (name: string): Promise<{ measurements: Array<{ measurement: string, points: InfluxQueryRow[] }> }> {
     const measurementRows = await this.conn.query('SHOW MEASUREMENTS', { database: name });
-    const measurements: Array<{ measurement: string, points: any[] }> = [];
+    const measurements: Array<{ measurement: string, points: InfluxQueryRow[] }> = [];
     for (const row of measurementRows) {
-      const measurementName = row.name;
+      const measurementName = row.name as string;
       const points = await this.conn.query(`SELECT * FROM "${measurementName}"`, { database: name });
       measurements.push({ measurement: measurementName, points });
     }
@@ -80,12 +119,12 @@ class InfluxConnection {
    * Import measurements and their points into the given database.
    * Creates the database if it does not exist.
    */
-  async importDatabase (name: string, data: { measurements: Array<{ measurement: string, points: any[] }> }): Promise<void> {
+  async importDatabase (name: string, data: { measurements: Array<{ measurement: string, points: InfluxQueryRow[] }> }): Promise<void> {
     await this.createDatabase(name);
     for (const { measurement, points } of data.measurements) {
       if (points.length === 0) continue;
-      const writePoints = points.map((p: Record<string, any>) => {
-        const fields: Record<string, any> = {};
+      const writePoints = points.map((p: InfluxQueryRow) => {
+        const fields: Record<string, unknown> = {};
         const tags: Record<string, string> = {};
         for (const [key, value] of Object.entries(p)) {
           if (key === 'time') continue;
