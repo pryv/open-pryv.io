@@ -5,20 +5,29 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { MethodContext } from 'business/src/MethodContext.ts';
+import type { MethodNext } from './_types.ts';
 const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 const { ready } = require('@pryv/boiler');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
-export default function (api: any) {
+
+type ServiceInfo = {
+  features: { noHF?: boolean } & Record<string, unknown>;
+  version?: string;
+  [key: string]: unknown;
+};
+
+export default function (api: { register: (...args: unknown[]) => void }) {
   api.register('service.info', getServiceInfo);
-  async function getServiceInfo (context: any, params: any, result: any, next: any) {
+  async function getServiceInfo (context: MethodContext, params: Record<string, unknown>, result: Record<string, unknown>, next: MethodNext) {
     // Read live from config every call so config mutations after boot
     // (e.g. the `public-url.js` plugin rewriting URLs when `dns.domain`
     // changes, or admin APIs updating `service.*`) are picked up without
     // a process restart. The earlier cache-on-first-call behaviour also
     // leaked service state across tests sharing a single api-server.
     const config = await ready();
-    const serviceInfo: any = Object.assign({}, config.get('service') || {});
+    const serviceInfo: ServiceInfo = Object.assign({}, config.get('service') || {});
     // Auto-derive `features.noHF` from cluster.hfsWorkers. lib-js's
     // `Service.supportsHF()` (and any other SDK following the same
     // contract) reads `features.noHF: true` to short-circuit HF-series

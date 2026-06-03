@@ -17,8 +17,8 @@ const { ready } = require('@pryv/boiler');
 //  and store it forever. This (init and memoise) is the next best thing.
 // Memoised copy of the current project version.
 let version = 'n/a';
-let serial: any = null;
-let config: any = null;
+let serial: string | null = null;
+let config: { get: (key: string) => unknown } | null = null;
 /**
  *
  * If no parameter is provided, loads the configuration. Otherwise takes the provided loaded settings.
@@ -37,12 +37,12 @@ export const loadSettings = async function () {
  *
  * @param result {Object} Current result. MODIFIED IN PLACE.
  */
-export const setCommonMeta = function (result: any) {
+export const setCommonMeta = function (result: { meta?: Record<string, unknown> }) {
   if (result.meta == null) {
     result.meta = {};
   }
   if (serial == null && config != null) {
-    serial = config.get('service:serial');
+    serial = config.get('service:serial') as string;
   }
   Object.assign(result.meta, {
     apiVersion: version,
