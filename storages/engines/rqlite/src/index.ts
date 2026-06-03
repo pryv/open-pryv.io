@@ -11,13 +11,18 @@ const require = createRequire(import.meta.url);
 const { DBrqlite } = require('./DBrqlite.ts');
 const { buildMigrationsCapability } = require('./SchemaMigrations.ts');
 
-let platformDB: any = null;
-let _getLogger: ((name: string) => any) | null = null;
+type PlatformDB = InstanceType<typeof DBrqlite>;
+type Logger = unknown;
+type GetLoggerFn = (name: string) => Logger;
+type MigrationsCapability = unknown;
+
+let platformDB: PlatformDB | null = null;
+let _getLogger: GetLoggerFn | null = null;
 
 /**
  * Initialize the rqlite engine.
  */
-function init (config: { url?: string }, getLogger?: (name: string) => any): void {
+function init (config: { url?: string }, getLogger?: GetLoggerFn): void {
   platformDB = new DBrqlite(config.url);
   if (getLogger) _getLogger = getLogger;
 }
@@ -25,7 +30,7 @@ function init (config: { url?: string }, getLogger?: (name: string) => any): voi
 /**
  * Create and return the PlatformDB instance.
  */
-function createPlatformDB (): any {
+function createPlatformDB (): PlatformDB {
   if (!platformDB) {
     platformDB = new DBrqlite();
   }
@@ -36,7 +41,7 @@ function createPlatformDB (): any {
  * Build the migrations capability for the engine-agnostic MigrationRunner.
  * Returns null when the engine hasn't been initialized yet.
  */
-function getMigrationsCapability (): any | null {
+function getMigrationsCapability (): MigrationsCapability | null {
   if (!platformDB) return null;
   return buildMigrationsCapability(platformDB, _getLogger);
 }
