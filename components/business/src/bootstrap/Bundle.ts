@@ -65,7 +65,31 @@ const REQUIRED_RQLITE = ['raftPort', 'httpPort'];
  * @param [input.rqlite.raftPort=4002]
  * @param [input.rqlite.httpPort=4001]
  */
-function assemble (input: any) {
+type AssembleInput = {
+  cluster: { domain: string; ackUrl: string; joinToken: string; caCertPem: string };
+  node: { id: string; ip?: string | null; hosting?: string | null; url?: string | null; certPem: string; keyPem: string };
+  platformSecrets: {
+    auth: { adminAccessKey: string; filesReadTokenSecret: string };
+    letsEncrypt?: { atRestKey?: string };
+  };
+  rqlite?: { raftPort?: number; httpPort?: number };
+};
+
+type PlatformSecretsAssembled = {
+  auth: { adminAccessKey: string; filesReadTokenSecret: string };
+  letsEncrypt?: { atRestKey: string };
+};
+
+type BundleShape = {
+  version: number;
+  issuedAt: string;
+  cluster: { domain: string; ackUrl: string; joinToken: string; ca: { certPem: string } };
+  node: { id: string; ip: string | null; hosting: string | null; url: string | null; certPem: string; keyPem: string };
+  platformSecrets: PlatformSecretsAssembled;
+  rqlite: { raftPort: number; httpPort: number };
+};
+
+function assemble (input: AssembleInput): BundleShape {
   if (!input || typeof input !== 'object') {
     throw new Error('Bundle.assemble: input is required');
   }
@@ -76,7 +100,7 @@ function assemble (input: any) {
   requireAll(input.platformSecrets.auth, ['adminAccessKey', 'filesReadTokenSecret'], 'platformSecrets.auth');
 
   const rqlite = input.rqlite || {};
-  const platformSecrets: any = {
+  const platformSecrets: PlatformSecretsAssembled = {
     auth: {
       adminAccessKey: input.platformSecrets.auth.adminAccessKey,
       filesReadTokenSecret: input.platformSecrets.auth.filesReadTokenSecret
@@ -117,10 +141,11 @@ function assemble (input: any) {
  * Throws descriptive Errors on failure.
  *
  */
-function validate (bundle: any) {
-  if (!bundle || typeof bundle !== 'object') {
+function validate (bundleIn: unknown): BundleShape {
+  if (!bundleIn || typeof bundleIn !== 'object') {
     throw new Error('Bundle.validate: not an object');
   }
+  const bundle = bundleIn as BundleShape;
   requireAll(bundle, REQUIRED_TOP_LEVEL, 'bundle');
   if (!Number.isInteger(bundle.version) || bundle.version < 1 || bundle.version > BUNDLE_VERSION) {
     throw new Error(`Bundle.validate: unsupported version ${bundle.version} (this binary understands versions 1..${BUNDLE_VERSION})`);
@@ -153,12 +178,13 @@ function validate (bundle: any) {
   return bundle;
 }
 
-function requireAll (obj: any, keys: any, context: any) {
+function requireAll (obj: unknown, keys: readonly string[], context: string): void {
   if (!obj || typeof obj !== 'object') {
     throw new Error(`Bundle.validate: ${context} is not an object`);
   }
+  const rec = obj as Record<string, unknown>;
   for (const k of keys) {
-    if (obj[k] == null) {
+    if (rec[k] == null) {
       throw new Error(`Bundle.validate: ${context}.${k} is required`);
     }
   }
