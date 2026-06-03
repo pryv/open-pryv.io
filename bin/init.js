@@ -399,11 +399,17 @@ async function main () {
     console.log();
   }
 
+  // We surface problems but never refuse to write. An operator who hand-
+  // edits the generated YAML afterwards can re-validate it with
+  // `check-config <path>` — that's exactly what that subcommand is for.
+  // Refusing the write would force the operator to restart the wizard
+  // from scratch just to fix a typo in a single field.
   if (problems.length > 0) {
     console.log();
-    console.log('Refusing to write — fix the problems above and re-run init.');
-    rl.close();
-    process.exit(1);
+    console.log('Config will be written despite the problems above — edit the YAML to fix');
+    console.log('them, then re-validate with `check-config`:');
+    console.log(`    docker run --rm -v ${configDir}:/app/config \\`);
+    console.log(`      pryvio/open-pryv.io check-config ${absConfigPath}`);
   }
 
   console.log();
