@@ -31,35 +31,43 @@ import type {} from 'node:fs';
  *                                   cron-like work).
  */
 
-let activeProvider: any = null; // {id, setTransactionName, recordError, recordCustomEvent, startBackgroundTransaction}
+interface ObservabilityProvider {
+  id: string;
+  setTransactionName: (name: string) => void;
+  recordError: (err: unknown, attrs?: Record<string, unknown>) => void;
+  recordCustomEvent: (type: string, attrs?: Record<string, unknown>) => void;
+  startBackgroundTransaction: <T> (name: string, fn: () => T | Promise<T>) => T | Promise<T>;
+}
 
-function init (provider: any) {
+let activeProvider: ObservabilityProvider | null = null;
+
+function init (provider: ObservabilityProvider): void {
   if (activeProvider) {
     throw new Error('observability.init: a provider is already attached (' + activeProvider.id + ')');
   }
   activeProvider = provider;
 }
 
-function isActive () {
+function isActive (): boolean {
   return activeProvider !== null;
 }
 
-function setTransactionName (name: any) {
+function setTransactionName (name: string): void {
   if (!activeProvider) return;
   try { activeProvider.setTransactionName(name); } catch { /* never let obs break a request */ }
 }
 
-function recordError (err: any, attrs: any) {
+function recordError (err: unknown, attrs?: Record<string, unknown>): void {
   if (!activeProvider) return;
   try { activeProvider.recordError(err, attrs); } catch { /* idem */ }
 }
 
-function recordCustomEvent (type: any, attrs: any) {
+function recordCustomEvent (type: string, attrs?: Record<string, unknown>): void {
   if (!activeProvider) return;
   try { activeProvider.recordCustomEvent(type, attrs); } catch { /* idem */ }
 }
 
-async function startBackgroundTransaction (name: any, fn: any) {
+async function startBackgroundTransaction<T> (name: string, fn: () => T | Promise<T>): Promise<T> {
   if (!activeProvider) return fn();
   try {
     return await activeProvider.startBackgroundTransaction(name, fn);
