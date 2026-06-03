@@ -12,18 +12,70 @@ const { Pool } = require('pg');
 const { setTimeout } = require('timers/promises');
 const { _internals } = require('./_internals.ts');
 
+interface PgClient {
+  query: (text: string, params?: unknown[]) => Promise<PgQueryResult>;
+  release: () => void;
+}
+
+interface PgPool {
+  query: (text: string, params?: unknown[]) => Promise<PgQueryResult>;
+  connect: () => Promise<PgClient>;
+  on: (event: string, handler: (err: Error) => void) => void;
+  end: () => Promise<void>;
+}
+
+interface PgQueryResult {
+  rows: Array<Record<string, unknown>>;
+  rowCount?: number | null;
+  [k: string]: unknown;
+}
+
+interface PgError extends Error {
+  code?: string;
+  constraint?: string;
+  isDuplicate?: boolean;
+  isDuplicateIndex?: (key: string) => boolean;
+}
+
+interface PgSettings {
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  password?: string;
+  max?: number;
+}
+
+interface PoolConfig {
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  password: string | undefined;
+  max: number;
+  idleTimeoutMillis: number;
+  connectionTimeoutMillis: number;
+}
+
+interface Logger {
+  debug: (...args: unknown[]) => void;
+  info: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+}
+
 /**
  * PostgreSQL connection wrapper with pooling.
  */
 class DatabasePG {
-  pool: any;
-  poolConfig: any;
+  pool: PgPool | null;
+  poolConfig: PoolConfig;
   connected: boolean;
-  logger: any;
+  logger: Logger;
   _connectingPromise: Promise<void> | null;
   _schemaReady: boolean;
 
-  constructor (settings: any) {
+  constructor (settings: PgSettings) {
     this.logger = _internals.getLogger('database-pg');
     this.poolConfig = {
       host: settings.host,
@@ -62,12 +114,12 @@ class DatabasePG {
 
     if (!this.pool) {
       this.pool = new Pool(this.poolConfig);
-      this.pool.on('error', (err: any) => {
+      this.pool!.on('error', (err: Error) => {
         this.logger.error('Unexpected PG pool error', err);
       });
     }
 
-    const client = await this.pool.connect();
+    const client = await this.pool!.connect();
     try {
       await client.query('SELECT 1');
       this.logger.debug(`Connected to PostgreSQL at ${this.poolConfig.host}:${this.poolConfig.port}/${this.poolConfig.database}`);
@@ -96,24 +148,24 @@ class DatabasePG {
   /**
    * Execute a parameterised query.
    */
-  async query (text: string, params?: any[]): Promise<any> {
+  async query (text: string, params?: unknown[]): Promise<PgQueryResult> {
     await this.ensureConnect();
     this.logger.debug('Query:', text.replace(/\s+/g, ' ').trim());
-    return this.pool.query(text, params);
+    return this.pool!.query(text, params);
   }
 
   /**
    * Get a client from the pool for use in transactions.
    */
-  async getClient (): Promise<any> {
+  async getClient (): Promise<PgClient> {
     await this.ensureConnect();
-    return this.pool.connect();
+    return this.pool!.connect();
   }
 
   /**
    * Run a function inside a transaction.
    */
-  async withTransaction<T> (fn: (client: any) => Promise<T>): Promise<T> {
+  async withTransaction<T> (fn: (client: PgClient) => Promise<T>): Promise<T> {
     const client = await this.getClient();
     try {
       await client.query('BEGIN');
@@ -141,7 +193,7 @@ class DatabasePG {
    */
   async _initSchemaOnce (): Promise<void> {
     if (this._schemaReady) return;
-    await this.pool.query(SCHEMA_SQL);
+    await this.pool!.query(SCHEMA_SQL);
     this._schemaReady = true;
     this.logger.info('PostgreSQL schema initialized');
   }
@@ -162,14 +214,14 @@ class DatabasePG {
   /**
    * Check whether a PG error is a unique-constraint violation.
    */
-  static isDuplicateError (err: any): boolean {
-    return err && err.code === '23505';
+  static isDuplicateError (err: PgError | null | undefined): boolean {
+    return !!(err && err.code === '23505');
   }
 
   /**
    * Attach duplicate-error helpers to a PG error.
    */
-  static handleDuplicateError (err: any): void {
+  static handleDuplicateError (err: PgError): void {
     err.isDuplicate = DatabasePG.isDuplicateError(err);
     err.isDuplicateIndex = (key: string): boolean => {
       if (!err.isDuplicate) return false;
