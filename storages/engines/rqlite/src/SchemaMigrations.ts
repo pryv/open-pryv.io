@@ -26,10 +26,15 @@ const __dirname = dirname(__filename);
 
 const KEY = 'migrations/version';
 
-class SchemaMigrationsRqlite {
-  db: any;
+type RqliteDbLike = {
+  query: (sql: string, params?: unknown[]) => Promise<Array<{ value: string }>>;
+  execute: (sql: string, params?: unknown[]) => Promise<unknown>;
+};
 
-  constructor (db: any) {
+class SchemaMigrationsRqlite {
+  db: RqliteDbLike;
+
+  constructor (db: RqliteDbLike) {
     this.db = db;
   }
 
@@ -66,7 +71,7 @@ const noopLogger = { debug () {}, info () {}, warn () {}, error () {} };
 /**
  * Build the capability object the MigrationRunner consumes.
  */
-function buildMigrationsCapability (db: any, getLogger?: (name: string) => any): any {
+function buildMigrationsCapability (db: RqliteDbLike, getLogger?: (name: string) => unknown): unknown {
   const path = require('path');
   if (!db) throw new Error('rqlite engine: db argument required to build migrations capability');
   const store = new SchemaMigrationsRqlite(db);
