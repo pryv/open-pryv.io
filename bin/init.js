@@ -493,8 +493,11 @@ async function main () {
         '',
         'CONFIG_DIR="$(cd "$(dirname "$0")" && pwd)"',
         `CONFIG_FILE="$CONFIG_DIR/${configFileName}"`,
+        // eslint-disable-next-line no-template-curly-in-string -- shell-variable expansions in the emitted script body
         'DATA_DIR="${PRYV_DATA_DIR:-$CONFIG_DIR/../data}"',
+        // eslint-disable-next-line no-template-curly-in-string
         'IMAGE="${PRYV_IMAGE:-pryvio/open-pryv.io:2.0.0-rc.1}"',
+        // eslint-disable-next-line no-template-curly-in-string
         'NAME="${PRYV_NAME:-pryvio}"',
         '',
         'mkdir -p "$DATA_DIR"',
@@ -536,12 +539,12 @@ async function main () {
     console.log(`  ${runScriptPath}`);
     console.log('    (override host data dir with: PRYV_DATA_DIR=/host/path ./run-pryv.sh)');
   } else {
-    console.log(`  docker run -d --name pryvio \\`);
+    console.log('  docker run -d --name pryvio \\');
     console.log(`    -v ${configDir}:/app/config \\`);
     console.log(`    -v ${dataFolder}:/app/data \\`);
     console.log(`    ${dockerPorts.join(' ')} \\`);
-    console.log(`    -e PRYV_DATADIR=/app/data \\`);
-    console.log(`    pryvio/open-pryv.io:2.0.0-rc.1 \\`);
+    console.log('    -e PRYV_DATADIR=/app/data \\');
+    console.log('    pryvio/open-pryv.io:2.0.0-rc.1 \\');
     console.log(`    node bin/master.js --config ${absConfigPath}`);
   }
   console.log();
