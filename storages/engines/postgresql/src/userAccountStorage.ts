@@ -12,11 +12,34 @@ const timestamp = require('unix-timestamp');
 const { _internals } = require('./_internals.ts');
 const encryption = require('utils').encryption;
 
-let db: any;
+interface PgQueryResult {
+  rows: Array<Record<string, unknown>>;
+}
 
-const userAccountStorage = _internals.createUserAccountStorage({
+interface PgDb {
+  ensureConnect: () => Promise<void>;
+  query: (sql: string, params?: unknown[]) => Promise<PgQueryResult>;
+}
+
+interface PasswordExport { time: number; hash: string; createdBy: string }
+interface StoreKVExport { storeId: string; key: string; value: unknown }
+interface AccountFieldExport { field: string; value: unknown; time: number; createdBy: string }
+interface ImportData {
+  passwords?: Array<{ time: number; hash: string; createdBy?: string; created_by?: string }>;
+  storeKeyValues?: Array<{ storeId?: string; store_id?: string; key: string; value: unknown }>;
+  accountFields?: Array<{ field: string; value: unknown; time: number; createdBy?: string; created_by?: string }>;
+}
+interface UserExport {
+  passwords: PasswordExport[];
+  storeKeyValues: StoreKVExport[];
+  accountFields: AccountFieldExport[];
+}
+
+let db: PgDb;
+
+const userAccountStorage = (_internals.createUserAccountStorage as (impl: unknown) => unknown)({
   async init (): Promise<void> {
-    db = _internals.databasePG;
+    db = _internals.databasePG as PgDb;
     await db.ensureConnect();
   },
 
@@ -25,7 +48,7 @@ const userAccountStorage = _internals.createUserAccountStorage({
       'SELECT hash FROM passwords WHERE user_id = $1 ORDER BY time DESC LIMIT 1',
       [userId]
     );
-    return res.rows.length > 0 ? res.rows[0].hash : undefined;
+    return res.rows.length > 0 ? (res.rows[0].hash as string) : undefined;
   },
 
   async addPasswordHash (userId: string, passwordHash: string, createdBy: string, time?: number): Promise<{ time: number, hash: string, createdBy: string }> {
@@ -45,7 +68,7 @@ const userAccountStorage = _internals.createUserAccountStorage({
     if (res.rows.length === 0) {
       throw new Error(`No password found in database for user id "${userId}"`);
     }
-    return res.rows[0].time;
+    return res.rows[0].time as number;
   },
 
   async passwordExistsInHistory (userId: string, password: string, historyLength: number): Promise<boolean> {
@@ -71,19 +94,19 @@ const userAccountStorage = _internals.createUserAccountStorage({
 
   // -- Account fields --
 
-  async getAccountFields (userId: string): Promise<Record<string, any>> {
+  async getAccountFields (userId: string): Promise<Record<string, unknown>> {
     const res = await db.query(
       'SELECT DISTINCT ON (field) field, value FROM account_fields WHERE user_id = $1 ORDER BY field, time DESC',
       [userId]
     );
-    const fields: Record<string, any> = {};
+    const fields: Record<string, unknown> = {};
     for (const row of res.rows) {
-      fields[row.field] = row.value;
+      fields[row.field as string] = row.value;
     }
     return fields;
   },
 
-  async getAccountField (userId: string, field: string): Promise<any | null> {
+  async getAccountField (userId: string, field: string): Promise<unknown | null> {
     const res = await db.query(
       'SELECT value FROM account_fields WHERE user_id = $1 AND field = $2 ORDER BY time DESC LIMIT 1',
       [userId, field]
@@ -91,7 +114,7 @@ const userAccountStorage = _internals.createUserAccountStorage({
     return res.rows.length > 0 ? res.rows[0].value : null;
   },
 
-  async setAccountField (userId: string, field: string, value: any, createdBy: string, time?: number): Promise<any> {
+  async setAccountField (userId: string, field: string, value: unknown, createdBy: string, time?: number): Promise<{ field: string; value: unknown; time: number; createdBy: string }> {
     const t = time || timestamp.now();
     await db.query(
       'INSERT INTO account_fields (user_id, field, value, time, created_by) VALUES ($1, $2, $3, $4, $5)',
@@ -100,18 +123,18 @@ const userAccountStorage = _internals.createUserAccountStorage({
     return { field, value, time: t, createdBy };
   },
 
-  async getAccountFieldHistory (userId: string, field: string, limit?: number): Promise<any[]> {
+  async getAccountFieldHistory (userId: string, field: string, limit?: number): Promise<Array<{ value: unknown; time: number; createdBy: string }>> {
     let sql = 'SELECT value, time, created_by FROM account_fields WHERE user_id = $1 AND field = $2 ORDER BY time DESC';
-    const params: any[] = [userId, field];
+    const params: unknown[] = [userId, field];
     if (limit != null) {
       sql += ' LIMIT $3';
       params.push(limit);
     }
     const res = await db.query(sql, params);
-    return res.rows.map((r: any) => ({
+    return res.rows.map((r: Record<string, unknown>) => ({
       value: r.value,
-      time: r.time,
-      createdBy: r.created_by
+      time: r.time as number,
+      createdBy: r.created_by as string
     }));
   },
 
@@ -124,7 +147,7 @@ const userAccountStorage = _internals.createUserAccountStorage({
 
   // -- Migration methods --
 
-  async _exportAll (userId: string): Promise<any> {
+  async _exportAll (userId: string): Promise<UserExport> {
     const passwords = await db.query(
       'SELECT time, hash, created_by FROM passwords WHERE user_id = $1 ORDER BY time',
       [userId]
@@ -138,26 +161,26 @@ const userAccountStorage = _internals.createUserAccountStorage({
       [userId]
     );
     return {
-      passwords: passwords.rows.map((r: any) => ({
-        time: r.time,
-        hash: r.hash,
-        createdBy: r.created_by
+      passwords: passwords.rows.map((r: Record<string, unknown>) => ({
+        time: r.time as number,
+        hash: r.hash as string,
+        createdBy: r.created_by as string
       })),
-      storeKeyValues: storeData.rows.map((r: any) => ({
-        storeId: r.store_id,
-        key: r.key,
+      storeKeyValues: storeData.rows.map((r: Record<string, unknown>) => ({
+        storeId: r.store_id as string,
+        key: r.key as string,
         value: r.value
       })),
-      accountFields: accountFieldsData.rows.map((r: any) => ({
-        field: r.field,
+      accountFields: accountFieldsData.rows.map((r: Record<string, unknown>) => ({
+        field: r.field as string,
         value: r.value,
-        time: r.time,
-        createdBy: r.created_by
+        time: r.time as number,
+        createdBy: r.created_by as string
       }))
     };
   },
 
-  async _importAll (userId: string, data: any): Promise<void> {
+  async _importAll (userId: string, data: ImportData): Promise<void> {
     if (data.passwords) {
       for (const p of data.passwords) {
         await db.query(
@@ -201,19 +224,19 @@ class StoreKeyValueData {
     this.storeId = storeId;
   }
 
-  async getAll (userId: string): Promise<Record<string, any>> {
+  async getAll (userId: string): Promise<Record<string, unknown>> {
     const res = await db.query(
       'SELECT key, value FROM store_key_values WHERE user_id = $1 AND store_id = $2',
       [userId, this.storeId]
     );
-    const result: Record<string, any> = {};
+    const result: Record<string, unknown> = {};
     for (const row of res.rows) {
-      result[row.key] = row.value;
+      result[row.key as string] = row.value;
     }
     return result;
   }
 
-  async get (userId: string, key: string): Promise<any | null> {
+  async get (userId: string, key: string): Promise<unknown | null> {
     const res = await db.query(
       'SELECT value FROM store_key_values WHERE user_id = $1 AND store_id = $2 AND key = $3',
       [userId, this.storeId, key]
@@ -221,7 +244,7 @@ class StoreKeyValueData {
     return res.rows.length > 0 ? res.rows[0].value : null;
   }
 
-  async set (userId: string, key: string, value: any): Promise<void> {
+  async set (userId: string, key: string, value: unknown): Promise<void> {
     if (value === null || value === undefined) {
       await db.query(
         'DELETE FROM store_key_values WHERE user_id = $1 AND store_id = $2 AND key = $3',
