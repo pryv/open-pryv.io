@@ -18,21 +18,30 @@ const { getMall } = require('mall');
 // more and together make up the configuration of the system.
 //
 
+type SeriesRepository = unknown;
+type MetadataCacheLike = unknown;
+type MetadataUpdaterLike = { start?: () => void; [k: string]: unknown };
+type TypeRepoLike = { tryUpdate: (url: string) => void; [k: string]: unknown };
+type TracerSpan = { end?: () => void; [k: string]: unknown };
+type TracerLike = { startSpan: (name: string, opts?: Record<string, unknown>) => TracerSpan };
+type ConfigLike = { get: (key: string) => unknown; [k: string]: unknown };
+type InfluxConnection = unknown;
+
 class Context {
-  series;
+  series: SeriesRepository;
 
-  metadata: any;
+  metadata?: MetadataCacheLike;
 
-  metadataUpdater;
+  metadataUpdater: MetadataUpdaterLike;
 
   // Application level performance and error tracing:
 
-  tracer;
+  tracer: TracerLike;
 
-  typeRepository: any;
+  typeRepository!: TypeRepoLike;
 
-  config;
-  constructor (influxConn: any, tracer: any, typeRepoUpdateUrl: any, config: any) {
+  config: ConfigLike;
+  constructor (influxConn: InfluxConnection, tracer: TracerLike, typeRepoUpdateUrl: string, config: ConfigLike) {
     this.series = new business.series.Repository(influxConn);
     this.metadataUpdater = new MetadataForgetter(getLogger('metadata.update'));
     this.tracer = tracer;
@@ -40,17 +49,17 @@ class Context {
     this.configureTypeRepository(typeRepoUpdateUrl);
   }
 
-  async init () {
+  async init (): Promise<void> {
     await this.configureMetadataCache();
   }
 
-  configureTypeRepository (url: any) {
-    const typeRepo = new business.types.TypeRepository();
+  configureTypeRepository (url: string): void {
+    const typeRepo: TypeRepoLike = new business.types.TypeRepository();
     typeRepo.tryUpdate(url); // async
     this.typeRepository = typeRepo;
   }
 
-  async configureMetadataCache () {
+  async configureMetadataCache (): Promise<void> {
     const mall = await getMall();
     const metadataLoader = new MetadataLoader();
     await metadataLoader.init(mall, getLogger('metadata-cache'));
@@ -59,15 +68,15 @@ class Context {
 
   // Starts the in-process metadata updater.
   //
-  startMetadataUpdater () {
-    const updater = new MetadataUpdater();
-    updater.start();
+  startMetadataUpdater (): void {
+    const updater: MetadataUpdaterLike = new MetadataUpdater();
+    updater.start!();
     this.metadataUpdater = updater;
   }
 
   // Starts a child span below the request span.
   //
-  childSpan (name: any, opts: any) {
+  childSpan (name: string, opts?: Record<string, unknown>): TracerSpan {
     const tracer = this.tracer;
     const rootSpan = cls.getRootSpan();
     const spanOpts = Object.assign({}, { childOf: rootSpan }, opts);
@@ -79,5 +88,3 @@ class Context {
 }
 export default Context;
 export { Context };
-
-type Repository = any; // was business.series.Repository (JSDoc namespace)
