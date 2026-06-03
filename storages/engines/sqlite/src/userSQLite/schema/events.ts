@@ -5,7 +5,20 @@
  * Refer to LICENSE file
  */
 
-const schema: any = {
+type SchemaCol = { type: string; index?: boolean; coerce: 'txt' | 'num' | 'bool' };
+type DbSchemaMap = Record<string, SchemaCol>;
+type Schema = {
+  dbSchema: DbSchemaMap;
+  ALL_EVENTS_TAG: string;
+  toDB: (event: Event) => DbEvent;
+  fromDB: (dbEvent: DbEvent) => Event;
+  fromDBHistory: (event: DbEvent) => Event;
+  coerceValueForColumn: (column: string, value: unknown) => unknown;
+};
+type Event = { id?: string; streamIds?: string[]; time?: number; endTime?: number | null; deleted?: number | null; integrity?: string | null; headId?: string | null; type?: string; content?: unknown; description?: string; created?: number; clientData?: unknown; attachments?: unknown; trashed?: boolean; createdBy?: string; modifiedBy?: string; modified?: number; [k: string]: unknown };
+type DbEvent = { eventid?: string; streamIds?: string | string[]; trashed?: number | boolean; content?: string | null; attachments?: string | null; clientData?: string | null; [k: string]: unknown };
+
+const schema: Schema = {
   dbSchema: {
     eventid: { type: 'TEXT UNIQUE', index: true, coerce: 'txt' },
     headId: { type: 'TEXT DEFAULT NULL', coerce: 'txt' },
@@ -36,8 +49,8 @@ const schema: any = {
 
 const IDS_SEPARATOR = ' ';
 
-function toDB (event: any): any {
-  const dbEvent: any = {};
+function toDB (event: Event): DbEvent {
+  const dbEvent: DbEvent = {};
   dbEvent.eventid = event.id;
 
   if (event.streamIds == null) {
@@ -70,20 +83,20 @@ function toDB (event: any): any {
   return dbEvent;
 }
 
-function nullIfUndefined (value: any): any {
+function nullIfUndefined<T> (value: T | undefined): T | null {
   return (typeof value !== 'undefined') ? value : null;
 }
 
-function nullOrJSON (value: any): string | null {
+function nullOrJSON (value: unknown): string | null {
   if (typeof value === 'undefined' || value === null) return null;
   return JSON.stringify(value);
 }
 
-function fromDB (dbEvent: any): any {
+function fromDB (dbEvent: DbEvent): Event {
   if (dbEvent.streamIds != null) {
-    dbEvent.streamIds = dbEvent.streamIds.split(IDS_SEPARATOR);
-    dbEvent.streamIds.pop(); // pop removes the last element which is set on all events ALL_EVENTS_TAG
-    if (dbEvent.streamIds.length === 0) delete dbEvent.streamIds; // it was a "deleted" event
+    dbEvent.streamIds = (dbEvent.streamIds as string).split(IDS_SEPARATOR);
+    (dbEvent.streamIds as string[]).pop(); // pop removes the last element which is set on all events ALL_EVENTS_TAG
+    if ((dbEvent.streamIds as string[]).length === 0) delete dbEvent.streamIds; // it was a "deleted" event
   }
 
   dbEvent.id = dbEvent.eventid;
@@ -96,15 +109,15 @@ function fromDB (dbEvent: any): any {
   }
 
   if (dbEvent.content != null) {
-    dbEvent.content = JSON.parse(dbEvent.content);
+    dbEvent.content = JSON.parse(dbEvent.content as string);
   }
 
   if (dbEvent.attachments != null) {
-    dbEvent.attachments = JSON.parse(dbEvent.attachments);
+    dbEvent.attachments = JSON.parse(dbEvent.attachments as string);
   }
 
   if (dbEvent.clientData != null) {
-    dbEvent.clientData = JSON.parse(dbEvent.clientData);
+    dbEvent.clientData = JSON.parse(dbEvent.clientData as string);
   }
 
   for (const key of Object.keys(dbEvent)) {
@@ -112,12 +125,12 @@ function fromDB (dbEvent: any): any {
     if (key !== 'endTime' && dbEvent[key] == null) delete dbEvent[key];
   }
 
-  return dbEvent;
+  return dbEvent as Event;
 }
 
-function fromDBHistory (event: any): any {
-  event = fromDB(event);
-  event.id = event.headId;
+function fromDBHistory (dbEvent: DbEvent): Event {
+  const event = fromDB(dbEvent);
+  event.id = event.headId ?? undefined;
   delete event.headId;
   return event;
 }
@@ -128,14 +141,14 @@ function fromDBHistory (event: any): any {
  * - Check that numbers are numbers
  * Does not handle "null" values
  */
-function coerceValueForColumn (column: string, value: any): any {
+function coerceValueForColumn (column: string, value: unknown): unknown {
   return coerceFns[schema.dbSchema[column].coerce as keyof typeof coerceFns](value);
 }
 
 const coerceFns = {
-  txt: (value: any) => { return "'" + (value + '').replaceAll("'", "\\'") + "'"; },
-  num: (value: any) => { return (typeof value === 'number') ? value : parseFloat(value); },
-  bool: (value: any) => { return value ? 1 : 0; }
+  txt: (value: unknown) => { return "'" + (value + '').replaceAll("'", "\\'") + "'"; },
+  num: (value: unknown) => { return (typeof value === 'number') ? value : parseFloat(value as string); },
+  bool: (value: unknown) => { return value ? 1 : 0; }
 };
 
 const dbSchema = schema.dbSchema;
