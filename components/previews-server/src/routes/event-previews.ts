@@ -35,7 +35,11 @@ const StandardDimensionsLength = StandardDimensions.length;
  * Routes for retrieving preview images for events.
  *
  */
-type ExpressApp = { all: (path: string, ...handlers: unknown[]) => unknown; get: (path: string, handler: (req: any, res: any, next: any) => unknown) => unknown; post: (path: string, handler: (req: any, res: any, next: any) => unknown) => unknown };
+type RouteHandler = (req: PryvRequest, res: ResponseLike, next: NextFn) => unknown;
+type ExpressApp = { all: (path: string, ...handlers: unknown[]) => unknown; get: (path: string, handler: RouteHandler) => unknown; post: (path: string, handler: RouteHandler) => unknown };
+type PryvRequest = Record<string, any>;
+type ResponseLike = Record<string, any>;
+type NextFn = (err?: unknown) => void;
 type EventLike = { type: string; modified: number; streamIds: string[]; attachments?: Array<{ id: string; width?: number; height?: number }>; [k: string]: unknown };
 type ImageError = Error & { message: string };
 type Size = { width: number; height: number };
@@ -47,7 +51,7 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
   // SERVING PREVIEWS
   expressApp.all('/*', getAuth);
   expressApp.all('/:username/events/*', initContextMiddleware, loadAccessMiddleware);
-  expressApp.get('/:username/events/:id:extension(.jpg|.jpeg|)', async function (req: any, res: any, next: any): Promise<void> {
+  expressApp.get('/:username/events/:id:extension(.jpg|.jpeg|)', async function (req: PryvRequest, res: ResponseLike, next: NextFn): Promise<void> {
     let originalSize, previewPath;
     let cached = false;
     const context = req.context;
@@ -178,7 +182,7 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
   const logger = getLogger('previews-cache'); let workerRunning = false;
   expressApp.post('/clean-up-cache', cleanUpCache);
   expressApp.post('/:username/clean-up-cache', cleanUpCache);
-  function cleanUpCache (req: any, res: any, next: any) {
+  function cleanUpCache (req: PryvRequest, res: ResponseLike, next: NextFn) {
     if (workerRunning) {
       return res.status(200).json({ message: 'Clean-up already in progress.' });
     }
