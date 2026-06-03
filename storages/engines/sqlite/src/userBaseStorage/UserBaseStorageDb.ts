@@ -37,10 +37,17 @@ const VERSION = '1.0.0';
  *   CREATE INDEX … ON <name>(deleted) WHEN withDeleted
  *   CREATE INDEX … ON <name>(head_id) WHEN withHeadId
  */
+type SqliteDb = { prepare: (sql: string) => { run: (...args: unknown[]) => unknown; get: (...args: unknown[]) => unknown; all: (...args: unknown[]) => unknown[] }; close: () => void; [k: string]: unknown };
+type UserDbLRU = {
+  get: (key: string) => UserBaseStorageDb | undefined;
+  set: (key: string, value: UserBaseStorageDb) => void;
+  delete: (key: string) => void;
+};
+
 class UserBaseStorageDb {
-  static cache: any = new LRU({
+  static cache: UserDbLRU = new LRU({
     max: CACHE_SIZE,
-    dispose (db: any, _key: any) { db.close(); }
+    dispose (db: UserBaseStorageDb, _key: string) { db.db?.close(); }
   });
 
   static async forUser (userId: string): Promise<UserBaseStorageDb> {
@@ -58,7 +65,7 @@ class UserBaseStorageDb {
     UserBaseStorageDb.cache.delete(userId);
   }
 
-  db: any;
+  db!: SqliteDb;
   dbPath: string;
   knownTables: Set<string> = new Set();
 
@@ -98,7 +105,7 @@ class UserBaseStorageDb {
   close (): void {
     if (this.db) {
       this.db.close();
-      this.db = null;
+      this.db = null as unknown as SqliteDb;
     }
   }
 }
