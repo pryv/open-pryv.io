@@ -11,13 +11,15 @@ const Series = require('./series.ts').default;
 const NamespaceBatch = require('./namespace_batch.ts').default;
 /** Repository of all series in this Pryv instance.
  */
+type ConnectionLike = { createDatabase: (name: string) => Promise<void> | void; [k: string]: unknown };
+
 class Repository {
-  connection;
+  connection: ConnectionLike;
   /** Constructs a series repository based on a connection to InfluxDB.
    *
    * @param influxConnection {InfluxDB} handle to the database instance
    */
-  constructor (influxConnection: any) {
+  constructor (influxConnection: ConnectionLike) {
     this.connection = influxConnection;
   }
 
@@ -34,7 +36,7 @@ class Repository {
    * @param {string} name
    * @returns {Promise<any>}
    */
-  async get (namespace: any, name: any) {
+  async get (namespace: string, name: string) {
     // Make sure that the database exists:
     await this.connection.createDatabase(namespace);
     return new Series(this.connection, namespace, name);
@@ -49,7 +51,7 @@ class Repository {
   //    // ... as many times as you like
   //    await batch.store();
   //
-  async makeBatch (namespace: any) {
+  async makeBatch (namespace: string) {
     // Make sure that the database exists:
     await this.connection.createDatabase(namespace);
     return new NamespaceBatch(this.connection, namespace);

@@ -19,24 +19,24 @@ const { randomUUID: uuidv4 } = require('node:crypto');
  */
 class Profile {
   /** @type {Object} */
-  content: any;
+  content: Record<string, unknown>;
   /** @type {string[]} */
-  recoveryCodes: any;
+  recoveryCodes: string[];
 
-  constructor (content: any = {}, recoveryCodes: any = []) {
+  constructor (content: Record<string, unknown> = {}, recoveryCodes: string[] = []) {
     this.content = content;
     this.recoveryCodes = recoveryCodes;
   }
 
-  isActive () {
+  isActive (): boolean {
     return Object.keys(this.content).length > 0;
   }
 
-  generateRecoveryCodes () {
+  generateRecoveryCodes (): void {
     this.recoveryCodes = Array.from({ length: 10 }, () => uuidv4());
   }
 
-  getRecoveryCodes () {
+  getRecoveryCodes (): string[] {
     return this.recoveryCodes;
   }
 }

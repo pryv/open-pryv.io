@@ -13,8 +13,13 @@ const Service = require('./Service.ts').default;
  * external SMS provider. The provider generates and validates the code itself
  * — service-core never sees it.
  */
+type MfaSmsEndpoint = { url: string; method: string; headers: Record<string, unknown>; body: Record<string, unknown> | string };
+type MfaConfig = { sms: { endpoints: { challenge: MfaSmsEndpoint; verify: MfaSmsEndpoint }; [k: string]: unknown }; [k: string]: unknown };
+type ProfileLike = { content: Record<string, unknown> };
+type ClientRequestLike = { body?: Record<string, unknown>; [k: string]: unknown };
+
 class ChallengeVerifyService extends Service {
-  constructor (mfaConfig: any) {
+  constructor (mfaConfig: MfaConfig) {
     super(mfaConfig);
     const eps = mfaConfig.sms.endpoints;
     this.challengeUrl = eps.challenge.url;
@@ -27,7 +32,7 @@ class ChallengeVerifyService extends Service {
     this.verifyBody = eps.verify.body;
   }
 
-  async challenge (_username: any, profile: any, _clientRequest: any) {
+  async challenge (_username: string, profile: ProfileLike, _clientRequest: ClientRequestLike) {
     const replacements = profile.content;
     let url = this.challengeUrl;
     let headers = this.challengeHeaders;
@@ -40,7 +45,7 @@ class ChallengeVerifyService extends Service {
     await this._makeRequest(this.challengeMethod, url, headers, body);
   }
 
-  async verify (_username: any, profile: any, clientRequest: any) {
+  async verify (_username: string, profile: ProfileLike, clientRequest: ClientRequestLike) {
     // Verify-time replacements include both the persisted profile content and
     // whatever the client sent in the verify request body (typically `code`).
     const replacements = Object.assign({}, clientRequest.body, profile.content);
