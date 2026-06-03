@@ -29,7 +29,7 @@ function pick<T extends object> (obj: T, keys: readonly string[]): Record<string
 class User {
   // User properties that exists by default (email could not exist with specific config)
 
-  id: string = '';
+  id!: string;
 
   username: string;
 
@@ -52,7 +52,7 @@ class User {
   uniqueAccountFields: string[] = [];
   [k: string]: unknown;
   constructor (params: UserParams) {
-    this.username = params.username ?? '';
+    this.username = params.username as string;
     buildAccountFields(this);
     loadAccountData(this, params);
     if (params.events != null) { this.events = buildAccountDataFromListOfEvents(this, params.events); }
