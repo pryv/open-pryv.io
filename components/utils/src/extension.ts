@@ -17,11 +17,13 @@ const fs = require('fs');
 // example of an extension.
 //
 
-class Extension {
-  path;
-  fn;
+type ExtensionFunction = (...args: unknown[]) => unknown;
 
-  constructor (path: any, fn: any) {
+class Extension {
+  path: string;
+  fn: ExtensionFunction;
+
+  constructor (path: string, fn: ExtensionFunction) {
     this.path = path;
     this.fn = fn;
   }
@@ -32,16 +34,16 @@ class Extension {
 //
 
 class ExtensionLoader {
-  defaultFolder;
+  defaultFolder: string;
 
-  constructor (defaultFolder: any) {
+  constructor (defaultFolder: string) {
     this.defaultFolder = defaultFolder;
   }
 
   // Tries loading the extension identified by name. This will try to load from
   // below `defaultFolder` first, by appending '.js' to `name`.
   //
-  load (name: any) {
+  load (name: string): Extension | null {
     // not explicitly specified —> try to load from default folder
     const defaultModulePath = path.join(this.defaultFolder, name + '.js');
     // If default location doesn't contain a module, give up.
@@ -52,16 +54,15 @@ class ExtensionLoader {
 
   // Tries loading an extension from path. Throws an error if not successful.
   //
-  loadFrom (path: any) {
+  loadFrom (path: string): Extension {
     try {
       const fn = require(path);
       if (typeof fn !== 'function') { throw new Error(`Not a function (${typeof fn})`); }
       return new Extension(path, fn);
-    } catch (err: any) {
-      throw new Error(`Cannot load function module @'${path}': ${err.message}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Cannot load function module @'${path}': ${message}`);
     }
   }
 }
 export { ExtensionLoader, Extension };
-
-type ExtensionFunction = () => void;
