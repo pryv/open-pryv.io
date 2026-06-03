@@ -29,10 +29,12 @@ const __dirname = dirname(__filename);
 
 const { _internals } = require('./_internals.ts');
 
-class SchemaMigrationsPG {
-  db: any;
+type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<{ v?: number }> }> };
 
-  constructor (db: any) {
+class SchemaMigrationsPG {
+  db: PgDbLike;
+
+  constructor (db: PgDbLike) {
     this.db = db;
   }
 
@@ -75,7 +77,7 @@ class SchemaMigrationsPG {
 /**
  * Build the capability object the MigrationRunner consumes.
  */
-function buildMigrationsCapability (): any {
+function buildMigrationsCapability (): unknown {
   const path = require('path');
   const db = _internals.databasePG;
   if (!db) throw new Error('PostgreSQL engine: databasePG not registered — cannot build migrations capability');
