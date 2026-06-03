@@ -18,14 +18,14 @@
  * - storeKeyValueData: key-value store for plugin metadata
  */
 
-const registry: any = {};
+const registry: Record<string, unknown> = {};
 
 /**
  * Register a host capability that plugins can request.
  * @param name - Capability name (e.g. 'userLocalDirectory')
  * @param value - The capability (function, object, etc.)
  */
-function register (name: any, value: any) {
+function register (name: string, value: unknown): void {
   if (typeof name !== 'string' || !name) {
     throw new Error('Internal name must be a non-empty string');
   }
@@ -37,8 +37,8 @@ function register (name: any, value: any) {
  * @param requiredInternals - Names from manifest.requiredInternals
  * @param engineName - Engine name (for error messages)
  */
-function resolve (requiredInternals: any, engineName: any) {
-  const result: any = {};
+function resolve (requiredInternals: string[] | undefined, engineName: string): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
   if (!requiredInternals) return result;
 
   for (const name of requiredInternals) {
@@ -53,14 +53,14 @@ function resolve (requiredInternals: any, engineName: any) {
 /**
  * Get all registered internals (for debugging).
  */
-function listRegistered () {
+function listRegistered (): string[] {
   return Object.keys(registry);
 }
 
 /**
  * Clear all registered internals (for testing).
  */
-function clearAll () {
+function clearAll (): void {
   for (const key of Object.keys(registry)) {
     delete registry[key];
   }
@@ -69,7 +69,7 @@ function clearAll () {
 /**
  * Check if a given internal is registered.
  */
-function isRegistered (name: any) {
+function isRegistered (name: string): boolean {
   return name in registry;
 }
 
