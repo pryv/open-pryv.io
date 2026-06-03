@@ -45,6 +45,19 @@ const STORE_VERSION = 1;
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24 h
 const RAW_TOKEN_BYTES = 32;
 
+interface TokenEntry {
+  coreId: string;
+  issuedAt: number;
+  expiresAt: number;
+  consumedAt: number | null;
+  consumerIp: string | null;
+}
+
+interface StoreData {
+  version: number;
+  tokens: Record<string, TokenEntry>;
+}
+
 class TokenStore {
   /**
    * @param opts.path - absolute path to the JSON file backing the store.
@@ -63,14 +76,14 @@ class TokenStore {
    * @param [opts.ttlMs=24h]
    * @param [opts.now=Date.now()] - injectable for testing
    */
-  mint ({ coreId, ttlMs = DEFAULT_TTL_MS, now = Date.now() }: any) {
+  mint ({ coreId, ttlMs = DEFAULT_TTL_MS, now = Date.now() }: { coreId: string; ttlMs?: number; now?: number }) {
     if (!coreId) throw new Error('TokenStore.mint: coreId is required');
     if (!(Number.isInteger(ttlMs) && ttlMs > 0)) {
       throw new Error('TokenStore.mint: ttlMs must be a positive integer');
     }
     const raw = crypto.randomBytes(RAW_TOKEN_BYTES).toString('base64url');
     const hash = sha256(raw);
-    const entry = {
+    const entry: TokenEntry = {
       coreId,
       issuedAt: now,
       expiresAt: now + ttlMs,
@@ -90,7 +103,7 @@ class TokenStore {
    * @param [opts]
    * @param [opts.now=Date.now()]
    */
-  verify (rawToken: any, { now = Date.now() } = {}) {
+  verify (rawToken: string, { now = Date.now() }: { now?: number } = {}) {
     if (typeof rawToken !== 'string' || rawToken.length === 0) {
       return { ok: false, reason: 'invalid-format' };
     }
@@ -111,7 +124,7 @@ class TokenStore {
    * @param [opts.consumerIp=null] - recorded for audit
    * @param [opts.now=Date.now()]
    */
-  consume (rawToken: any, { consumerIp = null, now = Date.now() } = {}) {
+  consume (rawToken: string, { consumerIp = null, now = Date.now() }: { consumerIp?: string | null; now?: number } = {}) {
     if (typeof rawToken !== 'string' || rawToken.length === 0) {
       return { ok: false, reason: 'invalid-format' };
     }
@@ -134,9 +147,8 @@ class TokenStore {
    * @param [opts]
    * @param [opts.now=Date.now()]
    */
-  listActive ({ now = Date.now() } = {}) {
-    type Entry = { coreId: string, issuedAt: number, expiresAt: number, consumedAt: number | null };
-    const store: { tokens: Record<string, Entry> } = this._load();
+  listActive ({ now = Date.now() }: { now?: number } = {}) {
+    const store: StoreData = this._load();
     return Object.values(store.tokens)
       .filter(e => e.consumedAt == null && e.expiresAt > now)
       .map(({ coreId, issuedAt, expiresAt }) => ({ coreId, issuedAt, expiresAt }));
@@ -147,7 +159,7 @@ class TokenStore {
    * tokens revoked.
    *
    */
-  revokeByCoreId (coreId: any) {
+  revokeByCoreId (coreId: string) {
     if (!coreId) throw new Error('TokenStore.revokeByCoreId: coreId is required');
     const store = this._load();
     let count = 0;
@@ -171,7 +183,7 @@ class TokenStore {
    * @param [opts.retainMs=7 days] - how long to keep consumed/expired entries for audit
    * @param [opts.now=Date.now()]
    */
-  purge ({ retainMs = 7 * 24 * 60 * 60 * 1000, now = Date.now() } = {}) {
+  purge ({ retainMs = 7 * 24 * 60 * 60 * 1000, now = Date.now() }: { retainMs?: number; now?: number } = {}) {
     const store = this._load();
     let count = 0;
     for (const hash of Object.keys(store.tokens)) {
@@ -188,14 +200,15 @@ class TokenStore {
 
   // --- private helpers ---
 
-  _load () {
+  _load (): StoreData {
     if (!fs.existsSync(this.path)) {
       return { version: STORE_VERSION, tokens: {} };
     }
     const raw = fs.readFileSync(this.path, 'utf8');
-    let parsed;
-    try { parsed = JSON.parse(raw); } catch (err: any) {
-      throw new Error(`TokenStore: cannot parse ${this.path}: ${err.message}`);
+    let parsed: StoreData;
+    try { parsed = JSON.parse(raw); } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`TokenStore: cannot parse ${this.path}: ${message}`);
     }
     if (parsed.version !== STORE_VERSION) {
       throw new Error(`TokenStore: unsupported version ${parsed.version} (expected ${STORE_VERSION})`);
@@ -206,7 +219,7 @@ class TokenStore {
     return parsed;
   }
 
-  _save (store: any) {
+  _save (store: StoreData) {
     fs.mkdirSync(path.dirname(this.path), { recursive: true });
     const tmp = this.path + '.tmp-' + process.pid + '-' + Date.now();
     fs.writeFileSync(tmp, JSON.stringify(store, null, 2), { mode: 0o600 });
@@ -214,7 +227,7 @@ class TokenStore {
   }
 }
 
-function sha256 (s: any) {
+function sha256 (s: string): string {
   return crypto.createHash('sha256').update(s).digest('hex');
 }
 
