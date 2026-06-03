@@ -14,15 +14,18 @@ const require = createRequire(import.meta.url);
  * single {type, language} template; presence is probed via the injected
  * `templateExists` function (disk in service-mail, PlatformDB here).
  */
+type TemplateExistsFn = (path: string) => boolean | Promise<boolean>;
+type SendOpLike = { sendMail: (root: string) => Promise<unknown> };
+
 class Template {
   root: string;
-  templateExists: any;
-  constructor (mailType: any, language: any, templateExists: any) {
+  templateExists: TemplateExistsFn;
+  constructor (mailType: string, language: string, templateExists: TemplateExistsFn) {
     this.root = [mailType, language].join('/');
     this.templateExists = templateExists;
   }
 
-  async exists () {
+  async exists (): Promise<boolean> {
     const parts = ['subject.pug', 'html.pug'];
     for (const part of parts) {
       if (!await this.templateExists(this.templatePath(part))) return false;
@@ -30,11 +33,11 @@ class Template {
     return true;
   }
 
-  async executeSend (sendOp: any) {
+  async executeSend (sendOp: SendOpLike): Promise<unknown> {
     return await sendOp.sendMail(this.root);
   }
 
-  templatePath (part: any) {
+  templatePath (part: string): string {
     return [this.root, part].join('/');
   }
 }
