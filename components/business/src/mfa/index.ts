@@ -23,6 +23,14 @@ const SingleService = require('./SingleService.ts').default;
 const SessionStore = require('./SessionStore.ts').default;
 const generateCode = require('./generateCode.ts').default;
 
+type MFAConfig = {
+  mode?: 'disabled' | 'challenge-verify' | 'single' | string;
+  sessions?: { ttlSeconds?: number };
+  [k: string]: unknown;
+};
+type MFAServiceLike = unknown; // Service implementation — opaque from the façade's POV
+type MFASessionStoreLike = { clearAll: () => Promise<void>; [k: string]: unknown };
+
 /**
  * Build the MFA service implementation matching `mfaConfig.mode`.
  * Returns null when MFA is disabled — callers should treat that as
@@ -30,7 +38,7 @@ const generateCode = require('./generateCode.ts').default;
  *
  * @param mfaConfig - the `services.mfa` config block
  */
-function createMFAService (mfaConfig: any) {
+function createMFAService (mfaConfig: MFAConfig | null | undefined): MFAServiceLike | null {
   if (!mfaConfig || mfaConfig.mode == null || mfaConfig.mode === 'disabled') return null;
   if (mfaConfig.mode === 'challenge-verify') return new ChallengeVerifyService(mfaConfig);
   if (mfaConfig.mode === 'single') return new SingleService(mfaConfig);
@@ -43,8 +51,8 @@ function createMFAService (mfaConfig: any) {
 // storage is `cluster_kv` (master-held), so every worker in the cluster
 // sees the same MFA sessions. The earlier per-worker `Map` broke the
 // login → verify flow when polls round-robined across workers.
-let _mfaService: any = null;
-let _sessionStore: any = null;
+let _mfaService: MFAServiceLike | null = null;
+let _sessionStore: MFASessionStoreLike | null = null;
 
 /**
  * Get (or lazily build) the process-wide MFA service singleton from `services.mfa` config.
@@ -52,7 +60,7 @@ let _sessionStore: any = null;
  *
  * @param mfaConfig - `services.mfa` config block
  */
-function getMFAService (mfaConfig: any) {
+function getMFAService (mfaConfig: MFAConfig | null | undefined): MFAServiceLike | null {
   if (_mfaService === null) _mfaService = createMFAService(mfaConfig);
   return _mfaService;
 }
@@ -62,19 +70,19 @@ function getMFAService (mfaConfig: any) {
  *
  * @param mfaConfig - `services.mfa` config block (read sessions.ttlSeconds)
  */
-function getMFASessionStore (mfaConfig: any) {
+function getMFASessionStore (mfaConfig: MFAConfig | null | undefined): MFASessionStoreLike {
   if (_sessionStore === null) {
     const ttl = mfaConfig?.sessions?.ttlSeconds ?? 1800;
     _sessionStore = new SessionStore(ttl);
   }
-  return _sessionStore;
+  return _sessionStore!;
 }
 
 /**
  * Reset singletons — for tests only. Async because `clearAll()` now goes
  * through cluster_kv (master IPC).
  */
-async function _resetMFASingletons () {
+async function _resetMFASingletons (): Promise<void> {
   if (_sessionStore) {
     try { await _sessionStore.clearAll(); } catch (_) { /* may fail outside cluster — ignore */ }
   }
