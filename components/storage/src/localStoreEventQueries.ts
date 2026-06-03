@@ -18,11 +18,32 @@ const DELTA_TO_CONSIDER_IS_NOW = 5; // 5 seconds
 
 export { localStorePrepareOptions, localStorePrepareQuery };
 
+type StoreOptions = {
+  sortAscending?: boolean;
+  skip?: number | null;
+  limit?: number | null;
+};
+type StoreQuery = {
+  state?: 'default' | 'all' | 'trashed' | string;
+  modifiedSince?: number | null;
+  types?: string[];
+  streams?: unknown[];
+  fromTime?: number | null;
+  toTime?: number | null;
+  running?: boolean;
+};
+type LocalQueryItem = { type: string; content: unknown };
+type LocalOptions = {
+  sort: { time: 1 | -1 };
+  skip?: number | null;
+  limit?: number | null;
+};
+
 /**
  * Convert store API options params to local store options
  */
-function localStorePrepareOptions (options: any) {
-  const localOptions = {
+function localStorePrepareOptions (options: StoreOptions): LocalOptions {
+  const localOptions: LocalOptions = {
     sort: { time: options.sortAscending ? 1 : -1 },
     skip: options.skip,
     limit: options.limit
@@ -33,8 +54,8 @@ function localStorePrepareOptions (options: any) {
 /**
  * Convert store API query params to an array of queries
  */
-function localStorePrepareQuery (query: any) {
-  const localQuery: any[] = [];
+function localStorePrepareQuery (query: StoreQuery): LocalQueryItem[] {
+  const localQuery: LocalQueryItem[] = [];
   // trashed
   switch (query.state) {
     case 'trashed':
