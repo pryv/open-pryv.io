@@ -4,6 +4,11 @@ on:
   pull_request:
   push:
     branches: [master]
+    # Tag pushes trigger the same test+lint+typecheck jobs as master
+    # pushes so the release moment is gated by the same checks. The
+    # docker job below additionally requires `refs/tags/*` so it only
+    # publishes on tag pushes, never on master pushes.
+    tags: ['*']
 
 jobs:
   # PostgreSQL is the default baseStorage engine; SQLite is the
