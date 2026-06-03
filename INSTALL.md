@@ -26,6 +26,47 @@ YAML config files, loaded in order (last wins):
 3. `--config /path/to/override.yml`
 4. `--key:path=value` on command line
 
+### Quickest path: `docker run … init` (interactive wizard)
+
+For a fresh single-core install, the docker image ships an interactive wizard that produces a complete `override-config.yml` from prompts (DNS topology, storage engine, secrets, TLS strategy, app-web-auth3 URL, …) and validates the host environment before writing.
+
+```bash
+mkdir -p /host/pryv/config
+docker run -it --rm \
+  -v /host/pryv/config:/app/config \
+  pryvio/open-pryv.io \
+  init /app/config/override-config.yml
+```
+
+The wizard:
+- Prompts for ~15 deployment-specific choices; defaults are pre-filled and accepted with enter.
+- Generates random secrets (`auth.adminAccessKey`, `auth.filesReadTokenSecret`, `letsEncrypt.atRestKey`) — *back these up before discarding the container output, losing them locks you out of audit + cert decryption*.
+- For `dnsLess: false` (multi-core / subdomain-per-user), prints a host pre-flight block with the commands to free UDP/53 on the host (disable `systemd-resolved` on Ubuntu 24+ / Fedora / modern Debian).
+- Refuses to overwrite an existing config — move the file aside to re-run.
+- Offers to write a sibling `run-pryv.sh` launcher that pins the image, mounts the config + data folders, and publishes the right ports for the configuration you chose:
+
+```bash
+# Sibling to override-config.yml. Self-locating.
+/host/pryv/config/run-pryv.sh
+# Override the host data dir if you want it elsewhere:
+PRYV_DATA_DIR=/srv/pryv/data /host/pryv/config/run-pryv.sh
+```
+
+If you prefer hand-crafting the YAML (or already have one), skip to **Minimal production config** below. The wizard's output matches that shape exactly.
+
+### Validating an existing config
+
+`check-config` runs the same structural checks the wizard runs (REQUIRED service fields, REQUIRED_WHEN auth secrets, dnsLess vs dns.active, PG creds when applicable, etc.) against a config you already have, without booting. Useful for catching half-configured cases (e.g. `access.defaultAuthUrl` missing — would silently break SDK sign-in) before they hit production.
+
+```bash
+docker run --rm \
+  -v /host/pryv/config:/app/config \
+  pryvio/open-pryv.io \
+  check-config /app/config/override-config.yml
+```
+
+Exit 0 = all required-at-boot checks passed. Exit 1 = at least one problem (printed). Warnings (e.g. missing `access.defaultAuthUrl`) print but don't fail.
+
 ### Minimal production config
 
 ```yaml
@@ -320,6 +361,8 @@ The Dockerfile declares `VOLUME ["/app/var-pryv/rqlite-data"]` so this is the de
 
 ### Docker (plain)
 
+If you generated the config + launcher via the wizard (see **Configuration → Quickest path** above), just run the sibling `run-pryv.sh`. Otherwise, the manual form:
+
 ```bash
 docker run \
   -v /host/pryv/data:/app/data \
@@ -330,6 +373,8 @@ docker run \
   -p 3000:3000 \
   pryvio/open-pryv.io
 ```
+
+The default entrypoint dispatches on the first arg: no args boots `bin/master.js` (the normal server); `init <path>` runs the wizard; `check-config <path>` runs the validator; anything else passes through (e.g. `docker run pryvio/open-pryv.io node --version`).
 
 When running with `letsEncrypt.enabled: true` (master serves HTTPS itself
 instead of being fronted by a reverse proxy), publish 443 (HTTP-01 also
