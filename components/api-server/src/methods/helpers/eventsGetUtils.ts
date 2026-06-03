@@ -20,13 +20,24 @@ const SetFileReadTokenStream = require('../streams/SetFileReadTokenStream.ts').d
 const accountStreams = require('business/src/system-streams/index.ts');
 const integrity = require('business/src/integrity/index.ts').default;
 import type { MethodNext } from '../_types.ts';
+import type { Readable as ReadableStream } from 'node:stream';
 
+type AccessLike = {
+  canGetEventsOnStream: (streamId: string, storeId: string | undefined) => Promise<boolean> | boolean;
+  getStoresPermissions: (storeId: string | undefined) => Array<{ streamId: string }>;
+  getForcedStreamsGetEventsStreamIds: (storeId: string | undefined) => string[];
+  getForbiddenGetEventsStreamIds: (storeId: string | undefined) => string[];
+  isPersonal: () => boolean;
+  id?: string;
+  token?: string;
+  _streamByStorePermissionsMap?: Record<string, Array<{ streamId: string }>>;
+};
 type MethodContext = {
   user: { id: string };
-  access: any;
+  access: AccessLike;
   tracing: { startSpan (n: string): void; finishSpan (n: string): void };
   acceptStreamsQueryNonStringified?: boolean;
-  streamForStreamId: (streamId: string, storeId: string) => Promise<unknown>;
+  streamForStreamId: (streamId: string, storeId: string | undefined) => Promise<unknown>;
   [k: string]: unknown;
 };
 type ResultBag = Record<string, unknown> & { addToConcatArrayStream: (key: string, stream: unknown) => void; closeConcatArrayStream: (key: string) => void; events?: unknown[] };
@@ -34,7 +45,7 @@ type Mall = {
   streams: { get: (userId: string, query: Record<string, unknown>) => Promise<Array<{ id: string; trashed?: boolean; [k: string]: unknown }>> };
   events: {
     getWithParamsByStore: (userId: string, params: Record<string, unknown>) => Promise<Array<{ time: number; attachments?: Array<{ id: string; readToken?: string }>; [k: string]: unknown }>>;
-    generateStreamsWithParamsByStore: (userId: string, params: Record<string, unknown>, cb: (storeSettings: unknown, stream: unknown) => void) => Promise<unknown>;
+    generateStreamsWithParamsByStore: (userId: string, params: Record<string, unknown>, cb: (storeSettings: unknown, stream: ReadableStream) => void) => Promise<unknown>;
   };
 };
 
@@ -189,7 +200,7 @@ async function streamQueryCheckPermissionsAndReplaceStars (context: MethodContex
   context.tracing.startSpan('streamQueries');
   const unAuthorizedStreamIds: string[] = [];
   const unAccessibleStreamIds: string[] = [];
-  async function streamExistsAndCanGetEventsOnStream (streamId: string, storeId: string, unAuthorizedStreamIds: string[], unAccessibleStreamIds: string[]) {
+  async function streamExistsAndCanGetEventsOnStream (streamId: string, storeId: string | undefined, unAuthorizedStreamIds: string[], unAccessibleStreamIds: string[]) {
     const cleanStreamId = hasDoNotExpandMarker(streamId)
       ? stripDoNotExpandMarker(streamId)
       : streamId;
@@ -202,7 +213,7 @@ async function streamQueryCheckPermissionsAndReplaceStars (context: MethodContex
       unAuthorizedStreamIds.push(cleanStreamId);
     }
   }
-  const additionalStoreQueries: unknown[] = [];
+  const additionalStoreQueries: StreamQueryItem[] = [];
   for (const streamQuery of params.arrayOfStreamQueriesWithStoreId) {
     // ------------ "*" case
     if (streamQuery.any && streamQuery.any.includes('*')) {
@@ -226,13 +237,13 @@ async function streamQueryCheckPermissionsAndReplaceStars (context: MethodContex
       // e.g. :system:email). Only applies to local store star queries — explicit
       // queries to other stores (like :_audit:) should not leak into unrelated stores.
       if (streamQuery.storeId !== storeDataUtils.LocalStoreId) continue;
-      for (const [otherStoreId, perms] of Object.entries(context.access._streamByStorePermissionsMap || {}) as Array<[string, any]>) {
+      for (const [otherStoreId, perms] of Object.entries(context.access._streamByStorePermissionsMap || {})) {
         if (otherStoreId === streamQuery.storeId) continue;
-        if (params.arrayOfStreamQueriesWithStoreId.some((q: { storeId: string }) => q.storeId === otherStoreId)) continue;
+        if (params.arrayOfStreamQueriesWithStoreId.some((q: StreamQueryItem) => q.storeId === otherStoreId)) continue;
         // Skip audit store — audit events should only appear via explicit :_audit: queries
         if (otherStoreId === '_audit') continue;
         const otherStreamIds: string[] = [];
-        for (const perm of Object.values(perms) as any[]) {
+        for (const perm of Object.values(perms)) {
           if (await context.access.canGetEventsOnStream(perm.streamId, otherStoreId)) {
             otherStreamIds.push(perm.streamId);
           }
@@ -249,7 +260,7 @@ async function streamQueryCheckPermissionsAndReplaceStars (context: MethodContex
       if (streamQuery?.any?.length === 0) {
         return next(errors.invalidRequestStructure('streamQueries must have a valid {any: [...]} component'));
       }
-      for (const streamId of streamQuery.any) {
+      for (const streamId of streamQuery.any as string[]) {
         await streamExistsAndCanGetEventsOnStream(streamId, streamQuery.storeId, unAuthorizedStreamIds, unAccessibleStreamIds);
       }
     }
@@ -413,7 +424,7 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
    * Will be called by "mall" for each store of events that need to be streamed to result
    * @param eventsStream of "Events"
    */
-  function addEventsStreamFromStore (storeSettings: unknown, eventsStream: any) {
+  function addEventsStreamFromStore (storeSettings: unknown, eventsStream: ReadableStream) {
     const ss = storeSettings as { attachments?: { setFileReadToken?: boolean } } | null;
     let stream = eventsStream;
     if (ss?.attachments?.setFileReadToken) {
@@ -494,10 +505,18 @@ async function init () {
 
 // StreamQuery + StreamQueryWithStoreId were JSDoc-only types
 // (declared in references/events-typedef.js, not imported as TS types).
+type StreamQueryItem = {
+  storeId?: string;
+  any?: string[];
+  and?: unknown[];
+  all?: unknown[];
+  not?: unknown[];
+  [k: string]: unknown;
+};
 type GetEventsParams = {
-  streams?: any;
-  arrayOfStreamQueries: any[];
-  arrayOfStreamQueriesWithStoreId: any[];
+  streams?: unknown;
+  arrayOfStreamQueries: Array<Record<string, unknown>>;
+  arrayOfStreamQueriesWithStoreId: StreamQueryItem[];
   types?: Array<string> | null;
   fromTime?: number | null;
   toTime?: number | null;
