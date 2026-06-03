@@ -10,10 +10,32 @@ const require = createRequire(import.meta.url);
 const ds = require('@pryv/datastore');
 const audit = require('audit').default;
 
+type AuditStreamItem = {
+  id: string;
+  name: string;
+  parentId: string | null;
+  children: AuditStreamItem[];
+  childrenHidden?: boolean;
+  trashed?: boolean;
+};
+
+type StreamQuery = {
+  parentId?: string | null;
+  [k: string]: unknown;
+};
+
+type AuditAccess = { term: string };
+type AuditAction = { term: string };
+
+interface AuditUserStreams {
+  get (userId: string, query: StreamQuery): Promise<AuditStreamItem[]>;
+  getOne (userId: string, streamId: string, query: StreamQuery): Promise<AuditStreamItem | null>;
+}
+
 /**
  * Children id: `access-{accessId}`
  */
-const accessesStream = {
+const accessesStream: AuditStreamItem = {
   id: 'accesses',
   name: 'Accesses',
   parentId: null,
@@ -24,7 +46,7 @@ Object.freeze(accessesStream);
 /**
  * Children id: `action-{actionId}`
  */
-const actionsStream = {
+const actionsStream: AuditStreamItem = {
   id: 'actions',
   name: 'Actions',
   parentId: null,
@@ -33,11 +55,11 @@ const actionsStream = {
 };
 Object.freeze(actionsStream);
 
-const auditStreams = [accessesStream, actionsStream];
+const auditStreams: AuditStreamItem[] = [accessesStream, actionsStream];
 Object.freeze(auditStreams);
 
-const auditUserStreams: any = ds.createUserStreams({
-  async get (userId: any, query: any) {
+const auditUserStreams: AuditUserStreams = ds.createUserStreams({
+  async get (userId: string, query: StreamQuery): Promise<AuditStreamItem[]> {
     if (query.parentId === '*' || query.parentId == null) {
       // Return fresh clones: `auditStreams` and its members are Object.freeze'd
       // module-scope singletons. The caller (mall's addStoreIdPrefixToStreams)
@@ -51,13 +73,13 @@ const auditUserStreams: any = ds.createUserStreams({
     return parent.children;
   },
 
-  async getOne (userId: any, streamId: any, query: any) {
+  async getOne (userId: string, streamId: string, query: StreamQuery): Promise<AuditStreamItem | null> {
     // list accesses
     if (streamId === accessesStream.id) {
       const userStorage = await audit.storage.forUser(userId);
       const accesses = await userStorage.getAllAccesses();
       if (accesses == null) return null;
-      const res = accesses.map((access: any) => {
+      const res: AuditStreamItem[] = accesses.map((access: AuditAccess) => {
         return {
           id: access.term,
           name: access.term,
@@ -76,7 +98,7 @@ const auditUserStreams: any = ds.createUserStreams({
       const userStorage = await audit.storage.forUser(userId);
       const actions = await userStorage.getAllActions();
       if (actions == null) return null;
-      const res = actions.map((action: any) => {
+      const res: AuditStreamItem[] = actions.map((action: AuditAction) => {
         return {
           id: action.term,
           name: action.term,
@@ -91,7 +113,7 @@ const auditUserStreams: any = ds.createUserStreams({
     }
 
     if (streamId) {
-      let parentId: any = null;
+      let parentId: string | null = null;
       if (streamId.startsWith('access-')) {
         parentId = accessesStream.id;
       } else if (streamId.startsWith('action-')) {
