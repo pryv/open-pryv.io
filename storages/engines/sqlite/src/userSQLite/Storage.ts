@@ -18,12 +18,20 @@ const { _internals } = require('../_internals.ts');
 const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
 
+interface UserDbLike { close: () => Promise<void> | void; init: () => Promise<void>; [k: string]: unknown }
+interface SqliteStorageOptions { max?: number; [k: string]: unknown }
+interface Logger {
+  debug: (msg: string) => void;
+  info: (msg: string) => void;
+  error: (msg: string) => void;
+}
+
 class SqliteStorage {
   initialized: boolean = false;
-  userDBsCache: any = null;
-  options: any = null;
+  userDBsCache!: { get: (key: string) => UserDbLike | undefined; set: (key: string, value: UserDbLike) => void; delete: (key: string) => void; clear: () => void };
+  options: SqliteStorageOptions;
   id: string;
-  logger: any;
+  logger: Logger;
 
   async init (): Promise<this> {
     if (this.initialized) {
@@ -36,13 +44,13 @@ class SqliteStorage {
     return this;
   }
 
-  constructor (id: string, options?: any) {
+  constructor (id: string, options?: SqliteStorageOptions) {
     this.id = id;
     this.logger = _internals.getLogger(this.id + ':storage');
     this.options = options || {};
     this.userDBsCache = new LRU({
       max: this.options.max || CACHE_SIZE,
-      dispose: function (db: any, _key: any) { db.close(); }
+      dispose: function (db: UserDbLike, _key: string) { db.close(); }
     });
   }
 
@@ -60,7 +68,7 @@ class SqliteStorage {
   /**
    * get the database relative to a specific user
    */
-  async forUser (userId: string): Promise<any> {
+  async forUser (userId: string): Promise<UserDbLike> {
     this.logger.debug('forUser: ' + userId);
     this.checkInitialized();
     return this.userDBsCache.get(userId) || (await open(this, userId, this.logger));
@@ -94,7 +102,7 @@ class SqliteStorage {
   }
 }
 
-async function open (storage: SqliteStorage, userId: string, logger: any): Promise<any> {
+async function open (storage: SqliteStorage, userId: string, logger: Logger): Promise<UserDbLike> {
   logger.debug('open: ' + userId);
   const db = new UserDatabase(logger, { dbPath: await storage.dbgetPathForUser(userId) });
   await db.init();
