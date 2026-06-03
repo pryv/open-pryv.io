@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const middleware = require('middleware');
 const commonMeta = require('../methods/helpers/setCommonMeta.ts');
@@ -16,9 +17,17 @@ const { setMethodId } = require('middleware');
 (async () => {
   await commonMeta.loadSettings();
 })();
+
+type AppLike = {
+  api: { call: (...args: unknown[]) => unknown };
+  storageLayer: unknown;
+  getCustomAuthFunction: (name: string) => unknown;
+};
+type PryvRequest = Request & { context?: unknown };
+
 // Handlers for path roots at various places; handler for batch calls and
 // access-info.
-function root (expressApp: any, app: any) {
+function root (expressApp: ExpressApp, app: AppLike): void {
   const api = app.api;
 
   const customAuthStepFn = app.getCustomAuthFunction('root.js');
@@ -39,7 +48,7 @@ function root (expressApp: any, app: any) {
   expressApp.get(Paths.UserRoot + '/access-info',
     setMethodId('getAccessInfo'),
     loadAccessMiddleware,
-    function (req: any, res: any, next: any) {
+    function (req: PryvRequest, res: Response, next: NextFunction) {
       api.call(req.context, req.query,
         methodCallback(res, next, 200));
     });
@@ -49,7 +58,7 @@ function root (expressApp: any, app: any) {
     initContextMiddleware,
     setMethodId('callBatch'),
     loadAccessMiddleware,
-    function (req: any, res: any, next: any) {
+    function (req: PryvRequest, res: Response, next: NextFunction) {
       api.call(req.context, req.body,
         methodCallback(res, next, 200));
     }
@@ -60,7 +69,7 @@ export { root };
 // Renders a greeting message; this route is displayed on the various forms
 // of roots ('/', 'foo.pryv.me/')
 //
-function rootIndex (req: any, res: any) {
+function rootIndex (req: Request, res: Response): void {
   const devSiteURL = 'https://pryv.github.io/';
   const result = commonMeta.setCommonMeta({});
 
