@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const cookieParser = require('cookie-parser');
 const errors = require('errors').factory;
@@ -13,12 +14,19 @@ const { setMethodId } = require('middleware');
 const methodCallback = require('../methodCallback.ts').default;
 const Paths = require('../Paths.ts');
 const { getConfigSync } = require('@pryv/boiler');
+
+type AppLike = {
+  api: { call: (...args: unknown[]) => unknown };
+  storageLayer: unknown;
+};
+type PryvRequest = Request & { context?: { user?: { username?: string; [k: string]: unknown }; [k: string]: unknown } };
+
 /**
  * Auth routes.
  *
  * @param api The API object for registering methods
  */
-export default function (expressApp: any, app: any) {
+export default function (expressApp: ExpressApp, app: AppLike) {
   const config = getConfigSync();
   const api = app.api;
   const ms14days = 1000 * 60 * 60 * 24 * 14;
@@ -31,7 +39,7 @@ export default function (expressApp: any, app: any) {
   // Returns true if the given `obj` has all of the property values identified
   // by the names contained in `keys`.
   //
-  function hasProperties (obj: any, keys: any) {
+  function hasProperties (obj: unknown, keys: string[]): boolean {
     if (obj == null) {
       return false;
     }
@@ -43,7 +51,7 @@ export default function (expressApp: any, app: any) {
     }
     return true;
   }
-  function setSSOCookie (data: any, res: any) {
+  function setSSOCookie (data: Record<string, unknown>, res: Response): void {
     res.cookie('sso', data, {
       domain: ssoCookieDomain,
       maxAge: sessionMaxAge,
@@ -52,7 +60,7 @@ export default function (expressApp: any, app: any) {
       httpOnly: ssoHttpOnly
     });
   }
-  function clearSSOCookie (res: any) {
+  function clearSSOCookie (res: Response): void {
     res.clearCookie('sso', {
       domain: ssoCookieDomain,
       secure: ssoCookieSecure,
@@ -61,10 +69,10 @@ export default function (expressApp: any, app: any) {
   }
   // Define local routes
   expressApp.all(Paths.Auth + '*', cookieParser(ssoCookieSignSecret));
-  expressApp.get(Paths.Auth + '/who-am-i', function routeWhoAmI (req: any, res: any, next: any) {
+  expressApp.get(Paths.Auth + '/who-am-i', function routeWhoAmI (_req: PryvRequest, _res: Response, next: NextFunction) {
     return next(errors.goneResource());
   });
-  expressApp.post(Paths.Auth + '/login', setMethodId('auth.login'), function routeLogin (req: any, res: any, next: any) {
+  expressApp.post(Paths.Auth + '/login', setMethodId('auth.login'), function routeLogin (req: PryvRequest, res: Response, next: NextFunction) {
     if (typeof req.body !== 'object' ||
             req.body == null ||
             !hasProperties(req.body, ['username', 'password', 'appId'])) {
@@ -78,13 +86,13 @@ export default function (expressApp: any, app: any) {
       // some browsers provide origin, some provide only referer
       origin: req.headers.origin || req.headers.referer || ''
     };
-    api.call(req.context, params, function (err: any, result: any) {
+    api.call(req.context, params, function (err: Error | null, result: { token?: string; [k: string]: unknown }) {
       if (err) { return next(err); }
-      setSSOCookie({ username: req.context.user.username, token: result.token }, res);
+      setSSOCookie({ username: req.context?.user?.username, token: result.token }, res);
       methodCallback(res, next, 200)(err, result);
     });
   });
-  expressApp.post(Paths.Auth + '/logout', setMethodId('auth.logout'), loadAccessMiddleware, function routeLogout (req: any, res: any, next: any) {
+  expressApp.post(Paths.Auth + '/logout', setMethodId('auth.logout'), loadAccessMiddleware, function routeLogout (req: PryvRequest, res: Response, next: NextFunction) {
     clearSSOCookie(res);
     api.call(req.context, {}, methodCallback(res, next, 200));
   });
