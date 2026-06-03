@@ -75,13 +75,13 @@ type Counterparty = { username: string; host: string };
 type AccessLike = {
   id: string;
   type?: string;
-  clientData?: any;
+  clientData?: { cmc?: { role?: string; counterparty?: Counterparty; appCode?: string; [k: string]: unknown }; [k: string]: unknown };
 };
 
 type FindAccessParams = {
   userId: string;
   counterparty: Counterparty;
-  mall: { accesses: { get: (userId: string, params?: any) => Promise<AccessLike[]> } };
+  mall: { accesses: { get: (userId: string, params?: Record<string, unknown>) => Promise<AccessLike[]> } };
 };
 
 /**
@@ -133,7 +133,7 @@ type DeliverChatParams = {
   content: string;
   selfIdentity: Counterparty;
   deps: {
-    fetch: (url: string, init?: any) => Promise<any>;
+    fetch: (url: string, init?: Record<string, unknown>) => Promise<Response>;
     timeoutMs?: number;
     logger?: { debug: Function; warn: Function };
   };

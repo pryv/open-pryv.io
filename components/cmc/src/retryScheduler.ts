@@ -40,7 +40,7 @@ type Logger = { debug?: Function; warn?: Function; info?: Function };
 type SchedulerDeps = {
   // Forwarded into runRetryLoop. Same shape as RetryDeps in retryQueue.ts
   // — must include mall, dispatch, dispatchDeps, etc.
-  retryDeps: any;
+  retryDeps: Record<string, unknown>;
   // Returns the list of userIds to process on each tick. Operator-defined.
   userIdsProvider: () => Promise<string[]> | string[];
   // Optional override of the runRetryLoop function (tests inject a stub).
@@ -53,7 +53,7 @@ type SchedulerDeps = {
 
 class RetryScheduler {
   private deps: SchedulerDeps;
-  private timer: any = null;
+  private timer: NodeJS.Timeout | null = null;
   private running = false;
   private inFlight: Promise<void> | null = null;
   private intervalMs: number = 60_000;
@@ -127,12 +127,13 @@ class RetryScheduler {
           succeeded += summary.succeeded;
           rescheduled += summary.rescheduled;
           failedPermanent += summary.failedPermanent;
-        } catch (err: any) {
+        } catch (err: unknown) {
           tickErrors += 1;
           this.errors += 1;
+          const message = err instanceof Error ? err.message : String(err);
           this.deps.logger?.warn?.('cmc/retryScheduler: per-user run failed', {
             userId,
-            error: String(err?.message || err),
+            error: message,
           });
         }
       }

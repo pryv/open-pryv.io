@@ -34,13 +34,15 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 
 type ErrorFactory = {
-  invalidOperation: (message: string, details?: any) => any;
-  forbidden?: (message?: string, details?: any) => any;
+  invalidOperation: (message: string, details?: Record<string, unknown>) => Error;
+  forbidden?: (message?: string, details?: Record<string, unknown>) => Error;
 };
 
 type Deps = { errors: ErrorFactory };
 
-type Middleware = (context: any, params: any, result: any, next: any) => any | Promise<any>;
+type MwContext = Record<string, any>;
+type MwNext = (err?: unknown) => void;
+type Middleware = (context: MwContext, params: unknown, result: unknown, next: MwNext) => unknown | Promise<unknown>;
 
 /**
  * Returns the middleware. Inserts at the same point in the events.create

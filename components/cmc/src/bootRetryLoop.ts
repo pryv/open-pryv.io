@@ -28,11 +28,13 @@ const require = createRequire(import.meta.url);
 const { RetryScheduler } = require('./retryScheduler.ts');
 const { dispatch } = require('./dispatch.ts');
 
+type MallLike = Record<string, any>;
+type Identity = { username?: string; host?: string; apiEndpoint?: string; [k: string]: unknown };
 type BootDeps = {
-  config: { get: (key: string) => any };
-  mall: any;
-  selfIdentityFor: (userId: string) => any;
-  fetch: (url: string, init?: any) => Promise<any>;
+  config: { get: (key: string) => unknown };
+  mall: MallLike;
+  selfIdentityFor: (userId: string) => Identity;
+  fetch: (url: string, init?: Record<string, unknown>) => Promise<Response>;
   logger?: { debug: Function; warn: Function; info?: Function };
   userIdsProvider?: () => Promise<string[]> | string[];
   // Optional: a cluster worker id check. Defaults to checking the
@@ -61,7 +63,7 @@ function defaultIsLoopWorker (): boolean {
  * The caller is responsible for `await scheduler.stop()` on shutdown
  * if it wants a graceful drain.
  */
-function startRetryLoopIfEnabled (deps: BootDeps): any {
+function startRetryLoopIfEnabled (deps: BootDeps): unknown {
   const enabled = deps.config.get('cmc:retryLoop:enabled');
   if (enabled !== true) {
     deps.logger?.debug?.('cmc/bootRetryLoop: disabled by config');
