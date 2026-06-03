@@ -13,12 +13,22 @@ const timestamp = require('unix-timestamp');
 const xattr = require('fs-xattr');
 const { resolve } = require('path');
 const { readdir } = require('fs').promises;
+type Logger = { warn: (msg: string) => void; info?: (msg: string) => void; debug?: (msg: string) => void; error?: (msg: string) => void };
+
+type CacheSettings = {
+  maxAge: number;
+  rootPath: string;
+  logger: Logger;
+};
+
+type DirEntLike = { name: string; isDirectory: () => boolean };
+
 // Basic implementation for file cache cleanup, relying on xattr.
 
 class Cache {
-  settings;
+  settings: CacheSettings;
 
-  cleanUpInProgress;
+  cleanUpInProgress: boolean;
   /** @static
    * @default 'user.pryv.eventModified'
    */
@@ -27,13 +37,13 @@ class Cache {
    * @default 'user.pryv.lastAccessed'
    */
   static LastAccessedXattrKey = 'user.pryv.lastAccessed';
-  constructor (settings: any) {
+  constructor (settings: CacheSettings) {
     this.settings = settings;
     this.cleanUpInProgress = false;
   }
 
   // Removes all cached files that haven't been accessed since the given time.
-  async cleanUp () {
+  async cleanUp (): Promise<void> {
     if (this.cleanUpInProgress) {
       throw new Error('Clean-up is already in progress.');
     }
@@ -54,9 +64,9 @@ class Cache {
     this.cleanUpInProgress = false;
   }
 }
-async function getFiles (dir: any) {
+async function getFiles (dir: string): Promise<string[]> {
   const dirents = await readdir(dir, { withFileTypes: true });
-  const files = await Promise.all(dirents.map((dirent: any) => {
+  const files = await Promise.all((dirents as DirEntLike[]).map((dirent: DirEntLike) => {
     const res = resolve(dir, dirent.name);
     return dirent.isDirectory() ? getFiles(res) : res;
   }));
@@ -64,9 +74,3 @@ async function getFiles (dir: any) {
 }
 export default Cache;
 export { Cache };
-
-type CacheSettings = {
-  maxAge: number;
-  rootPath: string;
-  logger: any;
-};
