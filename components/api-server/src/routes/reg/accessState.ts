@@ -27,14 +27,53 @@ const crypto = require('node:crypto');
 const KEY_LENGTH = 16;
 const DEFAULT_TTL_MS = 3600 * 1000; // 1 hour
 
-function getPlatformDB () {
+type BuildStateParams = {
+  expireAfter?: number;
+  requestingAppId: string;
+  requestedPermissions: unknown;
+  languageCode?: string;
+  returnURL?: string | null;
+  oauthState?: unknown;
+  clientData?: unknown;
+  deviceName?: string | null;
+};
+
+type AccessState = {
+  status: string;
+  code: number;
+  key: string;
+  requestingAppId: string;
+  requestedPermissions: unknown;
+  languageCode: string;
+  returnURL: string | null;
+  oauthState: unknown;
+  clientData: unknown;
+  deviceName: string | null;
+  poll_rate_ms: number;
+  createdAt: number;
+  expiresAt: number;
+  pollUrl?: string;
+  authUrl?: string;
+  [k: string]: unknown;
+};
+
+type PlatformDbAccessRow = { value: AccessState; expiresAt: number };
+
+type PlatformDbAccessApi = {
+  setAccessState: (key: string, state: AccessState, expiresAt: number) => Promise<unknown>;
+  getAccessState: (key: string) => Promise<PlatformDbAccessRow | null>;
+  deleteAccessState: (key: string) => Promise<unknown>;
+  sweepExpiredAccessStates: (now: number) => Promise<unknown>;
+};
+
+function getPlatformDB (): PlatformDbAccessApi {
   return require('storages').platformDB;
 }
 
 /**
  * Generate a random alphanumeric key.
  */
-function generateKey () {
+function generateKey (): string {
   return crypto.randomBytes(KEY_LENGTH).toString('base64url').slice(0, KEY_LENGTH);
 }
 
@@ -48,11 +87,11 @@ function generateKey () {
  * round-trip we'd otherwise need to add the URLs after the initial save.
  *
  */
-function buildState (params: any) {
+function buildState (params: BuildStateParams): { key: string; state: AccessState; expiresAt: number } {
   const key = generateKey();
   const ttl = params.expireAfter || DEFAULT_TTL_MS;
   const expiresAt = Date.now() + ttl;
-  const state = {
+  const state: AccessState = {
     status: 'NEED_SIGNIN',
     code: 201,
     key,
@@ -77,7 +116,7 @@ function buildState (params: any) {
  *
  * @param [expiresAt] - defaults to `state.expiresAt`
  */
-async function persist (key: any, state: any, expiresAt: any) {
+async function persist (key: string, state: AccessState, expiresAt?: number): Promise<void> {
   const ts = expiresAt ?? state.expiresAt;
   await getPlatformDB().setAccessState(key, state, ts);
 }
@@ -89,7 +128,7 @@ async function persist (key: any, state: any, expiresAt: any) {
  * for tests and any external caller that doesn't decorate the state.
  *
  */
-async function create (params: any) {
+async function create (params: BuildStateParams): Promise<{ key: string; state: AccessState }> {
   const built = buildState(params);
   await persist(built.key, built.state, built.expiresAt);
   return { key: built.key, state: built.state };
@@ -98,7 +137,7 @@ async function create (params: any) {
 /**
  * Get an access request state.
  */
-async function get (key: any) {
+async function get (key: string): Promise<AccessState | null> {
   const row = await getPlatformDB().getAccessState(key);
   return row ? row.value : null;
 }
@@ -106,7 +145,7 @@ async function get (key: any) {
 /**
  * Update an access request state (accept or refuse).
  */
-async function update (key: any, update: any) {
+async function update (key: string, update: Partial<AccessState>): Promise<AccessState | null> {
   const platformDB = getPlatformDB();
   const row = await platformDB.getAccessState(key);
   if (!row) return null;
@@ -126,7 +165,7 @@ async function update (key: any, update: any) {
 /**
  * Delete an access request.
  */
-async function remove (key: any) {
+async function remove (key: string): Promise<void> {
   await getPlatformDB().deleteAccessState(key);
 }
 
