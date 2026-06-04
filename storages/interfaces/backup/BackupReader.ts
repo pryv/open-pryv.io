@@ -75,13 +75,14 @@ function createBackupReader (implementation: Partial<BackupReader>): BackupReade
 
 const REQUIRED_METHODS: string[] = Object.getOwnPropertyNames(BackupReader);
 
-function validateBackupReader (instance: any): BackupReader {
+function validateBackupReader (instance: unknown): BackupReader {
+  const inst = instance as Record<string, unknown>;
   for (const method of REQUIRED_METHODS) {
-    if (typeof instance[method] !== 'function') {
+    if (typeof inst[method] !== 'function') {
       throw new Error(`BackupReader implementation missing method: ${method}`);
     }
   }
-  return instance;
+  return inst as unknown as BackupReader;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,13 +112,14 @@ function createUserBackupReader (implementation: Partial<UserBackupReader>): Use
 
 const USER_REQUIRED_METHODS: string[] = Object.getOwnPropertyNames(UserBackupReader);
 
-function validateUserBackupReader (instance: any): UserBackupReader {
+function validateUserBackupReader (instance: unknown): UserBackupReader {
+  const inst = instance as Record<string, unknown>;
   for (const method of USER_REQUIRED_METHODS) {
-    if (typeof instance[method] !== 'function') {
+    if (typeof inst[method] !== 'function') {
       throw new Error(`UserBackupReader implementation missing method: ${method}`);
     }
   }
-  return instance;
+  return inst as unknown as UserBackupReader;
 }
 
 export { BackupReader,

@@ -22,7 +22,7 @@ export interface PasswordResetRequests {
 
   // Migration methods
   exportAll (callback: Callback<any[]>): void;
-  importAll (data: any[], callback: Callback<any>): void;
+  importAll (data: Array<Record<string, unknown>>, callback: Callback<any>): void;
 }
 
 const REQUIRED_METHODS: string[] = [
@@ -35,13 +35,14 @@ const REQUIRED_METHODS: string[] = [
   'importAll'
 ];
 
-function validatePasswordResetRequests (instance: any): PasswordResetRequests {
+function validatePasswordResetRequests (instance: unknown): PasswordResetRequests {
+  const inst = instance as Record<string, unknown>;
   for (const method of REQUIRED_METHODS) {
-    if (typeof instance[method] !== 'function') {
+    if (typeof inst[method] !== 'function') {
       throw new Error(`PasswordResetRequests implementation missing method: ${method}`);
     }
   }
-  return instance;
+  return inst as unknown as PasswordResetRequests;
 }
 
 export { validatePasswordResetRequests, REQUIRED_METHODS };

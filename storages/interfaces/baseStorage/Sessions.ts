@@ -26,7 +26,7 @@ export interface Sessions {
 
   // Migration methods
   exportAll (callback: Callback<any[]>): void;
-  importAll (data: any[], callback: Callback<any>): void;
+  importAll (data: Array<Record<string, unknown>>, callback: Callback<any>): void;
 }
 
 const REQUIRED_METHODS: string[] = [
@@ -43,13 +43,14 @@ const REQUIRED_METHODS: string[] = [
   'importAll'
 ];
 
-function validateSessions (instance: any): Sessions {
+function validateSessions (instance: unknown): Sessions {
+  const inst = instance as Record<string, unknown>;
   for (const method of REQUIRED_METHODS) {
-    if (typeof instance[method] !== 'function') {
+    if (typeof inst[method] !== 'function') {
       throw new Error(`Sessions implementation missing method: ${method}`);
     }
   }
-  return instance;
+  return inst as unknown as Sessions;
 }
 
 export { validateSessions, REQUIRED_METHODS };
