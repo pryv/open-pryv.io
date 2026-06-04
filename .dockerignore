@@ -21,3 +21,11 @@ var-pryv
 application.log
 npm-debug.log
 README.md
+
+# Developer override configs are gitignored but `COPY . .` still picks them
+# up from the local working tree; boiler loads them at higher precedence
+# than the operator's --config file, so a stray copy shadows wizard-set
+# service identity in the running container. CI builds run on a clean
+# checkout and are unaffected; this guard protects local docker builds
+# (rc-build-and-push.sh, ad-hoc `docker build .` iterations).
+**/override-config.yml
