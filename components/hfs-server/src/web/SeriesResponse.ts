@@ -5,18 +5,21 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Response } from 'express';
 const require = createRequire(import.meta.url);
 
 const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts').setCommonMeta;
+
+type DataMatrixLike = { columns: unknown; data: unknown };
 /** Represents a response in series format.
  *
  * This class is used to represent a series response. It serializes to JSON.
  */
 class SeriesResponse {
-  matrix;
+  matrix: DataMatrixLike;
   /** Constructs a series response from an existing data matrix.
    */
-  constructor (mat: any) {
+  constructor (mat: DataMatrixLike) {
     this.matrix = mat;
   }
 
@@ -24,7 +27,7 @@ class SeriesResponse {
    * @param {express$Response} res
    * @returns {void}
    */
-  answer (res: any) {
+  answer (res: Response) {
     res.json(this).status(200);
   }
 

@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction } from 'express';
 const require = createRequire(import.meta.url);
 
 const errorHandling = require('errors').errorHandling;
@@ -19,12 +20,12 @@ const { APIError } = require('errors');
  * @return {Function} express middleware function that logs errors and responds
  *    to them properly.
  */
-export default function produceErrorHandlingMiddleware (logger: any) {
-  return function handleError (error: any, req: any, res: any, next: any) {
+export default function produceErrorHandlingMiddleware (logger: unknown) {
+  return function handleError (error: unknown, req: Request, res: Response, next: NextFunction) {
     let safeError;
     if (error != null && error instanceof APIError) { safeError = error; } else {
-      // FLOW Assume that we can toString the mistery object
-      safeError = new APIError(error.toString());
+      // Assume that we can toString the mystery object
+      safeError = new APIError((error as { toString(): string }).toString());
     }
 
     errorHandling.logError(safeError, req, logger);

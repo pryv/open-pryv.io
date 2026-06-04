@@ -11,12 +11,12 @@ import type {} from 'node:fs';
 // tracer can re-introduce per-request span lifecycle without touching
 // hfs-server/src/server.js.
 
-function tracingMiddleware (_ctx: any, _req: any, _res: any, next: any) {
+function tracingMiddleware (_ctx: unknown, _req: unknown, _res: unknown, next: (...a: unknown[]) => unknown) {
   return next();
 }
 
-function factory (ctx: any) {
-  return (...rest: [any, any, any]) => tracingMiddleware(ctx, ...rest);
+function factory (ctx: unknown) {
+  return (...rest: [unknown, unknown, (...a: unknown[]) => unknown]) => tracingMiddleware(ctx, ...rest);
 }
 
 export default factory;
