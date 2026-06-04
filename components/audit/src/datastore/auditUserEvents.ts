@@ -11,8 +11,8 @@ const ds = require('@pryv/datastore');
 const audit = require('audit').default;
 const { localStorePrepareOptions, localStorePrepareQuery } = require('storage/src/localStoreEventQueries.ts');
 
-const auditUserEvents: any = ds.createUserEvents({
-  async getStreamed (userId: any, storeQuery: any, storeOptions: any) {
+const auditUserEvents: unknown = ds.createUserEvents({
+  async getStreamed (userId: string, storeQuery: unknown, storeOptions: unknown) {
     const userDB = await audit.storage.forUser(userId);
     const query = localStorePrepareQuery(storeQuery);
     const options = localStorePrepareOptions(storeOptions);

@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 
 const methodCallback = require('api-server/src/routes/methodCallback.ts').default;
@@ -12,11 +13,15 @@ const Paths = require('api-server/src/routes/Paths.ts');
 const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 const tryCoerceStringValues = require('api-server/src/schema/validation.ts').tryCoerceStringValues;
+
+type AppLike = { api: { call: (...args: unknown[]) => unknown }; storageLayer: unknown };
+type PryvRequest = Request & { context?: unknown };
+
 // Event streams route handling.
-export default function (expressApp: any, app: any) {
+export default function (expressApp: ExpressApp, app: AppLike) {
   const api = app.api;
   const loadAccessMiddleware = middleware.loadAccess(app.storageLayer);
-  expressApp.get(Paths.Audit, setMethodId('audit.getLogs'), loadAccessMiddleware, function (req: any, res: any, next: any) {
+  expressApp.get(Paths.Audit, setMethodId('audit.getLogs'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     const params = Object.assign({}, req.query);
     tryCoerceStringValues(params, {
       // standard event type
