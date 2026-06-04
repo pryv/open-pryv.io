@@ -115,6 +115,20 @@ function dirWritable (dir) {
 function bar (n = 50) { return '─'.repeat(n); }
 
 /**
+ * Default `pryvio/open-pryv.io:<tag>` image string used in the generated
+ * run-pryv.sh + check-config.sh launchers. The Dockerfile bakes
+ * `PRYV_IMAGE_TAG` from a build arg (CI sets it to the git ref name on
+ * tag pushes) so a wizard run from inside the container always emits a
+ * default that matches the running image — operators don't get pinned
+ * to a stale literal across RC bumps. Local `docker build .` without
+ * `--build-arg IMAGE_TAG=...` falls back to `dev`.
+ */
+function defaultImageRef () {
+  const tag = process.env.PRYV_IMAGE_TAG || 'dev';
+  return 'pryvio/open-pryv.io:' + tag;
+}
+
+/**
  * Emit a YAML section: header banner + per-line doc-comments + yaml.dump
  * of the data subtree. The header banner is sized to a stable width so
  * the file scans well in a text editor.
@@ -898,7 +912,7 @@ async function main () {
       '#',
       '# Overrides:',
       `#   PRYV_DATA_DIR  host path mounted at ${dataFolder} (default: $CONFIG_DIR/data — sibling to ${configFileName})`,
-      '#   PRYV_IMAGE     docker image tag (default: pryvio/open-pryv.io:2.0.0-rc.1)',
+      `#   PRYV_IMAGE     docker image tag (default: ${defaultImageRef()})`,
       '#   PRYV_NAME      container name (default: pryvio)',
       'set -e',
       '',
@@ -906,8 +920,7 @@ async function main () {
       `CONFIG_FILE="$CONFIG_DIR/${configFileName}"`,
       // eslint-disable-next-line no-template-curly-in-string -- shell-variable expansions in the emitted script body
       'DATA_DIR="${PRYV_DATA_DIR:-$CONFIG_DIR/data}"',
-      // eslint-disable-next-line no-template-curly-in-string
-      'IMAGE="${PRYV_IMAGE:-pryvio/open-pryv.io:2.0.0-rc.1}"',
+      `IMAGE="\${PRYV_IMAGE:-${defaultImageRef()}}"`,
       // eslint-disable-next-line no-template-curly-in-string
       'NAME="${PRYV_NAME:-pryvio}"',
       '',
@@ -963,13 +976,12 @@ async function main () {
       '#',
       '# Overrides:',
 
-      '#   PRYV_IMAGE     docker image tag (default: pryvio/open-pryv.io:2.0.0-rc.1)',
+      `#   PRYV_IMAGE     docker image tag (default: ${defaultImageRef()})`,
       'set -e',
       '',
       'CONFIG_DIR="$(cd "$(dirname "$0")" && pwd)"',
       `CONFIG_FILE="$CONFIG_DIR/${configFileName}"`,
-      // eslint-disable-next-line no-template-curly-in-string
-      'IMAGE="${PRYV_IMAGE:-pryvio/open-pryv.io:2.0.0-rc.1}"',
+      `IMAGE="\${PRYV_IMAGE:-${defaultImageRef()}}"`,
       '',
       'exec docker run --rm \\',
       `  -v "$CONFIG_DIR":${configDir} \\`,
@@ -1021,7 +1033,7 @@ async function main () {
     console.log(`    -v "$(pwd)":${configDir} \\`);
     console.log(`    -v "$(pwd)/data":${dataFolder} \\`);
     console.log(`    ${dockerPorts.join(' ')} \\`);
-    console.log('    pryvio/open-pryv.io:2.0.0-rc.1 \\');
+    console.log(`    ${defaultImageRef()} \\`);
     console.log(`    node bin/master.js --config ${absConfigPath}`);
   }
   console.log();

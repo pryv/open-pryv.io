@@ -6,6 +6,12 @@ First Release Candidate divider. All entries below this line up to the next `## 
 
 Notable internal work since `2.0.0-pre` open: SQLite full-matrix parity (Plan 76 close, both engines at 2351/0/7), TypeScript + ESM migration foundation (Plan 57 + Plan 64 strict-mode + Plan 65 noImplicitAny + ongoing Plan 80 type tightening), test-isolation hardening (`[P4OM]` customAuthStepFn race fixed), docker publish gated on git tags only.
 
+## chore(init): self-referential image tag in generated launchers
+
+`bin/init.js`'s `defaultImageRef()` reads `process.env.PRYV_IMAGE_TAG` (baked at image build time via `ARG IMAGE_TAG` → `ENV PRYV_IMAGE_TAG` in the `Dockerfile`) to compute the default `pryvio/open-pryv.io:<tag>` literal in the generated `run-pryv.sh` + `check-config.sh` launchers + the "Start the server" / "Verify the config" fallback hints. CI's `docker/build-push-action@v7` step passes `--build-arg IMAGE_TAG=${{ github.ref_name }}` on tag pushes, so the published image always carries the same tag it was published under.
+
+Local `docker build .` without `--build-arg IMAGE_TAG=...` falls back to `dev` — a tag that doesn't exist on Docker Hub, so a wizard run from a local build surfaces the misconfiguration cleanly when the operator runs `./run-pryv.sh` and docker can't pull. No more stale `:2.0.0-rc.1` literals across RC bumps.
+
 ## fix(acme): TLS hot-swap actually works on first-boot + container restart
 
 Two adjacent bugs in the embedded ACME flow that produced the same operator-visible symptom (workers serving a 1-day self-signed cert even after Let's Encrypt successfully issued the real one):

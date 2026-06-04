@@ -153,6 +153,11 @@ jobs:
         with:
           context: .
           push: true
+          # Bake the git tag into the image as PRYV_IMAGE_TAG so the install
+          # wizard's generated run-pryv.sh + check-config.sh launchers default
+          # their PRYV_IMAGE to the same tag the container was pulled from.
+          build-args: |
+            IMAGE_TAG=${{ github.ref_name }}
           tags: |
             pryvio/open-pryv.io:${{ github.ref_name }}
             pryvio/open-pryv.io:2.0.0-pre
