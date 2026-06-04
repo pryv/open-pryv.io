@@ -18,7 +18,7 @@ export { execute, initWALAndConcurrentSafeWriteCapabilities };
 /**
  * Init the given DB in WAL and unsafe mode, as we will take care of managing concurrent writes errors.
  */
-async function initWALAndConcurrentSafeWriteCapabilities (db: any): Promise<void> {
+async function initWALAndConcurrentSafeWriteCapabilities (db: { pragma: (s: string) => unknown; unsafeMode: (b: boolean) => unknown }): Promise<void> {
   await execute(() => {
     db.pragma('journal_mode = WAL');
   });
@@ -39,8 +39,8 @@ async function execute (statement: () => void, retries = 100): Promise<void> {
     try {
       statement();
       return;
-    } catch (err: any) {
-      if (err.code !== 'SQLITE_BUSY') {
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'SQLITE_BUSY') {
         throw err;
       }
       const waitTime = i > (WAIT_LIST_MS.length - 1) ? 100 : WAIT_LIST_MS[i];

@@ -10,14 +10,14 @@ const require = createRequire(import.meta.url);
 
 const { SeriesConnectionSQLite } = require('./SeriesConnectionSQLite.ts');
 
-let instance: any = null;
+let instance: unknown = null;
 
 /**
  * SQLite series connection factory. Returns a singleton so callers across
  * the api-server / hfs-server / backup code share one cache of per-user
  * file handles (the `SeriesConnectionSQLite.cache` LRU).
  */
-function createSeriesConnection (_config: any): any {
+function createSeriesConnection (_config: unknown): unknown {
   if (instance == null) instance = new SeriesConnectionSQLite();
   return instance;
 }

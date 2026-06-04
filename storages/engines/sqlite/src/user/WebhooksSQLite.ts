@@ -20,14 +20,14 @@ class WebhooksSQLite extends BaseStorageSQLite {
     this.hasHeadIdCol = false;
   }
 
-  applyDefaults (item: any): any {
+  applyDefaults (item: Record<string, unknown>): Record<string, unknown> {
     const copy = Object.assign({}, item);
     copy.id = copy.id || generateId();
     if (copy.deleted === undefined) copy.deleted = null;
     return copy;
   }
 
-  delete (userOrUserId: any, query: any, callback: (err: any, res?: any) => void): void {
+  delete (userOrUserId: { id: string } | string, query: Record<string, unknown>, callback: (err: Error | null, res?: unknown) => void): void {
     this.updateMany(userOrUserId, query, {
       $set: { deleted: timestamp.now() },
       $unset: {

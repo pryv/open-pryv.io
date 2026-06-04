@@ -15,7 +15,9 @@ export { toSQLiteQuery };
 /**
  * Get stream queries for SQLite.
  */
-function toSQLiteQuery (streamQuery: any): string | null {
+type StreamAndItem = { any?: string[]; not?: string[] };
+type AndBlock = string | StreamAndItem[];
+function toSQLiteQuery (streamQuery: AndBlock[] | null): string | null {
   if (streamQuery == null) return null;
 
   if (streamQuery.length === 1) {
@@ -24,7 +26,7 @@ function toSQLiteQuery (streamQuery: any): string | null {
     return '(' + streamQuery.map(processAndBlock).join(') OR (') + ')';
   }
 
-  function processAndBlock (andBlock: any): string | null {
+  function processAndBlock (andBlock: AndBlock): string | null {
     if (typeof andBlock === 'string') return '"' + andBlock + '"';
 
     const anys: string[] = [];
