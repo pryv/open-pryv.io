@@ -26,7 +26,7 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 
 type MallLike = {
-  streams: { create: (userId: string, params: any) => Promise<any> };
+  streams: { create: (userId: string, params: Record<string, unknown>) => Promise<unknown> };
 };
 
 type ProvisionResult = {
@@ -114,13 +114,14 @@ async function ensureStream (mall: MallLike, userId: string, id: string, parentI
       parentId,
     });
     return null;
-  } catch (err: any) {
-    const code = err?.id || err?.code || err?.errorId;
+  } catch (err) {
+    const e = err as { id?: string; code?: string; errorId?: string; message?: string } | undefined;
+    const code = e?.id || e?.code || e?.errorId;
     if (code === 'stream-already-exists' || code === 'item-already-exists' ||
-        /already.*exist/i.test(String(err?.message || ''))) {
+        /already.*exist/i.test(String(e?.message || ''))) {
       return null;
     }
-    return String(err?.message || err);
+    return String(e?.message || err);
   }
 }
 

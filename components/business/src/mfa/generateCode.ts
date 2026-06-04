@@ -14,14 +14,14 @@ const randomBytes = promisify(require('node:crypto').randomBytes);
  * Uses 4 random bytes and pads/truncates to `codeLength` digits.
  *
  */
-async function generateCode (codeLength: any) {
+async function generateCode (codeLength: number) {
   const bytes = await randomBytes(4);
   const hex = bytes.toString('hex');
   const code = parseInt(hex, 16) + '';
   return fixLength(code, codeLength);
 }
 
-function fixLength (number: any, desiredLength: any) {
+function fixLength (number: string, desiredLength: number) {
   const length = number.length;
   const pad = desiredLength - length;
   if (pad === 0) return number;

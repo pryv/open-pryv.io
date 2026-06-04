@@ -15,7 +15,7 @@ export { createStoreRootStream, addStoreIdPrefixToStreams };
 /**
  * Create a pseudo-stream representing a data store's root.
  */
-function createStoreRootStream (storeDescription: any, extraProperties: any) {
+function createStoreRootStream (storeDescription: { id: string; name: string }, extraProperties: Record<string, unknown>) {
   return Object.assign({
     id: ':' + storeDescription.id + ':',
     name: storeDescription.name,
@@ -32,7 +32,8 @@ function createStoreRootStream (storeDescription: any, extraProperties: any) {
  * @param storeId  undefined
  * @param streams  undefined
  */
-function addStoreIdPrefixToStreams (storeId: any, streams: any) {
+type StreamLike = { id: string; parentId?: string | null; children?: StreamLike[] };
+function addStoreIdPrefixToStreams (storeId: string, streams: StreamLike[]) {
   for (const stream of streams) {
     stream.id = getFullItemId(storeId, stream.id);
     if (stream.parentId != null) {

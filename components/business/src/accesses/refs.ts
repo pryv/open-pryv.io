@@ -89,9 +89,19 @@ function composeStoredRef (storedRef: string | undefined | null, serial: number 
  * serial of that row (e.g. `<base>:2`) rather than the storage's
  * fresh history-row id.
  */
-export function composeWireAccess (row: any, historyOfBase?: string): any {
+type AccessRow = {
+  id: string;
+  serial?: number | null;
+  createdBy?: string | null;
+  createdBySerial?: number | null;
+  modifiedBy?: string | null;
+  modifiedBySerial?: number | null;
+  headId?: string;
+  [k: string]: unknown;
+};
+export function composeWireAccess (row: AccessRow, historyOfBase?: string): Record<string, unknown> {
   if (row == null) return row;
-  const out: any = Object.assign({}, row);
+  const out = Object.assign({}, row);
   const baseId = historyOfBase != null ? historyOfBase : row.id;
   out.id = serializeAccessRef({ base: baseId, serial: row.serial ?? null });
   if (row.createdBy != null) {
