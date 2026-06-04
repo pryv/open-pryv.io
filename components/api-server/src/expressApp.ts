@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction } from 'express';
 const require = createRequire(import.meta.url);
 const express = require('express');
 const middleware = require('middleware');
@@ -14,7 +15,7 @@ const { getConfig } = require('@pryv/boiler');
 // Creates and returns an express application with a standard set of middleware.
 // `version` should be the version string you want to show to API clients.
 //
-async function expressAppInit (logging: any) {
+async function expressAppInit (logging: { getLogger: (name: string) => unknown }) {
   const config = await getConfig();
   const app = express(); // register common middleware
   const commonHeadersMiddleware = await middleware.commonHeaders();
@@ -53,7 +54,7 @@ async function expressAppInit (logging: any) {
     // URL shapes; tests and experimentation in confirm
     // that without this middleware the flows break (/service/info URLs
     // strip /reg/ but no route exists at root to serve them).
-    app.use(function regSubdomainPathMap (req: any, res: any, next: any) {
+    app.use(function regSubdomainPathMap (req: Request, res: Response, next: NextFunction) {
       if (!req.headers.host) return next();
       const firstChunk = req.headers.host.split('.')[0].toLowerCase();
       if (firstChunk === 'reg' || firstChunk === 'access' || firstChunk === 'mfa') {

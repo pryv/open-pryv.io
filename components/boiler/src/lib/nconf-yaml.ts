@@ -10,11 +10,13 @@ const require = createRequire(import.meta.url);
 
 const yaml = require('js-yaml');
 
-function stringify (obj: any, options: any) {
+// js-yaml ships no type declarations in this install, so its DumpOptions /
+// LoadOptions aren't importable — options is the structural pass-through bag.
+function stringify (obj: unknown, options?: Record<string, unknown>): string {
   return yaml.dump(obj, options);
 }
 
-function parse (obj: any, options: any) {
+function parse (obj: string, options?: Record<string, unknown>): unknown {
   return yaml.load(obj, options);
 }
 

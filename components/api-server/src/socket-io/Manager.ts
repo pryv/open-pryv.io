@@ -260,11 +260,12 @@ class Connection {
   // Called when the socket wants to call a Pryv IO method.
   //
   async onMethodCall (callData: CallData, callback: SocketCallback) {
-    const methodContext: any = this.methodContext;
-    methodContext.tracing = initRootSpan('socket.io', {
+    const methodContext = this.methodContext;
+    const tracing = initRootSpan('socket.io', {
       apiVersion: this.apiVersion,
       hostname: this.hostname
-    });
+    }) as { finishSpan: (n: string) => void; setError: (n: string, err: unknown) => void };
+    methodContext.tracing = tracing;
     const api = this.api;
     const logger = this.logger;
     if (!callData || !callData.data || callData.data.length !== 3) {
@@ -287,7 +288,7 @@ class Connection {
       if (result == null) { throw new Error('AF: either err or result must be non-null'); }
       const obj = await fromCallback((cb: NodeCallback) => result.toObject(cb));
       // good ending
-      methodContext.tracing.finishSpan('socket.io');
+      tracing.finishSpan('socket.io');
       // remove tracing for next call
       methodContext.tracing = null;
       return callback(null, commonMeta.setCommonMeta(obj));
@@ -298,8 +299,8 @@ class Connection {
         body: params
       }, logger);
       // bad ending
-      methodContext.tracing.setError('socket.io', err);
-      methodContext.tracing.finishSpan('socket.io');
+      tracing.setError('socket.io', err);
+      tracing.finishSpan('socket.io');
       return callback(commonMeta.setCommonMeta({
         error: errorHandling.getPublicErrorData(err)
       }));
