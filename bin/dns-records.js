@@ -250,6 +250,13 @@ Flags:
   --replace   (load) delete persisted records not present in the file
   -h, --help  print this help
 
+Coexistence with master.js dns-active bootstrap (single-core):
+  master.js seeds the apex SOA/NS (into dns.records.root in-memory) plus
+  "A core.<domain>" (via this same PlatformDB path) from dns.publicIp on
+  every boot, but only for records that are missing. Anything loaded via
+  this CLI is left in place — including a custom "core" A entry — and
+  wins on the next boot.
+
 YAML file format:
   records:
     - subdomain: _acme-challenge

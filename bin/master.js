@@ -167,6 +167,75 @@ if (cluster.isPrimary) {
       log: (m) => log('[cluster_kv] ' + m)
     });
 
+    // dns-active first-boot DNS chain bootstrap.
+    // Without this block, a fresh single-core dns-active deployment ships
+    // an empty embedded DNS server: parent-zone NS delegation reaches us,
+    // but the apex SOA/NS answer is empty and the recursor discards the
+    // delegation. acme-client's DNS-01 preflight then errors with
+    // "No TXT records found for name: _acme-challenge.<domain>" before
+    // the LE round-trip even starts.
+    //
+    // We seed the bootstrap chain from `dns.publicIp` (collected by the
+    // wizard or hand-set in the YAML):
+    //   - SOA + NS for the apex go into the in-memory boiler config under
+    //     `dns:records:root` (DnsServer's #answerRoot reads only from
+    //     YAML config — PlatformDB-runtime entries are per-subdomain).
+    //   - `A core.<domain>` lands in PlatformDB via setDnsRecord('core')
+    //     so the canonical API hostname resolves to this host.
+    // Idempotency: skip whichever of (root.soa, root.ns, the 'core' entry)
+    // already carries content — operator-managed records, whether typed
+    // into YAML or loaded via `bin/dns-records.js`, always win.
+    let dnsBootstrapFatal = null;
+    if (config.get('dns:active') && config.get('dns:domain')) {
+      const dnsDomain = config.get('dns:domain');
+      const publicIp = config.get('dns:publicIp');
+      if (!publicIp) {
+        dnsBootstrapFatal =
+          `dns.publicIp is unset, but dns.active=true + dns.domain=${dnsDomain}. ` +
+          'The embedded DNS server cannot answer the apex SOA/NS records the parent ' +
+          'zone NS delegation points at. Set dns.publicIp to this host\'s public IPv4 ' +
+          'address and restart.';
+        log('FATAL: ' + dnsBootstrapFatal);
+        log('       ACME orchestrator will NOT start (would burn the LE rate limit on a guaranteed-fail issuance).');
+      } else {
+        const adminEmail = config.get('letsEncrypt:email') || ('admin@' + dnsDomain);
+        const rfc1035Admin = adminEmail.replace('@', '.') + '.';
+        const primaryNs = `core.${dnsDomain}.`;
+        const existingRoot = (config.get('dns:records:root') || {});
+        const nextRoot = { ...existingRoot };
+        let mutated = false;
+        if (!existingRoot.soa) {
+          nextRoot.soa = {
+            primary: primaryNs,
+            admin: rfc1035Admin,
+            serial: Math.floor(Date.now() / 1000),
+            refresh: 3600,
+            retry: 600,
+            expiration: 604800,
+            minimum: 60
+          };
+          mutated = true;
+          log(`[dns-bootstrap] seeded dns.records.root.soa (primary=${primaryNs}, admin=${rfc1035Admin})`);
+        }
+        if (!existingRoot.ns || existingRoot.ns.length === 0) {
+          nextRoot.ns = [primaryNs];
+          mutated = true;
+          log(`[dns-bootstrap] seeded dns.records.root.ns = [${primaryNs}]`);
+        }
+        if (mutated) config.set('dns:records:root', nextRoot);
+
+        const { getPlatform } = require('../components/platform/src/index.ts');
+        const bootstrapPlatform = await getPlatform();
+        const existingCore = await bootstrapPlatform.getDnsRecord('core');
+        if (existingCore == null) {
+          await bootstrapPlatform.setDnsRecord('core', { a: [publicIp] });
+          log(`[dns-bootstrap] published A core.${dnsDomain} -> ${publicIp}`);
+        } else {
+          log(`[dns-bootstrap] A core.${dnsDomain} already set in PlatformDB; not overwriting`);
+        }
+      }
+    }
+
     // Start DNS server if configured
     let dnsServer = null;
     if (config.get('dns:active')) {
@@ -192,7 +261,9 @@ if (cluster.isPrimary) {
     // On the CA-holder (letsEncrypt.certRenewer: true) additionally runs
     // the daily ACME renewal loop (initial issuance + renew-when-expiring).
     let acmeOrchestrator = null;
-    if (config.get('letsEncrypt:enabled')) {
+    if (config.get('letsEncrypt:enabled') && dnsBootstrapFatal) {
+      log('[acme] skipping orchestrator start — dns-active bootstrap FATAL above means DNS-01 cannot succeed.');
+    } else if (config.get('letsEncrypt:enabled')) {
       // First-boot race: workers do `fs.readFileSync(http.ssl.keyFile)` at
       // boot. If ACME hasn't issued yet, that ENOENTs and the cluster
       // restart-loops. Pre-stage a 1-day self-signed cert at the configured

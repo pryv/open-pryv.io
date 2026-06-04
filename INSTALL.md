@@ -506,6 +506,30 @@ node bin/migrate.js up --target 3      # stop per-engine at version 3
 
 Set `migrations.autoRunOnStart: false` in config to disable auto-run at startup and rely on the CLI only.
 
+## First-boot DNS chain (dns-active mode)
+
+Before a dns-active deployment can issue a wildcard cert via Let's Encrypt DNS-01, the embedded DNS server must answer authoritatively for the zone: SOA + NS for the apex (`<domain>`), and an A record for `core.<domain>` (the canonical API hostname). Public recursors discard delegated answers when no SOA is present, so `acme-client`'s DNS-01 preflight errors with `No TXT records found for name: _acme-challenge.<domain>` before the LE round-trip even starts.
+
+`bin/master.js` seeds this chain on every boot when `dns.active: true` + `dns.domain` is set:
+
+1. Reads `dns.publicIp` from the YAML — the wizard prompts for it (auto-detected via `checkip.amazonaws.com`); set it by hand for hand-written configs.
+2. Merges a default SOA (primary `core.<domain>.`, admin derived from `letsEncrypt.email` or `admin@<domain>`, RFC 1912 timing) into `dns.records.root.soa` **only if empty**.
+3. Merges a default NS (`core.<domain>.`) into `dns.records.root.ns` **only if empty**.
+4. Writes `A core.<domain> -> publicIp` to PlatformDB via `setDnsRecord('core', ...)` **only if no record under that subdomain exists**.
+
+Operator-edited records always win — anything you set under `dns.records.root.*` in YAML, or load via `bin/dns-records.js load` (see below), is left untouched.
+
+You still need the **parent zone NS delegation** in your registrar / parent DNS provider (Infomaniak, Route 53, Cloudflare, …):
+
+```
+<domain>.    IN NS  core.<domain>.    ; or your designated NS hostname
+core.<domain>. IN A  <publicIp>        ; glue record at the parent
+```
+
+The glue record at the parent is what lets recursors find `core.<domain>` before they've ever talked to your authoritative server. Without it, NS chains break on the first lookup.
+
+If `dns.publicIp` is unset on boot, master logs `FATAL: dns.publicIp is unset …` and **skips** the ACME orchestrator start (which would otherwise burn the LE rate limit on a guaranteed-fail issuance). Set the field and restart.
+
 ## Managing persistent DNS records
 
 When the embedded DNS server is active (`dns.active: true`), runtime DNS entries (ACME challenges, admin-managed subdomains) are persisted in PlatformDB so they survive restart and replicate across cores. Two ways to manage them:
@@ -552,6 +576,8 @@ records:
 ```
 
 Static entries declared in `dns.staticEntries` config are authoritative and cannot be shadowed by PlatformDB entries; attempts to write a matching subdomain are rejected.
+
+The first-boot bootstrap (above) also writes through `bin/dns-records.js`-equivalent paths (`setDnsRecord('core', ...)` + an in-memory mutation of `dns.records.root` for SOA/NS). It only fills records that are missing — any subdomain you `load` via this CLI is left in place across restarts. To take ownership of the `core` A record (e.g. to point it at multiple IPs), `node bin/dns-records.js load core-override.yaml` once; the bootstrap will see it on the next boot and not overwrite.
 
 ## Cluster security
 

@@ -103,6 +103,26 @@ function genSecret (bytes = 32) {
   return crypto.randomBytes(bytes).toString('base64').replace(/=+$/, '');
 }
 
+/**
+ * Best-effort detection of the host's public IPv4 via checkip.amazonaws.com.
+ * Returns the trimmed string on success, null on timeout/error. Tight 2.5s
+ * AbortSignal so a wizard run on a machine without public egress doesn't
+ * hang — the operator can always type the IP in manually.
+ */
+async function detectPublicIp () {
+  try {
+    const res = await fetch('https://checkip.amazonaws.com/', {
+      signal: AbortSignal.timeout(2500)
+    });
+    if (!res.ok) return null;
+    const txt = (await res.text()).trim();
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(txt)) return txt;
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function dirWritable (dir) {
   try {
     fs.accessSync(dir, fs.constants.W_OK);
@@ -437,6 +457,7 @@ async function main () {
   // 2. Hostname / domain
   let publicUrl;
   let dnsDomain;
+  let dnsPublicIp;
   if (dnsLess) {
     publicUrl = await askNonEmpty('Public URL (e.g. https://pryv.example.com)');
     if (!/^https?:\/\//.test(publicUrl)) {
@@ -447,6 +468,25 @@ async function main () {
   } else {
     dnsDomain = await askNonEmpty('Root domain to serve (e.g. example.com — will serve *.example.com)');
     publicUrl = `https://core.${dnsDomain}`;
+
+    // Public IPv4 address — fed into `dns.publicIp` so master.js can seed
+    // the apex SOA/NS records + the `core.<domain>` A record on first boot.
+    // Without this, the embedded DNS server has no authoritative answer
+    // for the zone and ACME DNS-01 errors with
+    // "No TXT records found for name: _acme-challenge.<domain>" before
+    // the LE round-trip starts. Auto-detect via checkip.amazonaws.com
+    // with a tight timeout so wizard runs on machines without public
+    // egress don't hang.
+    const detectedIp = await detectPublicIp();
+    if (detectedIp) {
+      console.log(`  (detected public IPv4: ${detectedIp})`);
+    } else {
+      console.log('  (public IPv4 auto-detect failed — please enter manually)');
+    }
+    dnsPublicIp = await askNonEmpty(
+      'Public IPv4 address of this host (NS delegation for ' + dnsDomain + ' should resolve here)',
+      detectedIp || undefined
+    );
   }
   console.log();
 
@@ -750,7 +790,11 @@ async function main () {
   if (dnsLess) {
     config.dnsLess = { isActive: true, publicUrl };
   } else {
-    config.dns = { active: true, domain: dnsDomain, port: 53 };
+    // `publicIp` feeds master.js's first-boot bootstrap of the apex
+    // SOA + NS records + the A record for `core.<domain>` — without it
+    // the embedded DNS server can't answer authoritatively for the zone
+    // and DNS-01 issuance fails before contacting Let's Encrypt.
+    config.dns = { active: true, domain: dnsDomain, port: 53, publicIp: dnsPublicIp };
   }
 
   if (tlsStrategy === 'letsEncrypt') {
@@ -811,7 +855,10 @@ async function main () {
     yamlBody += section(yaml, 'DNS topology — dns.active (subdomain per user)',
       ['Each user gets a subdomain: https://<user>.<domain>/events.',
         'Requires embedded DNS server + delegated zone + port 53/udp on the host',
-        'and DNS-01 (wildcard) LE challenge.'],
+        'and DNS-01 (wildcard) LE challenge.',
+        'publicIp seeds the apex SOA + NS records + A core.<domain> on first boot.',
+        'Operator-edited records under dns.records.root or via bin/dns-records.js win;',
+        'the bootstrap only fills what is empty.'],
       { dns: config.dns });
   }
 

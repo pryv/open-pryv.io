@@ -282,6 +282,14 @@ dns:
   port: 5353             # UDP port (5353 for dev, 53 for prod via Docker mapping)
   ip: '0.0.0.0'         # bind address
   ip6: null              # IPv6 bind address (null = disabled)
+  publicIp: null         # host's public IPv4 (single-core dns-active boot only).
+                         # When set + dns.active + dns.domain, master.js seeds the
+                         # apex SOA + NS into dns.records.root in-memory and writes
+                         # `A core.<domain> -> publicIp` via PlatformDB on first
+                         # boot. Operator-edited records under dns.records.root /
+                         # dns.staticEntries / bin/dns-records.js always win.
+                         # Unset + dns.active=true logs FATAL and skips ACME start
+                         # (avoids burning the LE rate limit on a guaranteed fail).
   defaultTTL: 300        # TTL in seconds
   staticEntries: {}      # subdomain → { cname: "..." } or { a: [...] } or { txt: [...] }
   # Notes on staticEntries:
