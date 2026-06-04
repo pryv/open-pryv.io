@@ -4,7 +4,10 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type {} from 'node:fs';
+import type { Response, NextFunction } from 'express';
+
+type SuccessCode = number | ((result: unknown) => number);
+type ResultLike = { writeToHttpResponse: (res: Response, successCode: SuccessCode) => void };
 
 /**
  * Helper function for handling method responses.
@@ -12,8 +15,8 @@ import type {} from 'node:fs';
  * @param successCode Can be a function accepting the result in arg
  *                                      and returning a number
  */
-export default function (res: any, next: any, successCode: any) {
-  return function (err: any, result: any) {
+export default function (res: Response, next: NextFunction, successCode: SuccessCode) {
+  return function (err: unknown, result: ResultLike | null) {
     if (err != null) {
       return next(err);
     }
