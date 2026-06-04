@@ -15,21 +15,22 @@ const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
 
-type App = { config: { get (key: string): unknown }; [k: string]: any };
+type App = { config: { get (key: string): unknown }; [k: string]: unknown };
 type UserCore = { coreId: string; username: string };
+type UsersRepoLike = { usernameExists: (username: string) => Promise<boolean>; count: () => Promise<number> };
 
 export default function (expressApp: ExpressApp, app: App) {
   const adminAccessKey = app.config.get('auth:adminAccessKey') as string;
   const domain = app.config.get('dns:domain') as string;
 
   // Lazy-loaded dependencies (avoid circular requires at module load)
-  let _usersRepository: any;
-  async function getUsersRepository () {
+  let _usersRepository: UsersRepoLike | undefined;
+  async function getUsersRepository (): Promise<UsersRepoLike> {
     if (!_usersRepository) {
       const { getUsersRepository: getRepo } = require('business/src/users/index.ts');
       _usersRepository = await getRepo();
     }
-    return _usersRepository;
+    return _usersRepository!;
   }
 
   function getPlatformDB () {
@@ -143,7 +144,7 @@ export default function (expressApp: ExpressApp, app: App) {
    */
   expressApp.get('/reg/admin/users/:username', checkAdmin, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const username = req.params.username;
+      const username = req.params.username as string;
       const usersRepo = await getUsersRepository();
       if (!await usersRepo.usernameExists(username)) {
         return res.status(404).json({

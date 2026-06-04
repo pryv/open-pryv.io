@@ -11,6 +11,9 @@ const require = createRequire(import.meta.url);
 const { createId: cuid } = require('@paralleldrive/cuid2');
 
 type SessionData = Record<string, unknown>;
+type SessionPgRow = { id?: string; data?: SessionData; expires?: Date | string; [k: string]: unknown };
+type PgQueryResult = { rows: SessionPgRow[]; rowCount?: number };
+type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<PgQueryResult> };
 
 const DEFAULT_MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days
 
@@ -18,10 +21,10 @@ const DEFAULT_MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days
  * PostgreSQL implementation of Sessions storage.
  */
 class SessionsPG {
-  db: any; // DatabasePG — not yet modelled
+  db: PgDbLike; // DatabasePG — query slice modelled here
   options: { maxAge: number };
 
-  constructor (db: any, options?: { maxAge?: number }) {
+  constructor (db: PgDbLike, options?: { maxAge?: number }) {
     this.db = db;
     this.options = { maxAge: (options && options.maxAge) || DEFAULT_MAX_AGE };
   }

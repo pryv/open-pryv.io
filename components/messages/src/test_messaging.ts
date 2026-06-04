@@ -16,7 +16,15 @@ const require = createRequire(import.meta.url);
 const EventEmitter = require('events');
 const { getConfig, getLogger } = require('@pryv/boiler');
 
-let notifier: any = null;
+// The common contract consumers use — satisfied by both the no-op stub and a
+// real EventEmitter. Event name is string|symbol (Node's type); `on`'s 2nd arg
+// is a listener; only the event payload is genuinely arbitrary (Node types it
+// `any[]` — we use the stricter `unknown[]`).
+type TestNotifier = {
+  emit: (eventName: string | symbol, ...args: unknown[]) => unknown;
+  on: (eventName: string | symbol, listener: (...args: unknown[]) => void) => unknown;
+};
+let notifier: TestNotifier | null = null;
 let initializing = false;
 
 async function getTestNotifier () {
@@ -32,14 +40,16 @@ async function getTestNotifier () {
     return notifier;
   }
   const logger = getLogger('test-messaging');
-  notifier = new EventEmitter();
-  const originalEmit = notifier.emit.bind(notifier);
-  notifier.emit = function (eventName: any, ...args: any[]) {
-    originalEmit(eventName, ...args);
+  const emitter: TestNotifier = new EventEmitter();
+  const originalEmit = emitter.emit.bind(emitter);
+  emitter.emit = function (eventName: string | symbol, ...args: unknown[]) {
+    const result = originalEmit(eventName, ...args);
     if (typeof process.send === 'function') {
       try { process.send({ type: 'test-notification', event: eventName, data: args[0] }); } catch (e) { /* IPC channel closed */ }
     }
+    return result;
   };
+  notifier = emitter;
   logger.info('Test notifier ready (IPC-based)');
   initializing = false;
   return notifier;
