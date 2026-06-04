@@ -34,6 +34,13 @@ const { deriveHostnames } = require('./deriveHostnames.ts');
 const DAY_MS = 24 * 3600 * 1000;
 const DEFAULT_RENEW_INTERVAL_MS = DAY_MS;
 const DEFAULT_MATERIALIZE_INTERVAL_MS = 60 * 1000;
+// Before the first cert has been issued, ticks fire at a much faster
+// cadence so a transient first-boot validation failure (typical cause:
+// public-recursor negative-cache hangover from before this host was
+// authoritative) clears within minutes instead of the renew cadence's
+// 24h. Once `getCertificate(host)` returns non-null, the timer
+// downshifts to the renew cadence and stays there.
+const DEFAULT_INITIAL_RETRY_INTERVAL_MS = 60 * 1000;
 
 type LogFn = (msg: string) => void;
 type CertRenewerLike = {
@@ -56,6 +63,7 @@ interface AcmeOrchestratorOpts {
   isRenewer?: boolean;
   renewBeforeDays?: number;
   renewIntervalMs?: number;
+  initialRetryIntervalMs?: number;
   materializeIntervalMs?: number;
   log?: LogFn;
 }
@@ -67,12 +75,15 @@ class AcmeOrchestrator {
   #isRenewer: boolean;
   #renewBeforeMs: number;
   #renewIntervalMs: number;
+  #initialRetryIntervalMs: number;
   #materializeIntervalMs: number;
   #dnsWriter: DnsWriterLike;
   #http01Store: Http01StoreLike | undefined;
   #log: LogFn;
   #renewTimer: NodeJS.Timeout | null = null;
   #materializeTimer: NodeJS.Timeout | null = null;
+  #currentRenewIntervalMs = 0;
+  #renewInFlight = false;
 
   /**
    * @param opts.hostSpec           - output of deriveHostnames()
@@ -90,6 +101,7 @@ class AcmeOrchestrator {
     isRenewer = false,
     renewBeforeDays = 30,
     renewIntervalMs = DEFAULT_RENEW_INTERVAL_MS,
+    initialRetryIntervalMs = DEFAULT_INITIAL_RETRY_INTERVAL_MS,
     materializeIntervalMs = DEFAULT_MATERIALIZE_INTERVAL_MS,
     log
   }: AcmeOrchestratorOpts = {} as AcmeOrchestratorOpts) {
@@ -103,6 +115,7 @@ class AcmeOrchestrator {
     this.#isRenewer = isRenewer;
     this.#renewBeforeMs = renewBeforeDays * DAY_MS;
     this.#renewIntervalMs = renewIntervalMs;
+    this.#initialRetryIntervalMs = initialRetryIntervalMs;
     this.#materializeIntervalMs = materializeIntervalMs;
     this.#dnsWriter = dnsWriter;
     this.#http01Store = http01Store;
@@ -149,10 +162,30 @@ class AcmeOrchestrator {
     // writer (which is always present).
     const canRunHttp01 = this.#hostSpec.challenge !== 'http-01' || this.#http01Store != null;
     if (this.#isRenewer && canRunHttp01) {
-      this.#renewTimer = setInterval(() => {
-        this.triggerRenewCheck().catch(err => this.#logRenewError('renew tick', err));
-      }, this.#renewIntervalMs);
+      // Arm at the fast initial-retry cadence by default; triggerRenewCheck()
+      // downshifts to renewIntervalMs the moment a stored cert is observed
+      // (either because issuance just succeeded or because a previous boot
+      // already obtained one).
+      this.#armRenewTimer(this.#initialRetryIntervalMs);
       this.triggerRenewCheck().catch(err => this.#logRenewError('initial renew', err));
+    }
+  }
+
+  /**
+   * (Re)arm the renew timer at the given cadence. Idempotent — clears the
+   * current timer first; no-op if intervalMs matches the active cadence.
+   */
+  #armRenewTimer (intervalMs: number) {
+    if (this.#currentRenewIntervalMs === intervalMs && this.#renewTimer) return;
+    if (this.#renewTimer) { clearInterval(this.#renewTimer); this.#renewTimer = null; }
+    this.#renewTimer = setInterval(() => {
+      this.triggerRenewCheck().catch(err => this.#logRenewError('renew tick', err));
+    }, intervalMs);
+    this.#currentRenewIntervalMs = intervalMs;
+    if (intervalMs === this.#initialRetryIntervalMs) {
+      this.#log(`renew tick cadence = ${Math.round(intervalMs / 1000)}s (initial retry; downshifts after first issuance)`);
+    } else {
+      this.#log(`renew tick cadence = ${Math.round(intervalMs / 3600000)}h (steady-state)`);
     }
   }
 
@@ -245,19 +278,38 @@ class AcmeOrchestrator {
    */
   async triggerRenewCheck ({ now = Date.now() } = {}) {
     if (!this.#isRenewer) return { skipped: true, reason: 'not-renewer' };
+    // Single-flight: the initial-retry cadence (60s) can fire a tick
+    // while the immediate start()-side issuance is still walking the
+    // LE order — without this guard two issuances run concurrently,
+    // burning quota + producing confusing logs (success of one + a
+    // stale error of the other on the same boot). The tick is cheap;
+    // a no-op until the in-flight call settles is the right shape.
+    if (this.#renewInFlight) return { skipped: true, reason: 'in-flight' };
     const hostname = this.#hostSpec.commonName;
     const stored = await this.#certRenewer.getCertificate(hostname);
 
     if (stored == null) {
       this.#log(`no cert for ${hostname} — issuing initial`);
-      return this.#issue();
+      return this.#withInFlight(() => this.#issue());
     }
+    // A stored cert exists — the initial-retry cadence is no longer
+    // helpful; downshift to the steady-state renew cadence.
+    this.#armRenewTimer(this.#renewIntervalMs);
     const daysLeft = Math.round((stored.expiresAt - now) / DAY_MS);
     if (stored.expiresAt - now > this.#renewBeforeMs) {
       return { skipped: true, reason: 'not-yet-due', daysLeft };
     }
     this.#log(`${hostname} expires in ${daysLeft} day(s) — renewing`);
-    return this.#issue();
+    return this.#withInFlight(() => this.#issue());
+  }
+
+  async #withInFlight<T> (work: () => Promise<T>): Promise<T> {
+    this.#renewInFlight = true;
+    try {
+      return await work();
+    } finally {
+      this.#renewInFlight = false;
+    }
   }
 
   async #issue (hostname?: string) {

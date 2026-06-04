@@ -221,7 +221,7 @@ class PlatformDBDnsWriter {
   #platformDB: PlatformDB;
   #dnsServer: DnsServerLike | null;
   #waitMs: number;
-  constructor ({ platformDB, dnsServer = null, waitMs = 15000 }: { platformDB?: PlatformDB; dnsServer?: DnsServerLike | null; waitMs?: number }) {
+  constructor ({ platformDB, dnsServer = null, waitMs = 30000 }: { platformDB?: PlatformDB; dnsServer?: DnsServerLike | null; waitMs?: number }) {
     if (platformDB == null) throw new Error('PlatformDBDnsWriter: platformDB is required');
     this.#platformDB = platformDB!;
     this.#dnsServer = dnsServer;
