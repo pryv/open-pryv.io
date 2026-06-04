@@ -5,10 +5,10 @@
  * Refer to LICENSE file
  */
 
-import type {} from 'node:fs';
+import type { Request, Response, Application as ExpressApp } from 'express';
 
-export default function index (expressApp: any) {
-  expressApp.options('*', function (req: any, res: any /*, next */) {
+export default function index (expressApp: ExpressApp) {
+  expressApp.options('*', function (req: Request, res: Response /*, next */) {
     // common headers (e.g. CORS) are handled in related middleware
     res.sendStatus(200);
   });

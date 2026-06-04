@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { RequestHandler, ErrorRequestHandler, Express } from 'express';
 const require = createRequire(import.meta.url);
 
 const express = require('express');
@@ -13,7 +14,7 @@ const middleware = require('middleware');
 /**
  * The Express app definition.
  */
-export default function expressApp (commonHeadersMiddleware: any, errorsMiddleware: any, requestTraceMiddleware: any) {
+export default function expressApp (commonHeadersMiddleware: RequestHandler, errorsMiddleware: ErrorRequestHandler, requestTraceMiddleware: RequestHandler) {
   const app = express();
   /** Called once routes are defined on app, allows finalizing middleware stack
    * with things like error handling.
@@ -33,6 +34,6 @@ export default function expressApp (commonHeadersMiddleware: any, errorsMiddlewa
 };
 
 type AppAndEndWare = {
-  expressApp: any /* was express$Application (Flow type) */;
+  expressApp: Express;
   routesDefined: () => unknown;
 };
