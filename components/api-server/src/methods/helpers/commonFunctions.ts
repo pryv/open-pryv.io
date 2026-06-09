@@ -15,7 +15,7 @@ const logger = getLogger('commonFunctions');
 type MethodContext = {
   access: { isPersonal (): boolean; can (methodId: string): boolean | string };
   methodId: string;
-  [k: string]: any;
+  [k: string]: unknown;
 };
 type ResultBag = Record<string, unknown>;
 type Next = (err?: unknown) => void;

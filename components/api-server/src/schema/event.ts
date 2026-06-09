@@ -18,7 +18,7 @@ const string = helpers.string;
 const number = helpers.number;
 const boolean = helpers.boolean;
 
-export default function (action: any) {
+export default function (action: string) {
   // read items === stored items
   if (action === Action.STORE) {
     action = Action.READ;

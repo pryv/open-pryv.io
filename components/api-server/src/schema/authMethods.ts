@@ -206,11 +206,13 @@ export { __ex_emailCheck as emailCheck };
 /**
  * Append validation of custom system streams for registration method
  */
-function loadCustomValidationSettings (validationSchema: any) {
+type ValidationSchemaLike = { required: string[]; properties: Record<string, unknown>; messages: Record<string, unknown> };
+type SystemStreamLike = { isRequiredInValidation?: boolean; regexValidation?: string; regexError?: string; [k: string]: unknown };
+function loadCustomValidationSettings (validationSchema: ValidationSchemaLike) {
   // iterate account stream settings and APPEND validation with relevant properties
   // etc additional required fields or regex validation
   const accountStreamsSettings = accountStreams.accountMap;
-  for (const [streamIdWithPrefix, systemStream] of Object.entries(accountStreamsSettings) as Array<[string, any]>) {
+  for (const [streamIdWithPrefix, systemStream] of Object.entries(accountStreamsSettings) as Array<[string, SystemStreamLike]>) {
     // if streamIdWithPrefix is set as required - add required validation
     const streamId = accountStreams.toFieldName(streamIdWithPrefix);
     if (systemStream.isRequiredInValidation &&

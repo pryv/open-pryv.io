@@ -17,7 +17,7 @@ const string = helpers.string;
 const number = helpers.number;
 const array = helpers.array;
 
-export default function (action: any) {
+export default function (action: string) {
   if (action === Action.STORE) { action = Action.READ; } // read items === stored items
 
   const base = object({
