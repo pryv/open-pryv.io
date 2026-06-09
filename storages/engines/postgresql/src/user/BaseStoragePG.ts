@@ -11,7 +11,34 @@ const require = createRequire(import.meta.url);
 
 const { DatabasePG } = require('../DatabasePG.ts');
 
-type PGResult = { rows: any[]; rowCount: number };
+// ---- Precise document-store types (untyped-document ↔ typed-SQL boundary) ----
+
+/** A row read back from a PG table (snake_case columns, arbitrary per table). */
+type PgRow = Record<string, unknown>;
+type PGResult = { rows: PgRow[], rowCount: number };
+/** The query slice of DatabasePG this base relies on. Params are forwarded
+ *  opaquely to node-pg, which does its own value serialization. */
+type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<PGResult> };
+
+/**
+ * An engine-agnostic document. `id`/`deleted`/`headId` map to promoted
+ * columns; other fields are genuinely arbitrary per collection (`unknown`).
+ */
+type StoredItem = { id?: string, deleted?: unknown, headId?: unknown, [k: string]: unknown };
+type ItemList = Array<StoredItem | null>;
+
+/** Mongo-style query: field → scalar | operator-object | $or. */
+type Query = Record<string, unknown>;
+/** Mongo-style update: $set/$unset/$inc/$min/$max + bare fields. */
+type UpdateData = Record<string, unknown>;
+
+/** Operator-object value of a query field (the `{ $gt: x, $in: [...] }` shape). */
+type QueryOp = {
+  $eq?: unknown, $ne?: unknown,
+  $gt?: unknown, $gte?: unknown, $lt?: unknown, $lte?: unknown,
+  $in?: unknown[], $type?: string
+};
+
 type Options = {
   sort?: Record<string, number>;
   limit?: number;
@@ -81,7 +108,7 @@ const DEFAULT_JSONB_COLUMNS = new Set([
  *   this.hasHeadIdCol   — (optional, default false) whether table has a `head_id` column
  */
 class BaseStoragePG {
-  db: any;
+  db: PgDbLike;
   tableName: string | null;
   columnMap: Record<string, string>;
   jsonbColumns: Set<string>;
@@ -90,7 +117,7 @@ class BaseStoragePG {
   hasDeletedCol: boolean;
   hasHeadIdCol: boolean;
 
-  constructor (db: any) {
+  constructor (db: PgDbLike) {
     this.db = db;
     this.tableName = null;
     this.columnMap = {};
@@ -133,7 +160,7 @@ class BaseStoragePG {
     return DEFAULT_JSONB_COLUMNS.has(snakeCol) || this.jsonbColumns.has(snakeCol);
   }
 
-  toPGValue (snakeCol: string, value: any): any {
+  toPGValue (snakeCol: string, value: unknown): unknown {
     if (value === undefined) return null;
     if (this.isJsonbCol(snakeCol) && value != null) {
       return JSON.stringify(value);
@@ -141,9 +168,9 @@ class BaseStoragePG {
     return value;
   }
 
-  rowToItem (row: any): any | null {
+  rowToItem (row: PgRow): StoredItem | null {
     if (!row) return null;
-    const item: any = {};
+    const item: StoredItem = {};
     for (const [col, val] of Object.entries(row)) {
       if (col === 'user_id') continue;
       if (val === null && !NULLABLE_COLUMNS.has(col)) continue;
@@ -156,23 +183,23 @@ class BaseStoragePG {
     return item;
   }
 
-  rowsToItems (rows: any[]): any[] {
+  rowsToItems (rows: PgRow[]): ItemList {
     return rows.map((r) => this.rowToItem(r));
   }
 
   // ---- Query building helpers ----
 
-  buildWhere (userId: string, query: any, startIdx: number = 1): { text: string, params: any[], nextIdx: number } {
+  buildWhere (userId: string, query: Query, startIdx: number = 1): { text: string, params: unknown[], nextIdx: number } {
     const conditions: string[] = [`user_id = $${startIdx}`];
-    const params: any[] = [userId];
+    const params: unknown[] = [userId];
     let idx = startIdx + 1;
 
-    for (const [prop, val] of Object.entries(query) as Array<[string, any]>) {
+    for (const [prop, val] of Object.entries(query)) {
       if (prop === '$or') {
         const orParts: string[] = [];
-        for (const clause of val) {
+        for (const clause of val as Array<Record<string, unknown>>) {
           const sub: string[] = [];
-          for (const [k, v] of Object.entries(clause) as Array<[string, any]>) {
+          for (const [k, v] of Object.entries(clause)) {
             const col = this.toCol(k);
             if (v === null) {
               sub.push(`${col} IS NULL`);
@@ -194,55 +221,56 @@ class BaseStoragePG {
         conditions.push(`${col} IS NULL`);
       } else if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
         // MongoDB-style operators
-        if (val.$eq !== undefined) {
-          if (val.$eq === null) {
+        const op = val as QueryOp;
+        if (op.$eq !== undefined) {
+          if (op.$eq === null) {
             conditions.push(`${col} IS NULL`);
           } else {
             conditions.push(`${col} = $${idx}`);
-            params.push(this.toPGValue(col, val.$eq));
+            params.push(this.toPGValue(col, op.$eq));
             idx++;
           }
         }
-        if (val.$gt !== undefined) {
+        if (op.$gt !== undefined) {
           conditions.push(`${col} > $${idx}`);
-          params.push(val.$gt);
+          params.push(op.$gt);
           idx++;
         }
-        if (val.$gte !== undefined) {
+        if (op.$gte !== undefined) {
           conditions.push(`${col} >= $${idx}`);
-          params.push(val.$gte);
+          params.push(op.$gte);
           idx++;
         }
-        if (val.$lt !== undefined) {
+        if (op.$lt !== undefined) {
           conditions.push(`${col} < $${idx}`);
-          params.push(val.$lt);
+          params.push(op.$lt);
           idx++;
         }
-        if (val.$lte !== undefined) {
+        if (op.$lte !== undefined) {
           conditions.push(`${col} <= $${idx}`);
-          params.push(val.$lte);
+          params.push(op.$lte);
           idx++;
         }
-        if (val.$ne !== undefined) {
-          if (val.$ne === null) {
+        if (op.$ne !== undefined) {
+          if (op.$ne === null) {
             conditions.push(`${col} IS NOT NULL`);
           } else {
             conditions.push(`${col} != $${idx}`);
-            params.push(val.$ne);
+            params.push(op.$ne);
             idx++;
           }
         }
-        if (val.$in !== undefined) {
-          const placeholders = val.$in.map(() => `$${idx++}`);
-          conditions.push(`${col} IN (${(placeholders as string[]).join(', ')})`);
-          params.push(...val.$in);
+        if (op.$in !== undefined) {
+          const placeholders = op.$in.map(() => `$${idx++}`);
+          conditions.push(`${col} IN (${placeholders.join(', ')})`);
+          params.push(...op.$in);
         }
-        if (val.$type !== undefined) {
+        if (op.$type !== undefined) {
           // $type: 'number' means IS NOT NULL (for numeric fields)
           // $type: 'null' means IS NULL
-          if (val.$type === 'number') {
+          if (op.$type === 'number') {
             conditions.push(`${col} IS NOT NULL`);
-          } else if (val.$type === 'null') {
+          } else if (op.$type === 'null') {
             conditions.push(`${col} IS NULL`);
           }
         }
@@ -304,9 +332,10 @@ class BaseStoragePG {
     return { select: '*', excludeProps: [] };
   }
 
-  applyExclusions (items: any[], excludeProps: string[]): any[] {
+  applyExclusions (items: ItemList, excludeProps: string[]): ItemList {
     if (!excludeProps || excludeProps.length === 0) return items;
     for (const item of items) {
+      if (item == null) continue;
       for (const prop of excludeProps) {
         delete item[prop];
       }
@@ -316,19 +345,19 @@ class BaseStoragePG {
 
   // ---- Core CRUD methods (callback-based) ----
 
-  find (userOrUserId: UserOrId, query: any, options: any, callback: Callback<any[]>): void {
+  find (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<ItemList>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (this.hasDeletedCol) query.deleted = null;
     if (this.hasHeadIdCol) query.headId = null;
     this._findInternal(userId, query, options, callback);
   }
 
-  findIncludingDeletionsAndVersions (userOrUserId: UserOrId, query: any, options: any, callback: Callback<any[]>): void {
+  findIncludingDeletionsAndVersions (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<ItemList>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     this._findInternal(userId, query, options, callback);
   }
 
-  _findInternal (userId: string, query: any, options: any, callback: Callback<any[]>): void {
+  _findInternal (userId: string, query: Query, options: Options, callback: Callback<ItemList>): void {
     const { select, excludeProps } = this.buildSelect(options);
     const where = this.buildWhere(userId, query);
     const orderBy = this.buildOrderBy(options);
@@ -340,7 +369,7 @@ class BaseStoragePG {
       .catch(callback);
   }
 
-  findOne (userOrUserId: UserOrId, query: any, options: any, callback: Callback<any>): void {
+  findOne (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<StoredItem | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (this.hasDeletedCol) query.deleted = null;
     if (this.hasHeadIdCol) query.headId = null;
@@ -359,7 +388,7 @@ class BaseStoragePG {
       .catch(callback);
   }
 
-  findDeletion (userOrUserId: UserOrId, query: any, options: any, callback: Callback<any>): void {
+  findDeletion (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<StoredItem | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     query.deleted = { $ne: null };
 
@@ -377,19 +406,19 @@ class BaseStoragePG {
       .catch(callback);
   }
 
-  findDeletions (userOrUserId: UserOrId, deletedSince: number, options: any, callback: Callback<any[]>): void {
+  findDeletions (userOrUserId: UserOrId, deletedSince: number, options: Options, callback: Callback<ItemList>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-    const query: any = { deleted: { $gt: deletedSince } };
+    const query: Query = { deleted: { $gt: deletedSince } };
     if (this.hasHeadIdCol) query.headId = null;
     this._findInternal(userId, query, options, callback);
   }
 
-  insertOne (userOrUserId: UserOrId, item: any, callback: Callback<any>, _options?: any): void {
+  insertOne (userOrUserId: UserOrId, item: StoredItem, callback: Callback<StoredItem | null>, _options?: unknown): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     item = this.applyDefaults(item);
 
     const cols: string[] = ['user_id'];
-    const vals: any[] = [userId];
+    const vals: unknown[] = [userId];
     const placeholders: string[] = ['$1'];
     let idx = 2;
 
@@ -414,7 +443,7 @@ class BaseStoragePG {
       });
   }
 
-  findOneAndUpdate (userOrUserId: UserOrId, query: any, updatedData: any, callback: Callback<any>): void {
+  findOneAndUpdate (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<StoredItem | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const { setClauses, unsetClauses, incClauses, params, nextIdx } =
       this._buildUpdateClauses(updatedData, 1);
@@ -439,11 +468,11 @@ class BaseStoragePG {
       });
   }
 
-  updateOne (userOrUserId: UserOrId, query: any, updatedData: any, callback: Callback<any>): void {
+  updateOne (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<StoredItem | null>): void {
     this.findOneAndUpdate(userOrUserId, query, updatedData, callback);
   }
 
-  updateMany (userOrUserId: UserOrId, query: any, updatedData: any, callback: Callback<any>): void {
+  updateMany (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<{ modifiedCount: number }>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const { setClauses, unsetClauses, incClauses, params, nextIdx } =
       this._buildUpdateClauses(updatedData, 1);
@@ -461,24 +490,24 @@ class BaseStoragePG {
       .catch(callback);
   }
 
-  _buildUpdateClauses (updatedData: any, startIdx: number): { setClauses: string[], unsetClauses: string[], incClauses: string[], params: any[], nextIdx: number } {
-    const input: any = Object.assign({}, updatedData);
+  _buildUpdateClauses (updatedData: UpdateData, startIdx: number): { setClauses: string[], unsetClauses: string[], incClauses: string[], params: unknown[], nextIdx: number } {
+    const input: Record<string, unknown> = Object.assign({}, updatedData);
     const setClauses: string[] = [];
     const unsetClauses: string[] = [];
     const incClauses: string[] = [];
-    const params: any[] = [];
+    const params: unknown[] = [];
     let idx = startIdx;
 
     // Extract MongoDB operators
-    const $set = input.$set || {};
+    const $set: Record<string, unknown> = (input.$set as Record<string, unknown>) || {};
     delete input.$set;
-    const $unset = input.$unset || {};
+    const $unset: Record<string, unknown> = (input.$unset as Record<string, unknown>) || {};
     delete input.$unset;
-    const $inc = input.$inc || {};
+    const $inc: Record<string, unknown> = (input.$inc as Record<string, unknown>) || {};
     delete input.$inc;
-    const $min = input.$min || {};
+    const $min: Record<string, unknown> = (input.$min as Record<string, unknown>) || {};
     delete input.$min;
-    const $max = input.$max || {};
+    const $max: Record<string, unknown> = (input.$max as Record<string, unknown>) || {};
     delete input.$max;
     delete input.$pull; // Not supported in PG — handle in subclass if needed
 
@@ -497,7 +526,7 @@ class BaseStoragePG {
       if (v != null && typeof v === 'object' && !Array.isArray(v)) {
         const snakeCol = this.toCol(k);
         if (this.isJsonbCol(snakeCol)) {
-          for (const [subKey, subVal] of Object.entries(v)) {
+          for (const [subKey, subVal] of Object.entries(v as Record<string, unknown>)) {
             if (subVal !== null) {
               $set[`${k}.${subKey}`] = subVal;
             } else {
@@ -515,7 +544,7 @@ class BaseStoragePG {
     const dotUnsetKeys = Object.keys($unset).filter((k) => k.includes('.'));
 
     if (dotSetKeys.length > 0 || dotUnsetKeys.length > 0) {
-      const jsonbUpdates: Record<string, Record<string, any>> = {};
+      const jsonbUpdates: Record<string, Record<string, unknown>> = {};
       for (const key of dotSetKeys) {
         const [col, ...rest] = key.split('.');
         const snakeCol = this.toCol(col);
@@ -532,7 +561,7 @@ class BaseStoragePG {
       }
 
       for (const [snakeCol, updates] of Object.entries(jsonbUpdates)) {
-        const keysToSet: Record<string, any> = {};
+        const keysToSet: Record<string, unknown> = {};
         const keysToRemove: string[] = [];
         for (const [k, v] of Object.entries(updates)) {
           if (v === null) {
@@ -579,8 +608,8 @@ class BaseStoragePG {
     // Postgres rejects `SET col = …, col = …` ("multiple assignments to same
     // column"), which is exactly what batched API calls produce when
     // accessTracking is on (e.g. $inc: { 'calls.events:get': 1, 'calls.accesses:get': 1 }).
-    const dottedByTopKey: Record<string, Array<[string, any]>> = {};
-    const bareInc: Array<[string, any]> = [];
+    const dottedByTopKey: Record<string, Array<[string, unknown]>> = {};
+    const bareInc: Array<[string, unknown]> = [];
     for (const [k, v] of Object.entries($inc)) {
       if (k.includes('.')) {
         const [topKey, ...rest] = k.split('.');
@@ -631,11 +660,11 @@ class BaseStoragePG {
     return { setClauses, unsetClauses, incClauses, params, nextIdx: idx };
   }
 
-  delete (userOrUserId: UserOrId, query: any, callback: Callback<any>): void {
+  delete (userOrUserId: UserOrId, query: Query, callback: Callback<{ modifiedCount: number }>): void {
     this.updateMany(userOrUserId, query, { $set: { deleted: require('unix-timestamp').now() } }, callback);
   }
 
-  removeOne (userOrUserId: UserOrId, query: any, callback: Callback<number>): void {
+  removeOne (userOrUserId: UserOrId, query: Query, callback: Callback<number>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const where = this.buildWhere(userId, query);
 
@@ -645,7 +674,7 @@ class BaseStoragePG {
       .catch(callback);
   }
 
-  removeMany (userOrUserId: UserOrId, query: any, callback: Callback<number>): void {
+  removeMany (userOrUserId: UserOrId, query: Query, callback: Callback<number>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const where = this.buildWhere(userId, query);
 
@@ -659,7 +688,7 @@ class BaseStoragePG {
     this.removeMany(userOrUserId, {}, callback);
   }
 
-  count (userOrUserId: UserOrId, query: any, callback: Callback<number>): void {
+  count (userOrUserId: UserOrId, query: Query, callback: Callback<number>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (this.hasDeletedCol) query.deleted = null;
     if (this.hasHeadIdCol) query.headId = null;
@@ -667,7 +696,7 @@ class BaseStoragePG {
     const where = this.buildWhere(userId, query);
     const sql = `SELECT COUNT(*)::int AS cnt FROM ${this.tableName} ${where.text}`;
     this.db.query(sql, where.params)
-      .then((res: PGResult) => callback(null, res.rows[0].cnt))
+      .then((res: PGResult) => callback(null, res.rows[0].cnt as number))
       .catch(callback);
   }
 
@@ -675,11 +704,11 @@ class BaseStoragePG {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const sql = `SELECT COUNT(*)::int AS cnt FROM ${this.tableName} WHERE user_id = $1`;
     this.db.query(sql, [userId])
-      .then((res: PGResult) => callback(null, res.rows[0].cnt))
+      .then((res: PGResult) => callback(null, res.rows[0].cnt as number))
       .catch(callback);
   }
 
-  async * iterateAll (): AsyncGenerator<any> {
+  async * iterateAll (): AsyncGenerator<StoredItem | null> {
     const res = await this.db.query(`SELECT * FROM ${this.tableName}`);
     for (const row of res.rows) {
       yield this.rowToItem(row);
@@ -688,12 +717,12 @@ class BaseStoragePG {
 
   // ---- Test helpers ----
 
-  findAll (userOrUserId: UserOrId, options: any, callback: Callback<any[]>): void {
+  findAll (userOrUserId: UserOrId, options: Options, callback: Callback<ItemList>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     this._findInternal(userId, {}, options, callback);
   }
 
-  insertMany (userOrUserId: UserOrId, items: any[], callback: Callback<void>): void {
+  insertMany (userOrUserId: UserOrId, items: StoredItem[], callback: Callback<void>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (!items || items.length === 0) return callback(null);
 
@@ -701,7 +730,7 @@ class BaseStoragePG {
       for (const item of items) {
         const prepared = this.applyDefaults(item);
         const cols: string[] = ['user_id'];
-        const vals: any[] = [userId];
+        const vals: unknown[] = [userId];
         const placeholders: string[] = ['$1'];
         let idx = 2;
 
@@ -729,11 +758,11 @@ class BaseStoragePG {
     this.removeAll(userOrUserId, callback);
   }
 
-  listIndexes (_userOrUserId: UserOrId, _options: any, callback: Callback<any[]>): void {
+  listIndexes (_userOrUserId: UserOrId, _options: unknown, callback: Callback<ItemList>): void {
     callback(null, []);
   }
 
-  findAndUpdateIfNeeded (userOrUserId: UserOrId, query: any, options: any, updateIfNeededCallback: (item: any) => any, callback: Callback<any>): void {
+  findAndUpdateIfNeeded (userOrUserId: UserOrId, query: Query, options: Options, updateIfNeededCallback: (item: StoredItem | null) => UpdateData | null, callback: Callback<{ count: number }>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const where = this.buildWhere(userId, query);
     const orderBy = this.buildOrderBy(options);
@@ -744,6 +773,7 @@ class BaseStoragePG {
         let updatesDone = 0;
         for (const row of res.rows) {
           const item = this.rowToItem(row);
+          if (item == null) continue;
           const updateQuery = updateIfNeededCallback(item);
           if (updateQuery == null) continue;
           await new Promise<void>((resolve, reject) => {
@@ -759,7 +789,7 @@ class BaseStoragePG {
 
   // ---- Migration methods ----
 
-  exportAll (userOrUserId: UserOrId, callback: Callback<any[]>): void {
+  exportAll (userOrUserId: UserOrId, callback: Callback<ItemList>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const sql = `SELECT * FROM ${this.tableName} WHERE user_id = $1`;
     this.db.query(sql, [userId])
@@ -767,7 +797,7 @@ class BaseStoragePG {
       .catch(callback);
   }
 
-  importAll (userOrUserId: UserOrId, items: any[], callback: Callback<void>): void {
+  importAll (userOrUserId: UserOrId, items: StoredItem[], callback: Callback<void>): void {
     if (!items || items.length === 0) return callback(null);
     this.insertMany(userOrUserId, items, callback);
   }
@@ -778,7 +808,7 @@ class BaseStoragePG {
 
   // ---- Defaults ----
 
-  applyDefaults (item: any): any {
+  applyDefaults (item: StoredItem): StoredItem {
     return Object.assign({}, item);
   }
 }
