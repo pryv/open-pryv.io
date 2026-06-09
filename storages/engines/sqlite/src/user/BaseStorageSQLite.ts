@@ -20,6 +20,45 @@ type Options = {
   projection?: Record<string, number | boolean>;
 } | null | undefined;
 
+// ---- Precise document-store types (untyped-document ↔ typed-SQL boundary) ----
+
+/** Values that better-sqlite3 / our bind sites accept as a bound parameter. */
+type SqlParam = string | number | bigint | null | Buffer | Uint8Array;
+
+/**
+ * An engine-agnostic document. `id`/`headId`/`deleted` are promoted to SQL
+ * columns; everything else is packed into the JSON `data` column. Other
+ * fields are genuinely arbitrary per collection, hence `unknown`.
+ */
+type StoredItem = { id?: string, headId?: SqlParam, deleted?: SqlParam, [k: string]: unknown };
+type ItemList = Array<StoredItem | null>;
+
+/** Mongo-style query: field → scalar | operator-object | $or. */
+type Query = Record<string, unknown>;
+/** Mongo-style update: $set/$unset/$inc/$min/$max + bare fields. */
+type UpdateData = Record<string, unknown>;
+
+/** Operator-object value of a query field (the `{ $gt: x, $in: [...] }` shape). */
+type QueryOp = {
+  $eq?: unknown, $ne?: unknown,
+  $gt?: unknown, $gte?: unknown, $lt?: unknown, $lte?: unknown,
+  $in?: unknown[], $type?: string
+};
+
+/** A row read back from a baseStorage table. */
+type DbRow = { id: string, head_id?: number | string | null, deleted?: number | null, data?: string, cnt?: number, [k: string]: unknown };
+type SqliteStmt = {
+  all: (...params: SqlParam[]) => DbRow[],
+  get: (...params: SqlParam[]) => DbRow | undefined,
+  run: (...params: SqlParam[]) => { changes: number }
+};
+type SqliteDb = {
+  prepare: (sql: string) => SqliteStmt,
+  transaction: (fn: (items: StoredItem[]) => void) => (items: StoredItem[]) => void
+};
+/** The per-user handle returned by `userDb()` — only `.db` is touched downstream. */
+type UserDb = { db: SqliteDb };
+
 /**
  * Columns stored as proper SQL columns (vs packed into `data` JSON).
  * Mirrors PG indexable columns so query semantics line up.
@@ -71,11 +110,11 @@ class BaseStorageSQLite {
     return { name: this.tableName, useUserId: userId };
   }
 
-  applyDefaults (item: any): any {
+  applyDefaults (item: StoredItem): StoredItem {
     return Object.assign({}, item);
   }
 
-  private async userDb (userOrUserId: UserOrId): Promise<any> {
+  private async userDb (userOrUserId: UserOrId): Promise<UserDb> {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const udb = await UserBaseStorageDb.forUser(userId);
     await udb.ensureTable(this.tableName, {
@@ -87,27 +126,28 @@ class BaseStorageSQLite {
 
   // ---- Row ↔ item mapping ----
 
-  rowToItem (row: any): any | null {
+  rowToItem (row: DbRow | null | undefined): StoredItem | null {
     if (!row) return null;
     const dataJson = row.data ? JSON.parse(row.data) : {};
-    const item: any = Object.assign({}, dataJson);
+    const item: StoredItem = Object.assign({}, dataJson);
     item.id = row.id;
     if (this.hasHeadIdCol && row.head_id != null) item.headId = row.head_id;
     if (this.hasDeletedCol && row.deleted != null) item.deleted = row.deleted;
     return item;
   }
 
-  rowsToItems (rows: any[]): any[] {
+  rowsToItems (rows: DbRow[]): ItemList {
     return rows.map((r) => this.rowToItem(r));
   }
 
-  private itemToRow (item: any): { id: string, head_id: any, deleted: any, data: string } {
+  private itemToRow (item: StoredItem): { id: string, head_id: SqlParam, deleted: SqlParam, data: string } {
     const copy = Object.assign({}, item);
-    const id = copy.id;
+    // Document field → column-type narrowing (the document↔column boundary).
+    const id = copy.id as string;
     delete copy.id;
-    const head_id = this.hasHeadIdCol ? (copy.headId ?? null) : null;
+    const head_id: SqlParam = this.hasHeadIdCol ? (copy.headId ?? null) : null;
     delete copy.headId;
-    const deleted = this.hasDeletedCol ? (copy.deleted ?? null) : null;
+    const deleted: SqlParam = this.hasDeletedCol ? (copy.deleted ?? null) : null;
     delete copy.deleted;
     return { id, head_id, deleted, data: JSON.stringify(copy) };
   }
@@ -123,11 +163,11 @@ class BaseStorageSQLite {
    * $in, $type ('null' / 'number' map to IS NULL / IS NOT NULL). Top-level
    * $or supported.
    */
-  buildWhere (query: any): { sql: string, params: any[] } {
+  buildWhere (query: Query): { sql: string, params: SqlParam[] } {
     const conditions: string[] = [];
-    const params: any[] = [];
+    const params: SqlParam[] = [];
 
-    const pushFieldOp = (lvalue: string, op: string, val: any): void => {
+    const pushFieldOp = (lvalue: string, op: string, val: unknown): void => {
       conditions.push(`${lvalue} ${op} ?`);
       params.push(this.paramFor(val));
     };
@@ -137,17 +177,17 @@ class BaseStorageSQLite {
       return `json_extract(data, '$.${prop}')`;
     };
 
-    for (const [prop, val] of Object.entries(query) as Array<[string, any]>) {
+    for (const [prop, val] of Object.entries(query)) {
       if (prop === '$or') {
         const orParts: string[] = [];
-        for (const clause of val) {
+        for (const clause of val as Array<Record<string, unknown>>) {
           const subConds: string[] = [];
-          for (const [k, v] of Object.entries(clause) as Array<[string, any]>) {
+          for (const [k, v] of Object.entries(clause)) {
             const lv = lvalueFor(k);
             if (v === null) {
               subConds.push(`${lv} IS NULL`);
             } else if (typeof v === 'object' && !Array.isArray(v) && v !== null) {
-              this.translateOps(lv, v, subConds, params);
+              this.translateOps(lv, v as QueryOp, subConds, params);
             } else {
               subConds.push(`${lv} = ?`);
               params.push(this.paramFor(v));
@@ -163,7 +203,7 @@ class BaseStorageSQLite {
       if (val === null) {
         conditions.push(`${lv} IS NULL`);
       } else if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-        this.translateOps(lv, val, conditions, params);
+        this.translateOps(lv, val as QueryOp, conditions, params);
       } else {
         pushFieldOp(lv, '=', val);
       }
@@ -173,7 +213,7 @@ class BaseStorageSQLite {
     return { sql, params };
   }
 
-  private translateOps (lvalue: string, val: any, conds: string[], params: any[]): void {
+  private translateOps (lvalue: string, val: QueryOp, conds: string[], params: SqlParam[]): void {
     if (val.$eq !== undefined) {
       if (val.$eq === null) conds.push(`${lvalue} IS NULL`);
       else { conds.push(`${lvalue} = ?`); params.push(this.paramFor(val.$eq)); }
@@ -197,16 +237,16 @@ class BaseStorageSQLite {
     }
   }
 
-  private paramFor (val: any): any {
+  private paramFor (val: unknown): SqlParam {
     if (val === undefined) return null;
     if (val instanceof Date) return val.getTime();
     if (typeof val === 'boolean') return val ? 1 : 0;
-    return val;
+    return val as SqlParam;
   }
 
   // ---- Defaults injection ----
 
-  private addImplicitFilters (query: any): any {
+  private addImplicitFilters (query: Query): Query {
     const out = Object.assign({}, query);
     if (this.hasDeletedCol && out.deleted === undefined) out.deleted = null;
     if (this.hasHeadIdCol && out.headId === undefined) out.headId = null;
@@ -221,7 +261,7 @@ class BaseStorageSQLite {
    * pattern api-server uses to strip internal counters from accesses
    * before exposing them in the API response.
    */
-  private applyProjection (items: any[], options: any): any[] {
+  private applyProjection (items: ItemList, options: Options): ItemList {
     const projection = options?.projection;
     if (!projection || Object.keys(projection).length === 0) return items;
     const excludeProps = Object.entries(projection)
@@ -235,7 +275,7 @@ class BaseStorageSQLite {
     return items;
   }
 
-  find (userOrUserId: UserOrId, query: any, options: any, callback: Callback<any[]>): void {
+  find (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<ItemList>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = this.addImplicitFilters(query || {});
       const { sql: where, params } = this.buildWhere(q);
@@ -247,7 +287,7 @@ class BaseStorageSQLite {
     });
   }
 
-  findIncludingDeletionsAndVersions (userOrUserId: UserOrId, query: any, options: any, callback: Callback<any[]>): void {
+  findIncludingDeletionsAndVersions (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<ItemList>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
       const orderBy = this.buildOrderBy(options);
@@ -258,7 +298,7 @@ class BaseStorageSQLite {
     });
   }
 
-  findOne (userOrUserId: UserOrId, query: any, options: any, callback: Callback<any>): void {
+  findOne (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<StoredItem | null>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = this.addImplicitFilters(query || {});
       const { sql: where, params } = this.buildWhere(q);
@@ -271,7 +311,7 @@ class BaseStorageSQLite {
     });
   }
 
-  findDeletion (userOrUserId: UserOrId, query: any, _options: any, callback: Callback<any>): void {
+  findDeletion (userOrUserId: UserOrId, query: Query, _options: Options, callback: Callback<StoredItem | null>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = Object.assign({}, query || {}, { deleted: { $ne: null } });
       const { sql: where, params } = this.buildWhere(q);
@@ -281,9 +321,9 @@ class BaseStorageSQLite {
     });
   }
 
-  findDeletions (userOrUserId: UserOrId, deletedSince: number, options: any, callback: Callback<any[]>): void {
+  findDeletions (userOrUserId: UserOrId, deletedSince: number, options: Options, callback: Callback<ItemList>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
-      const q: any = { deleted: { $gt: deletedSince } };
+      const q: Query = { deleted: { $gt: deletedSince } };
       if (this.hasHeadIdCol) q.headId = null;
       const { sql: where, params } = this.buildWhere(q);
       const orderBy = this.buildOrderBy(options);
@@ -294,13 +334,13 @@ class BaseStorageSQLite {
     });
   }
 
-  insertOne (userOrUserId: UserOrId, item: any, callback: Callback<any>): void {
+  insertOne (userOrUserId: UserOrId, item: StoredItem, callback: Callback<StoredItem | null>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const prepared = this.applyDefaults(item);
       const { id, head_id, deleted, data } = this.itemToRow(prepared);
       const cols: string[] = ['id'];
       const placeholders: string[] = ['?'];
-      const vals: any[] = [id];
+      const vals: SqlParam[] = [id];
       if (this.hasHeadIdCol) { cols.push('head_id'); placeholders.push('?'); vals.push(head_id); }
       if (this.hasDeletedCol) { cols.push('deleted'); placeholders.push('?'); vals.push(deleted); }
       cols.push('data'); placeholders.push('?'); vals.push(data);
@@ -313,7 +353,7 @@ class BaseStorageSQLite {
     });
   }
 
-  findOneAndUpdate (userOrUserId: UserOrId, query: any, updatedData: any, callback: Callback<any>): void {
+  findOneAndUpdate (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<StoredItem | null>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
       const row = udb.db.prepare(`SELECT * FROM ${this.tableName} ${where} LIMIT 1`).get(...params);
@@ -325,11 +365,11 @@ class BaseStorageSQLite {
     });
   }
 
-  updateOne (userOrUserId: UserOrId, query: any, updatedData: any, callback: Callback<any>): void {
+  updateOne (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<StoredItem | null>): void {
     this.findOneAndUpdate(userOrUserId, query, updatedData, callback);
   }
 
-  updateMany (userOrUserId: UserOrId, query: any, updatedData: any, callback: Callback<any>): void {
+  updateMany (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<{ modifiedCount: number }>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
       const rows = udb.db.prepare(`SELECT * FROM ${this.tableName} ${where}`).all(...params);
@@ -343,12 +383,12 @@ class BaseStorageSQLite {
     });
   }
 
-  delete (userOrUserId: UserOrId, query: any, callback: Callback<any>): void {
+  delete (userOrUserId: UserOrId, query: Query, callback: Callback<{ modifiedCount: number }>): void {
     const now = require('unix-timestamp').now();
     this.updateMany(userOrUserId, query, { $set: { deleted: now } }, callback);
   }
 
-  removeOne (userOrUserId: UserOrId, query: any, callback: Callback<number>): void {
+  removeOne (userOrUserId: UserOrId, query: Query, callback: Callback<number>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
       const row = udb.db.prepare(`SELECT id FROM ${this.tableName} ${where} LIMIT 1`).get(...params);
@@ -358,7 +398,7 @@ class BaseStorageSQLite {
     });
   }
 
-  removeMany (userOrUserId: UserOrId, query: any, callback: Callback<number>): void {
+  removeMany (userOrUserId: UserOrId, query: Query, callback: Callback<number>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
       const res = udb.db.prepare(`DELETE FROM ${this.tableName} ${where}`).run(...params);
@@ -370,23 +410,23 @@ class BaseStorageSQLite {
     this.removeMany(userOrUserId, {}, callback);
   }
 
-  count (userOrUserId: UserOrId, query: any, callback: Callback<number>): void {
+  count (userOrUserId: UserOrId, query: Query, callback: Callback<number>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = this.addImplicitFilters(query || {});
       const { sql: where, params } = this.buildWhere(q);
       const row = udb.db.prepare(`SELECT COUNT(*) AS cnt FROM ${this.tableName} ${where}`).get(...params);
-      callback(null, row.cnt);
+      callback(null, row?.cnt ?? 0);
     });
   }
 
   countAll (userOrUserId: UserOrId, callback: Callback<number>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const row = udb.db.prepare(`SELECT COUNT(*) AS cnt FROM ${this.tableName}`).get();
-      callback(null, row.cnt);
+      callback(null, row?.cnt ?? 0);
     });
   }
 
-  async * iterateAll (): AsyncGenerator<any> {
+  async * iterateAll (): AsyncGenerator<StoredItem | null> {
     const { getUsersLocalIndex } = require('storage');
     const idx = await getUsersLocalIndex();
     const map = await idx.getAllByUsername();
@@ -402,14 +442,14 @@ class BaseStorageSQLite {
 
   // ---- Migration ----
 
-  exportAll (userOrUserId: UserOrId, callback: Callback<any[]>): void {
+  exportAll (userOrUserId: UserOrId, callback: Callback<ItemList>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const rows = udb.db.prepare(`SELECT * FROM ${this.tableName}`).all();
       callback(null, this.rowsToItems(rows));
     });
   }
 
-  importAll (userOrUserId: UserOrId, items: any[], callback: Callback<void>): void {
+  importAll (userOrUserId: UserOrId, items: StoredItem[], callback: Callback<void>): void {
     if (!items || items.length === 0) return callback(null);
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const cols: string[] = ['id'];
@@ -418,10 +458,10 @@ class BaseStorageSQLite {
       if (this.hasDeletedCol) { cols.push('deleted'); placeholders.push('?'); }
       cols.push('data'); placeholders.push('?');
       const stmt = udb.db.prepare(`INSERT OR IGNORE INTO ${this.tableName} (${cols.join(', ')}) VALUES (${placeholders.join(', ')})`);
-      const tx = udb.db.transaction((arr: any[]) => {
+      const tx = udb.db.transaction((arr: StoredItem[]) => {
         for (const it of arr) {
           const row = this.itemToRow(this.applyDefaults(it));
-          const vals: any[] = [row.id];
+          const vals: SqlParam[] = [row.id];
           if (this.hasHeadIdCol) vals.push(row.head_id);
           if (this.hasDeletedCol) vals.push(row.deleted);
           vals.push(row.data);
@@ -439,13 +479,13 @@ class BaseStorageSQLite {
 
   // ---- Update merging ----
 
-  private applyUpdateToItem (item: any, updatedData: any): any {
-    const merged = Object.assign({}, item);
-    const $set = updatedData.$set || {};
-    const $unset = updatedData.$unset || {};
-    const $inc = updatedData.$inc || {};
-    const $min = updatedData.$min || {};
-    const $max = updatedData.$max || {};
+  private applyUpdateToItem (item: StoredItem | null, updatedData: UpdateData): StoredItem {
+    const merged: StoredItem = Object.assign({}, item);
+    const $set: Record<string, unknown> = (updatedData.$set as Record<string, unknown>) || {};
+    const $unset: Record<string, unknown> = (updatedData.$unset as Record<string, unknown>) || {};
+    const $inc: Record<string, unknown> = (updatedData.$inc as Record<string, unknown>) || {};
+    const $min: Record<string, unknown> = (updatedData.$min as Record<string, unknown>) || {};
+    const $max: Record<string, unknown> = (updatedData.$max as Record<string, unknown>) || {};
 
     for (const [k, v] of Object.entries(updatedData)) {
       if (!k.startsWith('$')) {
@@ -466,8 +506,8 @@ class BaseStorageSQLite {
       if (COL_SET.has(k)) continue; // indexed col — value is the column value, not a nested map
       const existing = merged[k];
       if (existing != null && typeof existing === 'object' && !Array.isArray(existing)) {
-        const mergedField: any = Object.assign({}, existing);
-        for (const [subKey, subVal] of Object.entries(v as Record<string, any>)) {
+        const mergedField = Object.assign({}, existing) as Record<string, unknown>;
+        for (const [subKey, subVal] of Object.entries(v as Record<string, unknown>)) {
           if (subVal === null) delete mergedField[subKey];
           else mergedField[subKey] = subVal;
         }
@@ -481,56 +521,57 @@ class BaseStorageSQLite {
     for (const k of Object.keys($unset)) {
       this.unsetNested(merged, k);
     }
+    // $inc/$min/$max operand values are numeric by the mongo update contract.
     for (const [k, v] of Object.entries($inc) as Array<[string, number]>) {
       const cur = this.getNested(merged, k);
       this.setNested(merged, k, (typeof cur === 'number' ? cur : 0) + v);
     }
-    for (const [k, v] of Object.entries($min) as Array<[string, any]>) {
+    for (const [k, v] of Object.entries($min) as Array<[string, number]>) {
       const cur = this.getNested(merged, k);
-      this.setNested(merged, k, cur == null ? v : Math.min(cur, v));
+      this.setNested(merged, k, cur == null ? v : Math.min(cur as number, v));
     }
-    for (const [k, v] of Object.entries($max) as Array<[string, any]>) {
+    for (const [k, v] of Object.entries($max) as Array<[string, number]>) {
       const cur = this.getNested(merged, k);
-      this.setNested(merged, k, cur == null ? v : Math.max(cur, v));
+      this.setNested(merged, k, cur == null ? v : Math.max(cur as number, v));
     }
 
     return merged;
   }
 
-  private setNested (obj: any, path: string, val: any): void {
+  private setNested (obj: Record<string, unknown>, path: string, val: unknown): void {
     const parts = path.split('.');
-    let cur = obj;
+    let cur: Record<string, unknown> = obj;
     for (let i = 0; i < parts.length - 1; i++) {
       if (cur[parts[i]] == null || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {};
-      cur = cur[parts[i]];
+      cur = cur[parts[i]] as Record<string, unknown>;
     }
     cur[parts[parts.length - 1]] = val;
   }
 
-  private unsetNested (obj: any, path: string): void {
+  private unsetNested (obj: Record<string, unknown>, path: string): void {
     const parts = path.split('.');
-    let cur = obj;
+    let cur: Record<string, unknown> = obj;
     for (let i = 0; i < parts.length - 1; i++) {
       if (cur[parts[i]] == null) return;
-      cur = cur[parts[i]];
+      cur = cur[parts[i]] as Record<string, unknown>;
     }
     delete cur[parts[parts.length - 1]];
   }
 
-  private getNested (obj: any, path: string): any {
+  private getNested (obj: Record<string, unknown>, path: string): unknown {
     const parts = path.split('.');
-    let cur = obj;
+    let cur: unknown = obj;
     for (const p of parts) {
       if (cur == null) return undefined;
-      cur = cur[p];
+      cur = (cur as Record<string, unknown>)[p];
     }
     return cur;
   }
 
-  private _writeMerged (udb: any, id: string, merged: any): void {
+  private _writeMerged (udb: UserDb, id: string, merged: StoredItem): void {
     const row = this.itemToRow(Object.assign({}, merged, { id }));
     const cols: string[] = [];
-    const vals: any[] = [];
+    const vals: SqlParam[] = [];
     if (this.hasHeadIdCol) { cols.push('head_id = ?'); vals.push(row.head_id); }
     if (this.hasDeletedCol) { cols.push('deleted = ?'); vals.push(row.deleted); }
     cols.push('data = ?'); vals.push(row.data);
@@ -565,7 +606,7 @@ class BaseStorageSQLite {
 
   // ---- Test/extra helpers ----
 
-  findAll (userOrUserId: UserOrId, options: any, callback: Callback<any[]>): void {
+  findAll (userOrUserId: UserOrId, options: Options, callback: Callback<ItemList>): void {
     // Mirror PG's findAll: do NOT apply implicit filters (deleted=null,
     // headId=null), so the result includes deleted + versioned rows.
     // Used by test fixtures (`accesses-app.test.js` etc.) to assert on
@@ -573,7 +614,7 @@ class BaseStorageSQLite {
     this.findIncludingDeletionsAndVersions(userOrUserId, {}, options, callback);
   }
 
-  insertMany (userOrUserId: UserOrId, items: any[], callback: Callback<void>): void {
+  insertMany (userOrUserId: UserOrId, items: StoredItem[], callback: Callback<void>): void {
     this.importAll(userOrUserId, items, callback);
   }
 
@@ -585,11 +626,11 @@ class BaseStorageSQLite {
     this.removeAll(userOrUserId, callback);
   }
 
-  listIndexes (_userOrUserId: UserOrId, _options: any, callback: Callback<any[]>): void {
+  listIndexes (_userOrUserId: UserOrId, _options: unknown, callback: Callback<ItemList>): void {
     callback(null, []);
   }
 
-  findAndUpdateIfNeeded (userOrUserId: UserOrId, query: any, options: any, updateIfNeededCallback: (item: any) => any, callback: Callback<any>): void {
+  findAndUpdateIfNeeded (userOrUserId: UserOrId, query: Query, options: Options, updateIfNeededCallback: (item: StoredItem | null) => UpdateData | null, callback: Callback<{ count: number }>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
       const orderBy = this.buildOrderBy(options);
@@ -609,22 +650,22 @@ class BaseStorageSQLite {
 
   // ---- Async / write plumbing ----
 
-  private _userDbAnd (userOrUserId: UserOrId, callback: any, fn: (udb: any) => void): void {
+  private _userDbAnd<T> (userOrUserId: UserOrId, callback: Callback<T>, fn: (udb: UserDb) => void): void {
     this.userDb(userOrUserId)
       .then((udb) => {
-        try { fn(udb); } catch (err) { callback(err); }
+        try { fn(udb); } catch (err) { callback(err as Error); }
       })
       .catch(callback);
   }
 
-  private _userDbAndWrite (userOrUserId: UserOrId, callback: any, fn: (udb: any) => any): void {
+  private _userDbAndWrite<T> (userOrUserId: UserOrId, callback: Callback<T>, fn: (udb: UserDb) => T): void {
     this.userDb(userOrUserId)
       .then(async (udb) => {
         try {
-          let result: any;
+          let result: T | undefined;
           await concurrentSafeWrite.execute(() => { result = fn(udb); });
           callback(null, result);
-        } catch (err) { callback(err); }
+        } catch (err) { callback(err as Error); }
       })
       .catch(callback);
   }
