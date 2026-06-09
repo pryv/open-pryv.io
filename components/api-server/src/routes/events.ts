@@ -12,7 +12,7 @@ const methodCallback = require('./methodCallback.ts').default;
 
 type AppLike = { api: { call: (...args: unknown[]) => unknown }; config: { get (key: string): unknown }; storageLayer: unknown };
 type AccessRow = { token: string; [k: string]: unknown };
-type PryvRequest = Request & { context?: any; files?: unknown };
+type PryvRequest = Request & { context?: { retrieveAccessFromId: (storage: unknown, accessId: string) => Promise<AccessRow> }; files?: unknown };
 const encryption = require('utils').encryption;
 const errors = require('errors').factory;
 const Paths = require('./Paths.ts');
@@ -79,7 +79,7 @@ export default async function (expressApp: ExpressApp, app: AppLike) {
     const accessId = tokenParts.accessId;
     if (accessId == null) { return next(errors.invalidAccessToken('Invalid read token.')); }
     // Now load the access through the context; then verify the HMAC.
-    const context = req.context;
+    const context = req.context!;
     context
       .retrieveAccessFromId(storage, accessId)
       .then((access: AccessRow) => {

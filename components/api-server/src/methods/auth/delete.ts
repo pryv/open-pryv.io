@@ -13,7 +13,7 @@ const { getLogger, ready } = require('@pryv/boiler');
  * Auth API methods implementations.
  *
  */
-export default async function (api: any) {
+export default async function (api: { register: (...args: unknown[]) => void }) {
   const config = await ready();
   const logging = getLogger('delete');
   const storageLayer = await getStorageLayer();

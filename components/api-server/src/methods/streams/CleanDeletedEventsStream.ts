@@ -18,7 +18,7 @@ class CleanDeletedEventsStream extends Transform {
     super({ objectMode: true });
   }
 
-  _transform (event: any, encoding: any, callback: any) {
+  _transform (event: { id?: string; deleted?: unknown; integrity?: unknown; time?: unknown }, encoding: BufferEncoding, callback: (error?: Error | null) => void) {
     // we keep integrity only if we keep the full content of the event;
     if (event.time != null) {
       this.push({ id: event.id, deleted: event.deleted });

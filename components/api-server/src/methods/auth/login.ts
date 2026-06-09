@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 
 type MethodContext = BaseMethodContext & {
-  [key: string]: any;
+  [key: string]: unknown;
 };
 type ResultBag = Record<string, unknown>;
 type Next = (err?: unknown) => void;

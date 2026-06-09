@@ -19,7 +19,7 @@ function errMessage (err: unknown): string {
 }
 
 // System (e.g. registration server) calls route handling.
-export default function system (expressApp: Application, app: any) {
+export default function system (expressApp: Application, app: { systemAPI: { call: (...args: unknown[]) => unknown }; config: { get: (key: string) => unknown } }) {
   const systemAPI = app.systemAPI;
   const config = app.config;
   const adminAccessKey = config.get('auth:adminAccessKey');
@@ -191,7 +191,7 @@ export default function system (expressApp: Application, app: any) {
       }
       const mail = require('mail');
       if (!mail.isActive()) {
-        const emailCfg = config.get('services:email') || {};
+        const emailCfg = (config.get('services:email') || {}) as { smtp?: { host?: string }; from?: unknown; defaultLang?: string };
         if (!emailCfg.smtp || !emailCfg.smtp.host) {
           return next(errors.unexpectedError('services.email.smtp.host is required for send-test'));
         }

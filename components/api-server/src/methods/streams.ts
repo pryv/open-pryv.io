@@ -24,7 +24,7 @@ const Readable = require('stream').Readable;
 
 import type { MethodNext } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
-type MethodContext = BaseMethodContext & { [key: string]: any };
+type MethodContext = BaseMethodContext & { [key: string]: any }; // scratchpad context (context.stream etc.); see methods/account.ts note
 type Stream = {
   id?: string;
   name?: string;

@@ -11,6 +11,9 @@ const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 
 type MethodContext = BaseMethodContext & {
+  // scratchpad context: the method pipeline stashes typed-elsewhere objects
+  // (userBusiness, passwordResetRequest, ...) here. Stays `any` until those
+  // get real types (strongly-typed interface I/O follow-up plan).
   [key: string]: any;
 };
 type ResultBag = Record<string, unknown>;
