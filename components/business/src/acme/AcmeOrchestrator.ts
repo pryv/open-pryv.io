@@ -193,8 +193,8 @@ class AcmeOrchestrator {
   // PLUS the most common causes for HTTP-01 / DNS-01 failures so the
   // operator doesn't have to grep through acme-client's terse "Could not
   // validate authorization" with no context.
-  #logRenewError (phase: string, err: any) {
-    const msg = err && err.message ? err.message : String(err);
+  #logRenewError (phase: string, err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
     const banner = '─'.repeat(60);
     this.#log(banner);
     this.#log(`${phase} ERROR for host=${this.#hostSpec.commonName}`);
@@ -221,7 +221,7 @@ class AcmeOrchestrator {
     }
     this.#log(banner);
     if (process.env.DEBUG) {
-      this.#log(err && err.stack ? err.stack : '(no stack available)');
+      this.#log(err instanceof Error && err.stack ? err.stack : '(no stack available)');
     }
   }
 

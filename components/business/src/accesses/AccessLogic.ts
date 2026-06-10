@@ -53,8 +53,8 @@ class AccessLogic {
   _userId: string;
   _streamPermissionLevelCache: Record<string, StorePermissionEntry | null | undefined>;
   _streamByStorePermissionsMap!: Record<string, Record<string, StorePermissionEntry>>; // initialized in loadPermissions()
-  // Shape varies per forced-feature variant — kept wide.
-  _streamByStoreForced: any;
+  // In-store stream ids forced into events.get queries, keyed by store id.
+  _streamByStoreForced!: Record<string, string[]>; // initialized in loadPermissions()
   featurePermissionsMap!: Record<string, FeaturePermission>;
   // mirrored from `access` via deepMerge() in constructor — definite-assign:
   id!: string;
@@ -238,10 +238,16 @@ class AccessLogic {
   _registerFeaturePermission (perm: FeaturePermission) {
     this.featurePermissionsMap[perm.feature] = perm;
     if (perm.feature === 'forcedStreams') { // load them by store
-      const forced = perm as FeaturePermission & { streams: unknown[] };
-      const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(forced.streams);
-      if (this._streamByStoreForced[storeId] == null) this._streamByStoreForced[storeId] = [];
-      this._streamByStoreForced[storeId].push(...forced.streams);
+      const forced = perm as FeaturePermission & { streams?: string[] };
+      // Mirror getForbiddenGetEventsStreamIds(): group each stream by its
+      // parsed store id and keep the in-store id (the consumer pushes these
+      // into per-store stream queries). The previous code passed the whole
+      // array where a stream id string was expected and would have thrown.
+      for (const streamId of forced.streams ?? []) {
+        const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamId);
+        if (this._streamByStoreForced[storeId] == null) this._streamByStoreForced[storeId] = [];
+        this._streamByStoreForced[storeId].push(storeStreamId);
+      }
     }
   }
 

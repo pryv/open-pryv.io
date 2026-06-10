@@ -17,9 +17,8 @@ const setAdminAuditAccessId = setAuditAccessId(AuditAccessIds.ADMIN_TOKEN);
 
 type MethodContext = {
   user: { id: string; username: string };
-  access?: { isPersonal? (): boolean };
+  access?: { id?: string; isPersonal? (): boolean };
   authorizationHeader?: string;
-  [k: string]: any;
 };
 type ResultBag = Record<string, unknown>;
 type Next = (err?: unknown) => void;

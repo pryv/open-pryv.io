@@ -22,7 +22,17 @@ const __dirname = require('path').dirname(__filename);
  */
 const path = require('path');
 
-function buildObservabilityEnv (obs: any) {
+// Shape of `Platform.getObservabilityConfig()`'s resolved result.
+interface ObservabilityConfig {
+  enabled: boolean;
+  provider: string;
+  appName: string;
+  logLevel: string;
+  hostname: string;
+  newrelic?: { licenseKey?: string; highSecurity?: boolean };
+}
+
+function buildObservabilityEnv (obs: ObservabilityConfig | null | undefined): Record<string, string> {
   if (!obs || !obs.enabled) return {};
   if (obs.provider !== 'newrelic') return {};
   if (!obs.newrelic || !obs.newrelic.licenseKey) return {};
