@@ -12,14 +12,18 @@
  */
 
 import { createRequire } from 'node:module';
+import type { InfluxConnection as InfluxConnectionT } from './influx_connection.ts';
 const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
 
+type Logger = { debug?: (...args: unknown[]) => void; info?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void; error?: (...args: unknown[]) => void };
+type ConfigLike = { get: (key: string) => unknown };
+
 /**
  * Receive host internals from the barrel.
  */
-function init (config: Record<string, any>, getLogger: (name: string) => any, internals: Record<string, any>): void {
+function init (config: ConfigLike, getLogger: (name: string) => Logger, internals: Record<string, unknown>): void {
   _internals.set('config', config);
   _internals.set('getLogger', getLogger);
   for (const [key, value] of Object.entries(internals)) {
@@ -32,7 +36,7 @@ function init (config: Record<string, any>, getLogger: (name: string) => any, in
 /**
  * @param config — { host, port } from influxdb config section
  */
-function createSeriesConnection (config: { host: string, port: number }): any {
+function createSeriesConnection (config: { host: string, port: number }): InfluxConnectionT {
   const { InfluxConnection } = require('./influx_connection.ts');
   return new InfluxConnection({ host: config.host, port: config.port });
 }

@@ -14,8 +14,11 @@ import type {
   InvitationTokenInfo
 } from '../../../interfaces/platformStorage/PlatformDB.ts';
 
-type Row = Record<string, any>;
-type RqliteResult = { columns?: string[]; values?: any[][]; rows_affected?: number; error?: string };
+// All queries here hit the `keyValue` table (key TEXT, value TEXT).
+type Row = Record<string, string>;
+// rqlite speaks JSON — cell values are JSON scalars.
+type RqliteCell = string | number | boolean | null;
+type RqliteResult = { columns?: string[]; values?: RqliteCell[][]; rows_affected?: number; error?: string };
 
 /**
  * PlatformDB implementation backed by rqlite (distributed SQLite via Raft).
@@ -86,10 +89,10 @@ class DBrqlite {
     if (!result) return [];
     if (!result.columns || !result.values) return [];
     // Convert columnar format to row objects
-    return result.values.map((row: unknown[]) => {
+    return result.values.map((row: RqliteCell[]) => {
       const obj: Row = {};
       for (let i = 0; i < result.columns.length; i++) {
-        obj[result.columns[i]] = row[i];
+        obj[result.columns[i]] = row[i] as string; // keyValue columns are TEXT
       }
       return obj;
     });

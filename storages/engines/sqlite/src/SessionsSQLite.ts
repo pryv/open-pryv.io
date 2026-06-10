@@ -13,6 +13,10 @@ const { createId: cuid } = require('@paralleldrive/cuid2');
 const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
 type SessionData = Record<string, unknown>;
+// `sessions` table row (queries select subsets of these columns)
+type SessionRow = { id: string; data: string | SessionData; expires: number };
+type SqliteStmt = { run: (...args: unknown[]) => unknown; get: (...args: unknown[]) => SessionRow | undefined; all: (...args: unknown[]) => SessionRow[] };
+type SqliteDb = { prepare: (sql: string) => SqliteStmt; transaction: <T>(fn: (items: T) => void) => (items: T) => void };
 
 const DEFAULT_MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days
 
@@ -22,10 +26,10 @@ const DEFAULT_MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days
  * `data` is stored as a JSON TEXT column; `expires` as INTEGER (ms since epoch).
  */
 class SessionsSQLite {
-  db: any; // better-sqlite3 — not modelled
+  db: SqliteDb;
   options: { maxAge: number };
 
-  constructor (database: { getDb: () => any }, options?: { maxAge?: number }) {
+  constructor (database: { getDb: () => SqliteDb }, options?: { maxAge?: number }) {
     this.db = database.getDb();
     this.options = { maxAge: (options && options.maxAge) || DEFAULT_MAX_AGE };
   }

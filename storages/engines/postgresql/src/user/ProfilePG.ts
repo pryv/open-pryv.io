@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { PgDbLike } from './BaseStoragePG.ts';
 const require = createRequire(import.meta.url);
 
 const { BaseStoragePG } = require('./BaseStoragePG.ts');
@@ -14,7 +15,7 @@ const { BaseStoragePG } = require('./BaseStoragePG.ts');
  * PostgreSQL persistence for profile sets.
  */
 class ProfilePG extends BaseStoragePG {
-  constructor (db: any) {
+  constructor (db: PgDbLike) {
     super(db);
     this.tableName = 'profile';
     this.hasDeletedCol = false;

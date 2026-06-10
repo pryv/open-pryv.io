@@ -15,11 +15,14 @@
 
 export { setupForTable };
 
+type SqliteDb = { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } };
+
 /**
  * Add full text search capabilities on a specific table.
  * id defaults to 'rowid'; if provided, it must be an Integer primary key.
+ * `tableData` maps column names to their schema definitions (keys only are used).
  */
-function setupForTable (db: any, tableName: string, tableData: Record<string, any>, columnsToInclude: string[], id?: string): void {
+function setupForTable (db: SqliteDb, tableName: string, tableData: Record<string, unknown>, columnsToInclude: string[], id?: string): void {
   const itemId = id || 'rowid';
   const columnsTypes: string[] = [];
   const columnNames = Object.keys(tableData);

@@ -14,14 +14,18 @@
  */
 
 import { createRequire } from 'node:module';
+import type { EventFiles as EventFilesT } from '../../../interfaces/fileStorage/EventFiles.ts';
 const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
 
+type Logger = { debug?: (...args: unknown[]) => void; info?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void; error?: (...args: unknown[]) => void };
+type ConfigLike = { get: (key: string) => unknown };
+
 /**
  * Receive host internals from the barrel.
  */
-function init (config: Record<string, any>, getLogger: (name: string) => any, internals: Record<string, any>): void {
+function init (config: ConfigLike, getLogger: (name: string) => Logger, internals: Record<string, unknown>): void {
   _internals.set('config', config);
   _internals.set('getLogger', getLogger);
   for (const [key, value] of Object.entries(internals)) {
@@ -31,7 +35,7 @@ function init (config: Record<string, any>, getLogger: (name: string) => any, in
 
 // -- FileStorage --------------------------------------------------------
 
-async function createFileStorage (_config: any, _engineInternals: any): Promise<any> {
+async function createFileStorage (_config: ConfigLike, _engineInternals: Record<string, unknown>): Promise<EventFilesT> {
   const { EventFiles } = require('./EventLocalFiles.ts');
   return new EventFiles();
 }

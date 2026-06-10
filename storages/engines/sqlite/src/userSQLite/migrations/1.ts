@@ -25,7 +25,13 @@ const require = createRequire(import.meta.url);
 const SQLite3 = require('better-sqlite3');
 const fs = require('fs/promises');
 
-async function migrateUserDB (v0dbPath: string, v1userDB: any, _logger: any): Promise<{ count: number }> {
+type V1UserDb = {
+  db: { exec: (sql: string) => unknown };
+  createEventSync: (eventData: Record<string, unknown>) => unknown;
+};
+type Logger = { debug: (msg: string) => void; info: (msg: string) => void; warn: (msg: string) => void; error: (msg: unknown) => void };
+
+async function migrateUserDB (v0dbPath: string, v1userDB: V1UserDb, _logger: Logger): Promise<{ count: number }> {
   const v0db = new SQLite3(v0dbPath);
   const v0EventsIterator = v0db.prepare('SELECT * FROM events').iterate();
   const res = { count: 0 };

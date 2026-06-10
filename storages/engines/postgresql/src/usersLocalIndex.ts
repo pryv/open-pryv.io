@@ -13,12 +13,18 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
+type UsersIndexRow = { username: string; user_id: string };
+type PgDbLike = {
+  ensureConnect: () => Promise<void>;
+  query: (sql: string, params?: unknown[]) => Promise<{ rows: UsersIndexRow[] }>;
+};
+
 class UsersLocalIndexPG {
-  db: any;
+  db!: PgDbLike; // set in init()
 
   async init (): Promise<void> {
     const { _internals } = require('./_internals.ts');
-    this.db = _internals.databasePG;
+    this.db = _internals.databasePG as PgDbLike;
     await this.db.ensureConnect();
   }
 

@@ -814,3 +814,4 @@ class BaseStoragePG {
 }
 
 export { BaseStoragePG };
+export type { PgDbLike };
