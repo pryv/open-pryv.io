@@ -10,11 +10,18 @@ import type { MethodContext as BaseMethodContext } from 'business/src/MethodCont
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 
-type MethodContext = BaseMethodContext & {
-  [key: string]: any;
-};
+type MethodContext = BaseMethodContext;
 type ResultBag = Record<string, unknown>;
 type Next = (err?: unknown) => void;
+// `system.getUserInfo` response body, accumulated across the two middleware steps.
+type UserInfoStats = {
+  lastAccess: number;
+  callsTotal: number;
+  callsDetail: Record<string, number>;
+  callsPerAccess: Record<string, number>;
+  username?: string;
+  storageUsed?: unknown;
+};
 type AccessRow = { id?: string; type?: string; name?: string; lastUsed?: number; calls?: Record<string, number>; [k: string]: unknown };
 const commonFns = require('./helpers/commonFunctions.ts');
 const Registration = require('business/src/auth/registration.ts').default;
@@ -81,7 +88,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     }
   }
 
-  async function getUserInfoInit (context: MethodContext, _params: unknown, result: ResultBag & { userInfo?: Record<string, unknown> }, next: Next) {
+  async function getUserInfoInit (context: MethodContext, _params: unknown, result: ResultBag & { userInfo?: Partial<UserInfoStats> }, next: Next) {
     const newStorageUsed = await usersRepository.getStorageUsedByUserId(context.user.id);
     result.userInfo = {
       username: context.user.username,
@@ -90,12 +97,13 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     next();
   }
 
-  function getUserInfoSetAccessStats (context: MethodContext, _params: unknown, result: ResultBag & { userInfo?: any }, next: Next) {
-    const info = result.userInfo ??= {};
-    info.lastAccess ??= 0;
-    info.callsTotal ??= 0;
-    info.callsDetail ??= {};
-    info.callsPerAccess ??= {};
+  function getUserInfoSetAccessStats (context: MethodContext, _params: unknown, result: ResultBag & { userInfo?: Partial<UserInfoStats> }, next: Next) {
+    const partial = result.userInfo ??= {};
+    partial.lastAccess ??= 0;
+    partial.callsTotal ??= 0;
+    partial.callsDetail ??= {};
+    partial.callsPerAccess ??= {};
+    const info = partial as UserInfoStats; // defaults above guarantee the stats fields
 
     getAPIMethodKeys().forEach(function (methodKey: string) {
       info.callsDetail[methodKey] = 0;
@@ -105,8 +113,9 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       if (err) { return next(errors.unexpectedError(err)); }
 
       accesses.forEach(function (access: AccessRow) {
-        if ((access.lastUsed ?? 0) > info.lastAccess) {
-          info.lastAccess = access.lastUsed;
+        const lastUsed = access.lastUsed ?? 0;
+        if (lastUsed > info.lastAccess) {
+          info.lastAccess = lastUsed;
         }
 
         const accessKey = getAccessStatsKey(access);
