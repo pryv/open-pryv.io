@@ -35,25 +35,16 @@ const { sanitize } = require('storages/interfaces/backup/sanitize.ts');
  * Profile and account data are always fully exported (no timestamps).
  */
 class BackupOrchestrator {
-  // Storage-layer shapes are not yet modelled — typed loosely as `any` and
-  // tightened when StorageLayer / UsersLocalIndex / EventFiles / SeriesConnection
-  // get formal interfaces.
-  storageLayer: any;
-  usersLocalIndex: any;
-  userAccountStorage: any;
-  eventFiles: any;
+  // Storage handles, modelled by the `*Like` structural interfaces below
+  // (the methods this orchestrator actually calls). All set in `init()`.
+  storageLayer!: StorageLayerLike;
+  usersLocalIndex!: UsersLocalIndexLike;
+  userAccountStorage!: UserAccountStorageLike;
+  eventFiles!: EventFilesLike;
   platformDB!: PlatformDB;
-  auditStorage: any;
-  seriesConnection: any;
+  auditStorage: AuditStorageLike | null = null;
+  seriesConnection: SeriesConnectionLike | null = null;
   logger!: Logger;
-
-  constructor () {
-    this.storageLayer = null;
-    this.usersLocalIndex = null;
-    this.userAccountStorage = null;
-    this.eventFiles = null;
-    this.auditStorage = null;
-  }
 
   async init () {
     const { getStorageLayer, getUsersLocalIndex, getUserAccountStorage } = require('storage');
@@ -118,7 +109,8 @@ class BackupOrchestrator {
    * @param [options]
    */
   async backupUser (userId: string, writer: BackupWriter, options: BackupOptions = {}) {
-    const username = this.usersLocalIndex.getUsername(userId);
+    const username = await this.usersLocalIndex.getUsername(userId);
+    if (username == null) throw new Error(`User ${userId} not found in local index`);
     const config = await this._getBackupConfig();
     const coreVersion = require('storage/package.json').version;
     const snapshotBefore = timestamp.now();
@@ -358,6 +350,34 @@ export { BackupOrchestrator };
 type Logger = {
   info (msg: string): void;
   warn (msg: string): void;
+};
+type UserRef = { id: string };
+
+// Structural slices of the storage handles — the methods this orchestrator
+// calls. Tighten further if/when these stores expose formal interfaces.
+type ExportStore = { exportAll (user: UserRef, cb: NodeCallback): void };
+type StorageLayerLike = {
+  streams: ExportStore;
+  accesses: ExportStore;
+  profile: ExportStore;
+  webhooks: ExportStore;
+  engine: string;
+};
+type UsersLocalIndexLike = {
+  getAllByUsername (): Promise<Record<string, string>>;
+  getUsername (userId: string): Promise<string | undefined>;
+};
+type UserAccountStorageLike = {
+  _exportAll (userId: string): Promise<unknown>;
+};
+type EventFilesLike = {
+  getAttachmentStream (userId: string, eventId: string, fileId: string): Promise<unknown>;
+};
+type AuditStorageLike = {
+  forUser (userId: string): { exportAllEvents (): Promise<unknown> };
+};
+type SeriesConnectionLike = {
+  exportDatabase (userId: string): Promise<{ measurements?: unknown[] }>;
 };
 type Manifest = {
   users: Array<{ userId: string; backupTimestamp?: number }>;

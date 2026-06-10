@@ -17,25 +17,16 @@ const timestamp = require('unix-timestamp');
  * AuditStorage, EventFiles, PlatformDB.
  */
 class RestoreOrchestrator {
-  // Storage-layer shapes are not yet modelled — typed loosely as `any` and
-  // tightened when StorageLayer / UsersLocalIndex / EventFiles / SeriesConnection
-  // get formal interfaces.
-  storageLayer: any;
-  usersLocalIndex: any;
-  userAccountStorage: any;
-  eventFiles: any;
+  // Storage handles, modelled by the `*Like` structural interfaces below
+  // (the methods this orchestrator actually calls). All set in `init()`.
+  storageLayer!: StorageLayerLike;
+  usersLocalIndex!: UsersLocalIndexLike;
+  userAccountStorage!: UserAccountStorageLike;
+  eventFiles!: EventFilesLike;
   platformDB!: PlatformDB;
-  auditStorage: any;
-  seriesConnection: any;
+  auditStorage: AuditStorageLike | null = null;
+  seriesConnection: SeriesConnectionLike | null = null;
   logger!: Logger;
-
-  constructor () {
-    this.storageLayer = null;
-    this.usersLocalIndex = null;
-    this.userAccountStorage = null;
-    this.eventFiles = null;
-    this.auditStorage = null;
-  }
 
   async init () {
     const { getStorageLayer, getUsersLocalIndex, getUserAccountStorage } = require('storage');
@@ -315,17 +306,19 @@ class RestoreOrchestrator {
     // Clear all user-scoped stores
     const collections = ['streams', 'accesses', 'profile', 'webhooks'];
     for (const coll of collections) {
-      if (this.storageLayer[coll] && typeof this.storageLayer[coll].clearAll === 'function') {
+      const store = this.storageLayer[coll];
+      if (store && typeof store.clearAll === 'function') {
         await fromCallback(
-          (cb: NodeCallback) => this.storageLayer[coll].clearAll(user, cb)
+          (cb: NodeCallback) => store.clearAll(user, cb)
         );
       }
     }
 
     // Clear events
-    if (this.storageLayer.events && typeof this.storageLayer.events.clearAll === 'function') {
+    const eventsStore = this.storageLayer.events;
+    if (eventsStore && typeof eventsStore.clearAll === 'function') {
       await fromCallback(
-        (cb: NodeCallback) => this.storageLayer.events.clearAll(user, cb)
+        (cb: NodeCallback) => eventsStore.clearAll(user, cb)
       );
     }
 
@@ -486,6 +479,43 @@ type Logger = {
   warn (msg: string): void;
 };
 type UserRef = { id: string };
+
+// Structural slices of the storage handles — the methods this orchestrator
+// calls. Tighten further if/when these stores expose formal interfaces.
+type CollectionStore = {
+  importAll (user: UserRef, items: unknown[], cb: NodeCallback): void;
+  clearAll (user: UserRef, cb: NodeCallback): void;
+};
+type StorageLayerLike = {
+  streams: CollectionStore;
+  accesses: CollectionStore;
+  profile: CollectionStore;
+  webhooks: CollectionStore;
+  events?: CollectionStore;
+  [collection: string]: CollectionStore | undefined;
+};
+type UsersLocalIndexLike = {
+  addUser (username: string, userId: string): Promise<unknown>;
+  getUserId (username: string): Promise<string>;
+  getUsername (userId: string): Promise<string>;
+};
+type UserAccountStorageLike = {
+  _importAll (userId: string, data: unknown): Promise<unknown>;
+  setAccountField (userId: string, field: string, value: unknown, source: string, time: number): Promise<unknown>;
+  _clearAll (userId: string): Promise<unknown>;
+};
+type EventFilesLike = {
+  saveAttachmentFromStream (stream: unknown, userId: string, eventId: string, fileId: string): Promise<unknown>;
+  removeAllForUser (userId: string): Promise<unknown>;
+};
+type AuditStorageLike = {
+  forUser (userId: string): { importAllEvents (events: unknown[]): Promise<unknown> };
+  deleteUser (userId: string): Promise<unknown>;
+};
+type SeriesConnectionLike = {
+  importDatabase (userId: string, data: { measurements: unknown[] }): Promise<unknown>;
+  dropDatabase (userId: string): Promise<unknown>;
+};
 type UserManifest = { userId: string; username: string };
 type Manifest = { formatVersion: string; backupType: string; users: UserManifest[] };
 type ConflictRef = { userId: string; username: string; reason: string };
