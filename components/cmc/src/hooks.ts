@@ -41,7 +41,22 @@ type MethodContext = {
   [k: string]: unknown;
 };
 type MethodNext = (err?: unknown) => unknown;
-type Middleware = (context: MethodContext, params: any, result: any, next: MethodNext) => unknown | Promise<unknown>;
+// Per-method call params — heterogeneous across the hooked methods
+// (events.create / streams.* / accesses.*); each hook narrows the
+// fields it reads.
+type HookParams = {
+  id?: unknown;
+  streams?: unknown;
+  clientData?: { cmc?: unknown; [k: string]: unknown } | null;
+  update?: { id?: unknown; clientData?: { cmc?: unknown; [k: string]: unknown } | null; [k: string]: unknown } | null;
+  [k: string]: unknown;
+} | null | undefined;
+type HookResult = {
+  streams?: unknown;
+  access?: { permissions?: unknown; [k: string]: unknown } | null;
+  [k: string]: unknown;
+} | null | undefined;
+type Middleware = (context: MethodContext, params: HookParams, result: HookResult, next: MethodNext) => unknown | Promise<unknown>;
 
 /**
  * events.create hook — validates cmc/* event content against its schema.
@@ -552,7 +567,7 @@ function createAccessProvisionAppScopeHook (deps: ProvisionDeps): Middleware {
     const access = result?.access;
     if (userId == null || access == null) return next();
 
-    const targets = extractAppScopeLeavesToProvision(access.permissions);
+    const targets = extractAppScopeLeavesToProvision(Array.isArray(access.permissions) ? access.permissions : []);
     if (targets.size === 0) return next();
 
     for (const streamId of targets) {

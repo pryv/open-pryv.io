@@ -235,7 +235,7 @@ const ALL_EVENT_TYPES_SET = new Set(ALL_EVENT_TYPES);
  * four classes. Centralised here so callers don't have to know the
  * full list.
  */
-function isCmcEventType (eventType: any): boolean {
+function isCmcEventType (eventType: unknown): boolean {
   return typeof eventType === 'string' && ALL_EVENT_TYPES_SET.has(eventType);
 }
 

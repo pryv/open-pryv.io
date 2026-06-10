@@ -28,7 +28,23 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const slug = require('./slug.ts');
 
-type AccessRow = { id: string; token?: string; apiEndpoint?: string; clientData?: { cmc?: any }; [k: string]: unknown };
+type AcceptedByEntry = { username?: string; host?: string; acceptedAt?: number; [k: string]: unknown };
+type CapabilityCd = {
+  mode?: string;
+  state?: string;
+  stateChangedAt?: number;
+  acceptedBy?: AcceptedByEntry[];
+  [k: string]: unknown;
+};
+type CmcAccessCd = {
+  kind?: string;
+  capabilityId?: string;
+  requestEventId?: string | null;
+  singleUse?: boolean;
+  capability?: CapabilityCd;
+  [k: string]: unknown;
+};
+type AccessRow = { id: string; token?: string; apiEndpoint?: string; clientData?: { cmc?: CmcAccessCd; [k: string]: unknown }; [k: string]: unknown };
 type MallParams = Record<string, unknown>;
 type MallLike = {
   streams: { create: (userId: string, params: MallParams) => Promise<unknown>; delete?: (userId: string, params: MallParams) => Promise<unknown> };
@@ -408,7 +424,7 @@ async function markCapabilityConsumed (params: {
         cmc: {
           ...cmcCd,
           capability: {
-            ...(cmcCd.capability || {}),
+            ...(cmcCd?.capability || {}),
             state: 'consumed',
             stateChangedAt: now(),
           },

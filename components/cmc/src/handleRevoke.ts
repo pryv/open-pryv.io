@@ -306,7 +306,7 @@ function findPairedDataGrant (
       if (acc.id === peerAccessId) return acc;
     }
   }
-  // Fallback: any access whose clientData.cmc.role='data-grant' AND
+  // Fallback: every access whose clientData.cmc.role='data-grant' AND
   // clientData.cmc.counterparty matches.
   for (const acc of accesses) {
     const cmc = acc?.clientData?.cmc;
