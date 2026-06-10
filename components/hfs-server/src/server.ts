@@ -81,8 +81,6 @@ class Server {
   }
 
   /** Logs that the server has started.
-   * @param {any} arg
-   * @returns {Promise<any>}
    */
   logStarted<T> (arg: T): T {
     const addr = this.server.address() as { address: string; port: number };
@@ -126,8 +124,6 @@ class Server {
   }
 
   /** Defines all the routes that we serve from this server.
-   * @param {express$Application} app
-   * @returns {void}
    */
   defineApplication (app: ExpressApp) {
     const ctx = this.context;
@@ -140,9 +136,6 @@ class Server {
 }
 /** GET /system/status - Answers the caller with a status of the application.
  * This call should eventually permit health checks for this subsystem.
- * @param {express$Request} req
- * @param {express$Response} res
- * @returns {void}
  */
 function systemStatus (_req: Request, res: Response) {
   res.status(200).json({

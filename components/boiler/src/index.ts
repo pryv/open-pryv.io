@@ -17,7 +17,6 @@ const require = createRequire(import.meta.url);
 const { Config } = require('./config.ts');
 const logging = require('./logging.ts');
 
-/** @type {Config} */
 const config = new Config();
 
 const boiler = {

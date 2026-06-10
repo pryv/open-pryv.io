@@ -32,9 +32,6 @@ class Repository {
    * Example:
    *
    *    seriesRepo.get(...seriesMeta.namespace())
-   * @param {string} namespace
-   * @param {string} name
-   * @returns {Promise<any>}
    */
   async get (namespace: string, name: string) {
     // Make sure that the database exists:

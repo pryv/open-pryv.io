@@ -116,7 +116,6 @@ export const getTrustedAppCheck = function getTrustedAppCheck (getAuthSettings: 
  * given in `paramsSchema`.
  *
  * @param  {Object} paramsSchema JSON Schema for the parameters
- * @return {void}
  */
 export const getParamsValidation = function getParamsValidation (paramsSchema: ParamsSchema) {
   return function validateParams (_context: MethodContext, params: unknown, _result: ResultBag, next: Next) {
@@ -175,7 +174,6 @@ export const isValidStreamIdForCreation = function isValidStreamIdForCreation (s
  *
  * @param object error
  * @param object schema
- * @returns {any}
  */
 function _addCustomMessage (error: SchemaError, schema: ParamsSchema): SchemaError {
   const pathElements = error.path.split('/');

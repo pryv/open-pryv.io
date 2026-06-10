@@ -36,10 +36,6 @@ export { filesUploadSupport, hasFileUpload };
  *
  * Enables file uploads on a route. file uploads are checked in their global
  * form (MUST have only a JSON body).
- * @param {express$Request} req
- * @param {express$Response} res
- * @param {express$NextFunction} next
- * @returns {void}
  */
 function hasFileUpload (req: Request, res: Response, next: NextFunction) {
   const uploadMiddleware = uploadMiddlewareFactory.any();

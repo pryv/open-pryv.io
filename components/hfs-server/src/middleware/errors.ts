@@ -17,7 +17,7 @@ const { APIError } = require('errors');
  * routes have been added.
  *
  * @param  {Logger} logger logger to use for `logError` call
- * @return {Function} express middleware function that logs errors and responds
+ * @return express middleware function that logs errors and responds
  *    to them properly.
  */
 export default function produceErrorHandlingMiddleware (logger: unknown) {

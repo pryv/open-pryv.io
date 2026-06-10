@@ -24,15 +24,12 @@ class SeriesResponse {
   }
 
   /** Answers the client with a series response (JSON).
-   * @param {express$Response} res
-   * @returns {void}
    */
   answer (res: Response) {
     res.json(this).status(200);
   }
 
   /** Serializes this response to JSON.
-   * @returns {any}
    */
   toJSON () {
     return setCommonMeta({

@@ -18,9 +18,7 @@ const { randomUUID: uuidv4 } = require('node:crypto');
  *   one allows the user to deactivate MFA without going through the SMS challenge.
  */
 class Profile {
-  /** @type {Object} */
   content: Record<string, unknown>;
-  /** @type {string[]} */
   recoveryCodes: string[];
 
   constructor (content: Record<string, unknown> = {}, recoveryCodes: string[] = []) {

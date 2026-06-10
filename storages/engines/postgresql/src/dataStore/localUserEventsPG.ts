@@ -136,7 +136,6 @@ function rowToEvent (row: Record<string, unknown> | null | undefined): Event | n
  * Implements the @pryv/datastore UserEvents interface.
  */
 const userEvents = ds.createUserEvents({
-  /** @type {import('../DatabasePG')} */
   db: null,
   eventsFileStorage: null,
   deletionSettings: null,

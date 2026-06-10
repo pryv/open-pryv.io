@@ -36,18 +36,13 @@ class DataMatrix {
   columns: string[];
 
   data: RawRow[];
-  // @return {number} number of rows this data matrix has.
+  // number of rows in this data matrix
 
   length: number;
   // Parses a data matrix given a javascript object of the right form
   // ('flatJSON'). This method will throw a ParseFailure if the internal
   // structure of the object is not correct.
   //
-  /** @static
-   * @param {unknown} obj
-   * @param {SeriesRowType} type
-   * @returns {DataMatrix}
-   */
   static parse (obj: unknown, type: SeriesRowType): DataMatrix {
     const out = this.empty();
     const parser = new Parser(out);
@@ -57,7 +52,6 @@ class DataMatrix {
 
   /** Constructs an empty matrix.
    * @static
-   * @returns {DataMatrix}
    */
   static empty () {
     return new DataMatrix([], []);
@@ -76,7 +70,6 @@ class DataMatrix {
    * @param columns {Array<string>} column names to use for
    *  this matrix.
    * @param data {Array<Array<Element>} data
-   * @return {void}
    */
   constructor (columns: string[], data: RawRow[]) {
     this.columns = columns;
@@ -85,8 +78,6 @@ class DataMatrix {
   }
 
   /** Updates the data attribute internally, keeping length === data.length.
-   * @param {Array<any>} data
-   * @returns {void}
    */
   setData (data: RawRow[]) {
     this.data = data;
@@ -95,8 +86,6 @@ class DataMatrix {
 
   /** Accesses the nth element of the array. If the index is out of bounds,
    * an error is thrown.
-   * @param {number} idx
-   * @returns {import("/Users/sim/Code/Pryv/dev/service-core/data_matrix.ts-to-jsdoc").Element[]}
    */
   at (idx: number): RawRow {
     assert.ok(idx >= 0);
@@ -112,8 +101,6 @@ class DataMatrix {
   }
 
   /** Iterates over each row of the data matrix.
-   * @param {(row: Row, idx: number) => void} fn
-   * @returns {void}
    */
   eachRow (fn: (row: InstanceType<typeof Row>, idx: number) => void) {
     this.data.forEach((row: RawRow, idx: number) => {

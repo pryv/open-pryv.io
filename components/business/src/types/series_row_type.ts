@@ -120,9 +120,6 @@ class SeriesRowType {
 
   /** Returns true if all the rows in the given row array are valid for this
    * type.
-   * @param {Array<any>} rows
-   * @param {Array<string>} columnNames
-   * @returns {boolean}
    */
   validateAllRows (rows: unknown[], columnNames: string[]): boolean {
     for (const row of rows) {
@@ -146,10 +143,9 @@ class SeriesRowType {
    *      2.2.1) `coerce` into target type
    *      2.2.2) `isCellValid`?
    *
-   * @param {any} row  Rows parsed from client input, could be any type.
-   * @param {Array<string>} columnNames  A list of column names the client
+   * @param row  Rows parsed from client input, could be any type.
+   * @param columnNames  A list of column names the client
     provided. Check these first using `validateColumns`.
-   * @returns {boolean}
    */
   isRowValid (row: unknown, columnNames: string[]): boolean {
     // A valid row is an array of cells.
@@ -167,8 +163,6 @@ class SeriesRowType {
   }
 
   /** Returns the type of a single cell with column name `name`.
-   * @param {string} name
-   * @returns {any}
    */
   forField (name: string) {
     if (name === FIELD_DELTATIME) {

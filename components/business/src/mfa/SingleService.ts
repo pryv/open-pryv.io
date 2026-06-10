@@ -44,9 +44,8 @@ class SingleService extends Service {
     this.apiMethod = single.method;
     this.headers = single.headers;
     this.body = single.body;
-    /** @type {Map<string, string>} username -> code */
+    // username -> code 
     this.codes = new Map();
-    /** @type {Map<string, NodeJS.Timeout>} */
     this.timeouts = new Map();
     this.ttlMilliseconds = (mfaConfig.sessions?.ttlSeconds ?? 1800) * 1000;
   }

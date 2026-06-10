@@ -113,7 +113,6 @@ class Application {
    */
   systemAPI!: APIInstance;
 
-  /** @type {import('storage').Database} */
   database!: Database;
 
   /**

@@ -27,10 +27,9 @@ const errors = require('errors').factory;
  *      foo: 'bar'
  *    }
  *
- * @param {express$Request} req  request object
- * @param {express$Response} res  response object
- * @param {Function} next  callback for next middleware in chain
- * @return {any}
+ * @param req  request object
+ * @param res  response object
+ * @param next  callback for next middleware in chain
  */
 function validateFileUpload (req: Request, res: Response, next: NextFunction) {
   const body = req.body;

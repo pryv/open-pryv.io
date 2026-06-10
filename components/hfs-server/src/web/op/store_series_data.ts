@@ -28,10 +28,6 @@ const ApiConstants = require('../api_constants.ts');
 const TracedOperations = require('./traced_operations.ts').default;
 const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts').setCommonMeta;
 /** POST /events/:event_id/series - Store data in a series.
- * @param {Context} ctx
- * @param {express$Request} req
- * @param {express$Response} res
- * @returns {Promise<void>}
  */
 async function storeSeriesData (ctx: CtxLike, req: Request, res: Response) {
   const trace = new TracedOperations(ctx);

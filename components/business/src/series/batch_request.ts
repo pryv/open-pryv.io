@@ -36,11 +36,6 @@ class BatchRequest {
   // batch, as described in the documentation ('seriesBatch'). If the input
   // object contains an error, it is thrown as a `ParseFailure`.
   //
-  /** @static
-   * @param {unknown} jsonObj
-   * @param {TypeResolveFunction} resolver
-   * @returns {Promise<BatchRequest>}
-   */
   static parse (jsonObj: unknown, resolver: TypeResolveFunction): Promise<BatchRequest> {
     const parser = new Parser(resolver);
     return parser.parse(jsonObj);
@@ -77,11 +72,6 @@ class BatchRequestElement {
   eventId: string;
 
   data: DataMatrixInstance;
-  /** @static
-   * @param {unknown} obj
-   * @param {TypeResolveFunction} resolver
-   * @returns {Promise<BatchRequestElement>}
-   */
   static parse (obj: unknown, resolver: TypeResolveFunction): Promise<BatchRequestElement> {
     const parser = new ElementParser();
     return parser.parse(obj, resolver);

@@ -28,7 +28,7 @@ class Row {
    * @example
    *    row.toStruct() # => { col1: 'value1', col2: 'value2' }
    *
-   * @return {any} The current row in object (struct) form.
+   * @return The current row in object (struct) form.
    */
   toStruct (): Record<string, unknown> {
     const result: Record<string, unknown> = {};
@@ -43,8 +43,6 @@ class Row {
    *
    * You need to make sure that you access an actual column,
    * otherwise this method throws an error.
-   * @param {string} column
-   * @returns {any}
    */
   get (column: string): unknown {
     const idx = this.columnNames.indexOf(column);

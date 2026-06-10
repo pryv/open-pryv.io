@@ -61,8 +61,8 @@ class Series {
    * make sure that the data matches the event this series is linked to before
    * calling this method.
    *
-   * @param {DataMatrix} data  - data to store to the series
-   * @return {Promise<any>} - promise that resolves once the data is stored
+   * @param data  - data to store to the series
+   * @return - promise that resolves once the data is stored
    */
   append (data: SeriesData) {
     const appendOptions = {
@@ -89,8 +89,6 @@ class Series {
   }
 
   /** Queries the given series, returning a data matrix.
-   * @param {Query} query
-   * @returns {Promise<any>}
    */
   query (query: Query) {
     const queryOptions = { database: this.namespace };
@@ -108,8 +106,6 @@ class Series {
   }
 
   /** Transforms an IResult object into a data matrix.
-   * @param {IResults} result
-   * @returns {any}
    */
   transformResult (result: Array<Record<string, unknown>>) {
     if (result.length <= 0) { return DataMatrix.empty(); }
@@ -126,8 +122,6 @@ class Series {
   }
 
   /** Builds an expression that can be used within `WHERE` from a query.
-   * @param {Query} query
-   * @returns {string[]}
    */
   buildExpression (query: Query): string[] {
     const subConditions: string[] = [];
