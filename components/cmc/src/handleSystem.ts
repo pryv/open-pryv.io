@@ -323,7 +323,7 @@ async function handleSystemScopeUpdate (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: { debug: Function; warn: Function }; [k: string]: unknown };
+  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]>; update: (userId: string, params: { id: string; update: Record<string, unknown> }) => Promise<unknown> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: { debug: Function; warn: Function }; [k: string]: unknown };
 }): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_SCOPE_UPDATE) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
@@ -366,7 +366,7 @@ async function handleSystemScopeUpdate (params: {
         }
       }
       await accessesUpdateHookMod.runWithSuppression(async () => {
-        await (params.deps.mall.accesses as unknown as { update: (uid: string, p: unknown) => Promise<unknown> }).update(params.userId, {
+        await params.deps.mall.accesses.update(params.userId, {
           id: accessId,
           update: { permissions: mergedPerms },
         });

@@ -41,7 +41,7 @@ class PasswordResetRequestsPG {
       [id, username]
     )
       .then((res) => {
-        const rows = res.rows as unknown as ResetRow[];
+        const rows = res.rows as ResetRow[];
         if (rows.length === 0) return callback(null, null);
         const row = rows[0];
         if (new Date() >= new Date(row.expires)) {
@@ -97,7 +97,7 @@ class PasswordResetRequestsPG {
   exportAll (callback: Cb<ResetDoc[]>): void {
     this.db.query('SELECT id, username, expires FROM password_resets')
       .then((res) => {
-        const rows = res.rows as unknown as ResetRow[];
+        const rows = res.rows as ResetRow[];
         const docs = rows.map((r: ResetRow) => ({
           _id: r.id,
           username: r.username,

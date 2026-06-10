@@ -41,7 +41,7 @@ let mall: MallLike | null = null;
 let isAuditActive = false;
 let audit: AuditLike | null = null;
 async function middlewareFactory (): Promise<RequestHandler> {
-  if (initialized) { return attachmentsAccessMiddleware as unknown as RequestHandler; }
+  if (initialized) { return attachmentsAccessMiddleware as RequestHandler; }
   config = await getConfig();
   mall = await getMall();
   // -- Audit
@@ -53,7 +53,7 @@ async function middlewareFactory (): Promise<RequestHandler> {
   }
   // -- end Audit
   initialized = true;
-  return attachmentsAccessMiddleware as unknown as RequestHandler;
+  return attachmentsAccessMiddleware as RequestHandler;
 }
 export default middlewareFactory;
 export { middlewareFactory };

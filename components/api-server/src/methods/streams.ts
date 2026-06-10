@@ -36,7 +36,7 @@ type Stream = {
   [k: string]: unknown;
 };
 type StreamsParams = { id?: string; parentId?: string | null; includeDeletionsSince?: number | null; state?: string; expandChildren?: boolean; storeId?: string; includeTrashed?: boolean; update?: Partial<Stream>; mergeEventsWithParent?: boolean | null; [k: string]: unknown };
-type StreamsResult = { streams?: Stream[]; stream?: Stream; streamDeletions?: Array<{ id: string }>; addStream?: (name: string, stream: unknown) => void; [k: string]: unknown };
+type StreamsResult = { streams?: Stream[]; stream?: Stream; streamDeletions?: Array<{ id: string }>; addStream?: (name: string, stream: unknown, isArray?: boolean) => void; [k: string]: unknown };
 
 /**
  * Event streams API methods implementation.
@@ -372,7 +372,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     const updatedEventsStream = new ItemsStream();
     result.addStream!('updatedEvents', updatedEventsStream);
     const singleItemDeletedStream = new ItemsStream();
-    (result.addStream as unknown as (n: string, s: unknown, keep: boolean) => void)('streamDeletion', singleItemDeletedStream, false);
+    result.addStream!('streamDeletion', singleItemDeletedStream, false);
     next(); // <== call next here to avoid await blocking
 
     if (hasLinkedEvents) {

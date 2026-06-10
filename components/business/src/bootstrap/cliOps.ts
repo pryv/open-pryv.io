@@ -99,7 +99,7 @@ const OVERRIDE_HEADER_SUFFIX =
  * @param [opts.ttlMs] - token TTL; undefined = TokenStore default (24h)
  */
 async function newCore (opts: NewCoreOpts) {
-  requireOpts(opts as unknown as Record<string, unknown>, ['platformDB', 'caDir', 'tokensPath', 'ackUrlBase', 'secrets', 'rqlite', 'coreId', 'ip', 'outPath']);
+  requireOpts(opts, ['platformDB', 'caDir', 'tokensPath', 'ackUrlBase', 'secrets', 'rqlite', 'coreId', 'ip', 'outPath']);
   const {
     platformDB, caDir, tokensPath, dnsDomain = null, ackUrlBase,
     secrets, rqlite, coreId, ip, url = null, hosting = null, outPath, ttlMs
@@ -228,7 +228,7 @@ async function revokeToken ({ tokensPath, coreId, platformDB = null, ip = null }
  * }>}
  */
 async function initCaHolder (opts: InitCaHolderOpts) {
-  requireOpts(opts as unknown as Record<string, unknown>, ['caDir', 'tlsDir', 'coreId']);
+  requireOpts(opts, ['caDir', 'tlsDir', 'coreId']);
   const {
     caDir, tlsDir, coreId,
     ip = null, hostname = null,
@@ -314,12 +314,13 @@ function mergeRqliteTlsIntoOverride (overridePath: string, tlsPaths: TlsPaths): 
   return true;
 }
 
-function requireOpts (opts: Record<string, unknown> | null | undefined, keys: string[]) {
+function requireOpts (opts: object | null | undefined, keys: string[]) {
   if (opts == null || typeof opts !== 'object') {
     throw new Error('cliOps: opts is required');
   }
+  const rec = opts as Record<string, unknown>;
   for (const k of keys) {
-    if (opts[k] == null) throw new Error(`cliOps: opts.${k} is required`);
+    if (rec[k] == null) throw new Error(`cliOps: opts.${k} is required`);
   }
 }
 

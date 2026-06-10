@@ -107,12 +107,13 @@ class Server {
       });
       this.logger.info('SSL Mode using backloop.dev certificates');
     } else if (config.get('http:ssl:keyFile')) { // https with local files
-      server = https.createServer(buildHttpsOptions(config), requestHandler);
+      const httpsServer = https.createServer(buildHttpsOptions(config), requestHandler);
+      server = httpsServer;
       serverInfos.hostname = 'custom-according-to-your-ssl-cert';
       this.logger.info('SSL Mode using custom certificates');
       // Keep a reference so reloadTls() can hot-swap the SecureContext
       // when the Let's Encrypt orchestrator rotates the cert.
-      this.httpsServer = server as unknown as HttpsLike;
+      this.httpsServer = httpsServer;
     } else { // http
       server = http.createServer(requestHandler);
     }

@@ -233,7 +233,7 @@ const _SHARED_FALLBACK = new _InProcessStore();
  * @param [opts.fallback=true] - when false, raise instead of using the in-process store.
  */
 function clientFor (opts: { processHandle?: ProcessLike; timeoutMs?: number; fallback?: boolean } = {}) {
-  const { processHandle = process as unknown as ProcessLike, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, fallback = true } = opts;
+  const { processHandle = process as ProcessLike, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, fallback = true } = opts;
   // Mocha-parallel workers have `process.send` wired to the mocha runner —
   // not to a Pryv cluster master. Any IPC the client would send goes
   // unanswered and times out after 5s, surfacing as 500s in tests like
