@@ -195,11 +195,20 @@ clean-test-data:
     else
       TIMEOUT=""
     fi
+    # Engine host/port: honor the same env overrides the test commands use
+    # (parallel dev setups run several checkouts against per-checkout
+    # PG/rqlite instances on offset ports — resetting the default ports
+    # from such a checkout would wipe ANOTHER checkout's databases while
+    # leaving this one dirty).
+    PG_HOST="${storages__engines__postgresql__host:-127.0.0.1}"
+    PG_PORT="${storages__engines__postgresql__port:-5432}"
+    RQLITE_HOST="${storages__engines__rqlite__host:-localhost}"
+    RQLITE_PORT="${storages__engines__rqlite__port:-4001}"
     if [ -n "$DROPDB" ] && [ -n "$CREATEDB" ]; then
-      ($TIMEOUT "$DROPDB" -h 127.0.0.1 -p 5432 -U pryv --if-exists --force pryv-node-test 2>/dev/null && \
-          $TIMEOUT "$CREATEDB" -h 127.0.0.1 -p 5432 -U pryv pryv-node-test 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg test reset)"
-      ($TIMEOUT "$DROPDB" -h 127.0.0.1 -p 5432 -U pryv --if-exists --force pryv-node 2>/dev/null && \
-          $TIMEOUT "$CREATEDB" -h 127.0.0.1 -p 5432 -U pryv pryv-node 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg dev reset)"
+      ($TIMEOUT "$DROPDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv --if-exists --force pryv-node-test 2>/dev/null && \
+          $TIMEOUT "$CREATEDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv pryv-node-test 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg test reset)"
+      ($TIMEOUT "$DROPDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv --if-exists --force pryv-node 2>/dev/null && \
+          $TIMEOUT "$CREATEDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv pryv-node 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg dev reset)"
     else
       echo "dropdb/createdb not found (skipping pg test reset + pg dev reset)"
     fi
@@ -208,7 +217,7 @@ clean-test-data:
     # email/platform-unique index — paired with the PG dev-DB drop
     # above so the platform DB and the user index can't diverge
     # across cleans.
-    curl -s -X POST -H 'Content-Type: application/json' 'http://localhost:4001/db/execute' -d '[["DELETE FROM keyValue"]]' > /dev/null 2>&1 || echo "rqlite not reachable (skipping rqlite reset)"
+    curl -s -X POST -H 'Content-Type: application/json' "http://${RQLITE_HOST}:${RQLITE_PORT}/db/execute" -d '[["DELETE FROM keyValue"]]' > /dev/null 2>&1 || echo "rqlite not reachable (skipping rqlite reset)"
     # Stale customAuthStepFn from a prior aborted permissions-seq test (the [P4OM] invalid-fixture test crashes the api-server bin and leaves the file behind, polluting subsequent matrix runs with [api-server fatal] Not a function (string)). Safe to delete unconditionally — committed file is .gitkeep.
     rm -f ./custom-extensions/customAuthStepFn.js
     echo "Test data cleaned: SQLite + per-user dirs + attachments/previews + PG (pryv-node-test + pryv-node) + rqlite keyValue + custom-extensions stale fixture"
