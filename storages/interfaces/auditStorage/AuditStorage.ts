@@ -38,13 +38,14 @@ const REQUIRED_METHODS: string[] = [
   'close'
 ];
 
-function validateAuditStorage (instance: any): AuditStorage {
+function validateAuditStorage (instance: unknown): AuditStorage {
+  const obj = instance as Record<string, unknown>;
   for (const method of REQUIRED_METHODS) {
-    if (typeof instance[method] !== 'function') {
+    if (typeof obj[method] !== 'function') {
       throw new Error(`AuditStorage implementation missing method: ${method}`);
     }
   }
-  return instance;
+  return obj as unknown as AuditStorage;
 }
 
 export { REQUIRED_METHODS,

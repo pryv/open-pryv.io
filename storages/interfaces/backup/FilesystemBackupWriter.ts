@@ -146,7 +146,7 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
       stats.attachments++;
     },
 
-    async writeAccountData (data: any) {
+    async writeAccountData (data: unknown) {
       const filePath = path.join(userDir, jsonlFileName('account', opts.compress));
       // Account data is a single object, not a collection — write as one JSON line
       await writeJsonlFile(filePath, [data], opts.compress);

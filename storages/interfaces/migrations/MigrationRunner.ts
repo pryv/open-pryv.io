@@ -122,8 +122,8 @@ class MigrationRunner {
         const t0 = Date.now();
         try {
           await migration.module.up(ctx);
-        } catch (err: any) {
-          this.logger.error(`[migrations] ${engine.id}: ${migration.filename} FAILED: ${err.message}`);
+        } catch (err: unknown) {
+          this.logger.error(`[migrations] ${engine.id}: ${migration.filename} FAILED: ${(err as Error).message}`);
           throw err;
         }
         const durationMs = Date.now() - t0;

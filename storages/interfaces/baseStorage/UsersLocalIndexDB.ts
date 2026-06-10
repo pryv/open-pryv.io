@@ -54,13 +54,14 @@ for (const propName of Object.getOwnPropertyNames(UsersLocalIndexDB)) {
 
 const REQUIRED_METHODS: string[] = Object.getOwnPropertyNames(UsersLocalIndexDB);
 
-function validateUsersLocalIndexDB (instance: any): UsersLocalIndexDB {
+function validateUsersLocalIndexDB (instance: unknown): UsersLocalIndexDB {
+  const obj = instance as Record<string, unknown>;
   for (const method of REQUIRED_METHODS) {
-    if (typeof instance[method] !== 'function') {
+    if (typeof obj[method] !== 'function') {
       throw new Error(`UsersLocalIndexDB implementation missing method: ${method}`);
     }
   }
-  return instance;
+  return obj as unknown as UsersLocalIndexDB;
 }
 
 export { UsersLocalIndexDB, validateUsersLocalIndexDB };
