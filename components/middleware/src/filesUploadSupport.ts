@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction } from 'express';
 const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
@@ -31,7 +32,7 @@ const errors = require('errors').factory;
  * @param {Function} next  callback for next middleware in chain
  * @return {any}
  */
-function validateFileUpload (req: any, res: any, next: any) {
+function validateFileUpload (req: Request, res: Response, next: NextFunction) {
   const body = req.body;
   if (req.is('multipart/form-data') &&
         body != null &&

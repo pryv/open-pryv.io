@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction } from 'express';
 const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
@@ -12,6 +13,6 @@ const errors = require('errors').factory;
 /**
  * '404' handling to override Express' defaults. Must be set after the routes in the init sequence.
  */
-export default function (req: any, res: any, next: any) {
+export default function (req: Request, res: Response, next: NextFunction) {
   return next(errors.unknownResource());
 }

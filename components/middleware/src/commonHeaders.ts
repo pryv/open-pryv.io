@@ -5,14 +5,15 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
 const require = createRequire(import.meta.url);
 
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 // Middleware to handle OPTIONS requests and to add CORS headers to all other
 // requests.
-export default async function () {
+export default async function (): Promise<RequestHandler> {
   const version = await getAPIVersion();
-  return function (req: any, res: any, next: any) {
+  return function (req: Request, res: Response, next: NextFunction) {
     // allow cross-domain requests (CORS)
     res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
     // *
