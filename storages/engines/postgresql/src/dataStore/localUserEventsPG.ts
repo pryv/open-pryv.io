@@ -620,12 +620,12 @@ function convertJsonCondition (condition: NormalizedCondition, idx: number, para
     case 'neq':
       return { condition: `(${typeExpr} IS NOT NULL AND NOT ${eqExpr(condition.value as string | number | boolean)})`, nextIdx: idx };
     case 'in': {
-      // jsonb array containment: list @> value matches scalars strictly by
-      // JSON type; the typeof guard keeps array/object values from matching
-      // via jsonb subset semantics.
-      params.push(JSON.stringify(condition.value));
+      // `= ANY(jsonb[])` keeps exact jsonb equality (strict types, scalars
+      // can never equal arrays/objects) and is B-tree-servable, unlike
+      // jsonb containment.
+      params.push((condition.value as Array<string | number | boolean>).map((v) => JSON.stringify(v)));
       return {
-        condition: `(${typeExpr} IN ('string', 'number', 'boolean') AND $${idx++}::jsonb @> ${jsonbExpr})`,
+        condition: `${jsonbExpr} = ANY($${idx++}::jsonb[])`,
         nextIdx: idx
       };
     }

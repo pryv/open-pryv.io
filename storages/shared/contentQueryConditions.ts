@@ -38,7 +38,7 @@ const NUMERIC_OPS = new Set<ConditionOp>(['gt', 'gte', 'lt', 'lte']);
 
 export {
   MAX_CONDITIONS, MAX_VALUES_PER_IN, ROOT_PATH, OPERATORS,
-  validateAndNormalizeConditions, matchesConditions, resolveJsonPath
+  validateAndNormalizeConditions, matchesConditions, resolveJsonPath, parseJsonPath
 };
 export type { NormalizedCondition, ScalarValue, ConditionOp };
 
@@ -72,15 +72,10 @@ function normalizeCondition (rawCondition: unknown, field: 'content' | 'clientDa
     return fail('is missing a valid "path" string.');
   }
   let path: string[] | null;
-  if (rawPath === ROOT_PATH) {
-    path = null;
-  } else {
-    path = rawPath.split('.');
-    for (const segment of path) {
-      if (!SEGMENT_REGEXP.test(segment)) {
-        return fail(`has invalid path '${rawPath}'.`);
-      }
-    }
+  try {
+    path = parseJsonPath(rawPath);
+  } catch (e) {
+    return fail(`has invalid path '${rawPath}'.`);
   }
 
   // exactly one operator
@@ -137,6 +132,22 @@ function normalizeCondition (rawCondition: unknown, field: 'content' | 'clientDa
 function isScalarValue (v: unknown): v is ScalarValue {
   if (typeof v === 'number') return Number.isFinite(v);
   return typeof v === 'string' || typeof v === 'boolean';
+}
+
+/**
+ * Parse a raw path string per the content-query path grammar.
+ * Returns `null` for the reserved root path (`$`), the segments array
+ * otherwise. Throws on any invalid segment.
+ */
+function parseJsonPath (rawPath: string): string[] | null {
+  if (rawPath === ROOT_PATH) return null;
+  const segments = rawPath.split('.');
+  for (const segment of segments) {
+    if (!SEGMENT_REGEXP.test(segment)) {
+      throw new Error(`Invalid path '${rawPath}': segment '${segment}' does not match ${SEGMENT_REGEXP}.`);
+    }
+  }
+  return segments;
 }
 
 /**

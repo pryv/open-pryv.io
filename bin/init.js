@@ -438,6 +438,16 @@ ${HOSTINGS_BLOCK}
 # #   cooldownMs: 5000
 # #   maxRetries: 5
 
+# # storages.contentIndexes — acceleration indexes for events.get content/
+# # clientData query conditions (PLATFORM-WIDE: declare identically on every
+# # core). Queries are correct without indexes; declaring paths only speeds
+# # them up. Ignored by engines without index support (SQLite — scan-only).
+# # storages:
+# #   contentIndexes:
+# #     - field: content              # or clientData
+# #       path: drug.codes.atc        # dot-path, or $ for root scalar values
+# #       types: ['medication/exposure-assertion-v1']   # optional scoping
+
 # # cluster.discoveryEnabled — set true on multi-core deployments using
 # # DNS-based rqlite joiners (-disco-mode dns). Leave OFF on single-core.
 # # cluster:

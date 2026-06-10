@@ -44,6 +44,19 @@ storages:
   audit:
     engine: sqlite          # auditStorage
 
+  # === PLATFORM-WIDE: content-query acceleration indexes ===
+  # Content/clientData query conditions on events.get are always available
+  # (correct without indexes — sequential scan). Declaring paths here only
+  # creates acceleration indexes for them; declare identically on every core.
+  # Engines without index support (SQLite) ignore this and serve by scan.
+  # Each entry: { field: content|clientData, path: <dot-path or $>, types?: [<event types>] }
+  # Example:
+  #   contentIndexes:
+  #     - field: content
+  #       path: drug.codes.atc
+  #       types: ['medication/exposure-assertion-v1']
+  contentIndexes: []
+
   engines:
     postgresql:
       host: '127.0.0.1'

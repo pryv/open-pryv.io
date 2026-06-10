@@ -152,6 +152,13 @@ async function init (config?: BoilerConfig) {
   const integrityAccesses = require('business/src/integrity/index.ts').default.accesses;
   await storageLayer.init(connection, { integrityAccesses });
 
+  // 4.5 Content-query acceleration indexes (optional engine capability —
+  // engines without it serve content queries by scan, which is correct).
+  const bsModule = pluginLoader.getEngineModule(baseEngine);
+  if (typeof bsModule.reconcileContentIndexes === 'function') {
+    await bsModule.reconcileContentIndexes(cfg.get('storages:contentIndexes') || []);
+  }
+
   // 5. UserAccountStorage (uses same engine as baseStorage)
   const uaModule = pluginLoader.getEngineModule(baseEngine);
   const userAccountStorage = uaModule.getUserAccountStorage();
