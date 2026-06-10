@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Readable as NodeReadable } from 'node:stream';
 const require = createRequire(import.meta.url);
 
 const SQLite3 = require('better-sqlite3');
@@ -16,25 +17,69 @@ const eventsSchema = require('./schema/events.ts');
 const fullTextSearch = require('./fullTextSearch.ts');
 const { toSQLiteQuery } = require('./streamQueryUtils.ts');
 
+// ---- Types ----
+
+/** A raw events-table row (and the fromDB-converted event). The precise
+ *  domain Event type is the strongly-typed-interface-IO follow-up; here both
+ *  sides of the eventsSchema boundary are arbitrary records. */
+type EventRow = Record<string, unknown>;
+type DomainEvent = Record<string, unknown>;
+
+type ColumnDef = { type: string, index?: boolean };
+type TableSchema = Record<string, ColumnDef>;
+
+type SqliteStmt = {
+  all: (...params: unknown[]) => EventRow[],
+  get: (...params: unknown[]) => EventRow | undefined,
+  run: (...params: unknown[]) => { changes: number },
+  iterate: (...params: unknown[]) => IterableIterator<EventRow>
+};
+type SqliteDb = { prepare: (sql: string) => SqliteStmt, close: () => void };
+
+type EventQueries = {
+  getAll: SqliteStmt, getTerms: SqliteStmt, getById: SqliteStmt,
+  getDeletedSince: SqliteStmt, getHistory: SqliteStmt, create: SqliteStmt,
+  deleteByHeadId: SqliteStmt, deleteById: SqliteStmt
+};
+
+type Logger = { debug: (msg: string) => void };
+type LoggerFactory = { getLogger: (name: string) => Logger };
+
+/** One mongo-style query clause as pushed by the mall layer. `content` shape
+ *  depends on `type` (see `converters`), so it is opaque at this level. */
+type QueryItem = { type: string, content: unknown };
+type GetParams = {
+  query: QueryItem[],
+  options?: { sort?: Record<string, number>, limit?: number, skip?: number },
+  streams?: unknown
+};
+
+interface UserDatabaseInstance {
+  db: SqliteDb;
+  logger: Logger;
+  eventQueries: EventQueries;
+}
+
 const DB_OPTIONS = {};
 
-const tableSchemas: Record<string, any> = {
+const tableSchemas: Record<string, TableSchema> = {
   events: eventsSchema.dbSchema
 };
 
 /**
  * Per-user SQLite database wrapper.
  */
-function UserDatabase (this: any, logger: any, params: { dbPath: string }): void {
+function UserDatabase (this: UserDatabaseInstance, logger: LoggerFactory, params: { dbPath: string }): void {
   this.logger = logger.getLogger('user-database');
   this.db = new SQLite3(params.dbPath, DB_OPTIONS);
 }
 
-UserDatabase.prototype.init = async function (): Promise<void> {
+UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promise<void> {
   await concurrentSafeWrite.initWALAndConcurrentSafeWriteCapabilities(this.db);
   // here we might want to skip DB initialization if version is not null
 
-  this.eventQueries = {};
+  // Populated incrementally below before any read; the cast names the shape.
+  this.eventQueries = {} as EventQueries;
 
   // create all tables
   for (const tableName of Object.keys(tableSchemas)) {
@@ -75,19 +120,19 @@ UserDatabase.prototype.init = async function (): Promise<void> {
   this.eventQueries.deleteById = this.db.prepare('DELETE FROM events WHERE eventid = ?');
 };
 
-function prepareGetAllQuery (db: any, tableName: string): any {
+function prepareGetAllQuery (db: SqliteDb, tableName: string): SqliteStmt {
   return db.prepare(`SELECT * FROM ${tableName}`);
 }
 
-function prepareCreateQuery (db: any, tableName: string, columnNames: string[]): any {
+function prepareCreateQuery (db: SqliteDb, tableName: string, columnNames: string[]): SqliteStmt {
   return db.prepare(`INSERT INTO ${tableName} (${columnNames.join(', ')}) VALUES (@${columnNames.join(', @')})`);
 }
 
-UserDatabase.prototype.close = function (): void {
+UserDatabase.prototype.close = function (this: UserDatabaseInstance): void {
   this.db.close();
 };
 
-UserDatabase.prototype.getEvents = function (params: any): any[] | null {
+UserDatabase.prototype.getEvents = function (this: UserDatabaseInstance, params: GetParams): DomainEvent[] | null {
   params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
   params.query.push({ type: 'equal', content: { field: 'headId', value: null } });
   const queryString = prepareEventsGetQuery(params);
@@ -99,7 +144,7 @@ UserDatabase.prototype.getEvents = function (params: any): any[] | null {
   return null;
 };
 
-UserDatabase.prototype.getEventsStreamed = function (params: any): any {
+UserDatabase.prototype.getEventsStreamed = function (this: UserDatabaseInstance, params: GetParams): NodeReadable {
   params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
   params.query.push({ type: 'equal', content: { field: 'headId', value: null } });
   const queryString = prepareEventsGetQuery(params);
@@ -108,55 +153,54 @@ UserDatabase.prototype.getEventsStreamed = function (params: any): any {
   return readableEventsStreamForIterator(query.iterate());
 };
 
-function prepareEventsGetQuery (params: any): string {
+function prepareEventsGetQuery (params: GetParams): string {
   return 'SELECT * FROM events_fts ' + prepareQuery(params);
 }
 
-UserDatabase.prototype.getEventDeletionsStreamed = function (deletedSince: number): any {
+UserDatabase.prototype.getEventDeletionsStreamed = function (this: UserDatabaseInstance, deletedSince: number): NodeReadable {
   this.logger.debug(`GET events deletions since: ${deletedSince}`);
   return readableEventsStreamForIterator(this.eventQueries.getDeletedSince.iterate(deletedSince));
 };
 
 // also see: https://nodejs.org/api/stream.html#stream_stream_readable_from_iterable_options
-function readableEventsStreamForIterator (iterateSource: any): any {
-  const iterateTransform: any = {
-    next: function () {
+function readableEventsStreamForIterator (iterateSource: Iterator<EventRow>): NodeReadable {
+  const iterateTransform: IterableIterator<DomainEvent> = {
+    next: function (): IteratorResult<DomainEvent> {
       const res = iterateSource.next();
       if (res && res.value) {
         res.value = eventsSchema.fromDB(res.value);
       }
       return res;
+    },
+    [Symbol.iterator]: function (): IterableIterator<DomainEvent> {
+      return iterateTransform;
     }
-  };
-
-  iterateTransform[Symbol.iterator] = function () {
-    return iterateTransform;
   };
 
   return Readable.from(iterateTransform);
 }
 
-UserDatabase.prototype.getAllActions = function (): any[] {
+UserDatabase.prototype.getAllActions = function (this: UserDatabaseInstance): EventRow[] {
   return this.eventQueries.getTerms.all('action-%');
 };
 
-UserDatabase.prototype.getAllAccesses = function (): any[] {
+UserDatabase.prototype.getAllAccesses = function (this: UserDatabaseInstance): EventRow[] {
   return this.eventQueries.getTerms.all('access-%');
 };
 
-UserDatabase.prototype.getOneEvent = function (eventId: string): any | null {
+UserDatabase.prototype.getOneEvent = function (this: UserDatabaseInstance, eventId: string): DomainEvent | null {
   this.logger.debug(`GET one event: ${eventId}`);
   const event = this.eventQueries.getById.get(eventId);
   if (event == null) return null;
   return eventsSchema.fromDB(event);
 };
 
-UserDatabase.prototype.countEvents = function (): number {
+UserDatabase.prototype.countEvents = function (this: UserDatabaseInstance): number {
   const res = this.db.prepare('SELECT count(*) as count FROM events').get();
-  return res?.count || 0;
+  return (res?.count as number) || 0;
 };
 
-UserDatabase.prototype.createEvent = async function (event: any): Promise<void> {
+UserDatabase.prototype.createEvent = async function (this: UserDatabaseInstance, event: DomainEvent): Promise<void> {
   const dbEvent = eventsSchema.toDB(event);
   this.logger.debug(`(async) CREATE event: ${JSON.stringify(dbEvent)}`);
   await concurrentSafeWrite.execute(() => {
@@ -168,13 +212,13 @@ UserDatabase.prototype.createEvent = async function (event: any): Promise<void> 
  * Use only in tests or migration
  * Not safe within a multi-process environement
  */
-UserDatabase.prototype.createEventSync = function (event: any): void {
+UserDatabase.prototype.createEventSync = function (this: UserDatabaseInstance, event: DomainEvent): void {
   const dbEvent = eventsSchema.toDB(event);
   this.logger.debug(`(sync) CREATE event: ${JSON.stringify(dbEvent)}`);
   this.eventQueries.create.run(dbEvent);
 };
 
-UserDatabase.prototype.updateEvent = async function (eventId: string, eventData: any): Promise<any> {
+UserDatabase.prototype.updateEvent = async function (this: UserDatabaseInstance, eventId: string, eventData: DomainEvent): Promise<DomainEvent | null> {
   const dbEvent = eventsSchema.toDB(eventData);
   if (dbEvent.streamIds == null) { dbEvent.streamIds = eventsSchema.ALL_EVENTS_TAG; }
 
@@ -197,12 +241,12 @@ UserDatabase.prototype.updateEvent = async function (eventId: string, eventData:
   return eventsSchema.fromDB(dbEvent);
 };
 
-UserDatabase.prototype.getEventHistory = function (eventId: string): any[] {
+UserDatabase.prototype.getEventHistory = function (this: UserDatabaseInstance, eventId: string): DomainEvent[] {
   this.logger.debug(`GET event history for: ${eventId}`);
   return this.eventQueries.getHistory.all(eventId).map(eventsSchema.fromDBHistory);
 };
 
-UserDatabase.prototype.minimizeEventHistory = async function (eventId: string, fieldsToRemove: string[]): Promise<void> {
+UserDatabase.prototype.minimizeEventHistory = async function (this: UserDatabaseInstance, eventId: string, fieldsToRemove: string[]): Promise<void> {
   const minimizeHistoryStatement = `UPDATE events SET ${fieldsToRemove.map(field => `${field} = ${field === 'streamIds' ? '\'' + eventsSchema.ALL_EVENTS_TAG + '\'' : 'NULL'}`).join(', ')} WHERE headId = ?`;
   this.logger.debug(`(async) Minimize event history: ${minimizeHistoryStatement}`);
   await concurrentSafeWrite.execute(() => {
@@ -210,14 +254,14 @@ UserDatabase.prototype.minimizeEventHistory = async function (eventId: string, f
   });
 };
 
-UserDatabase.prototype.deleteEventHistory = async function (eventId: string): Promise<void> {
+UserDatabase.prototype.deleteEventHistory = async function (this: UserDatabaseInstance, eventId: string): Promise<void> {
   this.logger.debug(`(async) DELETE event history for event id: ${eventId}`);
   await concurrentSafeWrite.execute(() => {
     return this.eventQueries.deleteByHeadId.run(eventId);
   });
 };
 
-UserDatabase.prototype.deleteEvents = async function (params: any): Promise<any> {
+UserDatabase.prototype.deleteEvents = async function (this: UserDatabaseInstance, params: GetParams): Promise<{ changes: number } | null> {
   const queryString = prepareEventsDeleteQuery(params);
   if (queryString.indexOf('MATCH') > 0) {
     this.logger.debug(`DELETE events one by one as query includes "MATCH": ${queryString}`);
@@ -234,7 +278,7 @@ UserDatabase.prototype.deleteEvents = async function (params: any): Promise<any>
     return null;
   }
   // else
-  let res: any = null;
+  let res: { changes: number } | null = null;
   this.logger.debug(`DELETE events: ${queryString}`);
   await concurrentSafeWrite.execute(() => {
     res = this.db.prepare(queryString).run();
@@ -247,14 +291,14 @@ UserDatabase.prototype.deleteEvents = async function (params: any): Promise<any>
 /**
  * Export all raw event rows from the database.
  */
-UserDatabase.prototype.exportAllEvents = function (): any[] {
+UserDatabase.prototype.exportAllEvents = function (this: UserDatabaseInstance): EventRow[] {
   return this.eventQueries.getAll.all();
 };
 
 /**
  * Import raw event rows into the database.
  */
-UserDatabase.prototype.importAllEvents = async function (events: any[]): Promise<void> {
+UserDatabase.prototype.importAllEvents = async function (this: UserDatabaseInstance, events: EventRow[]): Promise<void> {
   for (const event of events) {
     await concurrentSafeWrite.execute(() => {
       this.eventQueries.create.run(event);
@@ -262,35 +306,41 @@ UserDatabase.prototype.importAllEvents = async function (events: any[]): Promise
   }
 };
 
-function prepareEventsDeleteQuery (params: any): string {
+function prepareEventsDeleteQuery (params: GetParams): string {
   if (params.streams) { throw new Error(`Events DELETE with stream query not supported yet: ${JSON.stringify(params)}`); }
   return 'DELETE FROM events ' + prepareQuery(params, true);
 }
 
-const converters: Record<string, (content: any) => string | null> = {
-  equal: (content: any) => {
-    const realField = (content.field === 'id') ? 'eventid' : content.field;
-    if (content.value === null) return `${realField} IS NULL`;
-    const value = eventsSchema.coerceValueForColumn(realField, content.value);
+const converters: Record<string, (content: unknown) => string | null> = {
+  equal: (content: unknown) => {
+    const c = content as { field: string, value: unknown };
+    const realField = (c.field === 'id') ? 'eventid' : c.field;
+    if (c.value === null) return `${realField} IS NULL`;
+    const value = eventsSchema.coerceValueForColumn(realField, c.value);
     return `${realField} = ${value}`;
   },
-  greater: (content: any) => {
-    const value = eventsSchema.coerceValueForColumn(content.field, content.value);
-    return `${content.field} > ${value}`;
+  greater: (content: unknown) => {
+    const c = content as { field: string, value: unknown };
+    const value = eventsSchema.coerceValueForColumn(c.field, c.value);
+    return `${c.field} > ${value}`;
   },
-  greaterOrEqual: (content: any) => {
-    const value = eventsSchema.coerceValueForColumn(content.field, content.value);
-    return `${content.field} >= ${value}`;
+  greaterOrEqual: (content: unknown) => {
+    const c = content as { field: string, value: unknown };
+    const value = eventsSchema.coerceValueForColumn(c.field, c.value);
+    return `${c.field} >= ${value}`;
   },
-  lowerOrEqual: (content: any) => {
-    const value = eventsSchema.coerceValueForColumn(content.field, content.value);
-    return `${content.field} <= ${value}`;
+  lowerOrEqual: (content: unknown) => {
+    const c = content as { field: string, value: unknown };
+    const value = eventsSchema.coerceValueForColumn(c.field, c.value);
+    return `${c.field} <= ${value}`;
   },
-  greaterOrEqualOrNull: (content: any) => {
-    const value = eventsSchema.coerceValueForColumn(content.field, content.value);
-    return `(${content.field} >= ${value} OR ${content.field} IS NULL)`;
+  greaterOrEqualOrNull: (content: unknown) => {
+    const c = content as { field: string, value: unknown };
+    const value = eventsSchema.coerceValueForColumn(c.field, c.value);
+    return `(${c.field} >= ${value} OR ${c.field} IS NULL)`;
   },
-  typesList: (list: any) => {
+  typesList: (content: unknown) => {
+    const list = content as string[];
     if (list.length === 0) return null;
     const lt = list.map((type: string) => {
       const typeCorced = eventsSchema.coerceValueForColumn('type', type);
@@ -304,14 +354,14 @@ const converters: Record<string, (content: any) => string | null> = {
     });
     return '(' + lt.join(' OR ') + ')';
   },
-  streamsQuery: (content: any) => {
+  streamsQuery: (content: unknown) => {
     const str = toSQLiteQuery(content);
     if (str === null) return null;
     return 'streamIds MATCH \'' + str + '\'';
   }
 };
 
-function prepareQuery (params: any = {}, isDelete = false): string {
+function prepareQuery (params: GetParams = { query: [] }, isDelete = false): string {
   const ands: string[] = [];
   for (const item of params.query) {
     const newCondition = converters[item.type](item.content);
@@ -326,9 +376,10 @@ function prepareQuery (params: any = {}, isDelete = false): string {
   }
 
   if (!isDelete) {
-    if (params.options?.sort) {
+    const sort = params.options?.sort;
+    if (sort) {
       const sorts: string[] = [];
-      for (const [field, order] of Object.entries(params.options.sort) as Array<[string, number]>) {
+      for (const [field, order] of Object.entries(sort)) {
         const orderStr = order > 0 ? 'ASC' : 'DESC';
         sorts.push(`${field} ${orderStr}`);
       }
@@ -336,12 +387,14 @@ function prepareQuery (params: any = {}, isDelete = false): string {
     }
   }
 
-  if (params.options?.limit) {
-    queryString += ' LIMIT ' + params.options.limit;
+  const limit = params.options?.limit;
+  if (limit) {
+    queryString += ' LIMIT ' + limit;
   }
 
-  if (params.options?.skip) {
-    queryString += ' OFFSET ' + params.options.skip;
+  const skip = params.options?.skip;
+  if (skip) {
+    queryString += ' OFFSET ' + skip;
   }
   return queryString;
 }
