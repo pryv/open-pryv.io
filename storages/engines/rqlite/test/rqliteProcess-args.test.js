@@ -31,7 +31,7 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
       const args = buildArgs(baseOpts);
       assert.deepEqual(args, [
         '-node-id', 'core-a',
-        '-http-addr', '0.0.0.0:4001',
+        '-http-addr', '127.0.0.1:4001',
         '-http-adv-addr', '127.0.0.1:4001',
         '-raft-addr', '127.0.0.1:4002',
         '-raft-cluster-remove-shutdown',
@@ -41,6 +41,7 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
 
     it('binds 0.0.0.0 and advertises coreIp separately in multi-core (NAT-aware)', () => {
       const args = buildArgs({ ...baseOpts, coreIp: '10.0.0.5' });
+      assert.equal(args[args.indexOf('-http-addr') + 1], '0.0.0.0:4001');
       assert(args.includes('-http-adv-addr'));
       assert.equal(args[args.indexOf('-http-adv-addr') + 1], '10.0.0.5:4001');
       // Raft listens on all interfaces; advertises the public IP to peers.
@@ -55,6 +56,11 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
       const args = buildArgs({ ...baseOpts });
       assert.equal(args[args.indexOf('-raft-addr') + 1], '127.0.0.1:4002');
       assert(!args.includes('-raft-adv-addr'));
+    });
+
+    it('single-core binds the HTTP API on loopback (unauthenticated API must not be public)', () => {
+      const args = buildArgs({ ...baseOpts });
+      assert.equal(args[args.indexOf('-http-addr') + 1], '127.0.0.1:4001');
     });
 
     it('does not add any TLS flag when tls option is null', () => {

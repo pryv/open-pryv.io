@@ -101,6 +101,16 @@ if (get('letsEncrypt.enabled') === true) {
   }
 }
 
+// DNS topology consistency (mirrors checkDnsTopologyConsistency in
+// config/plugins/config-validation.js). dnsLess.isActive DEFAULTS to true
+// at runtime, so for a dns-active config it must be explicitly false in
+// the file — absent is just as broken as true.
+if (get('dns.active') === true && get('dnsLess.isActive') !== false) {
+  problems.push('dns.active is true but dnsLess.isActive is not explicitly false — ' +
+    'the API would route path-style and reserved subdomains (reg/access/mfa) plus ' +
+    'per-user subdomains would misroute. Add `dnsLess:\n  isActive: false`');
+}
+
 // storages.base.engine + matching engine config block
 if (isMissingOrSentinel(get('storages.base.engine'))) {
   problems.push('storages.base.engine missing or unset');

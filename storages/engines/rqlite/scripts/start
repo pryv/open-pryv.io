@@ -36,9 +36,11 @@ if [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
   exit 0
 fi
 
+# HTTP API on loopback only: it is plaintext + unauthenticated (full
+# PlatformDB read/write), and every dev/test client connects via localhost.
 ARGS=(
   -node-id single
-  -http-addr 0.0.0.0:4001
+  -http-addr 127.0.0.1:4001
   -http-adv-addr 127.0.0.1:4001
   -raft-addr 127.0.0.1:4002
   -raft-cluster-remove-shutdown

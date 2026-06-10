@@ -62,12 +62,15 @@ function buildArgs (opts: RqliteOpts): string[] {
   } = opts;
 
   const advAddr = (coreIp || '127.0.0.1');
-  const httpAddr = `0.0.0.0:${httpPort}`;
   // Multi-core: advAddr is the core's public IP which is NAT'd on EC2 and
   // most cloud VMs (the network interface doesn't actually hold that IP).
   // Bind 0.0.0.0 for both listeners and pass -*-adv-addr so peers still
-  // contact us at the public address. Single-core stays on 127.0.0.1.
+  // contact us at the public address. Single-core stays on 127.0.0.1 for
+  // BOTH listeners: the HTTP API is plaintext and unauthenticated (the tls
+  // block below only secures the raft channel), so it must never be
+  // reachable from outside the host when no peer needs it.
   const isMultiCore = (coreIp != null);
+  const httpAddr = isMultiCore ? `0.0.0.0:${httpPort}` : `127.0.0.1:${httpPort}`;
   const raftBindAddr = isMultiCore ? `0.0.0.0:${raftPort}` : `${advAddr}:${raftPort}`;
 
   const args: string[] = [

@@ -279,10 +279,18 @@ class Platform {
       throw new Error('Platform.registerSelf: PlatformDB is not initialised. ' +
         'Call `await require("storages").init(config)` before getPlatform()/platform.init().');
     }
+    // dns-active deployments rarely set core.ip explicitly (the config
+    // wizard and the bootstrap bundle only carry dns.publicIp), yet the
+    // embedded DNS answers the reserved service names (reg/access/mfa) and
+    // `<coreId>.<domain>` from CoreInfo.ip — without this fallback those
+    // names return empty answers while service/info still advertises them.
+    const ip = (this.#config.get('core:ip') as string) ||
+      (this.#config.get('dns:active') ? (this.#config.get('dns:publicIp') as string) : undefined) ||
+      undefined;
     const info: CoreInfo = {
       id: this.coreId,
       url: this.coreUrl || undefined, // advertise explicit URL for DNSless multi-core
-      ip: (this.#config.get('core:ip') as string) || undefined,
+      ip,
       ipv6: (this.#config.get('core:ipv6') as string) || undefined,
       cname: (this.#config.get('core:cname') as string) || undefined,
       hosting: (this.#config.get('core:hosting') as string) || undefined,

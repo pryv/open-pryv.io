@@ -910,6 +910,11 @@ async function main () {
   if (dnsLess) {
     config.dnsLess = { isActive: true, publicUrl };
   } else {
+    // dnsLess.isActive defaults to TRUE in default-config.yml, and it gates
+    // the express-side subdomain routing (username hoist + reg/access/mfa
+    // path mapping). It MUST be flipped off here or the embedded DNS
+    // resolves names whose requests the API then misroutes path-style.
+    config.dnsLess = { isActive: false };
     // `publicIp` feeds master.js's first-boot bootstrap of the apex
     // SOA + NS records + the A record for `core.<domain>` — without it
     // the embedded DNS server can't answer authoritatively for the zone
@@ -966,7 +971,7 @@ async function main () {
     'What the SDK + /reg/service/info expose to clients.',
     { service: config.service });
 
-  if (config.dnsLess) {
+  if (dnsLess) {
     yamlBody += section(yaml, 'DNS topology — dnsLess (single FQDN)',
       ['All users share one host: https://<publicUrl>/<username>/<path>.',
         'HTTP-01 LE challenge works on this single host (no DNS server needed).'],
@@ -978,8 +983,10 @@ async function main () {
         'and DNS-01 (wildcard) LE challenge.',
         'publicIp seeds the apex SOA + NS records + A core.<domain> on first boot.',
         'Operator-edited records under dns.records.root or via bin/dns-records.js win;',
-        'the bootstrap only fills what is empty.'],
-      { dns: config.dns });
+        'the bootstrap only fills what is empty.',
+        'dnsLess.isActive MUST stay false here — it switches the API to',
+        'path-based routing and disables the per-user subdomain handling.'],
+      { dns: config.dns, dnsLess: config.dnsLess });
   }
 
   const httpDoc = ['Workers bind on `port`.'];

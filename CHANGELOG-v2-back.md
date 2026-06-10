@@ -1,5 +1,15 @@
 # Changelog - Internal (no API impact)
 
+## fix(platform,dns): reserved service subdomains resolve in dns-active deploys — `registerSelf` falls back to `dns.publicIp`
+
+In dns-active (subdomain-per-user) mode the embedded DNS answers the distribution-reserved service names (`reg.<domain>` / `access.<domain>` / `mfa.<domain>`) and `<coreId>.<domain>` from the `ip` field of each core's PlatformDB self-registration. `Platform.registerSelf()` only read `core.ip` — a key that neither the config wizard nor the bootstrap bundle sets (both carry `dns.publicIp`) — so those rows landed IP-less and the names returned empty answers, while `/reg/service/info` kept advertising `register: https://reg.<domain>/`: standard onboarding against the advertised register URL could not resolve. Verified live on a wizard-generated single-core deploy (LE staging, real public resolvers).
+
+Fix: `registerSelf()` now falls back to `dns.publicIp` for `CoreInfo.ip` when `dns.active` is on and `core.ip` is unset; an explicit `core.ip` still wins, and non-dns-active deployments are unchanged. 3 new `[MCIP]` tests pin the fallback, the precedence, and the dns-inactive no-op.
+
+## fix(rqlite): single-core rqlited binds its HTTP API on loopback, not 0.0.0.0
+
+`rqliteProcess.buildArgs()` passed `-http-addr 0.0.0.0:<port>` unconditionally, while only the raft listener honored the single-core-stays-on-loopback rule the surrounding comment promised. The rqlite HTTP API is plaintext and unauthenticated with full read/write access to PlatformDB (DNS records, core registry, invitation tokens, access-state, encrypted TLS-cert blobs); docker deployments were shielded by the port mapping, but raw single-core hosts exposed it to anything the host firewall let through. Single-core (no `core.ip`) now binds `127.0.0.1:<port>` — all in-process and on-host clients connect via localhost, so nothing changes for them. Multi-core keeps `0.0.0.0` + `-http-adv-addr <core.ip>` (NAT-aware, as before). The dev/test launcher `storages/engines/rqlite/scripts/start` carried the same `0.0.0.0` literal and is fixed to loopback too (observed live: a long-running dev rqlited answering unauthenticated on a dev machine's public interface). `[RQARGS]` argv tests updated + a dedicated loopback assertion added.
+
 ## feat(dns,init,acme): dns-active first-boot DNS chain + wizard preflight
 
 Closes the out-of-the-box gap for non-dnsLess (subdomain-per-user) single-core installs. Previously the embedded DNS server shipped empty, so even though ACME published the DNS-01 TXT in-memory, public recursors saw no authoritative answer for the zone and `acme-client` errored at preflight (`No TXT records found for name: _acme-challenge.<domain>`). Operators had to hand-run `bin/dns-records.js load` with a SOA/NS/A YAML before first boot — undocumented and easy to miss.

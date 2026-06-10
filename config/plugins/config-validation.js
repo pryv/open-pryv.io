@@ -109,6 +109,24 @@ function checkAuditOnUserDeleteMode (config, problems) {
   }
 }
 
+// Conflicting DNS-topology flags. `dns.active: true` runs the embedded DNS
+// and advertises per-user-subdomain URLs (service/info `api`, reserved
+// `reg.<domain>` register URL, …), but `dnsLess.isActive` — which defaults
+// to TRUE — gates the express-side subdomain routing (username hoist +
+// reg/access/mfa path mapping). Both on at once means DNS resolves names
+// whose requests the API then misroutes path-style: `reg.<domain>/…`
+// answers "Unknown user reg" and `https://<user>.<domain>/events` breaks.
+// Fail the boot with the one-line fix instead.
+function checkDnsTopologyConsistency (config, problems) {
+  if (config.get('dns:active') === true && config.get('dnsLess:isActive') === true) {
+    problems.push({
+      message: "conflicting DNS topology — 'dns.active: true' (per-user subdomains) requires 'dnsLess.isActive: false', but it is true (the default). Add `dnsLess:\\n  isActive: false` to your config.",
+      path: ['dnsLess', 'isActive'],
+      payload: { 'dns.active': true, 'dnsLess.isActive': true }
+    });
+  }
+}
+
 async function validate (config) {
   // Collect every validation problem in one pass so the operator sees the
   // full list in a single boot-and-fail cycle instead of one-per-restart.
@@ -128,6 +146,7 @@ async function validate (config) {
 
   checkRequiredWhen(config, problems);
   checkAuditOnUserDeleteMode(config, problems);
+  checkDnsTopologyConsistency(config, problems);
 
   return problems;
 }
@@ -206,6 +225,7 @@ module.exports = {
   validate,
   checkRequiredWhen,
   checkAuditOnUserDeleteMode,
+  checkDnsTopologyConsistency,
   isMissingOrSentinel,
   REQUIRED_WHEN,
   AUDIT_ON_USER_DELETE_MODES

@@ -245,3 +245,41 @@ describe('[CV-AOUD] config-validation audit.onUserDelete', () => {
     assert.deepEqual(AUDIT_ON_USER_DELETE_MODES, ['erase', 'keep', 'pseudonymise']);
   });
 });
+
+describe('[CVDT] config-validation DNS topology consistency', () => {
+  let checkDnsTopologyConsistency;
+
+  before(async function () {
+    this.timeout(30000);
+    await initTests();
+    await initCore();
+    ({ checkDnsTopologyConsistency } =
+      require('../../../config/plugins/config-validation.js'));
+  });
+
+  function fakeConfig (map) {
+    return { get: (key) => map[key] };
+  }
+
+  it('[CVDT1] dns.active + dnsLess.isActive both true → problem with the one-line fix', () => {
+    const problems = [];
+    checkDnsTopologyConsistency(fakeConfig({ 'dns:active': true, 'dnsLess:isActive': true }), problems);
+    assert.strictEqual(problems.length, 1);
+    assert.ok(problems[0].message.includes('dnsLess.isActive: false'),
+      'expected message to name the fix: ' + problems[0].message);
+    assert.deepEqual(problems[0].path, ['dnsLess', 'isActive']);
+  });
+
+  it('[CVDT2] dns.active with dnsLess.isActive false → no problem', () => {
+    const problems = [];
+    checkDnsTopologyConsistency(fakeConfig({ 'dns:active': true, 'dnsLess:isActive': false }), problems);
+    assert.strictEqual(problems.length, 0);
+  });
+
+  it('[CVDT3] dnsLess deployment (dns.active false/unset) → no problem', () => {
+    const problems = [];
+    checkDnsTopologyConsistency(fakeConfig({ 'dnsLess:isActive': true }), problems);
+    checkDnsTopologyConsistency(fakeConfig({ 'dns:active': false, 'dnsLess:isActive': true }), problems);
+    assert.strictEqual(problems.length, 0);
+  });
+});

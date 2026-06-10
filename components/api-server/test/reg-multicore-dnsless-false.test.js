@@ -489,4 +489,44 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
         'access URL should point at access.{domain}: ' + res.body.access);
     });
   });
+
+  describe('[MCIP] registerSelf CoreInfo.ip — dns.publicIp fallback', function () {
+    // The embedded DNS answers reg/access/mfa + `<coreId>.<domain>` from
+    // CoreInfo.ip. Deployments configured via the wizard or a bootstrap
+    // bundle set dns.publicIp but not core.ip — without the fallback their
+    // self-registration carries no ip and those names return empty answers.
+    afterEach(async function () {
+      config.injectTestConfig({});
+    });
+
+    it('[MCIP1] falls back to dns.publicIp when dns.active is on and core.ip is unset', async function () {
+      config.injectTestConfig({
+        dns: { active: true, domain: DOMAIN, publicIp: '203.0.113.7' },
+        core: { id: CORE_A }
+      });
+      await platform.registerSelf();
+      const info = await getPlatformDB().getCoreInfo(CORE_A);
+      assert.strictEqual(info.ip, '203.0.113.7');
+    });
+
+    it('[MCIP2] explicit core.ip wins over dns.publicIp', async function () {
+      config.injectTestConfig({
+        dns: { active: true, domain: DOMAIN, publicIp: '203.0.113.7' },
+        core: { id: CORE_A, ip: '10.0.0.1' }
+      });
+      await platform.registerSelf();
+      const info = await getPlatformDB().getCoreInfo(CORE_A);
+      assert.strictEqual(info.ip, '10.0.0.1');
+    });
+
+    it('[MCIP3] no fallback when dns.active is off', async function () {
+      config.injectTestConfig({
+        dns: { active: false, publicIp: '203.0.113.7' },
+        core: { id: CORE_A }
+      });
+      await platform.registerSelf();
+      const info = await getPlatformDB().getCoreInfo(CORE_A);
+      assert.ok(info.ip == null, 'ip should stay unset, got: ' + info.ip);
+    });
+  });
 });
