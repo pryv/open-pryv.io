@@ -5,9 +5,9 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { AppLike, PryvRequest } from './_types.ts';
 import type { Application, Request, Response, NextFunction } from 'express';
 // `context` is attached by setMinimalMethodContext earlier in the chain.
-type PryvRequest = Request & { context?: unknown };
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const Paths = require('./Paths.ts');

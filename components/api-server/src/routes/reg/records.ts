@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { AppLike, PryvRequest } from '../_types.ts';
 import type { Request, Response, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 /**
@@ -24,7 +25,6 @@ const require = createRequire(import.meta.url);
 
 const { getPlatform } = require('platform');
 
-type AppLike = { config: { get: (key: string) => unknown } };
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   const adminAccessKey = app.config.get('auth:adminAccessKey') as string | undefined;

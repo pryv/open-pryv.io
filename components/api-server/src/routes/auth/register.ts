@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { AppLike, PryvRequest } from '../_types.ts';
 import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const path = require('path');
@@ -13,8 +14,6 @@ const regPath = require('../Paths.ts').Register;
 const errors = require('errors').factory;
 const { setMinimalMethodContext, setMethodId } = require('middleware');
 
-type AppLike = { api: { call: (...args: unknown[]) => unknown } };
-type PryvRequest = Request & { context?: unknown };
 
 /**
  * Routes for users

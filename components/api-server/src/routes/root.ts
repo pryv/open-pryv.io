@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { AppLike, PryvRequest } from './_types.ts';
 import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const middleware = require('middleware');
@@ -18,12 +19,6 @@ const { setMethodId } = require('middleware');
   await commonMeta.loadSettings();
 })();
 
-type AppLike = {
-  api: { call: (...args: unknown[]) => unknown };
-  storageLayer: unknown;
-  getCustomAuthFunction: (name: string) => unknown;
-};
-type PryvRequest = Request & { context?: unknown };
 
 // Handlers for path roots at various places; handler for batch calls and
 // access-info.

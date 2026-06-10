@@ -5,8 +5,8 @@
  * Refer to LICENSE file
  */
 import type { Request, Response, Application as ExpressApp } from 'express';
+import type { AppLike } from '../_types.ts';
 
-type AppLike = { config: { get: (key: string) => unknown } };
 
 /**
  * GET /apps — list applications linked to this service.

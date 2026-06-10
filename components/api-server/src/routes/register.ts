@@ -5,14 +5,13 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { AppLike, PryvRequest } from './_types.ts';
 import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const methodCallback = require('./methodCallback.ts').default;
 const { setMethodId } = require('middleware');
 const { getConfigSync } = require('@pryv/boiler');
 
-type AppLike = { api: { call: (...args: unknown[]) => unknown } };
-type PryvRequest = Request & { context?: unknown };
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   const api = app.api;
