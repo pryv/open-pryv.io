@@ -19,7 +19,10 @@ const pluginLoader = require('./pluginLoader.ts');
 const internals = require('./internals.ts');
 const { getConfig, getLogger } = require('@pryv/boiler');
 
-type BoilerConfig = { get (key: string): any; has? (key: string): boolean };
+type BoilerConfig = { get (key: string): unknown; has? (key: string): boolean };
+// `storages:engines:<name>` config section — engine-specific fields plus the
+// connection coordinates the series wiring reads directly.
+type EngineConfig = { host?: string; port?: number; [k: string]: unknown };
 type Instances = {
   database: unknown;
   databasePG: unknown;
@@ -67,8 +70,8 @@ function registerInternals (config: BoilerConfig, database: unknown, databasePG:
  * The engine name is the folder name under storages/engines/.
  * Config structure: storages.engines.<engineName>.{...fields}
  */
-function getEngineConfig (config: BoilerConfig, engineName: string) {
-  return config.get(`storages:engines:${engineName}`) || {};
+function getEngineConfig (config: BoilerConfig, engineName: string): EngineConfig {
+  return (config.get(`storages:engines:${engineName}`) || {}) as EngineConfig;
 }
 
 function initEngines (config: BoilerConfig) {

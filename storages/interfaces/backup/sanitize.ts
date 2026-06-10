@@ -49,18 +49,19 @@ const ID_RENAMES: Record<string, string> = { streamId: 'id', profileId: 'id' };
  *    `_id` is promoted to `id` (events, accesses in MongoDB).
  * 3. Internal fields (`_id`, `__v`, `userId`, `user_id`) are stripped.
  */
-function sanitize (doc: any): any {
+function sanitize (doc: Record<string, unknown> | null | undefined): Record<string, unknown> | null | undefined {
   if (doc == null) return doc;
-  const clean: Record<string, any> = {};
+  const clean: Record<string, unknown> = {};
 
   // Check if doc has an engine-specific ID field that should become `id`
   const renamedId = Object.keys(ID_RENAMES).find(f => doc[f] != null);
 
   // Promote _id to id only if no existing id and no engine-specific ID
   if (doc._id != null && doc.id == null && !renamedId) {
-    clean.id = typeof doc._id === 'object' && doc._id.toString
-      ? doc._id.toString()
-      : doc._id;
+    const rawId = doc._id;
+    clean.id = typeof rawId === 'object' && rawId.toString
+      ? rawId.toString()
+      : rawId;
   }
 
   for (const key of Object.keys(doc)) {

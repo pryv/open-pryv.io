@@ -22,37 +22,46 @@
 
 const VALID_STORAGE_TYPES = ['baseStorage', 'dataStore', 'platformStorage', 'seriesStorage', 'fileStorage', 'auditStorage'];
 
+type EngineManifest = {
+  storageTypes: string[];
+  entrypoint: string;
+  requiredInternals?: string[];
+  scripts?: Record<string, string>;
+  [k: string]: unknown;
+};
+
 /**
  * @param manifest - Parsed manifest.json object
  * @param engineDir - Path to the engine directory (for error messages)
  * @throws {Error} If validation fails
  */
-function validateManifest (manifest: any, engineDir: any) {
+function validateManifest (manifest: unknown, engineDir: string): EngineManifest {
   if (!manifest || typeof manifest !== 'object') {
     throw new Error(`Invalid manifest in ${engineDir}: must be a non-null object`);
   }
+  const m = manifest as Record<string, unknown>;
 
   // storageTypes: required non-empty array of valid types
-  if (!Array.isArray(manifest.storageTypes) || manifest.storageTypes.length === 0) {
+  if (!Array.isArray(m.storageTypes) || m.storageTypes.length === 0) {
     throw new Error(`Invalid manifest in ${engineDir}: "storageTypes" must be a non-empty array`);
   }
-  for (const st of manifest.storageTypes) {
-    if (!VALID_STORAGE_TYPES.includes(st)) {
+  for (const st of m.storageTypes) {
+    if (typeof st !== 'string' || !VALID_STORAGE_TYPES.includes(st)) {
       throw new Error(`Invalid manifest in ${engineDir}: unknown storageType "${st}". Valid: ${VALID_STORAGE_TYPES.join(', ')}`);
     }
   }
 
   // entrypoint: required string
-  if (typeof manifest.entrypoint !== 'string' || !manifest.entrypoint) {
+  if (typeof m.entrypoint !== 'string' || !m.entrypoint) {
     throw new Error(`Invalid manifest in ${engineDir}: "entrypoint" must be a non-empty string`);
   }
 
   // requiredInternals: optional array of strings
-  if (manifest.requiredInternals != null) {
-    if (!Array.isArray(manifest.requiredInternals)) {
+  if (m.requiredInternals != null) {
+    if (!Array.isArray(m.requiredInternals)) {
       throw new Error(`Invalid manifest in ${engineDir}: "requiredInternals" must be an array if present`);
     }
-    for (const ri of manifest.requiredInternals) {
+    for (const ri of m.requiredInternals) {
       if (typeof ri !== 'string') {
         throw new Error(`Invalid manifest in ${engineDir}: each requiredInternals entry must be a string`);
       }
@@ -60,13 +69,13 @@ function validateManifest (manifest: any, engineDir: any) {
   }
 
   // scripts: optional object with string values
-  if (manifest.scripts != null) {
-    if (typeof manifest.scripts !== 'object') {
+  if (m.scripts != null) {
+    if (typeof m.scripts !== 'object') {
       throw new Error(`Invalid manifest in ${engineDir}: "scripts" must be an object if present`);
     }
   }
 
-  return manifest;
+  return m as unknown as EngineManifest;
 }
 
 export { validateManifest, VALID_STORAGE_TYPES };
