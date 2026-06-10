@@ -19,8 +19,12 @@ const DataMatrix = series.DataMatrix;
 const userStorage = helpers.dependencies.storage.user.events;
 const accountStreams = helpers.accountStreams;
 describe('[MXDB] Manage InfluxDB data (business.series.*)', function () {
+  // Read host/port from config so checkouts running several influxd instances
+  // on offset ports don't silently hit each other's data.
+  const engineConfig = helpers.getEngineConfig('influxdb', require('../manifest.json'));
   const connection = new influx.InfluxDB({
-    host: '127.0.0.1'
+    host: engineConfig.host,
+    port: engineConfig.port
   });
   before(async () => {
     accountStreams.init();

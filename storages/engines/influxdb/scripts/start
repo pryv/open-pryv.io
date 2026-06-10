@@ -47,9 +47,13 @@ else
   nohup "$INFLUX_BIN" -config "$INFLUX_CONF" > "$INFLUX_LOGS/influxd.log" 2>&1 &
   echo $! > "$PIDFILE"
 
-  # Wait for HTTP API to become ready
+  # Wait for HTTP API to become ready. Read the HTTP port from the config —
+  # probing a hardcoded port would report a false "ready" from another
+  # instance when the operator runs several checkouts on offset ports.
+  INFLUX_HTTP_PORT=$(awk '/^\[http\]/{f=1} f && /bind-address/{gsub(/.*:|"/,""); print; exit}' "$INFLUX_CONF")
+  INFLUX_HTTP_PORT=${INFLUX_HTTP_PORT:-8086}
   for i in $(seq 1 60); do
-    if curl -fs http://127.0.0.1:8086/ping >/dev/null 2>&1; then
+    if curl -fs "http://127.0.0.1:${INFLUX_HTTP_PORT}/ping" >/dev/null 2>&1; then
       echo "influxd running (PID $(cat "$PIDFILE"))."
       echo "  Logs: $INFLUX_LOGS/influxd.log"
       echo "  Stop: kill \$(cat $PIDFILE)"
