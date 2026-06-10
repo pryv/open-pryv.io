@@ -1,5 +1,11 @@
 # Changelog - Internal (no API impact)
 
+## fix(init): wizard preflight reads the NS delegation from the parent zone — no more false warning on first boot
+
+The dns-active preflight's delegation check did a *recursive* NS lookup, which needs the zone's own authoritative server to answer. At wizard time that server is the not-yet-booted embedded DNS, so the check could only fail and warned "No NS delegation found" on every correctly-delegated first boot — training operators to ignore the one check that catches real delegation mistakes.
+
+The check now walks up the label chain to the nearest ancestor zone a public recursor can resolve, then queries one of that zone's nameservers directly for `NS <domain>` (via `dns2`, now an explicit root dependency; 3s timeout race since the bare UDP client has none). Parents serve delegation referrals from their own zone data, so the answer is independent of the child zone's server being up. Three outcomes: delegation found (✓ + the NS→A-vs-publicIp cross-check as before), parent explicitly serves no delegation (warning — now a true config-error signal), lookup itself failed (informational note, best-effort tier). Verified live against a real parent zone in all three states: correct delegation pre-boot (no warning), undelegated name (warning), delegation pointing at a different IP than declared (wrong-server warning).
+
 ## fix(platform,dns): reserved service subdomains resolve in dns-active deploys — `registerSelf` falls back to `dns.publicIp`
 
 In dns-active (subdomain-per-user) mode the embedded DNS answers the distribution-reserved service names (`reg.<domain>` / `access.<domain>` / `mfa.<domain>`) and `<coreId>.<domain>` from the `ip` field of each core's PlatformDB self-registration. `Platform.registerSelf()` only read `core.ip` — a key that neither the config wizard nor the bootstrap bundle sets (both carry `dns.publicIp`) — so those rows landed IP-less and the names returned empty answers, while `/reg/service/info` kept advertising `register: https://reg.<domain>/`: standard onboarding against the advertised register URL could not resolve. Verified live on a wizard-generated single-core deploy (LE staging, real public resolvers).

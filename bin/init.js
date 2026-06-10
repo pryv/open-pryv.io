@@ -147,16 +147,69 @@ function publicResolver () {
 }
 
 /**
- * NS hostnames the public recursor sees for <domain> (i.e. whether the parent
- * zone delegates it), or null on NXDOMAIN / no-delegation / timeout.
+ * Send one NS query for <domain> straight to <serverIp> (no recursion) and
+ * return the parsed packet. dns2's UDP client has no timeout of its own, so
+ * race it against one — a silent server must not hang the wizard.
  */
-async function lookupNs (domain) {
-  try {
-    const ns = await publicResolver().resolveNs(domain);
-    return Array.isArray(ns) && ns.length ? ns : null;
-  } catch (_) {
-    return null;
+function queryNsAt (serverIp, domain, timeoutMs = 3000) {
+  const DNS = require('dns2');
+  const resolve = DNS.UDPClient({ dns: serverIp });
+  return Promise.race([
+    resolve(domain, 'NS', DNS.Packet.CLASS.IN, { recursive: false }),
+    new Promise((_resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+      if (t.unref) t.unref();
+    })
+  ]);
+}
+
+/**
+ * Delegation lookup that works BEFORE the embedded DNS server is up.
+ *
+ * A recursive NS query for <domain> needs the zone's own authoritative
+ * server to answer — at wizard time that server is the not-yet-booted
+ * embedded DNS, so recursion can only fail and would false-warn on every
+ * correct first boot. Instead, read the delegation where it actually
+ * lives: walk up the label chain to the nearest ancestor zone the public
+ * recursor CAN resolve NS for, then ask one of that zone's nameservers
+ * directly for `NS <domain>`. Parents answer delegation (referral)
+ * queries from their own zone data — the child being down is irrelevant.
+ * The referral returned is the closest-enclosing delegation, which is
+ * exactly the chain a resolver (or an ACME validator) will follow.
+ *
+ * Returns:
+ *   { ns: string[] }  delegation found (NS hostnames as the parent serves them)
+ *   null              parent answered authoritatively: no delegation exists
+ *   undefined         could not complete the lookup (offline / filtered DNS)
+ */
+async function lookupDelegationAtParent (domain) {
+  const resolver = publicResolver();
+  const labels = domain.split('.').filter(Boolean);
+  for (let i = 1; i < labels.length; i++) {
+    const ancestor = labels.slice(i).join('.');
+    let parentNsHosts;
+    try {
+      parentNsHosts = await resolver.resolveNs(ancestor);
+    } catch (_) {
+      continue; // ancestor zone not resolvable (may itself sit behind this host) — walk up
+    }
+    if (!Array.isArray(parentNsHosts) || parentNsHosts.length === 0) continue;
+    for (const host of parentNsHosts) {
+      const ips = await lookupA(host);
+      if (ips.length === 0) continue;
+      try {
+        const response = await queryNsAt(ips[0], domain);
+        const nsRecords = [...(response.answers || []), ...(response.authorities || [])]
+          .filter(r => r.type === 2 && r.ns); // 2 = NS
+        if (nsRecords.length > 0) return { ns: nsRecords.map(r => r.ns) };
+        return null; // parent answered and serves no delegation — genuinely missing
+      } catch (_) {
+        // this parent NS didn't answer — try its siblings
+      }
+    }
+    return undefined; // parent zone found but none of its NS answered
   }
+  return undefined;
 }
 
 /** A records for <hostname> via the public recursor; [] on any failure. */
@@ -761,15 +814,18 @@ async function main () {
     console.log();
     console.log('  Checking dns-active DNS chain (best-effort, a few seconds)…');
 
-    const nsHosts = await lookupNs(dnsDomain);
-    if (!nsHosts) {
-      warnings.push(`No NS delegation found for ${dnsDomain} via a public recursor. The parent zone ` +
+    const delegation = await lookupDelegationAtParent(dnsDomain);
+    if (delegation === null) {
+      warnings.push(`No NS delegation found for ${dnsDomain} at its parent zone. The parent zone ` +
         `must delegate ${dnsDomain} to a nameserver that resolves to ${dnsPublicIp} before Let's Encrypt ` +
         'DNS-01 issuance can succeed. (If you just set the delegation up, this may be propagation lag.)');
+    } else if (delegation === undefined) {
+      console.log(`    ℹ Could not verify the NS delegation for ${dnsDomain} (parent-zone lookup`);
+      console.log('      did not answer — offline or filtered DNS). Skipping this check.');
     } else {
-      console.log(`    ✓ NS delegation for ${dnsDomain}: ${nsHosts.join(', ')}`);
+      console.log(`    ✓ NS delegation for ${dnsDomain} found at the parent zone: ${delegation.ns.join(', ')}`);
       const nsIps = new Set();
-      for (const h of nsHosts) (await lookupA(h)).forEach(ip => nsIps.add(ip));
+      for (const h of delegation.ns) (await lookupA(h)).forEach(ip => nsIps.add(ip));
       if (nsIps.size && !nsIps.has(dnsPublicIp)) {
         warnings.push(`NS delegation for ${dnsDomain} resolves to ${[...nsIps].join(', ')}, but you declared ` +
           `the public IP as ${dnsPublicIp} — ACME challenge lookups will reach the wrong server.`);
