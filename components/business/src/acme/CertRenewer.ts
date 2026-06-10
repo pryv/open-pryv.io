@@ -42,6 +42,7 @@ type DnsServerLike = { refreshFromPlatform?: () => Promise<unknown> };
 type DnsWriter = { create (name: string, value: string): Promise<unknown>; remove (name: string, value: string): Promise<unknown> };
 type Account = { accountKey: string; accountUrl: string; email: string };
 type AcmeAuthz = { identifier: { value: string } };
+type AcmeChallenge = { type: string; token: string; [k: string]: unknown };
 
 class CertRenewer {
   #platformDB: PlatformDB;
@@ -147,7 +148,7 @@ class CertRenewer {
           account,
           challengePriority,
           directoryUrl: this.#directoryUrl,
-          challengeCreateFn: async (authz: AcmeAuthz, challenge: any, keyAuthorization: string) => {
+          challengeCreateFn: async (authz: AcmeAuthz, challenge: AcmeChallenge, keyAuthorization: string) => {
             const type = (challenge && challenge.type) || 'dns-01';
             if (type === 'dns-01') {
               if (!hasDns) throw new Error('CertRenewer.renew: dns-01 challenge but no dnsWriter provided');
@@ -160,7 +161,7 @@ class CertRenewer {
               throw new Error(`CertRenewer.renew: unsupported challenge type "${type}"`);
             }
           },
-          challengeRemoveFn: async (authz: AcmeAuthz, challenge: any, keyAuthorization: string) => {
+          challengeRemoveFn: async (authz: AcmeAuthz, challenge: AcmeChallenge, keyAuthorization: string) => {
             const type = (challenge && challenge.type) || 'dns-01';
             if (type === 'dns-01') {
               if (!hasDns) return;

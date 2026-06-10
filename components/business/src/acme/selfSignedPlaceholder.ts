@@ -31,11 +31,18 @@ const fs = require('node:fs');
 const path = require('node:path');
 const forge = require('node-forge');
 
+type ConfigLike = { get: (key: string) => unknown };
+type EnsureOpts = {
+  config?: ConfigLike;
+  deriveHostnames?: (config: ConfigLike) => { commonName: string; altNames?: string[] };
+  log?: (msg: string) => void;
+};
+
 /**
  * Generate a 1-day self-signed RSA-2048 cert valid for `commonName` and
  * `altNames`. Returns { keyPem, certPem }.
  */
-function generate ({ commonName, altNames = [] }: any) {
+function generate ({ commonName, altNames = [] }: { commonName: string; altNames?: string[] }) {
   if (typeof commonName !== 'string' || commonName.length === 0) {
     throw new Error('selfSignedPlaceholder.generate: commonName is required');
   }
@@ -97,12 +104,13 @@ function generate ({ commonName, altNames = [] }: any) {
  * @param [opts.deriveHostnames] - injectable for tests; defaults to ../deriveHostnames
  * @param [opts.log]       - logger
  */
-function ensure ({ config, deriveHostnames: deriveHostnamesFn, log = (_: any) => {} }: any = {}) {
+function ensure ({ config, deriveHostnames: deriveHostnamesFn, log = (_: string) => {} }: EnsureOpts = {}) {
+  if (config == null) throw new Error('selfSignedPlaceholder.ensure: config is required');
   if (!config.get('letsEncrypt:enabled')) {
     return { written: false, reason: 'letsEncrypt-disabled' };
   }
-  const keyFile = config.get('http:ssl:keyFile');
-  const certFile = config.get('http:ssl:certFile');
+  const keyFile = config.get('http:ssl:keyFile') as string | undefined;
+  const certFile = config.get('http:ssl:certFile') as string | undefined;
   if (!keyFile || !certFile) {
     return { written: false, reason: 'ssl-paths-not-configured' };
   }
@@ -120,7 +128,7 @@ function ensure ({ config, deriveHostnames: deriveHostnamesFn, log = (_: any) =>
   // copy it over the worker paths so workers fork up with the real
   // cert immediately.
   const { hostnameToDirName } = require('./certUtils.ts');
-  const tlsDir = config.get('letsEncrypt:tlsDir') || 'var-pryv/tls';
+  const tlsDir = (config.get('letsEncrypt:tlsDir') as string | undefined) || 'var-pryv/tls';
   const materializedDir = path.join(tlsDir, hostnameToDirName(commonName));
   const materializedCert = path.join(materializedDir, 'fullchain.pem');
   const materializedKey = path.join(materializedDir, 'privkey.pem');

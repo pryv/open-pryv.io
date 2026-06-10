@@ -30,6 +30,24 @@ const { splitCertChain, parseValidity } = require('./certUtils.ts');
 const DIRECTORY_STAGING = 'https://acme-staging-v02.api.letsencrypt.org/directory';
 const DIRECTORY_PRODUCTION = 'https://acme-v02.api.letsencrypt.org/directory';
 
+// Subset of the acme-client surface we use (acmeLib is injectable for tests).
+type AcmeChallenge = { type: string; token: string; [k: string]: unknown };
+type AcmeAuthz = { identifier: { value: string }; [k: string]: unknown };
+type ChallengeFn = (authz: AcmeAuthz, challenge: AcmeChallenge, keyAuthorization: string) => Promise<unknown>;
+type AcmeClientInstance = {
+  createAccount: (opts: { termsOfServiceAgreed: boolean; contact: string[] }) => Promise<unknown>;
+  getAccountUrl: () => string;
+  auto: (opts: { csr: Buffer | string; challengePriority: string[]; challengeCreateFn: ChallengeFn; challengeRemoveFn: ChallengeFn }) => Promise<string>;
+};
+type AcmeLibLike = {
+  crypto: {
+    createPrivateKey: () => Promise<Buffer | string>;
+    createCsr: (opts: { commonName: string; altNames?: string[] }) => Promise<[Buffer | string, Buffer | string]>;
+  };
+  Client: new (opts: { directoryUrl: string; accountKey: Buffer | string; accountUrl?: string }) => AcmeClientInstance;
+};
+type AcmeAccount = { accountKey: Buffer | string; accountUrl: string; [k: string]: unknown };
+
 /**
  * Create a new ACME account. Runs ONCE per cluster — the returned
  * `{accountKey, accountUrl}` pair is persisted (PlatformDB in our
@@ -40,7 +58,7 @@ const DIRECTORY_PRODUCTION = 'https://acme-v02.api.letsencrypt.org/directory';
  * @param [opts.directoryUrl] - default: LE production
  * @param [opts.acmeLib]      - default: require('acme-client'); injectable for tests
  */
-async function createAccount ({ email, directoryUrl, acmeLib }: any = {}) {
+async function createAccount ({ email, directoryUrl, acmeLib }: { email?: string; directoryUrl?: string; acmeLib?: AcmeLibLike } = {}) {
   if (!email) throw new Error('AcmeClient.createAccount: email is required');
   const lib = acmeLib || require('acme-client');
   const url = directoryUrl || DIRECTORY_PRODUCTION;
@@ -80,7 +98,16 @@ async function createAccount ({ email, directoryUrl, acmeLib }: any = {}) {
  *   expiresAt: number
  * }>}
  */
-async function issueCert (opts: any = {}) {
+async function issueCert (opts: {
+  commonName?: string;
+  altNames?: string[];
+  account?: AcmeAccount;
+  challengeCreateFn?: ChallengeFn;
+  challengeRemoveFn?: ChallengeFn;
+  challengePriority?: string[];
+  directoryUrl?: string;
+  acmeLib?: AcmeLibLike;
+} = {}) {
   const {
     commonName, altNames = [], account,
     challengeCreateFn, challengeRemoveFn,
