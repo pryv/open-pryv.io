@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { MethodNext as Next, ResultBag } from '../_types.ts';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const validation = require('../../schema/validation.ts');
@@ -17,8 +18,6 @@ type MethodContext = {
   methodId: string;
   [k: string]: unknown;
 };
-type ResultBag = Record<string, unknown>;
-type Next = (err?: unknown) => void;
 type AuthSettings = { trustedApps: string; [k: string]: unknown };
 type TrustedApp = { appId: string; originRegExp: RegExp };
 type SchemaError = { path: string; params?: unknown[]; code?: string; message?: string; schemaId?: unknown; param?: string; [k: string]: unknown };

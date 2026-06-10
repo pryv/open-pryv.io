@@ -13,6 +13,9 @@
  */
 export type MethodNext = (err?: unknown) => void;
 
+// Generic per-method result accumulator (methods narrow locally as needed).
+export type ResultBag = Record<string, unknown>;
+
 /**
  * Node-style callback shape used by the storage layer's fromCallback bridge
  * and any other (err, value) -> void boundary. The value is optional because

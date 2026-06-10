@@ -5,14 +5,13 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { MethodNext as Next, ResultBag } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 
 type MethodContext = BaseMethodContext;
-type ResultBag = Record<string, unknown>;
-type Next = (err?: unknown) => void;
 // `system.getUserInfo` response body, accumulated across the two middleware steps.
 type UserInfoStats = {
   lastAccess: number;

@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { MethodNext as Next, ResultBag } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 
 const require = createRequire(import.meta.url);
@@ -13,8 +14,6 @@ const { fromCallback } = require('utils');
 type MethodContext = BaseMethodContext & {
   [key: string]: unknown;
 };
-type ResultBag = Record<string, unknown>;
-type Next = (err?: unknown) => void;
 type MFAProfile = {
   content: Record<string, unknown>;
   recoveryCodes: string[];

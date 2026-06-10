@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { MethodNext as Next, ResultBag } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 
 const require = createRequire(import.meta.url);
@@ -16,8 +17,6 @@ type MethodContext = BaseMethodContext & {
   // get real types (strongly-typed interface I/O follow-up plan).
   [key: string]: any;
 };
-type ResultBag = Record<string, unknown>;
-type Next = (err?: unknown) => void;
 
 const errors = require('errors').factory;
 const commonFns = require('./helpers/commonFunctions.ts');
