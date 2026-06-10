@@ -12,11 +12,47 @@ const { APIError } = require('./APIError.ts');
 const { ErrorIds } = require('./ErrorIds.ts');
 const { ErrorMessages } = require('./ErrorMessages.ts');
 
+import type { APIError as APIErrorT } from './APIError.ts';
+
+/**
+ * The full factory contract — one entry per error producer below.
+ * Keeping the interface next to the assignments means a signature change
+ * in either place is a compile error.
+ */
+interface ErrorFactory {
+  unsupportedOperation: (message: string) => APIErrorT;
+  apiUnavailable: (message: string) => APIErrorT;
+  corruptedData: (message: string, innerError?: Error) => APIErrorT;
+  forbidden: (message?: string) => APIErrorT;
+  invalidAccessToken: (message: string, status?: number) => APIErrorT;
+  invalidCredentials: (message?: string) => APIErrorT;
+  invalidEventType: (type: string) => APIErrorT;
+  invalidItemId: (message?: string) => APIErrorT;
+  invalidMethod: (methodId: string) => APIErrorT;
+  invalidOperation: (message: string, data?: unknown, innerError?: Error) => APIErrorT;
+  invalidParametersFormat: (message: string, data?: unknown, innerError?: Error) => APIErrorT;
+  invalidRequestStructure: (message: string, data?: unknown, innerError?: Error) => APIErrorT;
+  itemAlreadyExists: (resourceType: string, conflictingKeys: Record<string, unknown>, innerError?: Error) => APIErrorT;
+  staleResource: (resourceType: string, data?: Record<string, unknown>) => APIErrorT;
+  missingHeader: (headerName: string, status?: number) => APIErrorT;
+  tooManyResults: (limit: number) => APIErrorT;
+  unexpectedError: (sourceError: unknown, message?: string) => APIErrorT;
+  unknownReferencedResource: (resourceType: string, paramKey: string, value: string | string[], innerError?: Error) => APIErrorT;
+  unknownResource: (resourceType?: string, id?: string, innerError?: Error) => APIErrorT;
+  unsupportedContentType: (contentType: string) => APIErrorT;
+  goneResource: () => APIErrorT;
+  unavailableMethod: (_message?: string) => APIErrorT;
+  InvalidInvitationToken: () => APIErrorT;
+}
+
 /**
  * Helper "factory" methods for API errors (see error ids).
+ * Populated by the assignments below — the cast is resolved by the time
+ * the module finishes evaluating.
  */
-const factory: any = {};
+const factory: ErrorFactory = {} as ErrorFactory;
 export { factory };
+export type { ErrorFactory };
 
 factory.unsupportedOperation = (message: string) => {
   return new APIError(ErrorIds.ApiUnavailable, message, {
@@ -154,7 +190,7 @@ factory.unexpectedError = function (sourceError: unknown, message?: string) {
   }
   // Give up:
   return produceError('(no message given)');
-  function produceError (msg: string, error?: any) {
+  function produceError (msg: string, error?: Error) {
     const opts = {
       httpStatus: 500,
       innerError: error

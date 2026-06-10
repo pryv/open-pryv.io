@@ -14,8 +14,20 @@ const require = createRequire(import.meta.url);
 
 const { APIError } = require('./APIError.ts');
 const { ErrorIds } = require('./ErrorIds.ts');
-const errorHandling: any = {};
+
+type LogFn = (msg: string, metadata?: unknown) => void;
+type ReqLike = { url?: string, method?: string, body?: unknown } | null;
+type LoggerLike = { debug: LogFn, info: LogFn, warn: LogFn, error: LogFn };
+type PublicErrorData = { id: string, message: string, data?: unknown };
+interface ErrorHandling {
+  logError: (error: Error, req: ReqLike, logger: LoggerLike) => void;
+  getPublicErrorData: (error: Error) => PublicErrorData;
+}
+
+// Populated by the assignments below.
+const errorHandling: ErrorHandling = {} as ErrorHandling;
 export { errorHandling };
+export type { ErrorHandling };
 /**
  * Logs the given error.
  *
@@ -23,9 +35,14 @@ export { errorHandling };
  * @param req The request context; expected properties: url, method, body
  * @param logger The logger object (expected methods: debug, info, warn, error)
  */
-errorHandling.logError = function (error: Error, req: { url?: string, method?: string, body?: unknown } | null, logger: { debug: Function, info: Function, warn: Function, error: Function }) {
+errorHandling.logError = function (error: Error, req: ReqLike, logger: LoggerLike) {
   // console.log('XXXXXX', error); // uncomment to log 500 errors on test running using InstanceManager
-  const metadata: any = {};
+  type ErrorLogMetadata = {
+    context?: { location?: string; method?: string; data?: unknown };
+    errorData?: unknown;
+    innerError?: string;
+  };
+  const metadata: ErrorLogMetadata = {};
   if (req) {
     metadata.context = {
       location: req.url,
