@@ -13,7 +13,7 @@
 class HookedTracer {
   tag () {}
   finish () {}
-  finishOnCallBack (cb: any) { return cb; }
+  finishOnCallBack<T> (cb: T): T { return cb; }
 }
 
 function getHookedTracer () { return new HookedTracer(); }

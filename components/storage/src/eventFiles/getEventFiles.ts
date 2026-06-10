@@ -7,6 +7,7 @@
 
 
 import { createRequire } from 'node:module';
+import type { EventFiles as EventFilesT } from '../../../../storages/interfaces/fileStorage/EventFiles.ts';
 const require = createRequire(import.meta.url);
 
 const { getConfig } = require('@pryv/boiler');
@@ -15,19 +16,21 @@ const { validateEventFiles } = require('storages/interfaces/fileStorage/EventFil
 
 export { getEventFiles };
 
-let eventFiles: any = null;
+let eventFiles: EventFilesT | null = null;
 
 async function getEventFiles () {
   if (eventFiles) return eventFiles;
 
   const settings = (await getConfig()).get('eventFiles');
+  let newEventFiles: EventFilesT;
   if (settings.engine) {
     const EventEngine = require(settings.engine.modulePath);
-    eventFiles = new EventEngine(settings.engine);
+    newEventFiles = new EventEngine(settings.engine);
   } else {
-    eventFiles = new EventLocalFiles();
+    newEventFiles = new EventLocalFiles();
   }
-  await eventFiles.init();
-  validateEventFiles(eventFiles);
-  return eventFiles;
+  eventFiles = newEventFiles;
+  await newEventFiles.init();
+  validateEventFiles(newEventFiles);
+  return newEventFiles;
 }

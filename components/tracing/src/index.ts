@@ -11,6 +11,8 @@
 // the implementations without touching consumers.
 
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction } from 'express';
+import type { DummyTracing as DummyTracingT } from './Tracing.ts';
 const require = createRequire(import.meta.url);
 
 const { DummyTracing } = require('./Tracing.ts');
@@ -24,7 +26,7 @@ function initRootSpan () {
 }
 
 function tracingMiddleware (name = 'express1') {
-  return function (req: any, res: any, next: any) {
+  return function (req: Request & { tracing?: DummyTracingT }, res: Response, next: NextFunction) {
     if (req.tracing == null) {
       req.tracing = initRootSpan();
     }

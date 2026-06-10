@@ -5,12 +5,13 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Request, Response, NextFunction } from 'express';
 const require = createRequire(import.meta.url);
 
 // Express middleware that makes sure we have a continuation local storage
 // context for each express request.
 const cls = require('../cls.ts').default;
-function clsWrap (req: any, res: any, next: any) {
+function clsWrap (req: Request, res: Response, next: NextFunction) {
   return cls.startExpressContext(req, res, next);
 }
 function factory () {

@@ -17,12 +17,13 @@ class Size {
    * Computes and updates storage size for the given user.
    *
    */
-  async computeForUser (user: any) {
+  async computeForUser (user: { id: string; [k: string]: unknown }) {
     const mall = await getMall();
     const storageInfo = await mall.getUserStorageInfos(user.id);
     let dbDocuments = 0;
     let attachedFiles = 0;
-    for (const [_key, entry] of Object.entries(storageInfo) as Array<[string, any]>) {
+    type StoreStorageInfo = { streams?: { count?: number }; events?: { count?: number }; files?: { sizeKb?: number } };
+    for (const [_key, entry] of Object.entries(storageInfo) as Array<[string, StoreStorageInfo]>) {
       if (entry.streams?.count) dbDocuments += entry.streams?.count;
       if (entry.events?.count) dbDocuments += entry.events?.count;
       if (entry.files?.sizeKb) attachedFiles += entry.files?.sizeKb;
