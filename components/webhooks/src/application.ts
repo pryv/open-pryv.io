@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 const require = createRequire(import.meta.url);
@@ -36,7 +37,6 @@ const services = {
   WebhooksService: require('./service.ts').WebhooksService
 };
 
-type Logger = { debug: (msg: string) => void; info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 type Settings = { get: (key: string) => unknown };
 type WebhooksServiceLike = { start: () => Promise<void>; stop: () => Promise<void> };
 

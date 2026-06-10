@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const path = require('path');
@@ -22,7 +23,6 @@ type StorageLike = {
   getVersion: () => number | string;
   dbgetPathForUser: (userId: string) => Promise<string>;
 };
-type Logger = { debug: (msg: string) => void; info: (msg: string) => void; warn: (msg: string) => void; error: (msg: unknown) => void };
 
 async function migrateUserDBsIfNeeded (storage: StorageLike): Promise<{ migrated: number, skipped: number } | undefined> {
   const usersBaseDirectory = _internals.userLocalDirectory.getBasePath();

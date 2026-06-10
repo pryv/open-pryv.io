@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 
@@ -17,7 +18,6 @@ type Integrity = {
   events: { isActive: boolean; compute (e: Event): { integrity: string } };
   accesses: { isActive: boolean; compute (a: Access): { integrity: string } };
 };
-type Logger = { info (m: string): void };
 type Event = { id?: string; _id?: unknown; __v?: unknown; userId?: string; user_id?: string; integrity?: string; headId?: string; [k: string]: unknown };
 type Access = { id?: string; _id?: unknown; __v?: unknown; userId?: string; user_id?: string; integrity?: string; [k: string]: unknown };
 type Report = {

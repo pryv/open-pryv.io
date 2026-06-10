@@ -12,6 +12,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
@@ -19,7 +20,6 @@ const { _internals } = require('./_internals.ts');
 /**
  * Receive host internals from the barrel.
  */
-type Logger = { debug (msg: string): void; info (msg: string): void; warn (msg: string): void; error (a: unknown, b?: unknown): void };
 type PgConnection = { query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
 type StorageLayer = {
   connection?: unknown;

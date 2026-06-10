@@ -12,12 +12,12 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 import type { InfluxConnection as InfluxConnectionT } from './influx_connection.ts';
 const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
 
-type Logger = { debug?: (...args: unknown[]) => void; info?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void; error?: (...args: unknown[]) => void };
 type ConfigLike = { get: (key: string) => unknown };
 
 /**

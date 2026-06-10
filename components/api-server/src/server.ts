@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 // Always require application first to be sure boiler is initialized
 const { getApplication } = require('api-server/src/application.ts');
@@ -27,12 +28,6 @@ type AppInstance = {
   initiate (): Promise<unknown>;
   getCustomAuthFunction (from: string): unknown;
   [k: string]: unknown;
-};
-type Logger = {
-  debug (msg: string): void;
-  info (msg: string): void;
-  warn (msg: string): void;
-  error (msg: string | Error, b?: unknown): void;
 };
 type BoilerConfig = { get (key: string): unknown };
 type HttpsLike = {

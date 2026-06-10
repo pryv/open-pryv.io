@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -36,12 +37,11 @@ type FetchLike = (url: string, init?: FetchInit) => Promise<{
   text: () => Promise<string>;
 }>;
 
-type LoggerLike = { debug: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
 
 type OutboundDeps = {
   fetch: FetchLike;
   timeoutMs?: number;
-  logger?: LoggerLike;
+  logger?: CmcLogger;
 };
 
 type DeliverResult =

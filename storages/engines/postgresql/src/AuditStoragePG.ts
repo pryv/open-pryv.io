@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const { LRUCache: LRU } = require('lru-cache');
@@ -15,7 +16,6 @@ const { _internals } = require('./_internals.ts');
 const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
 
-type Logger = { info: (msg: string) => void; warn: (msg: string) => void; debug: (msg: string) => void; error: (msg: string) => void };
 type DbLike = {
   ensureConnect: () => Promise<void>;
   query: (sql: string, params?: unknown[]) => Promise<unknown>;

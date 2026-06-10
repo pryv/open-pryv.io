@@ -20,6 +20,7 @@
 // - added headId
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const SQLite3 = require('better-sqlite3');
@@ -29,7 +30,6 @@ type V1UserDb = {
   db: { exec: (sql: string) => unknown };
   createEventSync: (eventData: Record<string, unknown>) => unknown;
 };
-type Logger = { debug: (msg: string) => void; info: (msg: string) => void; warn: (msg: string) => void; error: (msg: unknown) => void };
 
 async function migrateUserDB (v0dbPath: string, v1userDB: V1UserDb, _logger: Logger): Promise<{ count: number }> {
   const v0db = new SQLite3(v0dbPath);

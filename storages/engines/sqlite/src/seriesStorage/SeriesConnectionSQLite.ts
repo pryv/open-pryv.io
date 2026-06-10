@@ -20,6 +20,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -35,7 +36,6 @@ const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
 const FILE_PREFIX = 'series';
 
-type Logger = { debug (msg: string): void };
 type FieldsObj = Record<string, unknown>;
 type SeriesPoint = Record<string, unknown> & { time?: number };
 type SeriesRow = { delta_time: number; fields: string | null; [k: string]: unknown };

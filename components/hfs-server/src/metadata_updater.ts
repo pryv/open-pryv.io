@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 // In-process metadata updater — replaces the former TChannel RPC service.
@@ -28,7 +29,6 @@ type UpdateRequest = {
   timestamp: number;
   dataExtent: { from: number; to: number };
 };
-type Logger = { info (msg: string): void; error (msg: string): void };
 
 // --- PendingUpdate ---
 

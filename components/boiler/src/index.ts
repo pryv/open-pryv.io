@@ -77,7 +77,11 @@ const boiler = {
   init
 };
 
-type Logger = { info: (msg: string) => void; warn: (msg: string) => void; debug: (msg: string) => void; error: (msg: string) => void };
+// Canonical structural logger contract — matches the Logger class in
+// logging.ts (all methods variadic). Import with
+// `import type { Logger } from '@pryv/boiler';` instead of redeclaring.
+type LogFn = (...args: unknown[]) => void;
+type Logger = { debug: LogFn; info: LogFn; warn: LogFn; error: LogFn };
 type ConfigInstance = InstanceType<typeof Config>;
 type InitOptions = {
   appName: string;
@@ -214,4 +218,5 @@ function getConfigUnsafe (warnOnly?: boolean): ConfigInstance {
 // module pattern) both keep working under Node 24 require(esm).
 const { getLogger } = logging;
 export { boiler, getLogger, getConfig, ready, getConfigSync, getConfigUnsafe, init };
+export type { Logger, LogFn };
 export default boiler;

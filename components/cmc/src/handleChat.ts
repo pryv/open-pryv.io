@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -51,13 +52,12 @@ type AccessLike = {
   clientData?: CmcClientData;
 };
 
-type LoggerLike = { debug: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
 type FetchLike = (url: string, init?: Record<string, unknown>) => Promise<{ status: number; body?: unknown; ok?: boolean; [k: string]: unknown }>;
 
 type OutboundDeps = {
   fetch: FetchLike;
   timeoutMs?: number;
-  logger?: LoggerLike;
+  logger?: CmcLogger;
 };
 
 type ChatHandlerResult =
@@ -92,7 +92,7 @@ async function handleChat (params: {
     mall: { accesses: { get: (userId: string, params?: Record<string, unknown>) => Promise<AccessLike[]> } };
     fetch: FetchLike;
     timeoutMs?: number;
-    logger?: LoggerLike;
+    logger?: CmcLogger;
   };
 }): Promise<ChatHandlerResult> {
   const { userId, triggerEvent, selfIdentity, deps } = params;

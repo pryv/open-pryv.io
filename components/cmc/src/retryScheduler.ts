@@ -36,7 +36,6 @@ const retryQueue = require('./retryQueue.ts');
 
 type RunRetryLoopFn = typeof import('./retryQueue.ts').runRetryLoop;
 
-type Logger = CmcLogger;
 
 type SchedulerDeps = {
   // Forwarded into runRetryLoop. Same shape as RetryDeps in retryQueue.ts
@@ -49,7 +48,7 @@ type SchedulerDeps = {
   // Maximum events per user per tick (forwarded into runRetryLoop.limit).
   perUserLimit?: number;
   // Logger; optional.
-  logger?: Logger;
+  logger?: CmcLogger;
 };
 
 class RetryScheduler {

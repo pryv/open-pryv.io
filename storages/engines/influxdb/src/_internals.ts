@@ -5,6 +5,8 @@
  * Refer to LICENSE file
  */
 
+import type { Logger } from '@pryv/boiler';
+
 /**
  * Engine-local internals registry.
  * Populated by the engine entry point's init() from barrel-provided values.
@@ -12,7 +14,6 @@
  */
 
 type LogFn = (...args: unknown[]) => void;
-type Logger = { debug?: LogFn; info?: LogFn; warn?: LogFn; error?: LogFn; [k: string]: unknown };
 
 const registry: Record<string, unknown> = {};
 

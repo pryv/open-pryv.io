@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
@@ -13,7 +14,6 @@ const { _internals } = require('./_internals.ts');
 type PgDb = {
   query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
 };
-type Logger = { debug (msg: string): void };
 type FieldsObj = Record<string, unknown>;
 type SeriesPoint = Record<string, unknown> & { time?: number };
 

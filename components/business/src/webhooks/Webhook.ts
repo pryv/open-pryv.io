@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 
@@ -333,7 +334,6 @@ type WebhookUpdate = {
   currentRetries: number;
 };
 type User = { id: string; username: string; [k: string]: unknown };
-type Logger = { info (msg: string): void; warn? (msg: string): void };
 type WebhookMessage = string;
 type WebhooksRepository = {
   accessExists?: (user: User, accessId: string) => Promise<boolean>;

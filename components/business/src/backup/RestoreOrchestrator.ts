@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 import type { PlatformDB, PlatformEntry } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
@@ -474,10 +475,6 @@ export { RestoreOrchestrator };
 // BackupReader is a structural interface — the concrete reader implementations
 // live alongside (BackupReaderTar, BackupReaderDir, ...) and don't formally
 // implement an interface yet.
-type Logger = {
-  info (msg: string): void;
-  warn (msg: string): void;
-};
 type UserRef = { id: string };
 
 // Structural slices of the storage handles — the methods this orchestrator

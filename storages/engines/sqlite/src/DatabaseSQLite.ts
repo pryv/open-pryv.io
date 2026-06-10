@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const path = require('path');
@@ -25,7 +26,6 @@ const { _internals } = require('./_internals.ts');
  */
 type SqliteDb = { prepare: (sql: string) => { run: (...args: unknown[]) => unknown }; close: () => void; [k: string]: unknown };
 type LogFn = (...args: unknown[]) => void;
-type Logger = { debug?: LogFn; info?: LogFn; warn?: LogFn; error?: LogFn; [k: string]: unknown };
 
 class DatabaseSQLite {
   db!: SqliteDb;

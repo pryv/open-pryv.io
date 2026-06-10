@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 const { errorHandling } = require('errors');
 const mailing = require('api-server/src/methods/helpers/mailing.ts');
@@ -18,7 +19,6 @@ const observability = require('business/src/observability/index.ts');
 /**
  * Create (register) a new user
  */
-type Logger = { info (m: string): void; warn (m: string): void; error (a: unknown, b?: unknown): void };
 type Platform = {
   isSingleCore: boolean;
   coreId: string;

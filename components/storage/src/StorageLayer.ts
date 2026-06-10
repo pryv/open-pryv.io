@@ -7,6 +7,7 @@
 
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const { getConfig, getLogger } = require('@pryv/boiler');
@@ -22,7 +23,6 @@ const { pluginLoader } = require('storages');
  * Engine selection is handled by the pluginLoader — each engine plugin
  * provides an `initStorageLayer()` method that populates this instance.
  */
-type Logger = { info (m: string): void; debug?: (m: string) => void; warn?: (m: string) => void; error?: (e: unknown) => void };
 type Connection = { waitForConnection: () => Promise<unknown> };
 type IntegrityOpts = { integrityAccesses?: unknown };
 

@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -84,7 +85,6 @@ logger.debug('Loading app');
  * methods of its own. It is the type-safe version of DI.
  */
 type BoilerConfig = { get (key: string): unknown };
-type Logger = unknown;
 type APIInstance = unknown;
 type Database = unknown;
 type StorageLayer = { connection: Database; [k: string]: unknown };
@@ -99,7 +99,7 @@ type CustomAuthFn = unknown;
 class Application {
   // new config
   config!: BoilerConfig;
-  logging: Logger;
+  logging!: Logger; // set during initiate()
 
   initalized: boolean;
   initializing: boolean;

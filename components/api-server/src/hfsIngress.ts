@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 import type { IncomingMessage, ServerResponse } from 'http';
 const require = createRequire(import.meta.url);
 
@@ -50,7 +51,6 @@ function isHfsPath (url: string): boolean {
  * if the request matches an HFS path the dispatcher proxies it,
  * otherwise it invokes `fallback(req, res)` to pass to express.
  */
-type Logger = { warn: (msg: string) => void; info?: (msg: string) => void; debug?: (msg: string) => void; error?: (msg: string) => void };
 
 function buildHfsIngress (opts: { hfsHost: string, hfsPort: number, logger: Logger }) {
   const { hfsHost, hfsPort, logger } = opts;

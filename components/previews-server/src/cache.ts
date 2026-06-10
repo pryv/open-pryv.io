@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const fs = require('fs');
@@ -13,7 +14,6 @@ const timestamp = require('unix-timestamp');
 const xattr = require('fs-xattr');
 const { resolve } = require('path');
 const { readdir } = require('fs').promises;
-type Logger = { warn: (msg: string) => void; info?: (msg: string) => void; debug?: (msg: string) => void; error?: (msg: string) => void };
 
 type CacheSettings = {
   maxAge: number;

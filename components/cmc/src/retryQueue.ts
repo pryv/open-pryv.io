@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -44,7 +45,6 @@ const MAX_DELAY_MS = 10 * 60 * 1000; // 10 min
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MULTIPLIER = 5;
 
-type Logger = { debug?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void; info?: (...args: unknown[]) => void };
 
 type EventLike = {
   id?: string;
@@ -93,7 +93,7 @@ type RetryDeps = {
   dispatch: DispatchFn;
   dispatchDeps: unknown;          // forwarded into dispatch
   now?: () => number;
-  logger?: Logger;
+  logger?: CmcLogger;
 };
 
 /**

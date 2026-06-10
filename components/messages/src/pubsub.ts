@@ -7,6 +7,7 @@
 
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const EventEmitter = require('events');
@@ -26,7 +27,6 @@ type Transport = {
   setTestDeliverHook (hook: (...args: unknown[]) => void): void;
 };
 type TestNotifier = { emit (eventName: string, payload?: unknown): void };
-type Logger = { debug (...args: unknown[]): void; warn? (...args: unknown[]): void; getLogger (name: string): Logger };
 
 // Generic implementation of pub / sub messaging
 

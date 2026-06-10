@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 import type { MethodContext, CustomAuthFunction } from 'business/src/MethodContext.ts';
 const require = createRequire(import.meta.url);
 const errorHandling = require('errors').errorHandling;
@@ -321,10 +322,6 @@ export { Manager };
 
 // Local types for the socket-io plumbing this module wraps. Kept minimal —
 // only the surface area Manager / NamespaceContext / Connection actually use.
-type Logger = {
-  info: (msg: string) => void;
-  warn: (msg: string) => void;
-};
 type SocketNamespace = {
   name: string;
   emit (event: string, ...args: unknown[]): void;

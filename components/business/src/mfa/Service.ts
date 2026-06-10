@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 const { getLogger } = require('@pryv/boiler');
 const errors = require('errors').factory;
@@ -21,7 +22,6 @@ const errors = require('errors').factory;
  * Session storage is intentionally NOT in this class — see `SessionStore` for
  * the in-memory mfaToken → session map shared across MFA service instances.
  */
-type Logger = { error (msg: string, ctx?: Record<string, unknown>): void; info?: (m: string) => void; warn?: (m: string) => void };
 type MFAConfig = Record<string, unknown>;
 type Profile = { content: Record<string, unknown>; [k: string]: unknown };
 type ClientRequest = { headers: Record<string, unknown>; body: Record<string, unknown> };

@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const { pubsub } = require('messages');
@@ -24,11 +25,6 @@ type WebhookInstance = {
   send (msg: string): Promise<unknown>;
   startListenting (username: string): void;
   stop (): void;
-};
-type Logger = {
-  info (msg: string): void;
-  warn (msg: string): void;
-  error (msg: string): void;
 };
 type Settings = { get (key: string): unknown };
 type WebhooksMap = Map<string, WebhookInstance[]>;

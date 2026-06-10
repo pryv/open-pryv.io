@@ -6,13 +6,13 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const { DBrqlite } = require('./DBrqlite.ts');
 const { buildMigrationsCapability } = require('./SchemaMigrations.ts');
 
 type PlatformDB = InstanceType<typeof DBrqlite>;
-type Logger = unknown;
 type GetLoggerFn = (name: string) => Logger;
 type MigrationsCapability = unknown;
 

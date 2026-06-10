@@ -5,13 +5,14 @@
  * Refer to LICENSE file
  */
 
+import type { Logger } from '@pryv/boiler';
+
 /**
  * Engine-local internals registry.
  * Populated by the engine entry point's init() from barrel-provided values.
  * All engine files import { _internals } from './_internals.ts'.
  */
 
-type Logger = { debug?: (...args: unknown[]) => void; info?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void; error?: (...args: unknown[]) => void };
 type UserLocalDirectoryLike = { ensureUserDirectory: (userId: string) => Promise<string> };
 type ConfigLike = { get: (key: string) => unknown };
 

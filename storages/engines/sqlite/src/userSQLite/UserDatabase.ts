@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Logger } from '@pryv/boiler';
 import type { Readable as NodeReadable } from 'node:stream';
 const require = createRequire(import.meta.url);
 
@@ -42,7 +43,6 @@ type EventQueries = {
   deleteByHeadId: SqliteStmt, deleteById: SqliteStmt
 };
 
-type Logger = { debug: (msg: string) => void };
 type LoggerFactory = { getLogger: (name: string) => Logger };
 
 /** One mongo-style query clause as pushed by the mall layer. `content` shape

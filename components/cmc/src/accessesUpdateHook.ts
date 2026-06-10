@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -71,12 +72,11 @@ type MallLike = {
   accesses?: { get: (userId: string, params?: Record<string, unknown>) => Promise<AccessLike[]> };
 };
 
-type LoggerLike = { debug: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
 
 type OutboundDeps = {
   fetch: (url: string, init?: Record<string, unknown>) => Promise<{ status: number; [k: string]: unknown }>;
   timeoutMs?: number;
-  logger?: LoggerLike;
+  logger?: CmcLogger;
 };
 
 type PostHookDeps = {

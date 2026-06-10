@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -39,7 +40,6 @@ type ErrorFactory = {
   unexpectedError?: (err: unknown) => Error;
 };
 
-type LoggerLike = { debug: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
 
 type Deps = {
   mall: MallLike;
@@ -47,7 +47,7 @@ type Deps = {
   idGen?: () => string;
   now?: () => number;
   serviceUrlBase?: string;
-  logger?: LoggerLike;
+  logger?: CmcLogger;
   // Optional: when present, the resolved {username, host} is stamped on
   // the offer event as content.requesterHost so the accepter's
   // handleAccept can compute the counterparty's CANONICAL host (e.g.
