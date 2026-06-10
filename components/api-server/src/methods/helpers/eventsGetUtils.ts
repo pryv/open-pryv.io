@@ -51,7 +51,30 @@ type Mall = {
 
 let mall: Mall;
 
-export { init, applyDefaultsForRetrieval, coerceStreamsParam, validateStreamsQueriesAndSetStore, transformArrayOfStringsToStreamsQuery, streamQueryCheckPermissionsAndReplaceStars, streamQueryAddForcedAndForbiddenStreams, streamQueryExpandStreams, streamQueryAddHiddenStreams, findEventsFromStore };
+const { validateAndNormalizeConditions } = require('storages/shared/contentQueryConditions.ts');
+
+export { init, applyDefaultsForRetrieval, coerceStreamsParam, coerceAndValidateContentQueryParams, validateContentQueryStores, validateStreamsQueriesAndSetStore, transformArrayOfStringsToStreamsQuery, streamQueryCheckPermissionsAndReplaceStars, streamQueryAddForcedAndForbiddenStreams, streamQueryExpandStreams, streamQueryAddHiddenStreams, findEventsFromStore };
+
+// Stores supporting content/clientData query conditions (the mall enforces
+// the same constraint as defense-in-depth for non-API callers).
+const CONTENT_QUERY_STORE_IDS = new Set([storeDataUtils.LocalStoreId, storeDataUtils.AccountStoreId]);
+
+/**
+ * Reject content/clientData conditions aimed at stores that do not support
+ * them — they would otherwise return silently-unfiltered results.
+ * Must run after `validateStreamsQueriesAndSetStore` (storeIds resolved).
+ */
+function validateContentQueryStores (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
+  if (params.content == null && params.clientData == null) return next();
+  const streamQueries = (params.arrayOfStreamQueriesWithStoreId ?? []) as Array<{ storeId?: string }>;
+  for (const streamQuery of streamQueries) {
+    const storeId = streamQuery.storeId;
+    if (storeId != null && !CONTENT_QUERY_STORE_IDS.has(storeId)) {
+      return next(errors.invalidOperation(`Store '${storeId}' does not support content/clientData query conditions.`));
+    }
+  }
+  next();
+}
 /**
  *  # Stream Query Flow
  *  1. coerceStreamParam:
@@ -96,6 +119,31 @@ export { init, applyDefaultsForRetrieval, coerceStreamsParam, validateStreamsQue
  *      - "not" is expanded in third and added to `and` -- !! we exclude streamIds that are in 'any' as some authorization might have been given on child now expanded
  *          example: `{all: ['A'], not['B', 'C']}` =>  `{and: [{any: [...expand('A')]}, {not: [...expand('B')...expand('C')]}]}
  */
+/**
+ * Coerce + validate the `content` / `clientData` condition parameters.
+ * GET requests carry them as stringified JSON (same convention as `streams`);
+ * batch calls as native arrays. Normalized conditions replace the raw value.
+ */
+function coerceAndValidateContentQueryParams (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
+  for (const field of ['content', 'clientData'] as const) {
+    let raw = params[field];
+    if (raw == null) continue;
+    if (typeof raw === 'string') {
+      try {
+        raw = JSON.parse(raw);
+      } catch (e) {
+        return next(errors.invalidParametersFormat(`Invalid '${field}' parameter: not valid JSON.`, field));
+      }
+    }
+    try {
+      params[field] = validateAndNormalizeConditions(raw, field);
+    } catch (e) {
+      return next(errors.invalidParametersFormat((e as Error).message, field));
+    }
+  }
+  next();
+}
+
 function coerceStreamsParam (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
   if (params.streams == null) {
     return next();

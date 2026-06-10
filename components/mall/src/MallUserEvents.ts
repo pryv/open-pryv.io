@@ -19,6 +19,19 @@ const eventsQueryUtils = require('./helpers/eventsQueryUtils.ts');
 const errorFactory = require('errors').factory;
 const integrity = require('business/src/integrity/index.ts').default;
 
+// Stores supporting content/clientData query conditions. Other stores would
+// silently ignore the conditions and return unfiltered results — reject
+// instead. (Custom datastores will opt in via a capability declaration.)
+const CONTENT_QUERY_STORE_IDS = new Set([storeDataUtils.LocalStoreId, storeDataUtils.AccountStoreId]);
+
+function assertContentQuerySupportedByStore (storeId: string, params: unknown): void {
+  if (params == null || typeof params !== 'object') return;
+  const p = params as { content?: unknown, clientData?: unknown };
+  if ((p.content != null || p.clientData != null) && !CONTENT_QUERY_STORE_IDS.has(storeId)) {
+    throw errorFactory.invalidOperation(`Store '${storeId}' does not support content/clientData query conditions.`);
+  }
+}
+
 const { Readable } = require('stream');
 
 const { createId: cuid } = require('@paralleldrive/cuid2');
@@ -154,6 +167,7 @@ class MallUserEvents {
     for (const storeId of Object.keys(paramsByStore)) {
       const eventsStore = this.eventsStores.get(storeId);
       const params = paramsByStore[storeId];
+      assertContentQuerySupportedByStore(storeId, params);
       try {
         const query = eventsQueryUtils.getStoreQueryFromParams(params);
         const options = eventsQueryUtils.getStoreOptionsFromParams(params);
@@ -178,6 +192,7 @@ class MallUserEvents {
     const storeId = Object.keys(paramsByStore)[0];
     const eventsStore = this.eventsStores.get(storeId);
     const params = paramsByStore[storeId];
+    assertContentQuerySupportedByStore(storeId, params);
     try {
       const query = eventsQueryUtils.getStoreQueryFromParams(params);
       const options = eventsQueryUtils.getStoreOptionsFromParams(params);

@@ -17,6 +17,7 @@ const { DatabasePG } = require('../DatabasePG.ts');
 const timestamp = require('unix-timestamp');
 const { DeletionModesFields } = require('../../../../shared/DeletionModesFields.ts');
 const { localStoreEventQueries } = require('../../../../shared/localStoreEventQueries.ts');
+import type { NormalizedCondition } from '../../../../shared/contentQueryConditions.ts';
 
 type Event = {
   id: string;
@@ -470,7 +471,7 @@ const userEvents = ds.createUserEvents({
 // (also exported below as a named binding, but consumers reach for it via the userEvents namespace).
 const userEventsWithRow = Object.assign(userEvents, { rowToEvent });
 
-export { userEventsWithRow as userEvents, rowToEvent };
+export { userEventsWithRow as userEvents, rowToEvent, convertJsonCondition };
 
 // ---- Query building helpers ----
 
@@ -577,8 +578,81 @@ function convertQueryItem (item: LocalQueryItem, idx: number, params: unknown[])
     case 'streamsQuery': {
       return convertStreamsQuery(item.content as StreamFilterItem[][], idx, params);
     }
+    case 'jsonCondition': {
+      return convertJsonCondition(item.content as NormalizedCondition, idx, params);
+    }
     default:
       return null;
+  }
+}
+
+/**
+ * Translate a normalized content/clientData condition to SQL.
+ * Matching is strict on JSON types (semantics defined by the reference
+ * matcher in storages/shared/contentQueryConditions.ts): comparisons stay
+ * in the jsonb domain (`to_jsonb`) so no text→numeric cast can fail and
+ * `true` never equals `1` nor `'true'`.
+ */
+function convertJsonCondition (condition: NormalizedCondition, idx: number, params: unknown[]): { condition: string, nextIdx: number } {
+  const col = condition.field === 'clientData' ? 'e.client_data' : 'e.content';
+  let jsonbExpr: string, textExpr: string, typeExpr: string;
+  if (condition.path === null) { // root value ($)
+    jsonbExpr = col;
+    textExpr = `(${col} #>> '{}')`;
+    typeExpr = `jsonb_typeof(${col})`;
+  } else {
+    params.push(condition.path);
+    const pathParam = `$${idx++}::text[]`;
+    jsonbExpr = `(${col} #> ${pathParam})`;
+    textExpr = `(${col} #>> ${pathParam})`;
+    typeExpr = `jsonb_typeof(${col} #> ${pathParam})`;
+  }
+
+  const eqExpr = (value: string | number | boolean): string => {
+    params.push(value);
+    const cast = typeof value === 'number' ? 'numeric' : typeof value === 'boolean' ? 'boolean' : 'text';
+    return `${jsonbExpr} = to_jsonb($${idx++}::${cast})`;
+  };
+
+  switch (condition.op) {
+    case 'eq':
+      return { condition: eqExpr(condition.value as string | number | boolean), nextIdx: idx };
+    case 'neq':
+      return { condition: `(${typeExpr} IS NOT NULL AND NOT ${eqExpr(condition.value as string | number | boolean)})`, nextIdx: idx };
+    case 'in': {
+      // jsonb array containment: list @> value matches scalars strictly by
+      // JSON type; the typeof guard keeps array/object values from matching
+      // via jsonb subset semantics.
+      params.push(JSON.stringify(condition.value));
+      return {
+        condition: `(${typeExpr} IN ('string', 'number', 'boolean') AND $${idx++}::jsonb @> ${jsonbExpr})`,
+        nextIdx: idx
+      };
+    }
+    case 'exists': {
+      const presence = condition.path === null ? col : jsonbExpr;
+      return { condition: `${presence} IS ${condition.value === true ? 'NOT ' : ''}NULL`, nextIdx: idx };
+    }
+    case 'gt':
+    case 'gte':
+    case 'lt':
+    case 'lte': {
+      const sqlOp = { gt: '>', gte: '>=', lt: '<', lte: '<=' }[condition.op];
+      params.push(condition.value);
+      return {
+        condition: `(${typeExpr} = 'number' AND ${jsonbExpr} ${sqlOp} to_jsonb($${idx++}::numeric))`,
+        nextIdx: idx
+      };
+    }
+    case 'prefix': {
+      params.push((condition.value as string).replace(/[\\%_]/g, (m) => '\\' + m) + '%');
+      return {
+        condition: `(${typeExpr} = 'string' AND ${textExpr} LIKE $${idx++} ESCAPE '\\')`,
+        nextIdx: idx
+      };
+    }
+    default:
+      throw new Error(`Unsupported JSON condition operator: ${(condition as { op: string }).op}`);
   }
 }
 
