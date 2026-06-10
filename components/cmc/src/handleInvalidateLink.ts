@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -74,7 +75,7 @@ type InvalidateLinkResult =
 async function handleInvalidateLink (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: InvalidateLinkEventContent; streamIds?: string[] };
-  deps: { mall: MallLike; logger?: { debug?: Function; warn?: Function } };
+  deps: { mall: MallLike; logger?: CmcLogger };
 }): Promise<InvalidateLinkResult> {
   const { userId, triggerEvent, deps } = params;
   const { mall } = deps;

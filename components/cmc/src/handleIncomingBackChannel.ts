@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -97,7 +98,7 @@ async function handleIncomingBackChannel (params: {
   event: { type: string; content: BackChannelEventContent; streamIds?: string[] };
   deps: {
     mall: MallLike;
-    logger?: { debug: Function; warn: Function };
+    logger?: CmcLogger;
   };
 }): Promise<IncomingBackChannelResult> {
   const { userId, event, deps } = params;

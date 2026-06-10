@@ -24,7 +24,8 @@ const { _internals } = require('./_internals.ts');
  * The shared file lives at `<sqlite.path>/_shared/baseStorage.sqlite`.
  */
 type SqliteDb = { prepare: (sql: string) => { run: (...args: unknown[]) => unknown }; close: () => void; [k: string]: unknown };
-type Logger = { debug?: Function; info?: Function; warn?: Function; error?: Function; [k: string]: unknown };
+type LogFn = (...args: unknown[]) => void;
+type Logger = { debug?: LogFn; info?: LogFn; warn?: LogFn; error?: LogFn; [k: string]: unknown };
 
 class DatabaseSQLite {
   db!: SqliteDb;

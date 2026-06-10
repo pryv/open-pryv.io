@@ -15,7 +15,7 @@ export interface EventFiles {
   removeAttachment (userId: string, eventId: string, fileId: string): Promise<void>;
   removeAllForEvent (userId: string, eventId: string): Promise<void>;
   removeAllForUser (userId: string): Promise<void>;
-  attachToEventStore (es: unknown, setIntegrityOnEvent: Function): void;
+  attachToEventStore (es: unknown, setIntegrityOnEvent: (event: Record<string, unknown>) => unknown): void;
 }
 
 /**
@@ -37,7 +37,7 @@ const EventFiles: EventFiles = {
 
   async removeAllForUser (userId: string): Promise<void> { throw new Error('Not implemented'); },
 
-  attachToEventStore (es: unknown, setIntegrityOnEvent: Function): void { throw new Error('Not implemented'); }
+  attachToEventStore (es: unknown, setIntegrityOnEvent: (event: Record<string, unknown>) => unknown): void { throw new Error('Not implemented'); }
 };
 
 // Limit tampering on existing properties

@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -135,7 +136,7 @@ type DeliverChatParams = {
   deps: {
     fetch: (url: string, init?: Record<string, unknown>) => Promise<Response>;
     timeoutMs?: number;
-    logger?: { debug: Function; warn: Function };
+    logger?: CmcLogger;
   };
 };
 

@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -35,7 +36,7 @@ const retryQueue = require('./retryQueue.ts');
 
 type RunRetryLoopFn = typeof import('./retryQueue.ts').runRetryLoop;
 
-type Logger = { debug?: Function; warn?: Function; info?: Function };
+type Logger = CmcLogger;
 
 type SchedulerDeps = {
   // Forwarded into runRetryLoop. Same shape as RetryDeps in retryQueue.ts

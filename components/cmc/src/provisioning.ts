@@ -112,14 +112,14 @@ async function provisionUserStreams (params: {
     try {
       await mall.streams.create(userId, payload);
       created.push(stream.id);
-      logger?.debug('cmc: provisioned reserved parent stream', { userId, streamId: stream.id });
+      logger?.debug?.('cmc: provisioned reserved parent stream', { userId, streamId: stream.id });
     } catch (err) {
       if (isAlreadyExistsError(err)) {
-        logger?.debug('cmc: reserved parent already present', { userId, streamId: stream.id });
+        logger?.debug?.('cmc: reserved parent already present', { userId, streamId: stream.id });
         continue;
       }
       const message = err instanceof Error ? err.message : String(err);
-      logger?.warn('cmc: failed to provision reserved parent stream', {
+      logger?.warn?.('cmc: failed to provision reserved parent stream', {
         userId,
         streamId: stream.id,
         error: message,

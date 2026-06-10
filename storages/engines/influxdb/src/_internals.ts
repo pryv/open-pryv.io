@@ -11,7 +11,8 @@
  * All engine files use require('./_internals.ts') instead of host require() calls.
  */
 
-type Logger = { debug?: Function; info?: Function; warn?: Function; error?: Function; [k: string]: unknown };
+type LogFn = (...args: unknown[]) => void;
+type Logger = { debug?: LogFn; info?: LogFn; warn?: LogFn; error?: LogFn; [k: string]: unknown };
 
 const registry: Record<string, unknown> = {};
 

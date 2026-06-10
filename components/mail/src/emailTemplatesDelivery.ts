@@ -31,12 +31,8 @@ const logger = getLogger('mail-delivery');
  * @param opts.smtp                  nodemailer-compatible transport config
  * @param opts.from                  default `from` (name + address)
  * @param [opts.tmpDirRoot]          override tmpdir (tests)
- *   send: Function,
- *   templateExists: Function,
- *   refresh: Function,
- *   close: Function,
- *   tmpDir: string
- * }>}
+ * @returns delivery handle — { send, templateExists, refresh, close, tmpDir }
+ *          (signatures are in the TS types below)
  */
 type TemplateRow = { type: string; lang: string; part: string; pug: string };
 type MailFrom = string | { name?: string; address: string };

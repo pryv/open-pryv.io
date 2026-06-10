@@ -61,11 +61,12 @@ export interface AppliedMigration {
 }
 
 interface RunOptions { targetVersion?: number; dryRun?: boolean }
-interface RunnerOptions { logger?: { debug?: Function; info?: Function; warn?: Function; error?: Function } }
+type LogFn = (...args: unknown[]) => void;
+interface RunnerOptions { logger?: { debug?: LogFn; info?: LogFn; warn?: LogFn; error?: LogFn } }
 
 class MigrationRunner {
   engines: MigrationCapableEngine[];
-  logger: { info: Function; warn: Function; error: Function; debug: Function };
+  logger: { info: LogFn; warn: LogFn; error: LogFn; debug: LogFn };
 
   constructor (engines: MigrationCapableEngine[], { logger }: RunnerOptions = {}) {
     this.engines = engines;

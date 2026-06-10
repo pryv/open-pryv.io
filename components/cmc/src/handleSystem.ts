@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -75,7 +76,7 @@ type AccessLike = {
 type OutboundDeps = {
   fetch: (url: string, init?: RequestInit) => Promise<Response>;
   timeoutMs?: number;
-  logger?: { debug: Function; warn: Function };
+  logger?: CmcLogger;
 };
 
 type SystemHandlerResult =
@@ -145,7 +146,7 @@ async function handleSystemEvent (params: {
     mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } };
     fetch: OutboundDeps['fetch'];
     timeoutMs?: number;
-    logger?: { debug: Function; warn: Function };
+    logger?: CmcLogger;
   };
 }): Promise<SystemHandlerResult> {
   const { userId, triggerEvent, selfIdentity, deps } = params;
@@ -258,7 +259,7 @@ async function handleSystemAlert (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: { debug: Function; warn: Function }; [k: string]: unknown };
+  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: CmcLogger; [k: string]: unknown };
 }): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_ALERT) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
@@ -273,7 +274,7 @@ async function handleSystemAck (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: { debug: Function; warn: Function }; [k: string]: unknown };
+  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: CmcLogger; [k: string]: unknown };
 }): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_ACK) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
@@ -297,7 +298,7 @@ async function handleSystemScopeRequest (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: { debug: Function; warn: Function }; [k: string]: unknown };
+  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: CmcLogger; [k: string]: unknown };
 }): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_SCOPE_REQUEST) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
@@ -323,7 +324,7 @@ async function handleSystemScopeUpdate (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]>; update: (userId: string, params: { id: string; update: Record<string, unknown> }) => Promise<unknown> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: { debug: Function; warn: Function }; [k: string]: unknown };
+  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]>; update: (userId: string, params: { id: string; update: Record<string, unknown> }) => Promise<unknown> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: CmcLogger; [k: string]: unknown };
 }): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_SCOPE_UPDATE) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };

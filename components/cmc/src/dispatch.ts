@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -82,7 +83,7 @@ type DispatchDeps = {
   mall: MallLike;
   fetch: OutboundDeps['fetch'];
   timeoutMs?: number;
-  logger?: { debug: Function; warn: Function; info?: Function };
+  logger?: CmcLogger;
   selfIdentityFor: (userId: string) => Promise<SelfIdentity> | SelfIdentity;
   // When true (default), retryable handler failures are auto-enqueued
   // in :_cmc:_internal:retries for later re-dispatch by the retry loop.
@@ -155,7 +156,7 @@ async function dispatch (params: {
       });
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* notify is best-effort */ }
     } catch (err: unknown) {
-      deps.logger?.warn('cmc/dispatch: failed to mark trigger as delivered', {
+      deps.logger?.warn?.('cmc/dispatch: failed to mark trigger as delivered', {
         eventId: event.id,
         error: String((err as Error)?.message ?? err),
       });
@@ -336,7 +337,7 @@ async function markCompleted (deps: DispatchDeps, userId: string, event: CmcEven
     });
     try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
   } catch (err: unknown) {
-    deps.logger?.warn('cmc/dispatch: failed to mark trigger as completed', {
+    deps.logger?.warn?.('cmc/dispatch: failed to mark trigger as completed', {
       eventId: event.id,
       error: String((err as Error)?.message ?? err),
     });
@@ -371,7 +372,7 @@ async function markFailed (
         },
       });
     } catch (err: unknown) {
-      deps.logger?.warn('cmc/dispatch: failed to enqueue retry', {
+      deps.logger?.warn?.('cmc/dispatch: failed to enqueue retry', {
         eventId: event.id,
         error: String((err as Error)?.message ?? err),
       });
@@ -389,7 +390,7 @@ async function markFailed (
       });
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
     } catch (err: unknown) {
-      deps.logger?.warn('cmc/dispatch: failed to mark trigger as failed', {
+      deps.logger?.warn?.('cmc/dispatch: failed to mark trigger as failed', {
         eventId: event.id,
         reason,
         error: String((err as Error)?.message ?? err),
@@ -511,7 +512,7 @@ function createDispatchMiddleware (
       dispatch({ userId, event, deps: requestDeps })
         .then(() => next())
         .catch((err: unknown) => {
-          deps.logger?.warn('cmc/dispatch: sync handler failed', {
+          deps.logger?.warn?.('cmc/dispatch: sync handler failed', {
             type: event.type,
             error: String((err as Error)?.message ?? err),
           });
@@ -527,7 +528,7 @@ function createDispatchMiddleware (
     Promise.resolve()
       .then(() => dispatch({ userId, event, deps: requestDeps }))
       .catch((err) => {
-        deps.logger?.warn('cmc/dispatch: unexpected uncaught error', {
+        deps.logger?.warn?.('cmc/dispatch: unexpected uncaught error', {
           error: String((err as Error)?.message ?? err),
         });
       });

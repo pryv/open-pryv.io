@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -70,7 +71,7 @@ type AdapterDeps = {
    * when undefined (e.g. unit tests).
    */
   invalidateAccessCache?: (userId: string, accessId: string) => void | Promise<void>;
-  logger?: { debug: Function; warn: Function };
+  logger?: CmcLogger;
 };
 
 const { fromCallback } = require('utils');

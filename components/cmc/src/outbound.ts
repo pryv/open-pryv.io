@@ -139,20 +139,20 @@ async function postToPeer (params: {
       return { ok: true, status: res.status, body: parsed };
     }
     if (res.status >= 400 && res.status < 500) {
-      deps.logger?.debug('cmc/outbound: peer rejected delivery', { host: base, status: res.status });
+      deps.logger?.debug?.('cmc/outbound: peer rejected delivery', { host: base, status: res.status });
       return { ok: false, reason: 'http-4xx', status: res.status, body: parsed };
     }
-    deps.logger?.warn('cmc/outbound: peer 5xx', { host: base, status: res.status });
+    deps.logger?.warn?.('cmc/outbound: peer 5xx', { host: base, status: res.status });
     return { ok: false, reason: 'http-5xx', status: res.status, body: parsed };
   } catch (err) {
     if (timer != null) clearTimeout(timer);
     const errObj = err as { name?: string; code?: string; message?: string } | null;
     const isAbort = errObj?.name === 'AbortError' || errObj?.code === 'ABORT_ERR';
     if (isAbort) {
-      deps.logger?.warn('cmc/outbound: timeout', { host: base, timeoutMs });
+      deps.logger?.warn?.('cmc/outbound: timeout', { host: base, timeoutMs });
       return { ok: false, reason: 'timeout', status: 0 };
     }
-    deps.logger?.warn('cmc/outbound: network failure', { host: base, error: String(err) });
+    deps.logger?.warn?.('cmc/outbound: network failure', { host: base, error: String(err) });
     return { ok: false, reason: 'network', status: 0, error: String(errObj?.message || err) };
   }
 }

@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -35,7 +36,7 @@ type BootDeps = {
   mall: MallLike;
   selfIdentityFor: (userId: string) => Identity;
   fetch: (url: string, init?: Record<string, unknown>) => Promise<Response>;
-  logger?: { debug: Function; warn: Function; info?: Function };
+  logger?: CmcLogger;
   userIdsProvider?: () => Promise<string[]> | string[];
   // Optional: a cluster worker id check. Defaults to checking the
   // node:cluster module if available.
