@@ -621,6 +621,83 @@ describe('[ACSF] accesses (personal)', function () {
       assert.strictEqual(res.body.matchingAccess.token, appToken);
     });
 
+    it('[CHKA] must report a match for an access created via the API — load-time-injected system permissions (":_system:account", ":_audit:access-<id>") must be ignored', async function () {
+      const requestedPermissions = [
+        { streamId: stream0.attrs.id, level: 'contribute', defaultName: 'Stream 0' }
+      ];
+
+      // Create through the API (not fixtures) so the access goes through the
+      // full create pipeline — the load-time AccessLogic decoration then adds
+      // ':_system:account' (none) + ':_audit:access-<id>' (read) on read-back,
+      // which used to fail accessMatches' strict length comparison and made
+      // checkApp report a mismatch on every sign-in.
+      const createRes = await coreRequest
+        .post(basePath)
+        .set('Authorization', personalToken)
+        .send({
+          name: 'api-created-app',
+          type: 'app',
+          deviceName: 'checkapp-regression',
+          permissions: requestedPermissions
+        });
+      assert.strictEqual(createRes.status, 201);
+
+      const res = await coreRequest
+        .post(getCheckAppPath())
+        .set('Authorization', personalToken)
+        .send({
+          requestingAppId: 'api-created-app',
+          deviceName: 'checkapp-regression',
+          requestedPermissions
+        });
+
+      validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
+      assert.ok(res.body.matchingAccess,
+        'expected matchingAccess — injected system permissions must not count as a mismatch');
+      assert.strictEqual(res.body.matchingAccess.token, createRes.body.access.token);
+    });
+
+    it('[CHKB] must still report a match after an accesses.update — system permissions must not be persisted by the update path', async function () {
+      const requestedPermissions = [
+        { streamId: stream0.attrs.id, level: 'contribute', defaultName: 'Stream 0' }
+      ];
+      const createRes = await coreRequest
+        .post(basePath)
+        .set('Authorization', personalToken)
+        .send({
+          name: 'api-updated-app',
+          type: 'app',
+          deviceName: 'checkapp-update-regression',
+          permissions: requestedPermissions
+        });
+      assert.strictEqual(createRes.status, 201);
+
+      // Update through the API. AccessLogic's load-time decoration used to
+      // mutate the update payload's permissions array in place (shared
+      // reference through Object.assign + deepMerge), persisting
+      // ':_system:account' + ':_audit:access-<id>' into storage — after
+      // which checkApp reported a mismatch on every subsequent sign-in.
+      const updateRes = await coreRequest
+        .put(path(createRes.body.access.id))
+        .set('Authorization', personalToken)
+        .send({ permissions: requestedPermissions });
+      assert.strictEqual(updateRes.status, 200);
+      assert.strictEqual(updateRes.body.access.permissions.length, requestedPermissions.length,
+        'persisted permissions must not contain injected system permissions');
+
+      const res = await coreRequest
+        .post(getCheckAppPath())
+        .set('Authorization', personalToken)
+        .send({
+          requestingAppId: 'api-updated-app',
+          deviceName: 'checkapp-update-regression',
+          requestedPermissions
+        });
+      validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
+      assert.ok(res.body.matchingAccess,
+        'expected matchingAccess after update — injected system permissions must not be persisted nor counted');
+    });
+
     it('[IF33] must also return the token of the existing mismatching access if any', async function () {
       const data = {
         requestingAppId: appAccess.attrs.name,

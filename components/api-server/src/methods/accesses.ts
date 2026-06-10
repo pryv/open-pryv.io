@@ -867,11 +867,23 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // Returns true if the given access' permissions match the `requestedPermissions`.
   //
   function accessMatches (access: Access, requestedPermissions: Permission[], clientData?: Record<string, unknown>) {
-    const accessPerms = access.permissions;
     if (access == null ||
             access.type !== 'app' ||
-            accessPerms == null ||
-            accessPerms.length !== requestedPermissions.length) {
+            access.permissions == null) {
+      return false;
+    }
+    // Ignore the permissions AccessLogic injects into every non-personal
+    // access at load time — ':_system:account' (none) and
+    // ':_audit:access-<id>' (read, selfAudit). They are not part of what the
+    // app requested, so counting them would make every existing app access
+    // report as mismatching (the requesting app re-prompts for consent on
+    // every sign-in).
+    const isInjectedPermission = (perm: Permission) =>
+      (perm.streamId === accountStreams.STREAM_ID_ACCOUNT && perm.level === 'none') ||
+      (perm.streamId === ':_audit:access-' + access.id && perm.level === 'read');
+    const accessPerms = access.permissions.filter((perm) => !isInjectedPermission(perm));
+    const requestedPerms = requestedPermissions.filter((perm) => !isInjectedPermission(perm));
+    if (accessPerms.length !== requestedPerms.length) {
       return false;
     }
     // If the access is there but is expired, we consider it a mismatch.
@@ -880,7 +892,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     let accessPerm, reqPerm;
     for (let i = 0, ni = accessPerms.length; i < ni; i++) {
       accessPerm = accessPerms[i];
-      reqPerm = findByStreamId(requestedPermissions, accessPerm.streamId);
+      reqPerm = findByStreamId(requestedPerms, accessPerm.streamId);
       if (!reqPerm || reqPerm.level !== accessPerm.level) {
         return false;
       }

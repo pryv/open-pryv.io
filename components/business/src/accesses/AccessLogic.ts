@@ -75,7 +75,13 @@ class AccessLogic {
     if (this.isPersonal()) return;
     if (!this.id) return; // this is an access "in" creation process
 
-    if (!this.permissions) this.permissions = [];
+    // Work on a copy: deepMerge assigns the source's array by reference, so
+    // injecting the system permissions below would otherwise mutate the
+    // caller's data. Callers that go on to persist that data (e.g.
+    // accesses.update's would-be narrowing check) would then write the
+    // injected ':_system:account' / ':_audit:access-<id>' entries into
+    // storage.
+    this.permissions = this.permissions ? this.permissions.slice() : [];
 
     // Lock account streams by default — explicit permissions can override.
     // This also makes the 'none' level visible in access-info API responses.
