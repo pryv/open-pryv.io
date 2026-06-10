@@ -37,7 +37,7 @@ type StreamsStore = {
   hasFeatureGetParamsExcludedIds?: boolean;
 };
 type StoresHolder = {
-  storesById: Map<string, { streams: StreamsStore }>;
+  storesById: Map<string, { streams: StreamsStore, supports?: () => Record<string, unknown> }>;
   storeDescriptionsByStore: Map<{ streams: StreamsStore }, { name: string }>;
 };
 type GetParams = {
@@ -64,11 +64,25 @@ class MallUserStreams {
    */
   storeNames: Map<string, string> = new Map();
 
+  /** Per-store `DataStore.supports` declarations (announced on root pseudo-streams). */
+  storeSupports: Map<string, Record<string, unknown>> = new Map();
+
   constructor (storesHolder: StoresHolder) {
     for (const [storeId, store] of storesHolder.storesById) {
       this.streamsStores.set(storeId, store.streams);
       this.storeNames.set(storeId, storesHolder.storeDescriptionsByStore.get(store)!.name);
+      this.storeSupports.set(storeId, typeof store.supports === 'function' ? store.supports() : {});
     }
+  }
+
+  /**
+   * Extra properties for a store's root pseudo-stream: announce the store's
+   * capability declaration to clients via clientData (when non-empty).
+   */
+  _rootStreamExtras (storeId: string): Record<string, unknown> {
+    const supports = this.storeSupports.get(storeId);
+    if (supports == null || Object.keys(supports).length === 0) return {};
+    return { clientData: { 'pryv-datastore:supports': supports } };
   }
 
   /**
@@ -90,7 +104,8 @@ class MallUserStreams {
         name: this.storeNames.get(sid)
       }, {
         children: [],
-        childrenHidden: true // To be discussed
+        childrenHidden: true, // To be discussed
+        ...this._rootStreamExtras(sid)
       });
     }
 
@@ -125,7 +140,7 @@ class MallUserStreams {
     if (streamId === '*' &&
             storeId === storeDataUtils.LocalStoreId &&
             !hideStoreRoots) {
-      res = getChildlessRootStreamsForOtherStores(this.storeNames);
+      res = getChildlessRootStreamsForOtherStores(this);
     }
     // ------ Query Store -------------//
     const streamsStore = this.streamsStores.get(storeId)!;
@@ -173,15 +188,16 @@ class MallUserStreams {
             id: storeId,
             name: this.storeNames.get(storeId)
           }, {
-            children: res
+            children: res,
+            ...this._rootStreamExtras(storeId)
           })
         ];
       }
     }
     return res;
-    function getChildlessRootStreamsForOtherStores (storeNames: Map<string, string>): Stream[] {
+    function getChildlessRootStreamsForOtherStores (self: MallUserStreams): Stream[] {
       const res: Stream[] = [];
-      for (const [storeId, storeName] of storeNames) {
+      for (const [storeId, storeName] of self.storeNames) {
         // Passthrough stores (local, account) don't get pseudo-root streams
         if (!storeDataUtils.isPassthroughStore(storeId)) {
           res.push(streamsUtils.createStoreRootStream({
@@ -189,7 +205,8 @@ class MallUserStreams {
             name: storeName
           }, {
             children: [],
-            childrenHidden: true // To be discussed
+            childrenHidden: true, // To be discussed
+            ...self._rootStreamExtras(storeId)
           }));
         }
       }

@@ -131,4 +131,12 @@ describe('[CQAC] events.get content/clientData query conditions', () => {
     assert.strictEqual(res.status, 400);
     assert.strictEqual(res.body.error.id, 'invalid-operation');
   });
+
+  it('[CQ11] root pseudo-stream of a non-declaring store carries no supports announcement', async () => {
+    const res = await coreRequest.get('/' + username + '/streams/').set('Authorization', personalToken);
+    assert.strictEqual(res.status, 200);
+    const dummyRoot = res.body.streams.find((s) => s.id === ':dummy:');
+    assert.ok(dummyRoot, 'expected :dummy: root pseudo-stream');
+    assert.strictEqual(dummyRoot.clientData?.['pryv-datastore:supports'], undefined);
+  });
 });

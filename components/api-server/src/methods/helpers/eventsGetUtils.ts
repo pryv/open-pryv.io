@@ -46,6 +46,7 @@ type Mall = {
   events: {
     getWithParamsByStore: (userId: string, params: Record<string, unknown>) => Promise<Array<{ time: number; attachments?: Array<{ id: string; readToken?: string }>; [k: string]: unknown }>>;
     generateStreamsWithParamsByStore: (userId: string, params: Record<string, unknown>, cb: (storeSettings: unknown, stream: ReadableStream) => void) => Promise<unknown>;
+    getContentQuerySupportError: (storeId: string, params: unknown) => string | null;
   };
 };
 
@@ -55,13 +56,11 @@ const { validateAndNormalizeConditions } = require('storages/shared/contentQuery
 
 export { init, applyDefaultsForRetrieval, coerceStreamsParam, coerceAndValidateContentQueryParams, validateContentQueryStores, validateStreamsQueriesAndSetStore, transformArrayOfStringsToStreamsQuery, streamQueryCheckPermissionsAndReplaceStars, streamQueryAddForcedAndForbiddenStreams, streamQueryExpandStreams, streamQueryAddHiddenStreams, findEventsFromStore };
 
-// Stores supporting content/clientData query conditions (the mall enforces
-// the same constraint as defense-in-depth for non-API callers).
-const CONTENT_QUERY_STORE_IDS = new Set([storeDataUtils.LocalStoreId, storeDataUtils.AccountStoreId]);
-
 /**
- * Reject content/clientData conditions aimed at stores that do not support
- * them — they would otherwise return silently-unfiltered results.
+ * Reject content/clientData conditions aimed at stores whose
+ * `DataStore.supports` declaration does not cover them — they would
+ * otherwise return silently-unfiltered results. Per-store support is
+ * announced to clients in the store root stream's clientData.
  * Must run after `validateStreamsQueriesAndSetStore` (storeIds resolved).
  */
 function validateContentQueryStores (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
@@ -69,8 +68,10 @@ function validateContentQueryStores (context: MethodContext, params: GetEventsPa
   const streamQueries = (params.arrayOfStreamQueriesWithStoreId ?? []) as Array<{ storeId?: string }>;
   for (const streamQuery of streamQueries) {
     const storeId = streamQuery.storeId;
-    if (storeId != null && !CONTENT_QUERY_STORE_IDS.has(storeId)) {
-      return next(errors.invalidOperation(`Store '${storeId}' does not support content/clientData query conditions.`));
+    if (storeId == null) continue;
+    const detail = mall.events.getContentQuerySupportError(storeId, params);
+    if (detail != null) {
+      return next(errors.invalidOperation(detail));
     }
   }
   next();

@@ -12,6 +12,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
+const { CONTENT_QUERY_SUPPORT } = require('../../../../shared/contentQueryConditions.ts');
 const { _internals } = require('../_internals.ts');
 const { userStreams } = require('./localUserStreamsPG.ts');
 const { userEvents } = require('./localUserEventsPG.ts');
@@ -46,6 +47,8 @@ const dataStore = ds.createDataStore({
   streams: userStreams,
 
   events: userEvents,
+
+  supports () { return CONTENT_QUERY_SUPPORT; },
 
   async newTransaction (): Promise<unknown> {
     const transaction = new LocalTransactionPG(_internals.databasePG);

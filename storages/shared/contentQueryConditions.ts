@@ -36,11 +36,45 @@ const SEGMENT_REGEXP = /^[a-zA-Z0-9_:-]+$/;
 const OPERATORS: ConditionOp[] = ['eq', 'neq', 'in', 'exists', 'gt', 'gte', 'lt', 'lte', 'prefix'];
 const NUMERIC_OPS = new Set<ConditionOp>(['gt', 'gte', 'lt', 'lte']);
 
+/**
+ * Capability announcement of the built-in storage (full operator set on
+ * both fields). Custom datastores announce their own (possibly partial)
+ * object via `DataStore.supports`.
+ */
+const CONTENT_QUERY_SUPPORT = Object.freeze({
+  contentQueries: Object.freeze({
+    fields: Object.freeze(['content', 'clientData']),
+    operators: Object.freeze([...OPERATORS])
+  })
+});
+
+type StoreSupports = { contentQueries?: { fields?: readonly string[], operators?: readonly string[] } } | null | undefined;
+
 export {
-  MAX_CONDITIONS, MAX_VALUES_PER_IN, ROOT_PATH, OPERATORS,
-  validateAndNormalizeConditions, matchesConditions, resolveJsonPath, parseJsonPath
+  MAX_CONDITIONS, MAX_VALUES_PER_IN, ROOT_PATH, OPERATORS, CONTENT_QUERY_SUPPORT,
+  validateAndNormalizeConditions, matchesConditions, resolveJsonPath, parseJsonPath,
+  getConditionsSupportError
 };
-export type { NormalizedCondition, ScalarValue, ConditionOp };
+export type { NormalizedCondition, ScalarValue, ConditionOp, StoreSupports };
+
+/**
+ * Check normalized conditions against a store's capability announcement.
+ * Returns a human-readable detail when something is unsupported, `null`
+ * when the store can serve all conditions.
+ */
+function getConditionsSupportError (supports: StoreSupports, conditions: NormalizedCondition[]): string | null {
+  const capability = supports?.contentQueries;
+  if (capability == null) return 'content/clientData query conditions are not supported';
+  for (const condition of conditions) {
+    if (!(capability.fields ?? []).includes(condition.field)) {
+      return `'${condition.field}' conditions are not supported`;
+    }
+    if (!(capability.operators ?? []).includes(condition.op)) {
+      return `operator '${condition.op}' is not supported`;
+    }
+  }
+  return null;
+}
 
 /**
  * Validate raw conditions (already JSON-parsed) for one field parameter.
