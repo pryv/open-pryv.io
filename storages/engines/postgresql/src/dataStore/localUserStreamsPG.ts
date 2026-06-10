@@ -11,6 +11,12 @@ const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const assert = require('assert');
 const ds = require('@pryv/datastore');
+import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage.ts';
+
+/** The PG streams storage handle is a BaseStoragePG instance — the UserStorage
+ *  9-method contract plus its `.db` (used directly by createDeleted). */
+type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
+type UserStreamsStoragePG = UserStorage & { db: PgDbLike };
 
 type Stream = {
   id: string;
@@ -31,7 +37,7 @@ type DeletionsQuery = { deletedSince: number };
 type DeletionsOptions = Record<string, unknown> | null;
 type NodeCallback<T = unknown> = (err: Error | null | undefined, value?: T) => void;
 type Store = {
-  userStreamsStorage: any;
+  userStreamsStorage: UserStreamsStoragePG;
 };
 
 function pick<T extends Record<string, unknown>> (obj: T, keys: string[]): Partial<T> {
@@ -54,7 +60,7 @@ const STREAM_PROPERTIES = [
 const userStreams = ds.createUserStreams({
   userStreamsStorage: null,
 
-  init (this: Store, userStreamsStorage: any): void {
+  init (this: Store, userStreamsStorage: UserStreamsStoragePG): void {
     this.userStreamsStorage = userStreamsStorage;
   },
 

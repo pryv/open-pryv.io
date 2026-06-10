@@ -17,9 +17,18 @@ const { userStreams } = require('./localUserStreamsPG.ts');
 const { userEvents } = require('./localUserEventsPG.ts');
 const { LocalTransactionPG } = require('./LocalTransactionPG.ts');
 
+type IntegritySetter = (...args: unknown[]) => unknown;
+type DataStoreInitParams = {
+  settings: unknown;
+  integrity: { setOnEvent: IntegritySetter };
+  systemStreams: unknown;
+};
+interface DataStoreInstance { settings: unknown }
+type StorageInfos = { streams: { count: number }, events: unknown, files: unknown };
+
 const dataStore = ds.createDataStore({
 
-  async init (this: any, params: any): Promise<any> {
+  async init (this: DataStoreInstance, params: DataStoreInitParams): Promise<DataStoreInstance> {
     this.settings = params.settings;
 
     const db = _internals.databasePG;
@@ -38,7 +47,7 @@ const dataStore = ds.createDataStore({
 
   events: userEvents,
 
-  async newTransaction (): Promise<any> {
+  async newTransaction (): Promise<unknown> {
     const transaction = new LocalTransactionPG(_internals.databasePG);
     await transaction.init();
     return transaction;
@@ -49,7 +58,7 @@ const dataStore = ds.createDataStore({
     await userEvents._deleteUser(userId);
   },
 
-  async getUserStorageInfos (userId: string): Promise<any> {
+  async getUserStorageInfos (userId: string): Promise<StorageInfos> {
     const streams = await userStreams._getStorageInfos(userId);
     const events = await userEvents._getStorageInfos(userId);
     const files = await userEvents._getFilesStorageInfos(userId);

@@ -14,6 +14,7 @@ const ds = require('@pryv/datastore');
 const { treeUtils } = require('utils');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const { _internals } = require('../_internals.ts');
+import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage.ts';
 
 type Stream = {
   id: string;
@@ -33,7 +34,7 @@ type StreamQuery = { includeTrashed?: boolean; childrenDepth?: number };
 type DeletionsQuery = { deletedSince: number };
 type DeletionsOptions = Record<string, unknown> | null;
 type NodeCallback<T = unknown> = (err: Error | null | undefined, value?: T) => void;
-type Store = { userStreamsStorage: any };
+type Store = { userStreamsStorage: UserStorage };
 
 const STREAM_PROPERTIES = [
   'id', 'name', 'parentId', 'clientData', 'children',
@@ -67,7 +68,7 @@ function cloneStream (stream: Stream, childrenDepth: number): Stream {
 const userStreams = ds.createUserStreams({
   userStreamsStorage: null,
 
-  init (this: Store, userStreamsStorage: any): void {
+  init (this: Store, userStreamsStorage: UserStorage): void {
     this.userStreamsStorage = userStreamsStorage;
   },
 

@@ -17,6 +17,15 @@ const { userStreams } = require('./localUserStreamsSQLite.ts');
 const { userEvents } = require('./localUserEventsSQLite.ts');
 const { getStorage } = require('../userSQLite/index.ts');
 
+type IntegritySetter = (...args: unknown[]) => unknown;
+type DataStoreInitParams = {
+  settings: unknown;
+  integrity: { setOnEvent: IntegritySetter };
+  systemStreams: unknown;
+};
+interface DataStoreInstance { settings: unknown }
+type StorageInfos = { streams: { count: number }, events: unknown, files: unknown };
+
 /**
  * Pass-through transaction. SQLite per-user files serialize their own writes
  * via concurrentSafeWrite; the per-call transaction primitive PG uses
@@ -30,18 +39,18 @@ const { getStorage } = require('../userSQLite/index.ts');
  * needed later, LocalTransactionSQLite can be hooked in here.
  */
 class NoopTransactionSQLite {
-  transactionSession: any = null;
+  transactionSession: unknown = null;
   async init () { /* noop */ }
   async commit () { /* noop */ }
   async rollback () { /* noop */ }
-  async exec (callback?: () => Promise<any>) {
+  async exec (callback?: () => Promise<unknown>): Promise<unknown> {
     if (typeof callback === 'function') return await callback();
   }
 }
 
 const dataStore = ds.createDataStore({
 
-  async init (this: any, params: any): Promise<any> {
+  async init (this: DataStoreInstance, params: DataStoreInitParams): Promise<DataStoreInstance> {
     this.settings = params.settings;
 
     const eventFilesStorage = await _internals.getEventFiles();
@@ -59,7 +68,7 @@ const dataStore = ds.createDataStore({
 
   events: userEvents,
 
-  async newTransaction (): Promise<any> {
+  async newTransaction (): Promise<NoopTransactionSQLite> {
     return new NoopTransactionSQLite();
   },
 
@@ -68,7 +77,7 @@ const dataStore = ds.createDataStore({
     await userEvents._deleteUser(uid);
   },
 
-  async getUserStorageInfos (uid: string): Promise<any> {
+  async getUserStorageInfos (uid: string): Promise<StorageInfos> {
     const streams = await userStreams._getStorageInfos(uid);
     const events = await userEvents._getStorageInfos(uid);
     const files = await userEvents._getFilesStorageInfos(uid);
