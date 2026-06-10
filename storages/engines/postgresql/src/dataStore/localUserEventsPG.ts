@@ -55,6 +55,9 @@ type Store = {
   accountStreamIds: string[];
   deletionSettings: DeletionSettings;
   keepHistory: boolean;
+  // own helper methods of the store literal, so `this.<helper>()` typechecks
+  _generateVersionIfNeeded (userId: string, eventId: string, originalEvent: Event | null, queryFn: QueryFn): Promise<void>;
+  _syncEventStreams (userId: string, eventId: string, streamIds: string[], queryFn: QueryFn): Promise<void>;
 };
 
 interface LocalQueryItem {
@@ -232,7 +235,7 @@ const userEvents = ds.createUserEvents({
 
       // Populate event_streams junction table
       if (event.streamIds && event.streamIds.length > 0) {
-        await (this as any)._syncEventStreams(userId, event.id, event.streamIds, queryFn);
+        await this._syncEventStreams(userId, event.id, event.streamIds, queryFn);
       }
 
       return event;
@@ -248,7 +251,7 @@ const userEvents = ds.createUserEvents({
 
   async update (this: Store, userId: string, eventData: Event, transaction: Transaction): Promise<boolean> {
     const queryFn: QueryFn = transaction ? transaction.query.bind(transaction) : this.db.query.bind(this.db);
-    await (this as any)._generateVersionIfNeeded(userId, eventData.id, null, queryFn);
+    await this._generateVersionIfNeeded(userId, eventData.id, null, queryFn);
 
     try {
       const setClauses: string[] = [];
@@ -270,7 +273,7 @@ const userEvents = ds.createUserEvents({
 
       // Sync event_streams if streamIds changed
       if (eventData.streamIds) {
-        await (this as any)._syncEventStreams(userId, eventData.id, eventData.streamIds, queryFn);
+        await this._syncEventStreams(userId, eventData.id, eventData.streamIds, queryFn);
       }
 
       return res.rowCount === 1;
@@ -280,7 +283,7 @@ const userEvents = ds.createUserEvents({
   },
 
   async delete (this: Store, userId: string, originalEvent: Event): Promise<void> {
-    await (this as any)._generateVersionIfNeeded(userId, originalEvent.id, originalEvent, this.db.query.bind(this.db));
+    await this._generateVersionIfNeeded(userId, originalEvent.id, originalEvent, this.db.query.bind(this.db));
     const deletedEventContent: Event = structuredClone(originalEvent);
     const eventId = deletedEventContent.id;
 

@@ -38,6 +38,9 @@ type DeletionsOptions = Record<string, unknown> | null;
 type NodeCallback<T = unknown> = (err: Error | null | undefined, value?: T) => void;
 type Store = {
   userStreamsStorage: UserStreamsStoragePG;
+  // own helper methods of the store literal, so `this.<helper>()` typechecks
+  _getAllFromAccountAndCache (userId: string): Promise<Stream[]>;
+  getDeletions (userId: string, query: DeletionsQuery, options?: DeletionsOptions): Promise<Stream[]>;
 };
 
 function pick<T extends Record<string, unknown>> (obj: T, keys: string[]): Partial<T> {
@@ -65,7 +68,7 @@ const userStreams = ds.createUserStreams({
   },
 
   async get (this: Store, userId: string, query: StreamQuery): Promise<Stream[]> {
-    const allStreams = await (this as any)._getAllFromAccountAndCache(userId);
+    const allStreams = await this._getAllFromAccountAndCache(userId);
     if (query.includeTrashed) {
       return structuredClone(allStreams);
     } else {
@@ -76,7 +79,7 @@ const userStreams = ds.createUserStreams({
   async getOne (this: Store, userId: string, streamId: string, query: StreamQuery): Promise<Stream | null> {
     assert.ok(streamId !== '*' && streamId != null);
 
-    const allStreams = await (this as any)._getAllFromAccountAndCache(userId);
+    const allStreams = await this._getAllFromAccountAndCache(userId);
     let stream: Stream | null = null;
 
     const foundStream = treeUtils.findById(allStreams, streamId);
@@ -132,7 +135,7 @@ const userStreams = ds.createUserStreams({
   },
 
   async create (this: Store, userId: string, streamData: Stream): Promise<Stream> {
-    const deletedStreams = await (this as any).getDeletions(userId, { deletedSince: Number.MIN_SAFE_INTEGER });
+    const deletedStreams = await this.getDeletions(userId, { deletedSince: Number.MIN_SAFE_INTEGER });
     const deletedStream = deletedStreams.filter((s: Stream) => s.id === streamData.id);
     if (deletedStream.length > 0) {
       await fromCallback((cb: NodeCallback) =>

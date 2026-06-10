@@ -117,7 +117,7 @@ function validateEngineExports () {
   for (const [engineName, engine] of Object.entries(engines)) {
     const mod = getEngineModule(engineName);
     for (const storageType of engine.manifest.storageTypes) {
-      const required = (REQUIRED_EXPORTS as any)[storageType];
+      const required = REQUIRED_EXPORTS[storageType as keyof typeof REQUIRED_EXPORTS];
       if (!required) continue;
       for (const method of required) {
         if (typeof mod[method] !== 'function') {

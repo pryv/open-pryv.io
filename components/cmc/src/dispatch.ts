@@ -185,7 +185,7 @@ async function dispatch (params: {
   // update data-grant). Only chat / system / revoke handlers POST
   // unconditionally back out, so only they need the guard.
   if (OUTBOUND_LOOPABLE_TYPES.has(event.type)) {
-    const incoming = await isPeerDeliveredEvent(userId, (event as any).createdBy, deps);
+    const incoming = await isPeerDeliveredEvent(userId, event.createdBy, deps);
     if (incoming) {
       // Mark 'completed' (not 'skipped') so the trigger event's status
       // reflects "we processed this and decided no outbound was needed."
@@ -365,7 +365,7 @@ async function markFailed (
         failureDetail: detail,
         deps: {
           mall: deps.mall,
-          dispatch: dispatch as any,
+          dispatch,
           dispatchDeps: deps,
           logger: deps.logger,
         },

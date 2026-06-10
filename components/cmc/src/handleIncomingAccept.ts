@@ -56,8 +56,11 @@ type Counterparty = { username: string; host: string };
 
 type AccessLike = {
   id: string;
+  name?: string;
+  apiEndpoint?: string;
   permissions?: Array<Record<string, unknown>>;
   clientData?: Record<string, unknown>;
+  [k: string]: unknown;
 };
 
 type IncomingAcceptResult =
@@ -77,12 +80,13 @@ type IncomingAcceptResult =
 
 type MallLike = {
   accesses: {
-    create: (userId: string, params: unknown) => Promise<unknown>;
-    update?: (userId: string, params: unknown) => Promise<unknown>;
+    create: (userId: string, params: unknown) => Promise<AccessLike>;
+    update?: (userId: string, params: unknown) => Promise<AccessLike | null | undefined>;
     get?: (userId: string, params?: unknown) => Promise<unknown[]>;
   };
   events: {
     get: (userId: string, params?: unknown) => Promise<unknown[]>;
+    create: (userId: string, params: unknown) => Promise<unknown>;
     update?: (userId: string, params: unknown) => Promise<unknown>;
   };
   streams: { create: (userId: string, params: unknown) => Promise<unknown> };
@@ -245,7 +249,7 @@ async function handleIncomingAccept (params: {
   };
   let access: AccessLike;
   try {
-    access = (await mall.accesses.create(userId, accessParams)) as AccessLike;
+    access = await mall.accesses.create(userId, accessParams);
   } catch (err: unknown) {
     // Duplicate name (re-delivery / re-run) — look up the existing access
     // and update its clientData + permissions to reflect the latest
@@ -270,9 +274,9 @@ async function handleIncomingAccept (params: {
         detail: { name: accessName },
       };
     }
-    if (typeof (mall.accesses as any).update === 'function') {
+    if (typeof mall.accesses.update === 'function') {
       try {
-        const updated = await (mall.accesses as any).update(userId, {
+        const updated = await mall.accesses.update(userId, {
           id: existing.id,
           update: {
             permissions: accessParams.permissions,
@@ -345,7 +349,7 @@ async function handleIncomingAccept (params: {
         backChannelAccessId: access.id,
       };
       if (inviteEventId != null) mirrorContent.inviteEventId = inviteEventId;
-      await (deps.mall as any).events.create(userId, {
+      await deps.mall.events.create(userId, {
         streamIds: [C.NS_INBOX],
         type: C.ET_ACCEPT,
         time: Date.now() / 1000,
@@ -368,7 +372,7 @@ async function handleIncomingAccept (params: {
   // back to us. Best-effort — if delivery fails, the peer can't send
   // chat/system to us, but the data-grant for read access is intact and
   // the operator can retry.
-  if (typeof (deps as any).fetch === 'function' && (access as any).apiEndpoint != null) {
+  if (typeof deps.fetch === 'function' && access.apiEndpoint != null) {
     const outbound = require('./outbound.ts');
     try {
       await outbound.postToPeer({
@@ -379,13 +383,13 @@ async function handleIncomingAccept (params: {
           type: C.ET_BACK_CHANNEL,
           content: {
             from: { username: selfIdentity.username, host: selfIdentity.host },
-            apiEndpoint: (access as any).apiEndpoint,
+            apiEndpoint: access.apiEndpoint,
             remoteChatStreamId: chatStream,
             remoteCollectorStreamId: collectorStream,
             appCode,
           },
         },
-        deps: { fetch: (deps as any).fetch, timeoutMs: (deps as any).timeoutMs, logger: deps.logger },
+        deps: { fetch: deps.fetch, timeoutMs: deps.timeoutMs, logger: deps.logger },
       });
     } catch (err: unknown) {
       deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel info delivery failed (non-fatal)', {
@@ -440,7 +444,7 @@ async function handleIncomingAccept (params: {
   return {
     ok: true,
     backChannelAccessId: access.id,
-    backChannelApiEndpoint: (access as any).apiEndpoint,
+    backChannelApiEndpoint: access.apiEndpoint,
     anchorStreamIds: created,
     // appCode is guaranteed non-null by the scope-resolution branches
     // above (the fallback sets it to 'unknown'), but TS narrowing
@@ -496,7 +500,8 @@ async function findAccessByName (params: {
   if (typeof mall.accesses.get !== 'function') return null;
   try {
     const list = await mall.accesses.get(userId, {});
-    const arr: Array<{ id?: string; name?: string; [k: string]: unknown }> = Array.isArray(list) ? list as any[] : ((list as { accesses?: unknown[] })?.accesses ?? []) as any[];
+    const raw: unknown[] = Array.isArray(list) ? list : ((list as { accesses?: unknown[] })?.accesses ?? []);
+    const arr = raw as Array<{ id?: string; name?: string; [k: string]: unknown }>;
     for (const a of arr) {
       if (a?.name === name) return a as AccessLike;
     }

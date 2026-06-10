@@ -74,7 +74,11 @@ export function createHttp01Server (opts: Http01ServerOpts): http.Server & { lis
     log(`http-01: GET .../${token} — served ${ka.length} bytes`);
   });
 
-  (server as any).listenAsync = function listenAsync (): Promise<AddressInfo> {
+  // Augment the plain http.Server with the promised helpers declared in the
+  // return type — single cast, properties attached right below.
+  const augmented = server as http.Server & { listenAsync: () => Promise<AddressInfo>; closeAsync: () => Promise<void> };
+
+  augmented.listenAsync = function listenAsync (): Promise<AddressInfo> {
     return new Promise((resolve, reject) => {
       const onError = (err: Error) => {
         server.removeListener('listening', onListening);
@@ -90,11 +94,11 @@ export function createHttp01Server (opts: Http01ServerOpts): http.Server & { lis
     });
   };
 
-  (server as any).closeAsync = function closeAsync (): Promise<void> {
+  augmented.closeAsync = function closeAsync (): Promise<void> {
     return new Promise((resolve, reject) => {
       server.close((err?: Error) => (err ? reject(err) : resolve()));
     });
   };
 
-  return server as any;
+  return augmented;
 }

@@ -48,6 +48,8 @@ type Store = {
   accountStreamIds: string[];
   deletionSettings: DeletionSettings;
   keepHistory: boolean;
+  // own helper method of the store literal, so `this.<helper>()` typechecks
+  _generateVersionIfNeeded (db: UserDbLike, eventId: string, originalEvent?: Event | null, transaction?: unknown): Promise<void>;
 };
 
 /**
@@ -120,7 +122,7 @@ const userEvents = ds.createUserEvents({
 
   async update (this: Store, userId: string, eventData: Event, transaction: unknown): Promise<Event> {
     const db = await this.storage.forUser(userId);
-    await (this as any)._generateVersionIfNeeded(db, eventData.id, null, transaction);
+    await this._generateVersionIfNeeded(db, eventData.id, null, transaction);
     try {
       return db.updateEvent(eventData.id, eventData);
     } catch (err: unknown) {
@@ -133,7 +135,7 @@ const userEvents = ds.createUserEvents({
 
   async delete (this: Store, userId: string, originalEvent: Event, transaction: unknown): Promise<unknown> {
     const db = await this.storage.forUser(userId);
-    await (this as any)._generateVersionIfNeeded(db, originalEvent.id, originalEvent, transaction);
+    await this._generateVersionIfNeeded(db, originalEvent.id, originalEvent, transaction);
     const deletedEventContent: Event = structuredClone(originalEvent);
     const eventId = deletedEventContent.id;
 

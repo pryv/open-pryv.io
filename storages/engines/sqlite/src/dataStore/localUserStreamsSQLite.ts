@@ -34,7 +34,12 @@ type StreamQuery = { includeTrashed?: boolean; childrenDepth?: number };
 type DeletionsQuery = { deletedSince: number };
 type DeletionsOptions = Record<string, unknown> | null;
 type NodeCallback<T = unknown> = (err: Error | null | undefined, value?: T) => void;
-type Store = { userStreamsStorage: UserStorage };
+type Store = {
+  userStreamsStorage: UserStorage;
+  // own helper methods of the store literal, so `this.<helper>()` typechecks
+  _getAllFromAccountAndCache (userId: string): Promise<Stream[]>;
+  getDeletions (userId: string, query: DeletionsQuery, options?: DeletionsOptions): Promise<Stream[]>;
+};
 
 const STREAM_PROPERTIES = [
   'id', 'name', 'parentId', 'clientData', 'children',
@@ -84,7 +89,7 @@ const userStreams = ds.createUserStreams({
   },
 
   async get (this: Store, userId: string, query: StreamQuery): Promise<Stream[]> {
-    const all = await (this as any)._getAllFromAccountAndCache(userId);
+    const all = await this._getAllFromAccountAndCache(userId);
     if (query.includeTrashed) return structuredClone(all);
     return treeUtils.filterTree(all, false, (s: Stream) => !s.trashed);
   },
@@ -92,7 +97,7 @@ const userStreams = ds.createUserStreams({
   async getOne (this: Store, userId: string, streamId: string, query: StreamQuery): Promise<Stream | null> {
     assert.ok(streamId !== '*' && streamId != null);
 
-    const all = await (this as any)._getAllFromAccountAndCache(userId);
+    const all = await this._getAllFromAccountAndCache(userId);
     const found = treeUtils.findById(all, streamId);
     if (found == null) return null;
 
@@ -131,7 +136,7 @@ const userStreams = ds.createUserStreams({
   },
 
   async create (this: Store, userId: string, streamData: Stream): Promise<Stream> {
-    const deleted = await (this as any).getDeletions(userId, { deletedSince: Number.MIN_SAFE_INTEGER });
+    const deleted = await this.getDeletions(userId, { deletedSince: Number.MIN_SAFE_INTEGER });
     const match = deleted.filter((s: Stream) => s.id === streamData.id);
     if (match.length > 0) {
       await fromCallback((cb: NodeCallback) =>

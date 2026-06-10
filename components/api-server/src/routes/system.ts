@@ -6,6 +6,8 @@
  */
 import { createRequire } from 'node:module';
 import type { Application, Request, Response, NextFunction } from 'express';
+// `context` is attached by setMinimalMethodContext earlier in the chain.
+type PryvRequest = Request & { context?: unknown };
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const Paths = require('./Paths.ts');
@@ -33,26 +35,26 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
    */
   expressApp.all(Paths.System + '/*', setMinimalMethodContext, checkAuth);
   expressApp.post(Paths.System + '/create-user', contentType.json, setMethodId('system.createUser'), createUser);
-  function createUser (req: Request, res: Response, next: NextFunction) {
+  function createUser (req: PryvRequest, res: Response, next: NextFunction) {
     const params = Object.assign({}, req.body);
-    systemAPI.call((req as any).context, params, methodCallback(res, next, 201));
+    systemAPI.call(req.context, params, methodCallback(res, next, 201));
   }
-  expressApp.get(Paths.System + '/user-info/:username', setMethodId('system.getUserInfo'), function (req: Request, res: Response, next: NextFunction) {
+  expressApp.get(Paths.System + '/user-info/:username', setMethodId('system.getUserInfo'), function (req: PryvRequest, res: Response, next: NextFunction) {
     const params = {
       username: req.params.username
     };
-    systemAPI.call((req as any).context, params, methodCallback(res, next, 200));
+    systemAPI.call(req.context, params, methodCallback(res, next, 200));
   });
-  expressApp.delete(Paths.System + '/users/:username/mfa', setMethodId('system.deactivateMfa'), function (req: Request, res: Response, next: NextFunction) {
-    systemAPI.call((req as any).context, { username: req.params.username }, methodCallback(res, next, 204));
+  expressApp.delete(Paths.System + '/users/:username/mfa', setMethodId('system.deactivateMfa'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, { username: req.params.username }, methodCallback(res, next, 204));
   });
   // --------------------- admin user listing ----------------- //
-  expressApp.get(Paths.System + '/admin/users', setMethodId('system.listUsers'), function (req: Request, res: Response, next: NextFunction) {
-    systemAPI.call((req as any).context, {}, methodCallback(res, next, 200));
+  expressApp.get(Paths.System + '/admin/users', setMethodId('system.listUsers'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, {}, methodCallback(res, next, 200));
   });
   // --------------------- admin cores listing ----------------- //
-  expressApp.get(Paths.System + '/admin/cores', setMethodId('system.listCores'), function (req: Request, res: Response, next: NextFunction) {
-    systemAPI.call((req as any).context, {}, methodCallback(res, next, 200));
+  expressApp.get(Paths.System + '/admin/cores', setMethodId('system.listCores'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, {}, methodCallback(res, next, 200));
   });
   // --------------------- admin force-renew --------------------- //
   // POST /system/admin/certs/force-renew — operator-triggered ACME
@@ -61,7 +63,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // Use cases: key compromise, manual rotation, debugging. Body:
   //   { hostname?: string }   // omit to renew the core's primary host
   // Returns: { ok, hostname, issuedAt, expiresAt }.
-  expressApp.post(Paths.System + '/admin/certs/force-renew', contentType.json, async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.post(Paths.System + '/admin/certs/force-renew', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { forceRenew } = require('./forceRenewIpc.ts');
       const hostname = req.body?.hostname;
@@ -89,7 +91,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // --------------------- admin certs listing ----------------- //
   // Read-only. Returns the cert metadata PlatformDB has (hostname +
   // validity dates) — never the cert or key material itself.
-  expressApp.get(Paths.System + '/admin/certs', async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.get(Paths.System + '/admin/certs', async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const platformDB = require('storages').platformDB;
       const certs: Array<{ hostname?: string; issuedAt?: number; expiresAt?: number }> =
@@ -118,7 +120,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // every worker on this core refreshes its materialised Pug tmp-dir on
   // the next request; other cores pick up the change via rqlite
   // replication + their own master's periodic cache re-read.
-  expressApp.get(Paths.System + '/admin/mail/templates', async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.get(Paths.System + '/admin/mail/templates', async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const platformDB = require('storages').platformDB;
       const rows: Array<{ type: string; lang: string; part: string; pug: string }> =
@@ -133,7 +135,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       next(err);
     }
   });
-  expressApp.get(Paths.System + '/admin/mail/templates/:type/:lang/:part', async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.get(Paths.System + '/admin/mail/templates/:type/:lang/:part', async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { type, lang, part } = req.params;
       const platformDB = require('storages').platformDB;
@@ -147,7 +149,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       next(err);
     }
   });
-  expressApp.put(Paths.System + '/admin/mail/templates/:type/:lang/:part', contentType.json, async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.put(Paths.System + '/admin/mail/templates/:type/:lang/:part', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { type, lang, part } = req.params;
       const pug = req.body && typeof req.body.pug === 'string' ? req.body.pug : null;
@@ -163,7 +165,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       next(err);
     }
   });
-  expressApp.delete(Paths.System + '/admin/mail/templates/:type/:lang/:part', async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.delete(Paths.System + '/admin/mail/templates/:type/:lang/:part', async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { type, lang, part } = req.params;
       const platformDB = require('storages').platformDB;
@@ -177,7 +179,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       next(err);
     }
   });
-  expressApp.post(Paths.System + '/admin/mail/send-test', contentType.json, async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.post(Paths.System + '/admin/mail/send-test', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { type, lang, recipient } = req.body || {};
       if (!type || !lang || !recipient) {
@@ -218,7 +220,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // Auth is the one-time join token in the request body, NOT the admin key
   // (see bypass in checkAuth below). The handler verifies the token via
   // TokenStore, flips PlatformDB's `available:true`, returns a cluster snapshot.
-  expressApp.post(Paths.System + '/admin/cores/ack', contentType.json, async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.post(Paths.System + '/admin/cores/ack', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const TokenStore = require('business/src/bootstrap/index.ts').TokenStore;
       const ackHandler = require('business/src/bootstrap/index.ts').ackHandler;
@@ -237,7 +239,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
     }
   });
   // --------------------- user validation (pre-registration) ----------------- //
-  expressApp.post(Paths.System + '/users/validate', contentType.json, async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.post(Paths.System + '/users/validate', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { username, invitationToken, uniqueFields = {} } = req.body;
       const { getPlatform } = require('platform');
@@ -290,7 +292,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
     }
   });
   // --------------------- user update (system) ----------------- //
-  expressApp.put(Paths.System + '/users', contentType.json, async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.put(Paths.System + '/users', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const { username, user: fieldsForUpdate = {}, fieldsToDelete = {} } = req.body;
       if (!username) {
@@ -332,7 +334,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
     }
   });
   // --------------------- user delete (system, with onlyReg/dryRun) ----------------- //
-  expressApp.delete(Paths.System + '/users/:username', async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.delete(Paths.System + '/users/:username', async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       const username = req.params.username;
       const onlyReg = req.query.onlyReg === 'true';
@@ -378,12 +380,12 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
     }
   });
   // --------------------- health checks ----------------- //
-  expressApp.get(Paths.System + '/check-platform-integrity', setMethodId('system.checkPlatformIntegrity'), function (req: Request, res: Response, next: NextFunction) {
-    systemAPI.call((req as any).context, {}, methodCallback(res, next, 200));
+  expressApp.get(Paths.System + '/check-platform-integrity', setMethodId('system.checkPlatformIntegrity'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, {}, methodCallback(res, next, 200));
   });
   // Checks if `req` contains valid authorization to access the system routes.
   //
-  function checkAuth (req: Request, res: Response, next: NextFunction) {
+  function checkAuth (req: PryvRequest, res: Response, next: NextFunction) {
     // Bootstrap ack uses one-time join token instead of adminAccessKey.
     // The handler itself verifies the token; admit the request unconditionally.
     if (req.method === 'POST' && req.path === Paths.System + '/admin/cores/ack') {

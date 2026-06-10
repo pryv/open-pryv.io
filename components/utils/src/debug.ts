@@ -29,4 +29,8 @@ function logstack (...args: unknown[]) {
 export { logstack, log, stack };
 
 // dev-time global $$ shortcut. Intentional escape hatch for ad-hoc debugging.
-(global as any).$$ = logstack;
+declare global {
+  // eslint-disable-next-line no-var
+  var $$: typeof logstack | undefined;
+}
+global.$$ = logstack;

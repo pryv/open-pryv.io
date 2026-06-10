@@ -153,7 +153,7 @@ async function handleAccept (params: {
       userId,
       scopeStreamId: anchorScope,
       peerSlug,
-      mall: mall as any,
+      mall,
     });
     if (provisioned.ok) {
       preCreatedAnchorIds = provisioned.created;
