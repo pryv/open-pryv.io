@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { ConfigLike } from '@pryv/boiler';
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
@@ -12,7 +13,6 @@ const { getConfig } = require('@pryv/boiler');
 const getHTTPDigestHeaderForAttachment = require('business').integrity.attachments.getHTTPDigestHeaderForAttachment;
 const { getMall } = require('mall');
 
-type ConfigLike = { get: (key: string) => unknown };
 type AccessLike = { canGetEventsOnStream: (streamId: string, scope: string) => Promise<boolean> };
 type ContextLike = { user: { id: string }; access: AccessLike; originalQuery?: unknown };
 type AttachmentLike = {

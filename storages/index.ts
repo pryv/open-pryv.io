@@ -13,13 +13,13 @@
  */
 
 import { createRequire } from 'node:module';
+import type { ConfigLike as BoilerConfig } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const pluginLoader = require('./pluginLoader.ts');
 const internals = require('./internals.ts');
 const { getConfig, getLogger } = require('@pryv/boiler');
 
-type BoilerConfig = { get (key: string): unknown; has? (key: string): boolean };
 // `storages:engines:<name>` config section — engine-specific fields plus the
 // connection coordinates the series wiring reads directly.
 type EngineConfig = { host?: string; port?: number; [k: string]: unknown };

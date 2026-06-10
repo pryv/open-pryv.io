@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { ConfigLike } from '@pryv/boiler';
 import type { Application as ExpressApp, Request, Response } from 'express';
 import type { Server as HttpServer } from 'node:http';
 const require = createRequire(import.meta.url);
@@ -20,7 +21,6 @@ const KEY_IP = 'http:ip';
 const KEY_PORT = 'http:hfsPort';
 const { getConfig, getLogger } = require('@pryv/boiler');
 
-interface ConfigLike { get: (key: string) => unknown }
 interface LoggerLike {
   info: (msg: string) => void;
   debug: (msg: string) => void;

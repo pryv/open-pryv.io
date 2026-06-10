@@ -7,6 +7,7 @@
 
 
 import { createRequire } from 'node:module';
+import type { ConfigLike } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 /**
@@ -21,7 +22,6 @@ const { getConfig } = require('@pryv/boiler');
 
 export { init, ensureUserDirectory, getPathForUser, deleteUserDirectory, getBasePath, setBasePathTestOnly };
 
-interface ConfigLike { get: (key: string) => unknown }
 
 let config: ConfigLike;
 let basePath: string | undefined;

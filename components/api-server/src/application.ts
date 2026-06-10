@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { ConfigLike as BoilerConfig } from '@pryv/boiler';
 import type { Logger } from '@pryv/boiler';
 import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
@@ -84,7 +85,6 @@ logger.debug('Loading app');
  * Application is a grab bag of singletons / system services with not many
  * methods of its own. It is the type-safe version of DI.
  */
-type BoilerConfig = { get (key: string): unknown };
 type APIInstance = unknown;
 type Database = unknown;
 type StorageLayer = { connection: Database; [k: string]: unknown };

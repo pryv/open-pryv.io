@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { ConfigLike } from '@pryv/boiler';
 import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -36,7 +37,6 @@ const Server = require('./server.ts').default;
 const setCommonMeta = require('api-server/src/methods/helpers/setCommonMeta.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
 
-interface ConfigLike { get: (key: string) => unknown }
 interface LoggerLike {
   info: (msg: string) => void;
   debug: (msg: string) => void;

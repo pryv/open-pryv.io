@@ -7,6 +7,7 @@
 
 
 import { createRequire } from 'node:module';
+import type { ConfigLike as Config } from '@pryv/boiler';
 import type { PlatformDB, CoreInfo, DnsRecord } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 const require = createRequire(import.meta.url);
 
@@ -811,7 +812,6 @@ export default platform;
 export { platform, Platform };
 
 // Local type aliases for shapes that aren't formally exported by an interface.
-type Config = { get (key: string): unknown };
 type PlatformOperation = {
   action: 'create' | 'update' | 'delete';
   isUnique: boolean;

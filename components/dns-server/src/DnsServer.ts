@@ -12,6 +12,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { ConfigLike as BoilerConfig } from '@pryv/boiler';
 import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
@@ -39,7 +40,6 @@ const DEFAULT_PLATFORM_REFRESH_INTERVAL_MS = 30000;
  */
 const RESERVED_SERVICE_NAMES = ['reg', 'access', 'mfa'];
 
-type BoilerConfig = { get (key: string): unknown };
 
 type DnsAnswer = Record<string, unknown>;
 type DnsQuestion = { name: string; type: number };

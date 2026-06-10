@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { ConfigLike } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 /**
  * Pre-fork placeholder cert for the LE first-boot race.
@@ -31,7 +32,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const forge = require('node-forge');
 
-type ConfigLike = { get: (key: string) => unknown };
 type EnsureOpts = {
   config?: ConfigLike;
   deriveHostnames?: (config: ConfigLike) => { commonName: string; altNames?: string[] };

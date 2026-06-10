@@ -12,13 +12,13 @@
  */
 
 import { createRequire } from 'node:module';
+import type { ConfigLike } from '@pryv/boiler';
 import type { Logger } from '@pryv/boiler';
 import type { InfluxConnection as InfluxConnectionT } from './influx_connection.ts';
 const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
 
-type ConfigLike = { get: (key: string) => unknown };
 
 /**
  * Receive host internals from the barrel.

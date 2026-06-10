@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { ConfigLike as BoilerConfig } from '@pryv/boiler';
 import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 // Always require application first to be sure boiler is initialized
@@ -29,7 +30,6 @@ type AppInstance = {
   getCustomAuthFunction (from: string): unknown;
   [k: string]: unknown;
 };
-type BoilerConfig = { get (key: string): unknown };
 type HttpsLike = {
   setSecureContext (opts: HttpsOptions): void;
 };

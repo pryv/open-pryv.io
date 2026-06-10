@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { ConfigLike as Config } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 /**
  * Account streams — config-derived queries for account streams.
@@ -34,7 +35,6 @@ type SystemStream = {
   [k: string]: unknown;
 };
 type StreamsMap = Record<string, SystemStream>;
-type Config = { get (key: string): unknown };
 
 // Module-level state — all set by initializeState()
 let initialized = false;

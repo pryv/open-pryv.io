@@ -82,6 +82,9 @@ const boiler = {
 // `import type { Logger } from '@pryv/boiler';` instead of redeclaring.
 type LogFn = (...args: unknown[]) => void;
 type Logger = { debug: LogFn; info: LogFn; warn: LogFn; error: LogFn };
+// Canonical structural config-read contract (what getConfig() resolves to,
+// seen from consumers). Import instead of redeclaring per file.
+type ConfigLike = { get (key: string): unknown; has (key: string): boolean };
 type ConfigInstance = InstanceType<typeof Config>;
 type InitOptions = {
   appName: string;
@@ -218,5 +221,5 @@ function getConfigUnsafe (warnOnly?: boolean): ConfigInstance {
 // module pattern) both keep working under Node 24 require(esm).
 const { getLogger } = logging;
 export { boiler, getLogger, getConfig, ready, getConfigSync, getConfigUnsafe, init };
-export type { Logger, LogFn };
+export type { Logger, LogFn, ConfigLike };
 export default boiler;

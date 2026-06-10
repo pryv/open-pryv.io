@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { ConfigLike as Config } from '@pryv/boiler';
 import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
@@ -23,7 +24,6 @@ type MethodContext = {
 };
 type ResultBag = Record<string, unknown>;
 type Next = (err?: unknown) => void;
-type Config = { get (key: string): unknown };
 type StorageLayer = {
   accesses: { removeAll (user: { id: string }, cb: (err: Error | null) => void): void };
   profile: { removeAll (user: { id: string }, cb: (err: Error | null) => void): void };

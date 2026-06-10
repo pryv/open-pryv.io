@@ -20,6 +20,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { ConfigLike } from '@pryv/boiler';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 const require = createRequire(import.meta.url);
@@ -40,11 +41,6 @@ interface EngineEntry {
   manifest: EngineManifest;
   dir: string;
   module: Record<string, unknown> | null;
-}
-
-interface ConfigLike {
-  has: (key: string) => boolean;
-  get: (key: string) => unknown;
 }
 
 interface ResolvedConfig {
