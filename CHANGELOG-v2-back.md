@@ -1,5 +1,18 @@
 # Changelog - Internal (no API impact)
 
+## feat(dns,init,acme): dns-active first-boot DNS chain + wizard preflight
+
+Closes the out-of-the-box gap for non-dnsLess (subdomain-per-user) single-core installs. Previously the embedded DNS server shipped empty, so even though ACME published the DNS-01 TXT in-memory, public recursors saw no authoritative answer for the zone and `acme-client` errored at preflight (`No TXT records found for name: _acme-challenge.<domain>`). Operators had to hand-run `bin/dns-records.js load` with a SOA/NS/A YAML before first boot — undocumented and easy to miss.
+
+- **`bin/master.js` seeds the apex DNS chain at startup** when `dns.active: true` + `dns.domain` set. Before workers fork + the ACME orchestrator starts, it merges a bootstrap `SOA` + `NS` (→ `core.<domain>`) into `dns.records.root` in-memory and publishes an `A core.<domain> → dns.publicIp` record via PlatformDB. Idempotent: skips whichever records already exist, so operator-edited records always win. If `dns.publicIp` is unset, it logs a FATAL banner naming the key and skips ACME startup (rather than burning the LE rate limit on a guaranteed-fail issuance).
+- **New `dns.publicIp` config field** (under the `dns:` block) — the host's public IPv4, consumed by the bootstrap above. Distinct from `core.ip` (multi-core CoreInfo).
+- **Wizard prompts for `dns.publicIp`** on the non-dnsLess path, auto-detecting a default via `checkip.amazonaws.com` (2.5s timeout, falls back to manual entry).
+- **Wizard DNS-chain preflight** (best-effort, warnings only, never blocks): queries a public recursor (8.8.8.8/1.1.1.1, via Node's `dns` module — no `dig` dependency) to check (1) whether the parent zone delegates `dns.domain` at all, (2) whether the delegated NS hostnames resolve to the declared `dns.publicIp` (mismatch → wrong-server warning), and (3) a UDP/53 reachability probe to `dns.publicIp` (informational — silence is expected before first boot; an answer flags an existing listener / possible host systemd-resolved conflict). Surfaced in the existing "Validating host environment" summary.
+- **ACME fast-retry cadence for first issuance.** `AcmeOrchestrator` arms the renew timer at 60s when no cert is stored yet, downshifting to the normal 24h interval the moment a cert is present (first success OR restart with an already-issued cert). A `#renewInFlight` single-flight guard prevents the start()-side immediate trigger and the 60s timer from issuing concurrently. This absorbs the common first-deploy symptom where LE's distributed validators don't see a freshly-published TXT within the initial window (negative-cache hangover from the pre-delegation period) — the next 60s attempt succeeds instead of waiting a full day. `PlatformDBDnsWriter` default `waitMs` also bumped 15s → 30s for extra public-recursor cache headroom.
+- **`bin/dns-records.js --help`** notes that operator-managed records now coexist with the master-auto-published bootstrap chain (master only writes records that don't already exist). INSTALL.md gains a "first-boot DNS chain (dns-active mode)" subsection.
+
+Validated end-to-end on a real host with NS delegation: real LE production wildcard issued on first boot (after the 60s retry), cert restored from disk on restart, both confirmed externally via `openssl s_client`.
+
 ## 2.0.0-rc.1 — 2026-06-03
 
 First Release Candidate divider. All entries below this line up to the next `## 2.0.0-*` divider were landed during the `2.0.0-pre` rolling line and are now sealed under the RC tag. Internal changes are no-API-impact; see `CHANGELOG-v2.md` for implementer-facing changes.

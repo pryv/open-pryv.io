@@ -132,6 +132,86 @@ function dirWritable (dir) {
   }
 }
 
+// ── dns-active DNS-chain preflight helpers (best-effort, warnings only) ──
+//
+// We query a PUBLIC recursor (not the system resolver) so the checks reflect
+// what Let's Encrypt's distributed validators will see, and shell nothing out
+// to `dig` (not guaranteed present in the slim image) — Node's dns module is
+// enough. Every probe is time-boxed so a wizard run never hangs on them.
+
+function publicResolver () {
+  const dns = require('dns');
+  const resolver = new dns.promises.Resolver({ timeout: 3000, tries: 1 });
+  resolver.setServers(['8.8.8.8', '1.1.1.1']);
+  return resolver;
+}
+
+/**
+ * NS hostnames the public recursor sees for <domain> (i.e. whether the parent
+ * zone delegates it), or null on NXDOMAIN / no-delegation / timeout.
+ */
+async function lookupNs (domain) {
+  try {
+    const ns = await publicResolver().resolveNs(domain);
+    return Array.isArray(ns) && ns.length ? ns : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** A records for <hostname> via the public recursor; [] on any failure. */
+async function lookupA (hostname) {
+  try {
+    const a = await publicResolver().resolve4(hostname.replace(/\.$/, ''));
+    return Array.isArray(a) ? a : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * Send a minimal DNS SOA query over UDP/53 to <ip> and resolve true if ANY
+ * datagram comes back within timeoutMs — the content is irrelevant, even a
+ * SERVFAIL/REFUSED proves a listener is reachable at that address. Resolves
+ * false on timeout or socket error.
+ */
+function probeUdp53 (ip, domain, timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    const dgram = require('dgram');
+    const sock = dgram.createSocket('udp4');
+    let done = false;
+    const finish = (val) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { sock.close(); } catch (_) {}
+      resolve(val);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    sock.on('message', () => finish(true));
+    sock.on('error', () => finish(false));
+
+    // Header (12 bytes): ID, flags=RD, QDCOUNT=1, rest 0. Question: QNAME +
+    // QTYPE=SOA(6) + QCLASS=IN(1).
+    const labels = domain.split('.').filter(Boolean);
+    const qnameLen = labels.reduce((n, l) => n + 1 + Buffer.byteLength(l), 0) + 1;
+    const buf = Buffer.alloc(12 + qnameLen + 4);
+    buf.writeUInt16BE(0x1234, 0);
+    buf.writeUInt16BE(0x0100, 2);
+    buf.writeUInt16BE(1, 4);
+    let off = 12;
+    for (const l of labels) {
+      buf.writeUInt8(Buffer.byteLength(l), off++);
+      off += buf.write(l, off);
+    }
+    buf.writeUInt8(0, off++);
+    buf.writeUInt16BE(6, off); off += 2;
+    buf.writeUInt16BE(1, off);
+
+    sock.send(buf, 53, ip, (err) => { if (err) finish(false); });
+  });
+}
+
 function bar (n = 50) { return '─'.repeat(n); }
 
 /**
@@ -672,6 +752,46 @@ async function main () {
   }
   if (!dnsLess) {
     warnings.push('dns-active mode requires port 53/udp published + (for non-docker hosts) `setcap cap_net_bind_service=+ep $(which node)`.');
+
+    // ── Phase C: dns-active DNS-chain preflight (best-effort, never blocks) ──
+    // Catches the three most common reasons LE DNS-01 issuance fails on first
+    // boot: (1) parent zone never delegated the domain, (2) the delegation
+    // points at an IP other than this host, (3) UDP/53 isn't reachable. All
+    // results are warnings/notes only — the wizard always continues.
+    console.log();
+    console.log('  Checking dns-active DNS chain (best-effort, a few seconds)…');
+
+    const nsHosts = await lookupNs(dnsDomain);
+    if (!nsHosts) {
+      warnings.push(`No NS delegation found for ${dnsDomain} via a public recursor. The parent zone ` +
+        `must delegate ${dnsDomain} to a nameserver that resolves to ${dnsPublicIp} before Let's Encrypt ` +
+        'DNS-01 issuance can succeed. (If you just set the delegation up, this may be propagation lag.)');
+    } else {
+      console.log(`    ✓ NS delegation for ${dnsDomain}: ${nsHosts.join(', ')}`);
+      const nsIps = new Set();
+      for (const h of nsHosts) (await lookupA(h)).forEach(ip => nsIps.add(ip));
+      if (nsIps.size && !nsIps.has(dnsPublicIp)) {
+        warnings.push(`NS delegation for ${dnsDomain} resolves to ${[...nsIps].join(', ')}, but you declared ` +
+          `the public IP as ${dnsPublicIp} — ACME challenge lookups will reach the wrong server.`);
+      } else if (nsIps.has(dnsPublicIp)) {
+        console.log(`    ✓ NS delegation resolves to the declared public IP (${dnsPublicIp})`);
+      }
+    }
+
+    // UDP/53 reachability is informational, not a warning: at init time
+    // master.js isn't running yet, so "no answer" is the expected/normal
+    // case pre-boot. An answer here means a DNS listener is already bound at
+    // that address (your embedded server on a re-run, or — worth knowing — a
+    // host systemd-resolved that would conflict with the container's :53).
+    if (await probeUdp53(dnsPublicIp, dnsDomain)) {
+      console.log(`    ✓ A DNS listener already answers on ${dnsPublicIp}:53/udp.`);
+      console.log('      If that is the host\'s systemd-resolved, free :53 so the container can bind it.');
+    } else {
+      console.log(`    ℹ No answer yet on ${dnsPublicIp}:53/udp (normal before first boot). After starting`);
+      console.log(`      master.js, verify externally:  dig @${dnsPublicIp} SOA ${dnsDomain}`);
+      console.log('      If still silent, check the host firewall / AWS Security Group (53/udp) +');
+      console.log('      the docker `-p 53:53/udp` mapping.');
+    }
   }
   if (leConfig && leConfig.staging) {
     warnings.push('letsEncrypt.staging is ON — issued certs will NOT be trusted by browsers. Flip to false for production.');
