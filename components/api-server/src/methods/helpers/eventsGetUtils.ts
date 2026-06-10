@@ -123,9 +123,9 @@ function coerceStreamsParam (context: MethodContext, params: GetEventsParams, re
       // good, do nothing
     }
   }
-  // Transform object or string to Array
+  // Transform object or string to Array (null/undefined returned early above)
   if (!Array.isArray(params.streams)) {
-    params.streams = [params.streams];
+    params.streams = [params.streams!];
   }
   next();
   function parseStreamsParams (input: unknown) {
@@ -513,8 +513,12 @@ type StreamQueryItem = {
   not?: unknown[];
   [k: string]: unknown;
 };
+// Wire forms of the `streams` parameter before normalization: a single
+// stream id, an array of ids, a (possibly JSON-stringified) stream query
+// object, or an array of queries. Normalized in place by the middleware.
+type StreamsParamRaw = string | Record<string, unknown> | Array<string | Record<string, unknown>>;
 type GetEventsParams = {
-  streams?: unknown;
+  streams?: StreamsParamRaw;
   arrayOfStreamQueries: Array<Record<string, unknown>>;
   arrayOfStreamQueriesWithStoreId: StreamQueryItem[];
   types?: Array<string> | null;

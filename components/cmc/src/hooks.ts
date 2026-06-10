@@ -46,13 +46,16 @@ type MethodNext = (err?: unknown) => unknown;
 // fields it reads.
 type HookParams = {
   id?: unknown;
-  streams?: unknown;
+  // events.get stream queries: ids and/or {streamId} query objects
+  streams?: Array<string | { streamId?: string; [k: string]: unknown } | null>;
   clientData?: { cmc?: unknown; [k: string]: unknown } | null;
   update?: { id?: unknown; clientData?: { cmc?: unknown; [k: string]: unknown } | null; [k: string]: unknown } | null;
   [k: string]: unknown;
 } | null | undefined;
+type StreamNode = { id?: string; children?: StreamNode[]; [k: string]: unknown };
 type HookResult = {
-  streams?: unknown;
+  // streams.get response tree (pruned in place by the internal guard)
+  streams?: StreamNode[];
   access?: { permissions?: unknown; [k: string]: unknown } | null;
   [k: string]: unknown;
 } | null | undefined;
@@ -351,7 +354,6 @@ function createEventGetOneInternalGuardHook (deps: Deps): Middleware {
  * Wired AFTER `findAccessibleStreams` populates `result.streams`.
  */
 function createStreamsGetInternalGuardHook (): Middleware {
-  type StreamNode = { id?: string; children?: StreamNode[]; [k: string]: unknown };
   function prune (nodes: StreamNode[]): StreamNode[] {
     if (!Array.isArray(nodes)) return nodes;
     const kept: StreamNode[] = [];

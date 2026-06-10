@@ -78,7 +78,9 @@ type AccessesGetOneResult = { access?: Access; current?: string; history?: Acces
 type AccessesCreateParams = Partial<Access> & { name?: string; permissions?: Permission[]; clientData?: Record<string, unknown>; expireAfter?: number; deviceName?: string | null; [k: string]: unknown };
 type AccessesCreateResult = { access?: Access } & Record<string, unknown>;
 type AccessesUpdateParams = { id: string; update: Partial<Access> & { permissions?: Permission[]; expires?: number | null; expireAfter?: number; clientData?: Record<string, unknown> | null }; targetAccess?: Access; targetBase?: string; [k: string]: unknown };
-type AccessesUpdateResult = { access?: Access } & Record<string, unknown>;
+// __updateNotification: internal scratch slot between snapshotAndApplyUpdate
+// (producer) and emitUpdateNotifications (consumer); deleted before response.
+type AccessesUpdateResult = { access?: Access; __updateNotification?: { baseId: string; serial: number; compositeId: string } } & Record<string, unknown>;
 type AccessesDeleteParams = { id: string; accessToDelete?: Access };
 type AccessesDeleteResult = { accessDeletion?: ItemDeletion; relatedDeletions?: ItemDeletion[] } & Record<string, unknown>;
 type AccessesCheckAppParams = { requestingAppId: string; deviceName?: string; requestedPermissions: Permission[]; clientData?: Record<string, unknown> };
@@ -688,7 +690,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       const wire = composeWireAccess(newHead);
       wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
       result.access = wire;
-      result.__plan66 = { baseId, serial: newSerial, compositeId: wire.id };
+      result.__updateNotification = { baseId: baseId!, serial: newSerial, compositeId: wire.id! };
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
@@ -709,13 +711,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // Fine-grained event — payload is a structured `{ type, … }` object
     // so socket.io can forward both the event name (via type) and the
     // data fields (accessId, serial) to subscribers.
-    const plan66 = result.__plan66 as { compositeId: string; serial: number };
+    const notification = result.__updateNotification!;
     pubsub.notifications.emit(context.user.username, {
       type: pubsub.ACCESS_UPDATED,
-      accessId: plan66.compositeId,
-      serial: plan66.serial
+      accessId: notification.compositeId,
+      serial: notification.serial
     });
-    delete result.__plan66;
+    delete result.__updateNotification;
     next();
   }
 

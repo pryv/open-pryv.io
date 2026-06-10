@@ -24,7 +24,7 @@ type DataStoreInitParams = {
   systemStreams: unknown;
 };
 interface DataStoreInstance { settings: unknown }
-type StorageInfos = { streams: { count: number }, events: unknown, files: unknown };
+type StorageInfos = { streams: { count: number }, events: { count: number }, files: { sizeKb: number } };
 
 const dataStore = ds.createDataStore({
 
