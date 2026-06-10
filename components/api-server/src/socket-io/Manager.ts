@@ -277,7 +277,6 @@ class Connection {
     const apiMethod = callData.data[0];
     const params = callData.data[1];
     callback = callback || callData.data[2];
-    // if (callback == null) callback = function (err: any, res: any) { }; // eslint-disable-line no-unused-vars
     methodContext.methodId = apiMethod;
 
     const userName = methodContext.user.username;

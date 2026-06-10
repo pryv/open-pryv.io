@@ -19,9 +19,11 @@ const { getConfig, getLogger } = require('@pryv/boiler');
 const Mall = require('./Mall.ts').default;
 const storeDataUtils = require('./helpers/storeDataUtils.ts');
 
+import type MallType from './Mall.ts';
+
 export { getMall, storeDataUtils };
 
-let mall: any;
+let mall: MallType | undefined;
 let initializing = false;
 
 async function getMall () {
@@ -34,7 +36,8 @@ async function getMall () {
 
   const config = await getConfig();
   const logger = getLogger('mall');
-  mall = new Mall();
+  const newMall: MallType = new Mall();
+  mall = newMall;
 
   // load external stores from config (imported after to avoid cycles);
   const customStoresDef = config.get('custom:dataStores');
@@ -49,7 +52,7 @@ async function getMall () {
         includeInStarPermission: true,
         settings: storeDef.settings
       };
-      mall.addStore(store, storeDescription);
+      newMall.addStore(store, storeDescription);
     }
   }
 
@@ -61,20 +64,20 @@ async function getMall () {
     attachments: { setFileReadToken: true },
     versioning: config.get('versioning')
   };
-  mall.addStore(dataStoreModule, { id: 'local', name: 'Local', settings: localSettings });
+  newMall.addStore(dataStoreModule, { id: 'local', name: 'Local', settings: localSettings });
   // account (system streams backed by baseStorage account fields)
   const { accountStore } = require('storages/datastores/account/index.ts');
-  mall.addStore(accountStore, { id: 'account', name: 'Account', settings: {} });
+  newMall.addStore(accountStore, { id: 'account', name: 'Account', settings: {} });
 
   // audit
   if (config.get('audit:active')) {
     const auditDataStore = require('audit/src/datastore/auditDataStore.ts').default;
-    mall.addStore(auditDataStore, { id: '_audit', name: 'Audit', settings: {} });
+    newMall.addStore(auditDataStore, { id: '_audit', name: 'Audit', settings: {} });
   }
 
-  await mall.init();
+  await newMall.init();
 
   initializing = false;
-  return mall;
+  return newMall;
 }
 

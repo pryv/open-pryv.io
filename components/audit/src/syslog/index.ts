@@ -10,14 +10,17 @@ const require = createRequire(import.meta.url);
 const Syslog = require('./Syslog.ts').default;
 const { getConfig } = require('@pryv/boiler');
 
-let syslog: any;
+import type SyslogType from './Syslog.ts';
+
+let syslog: SyslogType | undefined;
 
 async function getSyslog () {
   if (!syslog) {
     const config = await getConfig();
     if (config.get('audit:syslog:active') === false) return null;
-    syslog = new Syslog();
-    await syslog.init();
+    const newSyslog: SyslogType = new Syslog();
+    syslog = newSyslog;
+    await newSyslog.init();
   }
   return syslog;
 }

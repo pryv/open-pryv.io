@@ -656,7 +656,15 @@ class Platform {
    * }>}
    */
   async getObservabilityConfig () {
-    const localYaml: any = this.#config.get('observability') || {};
+    // `observability` config section — operator YAML overrides.
+    type ObservabilityYaml = {
+      enabled?: boolean;
+      provider?: string;
+      logLevel?: string;
+      appName?: string;
+      newrelic?: { licenseKey?: string };
+    };
+    const localYaml = (this.#config.get('observability') || {}) as ObservabilityYaml;
     const dbRows = await this.#db.getAllObservabilityValues();
     const db: Record<string, string> = {};
     for (const { key, value } of dbRows) {
