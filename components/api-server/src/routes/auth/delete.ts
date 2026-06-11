@@ -5,17 +5,13 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { AppLike } from '../_types.ts';
+import type { AppLike, PryvRequest } from '../_types.ts';
 import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const methodCallback = require('../methodCallback.ts').default;
 const middleware = require('middleware');
 
-type PryvContext = {
-  user: { username?: string };
-  authorizationHeader?: string | string[];
-};
-type PryvRequest = Request & { context?: PryvContext };
+
 
 /**
  * Routes for users

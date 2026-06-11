@@ -5,14 +5,13 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { AppLike } from './_types.ts';
+import type { AppLike, PryvRequest } from './_types.ts';
 import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 
 const require = createRequire(import.meta.url);
 const methodCallback = require('./methodCallback.ts').default;
 
-type AccessRow = { token: string };
-type PryvRequest = Request & { context?: { retrieveAccessFromId: (storage: unknown, accessId: string) => Promise<AccessRow> }; files?: unknown };
+
 const encryption = require('utils').encryption;
 const errors = require('errors').factory;
 const Paths = require('./Paths.ts');
@@ -25,7 +24,8 @@ const attachmentsAccessMiddlewareFactory = require('../middleware/attachment-acc
 export default async function (expressApp: ExpressApp, app: AppLike) {
   const api = app.api;
   const config = app.config;
-  const storage = app.storageLayer;
+  // The storage layer satisfies the MethodContext access/session slice.
+  const storage = app.storageLayer as import('business/src/MethodContext.ts').StorageLike;
   const filesReadTokenSecret = config.get('auth:filesReadTokenSecret');
   const loadAccessMiddleware = middleware.loadAccess(storage);
   expressApp.get(Paths.Events + '/', setMethodId('events.get'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
@@ -82,7 +82,7 @@ export default async function (expressApp: ExpressApp, app: AppLike) {
     const context = req.context!;
     context
       .retrieveAccessFromId(storage, accessId)
-      .then((access: AccessRow) => {
+      .then((access: { token: string }) => {
         const hmacValid = encryption.isFileReadTokenHMACValid(tokenParts.hmac, req.params.fileId, access.token, filesReadTokenSecret);
         if (!hmacValid) { return next(errors.invalidAccessToken('Invalid read token.')); }
         next();

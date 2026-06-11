@@ -46,6 +46,9 @@ class MethodContext {
   /** Audit payload landed by api-server create steps (events/accesses) and
    *  consumed by the audit component when recording the call. */
   auditIntegrityPayload?: { key: string; integrity: string };
+  /** Raw Authorization header value, landed by the auth.delete route and
+   *  checked against auth.adminAccessKey by the deletion chain. */
+  authorizationHeader?: string;
   _tracing: unknown;
   /**
    * Used in events.get
@@ -285,7 +288,7 @@ class MethodContext {
 }
 export default MethodContext;
 export { MethodContext };
-export type { CustomAuthFunction, CustomAuthFunctionCallback };
+export type { CustomAuthFunction, CustomAuthFunctionCallback, StorageLike };
 type CustomAuthFunctionCallback = (err: Error | null | undefined) => void;
 type CustomAuthFunction = (ctx: MethodContext, cb: CustomAuthFunctionCallback) => void;
 type NodeCallback<T = unknown> = (err: unknown, value?: T) => void;

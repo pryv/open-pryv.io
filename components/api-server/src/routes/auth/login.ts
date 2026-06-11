@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { AppLike } from '../_types.ts';
+import type { AppLike, PryvRequest } from '../_types.ts';
 import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 const cookieParser = require('cookie-parser');
@@ -16,7 +16,7 @@ const methodCallback = require('../methodCallback.ts').default;
 const Paths = require('../Paths.ts');
 const { getConfigSync } = require('@pryv/boiler');
 
-type PryvRequest = Request & { context?: { user?: { username?: string; [k: string]: unknown }; [k: string]: unknown } };
+
 
 /**
  * Auth routes.

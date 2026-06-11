@@ -50,9 +50,9 @@ type SystemStreamConfig = { isEditable?: boolean; isIndexed?: boolean; isUnique?
 // Scratchpad fields the events middleware chains stash on the context,
 // named and typed (populated mid-chain, hence all optional).
 type MethodContext = BaseMethodContext & {
-  event?: Event;
-  newEvent?: Event;
-  oldEvent?: Event;
+  event?: WireEvent;
+  newEvent?: WireEvent;
+  oldEvent?: WireEvent;
   accountStreamIds?: string[];
   oldAccountStreamIds?: string[];
   doesEventBelongToAccountStream?: boolean;
@@ -64,7 +64,7 @@ type MethodContext = BaseMethodContext & {
 // Per-method param + result shapes mirroring components/api-server/src/schema/eventsMethods.ts.
 // Hand-authored. Keep in sync with that file when the wire schema changes.
 type ItemDeletion = { id: string; deleted?: number };
-type Event = {
+type WireEvent = {
   id?: string;
   type?: string;
   streamId?: string;
@@ -89,19 +89,19 @@ type EventsGetParams = { streams?: string | Record<string, unknown> | Array<stri
 // plain payload — typing it permissively here keeps `result.addStream(...)`
 // callable without modeling the full Result class API in this file.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type EventsGetResult = { addStream (name: string, stream: unknown): void; events?: Event[]; eventDeletions?: ItemDeletion[]; [k: string]: any };
+type EventsGetResult = { addStream (name: string, stream: unknown): void; events?: WireEvent[]; eventDeletions?: ItemDeletion[]; [k: string]: any };
 type EventsGetOneParams = { id: string; includeHistory?: boolean };
-type EventsGetOneResult = { event?: Event; history?: Event[] };
-type EventsCreateParams = Partial<Event>;
-type EventsCreateResult = { event?: Event };
+type EventsGetOneResult = { event?: WireEvent; history?: WireEvent[] };
+type EventsCreateParams = Partial<WireEvent>;
+type EventsCreateResult = { event?: WireEvent };
 // `files` is the multer upload bag attached by the route layer; consumed
 // (and deleted) by updateEvent before the update reaches the mall.
-type EventsUpdateParams = { id: string; update: Partial<Event>; files?: unknown };
-type EventsUpdateResult = { event?: Event };
+type EventsUpdateParams = { id: string; update: Partial<WireEvent>; files?: unknown };
+type EventsUpdateResult = { event?: WireEvent };
 type EventsDeleteParams = { id: string };
-type EventsDeleteResult = { event?: Event; eventDeletion?: ItemDeletion };
+type EventsDeleteResult = { event?: WireEvent; eventDeletion?: ItemDeletion };
 type EventsDeleteAttachmentParams = { id: string; fileId: string };
-type EventsDeleteAttachmentResult = { event?: Event };
+type EventsDeleteAttachmentResult = { event?: WireEvent };
 // Permissive shapes used by middleware that appears in multiple method
 // chains. Per-method param/result schemas remain narrow at the
 // method-specific middleware call sites; cross-chain shared functions
@@ -280,7 +280,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     try {
       const events = await mall.events.getHistory(context.user.id, params.id);
       result.history = [];
-      events.forEach((e: Event) => {
+      events.forEach((e: WireEvent) => {
         if (result.event!.streamIds == null) { // event might be deleted - limit result to modified property
           result.event = { id: e.id, modified: e.modified };
         } else {
@@ -653,7 +653,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
         return next(errors.unexpectedError(err));
       }
     }
-    result.event = newEvent as Event;
+    result.event = newEvent as WireEvent;
     return next();
   }
   /**
@@ -798,7 +798,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
           };
           eventWithUpdatedAttachments = await mall.events.addAttachment(context.user.id, newEvent.id!, attachmentItem);
           // update attachments property of newEvent
-          newEvent.attachments = eventWithUpdatedAttachments!.attachments as Event['attachments'];
+          newEvent.attachments = eventWithUpdatedAttachments!.attachments as WireEvent['attachments'];
         }
       }
       // -- update the event (to save tacking properties and recalculate integrity)
@@ -967,7 +967,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     newEvent.trashed = true;
     context.updateTrackingProperties(newEvent);
     const updatedEvent = await mall.events.update(context.user.id, newEvent);
-    result.event = updatedEvent as Event;
+    result.event = updatedEvent as WireEvent;
     result.event!.attachments = setFileReadToken(context.access, result.event!.attachments as Array<{ id: string; readToken?: string }> | undefined);
     next();
   }

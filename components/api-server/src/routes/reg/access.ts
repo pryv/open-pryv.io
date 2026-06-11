@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { AppLike } from '../_types.ts';
+import type { AppLike, PryvRequest } from '../_types.ts';
 import type { Request, Response, NextFunction, Application as ExpressApp } from 'express';
 const require = createRequire(import.meta.url);
 /**
@@ -19,7 +19,7 @@ const require = createRequire(import.meta.url);
 
 const accessState = require('./accessState.ts');
 
-type PryvRequest = Request;
+
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   /**
