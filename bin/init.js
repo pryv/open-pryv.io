@@ -316,7 +316,45 @@ function section (yaml, title, doc, obj) {
  * coverage for the appendix is at `bin/test/init-appendix.test.js` (TODO
  * — currently exercised only by manual smoke tests).
  */
-function buildOptionalAppendix ({ dnsLess, dataFolder }) {
+function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite', s3Configured = false }) {
+  // Diskless platform storage — only meaningful for single-core dnsLess in
+  // full PG mode; omitted entirely when the wizard already enabled it.
+  const PLATFORM_DISKLESS_BLOCK = (dnsLess && platformEngine === 'rqlite')
+    ? `
+# # storages.platform — single-core dnsLess deployments in full PG mode can
+# # keep platform data (registrations index, DNS records, TLS certs, …) in
+# # PostgreSQL instead of the embedded rqlite: no rqlite process and no
+# # platform files on local disk (diskless shape — pair with S3 attachments
+# # below). Migrate existing platform data FIRST (master stopped):
+# #   node bin/migrate-platform.js --from rqlite --to postgresql
+# # Moving to multi-core later requires migrating back to rqlite.
+# # storages:
+# #   platform:
+# #     engine: postgresql
+`
+    : '';
+
+  // S3 attachment storage — shown whenever the wizard did not configure it.
+  const S3_BLOCK = s3Configured
+    ? ''
+    : `
+# # storages.file + storages.engines.s3 — store event attachments on an
+# # S3-compatible object store (AWS S3, MinIO, Ceph RGW, …) instead of the
+# # local filesystem (diskless shape).
+# # storages:
+# #   file:
+# #     engine: s3
+# #   engines:
+# #     s3:
+# #       endpoint: https://s3.example.com   # omit for AWS (region-derived)
+# #       region: us-east-1
+# #       bucket: pryv-attachments
+# #       accessKeyId: null                  # null = AWS credential chain / IAM
+# #       secretAccessKey: null
+# #       forcePathStyle: true               # required by MinIO / most self-hosted
+# #       keyPrefix: ''
+`;
+
   const HOSTINGS_BLOCK = dnsLess
     ? `# # hostings — single-core dnsLess deployments don't need this; the
 # # auto-generated hostings hierarchy in /reg/hostings is sufficient.
@@ -399,7 +437,7 @@ function buildOptionalAppendix ({ dnsLess, dataFolder }) {
 # #           bodyTemplate: '{"to": "{{phoneNumber}}", "text": "{{message}}"}'
 
 ${HOSTINGS_BLOCK}
-
+${PLATFORM_DISKLESS_BLOCK}${S3_BLOCK}
 # # custom.systemStreams — extend the account schema (e.g. add 'phone',
 # # 'address', 'organization' alongside the built-in 'username' / 'email').
 # # custom:
@@ -654,6 +692,47 @@ async function main () {
       password: await askNonEmpty('  Password'),
       max: 20
     };
+    console.log();
+  }
+
+  // 3b. Diskless options — single-core dnsLess deployments in full PG mode
+  // can keep ALL durable state off the local filesystem: platform data in
+  // PostgreSQL (no rqlite process, no Raft ports, no platform data dir) +
+  // event attachments on an S3-compatible object store.
+  let platformEngine = 'rqlite';
+  let s3Config = null;
+  if (dnsLess && dbEngine === 'postgresql') {
+    console.log('▸ Platform storage (diskless option)');
+    console.log('  Platform data (registrations index, DNS records, TLS certs, …) can live in');
+    console.log('  PostgreSQL instead of the embedded rqlite — one process and zero platform');
+    console.log('  files on local disk. NOTE: moving to multi-core later requires a one-shot');
+    console.log('  platform-data migration back to rqlite (node bin/migrate-platform.js).');
+    const diskless = await askYesNo('Store platform data in PostgreSQL (diskless)?', false);
+    if (diskless) platformEngine = 'postgresql';
+    console.log();
+
+    console.log('▸ Event attachments storage');
+    console.log('  filesystem → attachment files under the data folder (default)');
+    console.log('  s3         → attachments on an S3-compatible object store (AWS S3, MinIO, …)');
+    const fileEngine = await askChoice('Choose:', ['filesystem', 's3'], diskless ? 1 : 0);
+    if (fileEngine === 's3') {
+      const endpoint = await ask('  S3 endpoint URL (empty for AWS — derived from region)', '');
+      const accessKeyId = await ask('  Access key id (empty = AWS credential chain / IAM role)', '');
+      s3Config = {
+        endpoint: endpoint || null,
+        region: await ask('  Region', 'us-east-1'),
+        bucket: await askNonEmpty('  Bucket'),
+        accessKeyId: accessKeyId || null,
+        secretAccessKey: accessKeyId ? await askNonEmpty('  Secret access key') : null,
+        forcePathStyle: await askYesNo('  Path-style addressing (required for MinIO / most self-hosted)?', true),
+        keyPrefix: await ask('  Key prefix inside the bucket', '')
+      };
+    }
+    console.log();
+  } else if (dnsLess && dbEngine === 'sqlite') {
+    console.log('  ℹ Diskless option: with the postgresql engine, platform data can live in');
+    console.log('    PostgreSQL and attachments on S3 — no durable local files at all.');
+    console.log('    Re-run the wizard and pick postgresql to enable it.');
     console.log();
   }
 
@@ -953,22 +1032,28 @@ async function main () {
     },
     storages: {
       base: { engine: dbEngine },
-      platform: { engine: 'rqlite' },
-      file: { engine: 'filesystem' },
+      platform: { engine: platformEngine },
+      file: { engine: s3Config ? 's3' : 'filesystem' },
       series: { engine: dbEngine === 'postgresql' ? 'postgresql' : 'sqlite' },
-      audit: { engine: 'sqlite' },
+      audit: { engine: platformEngine === 'postgresql' ? 'postgresql' : 'sqlite' },
       engines: {
         ...(pgConfig ? { postgresql: pgConfig } : {}),
         filesystem: {
           attachmentsDirPath: `${dataFolder}/users`,
           previewsDirPath: `${dataFolder}/previews`
         },
+        ...(s3Config ? { s3: s3Config } : {}),
         sqlite: { path: `${dataFolder}/users` },
-        rqlite: {
-          url: 'http://localhost:4001',
-          raftPort: 4002,
-          dataDir: `${dataFolder}/rqlite-data`
-        }
+        // No rqlite process runs when platform data lives in PostgreSQL.
+        ...(platformEngine === 'rqlite'
+          ? {
+              rqlite: {
+                url: 'http://localhost:4001',
+                raftPort: 4002,
+                dataDir: `${dataFolder}/rqlite-data`
+              }
+            }
+          : {})
       }
     }
   };
@@ -1088,7 +1173,10 @@ async function main () {
 
   yamlBody += section(yaml, 'Storage engines',
     ['Per-area engine selection + per-engine connection params.',
-      'Wizard picked: base + series = ' + dbEngine + '; platform = rqlite; audit = sqlite.'],
+      'Wizard picked: base + series = ' + dbEngine +
+      '; platform = ' + platformEngine +
+      '; audit = ' + config.storages.audit.engine +
+      '; file = ' + config.storages.file.engine + '.'],
     { storages: config.storages });
 
   if (config.services) {
@@ -1097,7 +1185,12 @@ async function main () {
       { services: config.services });
   }
 
-  const appendix = buildOptionalAppendix({ dnsLess, dataFolder });
+  const appendix = buildOptionalAppendix({
+    dnsLess,
+    dataFolder,
+    platformEngine,
+    s3Configured: s3Config != null
+  });
   fs.writeFileSync(absConfigPath, yamlBody + appendix);
 
   console.log();
