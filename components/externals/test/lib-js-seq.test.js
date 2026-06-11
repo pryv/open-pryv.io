@@ -32,9 +32,10 @@ const PROXY_BIN = path.resolve(__dirname, 'proxy.js');
 const OVERRIDE_SRC = path.resolve(__dirname, '../../../config/libjs-test-config.yml');
 const OVERRIDE_DST = path.resolve(__dirname, '../../../config/override-config.yml');
 
-const PROXY_PORT = 3000; // HTTPS — what lib-js connects to
-const API_PORT = 3001; // HTTP — API server (plain, behind proxy)
-const HFS_PORT = 4000; // HTTP — HFS server
+// Ports are overridable so the suite can coexist with other local servers
+const PROXY_PORT = parseInt(process.env.EXTERNALS_PROXY_PORT || '3000', 10); // HTTPS — what lib-js connects to
+const API_PORT = parseInt(process.env.EXTERNALS_API_PORT || '3001', 10); // HTTP — API server (plain, behind proxy)
+const HFS_PORT = parseInt(process.env.EXTERNALS_HFS_PORT || '4000', 10); // HTTP — HFS server
 const SERVER_URL = 'https://l.backloop.dev:' + PROXY_PORT + '/';
 
 function libJsAvailable () {
@@ -55,37 +56,47 @@ if (!libJsAvailable()) {
 
   // Start API + HFS + proxy before all tests
   before(async function () {
-    this.timeout(30000);
-    fs.copyFileSync(OVERRIDE_SRC, OVERRIDE_DST);
+    this.timeout(60000);
+    let overlay = fs.readFileSync(OVERRIDE_SRC, 'utf8');
+    overlay = overlay
+      .replace('port: 3001', 'port: ' + API_PORT + '\n  hfsPort: ' + HFS_PORT)
+      .replaceAll('l.backloop.dev:3000', 'l.backloop.dev:' + PROXY_PORT);
+    fs.writeFileSync(OVERRIDE_DST, overlay);
 
-    // Kill any leftover servers on our ports (including tcp_pubsub broker)
+    // Kill leftover servers of OUR OWN from a previous run (including tcp_pubsub
+    // broker); fail fast if a port is held by a foreign process instead.
     for (const port of [PROXY_PORT, API_PORT, HFS_PORT, 4222]) {
-      try { execSync('fuser -k ' + port + '/tcp 2>/dev/null || true', { stdio: 'ignore' }); } catch (e) { /* */ }
+      killOwnLeftoverOnPort(port);
     }
     await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Child output goes to log files — boot failures are undiagnosable otherwise
+    const logFd = (name) => fs.openSync('/tmp/externals-' + name + '.log', 'w');
 
     // 1. API server (HTTP, no SSL — proxy handles HTTPS)
     childProcesses.push(spawn(process.execPath, [API_SERVER_BIN], {
       cwd: SERVICE_CORE_DIR,
       env: { ...process.env, NODE_ENV: 'development', PRYV_BOILER_SUFFIX: '-libjs-api' },
-      stdio: 'ignore'
+      stdio: ['ignore', logFd('api'), logFd('api-err')]
     }));
 
     // 2. HFS server (HTTP)
     childProcesses.push(spawn(process.execPath, [HFS_SERVER_BIN], {
       cwd: SERVICE_CORE_DIR,
       env: { ...process.env, NODE_ENV: 'development', PRYV_BOILER_SUFFIX: '-libjs-hfs' },
-      stdio: 'ignore'
+      stdio: ['ignore', logFd('hfs'), logFd('hfs-err')]
     }));
 
     // 3. HTTPS proxy (backloop.dev, routes series→HFS, rest→API)
     childProcesses.push(spawn(process.execPath, [PROXY_BIN, '' + PROXY_PORT, '' + API_PORT, '' + HFS_PORT], {
       cwd: SERVICE_CORE_DIR,
-      stdio: 'ignore'
+      stdio: ['ignore', logFd('proxy'), logFd('proxy-err')]
     }));
 
     // Wait for API server to be ready (plain HTTP, no SSL)
     await waitForServer('http://127.0.0.1:' + API_PORT + '/', 20000);
+    // Wait for HFS server too (any HTTP response means it is listening)
+    await waitForServer('http://127.0.0.1:' + HFS_PORT + '/', 30000, true);
     // Wait for proxy to be ready (it sits in front of everything)
     await waitForServer(SERVER_URL + 'reg/service/info', 30000);
   });
@@ -151,18 +162,45 @@ function loadTestFiles (component) {
     .forEach(f => require(path.join(testDir, f)));
 }
 
-function waitForServer (url, timeoutMs) {
+function waitForServer (url, timeoutMs, anyResponse) {
   const mod = url.startsWith('https') ? require('node:https') : require('node:http');
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
     (function attempt () {
-      if (Date.now() > deadline) return reject(new Error('Server not ready after ' + timeoutMs + 'ms'));
+      if (Date.now() > deadline) return reject(new Error('Server not ready after ' + timeoutMs + 'ms: ' + url));
       const req = mod.get(url, { rejectUnauthorized: false }, (res) => {
         res.on('data', () => {});
-        res.on('end', () => res.statusCode === 200 ? resolve() : setTimeout(attempt, 500));
+        res.on('end', () => (anyResponse || res.statusCode === 200) ? resolve() : setTimeout(attempt, 500));
       });
       req.on('error', () => setTimeout(attempt, 500));
       req.end();
     })();
   });
+}
+
+/**
+ * Kill a leftover child of a previous run still listening on the port
+ * (identified by its command line referencing this repository checkout).
+ * Throws if the port is held by a foreign process — killing it blindly
+ * (the previous `fuser -k`, Linux-only) could take down unrelated dev
+ * servers; pick other ports via EXTERNALS_*_PORT instead.
+ */
+function killOwnLeftoverOnPort (port) {
+  let out = '';
+  try {
+    out = execSync('lsof -ti :' + port, { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+  } catch (e) { return; } // no listener on that port
+  for (const pidStr of out.trim().split('\n').filter(Boolean)) {
+    const pid = parseInt(pidStr, 10);
+    let command = '';
+    try {
+      command = execSync('ps -o command= -p ' + pid, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    } catch (e) { continue; } // already gone
+    if (command.includes(SERVICE_CORE_DIR)) {
+      try { process.kill(pid, 'SIGKILL'); } catch (e) { /* already gone */ }
+    } else {
+      throw new Error('Port ' + port + ' is in use by a foreign process (pid ' + pid + ': ' + command + '). ' +
+        'Free the port or set EXTERNALS_PROXY_PORT / EXTERNALS_API_PORT / EXTERNALS_HFS_PORT.');
+    }
+  }
 }

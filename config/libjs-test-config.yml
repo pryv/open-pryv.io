@@ -12,6 +12,11 @@ service:
   assets:
     definitions: https://pryv.github.io/assets-pryv.me/index.json
 
+# Auth-popup base URL — only needs to be a well-formed URL for the
+# access-request flow tests (no auth UI is actually served locally).
+access:
+  defaultAuthUrl: https://l.backloop.dev:3000/auth-ui/access.html
+
 # Local-integration auth values (NOT secrets — this overlay only ever runs
 # the lib-js suite against a throwaway local dev server).
 auth:
