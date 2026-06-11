@@ -176,7 +176,13 @@ class DBrqlite {
   // --- Migration methods --- //
 
   async exportAll () {
-    return await this.getAllWithPrefix('user');
+    // Only the two user-field namespaces — a bare 'user' prefix would also
+    // match 'user-core/' rows, which parseEntry misreads (no username) and
+    // importAll would then corrupt into bogus 'user-indexed/' keys.
+    return [
+      ...await this.getAllWithPrefix('user-unique/'),
+      ...await this.getAllWithPrefix('user-indexed/')
+    ];
   }
 
   async importAll (data: PlatformEntry[]) {
