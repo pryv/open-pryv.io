@@ -11,3 +11,10 @@ dnsLess:
 service:
   assets:
     definitions: https://pryv.github.io/assets-pryv.me/index.json
+
+# Local-integration auth values (NOT secrets — this overlay only ever runs
+# the lib-js suite against a throwaway local dev server).
+auth:
+  adminAccessKey: 'libjs-test-admin-key'
+  filesReadTokenSecret: 'libjs-test-files-secret'
+  ssoCookieSignSecret: 'libjs-test-sso-secret'
