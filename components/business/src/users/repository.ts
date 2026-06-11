@@ -17,6 +17,12 @@ const accountStreams = require('business/src/system-streams/index.ts');
 const encryption = require('utils').encryption;
 const errors = require('errors').factory;
 const { getMall } = require('mall');
+import type { Mall } from 'mall/src/types.ts';
+import type { Platform } from 'platform/src/Platform.ts';
+import type { Sessions } from 'storages/interfaces/baseStorage/Sessions.ts';
+import type { UserStorage } from 'storages/interfaces/baseStorage/UserStorage.ts';
+import type { UserAccountStorage } from 'storages/interfaces/baseStorage/UserAccountStorage.ts';
+import type { StoredAccess } from 'storages/interfaces/_shared/domain.ts';
 const { getPlatform } = require('platform');
 const cache = require('cache').default;
 const cmc = require('cmc');
@@ -28,20 +34,17 @@ export { getUsersRepository };
  * Repository of the users
  */
 type UserData = { id: string; username: string; password?: string; [k: string]: unknown };
-type Operation = { action: string; key: string; value: unknown; isUnique?: boolean; isActive?: boolean; previousValue?: unknown; [k: string]: unknown };
+type Operation = import('platform/src/Platform.ts').PlatformOperation;
 
 class UsersRepository {
-  // Storage-layer plumbing shapes are not yet modelled in TS — `any` here
-  // until StorageLayer / Sessions / Accesses / UsersLocalIndex / EventFiles
-  // have formal interfaces.
-  /* eslint-disable @typescript-eslint/no-explicit-any -- storage plumbing escape hatch (see above) */
-  storageLayer: any;
-  sessionsStorage: any;
-  accessStorage: any;
-  mall: any;
-  platform: any;
-  userAccountStorage: any;
-  /* eslint-enable @typescript-eslint/no-explicit-any */
+  // Storage-layer plumbing, typed with the storage contracts. All set by
+  // init() before any use (definite assignment).
+  storageLayer!: { sessions: Sessions; accesses: UserStorage<StoredAccess>; [k: string]: unknown };
+  sessionsStorage!: Sessions;
+  accessStorage!: UserStorage<StoredAccess>;
+  mall!: Mall;
+  platform!: Platform;
+  userAccountStorage!: UserAccountStorage;
   usersIndex!: typeof usersLocalIndex; // set by init()
 
   async init () {
@@ -208,7 +211,8 @@ class UsersRepository {
         operations.push({
           action: 'create',
           key,
-          value,
+          // Indexed account-field values are strings (system-streams config).
+          value: value as string,
           isUnique: accountStreams.uniqueFieldNames.includes(key),
           isActive: true
         });
@@ -225,7 +229,8 @@ class UsersRepository {
     // could throw uniqueness errors
     await this.platform.updateUser(user.username, operations);
     const mallTransaction = await this.mall.newTransaction();
-    const localTransaction = await mallTransaction.getStoreTransaction('local');
+    // Invariant: the local store always provides a transaction.
+    const localTransaction = (await mallTransaction.getStoreTransaction('local'))!;
     await localTransaction.exec(async () => {
       let accessId = UserRepositoryOptions.SYSTEM_USER_ACCESS_ID;
       if (withSession &&
@@ -256,7 +261,7 @@ class UsersRepository {
       // set user password
       if (user.passwordHash) {
         // if passwordHash was provided directly (via system.createUser)
-        await this.userAccountStorage.addPasswordHash(user.id, user.passwordHash, user.accessId);
+        await this.userAccountStorage.addPasswordHash(user.id, user.passwordHash as string, user.accessId as string);
       } else {
         // regular user creation
         await this.setUserPassword(user.id, user.password!, user.accessId as string);
@@ -277,7 +282,8 @@ class UsersRepository {
     delete update.password;
     // Start a transaction session
     const mallTransaction = await this.mall.newTransaction();
-    const localTransaction = await mallTransaction.getStoreTransaction('local');
+    // Invariant: the local store always provides a transaction.
+    const localTransaction = (await mallTransaction.getStoreTransaction('local'))!;
     const modifiedTime = timestamp.now();
     await localTransaction.exec(async () => {
       // update all account streams and don't allow additional properties

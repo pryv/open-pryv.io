@@ -7,7 +7,7 @@
 
 // Shared structural types for the CMC plugin modules.
 
-type LogFn = (...args: unknown[]) => void;
+import type { LogFn } from '@pryv/boiler';
 // All methods optional: callers use `logger?.warn?.(...)` style throughout.
 type CmcLogger = { debug?: LogFn; warn?: LogFn; info?: LogFn; error?: LogFn };
 

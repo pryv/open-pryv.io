@@ -40,7 +40,11 @@ export type StoreDescription = { id: string; includeInStarPermission?: boolean; 
 
 // ───────────────────────── Transactions ─────────────────────────
 
-export type StoreTransaction = { exec: (func: () => unknown | Promise<unknown>) => Promise<unknown> };
+export type StoreTransaction = {
+  exec: (func: () => unknown | Promise<unknown>) => Promise<unknown>;
+  /** Engine-specific session handle (e.g. the local data store exposes one). */
+  transactionSession?: unknown;
+};
 
 /** Structural view of MallTransaction (the class adds caching per store). */
 export type MallTransactionLike = {

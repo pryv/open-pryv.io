@@ -348,6 +348,6 @@ typecheck:
     tsc --noEmit -p tsconfig.json
 
 # Report TS type coverage (share of expressions with a non-any type).
-# Baseline 80.91% (2026-06-11); --at-least guards against regressions.
+# Baseline 81.77% (2026-06-11, post interface-IO typing); --at-least guards against regressions.
 type-coverage:
-    npx type-coverage -p tsconfig.json --at-least 80
+    npx type-coverage -p tsconfig.json --at-least 81

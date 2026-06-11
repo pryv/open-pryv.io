@@ -810,6 +810,7 @@ function parseJsonString (raw: string): string {
 const platform = new Platform();
 export default platform;
 export { platform, Platform };
+export type { PlatformOperation };
 
 // Local type aliases for shapes that aren't formally exported by an interface.
 type PlatformOperation = {

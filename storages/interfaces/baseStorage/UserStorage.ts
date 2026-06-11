@@ -31,7 +31,8 @@ export interface UserStorage<T extends StoredItem = StoredItem> {
 
   find (userOrUserId: UserOrId, query: Query, options: FindOptions, callback: Callback<Array<T | null>>): void;
   findOne (userOrUserId: UserOrId, query: Query, options: FindOptions, callback: Callback<T | null>): void;
-  insertOne (userOrUserId: UserOrId, item: T, callback: Callback<T | null>): void;
+  /** Inserts accept partial items — applyDefaults mints missing id/defaults. */
+  insertOne (userOrUserId: UserOrId, item: Partial<T>, callback: Callback<T | null>): void;
   findOneAndUpdate (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<T | null>): void;
   updateOne (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<T | null>): void;
   updateMany (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<{ modifiedCount: number }>): void;

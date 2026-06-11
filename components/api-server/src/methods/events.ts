@@ -88,8 +88,7 @@ type EventsGetParams = { streams?: string | Record<string, unknown> | Array<stri
 // events.get's result is the streaming Result wrapper (Result.ts), not a
 // plain payload — typing it permissively here keeps `result.addStream(...)`
 // callable without modeling the full Result class API in this file.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type EventsGetResult = { addStream (name: string, stream: unknown): void; events?: WireEvent[]; eventDeletions?: ItemDeletion[]; [k: string]: any };
+type EventsGetResult = { addStream (name: string, stream: unknown): void; events?: WireEvent[]; eventDeletions?: ItemDeletion[]; [k: string]: unknown };
 type EventsGetOneParams = { id: string; includeHistory?: boolean };
 type EventsGetOneResult = { event?: WireEvent; history?: WireEvent[] };
 type EventsCreateParams = Partial<WireEvent>;
@@ -107,12 +106,10 @@ type EventsDeleteAttachmentResult = { event?: WireEvent };
 // method-specific middleware call sites; cross-chain shared functions
 // just need an open-ended carrier that doesn't fight TS at the field
 // reads they perform on a heterogeneous payload.
-/* eslint-disable @typescript-eslint/no-explicit-any -- middleware scratchpad carriers (see above) */
-type EventsCreateOrUpdateParams = { [k: string]: any };
-type EventsCreateOrUpdateResult = { [k: string]: any };
-type EventsAnyParams = { [k: string]: any };
-type EventsAnyResult = { [k: string]: any };
-/* eslint-enable @typescript-eslint/no-explicit-any */
+type EventsCreateOrUpdateParams = { update?: Partial<WireEvent>; [k: string]: unknown } & Partial<WireEvent>;
+type EventsCreateOrUpdateResult = { event?: WireEvent; [k: string]: unknown };
+type EventsAnyParams = { [k: string]: unknown };
+type EventsAnyResult = { event?: WireEvent; eventDeletion?: ItemDeletion; [k: string]: unknown };
 
 // Type repository that will contain information about what is allowed/known
 // for events.
@@ -162,8 +159,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // `mall.streams` + `mall.events`. Mall uses class-instance getters
   // for streams/events so Object.assign would drop them — use a
   // forwarding object literal instead.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mallForCmc: any = {
+  const mallForCmc: import('cmc/src/_types.ts').MallLike = {
     get streams () { return mall.streams; },
     get events () { return mall.events; },
     accesses: cmcMallAccessesAdapter,
@@ -815,10 +811,12 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
     // notify is called by create, update and delete
     // depending on the case the event properties will be found in context or event
-    if (isSeriesEvent(context.event || result.event)) {
+    const notifiedEvent = context.event || result.event;
+    if (notifiedEvent != null && isSeriesEvent(notifiedEvent)) {
       const isDelete = !!result.eventDeletion;
       // if event is a deletion 'id' is given by result.eventDeletion
-      const updatedEventId = { id: (isDelete ? result.eventDeletion : result.event).id };
+      // Invariant: a series notification always carries the event or its deletion.
+      const updatedEventId = { id: (isDelete ? result.eventDeletion! : notifiedEvent).id };
       const subject = isDelete
         ? pubsub.SERIES_DELETE_EVENTID_USERNAME
         : pubsub.SERIES_UPDATE_EVENTID_USERNAME;
@@ -839,7 +837,10 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
    *
    */
   // Multer-style files-or-files-array — runtime shape is heterogeneous,
-  // intentionally kept wide.
+  // intentionally kept wide. NOTE: when the `{ file: [...] }` nesting is hit,
+  // the sanitized index-keyed object carries no `length`, so the consumers'
+  // `files.length > 0` checks skip it — dormant path, tracked in the
+  // workspace bug registry.
   /* eslint-disable @typescript-eslint/no-explicit-any -- heterogeneous multer bag (see above) */
   function sanitizeRequestFiles (files: any) {
     if (!files || !files.file || !Array.isArray(files.file)) {
@@ -857,7 +858,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
   async function normalizeStreamIdAndStreamIds (context: MethodContext, params: EventsCreateOrUpdateParams, result: EventsCreateOrUpdateResult, next: MethodNext) {
-    const event = isEventsUpdateMethod() ? params.update : params;
+    // Invariant: on events.update the schema requires params.update.
+    const event = isEventsUpdateMethod() ? params.update! : params;
     // remove double entries from streamIds
     if (event.streamIds != null && event.streamIds.length > 1) {
       event.streamIds = [...new Set(event.streamIds)];

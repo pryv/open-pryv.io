@@ -1,5 +1,27 @@
 # Changelog - Internal (no API impact)
 
+## refactor(types): strongly-typed storage and data-access contracts
+
+The storage interfaces, their engine implementations and the main callers now exchange real domain types instead of structural bags. All type-level — no runtime behavior changed (two deliberate exceptions below); both engine matrices and CI stayed green throughout.
+
+**Contracts** (`storages/interfaces/**`):
+- New `_shared/domain.ts`: `StoredEvent` / `StoredStream` / `StoredAccess` / `StoredPermission` / `SessionData` — the storage-side counterparts of the wire types in `business/src/types/public.ts` (wire vs stored vs engine-row are deliberately distinct).
+- `UserStorage<T extends StoredItem>` is generic over the stored item; `iterateAll` now declares the generator shape both engines actually implement; the mongo-era `CollectionInfo.indexes` field and the dead `insertOne` options parameter are gone.
+- `Sessions` / `PasswordResetRequests` / `UserAccountStorage` / `EventFiles` / `UserAuditDatabase` / `BackupReader`+`Writer` fully typed (migration docs are the mongo-era `_id` formats, named as such; audit sync/SQLite-vs-async/PG dual-mode modelled on all read methods).
+
+**Data-access layer**: new `components/mall/src/types.ts` exporting `interface Mall` / `MallEvents` / `MallStreams` (classes declare `implements`); `MethodContext.mall` uses it; `DataStore.supports` strongly typed with `StoreSupports`.
+
+**Callers**:
+- CMC modules share one set of mall views + `CmcAccessLike` / `CmcClientData` in `cmc/src/_types.ts` (15 per-module Mall views and 10 access shapes collapsed; `OutboundDeps`/`FetchLike` declared once).
+- api-server method contexts declare their scratch fields (events/account/streams families) instead of `[key: string]: any`; `auditIntegrityPayload` and `authorizationHeader` live on the base `MethodContext` (cross-component contracts); canonical `PryvRequest` carries the typed context.
+- `UsersRepository` plumbing fields use the storage contracts; `PlatformOperation` exported from the platform component.
+
+**Runtime-visible fixes shipped with the typing** (each found by the new types):
+- `mall.events.updateStreamedMany` on a multi-store query now throws the underlying error instead of failing with an opaque TypeError at iteration.
+- The accesses storage method that looked up deletion records by query is now `findDeletionRecords` — it shadowed the contract's `findDeletions(deletedSince)` with different semantics.
+
+**Guardrails**: `just type-coverage` floor raised 80 → 81 (baseline 81.77%); explicit `: any` down to 8 lines in 4 documented clusters (heterogeneous middleware registry, multer file bag, boiler logging internals, migration authoring contract).
+
 ## refactor(types): typing-consistency pass + lint/coverage guardrails
 
 Closes the long-running TypeScript type-tightening effort. The earlier drain removed `: any` file by file with minimal-diff local types; this pass optimizes for consistency across files and locks the result in. All type-level — no runtime change intended; both engine matrices and CI stayed green throughout.
