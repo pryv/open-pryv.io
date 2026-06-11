@@ -13,11 +13,21 @@
  */
 
 import type { Callback } from '../_shared/types.ts';
+import type { SessionData } from '../_shared/domain.ts';
+
+/** Mongo-era migration document delivered by exportAll (and accepted, with
+ *  variants, by importAll). `_id`-keyed and Date-typed for cross-engine
+ *  migration compatibility. */
+export type SessionExportDoc = { _id: string; data: SessionData; expires: Date };
+export type SessionImportDoc = { _id?: string; id?: string; data: SessionData | string; expires: Date | number };
 
 export interface Sessions {
-  get (id: string, callback: Callback<unknown>): void;
-  getMatching (data: Record<string, unknown>, callback: Callback<string | null>): void;
-  generate (data: Record<string, unknown>, options: Record<string, unknown> | null, callback: Callback<string>): void;
+  get (id: string, callback: Callback<SessionData | null>): void;
+  getMatching (data: SessionData, callback: Callback<string | null>): void;
+  generate (data: SessionData, options: Record<string, unknown> | null, callback: Callback<string>): void;
+  // touch/destroy/clearAll/expireNow/remove payloads are engine-specific
+  // write results (PG query result vs SQLite run result) — callers ignore
+  // them, so they stay `unknown` by design.
   touch (id: string, callback: Callback<unknown>): void;
   destroy (id: string, callback: Callback<unknown>): void;
   clearAll (callback: Callback<unknown>): void;
@@ -25,8 +35,8 @@ export interface Sessions {
   remove (query: Record<string, unknown>, callback: Callback<unknown>): void;
 
   // Migration methods
-  exportAll (callback: Callback<unknown[]>): void;
-  importAll (data: Array<Record<string, unknown>>, callback: Callback<unknown>): void;
+  exportAll (callback: Callback<SessionExportDoc[]>): void;
+  importAll (data: SessionImportDoc[], callback: Callback<unknown>): void;
 }
 
 const REQUIRED_METHODS: string[] = [

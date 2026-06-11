@@ -117,22 +117,8 @@ export type StoredAccess = {
 // ───────────────────────────── Sessions ─────────────────────────────
 
 /** Session payload as written by login (`{ username, appId }`); kept open
- *  because the Sessions contract is content-agnostic. */
+ *  because the Sessions contract is content-agnostic. The full
+ *  session/reset-request document shapes are interface wire formats
+ *  (mongo-era `_id` docs) and live with their contracts in
+ *  `baseStorage/Sessions.ts` / `baseStorage/PasswordResetRequests.ts`. */
 export type SessionData = { username?: string; appId?: string } & Record<string, unknown>;
-
-export type Session = {
-  id: string;
-  data: SessionData;
-  /** Expiry timestamp (ms since epoch at the interface level; engines may
-   *  store Date or integer internally). */
-  expires: number;
-};
-
-// ───────────────────────── Password reset ─────────────────────────
-
-export type PasswordResetRequest = {
-  id: string;
-  username: string;
-  /** Expiry timestamp (ms since epoch at the interface level). */
-  expires: number;
-};

@@ -14,15 +14,22 @@
 
 import type { Callback } from '../_shared/types.ts';
 
+/** Mongo-era reset-request document (`_id`-keyed, Date-typed) as delivered
+ *  by get/exportAll; importAll accepts looser legacy variants. */
+export type PasswordResetDoc = { _id: string; username: string; expires: Date };
+export type PasswordResetImportDoc = { _id?: string; id?: string; username: string; expires: Date | number | string };
+
 export interface PasswordResetRequests {
-  get (id: string, username: string, callback: Callback<unknown>): void;
+  get (id: string, username: string, callback: Callback<PasswordResetDoc | null>): void;
   generate (username: string, callback: Callback<string>): void;
+  // destroy/clearAll payloads are engine-specific write results — ignored
+  // by callers, `unknown` by design.
   destroy (id: string, username: string, callback: Callback<unknown>): void;
   clearAll (callback: Callback<unknown>): void;
 
   // Migration methods
-  exportAll (callback: Callback<unknown[]>): void;
-  importAll (data: Array<Record<string, unknown>>, callback: Callback<unknown>): void;
+  exportAll (callback: Callback<PasswordResetDoc[]>): void;
+  importAll (data: PasswordResetImportDoc[], callback: Callback<unknown>): void;
 }
 
 const REQUIRED_METHODS: string[] = [
