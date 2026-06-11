@@ -22,6 +22,8 @@ type SynchroModule = {
 
 const _caches: Record<string, InstanceType<typeof LRU>> = {};
 const MAX_PER_CACHE_SIZE = 2000; // maximum elements for each cache (namespace)
+// Invariant: isSynchroActive === true implies synchro != null (both set
+// together in loadConfiguration) — the `synchro!` uses below rely on it.
 let synchro: SynchroModule | null = null;
 let isActive = false;
 let isSynchroActive = false;

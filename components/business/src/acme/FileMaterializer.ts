@@ -58,9 +58,9 @@ class FileMaterializer {
     if (certRenewer == null) throw new Error('FileMaterializer: certRenewer is required');
     if (!tlsDir) throw new Error('FileMaterializer: tlsDir is required');
     if (!hostname) throw new Error('FileMaterializer: hostname is required');
-    this.#certRenewer = certRenewer!;
-    this.#tlsDir = tlsDir!;
-    this.#hostname = hostname!;
+    this.#certRenewer = certRenewer;
+    this.#tlsDir = tlsDir;
+    this.#hostname = hostname;
     this.#onRotate = onRotate || (async () => {});
     this.#log = log || ((msg: string) => console.log('[fm] ' + msg));
   }

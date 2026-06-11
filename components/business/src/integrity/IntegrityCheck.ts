@@ -30,6 +30,7 @@ type Report = {
 };
 
 class IntegrityCheck {
+  // Set by init() before any check* method runs — the `!` uses rely on it.
   storageLayer: StorageLayer | null;
   integrity: Integrity | null;
   logger: Logger | null;

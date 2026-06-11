@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { HttpHeaders } from './types/public.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
@@ -30,7 +31,7 @@ class MethodContext {
   /**
    * Used in custom auth function
    */
-  headers: Record<string, string | string[] | undefined>;
+  headers: HttpHeaders;
   /**
    * API method id, e.g. "events.get"
    */
@@ -51,7 +52,7 @@ class MethodContext {
    */
   acceptStreamsQueryNonStringified: boolean | undefined;
 
-  constructor (source: ContextSource, username: string, auth: string | null, customAuthStepFn: CustomAuthFunction | null, headers: Record<string, string | string[] | undefined>, query: Record<string, unknown>, tracing: unknown) {
+  constructor (source: ContextSource, username: string, auth: string | null, customAuthStepFn: CustomAuthFunction | null, headers: HttpHeaders, query: Record<string, unknown>, tracing: unknown) {
     this.source = source;
     this.user = { id: null, username };
     this.mall = null;

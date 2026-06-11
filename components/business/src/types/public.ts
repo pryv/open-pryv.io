@@ -132,6 +132,9 @@ export type Webhook = {
 
 // ───────────────────────────── Methods (call envelope) ─────────────────────────────
 
+/** Node/Express request headers as seen by method contexts and handlers. */
+export type HttpHeaders = Record<string, string | string[] | undefined>;
+
 export type ApiResultMeta = {
   apiVersion: string;
   serverTime: number;

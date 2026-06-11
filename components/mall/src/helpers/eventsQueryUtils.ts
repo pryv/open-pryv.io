@@ -7,6 +7,7 @@
 
 
 import { createRequire } from 'node:module';
+import type { EventsQueryState } from '../../../../storages/interfaces/_shared/types.ts';
 const require = createRequire(import.meta.url);
 
 const storeDataUtils = require('./storeDataUtils.ts');
@@ -22,7 +23,7 @@ type EventsParams = {
   id?: string;
   headId?: string;
   streams?: StreamQueryItem[];
-  state?: 'trashed' | 'all' | 'default' | null;
+  state?: EventsQueryState | null;
   types?: string[];
   fromTime?: number;
   toTime?: number;

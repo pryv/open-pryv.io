@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { HttpHeaders } from 'business/src/types/public.ts';
 const require = createRequire(import.meta.url);
 
 const { LRUCache: LRU } = require('lru-cache');
@@ -28,7 +29,7 @@ type SeriesMeta = {
   produceRowType (repo: unknown): unknown;
   namespaceAndName (): [string, string];
 };
-type ReqLike = { params: Record<string, string>; headers: Record<string, string | string[] | undefined>; body: unknown };
+type ReqLike = { params: Record<string, string>; headers: HttpHeaders; body: unknown };
 type ResLike = { status: (code: number) => { json: (b: unknown) => unknown } };
 type BatchRequestLike = {
   elements (): Iterable<{ eventId: string; data: { minmax (): unknown } }>;

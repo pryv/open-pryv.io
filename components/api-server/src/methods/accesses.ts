@@ -38,7 +38,7 @@ const WebhooksRepository = require('business').webhooks.Repository;
 
 type Permission = {
   streamId: string;
-  level: 'manage' | 'contribute' | 'read' | 'create-only' | 'none';
+  level: PermissionLevel;
   // Display-only fields that the wire schema accepts on create / update and the
   // cleanup middleware strips before storage. Kept here so the cleanup forEach
   // can `delete` them under noImplicitAny.
@@ -47,7 +47,7 @@ type Permission = {
 };
 type Access = {
   id?: string;
-  type?: 'personal' | 'app' | 'shared';
+  type?: AccessType;
   permissions?: Array<Permission>;
   expires?: number | undefined | null;
   clientData?: {} | undefined | null;
@@ -58,6 +58,7 @@ type Access = {
 };
 import type { MethodNext, NodeCallback } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
+import type { PermissionLevel, AccessType } from 'business/src/types/public.ts';
 // One scratchpad field landed by middleware steps for downstream consumers.
 type MethodContext = BaseMethodContext & {
   auditIntegrityPayload?: unknown;

@@ -259,12 +259,14 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
     } catch (error) {
       return next(errors.unexpectedError(error));
     }
+    // Assigned + null-checked in the try above; failures returned via next().
+    const checkedWebhook = webhook!;
     try {
-      await webhook!.makeCall([TEST_MESSAGE]);
+      await checkedWebhook.makeCall([TEST_MESSAGE]);
     } catch (e) {
-      return next(errors.unknownReferencedResource('webhook', 'url', webhook!.url, e));
+      return next(errors.unknownReferencedResource('webhook', 'url', checkedWebhook.url, e));
     }
-    result.webhook = webhook!.forApi();
+    result.webhook = checkedWebhook.forApi();
     next();
   }
 

@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { HttpHeaders } from 'business/src/types/public.ts';
 import type { Server as HttpServer } from 'node:http';
 import type { CustomAuthFunction } from 'business/src/MethodContext.ts';
 const require = createRequire(import.meta.url);
@@ -34,7 +35,7 @@ type SocketLike = {
   nsp: { name: string };
   handshake: {
     query: Record<string, string | undefined>;
-    headers: Record<string, string | string[] | undefined>;
+    headers: HttpHeaders;
   };
   request: { connection: { remoteAddress?: string } };
   methodContext?: unknown;

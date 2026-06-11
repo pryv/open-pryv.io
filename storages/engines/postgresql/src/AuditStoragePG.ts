@@ -64,11 +64,12 @@ class AuditStoragePG {
     this.checkInitialized();
     let userDb = this.userDBsCache.get(userId);
     if (!userDb) {
-      userDb = new UserAuditDatabasePG(this.db, userId, this.logger);
-      await userDb!.init();
-      this.userDBsCache.set(userId, userDb!);
+      const fresh: UserAuditDbLike = new UserAuditDatabasePG(this.db, userId, this.logger);
+      await fresh.init();
+      this.userDBsCache.set(userId, fresh);
+      userDb = fresh;
     }
-    return userDb!;
+    return userDb;
   }
 
   async deleteUser (userId: string): Promise<void> {

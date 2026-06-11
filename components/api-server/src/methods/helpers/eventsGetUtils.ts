@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { EventsQueryState } from '../../../../../storages/interfaces/_shared/types.ts';
 const require = createRequire(import.meta.url);
 /**
  * Some method used by events.get are shared with audit.getLogs

@@ -68,6 +68,7 @@ interface Logger {
  * PostgreSQL connection wrapper with pooling.
  */
 class DatabasePG {
+  // Set by init() / ensureConnected() before queries — `!` uses rely on it.
   pool: PgPool | null;
   poolConfig: PoolConfig;
   connected: boolean;

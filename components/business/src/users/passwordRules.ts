@@ -143,6 +143,8 @@ async function init (): Promise<PasswordRules> {
     }
   }
 
+  // The `settings().passwordX!` uses above rely on default-config.yml always
+  // providing the auth.password* keys (config defaults, not runtime checks).
   function settings (): AuthSettings {
     return config.get('auth') as AuthSettings;
   }

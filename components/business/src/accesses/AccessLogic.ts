@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { PermissionLevel, AccessType } from '../types/public.ts';
 const require = createRequire(import.meta.url);
 /**
  * Business logic for access objects.
@@ -19,7 +20,7 @@ const { storeDataUtils, getMall } = require('mall');
 
 type StreamPermission = {
   streamId: string;
-  level: 'read' | 'contribute' | 'manage' | 'create-only' | 'none';
+  level: PermissionLevel;
 };
 type FeaturePermission = {
   feature: string;
@@ -58,7 +59,7 @@ class AccessLogic {
   featurePermissionsMap!: Record<string, FeaturePermission>;
   // mirrored from `access` via deepMerge() in constructor — definite-assign:
   id!: string;
-  type!: 'personal' | 'app' | 'shared';
+  type!: AccessType;
   permissions!: Permission[];
 
   static PERMISSION_LEVEL_CONTRIBUTE: string;

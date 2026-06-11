@@ -35,6 +35,9 @@ type MallLike = {
 type AuditLike = { validApiCall: (context: ContextLike, err: unknown) => Promise<void> };
 type PryvRequest = Request & { context: ContextLike; params: { id: string; fileId: string } & Request['params'] };
 
+// Populated by the middleware factory before the middleware is returned —
+// the `mall!` / `audit!` uses in handlers rely on that ordering
+// (`audit!` additionally guarded by isAuditActive).
 let initialized = false;
 let config: ConfigLike | null = null;
 let mall: MallLike | null = null;
@@ -42,10 +45,11 @@ let isAuditActive = false;
 let audit: AuditLike | null = null;
 async function middlewareFactory (): Promise<RequestHandler> {
   if (initialized) { return attachmentsAccessMiddleware as RequestHandler; }
-  config = await getConfig();
+  const loadedConfig = await getConfig();
+  config = loadedConfig;
   mall = await getMall();
   // -- Audit
-  isAuditActive = !!config!.get('audit:active');
+  isAuditActive = !!loadedConfig.get('audit:active');
   if (isAuditActive) {
     const throwIfMethodIsNotDeclared = require('audit/src/ApiMethods.ts').throwIfMethodIsNotDeclared;
     throwIfMethodIsNotDeclared('events.getAttachment');

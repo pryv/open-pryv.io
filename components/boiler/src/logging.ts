@@ -33,6 +33,8 @@ type BoilerConfig = {
   has? (key: string): boolean;
 };
 
+// Set by init() before any getLogger() consumer runs — the `!` uses below
+// rely on that boot ordering.
 let winstonInstance: WinstonLogger | null = null;
 let rootLogger: Logger | null = null;
 let customLoggerInstance: CustomLogger | null = null;

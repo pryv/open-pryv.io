@@ -20,3 +20,7 @@ export type Callback<T = unknown> = (err: Error | null, result?: T) => void;
 /** A user reference accepted by interface methods that key on user identity.
  *  Either the bare user id string, or an object containing it. */
 export type UserOrId = string | { id: string };
+
+/** events.get `state` filter: which trashed-ness bucket to return.
+ *  Sites that accept unvalidated wire input widen with `| string`/`| null`. */
+export type EventsQueryState = 'default' | 'trashed' | 'all';

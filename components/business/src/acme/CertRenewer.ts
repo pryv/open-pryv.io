@@ -64,9 +64,9 @@ class CertRenewer {
       throw new Error('CertRenewer: atRestKey must be a 32-byte Buffer');
     }
     if (!email) throw new Error('CertRenewer: email is required');
-    this.#platformDB = platformDB!;
-    this.#atRestKey = atRestKey!;
-    this.#email = email!;
+    this.#platformDB = platformDB;
+    this.#atRestKey = atRestKey;
+    this.#email = email;
     this.#directoryUrl = directoryUrl || AcmeClient.DIRECTORY_PRODUCTION;
     this.#acmeLib = acmeLib;
   }
@@ -224,7 +224,7 @@ class PlatformDBDnsWriter {
   #waitMs: number;
   constructor ({ platformDB, dnsServer = null, waitMs = 30000 }: { platformDB?: PlatformDB; dnsServer?: DnsServerLike | null; waitMs?: number }) {
     if (platformDB == null) throw new Error('PlatformDBDnsWriter: platformDB is required');
-    this.#platformDB = platformDB!;
+    this.#platformDB = platformDB;
     this.#dnsServer = dnsServer;
     this.#waitMs = waitMs;
   }

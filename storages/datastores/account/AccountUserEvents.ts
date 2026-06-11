@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { EventsQueryState } from '../../interfaces/_shared/types.ts';
 import type { Readable as ReadableType } from 'node:stream';
 const require = createRequire(import.meta.url);
 
@@ -29,7 +30,7 @@ type Event = {
   modifiedBy: string;
 };
 type EventQuery = {
-  state?: 'default' | 'trashed' | 'all';
+  state?: EventsQueryState;
   streams?: StreamGroup[];
   types?: string[];
   running?: boolean;

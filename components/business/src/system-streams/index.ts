@@ -41,7 +41,8 @@ let initialized = false;
 let streamIdWithPrefixToWithout: Record<string, string> | null = null;
 let accountStreamIdWithoutPrefixToWith: Record<string, string> | null = null;
 
-// Live exports — reassigned by initializeState()
+// Live exports — reassigned by initializeState(), which runs at module load
+// (bottom of this file) before any consumer; the `!` uses below rely on it.
 let allAsTree: SystemStream[] | null = null;
 let accountChildren: SystemStream[] | null = null;
 let accountMap: StreamsMap | null = null;

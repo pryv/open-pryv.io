@@ -9,6 +9,7 @@
  * Might by moved tp @pryv/datastore repo
  */
 import { createRequire } from 'node:module';
+import type { EventsQueryState } from '../interfaces/_shared/types.ts';
 const require = createRequire(import.meta.url);
 
 const timestamp = require('unix-timestamp');
@@ -28,7 +29,7 @@ type StoreOptions = {
   limit?: number | null;
 };
 type StoreQuery = {
-  state?: 'default' | 'all' | 'trashed' | string;
+  state?: EventsQueryState | string;
   modifiedSince?: number | null;
   types?: string[];
   streams?: unknown[];

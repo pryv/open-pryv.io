@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { EventsQueryState } from '../../../../storages/interfaces/_shared/types.ts';
 const require = createRequire(import.meta.url);
 const utils = require('utils');
 const errors = require('errors').factory;
@@ -79,7 +80,7 @@ type Event = {
 };
 // `streams` wire forms before normalization: single id, array of ids,
 // (possibly JSON-stringified) stream-query object, or array of queries.
-type EventsGetParams = { streams?: string | Record<string, unknown> | Array<string | Record<string, unknown>>; types?: string[] | null; fromTime?: number; toTime?: number; sortAscending?: boolean; skip?: number; limit?: number; state?: 'default' | 'trashed' | 'all'; modifiedSince?: number; includeDeletions?: boolean; auth?: string; running?: boolean; [k: string]: unknown };
+type EventsGetParams = { streams?: string | Record<string, unknown> | Array<string | Record<string, unknown>>; types?: string[] | null; fromTime?: number; toTime?: number; sortAscending?: boolean; skip?: number; limit?: number; state?: EventsQueryState; modifiedSince?: number; includeDeletions?: boolean; auth?: string; running?: boolean; [k: string]: unknown };
 // events.get's result is the streaming Result wrapper (Result.ts), not a
 // plain payload — typing it permissively here keeps `result.addStream(...)`
 // callable without modeling the full Result class API in this file.
