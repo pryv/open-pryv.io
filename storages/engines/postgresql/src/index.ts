@@ -14,6 +14,7 @@
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 import type { SeriesConnection } from '../../../interfaces/seriesStorage/SeriesConnection.ts';
+import type { UserOrId } from '../../../interfaces/_shared/types.ts';
 const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
@@ -42,7 +43,6 @@ type InitOptions = {
   [k: string]: unknown;
 };
 type EventRow = { id: string; streamIds?: string[]; [k: string]: unknown };
-type UserOrId = string | { id: string };
 
 function init (config: Record<string, unknown>, getLogger: (name: string) => Logger, internals: Record<string, unknown>): void {
   _internals.set('config', config);

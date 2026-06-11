@@ -173,6 +173,8 @@ Naming: a bare `Xxx` is a canonical type defined once and imported (`import type
 
 **Three layers, never merged:** wire (`Event`, what the API returns), stored (`StoredEvent`, what flows through interfaces and the mall — carries `headId`/`deleted`/`endTime`), engine row (`XxxRow`, per-engine, converted at the `toDB`/`fromDB` boundary). If your shape genuinely differs from all three, it's probably a narrow view — name it `XxxLike` and keep it local.
 
+**Lint-enforced:** a subset of these nouns is guarded by `no-restricted-syntax` in `eslint.ts-any.config.js` (part of `just lint`) — declaring a local `type`/`interface` with a guarded name fails lint with a pointer to the canonical home. Nouns with legitimate local narrow views (`Event`, `Stream`, `Access`, `Permission`, `StreamQuery`, `Query`, `Mall`, `LogFn`, `ConfigLike`, …) are not guarded — the `CANONICAL_NOUNS` block in the config lists both sets. When adding a row to this table, add the noun to the guard (after grepping the tree for existing local redeclarations).
+
 ### Patterns
 
 - **Method-context scratch fields**: api-server method chains refine the context as `type MethodContext = BaseMethodContext & { myField?: T }` with *named, typed* fields — never `[key: string]: any`. A field written by one component and read by another belongs on the base `MethodContext` class. Mid-chain reads of step-populated fields use one capture with an invariant comment: `const x = context.x!; // Invariant: <populating step> ran earlier in this chain.`

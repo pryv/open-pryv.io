@@ -1,5 +1,9 @@
 # Changelog - Internal (no API impact)
 
+## chore(lint): guard against redeclaring canonical type names
+
+`just lint` now fails when a TS source declares a local `type`/`interface` whose name collides with a canonical type (the AGENTS.md "Canonical type homes" table) — the error message points at the import instead. Implemented as `no-restricted-syntax` entries in `eslint.ts-any.config.js`; canonical-home files are exempt, and nouns with legitimate local narrow views (`Event`, `Stream`, `Access`, `Mall`, …) are deliberately not guarded — the `CANONICAL_NOUNS` block documents both sets. Three cleanups shipped with the guard, all type-only: the PG and SQLite engine entrypoints import `UserOrId` instead of carrying textually-identical local copies, the mail helper's local `Callback` is renamed `MailCallback` (it differs from the storage-plumbing `Callback`), and five dead type declarations were dropped from `Result.ts`.
+
 ## refactor(types): typed inheritance seam on the storage engine classes
 
 The per-store engine classes (Accesses/Streams/Webhooks/Profile × PG/SQLite) used to extend their bases through an untyped `require()`, which made the parent type `any` and silenced all override-compatibility checking — the blind spot the `findDeletions` shadowing shipped through. The bases are now generic over the stored item shape (`BaseStoragePG<T>` / `BaseStorageSQLite<TItem>`), declare `implements UserStorage<T>`, and every subclass extends through a typed require handle binding its item type (new `StoredWebhook` in `interfaces/_shared/domain.ts`). One cross-engine payload fix shipped with it (latent — no caller reads it): `AccessesPG.delete` in the integrity path now delivers `{ modifiedCount, integrityRecomputed }` like the SQLite twin, instead of the raw recompute result. Type-coverage floor unchanged at 81 (actual 81.97%).

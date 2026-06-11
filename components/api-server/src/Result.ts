@@ -352,8 +352,3 @@ type itemDeletion = {
   id: string;
   deleted: number;
 };
-type PermissionLevel = 'read' | 'contribute' | 'manage';
-type Setting = 'forbidden';
-type Permission =
-  | { streamId: string; level: PermissionLevel }
-  | { feature: string; setting: Setting };

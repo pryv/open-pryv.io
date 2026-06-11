@@ -19,7 +19,7 @@ const errors = require('errors').factory;
  * @param lang: user prefered language
  * @param callback(err,res): called once the email is sent
  */
-export const sendmail = function (emailSettings: EmailSettings, template: string, recipient: Recipient, subs: Substitutions, lang: string, callback: Callback): void {
+export const sendmail = function (emailSettings: EmailSettings, template: string, recipient: Recipient, subs: Substitutions, lang: string, callback: MailCallback): void {
   const mailingMethod = emailSettings.method;
   switch (mailingMethod) {
     case 'in-process':
@@ -78,7 +78,7 @@ export const sendmail = function (emailSettings: EmailSettings, template: string
  * already treat mail failures as non-fatal.
  *
  */
-function _sendmailInProcess (emailSettings: EmailSettings, template: string, recipient: Recipient, subs: Substitutions, lang: string, callback: Callback): void {
+function _sendmailInProcess (emailSettings: EmailSettings, template: string, recipient: Recipient, subs: Substitutions, lang: string, callback: MailCallback): void {
   (async () => {
     const mail = require('mail');
     if (!mail.isActive()) {
@@ -115,7 +115,7 @@ function _sendmailInProcess (emailSettings: EmailSettings, template: string, rec
 }
 type MailResponse = { ok: boolean; status: number; body: unknown };
 
-function _sendmail (url: string, data: MicroserviceData | MandrillData, cb: Callback): void {
+function _sendmail (url: string, data: MicroserviceData | MandrillData, cb: MailCallback): void {
   fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -146,7 +146,7 @@ function parseError (url: string, err: Error | null, res: MailResponse | null): 
   return errors.unexpectedError(baseMsg + errorMsg);
 }
 
-type Callback = (error?: Error | null, res?: MailResponse | null) => unknown;
+type MailCallback = (error?: Error | null, res?: MailResponse | null) => unknown;
 type Recipient = {
   email: string;
   name: string;

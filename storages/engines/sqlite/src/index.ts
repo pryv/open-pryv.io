@@ -27,6 +27,7 @@ const require = createRequire(import.meta.url);
 const { _internals } = require('./_internals.ts');
 
 import type { Logger } from '@pryv/boiler';
+import type { UserOrId } from '../../../interfaces/_shared/types.ts';
 
 interface StorageLayerLike {
   connection?: unknown;
@@ -49,8 +50,6 @@ interface InitOptions {
   integrityAccesses?: unknown;
   [k: string]: unknown;
 }
-
-type UserOrId = string | { id: string };
 
 function init (config: Record<string, unknown>, getLogger: (name: string) => Logger, internals: Record<string, unknown>): void {
   _internals.set('config', config);
