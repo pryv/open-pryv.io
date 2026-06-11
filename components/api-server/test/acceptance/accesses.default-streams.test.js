@@ -29,6 +29,14 @@ const { produceStorageConnection } = require('api-server/test/test-helpers');
 const { getConfig } = require('@pryv/boiler');
 
 describe('[AD01] Accesses with account streams', function () {
+  // nock >=14 patches the global http stack via @mswjs/interceptors; if a
+  // suite leaves it active, later suites' REAL requests flow through the
+  // mock socket and intermittently die ("socket hang up"). Activate on
+  // entry (restore() in a previous suite deactivates globally), fully
+  // restore on exit.
+  before(() => { if (!nock.isActive()) nock.activate(); });
+  after(() => { nock.cleanAll(); nock.restore(); });
+
   let config;
   let app;
   let request;

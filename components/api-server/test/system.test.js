@@ -7,6 +7,7 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
+const nock = require('nock');
 require('test-helpers/src/api-server-tests-config.ts');
 const async = require('async');
 const assert = require('node:assert');
@@ -36,6 +37,14 @@ const { getConfig } = require('@pryv/boiler');
 require('date-utils');
 
 describe('[SYRO] system route', function () {
+  // nock >=14 patches the global http stack via @mswjs/interceptors; if a
+  // suite leaves it active, later suites' REAL requests flow through the
+  // mock socket and intermittently die ("socket hang up"). Activate on
+  // entry (restore() in a previous suite deactivates globally), fully
+  // restore on exit.
+  before(() => { if (!nock.isActive()) nock.activate(); });
+  after(() => { nock.cleanAll(); nock.restore(); });
+
   let fixtures;
   let username;
   let config;
@@ -124,6 +133,14 @@ describe('[SYRO] system route', function () {
 });
 
 describe('[SYER] system (ex-register)', function () {
+  // nock >=14 patches the global http stack via @mswjs/interceptors; if a
+  // suite leaves it active, later suites' REAL requests flow through the
+  // mock socket and intermittently die ("socket hang up"). Activate on
+  // entry (restore() in a previous suite deactivates globally), fully
+  // restore on exit.
+  before(() => { if (!nock.isActive()) nock.activate(); });
+  after(() => { nock.cleanAll(); nock.restore(); });
+
   let fixtures;
 
   this.timeout(5000);

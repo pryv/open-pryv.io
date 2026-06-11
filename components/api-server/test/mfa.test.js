@@ -67,6 +67,14 @@ const mfaConfig = {
 };
 
 describe('[MFAA] MFA acceptance (seq)', function () {
+  // nock >=14 patches the global http stack via @mswjs/interceptors; if a
+  // suite leaves it active, later suites' REAL requests flow through the
+  // mock socket and intermittently die ("socket hang up"). Activate on
+  // entry (restore() in a previous suite deactivates globally), fully
+  // restore on exit.
+  before(() => { if (!nock.isActive()) nock.activate(); });
+  after(() => { nock.cleanAll(); nock.restore(); });
+
   this.timeout(20000);
 
   let fixtures;

@@ -7,6 +7,7 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
+const nock = require('nock');
 const assert = require('node:assert');
 const _ = require('lodash');
 const async = require('async');
@@ -28,6 +29,14 @@ const { getMall } = require('mall');
 const encryption = require('utils').encryption;
 
 describe('[ACCO] account', function () {
+  // nock >=14 patches the global http stack via @mswjs/interceptors; if a
+  // suite leaves it active, later suites' REAL requests flow through the
+  // mock socket and intermittently die ("socket hang up"). Activate on
+  // entry (restore() in a previous suite deactivates globally), fully
+  // restore on exit.
+  before(() => { if (!nock.isActive()) nock.activate(); });
+  after(() => { nock.cleanAll(); nock.restore(); });
+
   const user = structuredClone(testData.users[0]);
   let usersRepository = null;
   let userAccountStorage = null;
