@@ -1,5 +1,22 @@
 # Changelog - Internal (no API impact)
 
+## fix(storage): SQLite literal escaping + cross-process PG schema-init serialization
+
+Storage-layer and registration robustness fixes, no API impact:
+
+- User registration now compensates on failure: the platform reservation
+  (unique/indexed account fields, written first for cross-core uniqueness)
+  plus any partially-created local data are rolled back when the local
+  side of the creation fails, and the original error is rethrown. A failed
+  attempt no longer blocks re-registration of the same unique values nor
+  leaves platform-vs-repository inconsistencies behind.
+
+- SQLite column-condition literals now escape `'` by doubling (`''`) instead of backslash (not an escape character in SQLite) — a value containing a quote produced malformed SQL in the legacy coercion path. Covered by live round-trip tests including injection-shaped values. The `streamIds` FTS MATCH path was audited and is safe by construction (quotes and backslashes are forbidden streamId characters).
+- PostgreSQL schema DDL is serialized across processes with an advisory lock: two servers booting together against the same fresh database (e.g. API + HFS in the integration suite) raced the idempotent `CREATE TABLE IF NOT EXISTS` and PostgreSQL failed one of them with a `pg_type` unique-constraint error.
+- The SQLite engine now enforces the webhook-url uniqueness PG gets from `idx_webhook_url` (per access, live rows only) — duplicate webhook creation returns the documented 409 under both engines, and the collision test is re-enabled.
+
+Companion test-infra fixes: the lib-js integration suite now boots HFS correctly (its CommonJS launcher crashed as ESM on every spawn), forwards WebSocket upgrades through the HTTPS test proxy, supports port overrides for parallel local servers, and `just clean-test-data` fully resets rqlite raft state (stale raft replays previously resurrected ghost platform entries and degraded the local api-server matrix).
+
 ## chore(lint): guard against redeclaring canonical type names
 
 `just lint` now fails when a TS source declares a local `type`/`interface` whose name collides with a canonical type (the AGENTS.md "Canonical type homes" table) — the error message points at the import instead. Implemented as `no-restricted-syntax` entries in `eslint.ts-any.config.js`; canonical-home files are exempt, and nouns with legitimate local narrow views (`Event`, `Stream`, `Access`, `Mall`, …) are deliberately not guarded — the `CANONICAL_NOUNS` block documents both sets. Three cleanups shipped with the guard, all type-only: the PG and SQLite engine entrypoints import `UserOrId` instead of carrying textually-identical local copies, the mail helper's local `Callback` is renamed `MailCallback` (it differs from the storage-plumbing `Callback`), and five dead type declarations were dropped from `Result.ts`.
