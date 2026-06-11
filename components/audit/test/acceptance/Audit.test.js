@@ -132,7 +132,10 @@ describe('[AUDT] Audit', function () {
           .set('Authorization', access.token)
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
-        const entries = res.body.auditLogs;
+        // The audit query of the PREVIOUS test is itself audited; its async
+        // write can land after this test sampled `now` (tight timing, e.g.
+        // parallel mode). Only the action under test is asserted on.
+        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         log = entries[0];
@@ -196,7 +199,10 @@ describe('[AUDT] Audit', function () {
           .set('Authorization', access.token)
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
-        const entries = res.body.auditLogs;
+        // The audit query of the PREVIOUS test is itself audited; its async
+        // write can land after this test sampled `now` (tight timing, e.g.
+        // parallel mode). Only the action under test is asserted on.
+        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -224,7 +230,10 @@ describe('[AUDT] Audit', function () {
           .set('Authorization', access.token)
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
-        const entries = res.body.auditLogs;
+        // The audit query of the PREVIOUS test is itself audited; its async
+        // write can land after this test sampled `now` (tight timing, e.g.
+        // parallel mode). Only the action under test is asserted on.
+        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -252,7 +261,10 @@ describe('[AUDT] Audit', function () {
           .set('Authorization', access.token)
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
-        const entries = res.body.auditLogs;
+        // The audit query of the PREVIOUS test is itself audited; its async
+        // write can land after this test sampled `now` (tight timing, e.g.
+        // parallel mode). Only the action under test is asserted on.
+        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -278,7 +290,10 @@ describe('[AUDT] Audit', function () {
           .set('Authorization', access.token)
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
-        const entries = res.body.auditLogs;
+        // The audit query of the PREVIOUS test is itself audited; its async
+        // write can land after this test sampled `now` (tight timing, e.g.
+        // parallel mode). Only the action under test is asserted on.
+        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -309,7 +324,10 @@ describe('[AUDT] Audit', function () {
           .set('Authorization', access.token)
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
-        const entries = res.body.auditLogs;
+        // The audit query of the PREVIOUS test is itself audited; its async
+        // write can land after this test sampled `now` (tight timing, e.g.
+        // parallel mode). Only the action under test is asserted on.
+        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -334,7 +352,10 @@ describe('[AUDT] Audit', function () {
           .set('Authorization', access.token)
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
-        const entries = res.body.auditLogs;
+        // The audit query of the PREVIOUS test is itself audited; its async
+        // write can land after this test sampled `now` (tight timing, e.g.
+        // parallel mode). Only the action under test is asserted on.
+        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -361,7 +382,9 @@ describe('[AUDT] Audit', function () {
           .set('Authorization', access.token)
           .query({ fromTime: now });
         assert.strictEqual(res.status, 200);
-        const entries = res.body.auditLogs;
+        // Self-auditing of the previous test's audit query can land in the
+        // window (see the filter in the [AT5x] cases above).
+        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
         assert.ok(entries);
         assert.strictEqual(entries.length, 0);
       });
