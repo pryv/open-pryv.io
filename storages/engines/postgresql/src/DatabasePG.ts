@@ -186,10 +186,23 @@ class DatabasePG {
 
   /**
    * Run schema DDL once. Idempotent.
+   * Serialized across processes with an advisory lock: two servers booting
+   * together (e.g. API + HFS) racing "CREATE TABLE IF NOT EXISTS" can make
+   * PostgreSQL fail one of them with 23505 on pg_type.
    */
   async _initSchemaOnce (): Promise<void> {
     if (this._schemaReady) return;
-    await this.pool!.query(SCHEMA_SQL);
+    const client = await this.pool!.connect();
+    try {
+      await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_INIT_LOCK_KEY]);
+      try {
+        await client.query(SCHEMA_SQL);
+      } finally {
+        await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_INIT_LOCK_KEY]);
+      }
+    } finally {
+      client.release();
+    }
     this._schemaReady = true;
     this.logger.info('PostgreSQL schema initialized');
   }
@@ -227,6 +240,9 @@ class DatabasePG {
 }
 
 // ---------- Schema DDL ----------
+
+// Arbitrary application-wide advisory-lock key for schema DDL ('pryv' in hex)
+const SCHEMA_INIT_LOCK_KEY = 0x70727976;
 
 const SCHEMA_SQL = `
 -- User-scoped tables
