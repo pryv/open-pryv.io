@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Diskless deployment: PostgreSQL platform storage + S3 attachments
+
+Single-core dnsLess deployments in full PostgreSQL mode can now run with **no persistent filesystem on the app host** — every durable byte lives in PostgreSQL and an S3-compatible object store. Verified end-to-end with the app container on a `--read-only` rootfs (tmpfs for caches only).
+
+- **`storages.platform.engine: postgresql`** — platform data (registrations index, user-core map, DNS records, ACME account + TLS certs, observability values, mail templates, invitation tokens, access-request states) is stored in a `platform_kv` table in the same PostgreSQL instance as user data. No rqlited process, no Raft ports, no platform data dir. Boot-time validation refuses the option outside the single-core dnsLess full-PG shape (multi-core keeps rqlite); `check-config` mirrors the same rules.
+- **`storages.file.engine: s3`** — new attachment storage engine for AWS S3 / MinIO / Ceph RGW / any S3-compatible store, configured under `storages.engines.s3` (`endpoint`, `region`, `bucket`, credentials or IAM chain, `forcePathStyle`, `keyPrefix`). Streaming multipart uploads; one object per attachment at `<keyPrefix><userId>/<eventId>/<fileId>`.
+- **`bin/migrate-platform.js`** — one-shot migration of all platform data between rqlite and PostgreSQL, both directions (`--from/--to`, `--dry-run`, `--force`); adopt the diskless shape on an existing deployment, or move back to rqlite before going multi-core.
+- **`bin/config-to-env.js`** (+ `config-to-env` docker subcommand) — converts a YAML config into an env file (`KEY=VALUE`, nested paths joined with `__`, type-exact round-trip) so a deployment can run from `docker run --env-file …` with no config file mounted.
+- **Install wizard** — picking dnsLess + postgresql now offers both diskless options; the generated config carries the choices (audit storage follows onto PostgreSQL) or documents them as commented-out appendix blocks when declined, and a sibling `config-to-env.sh` launcher is generated alongside `check-config.sh`.
+- **`auth.delete` erases attachments through the storage engine** — account deletion now routes attachment removal through the fileStorage interface, so remote stores (S3) are emptied too; previously only the local user directory wipe covered them (filesystem engine unaffected).
+- INSTALL.md gains a "Diskless (PostgreSQL + S3)" section: config recipe, tmpfs guidance for the remaining cache paths, migration runbook, read-only container example.
+
 ### Content queries: filter `events.get` by `content` / `clientData`
 
 Two new `events.get` parameters — `content` and `clientData` — each an array of conditions on dot-paths into the corresponding event field, e.g. `[{"path":"drug.codes.atc","in":["G03DA04","B01AC06"]},{"path":"taken","eq":true}]`. Conditions AND together and compose with all existing parameters (`streams`, `types`, time bounds, paging).

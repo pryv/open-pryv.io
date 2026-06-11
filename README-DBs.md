@@ -28,9 +28,9 @@ storages:
   base:     { engine: postgresql }   # or sqlite
   data:     { engine: postgresql }   # or sqlite
   series:   { engine: postgresql }   # or influxdb
-  audit:    { engine: sqlite }
-  platform: { engine: rqlite }        # only supported value in v2
-  file:     { engine: filesystem }
+  audit:    { engine: sqlite }       # or postgresql
+  platform: { engine: rqlite }        # or postgresql (single-core dnsLess only)
+  file:     { engine: filesystem }   # or s3
 ```
 
 ## List of storage used in Pryv.io
@@ -71,17 +71,21 @@ base code: [components/platform](components/platform)
 Holds indexed and unique fields for users (emails, custom system-stream
 data) plus the user→core mapping in multi-core deployments.
 
-Since v2 the platform DB is **always** rqlite (distributed SQLite).
-`bin/master.js` spawns and supervises an embedded `rqlited` in
-single-core mode (one node) and in multi-core mode (each core runs its
-own node, joined into one Raft cluster via DNS discovery on
-`lsc.{dns.domain}`).
+The platform DB defaults to rqlite (distributed SQLite) — the only
+option for **multi-core** deployments. `bin/master.js` spawns and
+supervises an embedded `rqlited` in single-core mode (one node) and in
+multi-core mode (each core runs its own node, joined into one Raft
+cluster via DNS discovery on `lsc.{dns.domain}`).
 
 - Data lives in `var-pryv/rqlite-data/` (Raft log + SQLite snapshot)
 - HTTP API: `http://localhost:4001` (default)
-- PostgreSQL still ships a `PlatformDB` implementation for conformance
-  tests, but rqlite is the only engine selectable at runtime via
-  `storages.platform.engine`
+
+**Single-core dnsLess deployments in full PG mode** may set
+`storages.platform.engine: postgresql` instead: platform data lives in
+a `platform_kv` table in the same PostgreSQL instance as user data, no
+rqlited runs, and nothing platform-related touches the local disk (the
+diskless shape — see INSTALL.md). `bin/migrate-platform.js` moves
+platform data between the two engines in either direction.
 
 ### Events, Streams & Attachments storage
 
@@ -97,8 +101,10 @@ follow the modular API of the
   `<userLocalDirectory>/<userId>/baseStorage-<version>.sqlite`. One
   table per collection inside the file; minimal schema (id / headId
   / deleted as columns + JSON `data` column for the rest).
-- Attachments stay on the local filesystem via the `filesystem`
-  fileStorage engine, regardless of dataStore choice.
+- Attachments are independent of the dataStore choice: local disk via
+  the `filesystem` fileStorage engine (default), or an S3-compatible
+  object store via the `s3` engine (`storages.file.engine: s3` +
+  `storages.engines.s3.{endpoint,region,bucket,…}`).
 
 ### Profile, Accesses & Webhooks storage
 

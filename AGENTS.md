@@ -23,6 +23,8 @@ bin/              Entry points and admin CLIs
   backup.js         Engine-agnostic backup + restore (JSONL + gzip)
   migrate.js        Schema migration runner (status / up)
   dns-records.js    Persistent DNS record admin
+  migrate-platform.js  Move platform data between rqlite and postgresql
+  check-config.js / config-to-env.js  Validate a config / convert it to an env file
   integrity-check.js Per-user integrity verification
   mail.js           Mail template admin (in-process email)
   observability.js  Optional APM admin (enable / disable / set-license-key)
@@ -36,7 +38,7 @@ components/       Source code split by domain
   middleware/       Express middleware (auth, wrong-core, regSubdomainPathMap, ...)
   mall/             Data access layer (events, streams — engine-agnostic)
   cache/            Caching layer
-  platform/         PlatformDB interface (rqlite) + config-snapshot hash drift
+  platform/         PlatformDB interface + config-snapshot hash drift
   storage/          Storage facade — uses the engines selected in config
   audit/            Audit logging (uses SQLite directly)
   business/         Cross-domain logic:
@@ -50,10 +52,11 @@ storages/         Plugin tree for storage engines (npm workspace)
     baseStorage/  dataStore/  platformStorage/  fileStorage/
     seriesStorage/  auditStorage/  backup/  migrations/
   engines/
-    postgresql/     baseStorage, dataStore, seriesStorage, auditStorage
+    postgresql/     baseStorage, dataStore, seriesStorage, auditStorage, platformStorage
     sqlite/         per-user SQLite (baseStorage, dataStore, auditStorage)
-    rqlite/         distributed SQLite (platformStorage — always used in v2)
+    rqlite/         distributed SQLite (platformStorage default; required multi-core)
     filesystem/     attachments + previews on disk (fileStorage)
+    s3/             attachments on S3-compatible object stores (fileStorage)
     influxdb/       high-frequency series (seriesStorage)
   datastores/       Custom datastore plugins (e.g. `account` for system streams)
   manifest-schema.js  Schema for engine manifests
@@ -96,7 +99,7 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 
 1. **`bin/master.js` owns the lifecycle.** It:
    - Runs a minimal `@pryv/boiler` init to read config,
-   - Spawns and supervises an **embedded `rqlited`** in both single- and multi-core mode (no separate DB process to manage),
+   - Spawns and supervises an **embedded `rqlited`** in both single- and multi-core mode (no separate DB process to manage; skipped entirely when `storages.platform.engine: postgresql` — the single-core diskless shape),
    - Forks cluster workers: `cluster.apiWorkers` (default 2) API workers, `cluster.hfsWorkers` HFS workers, `cluster.previewsWorker` previews worker,
    - On the CA-holder core only, runs the **AcmeOrchestrator** that polls PlatformDB for cert state (other cores poll + materialize),
    - Handles the `--bootstrap` mode used to add new cores (decrypts a sealed bundle, writes `override-config.yml` + TLS files, acks the issuer, falls through into normal startup).
@@ -122,7 +125,7 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
    ```yaml
    storages:
      base:     { engine: postgresql }   # baseStorage + dataStore
-     platform: { engine: rqlite }       # platformStorage — always rqlite in v2
+     platform: { engine: rqlite }       # platformStorage — or postgresql (single-core dnsLess only)
      series:   { engine: influxdb }     # seriesStorage
      file:     { engine: filesystem }   # fileStorage
      audit:    { engine: sqlite }       # auditStorage
@@ -139,7 +142,7 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 
    Adding an engine = new directory under `storages/engines/` with a `manifest.json` + `src/index.js`. Don't reinvent — the plugin pattern exists.
 
-   PostgreSQL is a first-class production engine for every `storageType` except `platform`, which is rqlite-only (Raft consensus is what makes multi-core work). See `README-DBs.md` for the human-readable DB layout.
+   PostgreSQL is a first-class production engine for every `storageType`. `platform` defaults to rqlite (Raft consensus is what makes multi-core work); single-core dnsLess deployments in full PG mode may select postgresql instead — the diskless shape, with `storages.file.engine: s3` for attachments and `bin/migrate-platform.js` to move platform data when the topology changes. See `README-DBs.md` for the human-readable DB layout.
 
 5. **Cluster CA lifecycle.** The first `master.js` boot on a fresh box mints a self-signed cluster CA under `/etc/pryv/ca/`. **Back that directory up immediately** — the private key never leaves the host, and losing it means you can't add or rotate cores. `bin/bootstrap.js new-core --id <name> --ip <ip>` issues a sealed AES-256-GCM-encrypted bundle + one-time join token to onboard additional cores. Bundle and passphrase travel **on different channels**. See `SINGLE-TO-MULTIPLE.md`.
 
