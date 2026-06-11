@@ -211,4 +211,4 @@ function duplicateIndexError (constraintKeys: string[], data: Record<string, unk
   return err;
 }
 
-export { AccessesSQLite };
+export { AccessesSQLite, duplicateIndexError };
