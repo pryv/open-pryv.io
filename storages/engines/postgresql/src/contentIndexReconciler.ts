@@ -128,6 +128,13 @@ async function reconcileContentIndexes (db: DbLike, declarations: unknown, logge
     summary.created.push(name);
   }
 
+  // Refresh planner statistics after index changes — without this the
+  // planner can pick poor plans (e.g. for `= ANY(jsonb[])`) until the
+  // next autovacuum ANALYZE.
+  if (summary.created.length > 0 || summary.dropped.length > 0) {
+    await db.query('ANALYZE events');
+  }
+
   if (summary.created.length > 0 || summary.dropped.length > 0) {
     logger.info(`content-query indexes reconciled: created [${summary.created.join(', ')}], dropped [${summary.dropped.join(', ')}], kept ${summary.kept.length}`);
   } else {
