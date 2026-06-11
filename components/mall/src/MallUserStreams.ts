@@ -16,7 +16,7 @@ const { treeUtils } = require('utils');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const errorFactory = require('errors').factory;
 
-import type { MallStreams, StreamsGetParams, StoredStream } from './types.ts';
+import type { MallStreams, StreamsGetParams, StoredStream, StoreSupports } from './types.ts';
 
 /** Mall-level stream: the stored shape, plus pass-through of store-specific
  *  extra fields. */
@@ -33,7 +33,7 @@ type StreamsStore = {
   hasFeatureGetParamsExcludedIds?: boolean;
 };
 type StoresHolder = {
-  storesById: Map<string, { streams: StreamsStore, supports?: () => Record<string, unknown> }>;
+  storesById: Map<string, { streams: StreamsStore, supports?: () => StoreSupports }>;
   storeDescriptionsByStore: Map<{ streams: StreamsStore }, { name: string }>;
 };
 type GetParams = StreamsGetParams;
@@ -54,7 +54,7 @@ class MallUserStreams implements MallStreams {
   storeNames: Map<string, string> = new Map();
 
   /** Per-store `DataStore.supports` declarations (announced on root pseudo-streams). */
-  storeSupports: Map<string, Record<string, unknown>> = new Map();
+  storeSupports: Map<string, StoreSupports> = new Map();
 
   constructor (storesHolder: StoresHolder) {
     for (const [storeId, store] of storesHolder.storesById) {

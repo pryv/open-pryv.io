@@ -19,8 +19,9 @@
 
 import type { Readable } from 'node:stream';
 import type { StoredEvent, StoredStream } from '../../../storages/interfaces/_shared/domain.ts';
+import type { StoreSupports } from '../../../storages/shared/contentQueryConditions.ts';
 
-export type { StoredEvent, StoredStream };
+export type { StoredEvent, StoredStream, StoreSupports };
 
 // ───────────────────────── Store registration ─────────────────────────
 
@@ -29,6 +30,9 @@ export type DataStore = {
   init: (params: Record<string, unknown>) => Promise<unknown>;
   deleteUser: (userId: string) => Promise<unknown>;
   getUserStorageInfos?: (userId: string) => Promise<{ streams?: { count: number }; events?: { count: number }; files?: { sizeKb: number } }>;
+  /** Capability announcement (content-query support, …) — see
+   *  pryv-datastore's DataStore.supports. */
+  supports?: () => StoreSupports;
   [k: string]: unknown;
 };
 
