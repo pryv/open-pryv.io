@@ -8,8 +8,10 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts');
+const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts') as typeof import('./BaseStorageSQLite.ts');
 
+/** Profile documents are free-form key/value sets — the base's default
+ *  `StoredItem` binding is the honest type. */
 class ProfileSQLite extends BaseStorageSQLite {
   constructor () {
     super();

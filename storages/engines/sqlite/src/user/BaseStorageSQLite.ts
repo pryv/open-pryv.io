@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module';
 import type { Callback, UserOrId, Query, UpdateData, QueryOp, FindOptions } from '../../../../interfaces/_shared/types.ts';
 import type { StoredItem as StoredItemBase } from '../../../../interfaces/_shared/types.ts';
+import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage.ts';
 const require = createRequire(import.meta.url);
 
 const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
@@ -72,7 +73,7 @@ function colSql (name: string): string {
  *
  * applyDefaults(item) can be overridden to inject defaults at insertOne.
  */
-class BaseStorageSQLite<TItem extends StoredItem = StoredItem> {
+class BaseStorageSQLite<TItem extends StoredItem = StoredItem> implements UserStorage<TItem> {
   tableName: string | null = null;
   idField: string = 'id';
   defaultSort: string | null = null;

@@ -7,6 +7,7 @@
 
 import { createRequire } from 'node:module';
 import type { Callback, UserOrId, StoredItem, Query, UpdateData, QueryOp, FindOptions } from '../../../../interfaces/_shared/types.ts';
+import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage.ts';
 const require = createRequire(import.meta.url);
 
 const { DatabasePG } = require('../DatabasePG.ts');
@@ -92,7 +93,7 @@ const DEFAULT_JSONB_COLUMNS = new Set([
  *   this.hasDeletedCol  — (optional, default true) whether table has a `deleted` column
  *   this.hasHeadIdCol   — (optional, default false) whether table has a `head_id` column
  */
-class BaseStoragePG<T extends StoredItem = StoredItem> {
+class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T> {
   db: PgDbLike;
   tableName: string | null;
   columnMap: Record<string, string>;

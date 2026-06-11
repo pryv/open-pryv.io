@@ -6,35 +6,34 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Callback, UserOrId, Query } from 'storages/interfaces/_shared/types.ts';
+import type { StoredWebhook } from 'storages/interfaces/_shared/domain.ts';
+import type { PgDbLike } from './BaseStoragePG.ts';
 const require = createRequire(import.meta.url);
 
-const { BaseStoragePG } = require('./BaseStoragePG.ts');
+const { BaseStoragePG } = require('./BaseStoragePG.ts') as typeof import('./BaseStoragePG.ts');
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
-
-type UserOrId = string | { id: string };
-type WebhookItem = Record<string, unknown> & { id?: string; deleted?: number | null };
-type Query = Record<string, unknown>;
 
 /**
  * PostgreSQL persistence for webhooks.
  */
-class WebhooksPG extends BaseStoragePG {
-  constructor (db: unknown) {
+class WebhooksPG extends BaseStoragePG<StoredWebhook> {
+  constructor (db: PgDbLike) {
     super(db);
     this.tableName = 'webhooks';
     this.hasDeletedCol = true;
     this.hasHeadIdCol = false;
   }
 
-  applyDefaults (item: WebhookItem): WebhookItem {
-    const copy = Object.assign({}, item);
+  applyDefaults (item: Partial<StoredWebhook>): StoredWebhook {
+    const copy = Object.assign({}, item) as StoredWebhook;
     copy.id = copy.id || generateId();
     if (copy.deleted === undefined) copy.deleted = null;
     return copy;
   }
 
-  delete (userOrUserId: UserOrId, query: Query, callback: (err: Error | null, res?: unknown) => void): void {
+  delete (userOrUserId: UserOrId, query: Query, callback: Callback<{ modifiedCount: number }>): void {
     this.updateMany(userOrUserId, query, {
       $set: { deleted: timestamp.now() },
       $unset: {
@@ -56,7 +55,7 @@ class WebhooksPG extends BaseStoragePG {
     }, callback);
   }
 
-  insertOne (userOrUserId: UserOrId, item: WebhookItem, callback: (err: Error | null, item?: WebhookItem) => void, _options?: unknown): void {
+  insertOne (userOrUserId: UserOrId, item: Partial<StoredWebhook>, callback: Callback<StoredWebhook | null>, _options?: unknown): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const prepared = this.applyDefaults(item);
 
@@ -76,7 +75,7 @@ class WebhooksPG extends BaseStoragePG {
     const sql = `INSERT INTO ${this.tableName} (${cols.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`;
     this.db.query(sql, vals)
       .then((res: { rows: Array<Record<string, unknown>> }) => {
-        const result = this.rowToItem(res.rows[0]) as WebhookItem;
+        const result = this.rowToItem(res.rows[0])!; // RETURNING * always yields the inserted row
         delete result.deleted;
         callback(null, result);
       })

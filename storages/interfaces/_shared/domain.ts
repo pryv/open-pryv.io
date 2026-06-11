@@ -114,6 +114,37 @@ export type StoredAccess = {
   modifiedBySerial?: number | null;
 };
 
+// ───────────────────────────── Webhooks ─────────────────────────────
+
+/** Storage-side run record (mirror of the wire `WebhookRun` — storage
+ *  contracts stay independent of business types). */
+export type StoredWebhookRun = {
+  status: number;
+  timestamp: number;
+};
+
+/** Storage-side webhook shape. Soft-delete tombstones the rows (the
+ *  engines' `delete()` $unsets every functional field), so everything
+ *  but `id` is optional. */
+export type StoredWebhook = {
+  id: string;
+  accessId?: string;
+  url?: string;
+  state?: string;
+  runCount?: number;
+  failCount?: number;
+  lastRun?: StoredWebhookRun | null;
+  runs?: StoredWebhookRun[];
+  currentRetries?: number;
+  maxRetries?: number;
+  minIntervalMs?: number;
+  deleted?: number | null;
+  created?: number;
+  createdBy?: string;
+  modified?: number;
+  modifiedBy?: string;
+};
+
 // ───────────────────────────── Sessions ─────────────────────────────
 
 /** Session payload as written by login (`{ username, appId }`); kept open

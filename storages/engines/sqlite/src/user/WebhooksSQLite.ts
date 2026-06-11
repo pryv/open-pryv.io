@@ -6,13 +6,15 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Callback, UserOrId, Query } from '../../../../interfaces/_shared/types.ts';
+import type { StoredWebhook } from '../../../../interfaces/_shared/domain.ts';
 const require = createRequire(import.meta.url);
 
-const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts');
+const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts') as typeof import('./BaseStorageSQLite.ts');
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
 
-class WebhooksSQLite extends BaseStorageSQLite {
+class WebhooksSQLite extends BaseStorageSQLite<StoredWebhook> {
   constructor () {
     super();
     this.tableName = 'webhooks';
@@ -20,14 +22,14 @@ class WebhooksSQLite extends BaseStorageSQLite {
     this.hasHeadIdCol = false;
   }
 
-  applyDefaults (item: Record<string, unknown>): Record<string, unknown> {
-    const copy = Object.assign({}, item);
+  applyDefaults (item: Partial<StoredWebhook>): StoredWebhook {
+    const copy = Object.assign({}, item) as StoredWebhook;
     copy.id = copy.id || generateId();
     if (copy.deleted === undefined) copy.deleted = null;
     return copy;
   }
 
-  delete (userOrUserId: { id: string } | string, query: Record<string, unknown>, callback: (err: Error | null, res?: unknown) => void): void {
+  delete (userOrUserId: UserOrId, query: Query, callback: Callback<{ modifiedCount: number }>): void {
     this.updateMany(userOrUserId, query, {
       $set: { deleted: timestamp.now() },
       $unset: {

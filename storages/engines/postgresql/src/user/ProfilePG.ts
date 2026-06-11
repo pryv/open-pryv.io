@@ -9,10 +9,11 @@ import { createRequire } from 'node:module';
 import type { PgDbLike } from './BaseStoragePG.ts';
 const require = createRequire(import.meta.url);
 
-const { BaseStoragePG } = require('./BaseStoragePG.ts');
+const { BaseStoragePG } = require('./BaseStoragePG.ts') as typeof import('./BaseStoragePG.ts');
 
 /**
- * PostgreSQL persistence for profile sets.
+ * PostgreSQL persistence for profile sets. Profile documents are free-form
+ * key/value sets — the base's default `StoredItem` binding is the honest type.
  */
 class ProfilePG extends BaseStoragePG {
   constructor (db: PgDbLike) {
