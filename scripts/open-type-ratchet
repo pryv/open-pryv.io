@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#
+# Open-index-signature ratchet — run via `just lint` (lint-open-types).
+#
+# `[k: string]: unknown` on a type disables typo detection on every property
+# read of that type (a misspelled field silently types as `unknown` instead of
+# erroring). Some openness is load-bearing in this codebase — the event data
+# model is open by design (arbitrary types, content, clientData, store-specific
+# fields), and dynamic key access / passthrough need it — but new shapes whose
+# fields are enumerable must enumerate them.
+#
+# This gate pins the count of open index signatures in production sources so
+# it can only go DOWN:
+#   - Adding one fails the gate. Either enumerate the fields, or — if the
+#     openness is genuinely load-bearing — raise MAX by your additions with a
+#     justification in the same commit.
+#   - Removing some? Lower MAX to the new count in the same commit.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+MAX=228
+
+COUNT=$(grep -rE --include='*.ts' \
+  --exclude-dir=node_modules --exclude-dir=test --exclude-dir=test-helpers \
+  --exclude='*.test.ts' \
+  '\[k: string\]: unknown' components storages | wc -l | tr -d ' ')
+
+if [ "$COUNT" -gt "$MAX" ]; then
+  echo "open-type-ratchet FAIL: $COUNT open index signatures ('[k: string]: unknown') in production sources, max is $MAX."
+  echo "Enumerate the new shape's fields instead, or raise MAX in scripts/open-type-ratchet with a justification."
+  exit 1
+fi
+if [ "$COUNT" -lt "$MAX" ]; then
+  echo "open-type-ratchet: $COUNT/$MAX — count went down, lower MAX to $COUNT in scripts/open-type-ratchet to lock it in."
+fi
+echo "open-type-ratchet OK ($COUNT/$MAX)"

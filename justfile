@@ -57,13 +57,17 @@ run component bin:
 # Test & related
 # –––––––––––––----------------------------------------------------------------
 
-# Run code linting on the entire repo (JS style + TS `any` gate)
-lint *options: && lint-ts-any
+# Run code linting on the entire repo (JS style + TS `any` gate + open-type ratchet)
+lint *options: && lint-ts-any lint-open-types
     eslint {{options}} .
 
 # TypeScript `any` gate: no-explicit-any on TS sources (see eslint.ts-any.config.js)
 lint-ts-any:
     eslint --config eslint.ts-any.config.js 'components/**/*.ts' 'storages/**/*.ts'
+
+# Open-index-signature ratchet: `[k: string]: unknown` site count may only go down
+lint-open-types:
+    ./scripts/open-type-ratchet
 
 # Run code linting only on changed files (excludes deleted files)
 lint-changes *options:
