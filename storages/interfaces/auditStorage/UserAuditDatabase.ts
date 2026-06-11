@@ -40,8 +40,9 @@ export interface UserAuditDatabase {
   getOneEvent (eventId: string): AuditEvent | null;
   countEvents (): number;
 
-  getAllActions (): unknown[];
-  getAllAccesses (): unknown[];
+  // Sync in the SQLite engine, async in the PG engine — consumers must await.
+  getAllActions (): Array<{ term: string }> | Promise<Array<{ term: string }>>;
+  getAllAccesses (): Array<{ term: string }> | Promise<Array<{ term: string }>>;
 
   createEvent (event: AuditEvent): Promise<void>;
   createEventSync (event: AuditEvent): void;

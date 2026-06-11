@@ -29,8 +29,16 @@ type ItemList = Array<StoredItem | null>;
 
 /** Mongo-style query: field → scalar | operator-object | $or. */
 type Query = Record<string, unknown>;
-/** Mongo-style update: $set/$unset/$inc/$min/$max + bare fields. */
-type UpdateData = Record<string, unknown>;
+/** Mongo-style update: $set/$unset/$inc/$min/$max + bare fields (treated as $set). */
+type UpdateData = {
+  $set?: Record<string, unknown>;
+  $unset?: Record<string, unknown>;
+  $inc?: Record<string, unknown>;
+  $min?: Record<string, unknown>;
+  $max?: Record<string, unknown>;
+  $pull?: unknown;
+  [field: string]: unknown;
+};
 
 /** Operator-object value of a query field (the `{ $gt: x, $in: [...] }` shape). */
 type QueryOp = {
@@ -491,7 +499,7 @@ class BaseStoragePG {
   }
 
   _buildUpdateClauses (updatedData: UpdateData, startIdx: number): { setClauses: string[], unsetClauses: string[], incClauses: string[], params: unknown[], nextIdx: number } {
-    const input: Record<string, unknown> = Object.assign({}, updatedData);
+    const input: UpdateData = Object.assign({}, updatedData);
     const setClauses: string[] = [];
     const unsetClauses: string[] = [];
     const incClauses: string[] = [];
@@ -499,15 +507,15 @@ class BaseStoragePG {
     let idx = startIdx;
 
     // Extract MongoDB operators
-    const $set: Record<string, unknown> = (input.$set as Record<string, unknown>) || {};
+    const $set: Record<string, unknown> = input.$set || {};
     delete input.$set;
-    const $unset: Record<string, unknown> = (input.$unset as Record<string, unknown>) || {};
+    const $unset: Record<string, unknown> = input.$unset || {};
     delete input.$unset;
-    const $inc: Record<string, unknown> = (input.$inc as Record<string, unknown>) || {};
+    const $inc: Record<string, unknown> = input.$inc || {};
     delete input.$inc;
-    const $min: Record<string, unknown> = (input.$min as Record<string, unknown>) || {};
+    const $min: Record<string, unknown> = input.$min || {};
     delete input.$min;
-    const $max: Record<string, unknown> = (input.$max as Record<string, unknown>) || {};
+    const $max: Record<string, unknown> = input.$max || {};
     delete input.$max;
     delete input.$pull; // Not supported in PG — handle in subclass if needed
 

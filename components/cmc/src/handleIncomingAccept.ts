@@ -501,10 +501,9 @@ async function findAccessByName (params: {
   if (typeof mall.accesses.get !== 'function') return null;
   try {
     const list = await mall.accesses.get(userId, {});
-    const raw: unknown[] = Array.isArray(list) ? list : ((list as { accesses?: unknown[] })?.accesses ?? []);
-    const arr = raw as Array<{ id?: string; name?: string; [k: string]: unknown }>;
+    const arr = (Array.isArray(list) ? list : ((list as { accesses?: unknown[] })?.accesses ?? [])) as AccessLike[];
     for (const a of arr) {
-      if (a?.name === name) return a as AccessLike;
+      if (a?.name === name) return a;
     }
   } catch (_e) {
     return null;

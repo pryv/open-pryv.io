@@ -6,7 +6,9 @@
  */
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
+import type { Readable } from 'node:stream';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
+import type { UserManifest } from '../../../../storages/interfaces/backup/BackupWriter.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
@@ -75,7 +77,7 @@ class BackupOrchestrator {
     const coreVersion = require('storage/package.json').version;
     const snapshotBefore = timestamp.now();
     const allUsers = await this.usersLocalIndex.getAllByUsername();
-    const userManifests: unknown[] = [];
+    const userManifests: UserManifest[] = [];
     const userCount = Object.keys(allUsers).length;
 
     // Build per-user "since" map from previous manifest
@@ -84,7 +86,7 @@ class BackupOrchestrator {
     const isIncremental = options.incremental && Object.keys(perUserSince).length > 0;
     this.logger.info(`Starting ${isIncremental ? 'incremental' : 'full'} backup of ${userCount} users (snapshot before ${snapshotBefore})`);
 
-    for (const [username, userId] of Object.entries(allUsers) as Array<[string, string]>) {
+    for (const [username, userId] of Object.entries(allUsers)) {
       const since = perUserSince[userId] || null;
       this.logger.info(`Backing up user: ${username} (${userId})${since ? ' (incremental since ' + since + ')' : ''}`);
       const userManifest = await this._backupSingleUser(writer, userId, username, snapshotBefore, since, options);
@@ -368,7 +370,7 @@ type UserAccountStorageLike = {
   _exportAll (userId: string): Promise<unknown>;
 };
 type EventFilesLike = {
-  getAttachmentStream (userId: string, eventId: string, fileId: string): Promise<unknown>;
+  getAttachmentStream (userId: string, eventId: string, fileId: string): Promise<Readable>;
 };
 type AuditStorageLike = {
   forUser (userId: string): { exportAllEvents (): Promise<unknown> };
@@ -390,11 +392,11 @@ type UserWriter = {
   writeProfile (items: unknown[]): Promise<void>;
   writeWebhooks (items: unknown[]): Promise<void>;
   writeEvents (items: unknown[]): Promise<void>;
-  writeAttachment (eventId: string, fileId: string, stream: unknown): Promise<void>;
+  writeAttachment (eventId: string, fileId: string, stream: Readable): Promise<void>;
   writeAccountData (data: unknown): Promise<void>;
   writeAudit (items: unknown[]): Promise<void>;
   writeSeries (items: unknown[]): Promise<void>;
-  close (): Promise<unknown>;
+  close (): Promise<UserManifest>;
 };
 type BackupWriter = {
   openUser (userId: string, username: string): Promise<UserWriter>;

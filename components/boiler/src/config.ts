@@ -370,6 +370,7 @@ class Config {
 }
 
 export { Config };
+export type { ExtraDef };
 
 // --- remote and local json ressource loader ---- //
 

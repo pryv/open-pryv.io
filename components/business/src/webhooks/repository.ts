@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { UserStorage } from '../../../../storages/interfaces/baseStorage/UserStorage.ts';
+import type { Webhook as WebhookType } from './Webhook.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const { deepMerge } = require('utils');
@@ -43,7 +44,7 @@ class Repository {
       const webhooksQuery = {};
       const webhooksOptions = {};
       const webhooks: unknown[] = await fromCallback((cb: NodeCallback<unknown[]>) => this.storage.find(user, webhooksQuery, webhooksOptions, cb));
-      const userWebhooks: unknown[] = [];
+      const userWebhooks: WebhookType[] = [];
       webhooks.forEach((w: unknown) => {
         userWebhooks.push(initWebhook(user, this, w as Record<string, unknown>));
       });
@@ -65,7 +66,7 @@ class Repository {
       query.accessId = { $eq: access.id };
     }
     const webhooks: unknown[] = await fromCallback((cb: NodeCallback<unknown[]>) => this.storage.find(user, query, options, cb));
-    const webhookObjects: unknown[] = [];
+    const webhookObjects: WebhookType[] = [];
     webhooks.forEach((w: unknown) => {
       const webhook = initWebhook(user, this, w as Record<string, unknown>);
       webhookObjects.push(webhook);
@@ -137,7 +138,7 @@ class Repository {
 }
 export default Repository;
 export { Repository };
-function initWebhook (user: User, repository: Repository, webhook: Record<string, unknown>) {
+function initWebhook (user: User, repository: Repository, webhook: Record<string, unknown>): WebhookType {
   return new Webhook(deepMerge({
     webhooksRepository: repository,
     user

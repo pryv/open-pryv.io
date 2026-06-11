@@ -12,6 +12,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { ExtraDef } from './config.ts';
 const require = createRequire(import.meta.url);
 
 const { Config } = require('./config.ts');
@@ -91,7 +92,7 @@ type InitOptions = {
   appNameWithoutPostfix?: string;
   baseConfigDir?: string;
   baseFilesDir?: string;
-  extraConfigs?: unknown[];
+  extraConfigs?: ExtraDef[];
   skipOverrideConfig?: boolean;
   [k: string]: unknown;
 };

@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import type { MethodNext as Next, ResultBag } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
+import type { Platform } from 'platform/src/Platform.ts';
 
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
@@ -33,7 +34,7 @@ const { getUsersRepository } = require('business/src/users/index.ts');
 
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 
-const { platform } = require('platform');
+const { platform } = require('platform') as { platform: Platform };
 
 /**
  * @param api The user-facing API, used to compute usage stats per method
@@ -170,9 +171,9 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
     async function listCores (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
-        const allCores = await platform.getAllCoreInfos() as Array<{ id: string; hosting?: string; available?: boolean }>;
+        const allCores = await platform.getAllCoreInfos();
         // Count users per core from PlatformDB
-        const allMappings = await platform.getAllUserCores() as Array<{ coreId: string }>;
+        const allMappings = await platform.getAllUserCores();
         const counts: Record<string, number> = {};
         for (const core of allCores) {
           counts[core.id] = 0;

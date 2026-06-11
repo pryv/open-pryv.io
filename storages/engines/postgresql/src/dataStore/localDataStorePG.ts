@@ -9,6 +9,7 @@
  * PostgreSQL Data Store.
  */
 import { createRequire } from 'node:module';
+import type { LocalTransactionPG as LocalTransactionPGType } from './LocalTransactionPG.ts';
 const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
@@ -47,7 +48,7 @@ const dataStore = ds.createDataStore({
 
   events: userEvents,
 
-  async newTransaction (): Promise<unknown> {
+  async newTransaction (): Promise<LocalTransactionPGType> {
     const transaction = new LocalTransactionPG(_internals.databasePG);
     await transaction.init();
     return transaction;

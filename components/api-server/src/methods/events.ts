@@ -42,6 +42,7 @@ const { integrity } = require('business');
 
 import type { MethodNext } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
+import type { ReadStream } from 'node:fs';
 // Events middleware chains use the request context as a scratchpad
 // (newEvent/oldEvent/event are populated by earlier steps and read by later
 // ones). Widen MethodContext locally so the chain functions can carry
@@ -604,7 +605,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     const files = sanitizeRequestFiles(params.files);
     delete params.files;
     if (files != null && files.length > 0) {
-      const attachmentItems: unknown[] = [];
+      // Pre-storage attachment descriptors consumed by mall.events.createWithAttachments.
+      type AttachmentItem = { fileName: string; type: string; size: number; integrity?: string; attachmentData: ReadStream };
+      const attachmentItems: AttachmentItem[] = [];
       for (const file of files) {
         attachmentItems.push({
           fileName: file.originalname,

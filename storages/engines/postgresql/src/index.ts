@@ -13,6 +13,7 @@
 
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
+import type { SeriesConnection } from '../../../interfaces/seriesStorage/SeriesConnection.ts';
 const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
@@ -182,7 +183,7 @@ function createPlatformDB (): unknown {
 
 // -- SeriesStorage (PostgreSQL) -----------------------------------------
 
-async function createSeriesConnection (config: { databasePG?: unknown; [k: string]: unknown }): Promise<unknown> {
+async function createSeriesConnection (config: { databasePG?: unknown; [k: string]: unknown }): Promise<SeriesConnection> {
   const { PGSeriesConnection } = require('./pg_connection.ts');
   // Use provided databasePG (from barrel init) or fall back to storage
   const pgDb = config.databasePG || _internals.databasePG;

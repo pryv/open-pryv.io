@@ -7,6 +7,18 @@
 
 import type { Readable } from 'stream';
 
+/** Per-user manifest returned by `UserBackupWriter.close()`. */
+export type UserManifest = {
+  userId: string;
+  username: string;
+  /** ms epoch (Date.now() at close time). */
+  backupTimestamp: number;
+  /** Item counts per collection (streams, accesses, events, ...). */
+  stats: Record<string, number>;
+  /** Chunk-file inventory per collection. */
+  chunks: Record<string, string[]>;
+};
+
 /**
  * Per-user writer returned by `BackupWriter.openUser()`.
  * Handles writing all data scoped to a single user.
@@ -26,13 +38,13 @@ export interface UserBackupWriter {
   /** Account data as returned by UserAccountStorage.exportAll(). */
   writeAccountData (data: unknown): Promise<void>;
   /** Returns the user manifest (userId, username, chunk inventory, stats). */
-  close (): Promise<unknown>;
+  close (): Promise<UserManifest>;
 }
 
 export interface BackupWriteManifestParams {
   coreVersion: string;
   config: Record<string, unknown>;
-  userManifests: unknown[];
+  userManifests: UserManifest[];
   backupType: string;
   /** Consistency cutoff: items modified after this are excluded. */
   snapshotBefore?: number;
@@ -102,7 +114,7 @@ const UserBackupWriter: UserBackupWriter = {
   async writeSeries (items: AsyncIterable<unknown> | unknown[]): Promise<void> { throw new Error('Not implemented'); },
   async writeAttachment (eventId: string, fileId: string, readStream: Readable): Promise<void> { throw new Error('Not implemented'); },
   async writeAccountData (data: unknown): Promise<void> { throw new Error('Not implemented'); },
-  async close (): Promise<unknown> { throw new Error('Not implemented'); }
+  async close (): Promise<UserManifest> { throw new Error('Not implemented'); }
 };
 
 for (const propName of Object.getOwnPropertyNames(UserBackupWriter)) {

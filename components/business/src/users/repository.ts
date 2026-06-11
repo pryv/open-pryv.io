@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { usersLocalIndex } from 'storage/src/usersLocalIndex.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
@@ -39,9 +40,9 @@ class UsersRepository {
   accessStorage: any;
   mall: any;
   platform: any;
-  usersIndex: any;
   userAccountStorage: any;
   /* eslint-enable @typescript-eslint/no-explicit-any */
+  usersIndex!: typeof usersLocalIndex; // set by init()
 
   async init () {
     this.mall = await getMall();
@@ -60,7 +61,7 @@ class UsersRepository {
   async getAll () {
     const usersMap = await this.usersIndex.getAllByUsername();
     const users: UserData[] = [];
-    for (const [username, userId] of Object.entries(usersMap) as Array<[string, string]>) {
+    for (const [username, userId] of Object.entries(usersMap)) {
       const user = await this.getUserById(userId);
       if (user == null) {
         throw new Error(`Repository inconsistency: user index lists user with id: "${userId}" and username: "${username}", but cannot get it with getUserById()`);
@@ -88,7 +89,7 @@ class UsersRepository {
   async getAllUsersIdAndName () {
     const usersMap = await this.usersIndex.getAllByUsername();
     const users: UserData[] = [];
-    for (const [username, userId] of Object.entries(usersMap) as Array<[string, string]>) {
+    for (const [username, userId] of Object.entries(usersMap)) {
       users.push({ id: userId, username });
     }
     return users;

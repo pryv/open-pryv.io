@@ -24,7 +24,7 @@ type StoreDescription = { id: string; includeInStarPermission?: boolean; [k: str
 type DataStore = {
   init: (params: Record<string, unknown>) => Promise<unknown>;
   deleteUser: (userId: string) => Promise<unknown>;
-  getUserStorageInfos?: (userId: string) => Promise<unknown>;
+  getUserStorageInfos?: (userId: string) => Promise<{ streams?: { count: number }; events?: { count: number }; files?: { sizeKb: number } }>;
   [k: string]: unknown;
 };
 type IntegrityModule = { events: { compute (e: unknown): { integrity: string } } };

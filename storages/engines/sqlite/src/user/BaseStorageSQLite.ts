@@ -35,8 +35,16 @@ type ItemList = Array<StoredItem | null>;
 
 /** Mongo-style query: field → scalar | operator-object | $or. */
 type Query = Record<string, unknown>;
-/** Mongo-style update: $set/$unset/$inc/$min/$max + bare fields. */
-type UpdateData = Record<string, unknown>;
+/** Mongo-style update: $set/$unset/$inc/$min/$max + bare fields (treated as $set). */
+type UpdateData = {
+  $set?: Record<string, unknown>;
+  $unset?: Record<string, unknown>;
+  $inc?: Record<string, unknown>;
+  $min?: Record<string, unknown>;
+  $max?: Record<string, unknown>;
+  $pull?: unknown;
+  [field: string]: unknown;
+};
 
 /** Operator-object value of a query field (the `{ $gt: x, $in: [...] }` shape). */
 type QueryOp = {
@@ -481,11 +489,11 @@ class BaseStorageSQLite {
 
   private applyUpdateToItem (item: StoredItem | null, updatedData: UpdateData): StoredItem {
     const merged: StoredItem = Object.assign({}, item);
-    const $set: Record<string, unknown> = (updatedData.$set as Record<string, unknown>) || {};
-    const $unset: Record<string, unknown> = (updatedData.$unset as Record<string, unknown>) || {};
-    const $inc: Record<string, unknown> = (updatedData.$inc as Record<string, unknown>) || {};
-    const $min: Record<string, unknown> = (updatedData.$min as Record<string, unknown>) || {};
-    const $max: Record<string, unknown> = (updatedData.$max as Record<string, unknown>) || {};
+    const $set: Record<string, unknown> = updatedData.$set || {};
+    const $unset: Record<string, unknown> = updatedData.$unset || {};
+    const $inc: Record<string, unknown> = updatedData.$inc || {};
+    const $min: Record<string, unknown> = updatedData.$min || {};
+    const $max: Record<string, unknown> = updatedData.$max || {};
 
     for (const [k, v] of Object.entries(updatedData)) {
       if (!k.startsWith('$')) {

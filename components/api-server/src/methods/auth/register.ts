@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import type { MethodContext } from 'business/src/MethodContext.ts';
 import type { MethodNext } from '../_types.ts';
+import type { Platform } from 'platform/src/Platform.ts';
 const require = createRequire(import.meta.url);
 const commonFns = require('./../helpers/commonFunctions.ts');
 const errors = require('errors').factory;
@@ -54,7 +55,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // REGISTER
   const registration = new Registration(null, storageLayer, getServicesSettings);
   await registration.init();
-  const platform = await getPlatform();
+  const platform: Platform = await getPlatform();
 
   api.register('auth.register',
     setAuditAccessId(AuditAccessIds.PUBLIC),
@@ -136,7 +137,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       return next(errors.invalidParametersFormat('provide only "username" or "email", not both'));
     }
 
-    let username = params.username;
+    // Schema validation guarantees username xor email is present.
+    let username: string | null | undefined = params.username;
 
     // Resolve email → username via PlatformDB unique field
     if (params.email != null) {
@@ -150,7 +152,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
 
     // Multi-core: look up which core hosts this user via shared PlatformDB
     if (!platform.isSingleCore) {
-      const userCoreId = await platform.getUserCore(username);
+      const userCoreId = await platform.getUserCore(username!);
       if (userCoreId != null) {
         result.core = { url: platform.coreIdToUrl(userCoreId) };
         return next();
@@ -175,7 +177,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   async function hostingsLookup (_context: MethodContext, _params: HostingsParams, result: ResultBag, next: MethodNext) {
     try {
       const configHostings = config.get('hostings') as { regions?: Record<string, unknown> } | undefined;
-      const allCores = await platform.getAllCoreInfos() as Array<{ id: string; hosting?: string; available?: boolean; [k: string]: unknown }>;
+      const allCores = await platform.getAllCoreInfos();
 
       // Build hosting → available core URL map
       const hostingCores: Record<string, Array<{ id: string; [k: string]: unknown }>> = {};

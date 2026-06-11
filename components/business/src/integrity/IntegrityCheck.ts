@@ -14,6 +14,7 @@ const { fromCallback } = require('utils');
  * Recomputes hashes on events and accesses and compares against stored values.
  */
 type StorageLayer = { accesses: { exportAll: (user: { id: string }, cb: (err: Error | null, items?: Access[]) => void) => void } };
+type UsersIndexLike = { getAllByUsername: () => Promise<Record<string, string>> };
 type Integrity = {
   events: { isActive: boolean; compute (e: Event): { integrity: string } };
   accesses: { isActive: boolean; compute (a: Access): { integrity: string } };
@@ -77,8 +78,8 @@ class IntegrityCheck {
    */
   async checkAllUsers (onUserComplete?: (userId: string, report: Report) => void): Promise<Report[]> {
     const { getUsersLocalIndex } = require('storage');
-    const usersIndex = await getUsersLocalIndex();
-    const allUsers = await usersIndex.getAllByUsername() as Record<string, string>;
+    const usersIndex: UsersIndexLike = await getUsersLocalIndex();
+    const allUsers = await usersIndex.getAllByUsername();
     const reports: Report[] = [];
 
     for (const [username, userId] of Object.entries(allUsers)) {

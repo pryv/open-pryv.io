@@ -11,10 +11,12 @@
  * Here 'tree' means a recursive array of objects with a 'children' property.
  */
 
+// `children?: this[]` is polymorphic: for a `T extends TreeItem`,
+// `item.children` is `T[]` — no per-call-site `as T[]` casts needed.
 interface TreeItem {
   id: string;
   parentId?: string | null;
-  children?: TreeItem[];
+  children?: this[];
   deleted?: unknown;
   [k: string]: unknown;
 }
@@ -37,7 +39,7 @@ function buildTree<T extends TreeItem> (array: T[], stripParentIds?: boolean): T
   const map: Record<string, T> = {};
   array.forEach(function (item: T) {
     verifyFlatItem(item);
-    const clone = structuredClone(item) as T;
+    const clone = structuredClone(item);
     if (clone.deleted == null) clone.children = [];
     map[item.id] = clone;
   });
@@ -51,7 +53,7 @@ function buildTree<T extends TreeItem> (array: T[], stripParentIds?: boolean): T
         return;
       }
       if (map[clone.parentId].children == null) { map[clone.parentId].children = []; }
-      (map[clone.parentId].children as T[]).push(clone);
+      map[clone.parentId].children!.push(clone);
     } else {
       // root
       result.push(clone);
@@ -83,11 +85,11 @@ function flattenTreeWithoutParents<T extends TreeItem> (array: T[]): T[] {
 
 function flattenRecursiveWithoutParents<T extends TreeItem> (originalArray: T[], parentId: string | null, resultArray: T[]): void {
   originalArray.forEach(function (item: T) {
-    const clone = structuredClone(item) as T;
+    const clone = structuredClone(item);
     clone.parentId = parentId; // WTF
     const children = clone.children;
     if (Array.isArray(children) && children.length > 0) {
-      flattenRecursive(clone.children as T[], clone.id, resultArray);
+      flattenRecursive(clone.children!, clone.id, resultArray);
       delete clone.children; // WTF #2
     } else {
       resultArray.push(clone);
@@ -145,7 +147,7 @@ function flattenTree<T extends TreeItem> (array: T[]): T[] {
 
 function flattenRecursive<T extends TreeItem> (originalArray: T[], parentId: string | null, resultArray: T[]): void {
   originalArray.forEach(function (item: T) {
-    const clone = structuredClone(item) as T;
+    const clone = structuredClone(item);
     // When recursing into a parent's `children` array, the tree position
     // is authoritative — overwrite parentId with the parent's id.
     // At the root call (parentId === null), preserve any pre-existing
@@ -160,7 +162,7 @@ function flattenRecursive<T extends TreeItem> (originalArray: T[], parentId: str
     }
     resultArray.push(clone);
     if (clone.hasOwnProperty('children')) {
-      flattenRecursive(clone.children as T[], clone.id, resultArray);
+      flattenRecursive(clone.children!, clone.id, resultArray);
       delete clone.children;
     }
   });
@@ -184,7 +186,7 @@ function findInTree<T extends TreeItem> (array: T[], iterator: Predicate<T>): T 
     }
     // if not check its children if any
     if (item.hasOwnProperty('children')) {
-      const childrenFind = findInTree(item.children as T[], iterator);
+      const childrenFind = findInTree(item.children!, iterator);
       if (childrenFind) {
         return childrenFind;
       }
@@ -201,7 +203,7 @@ function findInTree<T extends TreeItem> (array: T[], iterator: Predicate<T>): T 
 async function iterateOnPromise<T extends TreeItem> (array: T[] | null | undefined, iterator: AsyncPredicate<T>): Promise<void> {
   if (!array) { return; }
   for (const stream of array) {
-    if ((await iterator(stream)) && stream.children) { await iterateOnPromise(stream.children as T[], iterator); }
+    if ((await iterator(stream)) && stream.children) { await iterateOnPromise(stream.children, iterator); }
   }
 }
 
@@ -215,13 +217,13 @@ async function filterTreeOnPromise<T extends TreeItem> (array: T[], keepOrphans:
   for (let i = 0, n = array.length; i < n; i++) {
     const item = array[i];
     if (await iterator(item)) {
-      const clone = structuredClone(item) as T;
+      const clone = structuredClone(item);
       filteredArray.push(clone);
       if (clone.hasOwnProperty('children')) {
-        clone.children = await filterTreeOnPromise(clone.children as T[], keepOrphans, iterator);
+        clone.children = await filterTreeOnPromise(clone.children!, keepOrphans, iterator);
       }
     } else if (item.hasOwnProperty('children') && keepOrphans) {
-      const res = await filterTreeOnPromise(item.children as T[], keepOrphans, iterator);
+      const res = await filterTreeOnPromise(item.children!, keepOrphans, iterator);
       filteredArray.push(...res);
     }
   }
@@ -239,13 +241,13 @@ function filterTree<T extends TreeItem> (array: T[], keepOrphans: boolean, itera
   for (let i = 0, n = array.length; i < n; i++) {
     const item = array[i];
     if (iterator(item)) {
-      const clone = structuredClone(item) as T;
+      const clone = structuredClone(item);
       filteredArray.push(clone);
       if (clone.hasOwnProperty('children')) {
-        clone.children = filterTree(clone.children as T[], keepOrphans, iterator);
+        clone.children = filterTree(clone.children!, keepOrphans, iterator);
       }
     } else if (item.hasOwnProperty('children') && keepOrphans) {
-      filteredArray.push.apply(filteredArray, filterTree(item.children as T[], keepOrphans, iterator));
+      filteredArray.push.apply(filteredArray, filterTree(item.children!, keepOrphans, iterator));
     }
   }
   return filteredArray;
@@ -265,7 +267,7 @@ function collectFromRootItem<T extends TreeItem, R> (item: T, iterator: Iter<T, 
     throw new Error('Invalid argument: expected a single item');
   }
   const result: R[] = [iterator(item)];
-  collectRecursive(item.children as T[], result, iterator);
+  collectRecursive(item.children!, result, iterator);
   return result;
 }
 
@@ -273,7 +275,7 @@ function collectRecursive<T extends TreeItem, R> (originalArray: T[], resultArra
   originalArray.forEach(function (item: T) {
     resultArray.push(iterator(item));
     if (item.hasOwnProperty('children')) {
-      collectRecursive(item.children as T[], resultArray, iterator);
+      collectRecursive(item.children!, resultArray, iterator);
     }
   });
 }
@@ -320,7 +322,7 @@ function expandIds<T extends TreeItem> (array: T[], ids: Array<string | null>): 
 function cloneAndApply<T extends TreeItem> (array: T[], iterator: Iter<T, T>): T[] {
   const result: T[] = [];
   array.forEach((item: T) => {
-    const clone = structuredClone(item) as T;
+    const clone = structuredClone(item);
     result.push(applyRecursive(iterator(clone), iterator));
   });
   return result;
@@ -332,7 +334,7 @@ function cloneAndApply<T extends TreeItem> (array: T[], iterator: Iter<T, T>): T
 function applyRecursive<T extends TreeItem> (item: T, iterator: Iter<T, T>): T {
   if (!Array.isArray(item.children) || item.children.length === 0) { return item; }
   const result: T[] = [];
-  (item.children as T[]).forEach((child: T) => {
+  item.children.forEach((child: T) => {
     result.push(applyRecursive(iterator(child), iterator));
   });
   item.children = result;
@@ -355,7 +357,7 @@ function debug<T extends TreeItem> (streams: T[], properties?: string[], depth?:
     }
     console.log(line);
     if (stream.children) {
-      debug(stream.children as T[], properties, myddepth);
+      debug(stream.children, properties, myddepth);
     }
   }
 }
