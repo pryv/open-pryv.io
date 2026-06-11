@@ -156,7 +156,28 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 
 ## TypeScript conventions
 
-Naming: a bare `Xxx` is a canonical type defined once and imported (`import type`); `XxxLike` is a *local structural* model of just the members a file actually uses; `XxxRow` is a storage-engine row shape (snake_case columns); `Wire`/`Raw` prefixes mark unparsed wire shapes before normalization. Use the **most precise real type available** — `unknown` only for genuinely-opaque pass-through and runtime-validator inputs, never as a shortcut when a real shape exists. Explicit `any` fails lint (`just lint-ts-any`, part of `just lint`); the few legitimate escape hatches carry a justified `eslint-disable` comment in place — read them before adding a new one. Don't add field initializers (`= ''`, `?? 0`) just to satisfy the compiler: they silently change undefined-by-default runtime semantics — use `field!: T`, `field?: T`, or an explicit union instead. Gates: `just typecheck` (tsc, `strict: true`) and `just type-coverage` (floor 80%).
+Naming: a bare `Xxx` is a canonical type defined once and imported (`import type`); `XxxLike` is a *local structural* model of just the members a file actually uses; `XxxRow` is a storage-engine row shape (snake_case columns); `Wire`/`Raw` prefixes mark unparsed wire shapes before normalization. Use the **most precise real type available** — `unknown` only for genuinely-opaque pass-through and runtime-validator inputs, never as a shortcut when a real shape exists. Explicit `any` fails lint (`just lint-ts-any`, part of `just lint`); the few legitimate escape hatches carry a justified `eslint-disable` comment in place — read them before adding a new one. Don't add field initializers (`= ''`, `?? 0`) just to satisfy the compiler: they silently change undefined-by-default runtime semantics — use `field!: T`, `field?: T`, or an explicit union instead. Gates: `just typecheck` (tsc, `strict: true`) and `just type-coverage` (floor 81%).
+
+### Canonical type homes — import, don't redeclare
+
+| You need | Import from |
+|---|---|
+| `Event`, `Stream`, `Access`, `Permission(Level)`, `AccessType`, `Webhook`, `UserId`, `HttpHeaders`, `ApiResult`, `StreamQuery` (API/wire shapes) | `business/src/types/public.ts` |
+| `StoredEvent`, `StoredStream`, `StoredAccess`, `StoredPermission`, `SessionData` (storage-side shapes) | `storages/interfaces/_shared/domain.ts` |
+| `Callback`, `UserOrId`, `StoredItem`, `Query`, `UpdateData`, `FindOptions`, `EventsQueryState` (storage plumbing) | `storages/interfaces/_shared/types.ts` |
+| `Mall`, `MallEvents`, `MallStreams`, `MallTransactionLike`, `DataStore`, `StoreSupports` | `components/mall/src/types.ts` |
+| `Logger`, `LogFn`, `ConfigLike` | `@pryv/boiler` (components and engines; `storages/interfaces/**` use the mirror pair in `_shared/types.ts` — contract files stay boiler-free) |
+| `SqliteDb`, `SqliteStmt<Row>`, `SqlParam` | `storages/engines/sqlite/src/types.ts` |
+| CMC views: `MallLike` groups, `CmcAccessLike`, `CmcClientData`, `OutboundDeps`, `FetchLike` | `components/cmc/src/_types.ts` |
+| Storage contracts (`UserStorage<T>`, `Sessions`, `UserAccountStorage`, `UserAuditDatabase`+`AuditEvent`, `BackupReader`+`BackupManifest`, …) | the `storages/interfaces/<kind>/` file that defines them |
+
+**Three layers, never merged:** wire (`Event`, what the API returns), stored (`StoredEvent`, what flows through interfaces and the mall — carries `headId`/`deleted`/`endTime`), engine row (`XxxRow`, per-engine, converted at the `toDB`/`fromDB` boundary). If your shape genuinely differs from all three, it's probably a narrow view — name it `XxxLike` and keep it local.
+
+### Patterns
+
+- **Method-context scratch fields**: api-server method chains refine the context as `type MethodContext = BaseMethodContext & { myField?: T }` with *named, typed* fields — never `[key: string]: any`. A field written by one component and read by another belongs on the base `MethodContext` class. Mid-chain reads of step-populated fields use one capture with an invariant comment: `const x = context.x!; // Invariant: <populating step> ran earlier in this chain.`
+- **DI-seam narrow views**: modules that receive dependencies for fake-based unit testing (CMC handlers) type them with the shared narrow views (`cmc/src/_types.ts`), not the full interfaces.
+- **Typed require handles**: when a `require()`d module erases a useful signature (e.g. a `: never` throw helper), re-bind it: `const m: typeof import('./m.ts') = require('./m.ts');`.
 
 ## Config precedence
 

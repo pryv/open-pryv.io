@@ -127,6 +127,8 @@ jobs:
         run: npm install --ignore-scripts
       - name: Typecheck
         run: just typecheck
+      - name: Type coverage floor
+        run: just type-coverage
 
   # OFFICIAL release path: tag-push → CI runs tests → builds + pushes
   # `pryvio/open-pryv.io:<tag>` + rolling `:2.0.0-pre` to Docker Hub.
