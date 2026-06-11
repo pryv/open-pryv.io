@@ -831,32 +831,6 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     }
     next();
   }
-  /**
-   * Fixes req.files structure for when attachments were sent without a filename, in which case
-   * Express lists files as an array in a `file` property (instead of directly as properties).
-   *
-   */
-  // Multer-style files-or-files-array — runtime shape is heterogeneous,
-  // intentionally kept wide. NOTE: when the `{ file: [...] }` nesting is hit,
-  // the sanitized index-keyed object carries no `length`, so the consumers'
-  // `files.length > 0` checks skip it — dormant path, tracked in the
-  // workspace bug registry.
-  /* eslint-disable @typescript-eslint/no-explicit-any -- heterogeneous multer bag (see above) */
-  function sanitizeRequestFiles (files: any) {
-    if (!files || !files.file || !Array.isArray(files.file)) {
-      // assume files is an object, nothing to do
-      return files;
-    }
-    const result: any = {};
-    files.file.forEach(function (item: any, i: number) {
-      if (!item.filename) {
-        item.filename = item.name;
-      }
-      result[i] = item;
-    });
-    return result;
-  }
-  /* eslint-enable @typescript-eslint/no-explicit-any */
   async function normalizeStreamIdAndStreamIds (context: MethodContext, params: EventsCreateOrUpdateParams, result: EventsCreateOrUpdateResult, next: MethodNext) {
     // Invariant: on events.update the schema requires params.update.
     const event = isEventsUpdateMethod() ? params.update! : params;
@@ -1072,3 +1046,25 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     return attachments;
   }
 };
+
+/**
+ * Fixes req.files structure for when attachments were sent without a filename, in which case
+ * Express lists files as an array in a `file` property (instead of directly as properties).
+ * Must return a real array: the consumers gate on `files.length > 0`, so an
+ * index-keyed object would silently skip the attachment branch.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any -- heterogeneous multer bag */
+function sanitizeRequestFiles (files: any) {
+  if (!files || !files.file || !Array.isArray(files.file)) {
+    // assume files is already an array (or absent), nothing to do
+    return files;
+  }
+  return files.file.map(function (item: any) {
+    if (!item.filename) {
+      item.filename = item.name;
+    }
+    return item;
+  });
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+export { sanitizeRequestFiles };
