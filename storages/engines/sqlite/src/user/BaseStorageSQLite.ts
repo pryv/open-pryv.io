@@ -6,52 +6,30 @@
  */
 
 import { createRequire } from 'node:module';
-import type { Callback, UserOrId } from '../../../../interfaces/_shared/types.ts';
+import type { Callback, UserOrId, Query, UpdateData, QueryOp, FindOptions } from '../../../../interfaces/_shared/types.ts';
+import type { StoredItem as StoredItemBase } from '../../../../interfaces/_shared/types.ts';
 const require = createRequire(import.meta.url);
 
 const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const { _internals } = require('../_internals.ts');
 
-type Options = {
-  sort?: Record<string, number>;
-  limit?: number;
-  skip?: number;
-  projection?: Record<string, number | boolean>;
-} | null | undefined;
+type Options = FindOptions;
 
 // ---- Precise document-store types (untyped-document ↔ typed-SQL boundary) ----
+// ItemList / Query / UpdateData / QueryOp come from interfaces/_shared/types.ts.
 
 /** Values that better-sqlite3 / our bind sites accept as a bound parameter. */
 type SqlParam = string | number | bigint | null | Buffer | Uint8Array;
 
 /**
- * An engine-agnostic document. `id`/`headId`/`deleted` are promoted to SQL
- * columns; everything else is packed into the JSON `data` column. Other
- * fields are genuinely arbitrary per collection, hence `unknown`.
+ * SQLite narrowing of the shared StoredItem: `id`/`headId`/`deleted` are
+ * promoted to SQL columns (so they must be bind-able), everything else is
+ * packed into the JSON `data` column. ItemList is re-derived from the
+ * narrowed item type (the shared ItemList carries the wide StoredItem).
  */
-type StoredItem = { id?: string, headId?: SqlParam, deleted?: SqlParam, [k: string]: unknown };
+type StoredItem = StoredItemBase & { headId?: SqlParam, deleted?: SqlParam };
 type ItemList = Array<StoredItem | null>;
-
-/** Mongo-style query: field → scalar | operator-object | $or. */
-type Query = Record<string, unknown>;
-/** Mongo-style update: $set/$unset/$inc/$min/$max + bare fields (treated as $set). */
-type UpdateData = {
-  $set?: Record<string, unknown>;
-  $unset?: Record<string, unknown>;
-  $inc?: Record<string, unknown>;
-  $min?: Record<string, unknown>;
-  $max?: Record<string, unknown>;
-  $pull?: unknown;
-  [field: string]: unknown;
-};
-
-/** Operator-object value of a query field (the `{ $gt: x, $in: [...] }` shape). */
-type QueryOp = {
-  $eq?: unknown, $ne?: unknown,
-  $gt?: unknown, $gte?: unknown, $lt?: unknown, $lte?: unknown,
-  $in?: unknown[], $type?: string
-};
 
 /** A row read back from a baseStorage table. */
 type DbRow = { id: string, head_id?: number | string | null, deleted?: number | null, data?: string, cnt?: number, [k: string]: unknown };

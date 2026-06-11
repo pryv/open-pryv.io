@@ -6,7 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
-import type { Callback, UserOrId } from '../../../../interfaces/_shared/types.ts';
+import type { Callback, UserOrId, StoredItem, ItemList, Query, UpdateData, QueryOp, FindOptions } from '../../../../interfaces/_shared/types.ts';
 const require = createRequire(import.meta.url);
 
 const { DatabasePG } = require('../DatabasePG.ts');
@@ -20,39 +20,9 @@ type PGResult = { rows: PgRow[], rowCount: number };
  *  opaquely to node-pg, which does its own value serialization. */
 type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<PGResult> };
 
-/**
- * An engine-agnostic document. `id`/`deleted`/`headId` map to promoted
- * columns; other fields are genuinely arbitrary per collection (`unknown`).
- */
-type StoredItem = { id?: string, deleted?: unknown, headId?: unknown, [k: string]: unknown };
-type ItemList = Array<StoredItem | null>;
-
-/** Mongo-style query: field → scalar | operator-object | $or. */
-type Query = Record<string, unknown>;
-/** Mongo-style update: $set/$unset/$inc/$min/$max + bare fields (treated as $set). */
-type UpdateData = {
-  $set?: Record<string, unknown>;
-  $unset?: Record<string, unknown>;
-  $inc?: Record<string, unknown>;
-  $min?: Record<string, unknown>;
-  $max?: Record<string, unknown>;
-  $pull?: unknown;
-  [field: string]: unknown;
-};
-
-/** Operator-object value of a query field (the `{ $gt: x, $in: [...] }` shape). */
-type QueryOp = {
-  $eq?: unknown, $ne?: unknown,
-  $gt?: unknown, $gte?: unknown, $lt?: unknown, $lte?: unknown,
-  $in?: unknown[], $type?: string
-};
-
-type Options = {
-  sort?: Record<string, number>;
-  limit?: number;
-  skip?: number;
-  projection?: Record<string, number | boolean>;
-} | null | undefined;
+// StoredItem / ItemList / Query / UpdateData / QueryOp / FindOptions are the
+// shared document-store boundary types from interfaces/_shared/types.ts.
+type Options = FindOptions;
 
 /**
  * Column-name mapping: camelCase JS property → snake_case PG column.
