@@ -6,7 +6,8 @@
  */
 
 import { createRequire } from 'node:module';
-import type { Callback, UserOrId } from 'storages/interfaces/_shared/types.ts';
+import type { Callback, UserOrId, Query, UpdateData, FindOptions } from 'storages/interfaces/_shared/types.ts';
+import type { StoredAccess } from 'storages/interfaces/_shared/domain.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -18,11 +19,11 @@ const timestamp = require('unix-timestamp');
 const logger = _internals.lazyLogger('storage:accesses-pg');
 
 type IntegrityAccesses = { isActive: boolean; set: (item: AccessItem, deep?: boolean) => void };
-type AccessItem = { id: string; type?: string; deviceName?: string | null; deleted?: number | null; headId?: string | null; integrity?: string; integrityBatchCode?: number; apiEndpoint?: string; token?: string; [k: string]: unknown };
+/** Storage item for this collection — the canonical stored shape. */
+type AccessItem = StoredAccess;
 type AccessRow = Record<string, unknown>;
-type Query = Record<string, unknown>;
-type Update = Record<string, unknown>;
-type Options = Record<string, unknown> | null;
+type Update = UpdateData;
+type Options = FindOptions;
 type PgDb = { query (sql: string, params?: unknown[]): Promise<{ rows: AccessRow[] }> };
 
 /**

@@ -6,24 +6,18 @@
  */
 
 import { createRequire } from 'node:module';
-import type { Callback, UserOrId } from 'storages/interfaces/_shared/types.ts';
+import type { Callback, UserOrId, Query, UpdateData, FindOptions } from 'storages/interfaces/_shared/types.ts';
+import type { StoredStream } from 'storages/interfaces/_shared/domain.ts';
 
 const require = createRequire(import.meta.url);
 
-type Stream = {
-  id: string;
-  parentId?: string | null;
-  name?: string;
-  path?: string;
-  deleted?: number | null;
-  trashed?: boolean;
-  singleActivity?: boolean;
-  [k: string]: unknown;
-};
+/** Storage item for this collection: the canonical stored shape plus the
+ *  PG-only materialized-path column (`path`, stripped on read) and the
+ *  legacy `singleActivity` flag this engine still round-trips. */
+type Stream = StoredStream & { path?: string; singleActivity?: boolean };
 type StreamRow = Record<string, unknown>;
-type Query = Record<string, unknown>;
-type Options = Record<string, unknown> | null;
-type Update = Record<string, unknown>;
+type Update = UpdateData;
+type Options = FindOptions;
 type PgDb = { query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
 
 const { BaseStoragePG } = require('./BaseStoragePG.ts');

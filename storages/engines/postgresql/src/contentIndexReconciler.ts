@@ -28,7 +28,7 @@ const { parseJsonPath } = require('../../../shared/contentQueryConditions.ts');
 
 type QueryResult = { rows: Array<Record<string, unknown>> };
 type DbLike = { query: (sql: string, params?: unknown[]) => Promise<QueryResult> };
-type Logger = { debug: (m: string) => void; info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void };
+import type { Logger } from '@pryv/boiler';
 type IndexDeclaration = { field?: 'content' | 'clientData'; path: string; types?: string[] };
 type ReconcileSummary = { created: string[]; dropped: string[]; kept: string[] };
 

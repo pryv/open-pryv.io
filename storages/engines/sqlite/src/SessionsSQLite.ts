@@ -13,8 +13,7 @@ const { createId: cuid } = require('@paralleldrive/cuid2');
 const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
 import type { SqliteDb } from './types.ts';
-
-type SessionData = Record<string, unknown>;
+import type { SessionData } from '../../../interfaces/_shared/domain.ts';
 // `sessions` table row (queries select subsets of these columns)
 type SessionRow = { id: string; data: string | SessionData; expires: number };
 

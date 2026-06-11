@@ -19,19 +19,10 @@ const { DeletionModesFields } = require('../../../../shared/DeletionModesFields.
 const { localStoreEventQueries } = require('../../../../shared/localStoreEventQueries.ts');
 import type { NormalizedCondition } from '../../../../shared/contentQueryConditions.ts';
 
-type Event = {
-  id: string;
-  type?: string;
-  streamIds?: string[];
-  time?: number;
-  duration?: number | null;
-  content?: unknown;
-  attachments?: Array<{ id?: string }>;
-  deleted?: number;
-  headId?: string;
-  trashed?: boolean;
-  [k: string]: unknown;
-};
+import type { StoredEvent } from '../../../../interfaces/_shared/domain.ts';
+/** Datastore-level event: the canonical stored shape plus the open tail the
+ *  deletion-mode field scrubbing indexes dynamically. */
+type Event = StoredEvent & { [k: string]: unknown };
 type DeletionSettings = {
   mode: 'keep-nothing' | 'keep-authors' | 'keep-everything' | string;
   fields: string[];

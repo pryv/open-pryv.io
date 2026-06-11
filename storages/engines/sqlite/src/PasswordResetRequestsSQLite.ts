@@ -20,9 +20,8 @@ const DEFAULT_MAX_AGE = 60 * 60 * 1000; // 1 hour
  * SQLite implementation of PasswordResetRequests storage.
  * Backed by the shared `password_resets` table; `expires` is INTEGER (ms).
  */
+import type { PasswordResetDoc as ResetDoc, PasswordResetImportDoc as ImportDoc } from '../../../interfaces/baseStorage/PasswordResetRequests.ts';
 type Cb<T = unknown> = (err: Error | null, res?: T) => void;
-type ResetDoc = { _id: string; username: string; expires: Date };
-type ImportDoc = { _id?: string; id?: string; username: string; expires: Date | number };
 
 class PasswordResetRequestsSQLite {
   db: SqliteDb;

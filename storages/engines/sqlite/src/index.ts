@@ -26,12 +26,7 @@ const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
 
-interface Logger {
-  debug: (...args: unknown[]) => void;
-  info: (...args: unknown[]) => void;
-  warn: (...args: unknown[]) => void;
-  error: (...args: unknown[]) => void;
-}
+import type { Logger } from '@pryv/boiler';
 
 interface StorageLayerLike {
   connection?: unknown;

@@ -21,11 +21,13 @@ import type { NormalizedCondition, ScalarValue } from '../../../../shared/conten
 
 // ---- Types ----
 
-/** A raw events-table row (and the fromDB-converted event). The precise
- *  domain Event type is the strongly-typed-interface-IO follow-up; here both
- *  sides of the eventsSchema boundary are arbitrary records. */
+import type { StoredEvent } from '../../../../interfaces/_shared/domain.ts';
+
+/** A raw events-table row: arbitrary columns per eventsSchema. */
 type EventRow = Record<string, unknown>;
-type DomainEvent = Record<string, unknown>;
+/** The fromDB-converted event: stored-event fields where present, plus the
+ *  open tail the eventsSchema converters read/write dynamically. */
+type DomainEvent = Partial<StoredEvent> & Record<string, unknown>;
 
 type ColumnDef = { type: string, index?: boolean };
 type TableSchema = Record<string, ColumnDef>;

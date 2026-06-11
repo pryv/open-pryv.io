@@ -69,8 +69,9 @@ export type FindOptions = {
 
 // ---- Logging ----
 
-/** Structural logger contract for storages/engines. Mirror of @pryv/boiler's
- *  `Logger`/`LogFn` exports — engines must not depend on boiler (plugin
- *  isolation), so the pair is declared on both sides; keep them in sync. */
+/** Structural logger contract for storages/interfaces/** (the contract files
+ *  stay boiler-free). Mirror of @pryv/boiler's `Logger`/`LogFn` exports —
+ *  engines type-import from boiler directly (type-only, erased at runtime);
+ *  keep the two declarations in sync. */
 export type LogFn = (...args: unknown[]) => void;
 export type Logger = { debug: LogFn; info: LogFn; warn: LogFn; error: LogFn };

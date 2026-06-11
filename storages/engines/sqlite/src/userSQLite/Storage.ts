@@ -20,11 +20,7 @@ const VERSION = '1.0.0';
 
 interface UserDbLike { close: () => Promise<void> | void; init: () => Promise<void> }
 interface SqliteStorageOptions { max?: number; [k: string]: unknown }
-interface Logger {
-  debug: (msg: string) => void;
-  info: (msg: string) => void;
-  error: (msg: string) => void;
-}
+import type { Logger } from '@pryv/boiler';
 
 class SqliteStorage {
   initialized: boolean = false;

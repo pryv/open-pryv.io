@@ -15,26 +15,7 @@ const { Readable } = require('stream');
 const ALL_EVENTS_TAG = '..';
 const IDS_SEPARATOR = ' ';
 
-type AuditEvent = {
-  id?: string;
-  streamIds?: string[];
-  time?: number;
-  endTime?: number | null;
-  deleted?: number | null;
-  headId?: string | null;
-  type?: string;
-  content?: unknown;
-  description?: string;
-  clientData?: unknown;
-  integrity?: string;
-  attachments?: unknown;
-  trashed?: boolean;
-  created?: number;
-  createdBy?: string;
-  modified?: number;
-  modifiedBy?: string;
-  [k: string]: unknown;
-};
+import type { AuditEvent } from '../../../interfaces/auditStorage/UserAuditDatabase.ts';
 type AuditRow = Record<string, unknown> & { eventid?: string | null; stream_ids?: string | null };
 // Query condition — `content` is polymorphic on `type`.
 type StreamsQuery = { any?: string[], not?: string[], all?: string[] };

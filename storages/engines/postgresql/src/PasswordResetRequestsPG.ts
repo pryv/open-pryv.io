@@ -15,9 +15,8 @@ const DEFAULT_MAX_AGE = 60 * 60 * 1000; // 1 hour
 type PgDb = {
   query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
 };
+import type { PasswordResetDoc as ResetDoc, PasswordResetImportDoc as ImportDoc } from '../../../interfaces/baseStorage/PasswordResetRequests.ts';
 type ResetRow = { id: string; username: string; expires: Date };
-type ResetDoc = { _id: string; username: string; expires: Date };
-type ImportDoc = { _id?: string; id?: string; username: string; expires: Date | number | string };
 type Cb<T = unknown> = (err: Error | null, result?: T) => void;
 
 /**

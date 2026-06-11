@@ -60,8 +60,10 @@ export interface AppliedMigration {
   dryRun: boolean;
 }
 
+import type { LogFn } from '../_shared/types.ts';
+
 interface RunOptions { targetVersion?: number; dryRun?: boolean }
-type LogFn = (...args: unknown[]) => void;
+
 interface RunnerOptions { logger?: { debug?: LogFn; info?: LogFn; warn?: LogFn; error?: LogFn } }
 
 class MigrationRunner {

@@ -6,24 +6,18 @@
  */
 
 import { createRequire } from 'node:module';
-import type { Callback, UserOrId } from 'storages/interfaces/_shared/types.ts';
+import type { Callback, UserOrId, Query, UpdateData, FindOptions } from 'storages/interfaces/_shared/types.ts';
+import type { StoredStream } from 'storages/interfaces/_shared/domain.ts';
 
 const require = createRequire(import.meta.url);
 
-type StreamItem = {
-  id: string;
-  parentId?: string | null;
-  name?: string;
-  path?: string;
-  deleted?: number | null;
-  trashed?: boolean;
-  singleActivity?: boolean;
-  [k: string]: unknown;
-};
+/** Storage item for this collection: the canonical stored shape plus the
+ *  materialized-path field (`path`, stripped on read) and the legacy
+ *  `singleActivity` flag this engine still round-trips. */
+type StreamItem = StoredStream & { path?: string; singleActivity?: boolean };
 type StreamRow = Record<string, unknown>;
-type Query = Record<string, unknown>;
-type Options = Record<string, unknown> | null;
-type Update = Record<string, unknown>;
+type Options = FindOptions;
+type Update = UpdateData;
 
 const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');

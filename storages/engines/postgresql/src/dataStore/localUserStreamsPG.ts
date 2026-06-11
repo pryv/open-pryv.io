@@ -18,20 +18,9 @@ import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage
 type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> };
 type UserStreamsStoragePG = UserStorage & { db: PgDbLike };
 
-type Stream = {
-  id: string;
-  name?: string;
-  parentId?: string | null;
-  clientData?: Record<string, unknown>;
-  children?: Stream[];
-  childrenHidden?: boolean;
-  trashed?: boolean;
-  created?: number;
-  createdBy?: string;
-  modified?: number;
-  modifiedBy?: string;
-  deleted?: number;
-};
+import type { StoredStream } from '../../../../interfaces/_shared/domain.ts';
+/** Datastore-level stream — the canonical stored shape. */
+type Stream = StoredStream;
 type StreamQuery = { includeTrashed?: boolean; childrenDepth?: number };
 type DeletionsQuery = { deletedSince: number };
 type DeletionsOptions = Record<string, unknown> | null;
