@@ -130,6 +130,12 @@ export type Webhook = {
   modifiedBy: string;
 };
 
+// ───────────────────────────── Users ─────────────────────────────
+
+/** Caller-side user reference: the `{ username, id? }` shape passed around
+ *  by method contexts, repositories and log helpers. */
+export type UserId = { username: string; id?: string };
+
 // ───────────────────────────── Methods (call envelope) ─────────────────────────────
 
 /** Node/Express request headers as seen by method contexts and handlers. */

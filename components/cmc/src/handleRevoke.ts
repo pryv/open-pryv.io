@@ -45,6 +45,8 @@ const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const outbound = require('./outbound.ts');
 
+import type { OutboundDeps } from './_types.ts';
+
 type Counterparty = { username: string; host: string };
 
 type CmcClientData = {
@@ -68,13 +70,6 @@ type MallLike = {
   };
 };
 
-type FetchResponse = { status: number; json?: () => Promise<unknown> };
-type FetchInit = { method?: string; headers?: Record<string, string>; body?: unknown };
-type OutboundDeps = {
-  fetch: (url: string, init?: FetchInit) => Promise<FetchResponse>;
-  timeoutMs?: number;
-  logger?: { debug?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void };
-};
 
 type RevokeHandlerResult =
   | {

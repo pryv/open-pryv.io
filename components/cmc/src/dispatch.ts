@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger } from './_types.ts';
+import type { CmcLogger, OutboundDeps } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -74,10 +74,6 @@ type MallLike = {
   streams: { create: (userId: string, params: unknown) => Promise<unknown> };
 };
 
-type OutboundDeps = {
-  fetch: (url: string, init?: RequestInit) => Promise<Response>;
-  timeoutMs?: number;
-};
 
 type DispatchDeps = {
   mall: MallLike;

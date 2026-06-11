@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger } from './_types.ts';
+import type { CmcLogger, OutboundDeps } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -22,27 +22,6 @@ const require = createRequire(import.meta.url);
  * fake. Returns `{ ok, status, body? }` discriminated unions per outcome.
  */
 
-type FetchInit = {
-  method?: string;
-  headers?: Record<string, string>;
-  body?: string;
-  signal?: AbortSignal;
-  [k: string]: unknown;
-};
-
-type FetchLike = (url: string, init?: FetchInit) => Promise<{
-  status: number;
-  ok?: boolean;
-  json: () => Promise<unknown>;
-  text: () => Promise<string>;
-}>;
-
-
-type OutboundDeps = {
-  fetch: FetchLike;
-  timeoutMs?: number;
-  logger?: CmcLogger;
-};
 
 type DeliverResult =
   | { ok: true; status: number; body: unknown }

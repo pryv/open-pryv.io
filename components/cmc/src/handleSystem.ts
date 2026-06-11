@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger } from './_types.ts';
+import type { CmcLogger, OutboundDeps } from './_types.ts';
 import type { DeliverResult } from './outbound.ts';
 const require = createRequire(import.meta.url);
 
@@ -74,11 +74,6 @@ type AccessLike = {
   permissions?: Array<Record<string, unknown>>;
 };
 
-type OutboundDeps = {
-  fetch: (url: string, init?: RequestInit) => Promise<Response>;
-  timeoutMs?: number;
-  logger?: CmcLogger;
-};
 
 type SystemHandlerResult =
   | {
