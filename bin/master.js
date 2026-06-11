@@ -81,32 +81,39 @@ if (cluster.isPrimary) {
     const log = (msg) => { logger.info(msg); console.log(`[master] ${msg}`); };
     const warn = (msg) => { logger.warn(msg); console.warn(`[master] WARNING: ${msg}`); };
 
-    // Start rqlited — rqlite is the only supported platform engine, master.js owns the lifecycle.
+    // Start rqlited when rqlite is the platform engine — master.js owns the lifecycle.
     // When `storages.engines.rqlite.external` is true, skip spawning and connect to an
     // already-running instance (useful for multi-core deployments sharing one rqlited).
-    const rqliteConfig = config.get('storages:engines:rqlite') || {};
-    const httpPort = new URL(rqliteConfig.url || 'http://localhost:4001').port || 4001;
-    if (rqliteConfig.external) {
-      log(`Connecting to external rqlited at ${rqliteConfig.url || 'http://localhost:4001'}`);
-      await rqliteProcess.waitForExternal(rqliteConfig.url || 'http://localhost:4001', 30000, log);
+    // With `storages.platform.engine: postgresql` (single-core diskless shape)
+    // no rqlited runs at all — platform data lives in PostgreSQL.
+    const platformEngine = config.get('storages:platform:engine') || 'rqlite';
+    if (platformEngine === 'rqlite') {
+      const rqliteConfig = config.get('storages:engines:rqlite') || {};
+      const httpPort = new URL(rqliteConfig.url || 'http://localhost:4001').port || 4001;
+      if (rqliteConfig.external) {
+        log(`Connecting to external rqlited at ${rqliteConfig.url || 'http://localhost:4001'}`);
+        await rqliteProcess.waitForExternal(rqliteConfig.url || 'http://localhost:4001', 30000, log);
+      } else {
+        await rqliteProcess.start({
+          coreId: config.get('core:id') || 'single',
+          binPath: rqliteConfig.binPath || 'bin-ext/rqlited',
+          dataDir: rqliteConfig.dataDir || 'var-pryv/rqlite-data',
+          httpPort: parseInt(httpPort),
+          raftPort: rqliteConfig.raftPort || 4002,
+          dnsDomain: config.get('dns:domain') || null,
+          // rqlited DNS-based peer discovery is opt-in. Multi-core deploys
+          // set `cluster.discoveryEnabled: true`; single-core deploys leave
+          // it false even when `dns.domain` is set, otherwise rqlited boots
+          // into a 30 s timeout looking for peers via the embedded DNS that
+          // hasn't started yet (it's started further down in this same file).
+          discoveryEnabled: config.get('cluster:discoveryEnabled') === true,
+          coreIp: config.get('core:ip') || null,
+          tls: rqliteConfig.tls || null,
+          log
+        });
+      }
     } else {
-      await rqliteProcess.start({
-        coreId: config.get('core:id') || 'single',
-        binPath: rqliteConfig.binPath || 'bin-ext/rqlited',
-        dataDir: rqliteConfig.dataDir || 'var-pryv/rqlite-data',
-        httpPort: parseInt(httpPort),
-        raftPort: rqliteConfig.raftPort || 4002,
-        dnsDomain: config.get('dns:domain') || null,
-        // rqlited DNS-based peer discovery is opt-in. Multi-core deploys
-        // set `cluster.discoveryEnabled: true`; single-core deploys leave
-        // it false even when `dns.domain` is set, otherwise rqlited boots
-        // into a 30 s timeout looking for peers via the embedded DNS that
-        // hasn't started yet (it's started further down in this same file).
-        discoveryEnabled: config.get('cluster:discoveryEnabled') === true,
-        coreIp: config.get('core:ip') || null,
-        tls: rqliteConfig.tls || null,
-        log
-      });
+      log(`Platform engine '${platformEngine}' — not starting rqlited`);
     }
 
     // Initialise the storages barrel once, unconditionally. Every

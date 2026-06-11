@@ -428,22 +428,6 @@ CREATE TABLE IF NOT EXISTS users_index (
   user_id TEXT UNIQUE NOT NULL
 );
 
--- Platform DB
-
-CREATE TABLE IF NOT EXISTS platform_unique_fields (
-  field TEXT NOT NULL,
-  value TEXT NOT NULL,
-  username TEXT NOT NULL,
-  UNIQUE (field, value)
-);
-
-CREATE TABLE IF NOT EXISTS platform_indexed_fields (
-  username TEXT NOT NULL,
-  field TEXT NOT NULL,
-  value TEXT NOT NULL,
-  UNIQUE (username, field)
-);
-
 -- Series data (replaces InfluxDB)
 
 CREATE TABLE IF NOT EXISTS series_data (

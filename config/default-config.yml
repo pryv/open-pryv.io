@@ -36,7 +36,13 @@ storages:
     # in the test harness) to pick it explicitly.
     engine: postgresql
   platform:
-    engine: rqlite          # platformStorage
+    # platformStorage. rqlite is the default and the only multi-core option
+    # (Raft-replicated across cores). Single-core dnsLess deployments in
+    # full PG mode may set `engine: postgresql` to keep platform data in
+    # the same PostgreSQL instance as user data (diskless shape — no rqlite
+    # process or data dir). Going multi-core later requires migrating the
+    # platform data back to rqlite (`node bin/migrate-platform.js`).
+    engine: rqlite
   series:
     engine: postgresql      # seriesStorage. Default since 2026-05-12; raw deploys typically don't ship influxd. Set `engine: influxdb` here in override-config.yml to opt back in (requires a running influxd on http.ip:storages.engines.influxdb.port).
   file:

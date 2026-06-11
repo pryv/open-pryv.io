@@ -109,6 +109,35 @@ function checkAuditOnUserDeleteMode (config, problems) {
   }
 }
 
+// PostgreSQL platform storage is a single-core, dnsLess-only option (the
+// "diskless" deployment shape: platform data lives in the same PG instance
+// as user data, no rqlite process / data dir). PostgreSQL is not replicated
+// across cores, so any multi-core signal alongside it would silently break
+// cross-core registration uniqueness — refuse the boot instead, naming the
+// migration path back to rqlite.
+function checkPlatformEngineTopology (config, problems) {
+  if (config.get('storages:platform:engine') !== 'postgresql') return;
+  const refuse = (message, payload) => problems.push({
+    message, path: ['storages', 'platform', 'engine'], payload
+  });
+  if (config.get('dnsLess:isActive') !== true) {
+    refuse("'storages.platform.engine: postgresql' is single-core only and requires 'dnsLess.isActive: true'. Multi-core / dns-active deployments must keep 'storages.platform.engine: rqlite' (migrate platform data with `node bin/migrate-platform.js` before switching).",
+      { 'dnsLess.isActive': config.get('dnsLess:isActive') });
+  }
+  if (config.get('dns:active') === true) {
+    refuse("'storages.platform.engine: postgresql' cannot run with the embedded DNS ('dns.active: true') — that topology implies per-user subdomains / multi-core and requires the rqlite platform engine.",
+      { 'dns.active': true });
+  }
+  if (config.get('storages:base:engine') !== 'postgresql') {
+    refuse(`'storages.platform.engine: postgresql' requires 'storages.base.engine: postgresql' (full PG mode) — got '${config.get('storages:base:engine')}'.`,
+      { 'storages.base.engine': config.get('storages:base:engine') });
+  }
+  if (config.get('cluster:discoveryEnabled') === true) {
+    refuse("'storages.platform.engine: postgresql' cannot run with 'cluster.discoveryEnabled: true' (multi-core rqlite discovery). Keep the rqlite platform engine for multi-core deployments.",
+      { 'cluster.discoveryEnabled': true });
+  }
+}
+
 // Conflicting DNS-topology flags. `dns.active: true` runs the embedded DNS
 // and advertises per-user-subdomain URLs (service/info `api`, reserved
 // `reg.<domain>` register URL, …), but `dnsLess.isActive` — which defaults
@@ -147,6 +176,7 @@ async function validate (config) {
   checkRequiredWhen(config, problems);
   checkAuditOnUserDeleteMode(config, problems);
   checkDnsTopologyConsistency(config, problems);
+  checkPlatformEngineTopology(config, problems);
 
   return problems;
 }
@@ -226,6 +256,7 @@ module.exports = {
   checkRequiredWhen,
   checkAuditOnUserDeleteMode,
   checkDnsTopologyConsistency,
+  checkPlatformEngineTopology,
   isMissingOrSentinel,
   REQUIRED_WHEN,
   AUDIT_ON_USER_DELETE_MODES

@@ -175,13 +175,22 @@ function discoverMigrations (dir: string): DiscoveredMigration[] {
 
 /**
  * Build a runner from the storages barrel's active engines.
- * Each engine that exports `getMigrationsCapability()` and returns a non-null
- * capability participates.
+ * Each engine that is selected for at least one storage type, exports
+ * `getMigrationsCapability()` and returns a non-null capability
+ * participates. Discovered-but-unselected engines are skipped — their
+ * backing store may not be running at all (e.g. rqlite when
+ * `storages.platform.engine: postgresql`).
  */
 async function createMigrationRunner ({ logger }: RunnerOptions = {}): Promise<MigrationRunner> {
   const storages = require('storages');
+  const selectedEngines = new Set<string>();
+  for (const storageType of storages.pluginLoader.VALID_STORAGE_TYPES) {
+    const engineName = storages.pluginLoader.getEngineFor(storageType);
+    if (engineName) selectedEngines.add(engineName);
+  }
   const capabilities: MigrationCapableEngine[] = [];
   for (const engineName of storages.pluginLoader.listEngines()) {
+    if (!selectedEngines.has(engineName)) continue;
     const mod = storages.pluginLoader.getEngineModule(engineName);
     if (typeof mod.getMigrationsCapability !== 'function') continue;
     const cap = mod.getMigrationsCapability();
