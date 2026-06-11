@@ -146,7 +146,8 @@ function coerceValueForColumn (column: string, value: unknown): unknown {
 }
 
 const coerceFns = {
-  txt: (value: unknown) => { return "'" + (value + '').replaceAll("'", "\\'") + "'"; },
+  // SQL string literals escape ' by doubling; backslash is NOT an escape in SQLite
+  txt: (value: unknown) => { return "'" + (value + '').replaceAll("'", "''") + "'"; },
   num: (value: unknown) => { return (typeof value === 'number') ? value : parseFloat(value as string); },
   bool: (value: unknown) => { return value ? 1 : 0; }
 };
