@@ -12,7 +12,8 @@ const require = createRequire(import.meta.url);
 
 const { deepMerge } = require('utils');
 const assert = require('assert');
-const storeDataUtils = require('./helpers/storeDataUtils.ts');
+// Typed handle so `throwAPIError: never` flows into return-type inference.
+const storeDataUtils: typeof import('./helpers/storeDataUtils.ts') = require('./helpers/storeDataUtils.ts');
 const eventsUtils = require('./helpers/eventsUtils.ts');
 const eventsQueryUtils = require('./helpers/eventsQueryUtils.ts');
 
@@ -26,49 +27,24 @@ const { Readable } = require('stream');
 
 const { createId: cuid } = require('@paralleldrive/cuid2');
 
-type Event = {
-  id: string;
-  type?: string;
-  streamId?: string;
-  streamIds?: string[];
-  time?: number;
-  duration?: number | null;
-  endTime?: number | null;
-  content?: unknown;
-  description?: string;
-  clientData?: Record<string, unknown> | null;
-  trashed?: boolean;
-  deleted?: number;
-  headId?: string | null;
-  attachments?: Array<{ id?: string; [k: string]: unknown }>;
-  integrity?: string | null;
-  [k: string]: unknown;
-};
-type EventQuery = Record<string, unknown>;
-type EventOptions = Record<string, unknown>;
+import type { MallEvents, EventQuery, EventOptions, StoreSettings, ParamsByStore, AttachmentItem, UpdateManySpec, MallTransactionLike, StoredEvent } from './types.ts';
+
+/** Mall-level event: the stored shape, plus pass-through of store-specific
+ *  extra fields (deepMerge/fieldsToDelete pipelines index by field name). */
+type Event = StoredEvent & { [k: string]: unknown };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type EventsStore = any; // Each store's UserEvents implementation; varied per backend.
-type StoreSettings = Record<string, unknown>;
-type ParamsByStore = Record<string, { query?: EventQuery; options?: EventOptions } | undefined>;
 type StoresHolder = {
   storesById: Map<string, { events: EventsStore, supports?: () => StoreSupports }>;
   storeDescriptionsByStore: Map<unknown, { settings: StoreSettings }>;
 };
-type Transaction = { getStoreTransaction?: (storeId: string) => unknown; [k: string]: unknown } | null | undefined;
-type AttachmentItem = { id?: string; fileName?: string; size?: number; [k: string]: unknown };
-type UpdateStreamedManyUpdate = {
-  fieldsToSet?: Partial<Event>;
-  fieldsToDelete?: string[];
-  addStreams?: string[];
-  removeStreams?: string[];
-  filter?: (event: Event) => boolean;
-};
+type Transaction = MallTransactionLike | null | undefined;
 
 /**
  * Storage for events.
  * Dispatches requests to each data store's events.
  */
-class MallUserEvents {
+class MallUserEvents implements MallEvents {
   eventsStores: Map<string, EventsStore> = new Map();
   storeSettings: Map<string, StoreSettings> = new Map();
   storeSupports: Map<string, StoreSupports> = new Map();
@@ -106,7 +82,7 @@ class MallUserEvents {
    * Get one event without filtering
    * Should also return eventual deleted events
    */
-  async getOne (userId: string, fullEventId: string) {
+  async getOne (userId: string, fullEventId: string): Promise<Event | null> {
     const [storeId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(fullEventId);
     const eventsStore = this.eventsStores.get(storeId);
     if (!eventsStore) {
@@ -145,7 +121,7 @@ class MallUserEvents {
     return null;
   }
 
-  async getHistory (userId: string, fullEventId: string) {
+  async getHistory (userId: string, fullEventId: string): Promise<Event[]> {
     const [storeId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(fullEventId);
     const eventsStore = this.eventsStores.get(storeId);
     if (!eventsStore) {
@@ -167,14 +143,14 @@ class MallUserEvents {
     return res;
   }
 
-  async get (userId: string, params: EventQuery) {
+  async get (userId: string, params: EventQuery): Promise<Event[]> {
     return await this.getWithParamsByStore(userId, eventsQueryUtils.getParamsByStore(params));
   }
 
   /**
    * Specific to Mall, allow query with a prepared query by store
    */
-  async getWithParamsByStore (userId: string, paramsByStore: ParamsByStore) {
+  async getWithParamsByStore (userId: string, paramsByStore: ParamsByStore): Promise<Event[]> {
     const res: Event[] = [];
     for (const storeId of Object.keys(paramsByStore)) {
       const eventsStore = this.eventsStores.get(storeId);
@@ -197,7 +173,7 @@ class MallUserEvents {
   /**
    * Specific to Mall, allow query with a prepared query by store
    */
-  async getStreamedWithParamsByStore (userId: string, paramsByStore: ParamsByStore) {
+  async getStreamedWithParamsByStore (userId: string, paramsByStore: ParamsByStore): Promise<ReadableType | Error> {
     if (Object.keys(paramsByStore).length !== 1) {
       return new Error('getStreamed only supported for one store at a time');
     }
@@ -220,7 +196,7 @@ class MallUserEvents {
    * To create a streamed result from multiple stores. 'events.get' pass a callback in order to add the streams
    * To the result;
    */
-  async generateStreamsWithParamsByStore (userId: string, paramsByStore: ParamsByStore, addEventsStreamCallback: (settings: StoreSettings | undefined, stream: ReadableType | Error | undefined) => void) {
+  async generateStreamsWithParamsByStore (userId: string, paramsByStore: ParamsByStore, addEventsStreamCallback: (settings: StoreSettings | undefined, stream: ReadableType | Error) => void): Promise<void> {
     for (const storeId of Object.keys(paramsByStore)) {
       const settings = this.storeSettings.get(storeId);
       const params = paramsByStore[storeId];
@@ -235,7 +211,7 @@ class MallUserEvents {
   /**
    * @param [options]
    */
-  async getDeletionsStreamed (storeId: string, userId: string, query: EventQuery, options: EventOptions) {
+  async getDeletionsStreamed (storeId: string, userId: string, query: EventQuery, options?: EventOptions): Promise<AsyncIterable<Event>> {
     const eventsStore = this.eventsStores.get(storeId);
     if (!eventsStore) {
       throw errorFactory.unknownResource(`Unknown store "${storeId}"`, storeId);
@@ -246,7 +222,7 @@ class MallUserEvents {
   /**
    * @param [options]
    */
-  async getDeletions (storeId: string, userId: string, query: EventQuery, options: EventOptions) {
+  async getDeletions (storeId: string, userId: string, query: EventQuery, options?: EventOptions): Promise<Event[]> {
     const resultStream = await this.getDeletionsStreamed(storeId, userId, query, options);
     const res: Event[] = [];
     for await (const item of resultStream) {
@@ -261,7 +237,7 @@ class MallUserEvents {
    *
    * @param [doNotOverrideIntegrity] - Used by tests to create event with preset integrity such as historical data
    */
-  async create (userId: string, eventData: Partial<Event>, mallTransaction?: Transaction, doNotOverrideIntegrity = false) {
+  async create (userId: string, eventData: Partial<Event>, mallTransaction?: Transaction, doNotOverrideIntegrity = false): Promise<Event> {
     assert.ok(eventData.attachments == null || eventData.attachments.length === 0,
       'Attachments must be added after event creation');
     const { storeId, eventsStore, storeEvent, storeTransaction } = await this.prepareForStore(eventData, mallTransaction, doNotOverrideIntegrity);
@@ -275,7 +251,7 @@ class MallUserEvents {
 
   // ----------------- ATTACHMENTS ----------------- //
 
-  async addAttachment (userId: string, eventId: string, attachmentItem: AttachmentItem, mallTransaction?: Transaction) {
+  async addAttachment (userId: string, eventId: string, attachmentItem: AttachmentItem, mallTransaction?: Transaction): Promise<Event> {
     const [storeId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(eventId);
     const eventsStore = this.eventsStores.get(storeId);
     const storeEvent = await eventsStore.addAttachment(userId, storeEventId, attachmentItem);
@@ -283,7 +259,7 @@ class MallUserEvents {
     return event;
   }
 
-  async getAttachment (userId: string, eventData: Event, fileId: string) {
+  async getAttachment (userId: string, eventData: Event, fileId: string): Promise<unknown> {
     const [storeId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.id);
     const eventsStore = this.eventsStores.get(storeId);
     if (!eventsStore) {
@@ -292,10 +268,10 @@ class MallUserEvents {
     return await eventsStore.getAttachment(userId, storeEventId, fileId);
   }
 
-  async deleteAttachment (userId: string, eventId: string, fileId: string, mallTransaction: Transaction) {
+  async deleteAttachment (userId: string, eventId: string, fileId: string, mallTransaction?: Transaction): Promise<Event> {
     const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(eventId);
     const eventsStore = this.eventsStores.get(storeId);
-    const storeTransaction = mallTransaction ? await mallTransaction!.getStoreTransaction!(storeId) : null;
+    const storeTransaction = mallTransaction ? await mallTransaction.getStoreTransaction(storeId) : null;
     if (!eventsStore) {
       throw errorFactory.unknownResource(`Unknown store "${storeId}"`, storeId);
     }
@@ -304,7 +280,7 @@ class MallUserEvents {
     return event;
   }
 
-  async createWithAttachments (userId: string, eventDataWithoutAttachments: Partial<Event>, attachmentsItems: AttachmentItem[], mallTransaction: Transaction) {
+  async createWithAttachments (userId: string, eventDataWithoutAttachments: Partial<Event>, attachmentsItems: AttachmentItem[], mallTransaction?: Transaction): Promise<Event> {
     let event = await this.create(userId, eventDataWithoutAttachments);
     for (const attachmentItem of attachmentsItems) {
       event = await this.addAttachment(userId, event.id, attachmentItem);
@@ -314,14 +290,15 @@ class MallUserEvents {
 
   // ----------------- UPDATE ----------------- //
 
-  async update (userId: string, newEventData: Partial<Event>, mallTransaction: Transaction) {
+  async update (userId: string, newEventData: Partial<Event>, mallTransaction?: Transaction): Promise<Event> {
     // update integrity field and recalculate if needed
     // integrity caclulation is done on event.id and streamIds that includes the store prefix
     if (integrity.events.isActive) {
       integrity.events.set(newEventData);
     }
     // replace all streamIds by store-less streamIds
-    const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(newEventData.id);
+    // Invariant: update is only called with an existing event's id set.
+    const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(newEventData.id!);
     const storeEvent = eventsUtils.convertEventToStore(storeId, newEventData);
 
     if (storeEvent?.streamIds) {
@@ -343,7 +320,7 @@ class MallUserEvents {
     }
     const eventsStore = this.eventsStores.get(storeId);
     const storeTransaction = mallTransaction
-      ? await mallTransaction!.getStoreTransaction!(storeId)
+      ? await mallTransaction.getStoreTransaction(storeId)
       : null;
     try {
       const success = await eventsStore.update(userId, storeEvent, storeTransaction);
@@ -368,7 +345,7 @@ class MallUserEvents {
    * @param update.filter - function to filter events to update (return true to update)
    * @param [forEachEvent] - each updated event is passed as parameter, null is passed after last event.
    */
-  async updateMany (userId: string, query: EventQuery, update: UpdateStreamedManyUpdate, forEachEvent: (e: Event | null) => unknown, mallTransaction: Transaction) {
+  async updateMany (userId: string, query: EventQuery, update: UpdateManySpec, forEachEvent: ((e: Event | null) => unknown) | null, mallTransaction?: Transaction): Promise<Event[] | null> {
     const result: Event[] = [];
     const streamedUpdate = await this.updateStreamedMany(userId, query, update, mallTransaction);
     for await (const event of streamedUpdate) {
@@ -396,13 +373,18 @@ class MallUserEvents {
    * @param update.removeStreams - array of streams ids to be remove from the events streamIds
    * @param update.filter - function to filter events to update (return true to update)
    */
-  async updateStreamedMany (userId: string, query: EventQuery, update: UpdateStreamedManyUpdate = {}, mallTransaction: Transaction) {
+  async updateStreamedMany (userId: string, query: EventQuery, update: UpdateManySpec = {}, mallTransaction?: Transaction): Promise<ReadableType> {
     const paramsByStore = eventsQueryUtils.getParamsByStore(query);
     // fetch events to be updated
     const streamedMatchingEvents = await this.getStreamedWithParamsByStore(userId, paramsByStore);
+    // getStreamed returns an Error for multi-store queries; previously this
+    // fell through to a TypeError when iterating — throw it explicitly.
+    if (streamedMatchingEvents instanceof Error) throw streamedMatchingEvents;
+    // post-guard capture: keeps the narrowing inside the generator closure
+    const matchingEvents: ReadableType = streamedMatchingEvents;
     const mallEvents = this;
     async function * reader () {
-      for await (const eventData of streamedMatchingEvents) {
+      for await (const eventData of matchingEvents) {
         const newEventData = deepMerge(eventData, update.fieldsToSet);
         if (update.addStreams && update.addStreams.length > 0) {
           newEventData.streamIds = [...new Set([...(newEventData.streamIds ?? []), ...update.addStreams])];
@@ -437,11 +419,11 @@ class MallUserEvents {
 
   // ----------------- DELETE / UPDATE ----------------- //
 
-  async delete (userId: string, originalEvent: Event, mallTransaction: Transaction) {
+  async delete (userId: string, originalEvent: Event, mallTransaction?: Transaction): Promise<void> {
     const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(originalEvent.id);
     const originalStoreEvent = eventsUtils.convertEventToStore(storeId, originalEvent);
     const eventsStore = this.eventsStores.get(storeId);
-    const storeTransaction = mallTransaction ? await mallTransaction!.getStoreTransaction!(storeId) : null;
+    const storeTransaction = mallTransaction ? await mallTransaction.getStoreTransaction(storeId) : null;
     await eventsStore.delete(userId, originalStoreEvent, storeTransaction);
   }
 
@@ -453,7 +435,7 @@ class MallUserEvents {
    * @param [doNotOverrideIntegrity] - Used during tests to store raw events (ex: history or deleted event)
    * @private
    */
-  async prepareForStore (eventData: Partial<Event>, mallTransaction: Transaction, doNotOverrideIntegrity = false) {
+  async prepareForStore (eventData: Partial<Event>, mallTransaction: Transaction, doNotOverrideIntegrity = false): Promise<{ storeId: string; eventsStore: EventsStore; storeEvent: Event; storeTransaction: unknown }> {
     let storeId = null;
     // add eventual missing id and get storeId from first streamId then
     if (eventData.id == null) {
@@ -482,14 +464,14 @@ class MallUserEvents {
     const storeEvent = eventsUtils.convertEventToStore(storeId, eventData);
     const eventsStore = this.eventsStores.get(storeId);
     const storeTransaction = mallTransaction
-      ? await mallTransaction!.getStoreTransaction!(storeId)
+      ? await mallTransaction.getStoreTransaction(storeId)
       : null;
     return { storeId, eventsStore, storeEvent, storeTransaction };
   }
 
   // -------------- LOCAL SPECIFIC TO ACCOUNT & SYSTEM STREAMS ----- //
 
-  async localRemoveAllNonAccountEventsForUser (userId: string) {
+  async localRemoveAllNonAccountEventsForUser (userId: string): Promise<unknown> {
     const localEventsStore = this.eventsStores.get('local');
     return await localEventsStore.removeAllNonAccountEventsForUser(userId);
   }

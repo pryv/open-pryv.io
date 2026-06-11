@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { HttpHeaders } from './types/public.ts';
+import type { Mall } from 'mall/src/types.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
@@ -41,11 +42,7 @@ class MethodContext {
    * Custom auth function, if one was configured.
    */
   customAuthStepFn: CustomAuthFunction | null;
-  // Loose Mall slot — full Mall interface lives across mall/src/* and isn't
-  // exported as a single named contract yet. Narrowed here to the methods
-  // this class actually invokes (streams.getOneWithNoChildren) plus the
-  // commonly-touched sub-stores callers reach via context.mall.{events, streams}.
-  mall: MallLike;
+  mall: Mall | null;
   _tracing: unknown;
   /**
    * Used in events.get
@@ -299,11 +296,6 @@ type UserDef = {
   id: string | undefined | null;
   username: string;
 };
-type StreamLike = { id?: string; parentId?: string | null; trashed?: boolean; children?: StreamLike[]; [k: string]: unknown };
-type MallLike = {
-  streams: { getOneWithNoChildren: (userId: string, streamId: string, storeId: string | null) => Promise<StreamLike | null> };
-  events: unknown;
-} | null;
 type StorageLike = {
   accesses: { findOne: (user: UserDef, query: Record<string, unknown>, opts: unknown, cb: NodeCallback) => void };
   sessions: { get: (token: string, cb: NodeCallback) => void; touch: (token: string, cb: NodeCallback) => void };

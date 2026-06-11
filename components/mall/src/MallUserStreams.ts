@@ -9,22 +9,18 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const storeDataUtils = require('./helpers/storeDataUtils.ts');
+// Typed handle so `throwAPIError: never` flows into return-type inference.
+const storeDataUtils: typeof import('./helpers/storeDataUtils.ts') = require('./helpers/storeDataUtils.ts');
 const streamsUtils = require('./helpers/streamsUtils.ts');
 const { treeUtils } = require('utils');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const errorFactory = require('errors').factory;
 
-type Stream = {
-  id: string;
-  name?: string;
-  parentId?: string | null;
-  trashed?: boolean;
-  deleted?: number | null;
-  children?: Stream[];
-  childrenHidden?: boolean;
-  [k: string]: unknown;
-};
+import type { MallStreams, StreamsGetParams, StoredStream } from './types.ts';
+
+/** Mall-level stream: the stored shape, plus pass-through of store-specific
+ *  extra fields. */
+type Stream = StoredStream & { [k: string]: unknown };
 type StreamsStore = {
   getOne (userId: string, streamId: string, opts: Record<string, unknown>): Promise<Stream | null>;
   get (userId: string, opts: Record<string, unknown>): Promise<Stream[]>;
@@ -40,20 +36,13 @@ type StoresHolder = {
   storesById: Map<string, { streams: StreamsStore, supports?: () => Record<string, unknown> }>;
   storeDescriptionsByStore: Map<{ streams: StreamsStore }, { name: string }>;
 };
-type GetParams = {
-  id?: string;
-  storeId?: string;
-  childrenDepth?: number;
-  excludedIds?: string[];
-  hideStoreRoots?: boolean;
-  includeTrashed?: boolean;
-};
+type GetParams = StreamsGetParams;
 
 /**
  * Storage for streams.
  * Dispatches requests to each data store's streams.
  */
-class MallUserStreams {
+class MallUserStreams implements MallStreams {
   /**
    * @default new Map()
    */
@@ -90,7 +79,7 @@ class MallUserStreams {
    * Will not expand children.
    * @param [storeId]
    */
-  async getOneWithNoChildren (userId: string, streamId: string, storeId?: string): Promise<Stream | null> {
+  async getOneWithNoChildren (userId: string, streamId: string, storeId?: string | null): Promise<Stream | null> {
     if (storeId == null) {
       [storeId, streamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamId);
     }
@@ -263,7 +252,7 @@ class MallUserStreams {
     let parentStoreStreamId;
     if (streamForStore.parentId != null) {
       [parentStoreId, parentStoreStreamId] =
-                storeDataUtils.parseStoreIdAndStoreItemId(streamData.parentId);
+                storeDataUtils.parseStoreIdAndStoreItemId(streamForStore.parentId);
       streamForStore.parentId = parentStoreStreamId;
     }
     // 2- Check streamId and store
@@ -307,7 +296,7 @@ class MallUserStreams {
 
     // 1- Check if there is a parent stream update
     if (streamForStore.parentId != null) {
-      const [parentStoreId, parentStoreStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamData.parentId);
+      const [parentStoreId, parentStoreStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamForStore.parentId);
       if (parentStoreId !== storeId) {
         throw errorFactory.invalidRequestStructure('streams cannot have an id different non matching from their parentId store', streamData);
       }

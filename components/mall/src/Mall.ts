@@ -15,21 +15,19 @@ const MallTransaction = require('./MallTransaction.ts').default;
 const { getLogger } = require('@pryv/boiler');
 const eventsUtils = require('./helpers/eventsUtils.ts');
 
+import type { Mall as MallContract, MallEvents, MallStreams, DataStore, StoreDescription } from './types.ts';
+
 /**
  * Storage for streams and events.
  * Under the hood, manages the different data stores (built-in and custom),
  * dispatching data requests for each one.
+ *
+ * Canonical contract: `Mall` in ./types.ts — import that type, not a local
+ * `MallLike` view.
  */
-type StoreDescription = { id: string; includeInStarPermission?: boolean; [k: string]: unknown };
-type DataStore = {
-  init: (params: Record<string, unknown>) => Promise<unknown>;
-  deleteUser: (userId: string) => Promise<unknown>;
-  getUserStorageInfos?: (userId: string) => Promise<{ streams?: { count: number }; events?: { count: number }; files?: { sizeKb: number } }>;
-  [k: string]: unknown;
-};
 type IntegrityModule = { events: { compute (e: unknown): { integrity: string } } };
 
-class Mall {
+class Mall implements MallContract {
   storesById: Map<string, DataStore> = new Map();
   storeDescriptionsByStore: Map<DataStore, StoreDescription> = new Map();
   /**
@@ -37,16 +35,16 @@ class Mall {
    */
   includedInStarPermissions: string[] = [];
 
-  _events!: InstanceType<typeof MallUserEvents>;
-  _streams!: InstanceType<typeof MallUserStreams>;
+  _events!: MallEvents;
+  _streams!: MallStreams;
 
   initialized = false;
 
-  get streams () {
+  get streams (): MallStreams {
     return this._streams;
   }
 
-  get events () {
+  get events (): MallEvents {
     return this._events;
   }
 
