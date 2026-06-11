@@ -57,9 +57,13 @@ run component bin:
 # Test & related
 # –––––––––––––----------------------------------------------------------------
 
-# Run code linting on the entire repo
-lint *options:
+# Run code linting on the entire repo (JS style + TS `any` gate)
+lint *options: && lint-ts-any
     eslint {{options}} .
+
+# TypeScript `any` gate: no-explicit-any on TS sources (see eslint.ts-any.config.js)
+lint-ts-any:
+    eslint --config eslint.ts-any.config.js 'components/**/*.ts' 'storages/**/*.ts'
 
 # Run code linting only on changed files (excludes deleted files)
 lint-changes *options:
@@ -342,3 +346,8 @@ version version:
 # Run the TypeScript compiler in check-only mode (no emit)
 typecheck:
     tsc --noEmit -p tsconfig.json
+
+# Report TS type coverage (share of expressions with a non-any type).
+# Baseline 80.91% (2026-06-11); --at-least guards against regressions.
+type-coverage:
+    npx type-coverage -p tsconfig.json --at-least 80
