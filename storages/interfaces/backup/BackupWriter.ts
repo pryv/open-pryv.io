@@ -51,6 +51,20 @@ export interface BackupWriteManifestParams {
   backupTimestamp: number;
 }
 
+/** Top-level manifest as persisted by writeManifest (the archive's
+ *  completion marker) and read back via BackupReader.readManifest. */
+export type BackupManifest = {
+  formatVersion: number;
+  coreVersion?: string;
+  config?: Record<string, unknown>;
+  backupType: string;
+  backupTimestamp?: number;
+  snapshotBefore?: number | null;
+  users: UserManifest[];
+  compressed?: boolean;
+  [k: string]: unknown;
+};
+
 /**
  * Top-level writer for a portable, engine-agnostic backup archive.
  * Data is written as JSONL (one JSON object per line), optionally

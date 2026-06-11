@@ -6,22 +6,43 @@
  */
 
 import type { Readable } from 'stream';
+import type { StoredItem } from '../_shared/types.ts';
+import type { StoredEvent, StoredStream, StoredAccess } from '../_shared/domain.ts';
+import type { BackupManifest, UserManifest } from './BackupWriter.ts';
+import type { UserAccountStorageExport } from '../baseStorage/UserAccountStorage.ts';
+import type { AuditExportRow } from '../auditStorage/UserAuditDatabase.ts';
+
+/** Platform-data entry: v1 / old-v2 archives carry raw `{key, value}` rows
+ *  straight from the platform store; v2 archives carry the parsed
+ *  `{username, field, value, isUnique}` shape (platformDB.exportAll).
+ *  Restore bridges both, so the type is a flat optional bag. */
+export type PlatformBackupEntry = {
+  key?: string;
+  value?: unknown;
+  username?: string;
+  field?: string;
+  isUnique?: boolean;
+  [k: string]: unknown;
+};
 
 /**
  * Per-user reader returned by `BackupReader.openUser()`.
  * Handles reading all data scoped to a single user.
  */
 export interface UserBackupReader {
-  readUserManifest (): Promise<unknown>;
-  readStreams (): AsyncIterable<unknown>;
-  readAccesses (): AsyncIterable<unknown>;
-  readProfile (): AsyncIterable<unknown>;
-  readWebhooks (): AsyncIterable<unknown>;
-  readEvents (): AsyncIterable<unknown>;
-  readAudit (): AsyncIterable<unknown>;
+  readUserManifest (): Promise<UserManifest>;
+  readStreams (): AsyncIterable<StoredStream>;
+  readAccesses (): AsyncIterable<StoredAccess>;
+  readProfile (): AsyncIterable<StoredItem>;
+  readWebhooks (): AsyncIterable<StoredItem>;
+  readEvents (): AsyncIterable<StoredEvent>;
+  /** Raw audit rows as exported by UserAuditDatabase.exportAllEvents. */
+  readAudit (): AsyncIterable<AuditExportRow>;
+  /** HF series rows — engine/CSV-derived, opaque at this level. */
   readSeries (): AsyncIterable<unknown>;
   readAttachments (): AsyncIterable<{ eventId: string, fileId: string, stream: Readable }>;
-  readAccountData (): Promise<unknown>;
+  /** Resolves to null when the archive has no account data file. */
+  readAccountData (): Promise<UserAccountStorageExport | null>;
 }
 
 /**
@@ -30,9 +51,9 @@ export interface UserBackupReader {
  */
 export interface BackupReader {
   /** Read the top-level manifest. */
-  readManifest (): Promise<unknown>;
+  readManifest (): Promise<BackupManifest>;
   /** Read platform-level data. */
-  readPlatformData (): AsyncIterable<unknown>;
+  readPlatformData (): AsyncIterable<PlatformBackupEntry>;
   /** Read register-level server mappings (v1 enterprise only). */
   readServerMappings (): AsyncIterable<{ username: string, server: string }>;
   /** Open a user context for reading backup data. */
@@ -46,9 +67,9 @@ export interface BackupReader {
  * All backup reader implementations inherit from this via {@link createBackupReader}.
  */
 const BackupReader: BackupReader = {
-  async readManifest (): Promise<unknown> { throw new Error('Not implemented'); },
+  async readManifest (): Promise<BackupManifest> { throw new Error('Not implemented'); },
 
-  readPlatformData (): AsyncIterable<unknown> { throw new Error('Not implemented'); },
+  readPlatformData (): AsyncIterable<PlatformBackupEntry> { throw new Error('Not implemented'); },
 
   /**
    * Default implementation yields nothing — sources without register
@@ -90,16 +111,16 @@ function validateBackupReader (instance: unknown): BackupReader {
 // ---------------------------------------------------------------------------
 
 const UserBackupReader: UserBackupReader = {
-  async readUserManifest (): Promise<unknown> { throw new Error('Not implemented'); },
-  readStreams (): AsyncIterable<unknown> { throw new Error('Not implemented'); },
-  readAccesses (): AsyncIterable<unknown> { throw new Error('Not implemented'); },
-  readProfile (): AsyncIterable<unknown> { throw new Error('Not implemented'); },
-  readWebhooks (): AsyncIterable<unknown> { throw new Error('Not implemented'); },
-  readEvents (): AsyncIterable<unknown> { throw new Error('Not implemented'); },
-  readAudit (): AsyncIterable<unknown> { throw new Error('Not implemented'); },
+  async readUserManifest (): Promise<UserManifest> { throw new Error('Not implemented'); },
+  readStreams (): AsyncIterable<StoredStream> { throw new Error('Not implemented'); },
+  readAccesses (): AsyncIterable<StoredAccess> { throw new Error('Not implemented'); },
+  readProfile (): AsyncIterable<StoredItem> { throw new Error('Not implemented'); },
+  readWebhooks (): AsyncIterable<StoredItem> { throw new Error('Not implemented'); },
+  readEvents (): AsyncIterable<StoredEvent> { throw new Error('Not implemented'); },
+  readAudit (): AsyncIterable<AuditExportRow> { throw new Error('Not implemented'); },
   readSeries (): AsyncIterable<unknown> { throw new Error('Not implemented'); },
   readAttachments (): AsyncIterable<{ eventId: string, fileId: string, stream: Readable }> { throw new Error('Not implemented'); },
-  async readAccountData (): Promise<unknown> { throw new Error('Not implemented'); }
+  async readAccountData (): Promise<UserAccountStorageExport | null> { throw new Error('Not implemented'); }
 };
 
 for (const propName of Object.getOwnPropertyNames(UserBackupReader)) {

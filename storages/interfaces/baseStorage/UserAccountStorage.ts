@@ -24,6 +24,12 @@ export interface AccountFieldEntry {
   createdBy: string;
 }
 
+export interface AccountFieldHistoryEntry {
+  value: unknown;
+  time: number;
+  createdBy: string;
+}
+
 export interface UserAccountStorageExport {
   passwords: PasswordEntry[];
   storeKeyValues: Array<{ storeId: string, key: string, value: unknown }>;
@@ -33,7 +39,8 @@ export interface UserAccountStorageExport {
 export interface UserAccountStorage {
   init (): Promise<void>;
   addPasswordHash (userId: string, hash: string, createdBy: string, time?: number): Promise<PasswordEntry>;
-  getPasswordHash (userId: string): Promise<string | null>;
+  /** Resolves to undefined when the user has no password (engine-aligned). */
+  getPasswordHash (userId: string): Promise<string | undefined>;
   getCurrentPasswordTime (userId: string): Promise<number>;
   passwordExistsInHistory (userId: string, password: string, historyLength: number): Promise<boolean>;
   clearHistory (userId: string): Promise<void>;
@@ -43,7 +50,7 @@ export interface UserAccountStorage {
   getAccountFields (userId: string): Promise<Record<string, unknown>>;
   getAccountField (userId: string, field: string): Promise<unknown>;
   setAccountField (userId: string, field: string, value: unknown, createdBy: string, time?: number): Promise<AccountFieldEntry>;
-  getAccountFieldHistory (userId: string, field: string, limit?: number): Promise<Array<{ value: unknown, time: number, createdBy: string }>>;
+  getAccountFieldHistory (userId: string, field: string, limit?: number): Promise<AccountFieldHistoryEntry[]>;
   deleteAccountField (userId: string, field: string): Promise<void>;
 
   // Migration methods
@@ -61,7 +68,7 @@ const UserAccountStorage: UserAccountStorage = {
 
   async addPasswordHash (userId: string, hash: string, createdBy: string, time?: number): Promise<PasswordEntry> { throw new Error('Not implemented'); },
 
-  async getPasswordHash (userId: string): Promise<string | null> { throw new Error('Not implemented'); },
+  async getPasswordHash (userId: string): Promise<string | undefined> { throw new Error('Not implemented'); },
 
   async getCurrentPasswordTime (userId: string): Promise<number> { throw new Error('Not implemented'); },
 
@@ -79,7 +86,7 @@ const UserAccountStorage: UserAccountStorage = {
 
   async setAccountField (userId: string, field: string, value: unknown, createdBy: string, time?: number): Promise<AccountFieldEntry> { throw new Error('Not implemented'); },
 
-  async getAccountFieldHistory (userId: string, field: string, limit?: number): Promise<Array<{ value: unknown, time: number, createdBy: string }>> { throw new Error('Not implemented'); },
+  async getAccountFieldHistory (userId: string, field: string, limit?: number): Promise<AccountFieldHistoryEntry[]> { throw new Error('Not implemented'); },
 
   async deleteAccountField (userId: string, field: string): Promise<void> { throw new Error('Not implemented'); },
 

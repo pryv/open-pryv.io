@@ -7,6 +7,15 @@
 
 import type { Readable } from 'stream';
 
+/** The slice of a datastore events store that attachment handling wraps —
+ *  implementations monkey-patch getAttachment/addAttachment/deleteAttachment
+ *  onto it (hence the open tail). */
+export type AttachableEventsStore = {
+  getOne: (userId: string, eventId: string) => Promise<Record<string, unknown> | null>;
+  update: (userId: string, event: Record<string, unknown>, transaction: unknown) => Promise<unknown>;
+  [k: string]: unknown;
+};
+
 export interface EventFiles {
   init (): Promise<void>;
   getFileStorageInfos (userId: string): Promise<number>;
@@ -15,7 +24,7 @@ export interface EventFiles {
   removeAttachment (userId: string, eventId: string, fileId: string): Promise<void>;
   removeAllForEvent (userId: string, eventId: string): Promise<void>;
   removeAllForUser (userId: string): Promise<void>;
-  attachToEventStore (es: unknown, setIntegrityOnEvent: (event: Record<string, unknown>) => unknown): void;
+  attachToEventStore (es: AttachableEventsStore, setIntegrityOnEvent: (event: Record<string, unknown>) => unknown): void;
 }
 
 /**
@@ -37,7 +46,7 @@ const EventFiles: EventFiles = {
 
   async removeAllForUser (userId: string): Promise<void> { throw new Error('Not implemented'); },
 
-  attachToEventStore (es: unknown, setIntegrityOnEvent: (event: Record<string, unknown>) => unknown): void { throw new Error('Not implemented'); }
+  attachToEventStore (es: AttachableEventsStore, setIntegrityOnEvent: (event: Record<string, unknown>) => unknown): void { throw new Error('Not implemented'); }
 };
 
 // Limit tampering on existing properties
