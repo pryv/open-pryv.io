@@ -6,7 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
-import type { Callback, UserOrId, StoredItem, ItemList, Query, UpdateData, QueryOp, FindOptions } from '../../../../interfaces/_shared/types.ts';
+import type { Callback, UserOrId, StoredItem, Query, UpdateData, QueryOp, FindOptions } from '../../../../interfaces/_shared/types.ts';
 const require = createRequire(import.meta.url);
 
 const { DatabasePG } = require('../DatabasePG.ts');
@@ -20,7 +20,7 @@ type PGResult = { rows: PgRow[], rowCount: number };
  *  opaquely to node-pg, which does its own value serialization. */
 type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<PGResult> };
 
-// StoredItem / ItemList / Query / UpdateData / QueryOp / FindOptions are the
+// StoredItem / Query / UpdateData / QueryOp / FindOptions are the
 // shared document-store boundary types from interfaces/_shared/types.ts.
 type Options = FindOptions;
 
@@ -76,6 +76,13 @@ const DEFAULT_JSONB_COLUMNS = new Set([
  * Provides the same callback-based API as BaseStorage (MongoDB) so that
  * StorageLayer consumers see a uniform interface.
  *
+ * Generic over the stored item shape `T`, mirroring the
+ * `UserStorage<T>` contract: collection subclasses bind `T` (e.g.
+ * `extends BaseStoragePG<StoredAccess>`) so the CRUD callbacks carry the
+ * collection's item type. The runtime truth backing this: every read path
+ * dispatches through `this.rowToItem` (overridden per collection), so
+ * results genuinely are `T`.
+ *
  * Subclasses must set:
  *   this.tableName      — PG table name
  *   this.columnMap      — (optional) additional camelCase→snake_case overrides
@@ -85,7 +92,7 @@ const DEFAULT_JSONB_COLUMNS = new Set([
  *   this.hasDeletedCol  — (optional, default true) whether table has a `deleted` column
  *   this.hasHeadIdCol   — (optional, default false) whether table has a `head_id` column
  */
-class BaseStoragePG {
+class BaseStoragePG<T extends StoredItem = StoredItem> {
   db: PgDbLike;
   tableName: string | null;
   columnMap: Record<string, string>;
@@ -146,7 +153,7 @@ class BaseStoragePG {
     return value;
   }
 
-  rowToItem (row: PgRow): StoredItem | null {
+  rowToItem (row: PgRow): T | null {
     if (!row) return null;
     const item: StoredItem = {};
     for (const [col, val] of Object.entries(row)) {
@@ -158,10 +165,12 @@ class BaseStoragePG {
     if (this.hasDeletedCol && item.deleted == null) {
       delete item.deleted;
     }
-    return item;
+    // The single document↔row boundary cast: rows of this collection's
+    // table are `T` by construction (subclass overrides refine further).
+    return item as T;
   }
 
-  rowsToItems (rows: PgRow[]): ItemList {
+  rowsToItems (rows: PgRow[]): Array<T | null> {
     return rows.map((r) => this.rowToItem(r));
   }
 
@@ -310,12 +319,12 @@ class BaseStoragePG {
     return { select: '*', excludeProps: [] };
   }
 
-  applyExclusions (items: ItemList, excludeProps: string[]): ItemList {
+  applyExclusions (items: Array<T | null>, excludeProps: string[]): Array<T | null> {
     if (!excludeProps || excludeProps.length === 0) return items;
     for (const item of items) {
       if (item == null) continue;
       for (const prop of excludeProps) {
-        delete item[prop];
+        delete (item as StoredItem)[prop];
       }
     }
     return items;
@@ -323,19 +332,19 @@ class BaseStoragePG {
 
   // ---- Core CRUD methods (callback-based) ----
 
-  find (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<ItemList>): void {
+  find (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<Array<T | null>>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (this.hasDeletedCol) query.deleted = null;
     if (this.hasHeadIdCol) query.headId = null;
     this._findInternal(userId, query, options, callback);
   }
 
-  findIncludingDeletionsAndVersions (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<ItemList>): void {
+  findIncludingDeletionsAndVersions (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<Array<T | null>>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     this._findInternal(userId, query, options, callback);
   }
 
-  _findInternal (userId: string, query: Query, options: Options, callback: Callback<ItemList>): void {
+  _findInternal (userId: string, query: Query, options: Options, callback: Callback<Array<T | null>>): void {
     const { select, excludeProps } = this.buildSelect(options);
     const where = this.buildWhere(userId, query);
     const orderBy = this.buildOrderBy(options);
@@ -347,7 +356,7 @@ class BaseStoragePG {
       .catch(callback);
   }
 
-  findOne (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<StoredItem | null>): void {
+  findOne (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<T | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (this.hasDeletedCol) query.deleted = null;
     if (this.hasHeadIdCol) query.headId = null;
@@ -366,7 +375,7 @@ class BaseStoragePG {
       .catch(callback);
   }
 
-  findDeletion (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<StoredItem | null>): void {
+  findDeletion (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<T | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     query.deleted = { $ne: null };
 
@@ -384,14 +393,14 @@ class BaseStoragePG {
       .catch(callback);
   }
 
-  findDeletions (userOrUserId: UserOrId, deletedSince: number, options: Options, callback: Callback<ItemList>): void {
+  findDeletions (userOrUserId: UserOrId, deletedSince: number, options: Options, callback: Callback<Array<T | null>>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const query: Query = { deleted: { $gt: deletedSince } };
     if (this.hasHeadIdCol) query.headId = null;
     this._findInternal(userId, query, options, callback);
   }
 
-  insertOne (userOrUserId: UserOrId, item: StoredItem, callback: Callback<StoredItem | null>): void {
+  insertOne (userOrUserId: UserOrId, item: Partial<T>, callback: Callback<T | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     item = this.applyDefaults(item);
 
@@ -421,7 +430,7 @@ class BaseStoragePG {
       });
   }
 
-  findOneAndUpdate (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<StoredItem | null>): void {
+  findOneAndUpdate (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<T | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const { setClauses, unsetClauses, incClauses, params, nextIdx } =
       this._buildUpdateClauses(updatedData, 1);
@@ -446,7 +455,7 @@ class BaseStoragePG {
       });
   }
 
-  updateOne (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<StoredItem | null>): void {
+  updateOne (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<T | null>): void {
     this.findOneAndUpdate(userOrUserId, query, updatedData, callback);
   }
 
@@ -686,7 +695,7 @@ class BaseStoragePG {
       .catch(callback);
   }
 
-  async * iterateAll (): AsyncGenerator<StoredItem | null> {
+  async * iterateAll (): AsyncGenerator<T | null> {
     const res = await this.db.query(`SELECT * FROM ${this.tableName}`);
     for (const row of res.rows) {
       yield this.rowToItem(row);
@@ -695,12 +704,12 @@ class BaseStoragePG {
 
   // ---- Test helpers ----
 
-  findAll (userOrUserId: UserOrId, options: Options, callback: Callback<ItemList>): void {
+  findAll (userOrUserId: UserOrId, options: Options, callback: Callback<Array<T | null>>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     this._findInternal(userId, {}, options, callback);
   }
 
-  insertMany (userOrUserId: UserOrId, items: StoredItem[], callback: Callback<void>): void {
+  insertMany (userOrUserId: UserOrId, items: Array<Partial<T>>, callback: Callback<void>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (!items || items.length === 0) return callback(null);
 
@@ -736,11 +745,13 @@ class BaseStoragePG {
     this.removeAll(userOrUserId, callback);
   }
 
-  listIndexes (_userOrUserId: UserOrId, _options: unknown, callback: Callback<ItemList>): void {
+  listIndexes (_userOrUserId: UserOrId, _options: unknown, callback: Callback<Array<T | null>>): void {
     callback(null, []);
   }
 
-  findAndUpdateIfNeeded (userOrUserId: UserOrId, query: Query, options: Options, updateIfNeededCallback: (item: StoredItem | null) => UpdateData | null, callback: Callback<{ count: number }>): void {
+  /** `updateIfNeededCallback` only ever receives non-null items — null rows
+   *  are skipped before it is invoked. */
+  findAndUpdateIfNeeded (userOrUserId: UserOrId, query: Query, options: Options, updateIfNeededCallback: (item: T) => UpdateData | null, callback: Callback<{ count: number }>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const where = this.buildWhere(userId, query);
     const orderBy = this.buildOrderBy(options);
@@ -767,7 +778,7 @@ class BaseStoragePG {
 
   // ---- Migration methods ----
 
-  exportAll (userOrUserId: UserOrId, callback: Callback<ItemList>): void {
+  exportAll (userOrUserId: UserOrId, callback: Callback<Array<T | null>>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const sql = `SELECT * FROM ${this.tableName} WHERE user_id = $1`;
     this.db.query(sql, [userId])
@@ -775,7 +786,7 @@ class BaseStoragePG {
       .catch(callback);
   }
 
-  importAll (userOrUserId: UserOrId, items: StoredItem[], callback: Callback<void>): void {
+  importAll (userOrUserId: UserOrId, items: T[], callback: Callback<void>): void {
     if (!items || items.length === 0) return callback(null);
     this.insertMany(userOrUserId, items, callback);
   }
@@ -786,8 +797,12 @@ class BaseStoragePG {
 
   // ---- Defaults ----
 
-  applyDefaults (item: StoredItem): StoredItem {
-    return Object.assign({}, item);
+  /** Subclasses override to complete partial items (mint ids, defaults). The
+   *  base copy-through cast is honest for the default `T = StoredItem` (all
+   *  fields optional); collection subclasses MUST refine when `T` has
+   *  required fields. */
+  applyDefaults (item: Partial<T>): T {
+    return Object.assign({}, item) as T;
   }
 }
 

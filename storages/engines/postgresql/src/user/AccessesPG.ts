@@ -8,13 +8,11 @@
 import { createRequire } from 'node:module';
 import type { Callback, UserOrId, Query, UpdateData, FindOptions } from 'storages/interfaces/_shared/types.ts';
 import type { StoredAccess } from 'storages/interfaces/_shared/domain.ts';
+import type { PgDbLike } from './BaseStoragePG.ts';
 
 const require = createRequire(import.meta.url);
 
-// NOTE: deliberately untyped require — a typed handle surfaces ~10 callback
-// variance mismatches per subclass (Callback<Item> vs Callback<StoredItem|null>)
-// that need their own alignment pass; tracked as stage follow-up.
-const { BaseStoragePG } = require('./BaseStoragePG.ts');
+const { BaseStoragePG } = require('./BaseStoragePG.ts') as typeof import('./BaseStoragePG.ts');
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const { _internals } = require('../_internals.ts');
 const timestamp = require('unix-timestamp');
@@ -27,16 +25,14 @@ type AccessItem = StoredAccess;
 type AccessRow = Record<string, unknown>;
 type Update = UpdateData;
 type Options = FindOptions;
-type PgDb = { query (sql: string, params?: unknown[]): Promise<{ rows: AccessRow[] }> };
 
 /**
  * PostgreSQL persistence for accesses.
  */
-class AccessesPG extends BaseStoragePG {
+class AccessesPG extends BaseStoragePG<AccessItem> {
   integrityAccesses: IntegrityAccesses;
-  declare db: PgDb;
 
-  constructor (db: PgDb, integrityAccesses?: IntegrityAccesses) {
+  constructor (db: PgDbLike, integrityAccesses?: IntegrityAccesses) {
     super(db);
     this.tableName = 'accesses';
     this.hasDeletedCol = true;
@@ -46,7 +42,7 @@ class AccessesPG extends BaseStoragePG {
   }
 
   rowToItem (row: AccessRow): AccessItem | null {
-    const item = super.rowToItem(row) as AccessItem | null;
+    const item = super.rowToItem(row);
     if (item && item.type === 'shared' && !('deviceName' in item)) {
       item.deviceName = null;
     }
@@ -58,8 +54,8 @@ class AccessesPG extends BaseStoragePG {
     return item;
   }
 
-  applyDefaults (item: AccessItem): AccessItem {
-    const copy: AccessItem = Object.assign({}, item);
+  applyDefaults (item: Partial<AccessItem>): AccessItem {
+    const copy = Object.assign({}, item) as AccessItem;
     copy.id = copy.id || generateId();
     copy.token = copy.token || generateId();
     if (copy.deleted === undefined) copy.deleted = null;
@@ -76,14 +72,14 @@ class AccessesPG extends BaseStoragePG {
 
   /** Query-shaped deletion lookup (accesses-specific; the base
    *  findDeletions keeps its deletedSince signature). */
-  findDeletionRecords (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<AccessItem[]>): void {
+  findDeletionRecords (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<Array<AccessItem | null>>): void {
     query = query || {};
     query.deleted = { $ne: null };
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     this._findInternal(userId, query, options, callback);
   }
 
-  delete (userOrUserId: UserOrId, query: Query, callback: Callback<{ modifiedCount?: number; count?: number }>): void {
+  delete (userOrUserId: UserOrId, query: Query, callback: Callback<{ modifiedCount: number; integrityRecomputed?: number }>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const now = timestamp.now();
 
@@ -120,12 +116,15 @@ class AccessesPG extends BaseStoragePG {
           logger.error('Issue when adding integrity to updated accesses for ' +
             JSON.stringify(userId) + ' counts does not match');
         }
-        callback(err2, res2);
+        // Deliver the contract payload (delete count under `modifiedCount`,
+        // like the non-integrity path and the SQLite twin) — not the raw
+        // recompute result.
+        callback(null, { modifiedCount: initialModifiedCount, integrityRecomputed: res2!.count });
       });
     });
   }
 
-  updateOne (userOrUserId: UserOrId, query: Query, update: Update & { modified?: number; integrity?: string; $set?: Record<string, unknown>; $unset?: Record<string, unknown> }, callback: Callback<AccessItem>): void {
+  updateOne (userOrUserId: UserOrId, query: Query, update: Update & { modified?: number; integrity?: string; $set?: Record<string, unknown>; $unset?: Record<string, unknown> }, callback: Callback<AccessItem | null>): void {
     if (update.modified == null || !this.integrityAccesses.isActive) {
       return this.findOneAndUpdate(userOrUserId, query, update, callback);
     }
@@ -136,7 +135,7 @@ class AccessesPG extends BaseStoragePG {
     }
 
     const that = this;
-    this.findOneAndUpdate(userOrUserId, query, update, (err: Error | null, accessData?: AccessItem) => {
+    this.findOneAndUpdate(userOrUserId, query, update, (err: Error | null, accessData?: AccessItem | null) => {
       if (err || accessData?.id == null) return callback(err, accessData);
 
       const integrityCheck = accessData.integrity;
@@ -180,9 +179,9 @@ class AccessesPG extends BaseStoragePG {
    * Caller is expected to mutate the head row immediately after this
    * call to bump `serial` (and update tracking + integrity).
    */
-  snapshotHead (userOrUserId: UserOrId, baseId: string, callback: Callback<unknown>): void {
+  snapshotHead (userOrUserId: UserOrId, baseId: string, callback: Callback<void>): void {
     const that = this;
-    this.findOne(userOrUserId, { id: baseId }, null, function (err: Error | null, head?: AccessItem) {
+    this.findOne(userOrUserId, { id: baseId }, null, function (err: Error | null, head?: AccessItem | null) {
       if (err) return callback(err);
       if (head == null) return callback(new Error('snapshotHead: no live head row for access id ' + JSON.stringify(baseId)));
       const snapshot: AccessItem = Object.assign({}, head);
@@ -196,7 +195,7 @@ class AccessesPG extends BaseStoragePG {
     });
   }
 
-  insertMany (userOrUserId: UserOrId, accesses: AccessItem[], callback: Callback<unknown>): void {
+  insertMany (userOrUserId: UserOrId, accesses: Array<Partial<AccessItem>>, callback: Callback<void>): void {
     const accessesToCreate = accesses.map((a) => {
       if (a.deleted === undefined) return Object.assign({ deleted: null }, a);
       return a;

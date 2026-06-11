@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module';
 import type { Callback, UserOrId, Query, UpdateData, FindOptions } from 'storages/interfaces/_shared/types.ts';
 import type { StoredStream } from 'storages/interfaces/_shared/domain.ts';
+import type { PgDbLike } from './BaseStoragePG.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -18,12 +19,8 @@ type Stream = StoredStream & { path?: string; singleActivity?: boolean };
 type StreamRow = Record<string, unknown>;
 type Update = UpdateData;
 type Options = FindOptions;
-type PgDb = { query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
 
-// NOTE: deliberately untyped require — a typed handle surfaces ~10 callback
-// variance mismatches per subclass (Callback<Item> vs Callback<StoredItem|null>)
-// that need their own alignment pass; tracked as stage follow-up.
-const { BaseStoragePG } = require('./BaseStoragePG.ts');
+const { BaseStoragePG } = require('./BaseStoragePG.ts') as typeof import('./BaseStoragePG.ts');
 const { _internals } = require('../_internals.ts');
 const timestamp = require('unix-timestamp');
 const { treeUtils } = require('utils');
@@ -31,9 +28,8 @@ const { treeUtils } = require('utils');
 /**
  * PostgreSQL persistence for streams.
  */
-class StreamsPG extends BaseStoragePG {
-  declare db: PgDb;
-  constructor (db: PgDb) {
+class StreamsPG extends BaseStoragePG<Stream> {
+  constructor (db: PgDbLike) {
     super(db);
     this.tableName = 'streams';
     this.hasDeletedCol = true;
@@ -42,7 +38,7 @@ class StreamsPG extends BaseStoragePG {
   }
 
   rowToItem (row: StreamRow): Stream | null {
-    const item = super.rowToItem(row) as Stream | null;
+    const item = super.rowToItem(row);
     if (item) {
       delete item.path;
       if (item.trashed === false) delete item.trashed;
@@ -54,7 +50,7 @@ class StreamsPG extends BaseStoragePG {
     return item;
   }
 
-  _findInternal (userId: string, query: Query, options: Options, callback: Callback<Stream[]>): void {
+  _findInternal (userId: string, query: Query, options: Options, callback: Callback<Array<Stream | null>>): void {
     const { select, excludeProps } = this.buildSelect(options);
     const where = this.buildWhere(userId, query);
     const orderBy = this.buildOrderBy(options);
@@ -73,7 +69,7 @@ class StreamsPG extends BaseStoragePG {
     this.count(userOrUserId, {}, callback);
   }
 
-  insertOne (userOrUserId: UserOrId, stream: Stream, callback: Callback<Stream>): void {
+  insertOne (userOrUserId: UserOrId, stream: Stream, callback: Callback<Stream | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     _internals.cache.unsetUserData(userId);
     if (!stream.path) {
@@ -98,7 +94,7 @@ class StreamsPG extends BaseStoragePG {
     }
   }
 
-  updateOne (userOrUserId: UserOrId, query: Query, updatedData: Update & { parentId?: unknown }, callback: Callback<Stream>): void {
+  updateOne (userOrUserId: UserOrId, query: Query, updatedData: Update & { parentId?: unknown }, callback: Callback<Stream | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (typeof updatedData.parentId !== 'undefined') {
       _internals.cache.unsetUserData(userId);
@@ -108,7 +104,7 @@ class StreamsPG extends BaseStoragePG {
     super.updateOne(userOrUserId, query, updatedData, callback);
   }
 
-  delete (userOrUserId: UserOrId, query: Query, callback: Callback<unknown>): void {
+  delete (userOrUserId: UserOrId, query: Query, callback: Callback<{ modifiedCount: number }>): void {
     const userId = (typeof userOrUserId === 'string') ? userOrUserId : userOrUserId.id;
     _internals.cache.unsetUserData(userId);
     this.updateMany(userOrUserId, query, {
@@ -126,7 +122,7 @@ class StreamsPG extends BaseStoragePG {
     }, callback);
   }
 
-  insertMany (userOrUserId: UserOrId, items: Stream[], callback: Callback<unknown>): void {
+  insertMany (userOrUserId: UserOrId, items: Stream[], callback: Callback<void>): void {
     let flatItems: Stream[] = treeUtils.flattenTree(items);
     const pathMap: Record<string, string> = {};
     flatItems = flatItems.map((s: Stream) => {

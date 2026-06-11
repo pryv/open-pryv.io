@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module';
 import type { Callback, UserOrId, Query, UpdateData, FindOptions } from 'storages/interfaces/_shared/types.ts';
 import type { StoredStream } from 'storages/interfaces/_shared/domain.ts';
+import type { DbRow } from './BaseStorageSQLite.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -15,20 +16,16 @@ const require = createRequire(import.meta.url);
  *  materialized-path field (`path`, stripped on read) and the legacy
  *  `singleActivity` flag this engine still round-trips. */
 type StreamItem = StoredStream & { path?: string; singleActivity?: boolean };
-type StreamRow = Record<string, unknown>;
 type Options = FindOptions;
 type Update = UpdateData;
 
-// NOTE: deliberately untyped require — a typed handle surfaces ~10 callback
-// variance mismatches per subclass (Callback<Item> vs Callback<StoredItem|null>)
-// that need their own alignment pass; tracked as stage follow-up.
-const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts');
+const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts') as typeof import('./BaseStorageSQLite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const timestamp = require('unix-timestamp');
 const { treeUtils } = require('utils');
 const { _internals } = require('../_internals.ts');
 
-class StreamsSQLite extends BaseStorageSQLite {
+class StreamsSQLite extends BaseStorageSQLite<StreamItem> {
   constructor () {
     super();
     this.tableName = 'streams';
@@ -37,8 +34,8 @@ class StreamsSQLite extends BaseStorageSQLite {
     this.defaultSort = `json_extract(data, '$.name') ASC`;
   }
 
-  rowToItem (row: StreamRow): StreamItem | null {
-    const item = super.rowToItem(row) as StreamItem | null;
+  rowToItem (row: DbRow): StreamItem | null {
+    const item = super.rowToItem(row);
     if (item) {
       delete item.path;
       if (item.trashed === false) delete item.trashed;
@@ -51,14 +48,14 @@ class StreamsSQLite extends BaseStorageSQLite {
   }
 
   find (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<StreamItem[]>): void {
-    super.find(userOrUserId, query, options, (err: Error | null, items?: StreamItem[]) => {
+    super.find(userOrUserId, query, options, (err: Error | null, items?: Array<StreamItem | null>) => {
       if (err) return callback(err);
       callback(null, treeUtils.buildTree(items));
     });
   }
 
   findIncludingDeletionsAndVersions (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<StreamItem[]>): void {
-    super.findIncludingDeletionsAndVersions(userOrUserId, query, options, (err: Error | null, items?: StreamItem[]) => {
+    super.findIncludingDeletionsAndVersions(userOrUserId, query, options, (err: Error | null, items?: Array<StreamItem | null>) => {
       if (err) return callback(err);
       callback(null, treeUtils.buildTree(items));
     });
@@ -68,7 +65,7 @@ class StreamsSQLite extends BaseStorageSQLite {
     this.count(userOrUserId, {}, callback);
   }
 
-  insertOne (userOrUserId: UserOrId, stream: StreamItem, callback: Callback<StreamItem>): void {
+  insertOne (userOrUserId: UserOrId, stream: StreamItem, callback: Callback<StreamItem | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (_internals.cache) _internals.cache.unsetUserData(userId);
     if (!stream.path) {
@@ -80,7 +77,7 @@ class StreamsSQLite extends BaseStorageSQLite {
     super.insertOne(userOrUserId, stream, callback);
   }
 
-  updateOne (userOrUserId: UserOrId, query: Query, updatedData: Update & { parentId?: unknown }, callback: Callback<StreamItem>): void {
+  updateOne (userOrUserId: UserOrId, query: Query, updatedData: Update & { parentId?: unknown }, callback: Callback<StreamItem | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (_internals.cache) {
       if (typeof updatedData.parentId !== 'undefined') {
@@ -110,7 +107,7 @@ class StreamsSQLite extends BaseStorageSQLite {
     }
   }
 
-  delete (userOrUserId: UserOrId, query: Query, callback: Callback<unknown>): void {
+  delete (userOrUserId: UserOrId, query: Query, callback: Callback<{ modifiedCount: number }>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (_internals.cache) _internals.cache.unsetUserData(userId);
     this.updateMany(userOrUserId, query, {
@@ -122,7 +119,7 @@ class StreamsSQLite extends BaseStorageSQLite {
     }, callback);
   }
 
-  insertMany (userOrUserId: UserOrId, items: StreamItem[], callback: Callback<unknown>): void {
+  insertMany (userOrUserId: UserOrId, items: StreamItem[], callback: Callback<void>): void {
     let flat: StreamItem[] = treeUtils.flattenTree(items);
     const pathMap: Record<string, string> = {};
     flat = flat.map((s: StreamItem) => {

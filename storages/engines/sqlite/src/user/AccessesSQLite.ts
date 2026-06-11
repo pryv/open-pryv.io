@@ -6,14 +6,12 @@
  */
 
 import { createRequire } from 'node:module';
-import type { Callback, UserOrId, UpdateData } from '../../../../interfaces/_shared/types.ts';
+import type { Callback, UserOrId, UpdateData, FindOptions } from '../../../../interfaces/_shared/types.ts';
 import type { StoredAccess } from '../../../../interfaces/_shared/domain.ts';
+import type { DbRow } from './BaseStorageSQLite.ts';
 const require = createRequire(import.meta.url);
 
-// NOTE: deliberately untyped require — a typed handle surfaces ~10 callback
-// variance mismatches per subclass (Callback<Item> vs Callback<StoredItem|null>)
-// that need their own alignment pass; tracked as stage follow-up.
-const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts');
+const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts') as typeof import('./BaseStorageSQLite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
@@ -24,7 +22,7 @@ type IntegrityAccesses = { isActive: boolean; set: (access: AccessItem, recomput
 type AccessItem = StoredAccess;
 type AccessUpdate = UpdateData & { modified?: number; integrity?: string | null };
 
-class AccessesSQLite extends BaseStorageSQLite {
+class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
   integrityAccesses: IntegrityAccesses;
 
   constructor (integrityAccesses?: IntegrityAccesses) {
@@ -36,7 +34,7 @@ class AccessesSQLite extends BaseStorageSQLite {
     this.integrityAccesses = integrityAccesses || { isActive: false, set: () => {} };
   }
 
-  rowToItem (row: Record<string, unknown>): AccessItem | null {
+  rowToItem (row: DbRow): AccessItem | null {
     const item = super.rowToItem(row);
     if (item && item.type === 'shared' && !('deviceName' in item)) {
       item.deviceName = null;
@@ -62,7 +60,7 @@ class AccessesSQLite extends BaseStorageSQLite {
 
   /** Query-shaped deletion lookup (accesses-specific; the base
    *  findDeletions keeps its deletedSince signature). */
-  findDeletionRecords (userOrUserId: UserOrId, query: Record<string, unknown>, options: unknown, callback: Callback<AccessItem[]>): void {
+  findDeletionRecords (userOrUserId: UserOrId, query: Record<string, unknown>, options: FindOptions, callback: Callback<Array<AccessItem | null>>): void {
     const q = Object.assign({}, query || {}, { deleted: { $ne: null } });
     this.findIncludingDeletionsAndVersions(userOrUserId, q, options, callback);
   }
@@ -81,9 +79,9 @@ class AccessesSQLite extends BaseStorageSQLite {
     const integrityBatchCode = Math.random();
     updateData.$set!.integrityBatchCode = integrityBatchCode;
 
-    this.updateMany(userOrUserId, query, updateData, (err: Error | null, res: { modifiedCount: number }) => {
+    this.updateMany(userOrUserId, query, updateData, (err: Error | null, res?: { modifiedCount: number }) => {
       if (err) return callback(err);
-      const initial = res.modifiedCount;
+      const initial = res!.modifiedCount;
       const updateIfNeeded = (access: AccessItem): AccessUpdate | null => {
         delete access.integrityBatchCode;
         const prev = access.integrity;
@@ -101,7 +99,7 @@ class AccessesSQLite extends BaseStorageSQLite {
     });
   }
 
-  updateOne (userOrUserId: UserOrId, query: Record<string, unknown>, update: AccessUpdate, callback: Callback<AccessItem>): void {
+  updateOne (userOrUserId: UserOrId, query: Record<string, unknown>, update: AccessUpdate, callback: Callback<AccessItem | null>): void {
     if (update.modified == null || !this.integrityAccesses.isActive) {
       return this.findOneAndUpdate(userOrUserId, query, update, callback);
     }
@@ -109,7 +107,7 @@ class AccessesSQLite extends BaseStorageSQLite {
       if (!update.$unset) update.$unset = {};
       update.$unset.integrity = 1;
     }
-    this.findOneAndUpdate(userOrUserId, query, update, (err: Error | null, accessData: AccessItem | null) => {
+    this.findOneAndUpdate(userOrUserId, query, update, (err: Error | null, accessData?: AccessItem | null) => {
       if (err || accessData?.id == null) return callback(err, accessData ?? undefined);
       const before = accessData.integrity;
       try {
@@ -132,11 +130,11 @@ class AccessesSQLite extends BaseStorageSQLite {
     const rows = udb.db.prepare(
       `SELECT * FROM ${this.tableName} WHERE head_id = ? ORDER BY json_extract(data, '$.modified') ASC`
     ).all(baseId);
-    return rows.map((r: Record<string, unknown>) => this.rowToItem(r)).filter((x: AccessItem | null): x is AccessItem => x != null);
+    return rows.map((r: DbRow) => this.rowToItem(r)).filter((x: AccessItem | null): x is AccessItem => x != null);
   }
 
   snapshotHead (userOrUserId: UserOrId, baseId: string, callback: Callback<void>): void {
-    this.findOne(userOrUserId, { id: baseId }, null, (err: Error | null, head: AccessItem | null) => {
+    this.findOne(userOrUserId, { id: baseId }, null, (err: Error | null, head?: AccessItem | null) => {
       if (err) return callback(err);
       if (head == null) return callback(new Error('snapshotHead: no live head row for access id ' + JSON.stringify(baseId)));
       const snapshot = Object.assign({}, head);
@@ -165,7 +163,7 @@ class AccessesSQLite extends BaseStorageSQLite {
    * shaped like PG's so api-server's `err.isDuplicateIndex('token')` /
    * `'name'` / `'type'` / `'deviceName'` branches keep matching.
    */
-  insertOne (userOrUserId: UserOrId, item: Partial<AccessItem>, callback: Callback<AccessItem>): void {
+  insertOne (userOrUserId: UserOrId, item: Partial<AccessItem>, callback: Callback<AccessItem | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const prepared = this.applyDefaults(Object.assign({ deleted: null }, item));
     // Versioned snapshots (headId != null) bypass the uniqueness check —
@@ -175,9 +173,10 @@ class AccessesSQLite extends BaseStorageSQLite {
     if (prepared.headId != null) {
       return super.insertOne(userId, prepared, callback);
     }
-    this.findIncludingDeletionsAndVersions(userId, { deleted: null, headId: null }, null, (err: Error | null, existing: AccessItem[]) => {
+    this.findIncludingDeletionsAndVersions(userId, { deleted: null, headId: null }, null, (err: Error | null, existing?: Array<AccessItem | null>) => {
       if (err) return callback(err);
       for (const ex of (existing || [])) {
+        if (ex == null) continue;
         if (ex.id === prepared.id) continue; // same row (shouldn't happen — defensive)
         if (ex.token != null && ex.token === prepared.token) {
           return callback(duplicateIndexError(['token'], { token: '(hidden)' }));
