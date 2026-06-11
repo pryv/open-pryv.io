@@ -1,0 +1,16 @@
+{
+  "storageTypes": ["fileStorage"],
+  "entrypoint": "src/index.ts",
+  "requiredInternals": [],
+  "configuration": {
+    "fields": {
+      "endpoint":        { "type": "string",  "default": null,   "description": "S3 endpoint URL (null = AWS default for the region; set for MinIO / Ceph RGW / other S3-compatible stores)" },
+      "region":          { "type": "string",  "default": "us-east-1", "description": "S3 region" },
+      "bucket":          { "type": "string",  "required": true,  "description": "Bucket holding event attachments" },
+      "accessKeyId":     { "type": "string",  "default": null,   "description": "Access key id (null = AWS default credential chain / IAM role)" },
+      "secretAccessKey": { "type": "string",  "default": null,   "description": "Secret access key (null = AWS default credential chain / IAM role)" },
+      "forcePathStyle":  { "type": "boolean", "default": false,  "description": "Path-style bucket addressing (required by MinIO and most self-hosted stores)" },
+      "keyPrefix":       { "type": "string",  "default": "",     "description": "Optional key prefix inside the bucket (e.g. 'attachments/')" }
+    }
+  }
+}

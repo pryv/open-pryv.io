@@ -21,11 +21,24 @@ let eventFiles: EventFilesT | null = null;
 async function getEventFiles () {
   if (eventFiles) return eventFiles;
 
-  const settings = (await getConfig()).get('eventFiles');
+  const config = await getConfig();
+  const settings = config.get('eventFiles');
+  const fileEngine = config.get('storages:file:engine') || 'filesystem';
   let newEventFiles: EventFilesT;
   if (settings.engine) {
+    // Legacy escape hatch: `eventFiles.engine.modulePath` loads an
+    // arbitrary EventFiles class. Predates the storages engine registry;
+    // takes precedence for backwards compatibility.
     const EventEngine = require(settings.engine.modulePath);
     newEventFiles = new EventEngine(settings.engine);
+  } else if (fileEngine !== 'filesystem') {
+    // Non-default fileStorage engine (e.g. `s3`) — resolve through the
+    // storages plugin registry. The barrel's init() has already run
+    // pluginLoader.init() + the engine's init(config, getLogger, …) by
+    // the time any consumer requests event files.
+    const { pluginLoader } = require('storages');
+    const engineModule = pluginLoader.getEngineModule(fileEngine);
+    newEventFiles = await engineModule.createFileStorage();
   } else {
     newEventFiles = new EventLocalFiles();
   }

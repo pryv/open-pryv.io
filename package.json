@@ -27,6 +27,8 @@
     "**/xmlhttprequest-ssl": "^1.6.2"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.864.0",
+    "@aws-sdk/lib-storage": "^3.864.0",
     "@paralleldrive/cuid2": "^3.3.0",
     "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
     "@pryv/stable-object-representation": "^1.1.4",

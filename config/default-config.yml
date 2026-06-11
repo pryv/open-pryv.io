@@ -76,6 +76,16 @@ storages:
     filesystem:
       attachmentsDirPath: 'REPLACE ME'
       previewsDirPath: 'REPLACE ME'
+    # s3 — S3-compatible attachment storage (diskless alternative to
+    # filesystem; select with `storages.file.engine: s3`). Uncomment + fill:
+    # s3:
+    #   endpoint: https://s3.example.com   # omit for AWS (region-derived)
+    #   region: us-east-1
+    #   bucket: pryv-attachments
+    #   accessKeyId: null                  # null = AWS credential chain / IAM
+    #   secretAccessKey: null
+    #   forcePathStyle: true               # required by MinIO / most self-hosted
+    #   keyPrefix: ''
     influxdb:
       host: 127.0.0.1
       port: 8086
