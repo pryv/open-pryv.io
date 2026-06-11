@@ -54,7 +54,7 @@ class ComplexType {
     if (parts.length <= 0) { throw new Error(`Cannot resolve field, path is empty for '${name}'.`); }
     const schema = this._schema;
     const outerType = this._outerType;
-    let properties: Record<string, any> | undefined = schema.properties as Record<string, any> | undefined;
+    let properties: Record<string, SchemaNode> | undefined = schema.properties as Record<string, SchemaNode> | undefined;
     while (parts.length > 0) {
       const lookupField = parts.shift()!;
       if (properties == null || typeof properties !== 'object') { throw new Error('AF: schema postulates an object here.'); }
@@ -94,4 +94,10 @@ type JSONSchema = {
   type: string;
   properties?: {};
   required?: Array<string>;
+};
+// JSON-schema node as found under `properties` — leaf nodes carry a value
+// type name, object nodes nest their own `properties`.
+type SchemaNode = {
+  type: string;
+  properties?: Record<string, SchemaNode>;
 };

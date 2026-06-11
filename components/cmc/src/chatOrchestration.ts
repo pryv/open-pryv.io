@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { CmcLogger } from './_types.ts';
+import type { DeliverResult } from './outbound.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -146,7 +147,7 @@ type DeliverChatParams = {
  *
  * Returns outbound.postToPeer's discriminated-union result.
  */
-async function deliverChatToPeer (params: DeliverChatParams): Promise<any> {
+async function deliverChatToPeer (params: DeliverChatParams): Promise<DeliverResult> {
   const { remoteApiEndpoint, remoteChatStreamId, content, selfIdentity, deps } = params;
   return outbound.postToPeer({
     apiEndpoint: remoteApiEndpoint,

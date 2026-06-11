@@ -7,6 +7,7 @@
 
 import { createRequire } from 'node:module';
 import type { Readable as ReadableType } from 'node:stream';
+import type { DatabasePG } from './DatabasePG.ts';
 const require = createRequire(import.meta.url);
 
 const { Readable } = require('stream');
@@ -35,12 +36,18 @@ type AuditEvent = {
   [k: string]: unknown;
 };
 type AuditRow = Record<string, unknown> & { eventid?: string | null; stream_ids?: string | null };
-type QueryItem = { type: string; content: Record<string, any> };
+// Query condition — `content` is polymorphic on `type`.
+type StreamsQuery = { any?: string[], not?: string[], all?: string[] };
+type ComparisonContent = { field?: string; value?: unknown };
+type QueryItem =
+  | { type: 'equal' | 'greater' | 'greaterOrEqual' | 'lowerOrEqual' | 'greaterOrEqualOrNull'; content: ComparisonContent }
+  | { type: 'typesList'; content: string[] }
+  | { type: 'streamsQuery'; content: StreamsQuery[] };
 type Params = { query: QueryItem[]; options?: { sort?: Record<string, number>; limit?: number | string; skip?: number | string }; streams?: unknown };
 
 type LoggerLike = { getLogger (name: string): unknown };
 
-type DbLike = Record<string, any>; // DatabasePG — wide alias until generic refactor
+type DbLike = DatabasePG;
 
 class UserAuditDatabasePG {
   db: DbLike; // DatabasePG — not yet typed externally
@@ -130,7 +137,7 @@ class UserAuditDatabasePG {
       'SELECT count(*)::int AS count FROM audit_events WHERE user_id = $1 AND deleted IS NULL AND head_id IS NULL',
       [this.userId]
     );
-    return res.rows[0].count;
+    return res.rows[0].count as number;
   }
 
   async getAllActions (): Promise<Array<{ term: string }>> {
@@ -147,8 +154,8 @@ class UserAuditDatabasePG {
       [this.userId, IDS_SEPARATOR]
     );
     return res.rows
-      .filter((r: { term?: string }) => r.term && r.term.startsWith(prefix))
-      .map((r: { term: string }) => ({ term: r.term }));
+      .filter((r): r is { term: string } => typeof r.term === 'string' && r.term.startsWith(prefix))
+      .map((r) => ({ term: r.term }));
   }
 
   async createEvent (event: AuditEvent): Promise<void> {
@@ -222,7 +229,8 @@ class UserAuditDatabasePG {
     }
     const { sql, values } = buildDeleteQuery(this.userId, params);
     const res = await this.db.query(sql, values);
-    return { changes: res.rowCount };
+    // pg always reports rowCount for DELETE statements.
+    return { changes: res.rowCount as number };
   }
 
   async exportAllEvents (): Promise<AuditRow[]> {
@@ -380,7 +388,8 @@ function buildDeleteQuery (userId: string, params: Params): { sql: string, value
 }
 
 function convertCondition (item: QueryItem, idx: number, values: unknown[]): { condition: string, nextIdx: number } | null {
-  const field = toDBFieldName(item.content?.field || '');
+  // `field` only exists on comparison items; array-content items resolve to ''.
+  const field = toDBFieldName((item.content as ComparisonContent)?.field || '');
   switch (item.type) {
     case 'equal':
       if (item.content.value === null) {
@@ -415,8 +424,7 @@ function convertCondition (item: QueryItem, idx: number, values: unknown[]): { c
     }
     case 'streamsQuery': {
       const parts: string[] = [];
-      type StreamsQuery = { any?: string[], not?: string[], all?: string[] };
-      for (const sq of item.content as StreamsQuery[]) {
+      for (const sq of item.content) {
         if (sq.any && sq.any.length > 0) {
           const anyParts = sq.any.map((sid: string) => {
             values.push('%' + sid + ' %');

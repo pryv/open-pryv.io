@@ -5,13 +5,14 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { SqliteStorage as SqliteStorageType } from './Storage.ts';
 const require = createRequire(import.meta.url);
 
 const { SqliteStorage } = require('./Storage.ts');
 
-const storages: Record<string, any> = {};
+const storages: Record<string, SqliteStorageType> = {};
 
-async function getStorage (name: string): Promise<any> {
+async function getStorage (name: string): Promise<SqliteStorageType> {
   if (!storages[name]) {
     storages[name] = new SqliteStorage(name);
     await storages[name].init();

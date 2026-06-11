@@ -15,7 +15,7 @@
 
 /** Node-style callback shape used by every legacy interface method that
  *  returns its result via `(err, result)` instead of a Promise. */
-export type Callback<T = any> = (err: Error | null, result?: T) => void;
+export type Callback<T = unknown> = (err: Error | null, result?: T) => void;
 
 /** A user reference accepted by interface methods that key on user identity.
  *  Either the bare user id string, or an object containing it. */

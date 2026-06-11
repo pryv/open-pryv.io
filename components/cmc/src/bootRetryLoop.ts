@@ -29,7 +29,9 @@ const require = createRequire(import.meta.url);
 const { RetryScheduler } = require('./retryScheduler.ts');
 const { dispatch } = require('./dispatch.ts');
 
-type MallLike = Record<string, any>;
+// Mall handle — pure pass-through to dispatch/retryScheduler (untyped
+// requires); never inspected here.
+type MallLike = unknown;
 type Identity = { username?: string; host?: string; apiEndpoint?: string; [k: string]: unknown };
 type BootDeps = {
   config: { get: (key: string) => unknown };

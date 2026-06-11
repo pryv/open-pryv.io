@@ -82,7 +82,7 @@ const userStreams = ds.createUserStreams({
       const cached = _internals.cache.getStreams(userId, 'local');
       if (cached != null) return cached;
     }
-    const all = await fromCallback((cb: NodeCallback<Stream[]>) =>
+    const all = await fromCallback((cb: NodeCallback<unknown[]>) =>
       this.userStreamsStorage.find({ id: userId }, {}, null, cb));
     if (_internals.cache) _internals.cache.setStreams(userId, 'local', all);
     return all as Stream[];
@@ -112,7 +112,7 @@ const userStreams = ds.createUserStreams({
   },
 
   async getDeletions (this: Store, userId: string, query: DeletionsQuery, options?: DeletionsOptions): Promise<Stream[]> {
-    return await fromCallback((cb: NodeCallback<Stream[]>) =>
+    return await fromCallback((cb: NodeCallback<unknown[]>) =>
       this.userStreamsStorage.findDeletions({ id: userId }, query.deletedSince, options ?? null, cb)) as Stream[];
   },
 
@@ -142,13 +142,13 @@ const userStreams = ds.createUserStreams({
       await fromCallback((cb: NodeCallback) =>
         this.userStreamsStorage.removeOne({ id: userId }, { id: match[0].id }, cb));
     }
-    return await fromCallback((cb: NodeCallback<Stream>) =>
-      this.userStreamsStorage.insertOne({ id: userId }, streamData, cb));
+    return (await fromCallback((cb: NodeCallback<unknown>) =>
+      this.userStreamsStorage.insertOne({ id: userId }, streamData, cb))) as Stream;
   },
 
   async update (this: Store, userId: string, streamData: Stream): Promise<Stream> {
-    return await fromCallback((cb: NodeCallback<Stream>) =>
-      this.userStreamsStorage.updateOne({ id: userId }, { id: streamData.id }, streamData, cb));
+    return (await fromCallback((cb: NodeCallback<unknown>) =>
+      this.userStreamsStorage.updateOne({ id: userId }, { id: streamData.id }, streamData, cb))) as Stream;
   },
 
   async delete (this: Store, userId: string, streamId: string): Promise<unknown> {

@@ -33,6 +33,7 @@ class UsersRepository {
   // Storage-layer plumbing shapes are not yet modelled in TS — `any` here
   // until StorageLayer / Sessions / Accesses / UsersLocalIndex / EventFiles
   // have formal interfaces.
+  /* eslint-disable @typescript-eslint/no-explicit-any -- storage plumbing escape hatch (see above) */
   storageLayer: any;
   sessionsStorage: any;
   accessStorage: any;
@@ -40,6 +41,7 @@ class UsersRepository {
   platform: any;
   usersIndex: any;
   userAccountStorage: any;
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 
   async init () {
     this.mall = await getMall();
@@ -240,6 +242,7 @@ class UsersRepository {
       const accountData = (user.getFullAccount as () => Record<string, unknown>)();
       const accountLeavesMap = accountStreams.accountLeavesMap;
       const now = timestamp.now();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- system-streams map entries; typed in the interface-IO follow-up
       for (const [streamId, stream] of Object.entries(accountLeavesMap) as Array<[string, any]>) {
         const fieldName = accountStreams.toFieldName(streamId);
         const value = accountData[fieldName] != null

@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import type { CmcLogger } from './_types.ts';
+import type { DeliverResult } from './outbound.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -106,7 +107,7 @@ type DeliverSystemParams = {
  *
  * Returns outbound.postToPeer's discriminated-union result.
  */
-async function deliverSystemToPeer (params: DeliverSystemParams): Promise<any> {
+async function deliverSystemToPeer (params: DeliverSystemParams): Promise<DeliverResult> {
   const { remoteApiEndpoint, remoteCollectorStreamId, eventType, payload, selfIdentity, deps } = params;
   return outbound.postToPeer({
     apiEndpoint: remoteApiEndpoint,

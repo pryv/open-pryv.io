@@ -300,14 +300,12 @@ type UserDef = {
 };
 type StreamLike = { id?: string; parentId?: string | null; trashed?: boolean; children?: StreamLike[]; [k: string]: unknown };
 type MallLike = {
-  streams: { getOneWithNoChildren: (userId: string, streamId: string, storeId: string | null) => Promise<StreamLike | null>; [k: string]: unknown };
-  events: { [k: string]: unknown };
-  [k: string]: unknown;
+  streams: { getOneWithNoChildren: (userId: string, streamId: string, storeId: string | null) => Promise<StreamLike | null> };
+  events: unknown;
 } | null;
 type StorageLike = {
-  accesses: { findOne: (user: UserDef, query: Record<string, unknown>, opts: unknown, cb: NodeCallback) => void; [k: string]: unknown };
-  sessions: { get: (token: string, cb: NodeCallback) => void; touch: (token: string, cb: NodeCallback) => void; [k: string]: unknown };
-  [k: string]: unknown;
+  accesses: { findOne: (user: UserDef, query: Record<string, unknown>, opts: unknown, cb: NodeCallback) => void };
+  sessions: { get: (token: string, cb: NodeCallback) => void; touch: (token: string, cb: NodeCallback) => void };
 };
 type AuthenticationData = {
   accessToken: string;

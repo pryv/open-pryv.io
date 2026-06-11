@@ -24,6 +24,7 @@
 
 export interface MigrationContext {
   /** Engine-provided database handle. Shape differs per engine. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- polymorphic migration-authoring contract
   db: any;
   /** Engine-provided logger. */
   logger: { debug: (m: string) => void; info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void };

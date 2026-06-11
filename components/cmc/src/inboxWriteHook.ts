@@ -40,7 +40,12 @@ type ErrorFactory = {
 
 type Deps = { errors: ErrorFactory };
 
-type MwContext = Record<string, any>;
+type MwContext = {
+  newEvent?: { streamIds?: string[]; type?: string; content?: Record<string, unknown> | null; [k: string]: unknown };
+  access?: { clientData?: { cmc?: { role?: string; counterparty?: { username?: string; host?: string } } } };
+  cmc?: Record<string, unknown>;
+  [k: string]: unknown;
+};
 type MwNext = (err?: unknown) => void;
 type Middleware = (context: MwContext, params: unknown, result: unknown, next: MwNext) => unknown | Promise<unknown>;
 

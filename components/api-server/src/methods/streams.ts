@@ -24,6 +24,7 @@ const Readable = require('stream').Readable;
 
 import type { MethodNext } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MethodContext = BaseMethodContext & { [key: string]: any }; // scratchpad context (context.stream etc.); see methods/account.ts note
 type Stream = {
   id?: string;

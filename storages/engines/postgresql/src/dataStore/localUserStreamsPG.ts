@@ -102,14 +102,14 @@ const userStreams = ds.createUserStreams({
     let allStreamsForAccount = _internals.cache.getStreams(userId, 'local');
     if (allStreamsForAccount != null) return allStreamsForAccount;
 
-    allStreamsForAccount = await fromCallback((cb: NodeCallback<Stream[]>) =>
-      this.userStreamsStorage.find({ id: userId }, {}, null, cb));
+    allStreamsForAccount = (await fromCallback((cb: NodeCallback<unknown[]>) =>
+      this.userStreamsStorage.find({ id: userId }, {}, null, cb))) as Stream[];
     _internals.cache.setStreams(userId, 'local', allStreamsForAccount);
     return allStreamsForAccount;
   },
 
   async getDeletions (this: Store, userId: string, query: DeletionsQuery, options?: DeletionsOptions): Promise<Stream[]> {
-    const deletedStreams = await fromCallback((cb: NodeCallback<Stream[]>) =>
+    const deletedStreams = await fromCallback((cb: NodeCallback<unknown[]>) =>
       this.userStreamsStorage.findDeletions({ id: userId }, query.deletedSince, options ?? null, cb));
     return deletedStreams as Stream[];
   },
@@ -141,13 +141,13 @@ const userStreams = ds.createUserStreams({
       await fromCallback((cb: NodeCallback) =>
         this.userStreamsStorage.removeOne({ id: userId }, { id: deletedStream[0].id }, cb));
     }
-    return await fromCallback((cb: NodeCallback<Stream>) =>
-      this.userStreamsStorage.insertOne({ id: userId }, streamData, cb));
+    return (await fromCallback((cb: NodeCallback<unknown>) =>
+      this.userStreamsStorage.insertOne({ id: userId }, streamData, cb))) as Stream;
   },
 
   async update (this: Store, userId: string, streamData: Stream): Promise<Stream> {
-    return await fromCallback((cb: NodeCallback<Stream>) =>
-      this.userStreamsStorage.updateOne({ id: userId }, { id: streamData.id }, streamData, cb));
+    return (await fromCallback((cb: NodeCallback<unknown>) =>
+      this.userStreamsStorage.updateOne({ id: userId }, { id: streamData.id }, streamData, cb))) as Stream;
   },
 
   async delete (this: Store, userId: string, streamId: string): Promise<unknown> {

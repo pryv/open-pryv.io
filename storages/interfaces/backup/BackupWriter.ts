@@ -12,16 +12,16 @@ import type { Readable } from 'stream';
  * Handles writing all data scoped to a single user.
  */
 export interface UserBackupWriter {
-  writeStreams (items: AsyncIterable<any> | any[]): Promise<void>;
-  writeAccesses (items: AsyncIterable<any> | any[]): Promise<void>;
-  writeProfile (items: AsyncIterable<any> | any[]): Promise<void>;
-  writeWebhooks (items: AsyncIterable<any> | any[]): Promise<void>;
+  writeStreams (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
+  writeAccesses (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
+  writeProfile (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
+  writeWebhooks (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
   /** Auto-chunks by maxChunkSize. */
-  writeEvents (items: AsyncIterable<any> | any[]): Promise<void>;
+  writeEvents (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
   /** Auto-chunks by maxChunkSize. */
-  writeAudit (items: AsyncIterable<any> | any[]): Promise<void>;
+  writeAudit (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
   /** Write HF series data (CSV format). */
-  writeSeries (items: AsyncIterable<any> | any[]): Promise<void>;
+  writeSeries (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
   writeAttachment (eventId: string, fileId: string, readStream: Readable): Promise<void>;
   /** Account data as returned by UserAccountStorage.exportAll(). */
   writeAccountData (data: unknown): Promise<void>;
@@ -47,7 +47,7 @@ export interface BackupWriteManifestParams {
  */
 export interface BackupWriter {
   openUser (userId: string, username: string): Promise<UserBackupWriter>;
-  writePlatformData (data: AsyncIterable<any> | any[]): Promise<void>;
+  writePlatformData (data: AsyncIterable<unknown> | unknown[]): Promise<void>;
   /** Must be called last — acts as completion marker. */
   writeManifest (params: BackupWriteManifestParams): Promise<void>;
   close (): Promise<void>;
@@ -60,7 +60,7 @@ export interface BackupWriter {
 const BackupWriter: BackupWriter = {
   async openUser (userId: string, username: string): Promise<UserBackupWriter> { throw new Error('Not implemented'); },
 
-  async writePlatformData (data: AsyncIterable<any> | any[]): Promise<void> { throw new Error('Not implemented'); },
+  async writePlatformData (data: AsyncIterable<unknown> | unknown[]): Promise<void> { throw new Error('Not implemented'); },
 
   async writeManifest (params: BackupWriteManifestParams): Promise<void> { throw new Error('Not implemented'); },
 
@@ -93,13 +93,13 @@ function validateBackupWriter (instance: unknown): BackupWriter {
 // ---------------------------------------------------------------------------
 
 const UserBackupWriter: UserBackupWriter = {
-  async writeStreams (items: AsyncIterable<any> | any[]): Promise<void> { throw new Error('Not implemented'); },
-  async writeAccesses (items: AsyncIterable<any> | any[]): Promise<void> { throw new Error('Not implemented'); },
-  async writeProfile (items: AsyncIterable<any> | any[]): Promise<void> { throw new Error('Not implemented'); },
-  async writeWebhooks (items: AsyncIterable<any> | any[]): Promise<void> { throw new Error('Not implemented'); },
-  async writeEvents (items: AsyncIterable<any> | any[]): Promise<void> { throw new Error('Not implemented'); },
-  async writeAudit (items: AsyncIterable<any> | any[]): Promise<void> { throw new Error('Not implemented'); },
-  async writeSeries (items: AsyncIterable<any> | any[]): Promise<void> { throw new Error('Not implemented'); },
+  async writeStreams (items: AsyncIterable<unknown> | unknown[]): Promise<void> { throw new Error('Not implemented'); },
+  async writeAccesses (items: AsyncIterable<unknown> | unknown[]): Promise<void> { throw new Error('Not implemented'); },
+  async writeProfile (items: AsyncIterable<unknown> | unknown[]): Promise<void> { throw new Error('Not implemented'); },
+  async writeWebhooks (items: AsyncIterable<unknown> | unknown[]): Promise<void> { throw new Error('Not implemented'); },
+  async writeEvents (items: AsyncIterable<unknown> | unknown[]): Promise<void> { throw new Error('Not implemented'); },
+  async writeAudit (items: AsyncIterable<unknown> | unknown[]): Promise<void> { throw new Error('Not implemented'); },
+  async writeSeries (items: AsyncIterable<unknown> | unknown[]): Promise<void> { throw new Error('Not implemented'); },
   async writeAttachment (eventId: string, fileId: string, readStream: Readable): Promise<void> { throw new Error('Not implemented'); },
   async writeAccountData (data: unknown): Promise<void> { throw new Error('Not implemented'); },
   async close (): Promise<unknown> { throw new Error('Not implemented'); }

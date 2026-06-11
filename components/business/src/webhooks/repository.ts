@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { UserStorage } from '../../../../storages/interfaces/baseStorage/UserStorage.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const { deepMerge } = require('utils');
@@ -18,8 +19,8 @@ type AccessLike = { id: string; isApp: () => boolean };
 /**
  * Repository of all Webhooks in this Pryv.io instance.
  */
-type WebhooksStorageLike = Record<string, any>; // wide alias — concrete iface deferred
-type AccessesStorageLike = Record<string, any>;
+type WebhooksStorageLike = UserStorage;
+type AccessesStorageLike = UserStorage;
 
 class Repository {
   storage: WebhooksStorageLike;
@@ -88,7 +89,7 @@ class Repository {
   /**
    * Inserts a webhook for a user
    */
-  async insertOne (user: User, webhook: { forStorage: () => unknown }) {
+  async insertOne (user: User, webhook: { forStorage: () => Record<string, unknown> }) {
     await fromCallback((cb: NodeCallback) => this.storage.insertOne(user, webhook.forStorage(), cb));
   }
 

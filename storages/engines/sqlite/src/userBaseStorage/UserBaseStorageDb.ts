@@ -37,7 +37,7 @@ const VERSION = '1.0.0';
  *   CREATE INDEX … ON <name>(deleted) WHEN withDeleted
  *   CREATE INDEX … ON <name>(head_id) WHEN withHeadId
  */
-type SqliteDb = { prepare: (sql: string) => { run: (...args: unknown[]) => unknown; get: (...args: unknown[]) => unknown; all: (...args: unknown[]) => unknown[] }; close: () => void; [k: string]: unknown };
+type SqliteDb = { prepare: (sql: string) => { run: (...args: unknown[]) => unknown; get: (...args: unknown[]) => unknown; all: (...args: unknown[]) => unknown[] }; close: () => void };
 type UserDbLRU = {
   get: (key: string) => UserBaseStorageDb | undefined;
   set: (key: string, value: UserBaseStorageDb) => void;

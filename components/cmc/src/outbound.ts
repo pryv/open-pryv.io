@@ -174,3 +174,4 @@ export {
   postToPeer,
   isRetryableFailure,
 };
+export type { DeliverResult };

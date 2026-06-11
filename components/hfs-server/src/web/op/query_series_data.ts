@@ -28,7 +28,6 @@ interface SeriesRepoLike {
 interface HfsContextLike {
   metadata: MetadataLike;
   series: SeriesRepoLike;
-  [k: string]: unknown;
 }
 
 /** GET /events/:event_id/series - Query a series for a data subset.

@@ -117,14 +117,14 @@ class AccessesSQLite extends BaseStorageSQLite {
     });
   }
 
-  async findHistory (userOrUserId: UserOrId, baseId: string): Promise<any[]> {
+  async findHistory (userOrUserId: UserOrId, baseId: string): Promise<AccessRow[]> {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const udb = await UserBaseStorageDb.forUser(userId);
     await udb.ensureTable(this.tableName, { withDeleted: this.hasDeletedCol, withHeadId: this.hasHeadIdCol });
     const rows = udb.db.prepare(
       `SELECT * FROM ${this.tableName} WHERE head_id = ? ORDER BY json_extract(data, '$.modified') ASC`
     ).all(baseId);
-    return rows.map((r: Record<string, unknown>) => this.rowToItem(r)).filter((x: AccessRow | null) => x != null);
+    return rows.map((r: Record<string, unknown>) => this.rowToItem(r)).filter((x: AccessRow | null): x is AccessRow => x != null);
   }
 
   snapshotHead (userOrUserId: UserOrId, baseId: string, callback: Callback<void>): void {

@@ -27,9 +27,8 @@ const BundleEncryption = require('./BundleEncryption.ts');
 const TokenStore = require('./TokenStore.ts').default;
 const DnsRegistration = require('./DnsRegistration.ts');
 
-interface PlatformDBLike {
-  [k: string]: unknown;
-}
+// Opaque PlatformDB handle — passed through to TokenStore/DnsRegistration, never inspected here.
+type PlatformDBLike = unknown;
 
 interface NewCoreOpts {
   platformDB: PlatformDBLike;

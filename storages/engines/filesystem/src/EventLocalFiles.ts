@@ -22,7 +22,7 @@ const ATTACHMENT_DIRNAME = 'attachments';
 
 interface EventFilesInstance {
   settings: unknown;
-  logger: { debug: (msg: string) => void; [k: string]: unknown };
+  logger: { debug: (msg: string) => void };
   init: () => Promise<void>;
   getFileStorageInfos: (userId: string) => Promise<number>;
   saveAttachmentFromStream: (s: Readable, userId: string, eventId: string, fileId?: string) => Promise<string>;

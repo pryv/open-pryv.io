@@ -20,11 +20,11 @@ const { getMall } = require('mall');
 
 type SeriesRepository = unknown;
 type MetadataCacheLike = unknown;
-type MetadataUpdaterLike = { start?: () => void; [k: string]: unknown };
-type TypeRepoLike = { tryUpdate: (url: string) => void; [k: string]: unknown };
-type TracerSpan = { end?: () => void; [k: string]: unknown };
+type MetadataUpdaterLike = { start?: () => void };
+type TypeRepoLike = { tryUpdate: (url: string) => void };
+type TracerSpan = { end?: () => void };
 type TracerLike = { startSpan: (name: string, opts?: Record<string, unknown>) => TracerSpan };
-type ConfigLike = { get: (key: string) => unknown; [k: string]: unknown };
+type ConfigLike = { get: (key: string) => unknown };
 type InfluxConnection = unknown;
 
 class Context {

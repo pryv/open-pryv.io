@@ -138,7 +138,7 @@ function jsonlFileName (baseName: string, compressed: boolean): string {
   return compressed ? baseName + '.jsonl.gz' : baseName + '.jsonl';
 }
 
-function readUserJsonl (userDir: string, baseName: string, compressed: boolean): AsyncIterable<any> {
+function readUserJsonl (userDir: string, baseName: string, compressed: boolean): AsyncIterable<unknown> {
   const filePath = path.join(userDir, jsonlFileName(baseName, compressed));
   if (!fs.existsSync(filePath)) return emptyIterator();
   return readJsonlFile(filePath, compressed);
@@ -147,7 +147,7 @@ function readUserJsonl (userDir: string, baseName: string, compressed: boolean):
 /**
  * Read a JSONL file (optionally gzip-compressed) and yield parsed objects.
  */
-async function * readJsonlFile (filePath: string, compressed: boolean): AsyncGenerator<any> {
+async function * readJsonlFile (filePath: string, compressed: boolean): AsyncGenerator<unknown> {
   let buffer = fs.readFileSync(filePath);
   if (compressed) {
     buffer = zlib.gunzipSync(buffer);
@@ -165,7 +165,7 @@ async function * readJsonlFile (filePath: string, compressed: boolean): AsyncGen
  * Read chunked JSONL files from a directory, yielding all items in order.
  * Chunk files are sorted alphabetically (events-0001, events-0002, ...).
  */
-async function * readChunkedJsonl (dir: string, baseName: string, compressed: boolean): AsyncGenerator<any> {
+async function * readChunkedJsonl (dir: string, baseName: string, compressed: boolean): AsyncGenerator<unknown> {
   if (!fs.existsSync(dir)) return;
   const ext = compressed ? '.jsonl.gz' : '.jsonl';
   const files = fs.readdirSync(dir)
@@ -208,7 +208,9 @@ async function buildFileIdMapping (userDir: string): Promise<Map<string, string>
   const files: string[] = fs.readdirSync(eventsDir);
   const compressed = files.some((f: string) => f.endsWith('.gz'));
 
-  for await (const event of readChunkedJsonl(eventsDir, 'events', compressed)) {
+  for await (const item of readChunkedJsonl(eventsDir, 'events', compressed)) {
+    // JSONL boundary — events were serialized by the backup writer.
+    const event = item as { id: string; attachments?: Array<{ id?: string }> };
     if (event.attachments && Array.isArray(event.attachments)) {
       for (const att of event.attachments) {
         if (att.id) {

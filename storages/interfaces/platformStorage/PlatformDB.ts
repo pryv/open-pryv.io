@@ -87,7 +87,7 @@ export interface PlatformDB {
   init (): Promise<void>;
 
   // --- Unique / indexed user fields --------------------------------
-  setUserUniqueField (username: string, field: string, value: string): Promise<any>;
+  setUserUniqueField (username: string, field: string, value: string): Promise<void>;
   setUserUniqueFieldIfNotExists (username: string, field: string, value: string): Promise<boolean>;
   deleteUserUniqueField (field: string, value: string): Promise<void>;
   setUserIndexedField (username: string, field: string, value: string): Promise<void>;
@@ -162,7 +162,7 @@ export interface PlatformDB {
 const PlatformDB: PlatformDB = {
   async init () { throw new Error('Not implemented'); },
 
-  async setUserUniqueField (username: string, field: string, value: string): Promise<any> { throw new Error('Not implemented'); },
+  async setUserUniqueField (username: string, field: string, value: string): Promise<void> { throw new Error('Not implemented'); },
 
   async setUserUniqueFieldIfNotExists (username: string, field: string, value: string): Promise<boolean> { throw new Error('Not implemented'); },
 

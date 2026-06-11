@@ -37,8 +37,24 @@ const StandardDimensionsLength = StandardDimensions.length;
  */
 type RouteHandler = (req: PryvRequest, res: ResponseLike, next: NextFn) => unknown;
 type ExpressApp = { all: (path: string, ...handlers: unknown[]) => unknown; get: (path: string, handler: RouteHandler) => unknown; post: (path: string, handler: RouteHandler) => unknown };
-type PryvRequest = Record<string, any>;
-type ResponseLike = Record<string, any>;
+type PryvRequest = {
+  context: {
+    user: { id: string; [k: string]: unknown };
+    access: { canGetEventsOnStream: (streamId: string, storeId: string) => Promise<boolean> };
+    [k: string]: unknown;
+  };
+  params: { id: string };
+  query: { width?: string; w?: string; height?: string; h?: string };
+  headers: { origin?: string };
+  ip: string;
+  [k: string]: unknown;
+};
+type ResponseLike = {
+  sendStatus: (code: number) => void;
+  sendFile: (path: string) => void;
+  status: (code: number) => { json: (body: unknown) => void };
+  [k: string]: unknown;
+};
 type NextFn = (err?: unknown) => void;
 type EventLike = { type: string; modified: number; streamIds: string[]; attachments?: Array<{ id: string; width?: number; height?: number }>; [k: string]: unknown };
 type ImageError = Error & { message: string };
@@ -99,9 +115,11 @@ export default async function (expressApp: ExpressApp, initContextMiddleware: un
         return next(adjustImageError(err));
       }
       // Prepare path
+      // Query values arrive as strings; getPreviewSize's arithmetic coerces
+      // them numerically (legacy behavior — '0' stays truthy, unlike Number('0')).
       const targetSize = getPreviewSize(originalSize, {
-        width: req.query.width || req.query.w,
-        height: req.query.height || req.query.h
+        width: (req.query.width || req.query.w) as unknown as number,
+        height: (req.query.height || req.query.h) as unknown as number
       });
       previewPath = await attachmentManagement.ensurePreviewPath(req.context.user, req.params.id, Math.max(targetSize.width, targetSize.height));
       try {

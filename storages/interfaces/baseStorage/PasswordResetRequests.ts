@@ -15,14 +15,14 @@
 import type { Callback } from '../_shared/types.ts';
 
 export interface PasswordResetRequests {
-  get (id: string, username: string, callback: Callback<any>): void;
+  get (id: string, username: string, callback: Callback<unknown>): void;
   generate (username: string, callback: Callback<string>): void;
-  destroy (id: string, username: string, callback: Callback<any>): void;
-  clearAll (callback: Callback<any>): void;
+  destroy (id: string, username: string, callback: Callback<unknown>): void;
+  clearAll (callback: Callback<unknown>): void;
 
   // Migration methods
-  exportAll (callback: Callback<any[]>): void;
-  importAll (data: Array<Record<string, unknown>>, callback: Callback<any>): void;
+  exportAll (callback: Callback<unknown[]>): void;
+  importAll (data: Array<Record<string, unknown>>, callback: Callback<unknown>): void;
 }
 
 const REQUIRED_METHODS: string[] = [

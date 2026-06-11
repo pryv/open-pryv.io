@@ -14,7 +14,7 @@ const { getLogger, ready } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 type MwContext = {
   user: { id: string; username?: string };
-  access?: { id: string; [k: string]: unknown };
+  access?: { id: string };
   methodId?: string;
   disableAccessUsageStats?: boolean;
   accessUsageStats?: Record<string, number>;

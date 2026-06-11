@@ -21,7 +21,7 @@ type UserInfoStats = {
   username?: string;
   storageUsed?: unknown;
 };
-type AccessRow = { id?: string; type?: string; name?: string; lastUsed?: number; calls?: Record<string, number>; [k: string]: unknown };
+type AccessRow = { id?: string; type?: string; name?: string; lastUsed?: number; calls?: Record<string, number> };
 const commonFns = require('./helpers/commonFunctions.ts');
 const Registration = require('business/src/auth/registration.ts').default;
 const methodsSchema = require('../schema/systemMethods.ts');

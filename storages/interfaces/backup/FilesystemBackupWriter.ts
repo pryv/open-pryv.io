@@ -48,7 +48,7 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
       return createFilesystemUserBackupWriter(userDir, userId, username, opts);
     },
 
-    async writePlatformData (data: AsyncIterable<any> | any[]) {
+    async writePlatformData (data: AsyncIterable<unknown> | unknown[]) {
       const platformDir = path.join(outputPath, 'platform');
       fs.mkdirSync(platformDir, { recursive: true });
       const filePath = path.join(platformDir, jsonlFileName('platform', opts.compress));
@@ -94,27 +94,27 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
   const chunks: Record<string, string[]> = {};
 
   return createUserBackupWriter({
-    async writeStreams (items: AsyncIterable<any> | any[]) {
+    async writeStreams (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('streams', opts.compress));
       stats.streams = await writeJsonlFile(filePath, items, opts.compress);
     },
 
-    async writeAccesses (items: AsyncIterable<any> | any[]) {
+    async writeAccesses (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('accesses', opts.compress));
       stats.accesses = await writeJsonlFile(filePath, items, opts.compress);
     },
 
-    async writeProfile (items: AsyncIterable<any> | any[]) {
+    async writeProfile (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('profile', opts.compress));
       stats.profile = await writeJsonlFile(filePath, items, opts.compress);
     },
 
-    async writeWebhooks (items: AsyncIterable<any> | any[]) {
+    async writeWebhooks (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('webhooks', opts.compress));
       stats.webhooks = await writeJsonlFile(filePath, items, opts.compress);
     },
 
-    async writeEvents (items: AsyncIterable<any> | any[]) {
+    async writeEvents (items: AsyncIterable<unknown> | unknown[]) {
       const eventsDir = path.join(userDir, 'events');
       fs.mkdirSync(eventsDir, { recursive: true });
       const result = await writeChunkedJsonlFiles(eventsDir, 'events', items, opts);
@@ -122,7 +122,7 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
       chunks.events = result.chunkFiles;
     },
 
-    async writeAudit (items: AsyncIterable<any> | any[]) {
+    async writeAudit (items: AsyncIterable<unknown> | unknown[]) {
       const auditDir = path.join(userDir, 'audit');
       fs.mkdirSync(auditDir, { recursive: true });
       const result = await writeChunkedJsonlFiles(auditDir, 'audit', items, opts);
@@ -130,7 +130,7 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
       chunks.audit = result.chunkFiles;
     },
 
-    async writeSeries (items: AsyncIterable<any> | any[]) {
+    async writeSeries (items: AsyncIterable<unknown> | unknown[]) {
       const seriesDir = path.join(userDir, 'series');
       fs.mkdirSync(seriesDir, { recursive: true });
       const filePath = path.join(seriesDir, jsonlFileName('series', opts.compress));
@@ -179,7 +179,7 @@ function jsonlFileName (baseName: string, compress: boolean): string {
  * Write items to a single JSONL file (optionally gzip-compressed).
  * Returns the count of items written.
  */
-async function writeJsonlFile (filePath: string, items: AsyncIterable<any> | any[], compress: boolean): Promise<number> {
+async function writeJsonlFile (filePath: string, items: AsyncIterable<unknown> | unknown[], compress: boolean): Promise<number> {
   let count = 0;
   const lines: string[] = [];
   for await (const item of items) {
@@ -204,7 +204,7 @@ async function writeJsonlFile (filePath: string, items: AsyncIterable<any> | any
  * When compression is off, the target applies to the raw file size.
  * Files may exceed the target by ~10% — this is a soft limit.
  */
-async function writeChunkedJsonlFiles (dir: string, baseName: string, items: AsyncIterable<any> | any[], opts: ResolvedWriterOptions): Promise<{ totalCount: number, chunkFiles: string[] }> {
+async function writeChunkedJsonlFiles (dir: string, baseName: string, items: AsyncIterable<unknown> | unknown[], opts: ResolvedWriterOptions): Promise<{ totalCount: number, chunkFiles: string[] }> {
   let chunkIndex = 1;
   let currentLines: string[] = [];
   let totalCount = 0;

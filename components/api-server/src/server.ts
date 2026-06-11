@@ -28,7 +28,6 @@ type AppInstance = {
   webhooksService?: unknown;
   initiate (): Promise<unknown>;
   getCustomAuthFunction (from: string): unknown;
-  [k: string]: unknown;
 };
 type HttpsLike = {
   setSecureContext (opts: HttpsOptions): void;

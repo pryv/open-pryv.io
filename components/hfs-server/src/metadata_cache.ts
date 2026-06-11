@@ -20,6 +20,8 @@ const { getMall } = require('mall');
 const LRU_CACHE_SIZE = 10000;
 // Credentials will be cached for at most this many ms.
 const LRU_CACHE_MAX_AGE_MS = 1000 * 60 * 5; // 5 mins
+// Series repository handle — only dropMeasurement is reached from here.
+type SeriesRepoLike = { connection: { dropMeasurement: (...args: unknown[]) => unknown } };
 /** Holds metadata related to series for some time so that we don't have to
  * compile it every time we store data in the server.
  *
@@ -33,12 +35,12 @@ class MetadataCache {
   //  - username/eventId/accessToken -> SeriesMetadataImpl
   cache: InstanceType<typeof LRU>;
 
-  series: { connection: { dropMeasurement: (...args: unknown[]) => unknown }; [k: string]: unknown };
+  series: SeriesRepoLike;
 
   mall: unknown;
 
   config: { get: (key: string) => unknown };
-  constructor (series: { connection: { dropMeasurement: (...args: unknown[]) => unknown }; [k: string]: unknown }, metadataLoader: MetadataLoader, config: { get: (key: string) => unknown }) {
+  constructor (series: SeriesRepoLike, metadataLoader: MetadataLoader, config: { get: (key: string) => unknown }) {
     this.loader = metadataLoader;
     this.series = series;
     this.config = config;

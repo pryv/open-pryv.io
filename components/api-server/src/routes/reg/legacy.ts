@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
 
-type App = { config: { get (key: string): unknown }; [k: string]: unknown };
+type App = { config: { get (key: string): unknown } };
 type UserCore = { coreId: string; username: string };
 type UsersRepoLike = { usernameExists: (username: string) => Promise<boolean>; count: () => Promise<number> };
 

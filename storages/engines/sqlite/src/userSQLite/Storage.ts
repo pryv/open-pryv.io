@@ -18,7 +18,7 @@ const { _internals } = require('../_internals.ts');
 const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
 
-interface UserDbLike { close: () => Promise<void> | void; init: () => Promise<void>; [k: string]: unknown }
+interface UserDbLike { close: () => Promise<void> | void; init: () => Promise<void> }
 interface SqliteStorageOptions { max?: number; [k: string]: unknown }
 interface Logger {
   debug: (msg: string) => void;

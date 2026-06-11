@@ -11,7 +11,7 @@ import type { Request, Response, NextFunction, Application as ExpressApp } from 
 const require = createRequire(import.meta.url);
 const methodCallback = require('./methodCallback.ts').default;
 
-type AccessRow = { token: string; [k: string]: unknown };
+type AccessRow = { token: string };
 type PryvRequest = Request & { context?: { retrieveAccessFromId: (storage: unknown, accessId: string) => Promise<AccessRow> }; files?: unknown };
 const encryption = require('utils').encryption;
 const errors = require('errors').factory;

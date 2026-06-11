@@ -333,7 +333,7 @@ type WebhookUpdate = {
   state: WebhookState;
   currentRetries: number;
 };
-type User = { id: string; username: string; [k: string]: unknown };
+type User = { id: string; username: string };
 type WebhookMessage = string;
 type WebhooksRepository = {
   accessExists?: (user: User, accessId: string) => Promise<boolean>;

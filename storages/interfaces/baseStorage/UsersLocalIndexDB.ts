@@ -7,7 +7,8 @@
 
 export interface UsersLocalIndexDB {
   init (): Promise<void>;
-  addUser (username: string, userId: string): Promise<any>;
+  // Result is engine-specific (e.g. a SQLite RunResult) and ignored by consumers.
+  addUser (username: string, userId: string): Promise<unknown>;
   getIdForName (username: string): Promise<string | undefined>;
   getNameForId (userId: string): Promise<string | undefined>;
   getAllByUsername (): Promise<Record<string, string>>;
@@ -26,7 +27,7 @@ export interface UsersLocalIndexDB {
 const UsersLocalIndexDB: UsersLocalIndexDB = {
   async init () { throw new Error('Not implemented'); },
 
-  async addUser (username: string, userId: string): Promise<any> { throw new Error('Not implemented'); },
+  async addUser (username: string, userId: string): Promise<unknown> { throw new Error('Not implemented'); },
 
   async getIdForName (username: string): Promise<string | undefined> { throw new Error('Not implemented'); },
 

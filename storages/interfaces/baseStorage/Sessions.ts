@@ -15,18 +15,18 @@
 import type { Callback } from '../_shared/types.ts';
 
 export interface Sessions {
-  get (id: string, callback: Callback<any>): void;
-  getMatching (data: Record<string, any>, callback: Callback<string | null>): void;
-  generate (data: Record<string, any>, options: Record<string, any> | null, callback: Callback<string>): void;
-  touch (id: string, callback: Callback<any>): void;
-  destroy (id: string, callback: Callback<any>): void;
-  clearAll (callback: Callback<any>): void;
-  expireNow (id: string, callback: Callback<any>): void;
-  remove (query: Record<string, any>, callback: Callback<any>): void;
+  get (id: string, callback: Callback<unknown>): void;
+  getMatching (data: Record<string, unknown>, callback: Callback<string | null>): void;
+  generate (data: Record<string, unknown>, options: Record<string, unknown> | null, callback: Callback<string>): void;
+  touch (id: string, callback: Callback<unknown>): void;
+  destroy (id: string, callback: Callback<unknown>): void;
+  clearAll (callback: Callback<unknown>): void;
+  expireNow (id: string, callback: Callback<unknown>): void;
+  remove (query: Record<string, unknown>, callback: Callback<unknown>): void;
 
   // Migration methods
-  exportAll (callback: Callback<any[]>): void;
-  importAll (data: Array<Record<string, unknown>>, callback: Callback<any>): void;
+  exportAll (callback: Callback<unknown[]>): void;
+  importAll (data: Array<Record<string, unknown>>, callback: Callback<unknown>): void;
 }
 
 const REQUIRED_METHODS: string[] = [

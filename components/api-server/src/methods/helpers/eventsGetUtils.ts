@@ -405,6 +405,7 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
   // in> params.fromTime = 2 params.streams = [{any: '*' storeId: 'local'}, {any: 'access-gasgsg', storeId: 'audit'}, {any: 'action-events.get', storeId: 'audit'}]
   // Per-store query params; the inner shape varies by store so this stays
   // wide. A tighter type lands when MallEvents getWithParamsByStore is typed.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const paramsByStoreId: Record<string, any> = {};
   for (const streamQuery of params.arrayOfStreamQueriesWithStoreId) {
     const storeId = streamQuery.storeId;

@@ -16,7 +16,7 @@ const utils = require('utils');
  *        params.access {Object} Access with which the API call was made
  *        params.filesReadTokenSecret {String} available in authSettings
  */
-type AccessLike = { id: string; token: string; [k: string]: unknown };
+type AccessLike = { id: string; token: string };
 type AttachmentLike = { id: string; readToken?: string; [k: string]: unknown };
 type EventLike = { attachments?: AttachmentLike[]; [k: string]: unknown };
 

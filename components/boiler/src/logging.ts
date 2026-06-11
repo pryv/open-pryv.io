@@ -26,6 +26,9 @@ type CustomLogger = {
   log (level: LogLevel, key: string, message: string, context: unknown): void;
 };
 type BoilerConfig = {
+  // Typing the config getter cascades to every config.get() call site —
+  // belongs to a dedicated config-typing pass, not here.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   get (key: string): any;
   has? (key: string): boolean;
 };
@@ -57,6 +60,7 @@ function generateFormat (options: { color?: boolean; time?: boolean; align?: boo
   function printf (info: { timestamp?: string; level: string; message: string; [k: string | symbol]: unknown }) {
     const { timestamp, level, message } = info;
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- winston splat payload, heterogeneous by design
     let items: any = info[Symbol.for('splat')] || {};
 
     let itemStr = '';

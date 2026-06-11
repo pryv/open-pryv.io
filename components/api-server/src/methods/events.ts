@@ -51,6 +51,7 @@ type MethodContext = BaseMethodContext & {
   // oldEvent / event / systemStream / accountStreamId(s) / auditIntegrityPayload
   // on the context as the steps run. Open-ended index keeps the typing
   // pragmatic; the BaseMethodContext fields stay strictly typed.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
 };
 
@@ -81,26 +82,31 @@ type EventsGetParams = { streams?: string | Record<string, unknown> | Array<stri
 // events.get's result is the streaming Result wrapper (Result.ts), not a
 // plain payload — typing it permissively here keeps `result.addStream(...)`
 // callable without modeling the full Result class API in this file.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type EventsGetResult = { addStream (name: string, stream: unknown): void; events?: Event[]; eventDeletions?: ItemDeletion[]; [k: string]: any };
 type EventsGetOneParams = { id: string; includeHistory?: boolean };
-type EventsGetOneResult = { event?: Event; history?: Event[] } & Record<string, unknown>;
-type EventsCreateParams = Partial<Event> & { [k: string]: unknown };
-type EventsCreateResult = { event?: Event } & Record<string, unknown>;
-type EventsUpdateParams = { id: string; update: Partial<Event> & { [k: string]: unknown } } & Record<string, unknown>;
-type EventsUpdateResult = { event?: Event } & Record<string, unknown>;
+type EventsGetOneResult = { event?: Event; history?: Event[] };
+type EventsCreateParams = Partial<Event>;
+type EventsCreateResult = { event?: Event };
+// `files` is the multer upload bag attached by the route layer; consumed
+// (and deleted) by updateEvent before the update reaches the mall.
+type EventsUpdateParams = { id: string; update: Partial<Event>; files?: unknown };
+type EventsUpdateResult = { event?: Event };
 type EventsDeleteParams = { id: string };
-type EventsDeleteResult = { event?: Event; eventDeletion?: ItemDeletion } & Record<string, unknown>;
+type EventsDeleteResult = { event?: Event; eventDeletion?: ItemDeletion };
 type EventsDeleteAttachmentParams = { id: string; fileId: string };
-type EventsDeleteAttachmentResult = { event?: Event } & Record<string, unknown>;
+type EventsDeleteAttachmentResult = { event?: Event };
 // Permissive shapes used by middleware that appears in multiple method
 // chains. Per-method param/result schemas remain narrow at the
 // method-specific middleware call sites; cross-chain shared functions
 // just need an open-ended carrier that doesn't fight TS at the field
 // reads they perform on a heterogeneous payload.
+/* eslint-disable @typescript-eslint/no-explicit-any -- middleware scratchpad carriers (see above) */
 type EventsCreateOrUpdateParams = { [k: string]: any };
 type EventsCreateOrUpdateResult = { [k: string]: any };
 type EventsAnyParams = { [k: string]: any };
 type EventsAnyResult = { [k: string]: any };
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 // Type repository that will contain information about what is allowed/known
 // for events.
@@ -150,6 +156,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // `mall.streams` + `mall.events`. Mall uses class-instance getters
   // for streams/events so Object.assign would drop them — use a
   // forwarding object literal instead.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mallForCmc: any = {
     get streams () { return mall.streams; },
     get events () { return mall.events; },
@@ -264,7 +271,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     try {
       const events = await mall.events.getHistory(context.user.id, params.id);
       result.history = [];
-      events.forEach((e: { id: string; modified?: number; [k: string]: unknown }) => {
+      events.forEach((e: Event) => {
         if (result.event!.streamIds == null) { // event might be deleted - limit result to modified property
           result.event = { id: e.id, modified: e.modified };
         } else {
@@ -539,6 +546,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (!context.systemStream.isIndexed) return next();
     try {
       const fieldName: string = context.accountStreamIdWithoutPrefix;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- system-stream-driven dynamic field access
       const previousValue = (context.user as any)[fieldName];
       const action = previousValue != null ? 'update' : 'create';
       const operations = [{
@@ -804,6 +812,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
    */
   // Multer-style files-or-files-array — runtime shape is heterogeneous,
   // intentionally kept wide.
+  /* eslint-disable @typescript-eslint/no-explicit-any -- heterogeneous multer bag (see above) */
   function sanitizeRequestFiles (files: any) {
     if (!files || !files.file || !Array.isArray(files.file)) {
       // assume files is an object, nothing to do
@@ -818,6 +827,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     });
     return result;
   }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
   async function normalizeStreamIdAndStreamIds (context: MethodContext, params: EventsCreateOrUpdateParams, result: EventsCreateOrUpdateResult, next: MethodNext) {
     const event = isEventsUpdateMethod() ? params.update : params;
     // remove double entries from streamIds

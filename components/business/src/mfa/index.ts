@@ -29,7 +29,7 @@ type MFAConfig = {
   [k: string]: unknown;
 };
 type MFAServiceLike = unknown; // Service implementation — opaque from the façade's POV
-type MFASessionStoreLike = { clearAll: () => Promise<void>; [k: string]: unknown };
+type MFASessionStoreLike = { clearAll: () => Promise<void> };
 
 /**
  * Build the MFA service implementation matching `mfaConfig.mode`.

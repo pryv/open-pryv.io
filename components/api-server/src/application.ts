@@ -87,7 +87,7 @@ logger.debug('Loading app');
  */
 type APIInstance = unknown;
 type Database = unknown;
-type StorageLayer = { connection: Database; [k: string]: unknown };
+type StorageLayer = { connection: Database };
 type ExpressApp = {
   use: (...args: unknown[]) => unknown;
   _router?: { stack: ExpressLayer[] };

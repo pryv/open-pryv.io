@@ -10,7 +10,7 @@ import type {} from 'node:fs';
 // above.
 //
 
-type TracerSpan = { finish: () => void; [k: string]: unknown };
+type TracerSpan = { finish: () => void };
 type ContextLike = { childSpan: (name: string, opts?: Record<string, unknown>) => TracerSpan };
 
 class TracedOperations {

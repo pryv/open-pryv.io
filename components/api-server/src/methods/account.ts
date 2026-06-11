@@ -15,6 +15,7 @@ type MethodContext = BaseMethodContext & {
   // scratchpad context: the method pipeline stashes typed-elsewhere objects
   // (userBusiness, passwordResetRequest, ...) here. Stays `any` until those
   // get real types (strongly-typed interface I/O follow-up plan).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
 };
 

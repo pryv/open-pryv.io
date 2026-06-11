@@ -43,6 +43,7 @@ type Event = {
 };
 type EventQuery = Record<string, unknown>;
 type EventOptions = Record<string, unknown>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type EventsStore = any; // Each store's UserEvents implementation; varied per backend.
 type StoreSettings = Record<string, unknown>;
 type ParamsByStore = Record<string, { query?: EventQuery; options?: EventOptions } | undefined>;

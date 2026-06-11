@@ -72,19 +72,19 @@ type UpdatesSettingsHolder = {
 // with that file when the wire schema changes.
 type ItemDeletion = { id: string; deleted?: number };
 type AccessesGetParams = { includeDeletions?: boolean; includeExpired?: boolean };
-type AccessesGetResult = { accesses?: Access[]; accessDeletions?: Access[] } & Record<string, unknown>;
+type AccessesGetResult = { accesses?: Access[]; accessDeletions?: Access[] };
 type AccessesGetOneParams = { id: string; includeHistory?: boolean };
-type AccessesGetOneResult = { access?: Access; current?: string; history?: Access[] } & Record<string, unknown>;
-type AccessesCreateParams = Partial<Access> & { name?: string; permissions?: Permission[]; clientData?: Record<string, unknown>; expireAfter?: number; deviceName?: string | null; [k: string]: unknown };
-type AccessesCreateResult = { access?: Access } & Record<string, unknown>;
-type AccessesUpdateParams = { id: string; update: Partial<Access> & { permissions?: Permission[]; expires?: number | null; expireAfter?: number; clientData?: Record<string, unknown> | null }; targetAccess?: Access; targetBase?: string; [k: string]: unknown };
+type AccessesGetOneResult = { access?: Access; current?: string; history?: Access[] };
+type AccessesCreateParams = Partial<Access> & { name?: string; permissions?: Permission[]; clientData?: Record<string, unknown>; expireAfter?: number; deviceName?: string | null };
+type AccessesCreateResult = { access?: Access };
+type AccessesUpdateParams = { id: string; update: Partial<Access> & { permissions?: Permission[]; expires?: number | null; expireAfter?: number; clientData?: Record<string, unknown> | null }; targetAccess?: Access; targetBase?: string };
 // __updateNotification: internal scratch slot between snapshotAndApplyUpdate
 // (producer) and emitUpdateNotifications (consumer); deleted before response.
-type AccessesUpdateResult = { access?: Access; __updateNotification?: { baseId: string; serial: number; compositeId: string } } & Record<string, unknown>;
+type AccessesUpdateResult = { access?: Access; __updateNotification?: { baseId: string; serial: number; compositeId: string } };
 type AccessesDeleteParams = { id: string; accessToDelete?: Access };
-type AccessesDeleteResult = { accessDeletion?: ItemDeletion; relatedDeletions?: ItemDeletion[] } & Record<string, unknown>;
+type AccessesDeleteResult = { accessDeletion?: ItemDeletion; relatedDeletions?: ItemDeletion[] };
 type AccessesCheckAppParams = { requestingAppId: string; deviceName?: string; requestedPermissions: Permission[]; clientData?: Record<string, unknown> };
-type AccessesCheckAppResult = { matchingAccess?: Access; mismatchingAccess?: Access; checkedPermissions?: Permission[]; error?: unknown } & Record<string, unknown>;
+type AccessesCheckAppResult = { matchingAccess?: Access; mismatchingAccess?: Access; checkedPermissions?: Permission[]; error?: unknown };
 
 export default async function produceAccessesApiMethods (api: { register (...args: unknown[]): unknown }) {
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };

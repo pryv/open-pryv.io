@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import type { Readable as ReadableType } from 'node:stream';
 const require = createRequire(import.meta.url);
 
 const { createId: cuid } = require('@paralleldrive/cuid2');
@@ -36,9 +37,28 @@ type Settings = { versioning?: { deletionMode?: string; forceKeepHistory?: boole
 type SystemStreams = { accountStreamIds?: string[] };
 type StoreQuery = unknown;
 type StoreOptions = unknown;
-type UserDbLike = Record<string, any>;
+// Per-user SQLite DB handle (userSQLite/UserDatabase) — the methods used here.
+// getEvents is modelled as Event[]: better-sqlite3 `.all()` always yields an
+// array, so UserDatabase's `| null` branch is unreachable.
+type UserDbLike = {
+  getOneEvent: (eventId: string) => Event | null;
+  getEvents: (params: { query: unknown[]; options: unknown }) => Event[];
+  getEventsStreamed: (params: { query: unknown[]; options: unknown }) => ReadableType;
+  getEventDeletionsStreamed: (deletedSince: number) => ReadableType;
+  getEventHistory: (eventId: string) => Event[];
+  createEvent: (event: Event) => Promise<void>;
+  updateEvent: (eventId: string, eventData: Event) => Promise<Event | null>;
+  minimizeEventHistory: (eventId: string, fieldsToRemove: string[]) => Promise<void>;
+  deleteEventHistory: (eventId: string) => Promise<void>;
+  deleteEvents: (params: { query: unknown[]; options?: unknown }) => Promise<{ changes: number } | null>;
+  countEvents: () => number;
+};
 type StorageFactory = { forUser: (userId: string) => Promise<UserDbLike> };
-type EventsFileStorageLike = Record<string, any>;
+type EventsFileStorageLike = {
+  removeAllForEvent: (userId: string, eventId: string) => Promise<void>;
+  removeAllForUser: (userId: string) => Promise<void>;
+  getFileStorageInfos: (userId: string) => Promise<number>;
+};
 
 type Store = {
   storage: StorageFactory;
@@ -90,14 +110,14 @@ const userEvents = ds.createUserEvents({
     return db.getEvents({ query, options });
   },
 
-  async getStreamed (this: Store, userId: string, storeQuery: StoreQuery, storeOptions: StoreOptions): Promise<unknown> {
+  async getStreamed (this: Store, userId: string, storeQuery: StoreQuery, storeOptions: StoreOptions): Promise<ReadableType> {
     const db = await this.storage.forUser(userId);
     const query = localStoreEventQueries.localStorePrepareQuery(storeQuery);
     const options = localStoreEventQueries.localStorePrepareOptions(storeOptions);
     return db.getEventsStreamed({ query, options });
   },
 
-  async getDeletionsStreamed (this: Store, userId: string, query: { deletedSince: number }, _options: unknown): Promise<unknown> {
+  async getDeletionsStreamed (this: Store, userId: string, query: { deletedSince: number }, _options: unknown): Promise<ReadableType> {
     const db = await this.storage.forUser(userId);
     return db.getEventDeletionsStreamed(query.deletedSince);
   },
@@ -120,7 +140,8 @@ const userEvents = ds.createUserEvents({
     }
   },
 
-  async update (this: Store, userId: string, eventData: Event, transaction: unknown): Promise<Event> {
+  // `null` when no row matched — mirrors the PG peer's update semantics.
+  async update (this: Store, userId: string, eventData: Event, transaction: unknown): Promise<Event | null> {
     const db = await this.storage.forUser(userId);
     await this._generateVersionIfNeeded(db, eventData.id, null, transaction);
     try {
@@ -165,7 +186,8 @@ const userEvents = ds.createUserEvents({
     if (originalEvent != null) {
       versionItem = structuredClone(originalEvent);
     } else {
-      versionItem = await db.getOneEvent(eventId);
+      // History generation is only requested for events known to exist.
+      versionItem = (await db.getOneEvent(eventId))!;
     }
     versionItem.headId = eventId;
     versionItem.id = cuid();

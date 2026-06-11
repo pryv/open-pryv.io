@@ -11,7 +11,7 @@ const Series = require('./series.ts').default;
 const NamespaceBatch = require('./namespace_batch.ts').default;
 /** Repository of all series in this Pryv instance.
  */
-type ConnectionLike = { createDatabase: (name: string) => Promise<void> | void; [k: string]: unknown };
+type ConnectionLike = { createDatabase: (name: string) => Promise<void> | void };
 
 class Repository {
   connection: ConnectionLike;

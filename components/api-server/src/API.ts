@@ -24,9 +24,13 @@ const RESULT_TO_OBJECT_MAX_ARRAY_SIZE = 100000;
 const WILDCARD = '*';
 
 // Result is imported as a value (require().default); MethodContext
-// was a JSDoc-only namespaced reference. `any` for both at the type level.
+// was a JSDoc-only namespaced reference. `any` for both at the type level:
+// the registry holds heterogeneous middleware whose param types vary per
+// method chain (contravariance makes a common signature impossible).
+/* eslint-disable @typescript-eslint/no-explicit-any -- heterogeneous middleware registry (see above) */
 type ApiCallback = (err?: Error | null, result?: any | null) => unknown;
 type ApiFunction = string | ((context: any, params: any, result: any, next: ApiCallback) => unknown);
+/* eslint-enable @typescript-eslint/no-explicit-any */
 type Filter = {
   idFilter: string;
   fns: Array<ApiFunction>;
