@@ -163,7 +163,7 @@ test-data command version:
 clean-test-data:
     #!/usr/bin/env bash
     set -uo pipefail
-    # Resolve PG client binaries: prefer the local Plan-41 install at
+    # Resolve PG client binaries: prefer the local from-source install at
     # ./var-pryv/postgresql-bin/bin/ (Linux dev + Darwin dev when the
     # PG setup script ran), fall back to system `dropdb`/`createdb`
     # found on PATH (Darwin operators using Homebrew / Postgres.app /
@@ -175,7 +175,7 @@ clean-test-data:
       DROPDB=$(command -v dropdb || true)
       CREATEDB=$(command -v createdb || true)
     fi
-    # SQLite user index + legacy pre-Plan-25 platform-wide.db (retained for safety)
+    # SQLite user index + legacy platform-wide.db from before the rqlite platform engine (retained for safety)
     rm -f ./var-pryv/users/user-index.db ./var-pryv/users/user-index.db-wal ./var-pryv/users/user-index.db-shm
     rm -f ./var-pryv/users/platform-wide.db ./var-pryv/users/platform-wide.db-wal ./var-pryv/users/platform-wide.db-shm
     # Per-user directories (each holds the user's audit SQLite + the SQLite
@@ -216,12 +216,27 @@ clean-test-data:
     else
       echo "dropdb/createdb not found (skipping pg test reset + pg dev reset)"
     fi
-    # rqlite PlatformDB key-value table (rqlite is the only platform
-    # engine). Wipes both the test harness state AND the local-dev
-    # email/platform-unique index — paired with the PG dev-DB drop
-    # above so the platform DB and the user index can't diverge
-    # across cleans.
-    curl -s -X POST -H 'Content-Type: application/json' "http://${RQLITE_HOST}:${RQLITE_PORT}/db/execute" -d '[["DELETE FROM keyValue"]]' > /dev/null 2>&1 || echo "rqlite not reachable (skipping rqlite reset)"
+    # rqlite PlatformDB — full state reset (rqlite is the only platform
+    # engine). Paired with the PG dev-DB drop above so the platform DB
+    # and the user index can't diverge across cleans.
+    # "DELETE FROM keyValue" alone is NOT enough: the raft log + on-disk
+    # db.sqlite retain historical writes that replay on restart, and after
+    # many runs the integrity check observes ghost users (api-server
+    # matrix degrades from ~1068 passing to ~252). So for the canonical
+    # pidfile-managed local instance: stop it, wipe the raft + db files,
+    # restart. Overridden host/port (parallel workspaces / remote rqlite)
+    # keep the keyValue-only wipe — their data dir is not ours to touch.
+    if [ "$RQLITE_PORT" = "4001" ] && { [ "$RQLITE_HOST" = "localhost" ] || [ "$RQLITE_HOST" = "127.0.0.1" ]; } && [ -f ./var-pryv/rqlite-data/rqlited.pid ]; then
+      RQLITED_PID=$(cat ./var-pryv/rqlite-data/rqlited.pid)
+      kill "$RQLITED_PID" 2>/dev/null || true
+      for i in $(seq 1 40); do kill -0 "$RQLITED_PID" 2>/dev/null || break; sleep 0.25; done
+      rm -rf ./var-pryv/rqlite-data/db.sqlite* ./var-pryv/rqlite-data/raft ./var-pryv/rqlite-data/raft.db \
+             ./var-pryv/rqlite-data/wsnapshots ./var-pryv/rqlite-data/clean_snapshot ./var-pryv/rqlite-data/rqlited.pid
+      ./storages/engines/rqlite/scripts/start > /dev/null 2>&1 || echo "rqlited restart FAILED — run storages/engines/rqlite/scripts/start manually"
+    else
+      curl -s -X POST -H 'Content-Type: application/json' "http://${RQLITE_HOST}:${RQLITE_PORT}/db/execute" -d '[["DELETE FROM keyValue"]]' > /dev/null 2>&1 || echo "rqlite not reachable (skipping rqlite reset)"
+      echo "rqlite at ${RQLITE_HOST}:${RQLITE_PORT} (non-canonical or unmanaged): wiped keyValue only — for a full raft-state reset stop that rqlited, wipe its data dir, restart it"
+    fi
     # Stale customAuthStepFn from a prior aborted permissions-seq test (the [P4OM] invalid-fixture test crashes the api-server bin and leaves the file behind, polluting subsequent matrix runs with [api-server fatal] Not a function (string)). Safe to delete unconditionally — committed file is .gitkeep.
     rm -f ./custom-extensions/customAuthStepFn.js
     echo "Test data cleaned: SQLite + per-user dirs + attachments/previews + PG (pryv-node-test + pryv-node) + rqlite keyValue + custom-extensions stale fixture"
@@ -258,7 +273,7 @@ clean-test-data-parallel WORKERS='':
       fi
     fi
     # Resolve PG binaries (mirror of `clean-test-data`): prefer the local
-    # Plan-41 install at ./var-pryv/postgresql-bin/bin/, fall back to
+    # from-source install at ./var-pryv/postgresql-bin/bin/, fall back to
     # system tooling on PATH (Darwin Homebrew / Postgres.app).
     if [ -x ./var-pryv/postgresql-bin/bin/dropdb ]; then
       DROPDB=./var-pryv/postgresql-bin/bin/dropdb
