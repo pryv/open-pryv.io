@@ -15,7 +15,7 @@
 
 export { setupForTable };
 
-type SqliteDb = { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } };
+import type { SqliteDb } from '../types.ts';
 
 /**
  * Add full text search capabilities on a specific table.

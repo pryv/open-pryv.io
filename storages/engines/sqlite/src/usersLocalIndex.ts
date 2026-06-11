@@ -14,20 +14,7 @@ const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
 const { _internals } = require('./_internals.ts');
 
-interface SqliteStmt {
-  get: (...params: unknown[]) => Record<string, unknown> | undefined;
-  run: (...params: unknown[]) => RunResult;
-  iterate: (...params: unknown[]) => Iterable<Record<string, unknown>>;
-}
-
-interface SqliteDb {
-  prepare: (sql: string) => SqliteStmt;
-}
-
-interface RunResult {
-  changes: number;
-  lastInsertRowid: number | bigint;
-}
+import type { SqliteDb, SqliteStmt, SqliteRunResult as RunResult } from './types.ts';
 
 class DBIndex {
   db!: SqliteDb;

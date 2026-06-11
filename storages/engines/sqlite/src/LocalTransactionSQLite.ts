@@ -15,7 +15,7 @@ const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
  * SQLite's BEGIN/COMMIT/ROLLBACK is process-wide on the connection;
  * concurrentSafeWrite serializes the body so the BEGIN window is exclusive.
  */
-type SqliteDb = { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } };
+import type { SqliteDb } from './types.ts';
 
 class LocalTransactionSQLite {
   db: SqliteDb;

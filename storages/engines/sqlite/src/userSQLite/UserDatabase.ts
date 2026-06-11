@@ -30,13 +30,9 @@ type DomainEvent = Record<string, unknown>;
 type ColumnDef = { type: string, index?: boolean };
 type TableSchema = Record<string, ColumnDef>;
 
-type SqliteStmt = {
-  all: (...params: unknown[]) => EventRow[],
-  get: (...params: unknown[]) => EventRow | undefined,
-  run: (...params: unknown[]) => { changes: number },
-  iterate: (...params: unknown[]) => IterableIterator<EventRow>
-};
-type SqliteDb = { prepare: (sql: string) => SqliteStmt, close: () => void };
+// EventRow equals the canonical SqliteStmt's default row shape, so the
+// shared statement type applies unparameterized.
+import type { SqliteDb, SqliteStmt } from '../types.ts';
 
 type EventQueries = {
   getAll: SqliteStmt, getTerms: SqliteStmt, getById: SqliteStmt,

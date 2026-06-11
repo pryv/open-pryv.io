@@ -19,8 +19,7 @@ type Options = FindOptions;
 // ---- Precise document-store types (untyped-document ↔ typed-SQL boundary) ----
 // ItemList / Query / UpdateData / QueryOp come from interfaces/_shared/types.ts.
 
-/** Values that better-sqlite3 / our bind sites accept as a bound parameter. */
-type SqlParam = string | number | bigint | null | Buffer | Uint8Array;
+import type { SqlParam, SqliteDb } from '../types.ts';
 
 /**
  * SQLite narrowing of the shared StoredItem: `id`/`headId`/`deleted` are
@@ -33,15 +32,6 @@ type ItemList = Array<StoredItem | null>;
 
 /** A row read back from a baseStorage table. */
 type DbRow = { id: string, head_id?: number | string | null, deleted?: number | null, data?: string, cnt?: number, [k: string]: unknown };
-type SqliteStmt = {
-  all: (...params: SqlParam[]) => DbRow[],
-  get: (...params: SqlParam[]) => DbRow | undefined,
-  run: (...params: SqlParam[]) => { changes: number }
-};
-type SqliteDb = {
-  prepare: (sql: string) => SqliteStmt,
-  transaction: (fn: (items: StoredItem[]) => void) => (items: StoredItem[]) => void
-};
 /** The per-user handle returned by `userDb()` — only `.db` is touched downstream. */
 type UserDb = { db: SqliteDb };
 
@@ -268,7 +258,7 @@ class BaseStorageSQLite {
       const orderBy = this.buildOrderBy(options);
       const { clause: lim } = this.buildLimitOffset(options);
       const sql = `SELECT * FROM ${this.tableName} ${where} ${orderBy}${lim}`.trim();
-      const rows = udb.db.prepare(sql).all(...params);
+      const rows = udb.db.prepare<DbRow>(sql).all(...params);
       callback(null, this.applyProjection(this.rowsToItems(rows), options));
     });
   }
@@ -279,7 +269,7 @@ class BaseStorageSQLite {
       const orderBy = this.buildOrderBy(options);
       const { clause: lim } = this.buildLimitOffset(options);
       const sql = `SELECT * FROM ${this.tableName} ${where} ${orderBy}${lim}`.trim();
-      const rows = udb.db.prepare(sql).all(...params);
+      const rows = udb.db.prepare<DbRow>(sql).all(...params);
       callback(null, this.applyProjection(this.rowsToItems(rows), options));
     });
   }
@@ -289,7 +279,7 @@ class BaseStorageSQLite {
       const q = this.addImplicitFilters(query || {});
       const { sql: where, params } = this.buildWhere(q);
       const sql = `SELECT * FROM ${this.tableName} ${where} LIMIT 1`.trim();
-      const row = udb.db.prepare(sql).get(...params);
+      const row = udb.db.prepare<DbRow>(sql).get(...params);
       if (!row) return callback(null, null);
       const item = this.rowToItem(row);
       const arr = this.applyProjection([item], options);
@@ -302,7 +292,7 @@ class BaseStorageSQLite {
       const q = Object.assign({}, query || {}, { deleted: { $ne: null } });
       const { sql: where, params } = this.buildWhere(q);
       const sql = `SELECT * FROM ${this.tableName} ${where} LIMIT 1`.trim();
-      const row = udb.db.prepare(sql).get(...params);
+      const row = udb.db.prepare<DbRow>(sql).get(...params);
       callback(null, row ? this.rowToItem(row) : null);
     });
   }
@@ -315,7 +305,7 @@ class BaseStorageSQLite {
       const orderBy = this.buildOrderBy(options);
       const { clause: lim } = this.buildLimitOffset(options);
       const sql = `SELECT * FROM ${this.tableName} ${where} ${orderBy}${lim}`.trim();
-      const rows = udb.db.prepare(sql).all(...params);
+      const rows = udb.db.prepare<DbRow>(sql).all(...params);
       callback(null, this.rowsToItems(rows));
     });
   }
@@ -334,7 +324,7 @@ class BaseStorageSQLite {
       udb.db.prepare(`INSERT INTO ${this.tableName} (${cols.join(', ')}) VALUES (${placeholders.join(', ')})`)
         .run(...vals);
 
-      const row = udb.db.prepare(`SELECT * FROM ${this.tableName} WHERE id = ?`).get(id);
+      const row = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} WHERE id = ?`).get(id);
       return this.rowToItem(row);
     });
   }
@@ -342,11 +332,11 @@ class BaseStorageSQLite {
   findOneAndUpdate (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<StoredItem | null>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
-      const row = udb.db.prepare(`SELECT * FROM ${this.tableName} ${where} LIMIT 1`).get(...params);
+      const row = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where} LIMIT 1`).get(...params);
       if (!row) return null;
       const merged = this.applyUpdateToItem(this.rowToItem(row), updatedData);
       this._writeMerged(udb, row.id, merged);
-      const updated = udb.db.prepare(`SELECT * FROM ${this.tableName} WHERE id = ?`).get(row.id);
+      const updated = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} WHERE id = ?`).get(row.id);
       return this.rowToItem(updated);
     });
   }
@@ -358,7 +348,7 @@ class BaseStorageSQLite {
   updateMany (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<{ modifiedCount: number }>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
-      const rows = udb.db.prepare(`SELECT * FROM ${this.tableName} ${where}`).all(...params);
+      const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where}`).all(...params);
       let modified = 0;
       for (const r of rows) {
         const merged = this.applyUpdateToItem(this.rowToItem(r), updatedData);
@@ -377,7 +367,7 @@ class BaseStorageSQLite {
   removeOne (userOrUserId: UserOrId, query: Query, callback: Callback<number>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
-      const row = udb.db.prepare(`SELECT id FROM ${this.tableName} ${where} LIMIT 1`).get(...params);
+      const row = udb.db.prepare<DbRow>(`SELECT id FROM ${this.tableName} ${where} LIMIT 1`).get(...params);
       if (!row) return 0;
       udb.db.prepare(`DELETE FROM ${this.tableName} WHERE id = ?`).run(row.id);
       return 1;
@@ -400,14 +390,14 @@ class BaseStorageSQLite {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = this.addImplicitFilters(query || {});
       const { sql: where, params } = this.buildWhere(q);
-      const row = udb.db.prepare(`SELECT COUNT(*) AS cnt FROM ${this.tableName} ${where}`).get(...params);
+      const row = udb.db.prepare<DbRow>(`SELECT COUNT(*) AS cnt FROM ${this.tableName} ${where}`).get(...params);
       callback(null, row?.cnt ?? 0);
     });
   }
 
   countAll (userOrUserId: UserOrId, callback: Callback<number>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
-      const row = udb.db.prepare(`SELECT COUNT(*) AS cnt FROM ${this.tableName}`).get();
+      const row = udb.db.prepare<DbRow>(`SELECT COUNT(*) AS cnt FROM ${this.tableName}`).get();
       callback(null, row?.cnt ?? 0);
     });
   }
@@ -417,9 +407,9 @@ class BaseStorageSQLite {
     const idx = await getUsersLocalIndex();
     const map = await idx.getAllByUsername();
     for (const userId of Object.values(map) as string[]) {
-      const udb = await UserBaseStorageDb.forUser(userId);
+      const udb: UserDb & { ensureTable: (name: string | null, opts: { withDeleted: boolean, withHeadId: boolean }) => Promise<void> } = await UserBaseStorageDb.forUser(userId);
       await udb.ensureTable(this.tableName, { withDeleted: this.hasDeletedCol, withHeadId: this.hasHeadIdCol });
-      const rows = udb.db.prepare(`SELECT * FROM ${this.tableName}`).all();
+      const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName}`).all();
       for (const row of rows) {
         yield this.rowToItem(row);
       }
@@ -430,7 +420,7 @@ class BaseStorageSQLite {
 
   exportAll (userOrUserId: UserOrId, callback: Callback<ItemList>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
-      const rows = udb.db.prepare(`SELECT * FROM ${this.tableName}`).all();
+      const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName}`).all();
       callback(null, this.rowsToItems(rows));
     });
   }
@@ -620,7 +610,7 @@ class BaseStorageSQLite {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
       const { sql: where, params } = this.buildWhere(query || {});
       const orderBy = this.buildOrderBy(options);
-      const rows = udb.db.prepare(`SELECT * FROM ${this.tableName} ${where} ${orderBy}`.trim()).all(...params);
+      const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where} ${orderBy}`.trim()).all(...params);
       let updates = 0;
       for (const r of rows) {
         const item = this.rowToItem(r);

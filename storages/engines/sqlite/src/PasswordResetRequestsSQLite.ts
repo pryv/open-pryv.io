@@ -12,14 +12,14 @@ const { createId: cuid } = require('@paralleldrive/cuid2');
 
 const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
+import type { SqliteDb } from './types.ts';
+
 const DEFAULT_MAX_AGE = 60 * 60 * 1000; // 1 hour
 
 /**
  * SQLite implementation of PasswordResetRequests storage.
  * Backed by the shared `password_resets` table; `expires` is INTEGER (ms).
  */
-type SqlitePrep = { run: (...args: unknown[]) => unknown; get: (...args: unknown[]) => Record<string, unknown> | undefined; all: (...args: unknown[]) => Record<string, unknown>[] };
-type SqliteDb = { prepare: (sql: string) => SqlitePrep; transaction: <T>(fn: (items: T) => void) => (items: T) => void };
 type Cb<T = unknown> = (err: Error | null, res?: T) => void;
 type ResetDoc = { _id: string; username: string; expires: Date };
 type ImportDoc = { _id?: string; id?: string; username: string; expires: Date | number };

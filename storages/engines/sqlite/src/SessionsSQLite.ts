@@ -12,11 +12,11 @@ const { createId: cuid } = require('@paralleldrive/cuid2');
 
 const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 
+import type { SqliteDb } from './types.ts';
+
 type SessionData = Record<string, unknown>;
 // `sessions` table row (queries select subsets of these columns)
 type SessionRow = { id: string; data: string | SessionData; expires: number };
-type SqliteStmt = { run: (...args: unknown[]) => unknown; get: (...args: unknown[]) => SessionRow | undefined; all: (...args: unknown[]) => SessionRow[] };
-type SqliteDb = { prepare: (sql: string) => SqliteStmt; transaction: <T>(fn: (items: T) => void) => (items: T) => void };
 
 const DEFAULT_MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days
 
@@ -40,7 +40,7 @@ class SessionsSQLite {
 
   get (id: string, callback: (err: Error | null, data?: SessionData | null) => void): void {
     try {
-      const row = this.db.prepare('SELECT data, expires FROM sessions WHERE id = ?').get(id);
+      const row = this.db.prepare<SessionRow>('SELECT data, expires FROM sessions WHERE id = ?').get(id);
       if (!row) return callback(null, null);
       if (Date.now() >= row.expires) {
         this.destroy(id, () => callback(null, null));
@@ -58,7 +58,7 @@ class SessionsSQLite {
       if (keys.length === 0) return callback(null, null);
       const where = keys.map((k) => `json_extract(data, '$.${k}') = ?`).join(' AND ');
       const values = keys.map((k) => data[k]);
-      const row = this.db.prepare(`SELECT id, expires FROM sessions WHERE ${where} LIMIT 1`).get(...values);
+      const row = this.db.prepare<SessionRow>(`SELECT id, expires FROM sessions WHERE ${where} LIMIT 1`).get(...values);
       if (!row) return callback(null, null);
       if (Date.now() >= row.expires) {
         this.destroy(row.id, () => callback(null, null));
@@ -139,7 +139,7 @@ class SessionsSQLite {
 
   exportAll (callback: (err: Error | null, docs?: Array<{ _id: string; data: SessionData; expires: Date }>) => void): void {
     try {
-      const rows = this.db.prepare('SELECT id, data, expires FROM sessions').all();
+      const rows = this.db.prepare<SessionRow>('SELECT id, data, expires FROM sessions').all();
       const docs = rows.map((r: { id: string; data: string | SessionData; expires: number }) => ({
         _id: r.id,
         data: this.rowToData(r),

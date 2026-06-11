@@ -28,8 +28,8 @@ const require = createRequire(import.meta.url);
 const SQLite3 = require('better-sqlite3');
 const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 
-type SqliteStmt = { run: (...args: unknown[]) => unknown; all: (...args: unknown[]) => Array<Record<string, unknown>>; get: (...args: unknown[]) => Record<string, unknown> | undefined };
-type SqliteDb = { prepare: (sql: string) => SqliteStmt; transaction: <T>(fn: (batch: T) => void) => (batch: T) => void; close: () => void };
+import type { SqliteDb, SqliteStmt } from '../types.ts';
+
 type InsertRow = { event_id: string; point_time: number; delta_time: number; fields: string };
 
 class SeriesDatabase {
