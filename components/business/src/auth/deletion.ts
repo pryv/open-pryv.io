@@ -111,6 +111,25 @@ class Deletion {
     next();
   }
 
+  // Engine-agnostic attachment erasure. The user-directory wipe in
+  // deleteAuditData covers the filesystem engine as a side-effect
+  // (attachments live under the per-user directory) but leaves objects
+  // behind on remote stores (S3). This step routes through the
+  // EventFiles interface so every fileStorage engine converges on the
+  // same end-state; for the filesystem engine it is an idempotent
+  // subset of the directory wipe.
+  async deleteAttachments (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    try {
+      const { getEventFiles } = require('storage/src/eventFiles/getEventFiles.ts');
+      const eventFiles = await getEventFiles();
+      await eventFiles.removeAllForUser(context.user.id);
+      next();
+    } catch (err: unknown) {
+      this.logger.error(err, err);
+      return next(errors.unexpectedError(err));
+    }
+  }
+
   async deleteAuditData (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const deleteUserDirectory = require('storage').userLocalDirectory.deleteUserDirectory;
     await deleteUserDirectory(context.user.id);

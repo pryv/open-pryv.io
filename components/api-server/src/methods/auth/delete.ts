@@ -25,6 +25,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     deletion.validateUserFilepaths.bind(deletion),
     deletion.deleteUserFiles.bind(deletion),
     deletion.deleteHFData.bind(deletion),
+    deletion.deleteAttachments.bind(deletion),
     deletion.deleteAuditDataStorage.bind(deletion),
     deletion.deleteAuditData.bind(deletion),
     deletion.deleteUser.bind(deletion));
