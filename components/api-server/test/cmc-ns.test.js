@@ -120,17 +120,28 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
       assert.strictEqual(res.body?.stream?.id, ':_cmc:apps:my-app');
     });
 
-    it('[CN06] allows nested user-creatable streams under :_cmc:apps:my-app', async function () {
+    it('[CN06] allows nested user-creatable streams under an app stream', async function () {
+      // self-contained: creates its own app parent so the test does not
+      // depend on a sibling test having run (e.g. under --grep subsets)
+      const parent = await coreRequest
+        .post(basePath)
+        .set('Authorization', token)
+        .send({
+          id: ':_cmc:apps:cn06-app',
+          parentId: ':_cmc:apps',
+          name: 'CN06 App',
+        });
+      assert.strictEqual(parent.status, 201, JSON.stringify(parent.body));
       const res = await coreRequest
         .post(basePath)
         .set('Authorization', token)
         .send({
-          id: ':_cmc:apps:my-app:study-A',
-          parentId: ':_cmc:apps:my-app',
+          id: ':_cmc:apps:cn06-app:study-A',
+          parentId: ':_cmc:apps:cn06-app',
           name: 'Study A',
         });
       assert.strictEqual(res.status, 201, JSON.stringify(res.body));
-      assert.strictEqual(res.body?.stream?.id, ':_cmc:apps:my-app:study-A');
+      assert.strictEqual(res.body?.stream?.id, ':_cmc:apps:cn06-app:study-A');
     });
 
     it('[CN07] rejects creating plugin-reserved segments under :_cmc:apps:my-app (chats / collectors)', async function () {

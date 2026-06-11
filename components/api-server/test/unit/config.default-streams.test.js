@@ -18,6 +18,24 @@ const PRIVATE_PREFIX = ':_system:';
 const CUSTOMER_PREFIX = ':system:';
 
 describe('[SSDC] SystemStreams config', () => {
+  // This suite swaps the live systemStreams config; while a custom config
+  // is active, account events of users created earlier (under the default
+  // config) map to different stream ids, so the per-test platform-vs-
+  // repository integrity hook reports a FALSE desync. Same opt-out as the
+  // other suites that deliberately reshape system streams.
+  let savedIntegrityCheck;
+  before(() => {
+    savedIntegrityCheck = process.env.DISABLE_INTEGRITY_CHECK;
+    process.env.DISABLE_INTEGRITY_CHECK = '1';
+  });
+  after(() => {
+    if (savedIntegrityCheck != null) {
+      process.env.DISABLE_INTEGRITY_CHECK = savedIntegrityCheck;
+    } else {
+      delete process.env.DISABLE_INTEGRITY_CHECK;
+    }
+  });
+
   let store;
   const customRootStreamId = 'myNewStream';
   const DEFAULT_VALUES_FOR_FIELDS = {
