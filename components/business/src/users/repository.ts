@@ -28,6 +28,7 @@ const cache = require('cache').default;
 const cmc = require('cmc');
 const { getLogger } = require('@pryv/boiler');
 const cmcLogger = getLogger('cmc:provisioning');
+const logger = getLogger('users:repository');
 
 export { getUsersRepository };
 /**
@@ -228,6 +229,26 @@ class UsersRepository {
     }
     // could throw uniqueness errors
     await this.platform.updateUser(user.username, operations);
+    try {
+      await this.createLocalUserData(user, withSession);
+    } catch (err) {
+      // Compensation: the platform reservation (unique/indexed fields) was
+      // written first — cross-core uniqueness requires it — so a failure on
+      // the local side must take it back, along with any partially-created
+      // local data. Orphaned platform rows block re-registration of the
+      // same unique values and desync platform vs repository.
+      await this.compensateFailedInsert(user);
+      throw err;
+    }
+    // TODO(B-2026-05-27-5, 2026-05-27): re-enable CMC reserved-parent
+    // auto-provisioning here. Lazy creation at first :_cmc:* write
+    // keeps the operational impact contained for now.
+    if (cmc != null && cmcLogger != null) { /* placeholder */ }
+    return user;
+  }
+
+  /** @private — local (single-core) part of insertOne */
+  async createLocalUserData (user: UserData, withSession: boolean) {
     const mallTransaction = await this.mall.newTransaction();
     // Invariant: the local store always provides a transaction.
     const localTransaction = (await mallTransaction.getStoreTransaction('local'))!;
@@ -267,11 +288,27 @@ class UsersRepository {
         await this.setUserPassword(user.id, user.password!, user.accessId as string);
       }
     });
-    // TODO(B-2026-05-27-5, 2026-05-27): re-enable CMC reserved-parent
-    // auto-provisioning here. Lazy creation at first :_cmc:* write
-    // keeps the operational impact contained for now.
-    if (cmc != null && cmcLogger != null) { /* placeholder */ }
-    return user;
+  }
+
+  /**
+   * @private — best-effort removal of everything insertOne may have
+   * persisted before failing (mirrors deleteOne's order). Cleanup errors
+   * are logged, not thrown: the original failure must surface.
+   */
+  async compensateFailedInsert (user: UserData) {
+    const cleanups: Array<[string, () => Promise<unknown>]> = [
+      ['usersIndex', async () => { await this.usersIndex.init(); await this.usersIndex.deleteById(user.id); }],
+      ['cache', async () => cache.unsetUser(user.username)],
+      ['platform', async () => await this.platform.deleteUser(user.username, user)],
+      ['mall', async () => await this.mall.deleteUser(user.id)]
+    ];
+    for (const [what, cleanup] of cleanups) {
+      try {
+        await cleanup();
+      } catch (cleanupErr) {
+        logger.warn(`user creation rollback: ${what} cleanup failed for "${user.username}"`, cleanupErr);
+      }
+    }
   }
 
   async updateOne (user: UserData, update: Partial<UserData>, accessId: string) {

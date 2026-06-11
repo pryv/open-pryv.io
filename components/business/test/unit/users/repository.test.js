@@ -76,4 +76,39 @@ describe('[USRP] Users repository', () => {
       }
     });
   });
+
+  describe('[UR02] insertOne() compensation on local failure', () => {
+    it('[URB1] releases platform reservations so the same unique fields can register again', async () => {
+      const usersRepository = await getUsersRepository();
+      const uname = charlatan.Lorem.characters(10).toLowerCase();
+      const mail = charlatan.Internet.email();
+      const failing = new User({
+        id: charlatan.Lorem.characters(25),
+        username: uname,
+        password: charlatan.Lorem.characters(10),
+        email: mail
+      });
+      const originalCreateLocal = usersRepository.createLocalUserData;
+      usersRepository.createLocalUserData = async () => { throw new Error('simulated local-creation failure'); };
+      try {
+        await usersRepository.insertOne(failing);
+        assert.fail('should have thrown');
+      } catch (err) {
+        assert.equal(err.message, 'simulated local-creation failure');
+      } finally {
+        usersRepository.createLocalUserData = originalCreateLocal;
+      }
+      // The platform reservation must be gone: registering the SAME
+      // username + email again succeeds (would throw item-already-exists
+      // if the failed attempt had leaked its unique-field rows).
+      const retry = new User({
+        id: charlatan.Lorem.characters(25),
+        username: uname,
+        password: charlatan.Lorem.characters(10),
+        email: mail
+      });
+      await usersRepository.insertOne(retry);
+      await usersRepository.deleteOne(retry.id, uname);
+    });
+  });
 });
