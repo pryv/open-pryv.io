@@ -1,5 +1,26 @@
 # Changelog - Internal (no API impact)
 
+## refactor(types): typing-consistency pass + lint/coverage guardrails
+
+Closes the long-running TypeScript type-tightening effort. The earlier drain removed `: any` file by file with minimal-diff local types; this pass optimizes for consistency across files and locks the result in. All type-level — no runtime change intended; both engine matrices and CI stayed green throughout.
+
+**Consistency / dedup** (each family one commit):
+- Canonical `Logger`/`LogFn` + `ConfigLike` exported from `@pryv/boiler`; shared `AppLike`/`PryvRequest` in api-server `routes/_types.ts`; `MethodNext`/`ResultBag` in `methods/_types.ts` — ~120 duplicate local declarations replaced by `import type`.
+- `: Function` fields (25) given real signatures; JSDoc brace-types (72) deleted in favor of the TS signatures (descriptions kept).
+- Index-signature audit over all 307 `[k: string]: unknown` / `& Record<…>` sites: 47 cargo-culted ones removed (consumers only touch named members); scratchpad pipelines, plugin bags and DB-row dictionaries stay, commented. One real leak surfaced and got a named slot (multer `files` on events.update params).
+- Generic-position `any` (`Callback<any>`, `Record<string, any>`, `Promise<any>` — invisible to the old line metric) drained, including the whole `storages/interfaces/**` family flipped to `unknown` equivalents.
+- Producer-side typing where call sites repeated the same cast: `treeUtils` `children?: this[]` (19 casts deleted), generic `fromCallback<T>`, modelled mongo-style `UpdateData` in both engine bases, `Platform`-typed handles, new exported `UserManifest` for the backup writer chain.
+- Canonical unions: `PermissionLevel`/`AccessType` imported from business types; new `EventsQueryState` (`storages/interfaces/_shared/types.ts`) and `HttpHeaders` (business types).
+- Non-null `!` cleanup: assertions dropped where guards already narrow; locals capture narrowing across try/catch and closures; one-line invariant comments at the declaration sites the remaining clusters rely on.
+
+**Guardrails:**
+- `just lint-ts-any` (chained into `just lint`, enforced in CI): `@typescript-eslint/no-explicit-any` as error over TS sources via the dedicated `eslint.ts-any.config.js` (separate config on purpose — a `files: *.ts` block in `eslint.config.js` would pull every pattern-less neostandard style rule onto TS files). The ~28 surviving `any` lines (heterogeneous middleware registry, method-pipeline scratchpads, storage-plumbing escape hatches, config getter, winston splat, multer bag, per-backend store handles, polymorphic migration contract) carry justified `eslint-disable` comments in place.
+- `just type-coverage`: baseline 80.91 %, `--at-least 80` regression floor (`type-coverage` devDependency).
+- `tsconfig` flips the `strict: true` umbrella (all eight granular flags were already on individually; future strict-family flags now arrive by default).
+- AGENTS.md gains a TypeScript-conventions section: `Xxx` canonical / `XxxLike` structural-local / `XxxRow` storage row / `Wire`-`Raw` wire shapes; most-precise-type-first, `unknown` only for genuinely-opaque pass-through and validator inputs; never add compiler-appeasing field initializers (`= ''`, `?? 0`) — use `field!`, `field?` or an explicit union.
+
+Deliberately out of scope (next effort: strongly-typed interface I/O): nominal domain types — the remaining same-name local types (`MethodContext`, `MallLike`, `AccessLike`, `Event`, `SqliteDb`, `AccessRow`, …) are real wire-vs-stored-vs-engine-row divergences to be modelled once, then threaded through interfaces → engines → callers.
+
 ## fix(init): wizard preflight reads the NS delegation from the parent zone — no more false warning on first boot
 
 The dns-active preflight's delegation check did a *recursive* NS lookup, which needs the zone's own authoritative server to answer. At wizard time that server is the not-yet-booted embedded DNS, so the check could only fail and warned "No NS delegation found" on every correctly-delegated first boot — training operators to ignore the one check that catches real delegation mistakes.
