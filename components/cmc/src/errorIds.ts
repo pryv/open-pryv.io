@@ -109,7 +109,7 @@ const CmcErrorIds = {
   HANDLER_BUILD_DATA_GRANT_FAILED: 'cmc-handler-build-data-grant-failed',
   // Back-channel access mint failed (`handleIncomingAccept` couldn't
   // create the access; rare, usually a uniqueness collision the duplicate
-  // handler should catch — see HANDOVER BLOCK-2 / Plan-68 bugs #12-#13).
+  // handler should catch).
   BACK_CHANNEL_CREATE_FAILED: 'cmc-back-channel-create-failed',
 
   // --- Outbound delivery (peer POST) ---

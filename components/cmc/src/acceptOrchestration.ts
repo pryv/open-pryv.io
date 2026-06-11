@@ -150,7 +150,7 @@ async function readOfferViaCapability (params: {
 /**
  * Permissions to grant on the recipient's data-grant access, derived from
  * the offer event's content.request.permissions. Validated against a small
- * sanity contract (streamId + level present); deeper Plan-66 chain rules
+ * sanity contract (streamId + level present); deeper CMC chain rules
  * are checked on the requester's side.
  */
 function permissionsFromOffer (offerEvent: OfferEvent): Permission[] {

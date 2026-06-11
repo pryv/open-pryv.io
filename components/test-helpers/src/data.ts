@@ -106,8 +106,9 @@ export const resetEvents = function resetEvents (done: any, user: any) {
   // deleteData(storage.user.events, user || defaultUser, events, done);
   user = user || defaultUser;
   // Lazy-attach integrity to fixture events — the static .map() at
-  // data/events.ts module-load no longer does this (post-Plan-57 8a-ii)
-  // because integrity computation needs post-boiler-init algorithm.
+  // data/events.ts module-load no longer does this (dropped with the
+  // TypeScript migration) because integrity computation needs
+  // post-boiler-init algorithm.
   ensureEventsIntegrity();
   const eventsToWrite = events.map((e: any) => structuredClone(e));
   (async () => {
