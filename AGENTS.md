@@ -162,7 +162,7 @@ Naming: a bare `Xxx` is a canonical type defined once and imported (`import type
 
 | You need | Import from |
 |---|---|
-| `Event`, `Stream`, `Access`, `Permission(Level)`, `AccessType`, `Webhook`, `UserId`, `HttpHeaders`, `ApiResult`, `StreamQuery` (API/wire shapes) | `business/src/types/public.ts` |
+| `Event`, `Stream`, `Access`, `Permission(Level)`, `StreamPermission`, `FeaturePermission`, `AccessType`, `Webhook`, `UserId`, `HttpHeaders`, `ApiResult`, `StreamQuery` (API/wire shapes) | `business/src/types/public.ts` |
 | `StoredEvent`, `StoredStream`, `StoredAccess`, `StoredPermission`, `SessionData` (storage-side shapes) | `storages/interfaces/_shared/domain.ts` |
 | `Callback`, `UserOrId`, `StoredItem`, `Query`, `UpdateData`, `FindOptions`, `EventsQueryState` (storage plumbing) | `storages/interfaces/_shared/types.ts` |
 | `Mall`, `MallEvents`, `MallStreams`, `MallTransactionLike`, `DataStore`, `StoreSupports` | `components/mall/src/types.ts` |
@@ -173,7 +173,7 @@ Naming: a bare `Xxx` is a canonical type defined once and imported (`import type
 
 **Three layers, never merged:** wire (`Event`, what the API returns), stored (`StoredEvent`, what flows through interfaces and the mall — carries `headId`/`deleted`/`endTime`), engine row (`XxxRow`, per-engine, converted at the `toDB`/`fromDB` boundary). If your shape genuinely differs from all three, it's probably a narrow view — name it `XxxLike` and keep it local.
 
-**Lint-enforced:** a subset of these nouns is guarded by `no-restricted-syntax` in `eslint.ts-any.config.js` (part of `just lint`) — declaring a local `type`/`interface` with a guarded name fails lint with a pointer to the canonical home. Nouns with legitimate local narrow views (`Event`, `Stream`, `Access`, `Permission`, `StreamQuery`, `Query`, `Mall`, `LogFn`, `ConfigLike`, …) are not guarded — the `CANONICAL_NOUNS` block in the config lists both sets. When adding a row to this table, add the noun to the guard (after grepping the tree for existing local redeclarations).
+**Lint-enforced — one type name, one meaning:** every noun in this table is guarded by `no-restricted-syntax` in `eslint.ts-any.config.js` (part of `just lint`) — declaring a local `type`/`interface` with a canonical name fails lint with a pointer to the canonical home. A local structural view gets its own name (`XxxLike`), an engine row `XxxRow`, a domain-distinct concept a real name of its own (e.g. `SeriesQuery`, not `Query`). When several shapes compete for a bare noun, the API-facing (wire) shape owns it. When adding a row to this table, add the noun to the `CANONICAL_NOUNS` block in the config.
 
 ### Patterns
 

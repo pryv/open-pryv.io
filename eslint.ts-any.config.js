@@ -18,29 +18,31 @@ const { plugins: neostandardPlugins } = require('neostandard');
 
 // Canonical-noun guard — these type names have a single canonical home
 // (AGENTS.md § "Canonical type homes — import, don't redeclare"); declaring
-// them locally drifts away from the shared shape. Import instead.
+// them locally is FORBIDDEN: one type name has exactly one meaning in this
+// codebase. Import the canonical type, or give a local structural view its
+// own name (`XxxLike`), an engine row `XxxRow`, a domain-distinct concept a
+// real name of its own. When several shapes compete for a bare noun, the
+// API-facing (wire) shape owns it.
 //
-// Deliberately NOT restricted, because narrow local views of these names are
-// by design (rename-to-XxxLike is the convention, but existing locals are
-// legitimate refinements): Event, Stream, Access, Permission, StreamQuery,
-// Query, Mall, StoreSupports, LogFn, ConfigLike, AuditEvent, StoredItem,
-// BackupReader, UserAccountStorage — plus the documented per-file
-// MethodContext refinements and middleware PryvRequest locals.
+// Same-meaning refinements stay allowed where documented (per-file
+// `type MethodContext = BaseMethodContext & {…}` scratch fields; middleware
+// PryvRequest locals) — those names are not in the table.
 //
-// Adding a row to the AGENTS.md canonical-homes table? Add the noun here
-// (after grepping the tree for legitimate local redeclarations).
+// Adding a row to the AGENTS.md canonical-homes table? Add the noun here.
 const CANONICAL_NOUNS = [
-  { home: 'components/business/src/types/public.ts', nouns: ['PermissionLevel', 'AccessType', 'Webhook', 'UserId', 'HttpHeaders', 'ApiResult'] },
+  { home: 'components/business/src/types/public.ts', nouns: ['Event', 'Stream', 'Access', 'Permission', 'PermissionLevel', 'StreamPermission', 'FeaturePermission', 'AccessType', 'Webhook', 'UserId', 'HttpHeaders', 'ApiResult', 'StreamQuery'] },
   { home: 'storages/interfaces/_shared/domain.ts', nouns: ['StoredEvent', 'StoredStream', 'StoredAccess', 'StoredPermission', 'SessionData'] },
-  { home: 'storages/interfaces/_shared/types.ts', nouns: ['Callback', 'UserOrId', 'UpdateData', 'FindOptions', 'EventsQueryState'] },
-  { home: '@pryv/boiler (storages/interfaces/** use the mirror in _shared/types.ts)', nouns: ['Logger'] },
-  { home: 'components/mall/src/types.ts', nouns: ['MallEvents', 'MallStreams', 'MallTransactionLike', 'DataStore'] },
+  { home: 'storages/interfaces/_shared/types.ts', nouns: ['Callback', 'UserOrId', 'StoredItem', 'Query', 'UpdateData', 'FindOptions', 'EventsQueryState'] },
+  { home: '@pryv/boiler (storages/interfaces/** use the mirror in _shared/types.ts)', nouns: ['Logger', 'LogFn', 'ConfigLike'] },
+  { home: 'components/mall/src/types.ts', nouns: ['Mall', 'MallEvents', 'MallStreams', 'MallTransactionLike', 'DataStore', 'StoreSupports'] },
   { home: 'storages/engines/sqlite/src/types.ts', nouns: ['SqliteDb', 'SqliteStmt', 'SqlParam'] },
   { home: 'components/cmc/src/_types.ts', nouns: ['CmcAccessLike', 'CmcClientData', 'OutboundDeps', 'FetchLike'] },
   { home: 'storages/interfaces/baseStorage/UserStorage.ts', nouns: ['UserStorage'] },
   { home: 'storages/interfaces/baseStorage/Sessions.ts', nouns: ['Sessions'] },
-  { home: 'storages/interfaces/auditStorage/UserAuditDatabase.ts', nouns: ['UserAuditDatabase'] },
-  { home: 'storages/interfaces/backup/BackupWriter.ts', nouns: ['BackupManifest'] }
+  { home: 'storages/interfaces/baseStorage/UserAccountStorage.ts', nouns: ['UserAccountStorage'] },
+  { home: 'storages/interfaces/auditStorage/UserAuditDatabase.ts', nouns: ['UserAuditDatabase', 'AuditEvent'] },
+  { home: 'storages/interfaces/backup/BackupWriter.ts', nouns: ['BackupManifest'] },
+  { home: 'storages/interfaces/backup/BackupReader.ts', nouns: ['BackupReader'] }
 ];
 const canonicalNounRestrictions = CANONICAL_NOUNS.map(({ home, nouns }) => ({
   selector: `:matches(TSTypeAliasDeclaration, TSInterfaceDeclaration)[id.name=/^(${nouns.join('|')})$/]`,
@@ -82,8 +84,11 @@ module.exports = [
       'components/cmc/src/_types.ts',
       'storages/interfaces/baseStorage/UserStorage.ts',
       'storages/interfaces/baseStorage/Sessions.ts',
+      'storages/interfaces/baseStorage/UserAccountStorage.ts',
       'storages/interfaces/auditStorage/UserAuditDatabase.ts',
-      'storages/interfaces/backup/BackupWriter.ts'
+      'storages/interfaces/backup/BackupWriter.ts',
+      'storages/interfaces/backup/BackupReader.ts',
+      'storages/shared/contentQueryConditions.ts' // StoreSupports origin, re-exported by mall/src/types.ts
     ],
     languageOptions: {
       parser: tseslint.parser
