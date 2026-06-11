@@ -13,7 +13,7 @@ Requires:
 
 ## Quick Start
 
-From the `macroPryv/` root:
+Using operator-local wrapper scripts (run from the workspace directory that contains your `open-pryv.io` checkout and `_local/scripts/`; see Direct Usage below for the script-free path):
 
 ```bash
 # 1. Clean databases (server stopped)
@@ -38,7 +38,7 @@ _local/scripts/perf-vs.sh --users 3 --events 10000 --duration 15
 
 ## Helper Scripts
 
-All scripts run from `macroPryv/` root.
+All wrapper scripts run from that same workspace directory.
 
 | Script | Purpose |
 |--------|---------|

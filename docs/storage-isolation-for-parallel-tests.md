@@ -3,8 +3,8 @@
 > Canonical list of configuration keys that a parallel-test fixture must
 > override per worker so concurrent mocha worker processes don't collide
 > on shared storage state (PG databases, SQLite paths, ports, etc.).
-> Produced by Plan 70 Wave 1 §2D as the input to Plan 61's per-worker
-> wiring.
+> Produced as groundwork (config-layer hardening, 2026-05) for the
+> future per-worker parallelism wiring.
 
 ## Background
 
@@ -16,11 +16,11 @@ Open Pryv.io uses **mocha parallel mode** (one worker process per CPU) when runn
 - talk to the same rqlite cluster (`http://localhost:4001`),
 - and so on.
 
-Most existing `*-seq.test.js` files were marked sequential precisely to avoid these collisions. Plan 70 Wave 1 made the boiler config layer tolerant of `config.set()` after `ready()` resolves (lazy getters in §2C, REQUIRED_WHEN validation in §2A), so a test-helper running in a worker's setup hook can mutate these keys before factories first touch them.
+Most existing `*-seq.test.js` files were marked sequential precisely to avoid these collisions. The 2026-05 config-layer hardening made the boiler config layer tolerant of `config.set()` after `ready()` resolves (lazy getters, REQUIRED_WHEN validation), so a test-helper running in a worker's setup hook can mutate these keys before factories first touch them.
 
 ## The canonical key list
 
-Each row: the config key, today's default fallback (if any), what it owns, and the per-worker shape Plan 61's fixture should set.
+Each row: the config key, today's default fallback (if any), what it owns, and the per-worker shape the parallelism fixture should set.
 
 | Config key | Today's default | Owner | Per-worker shape |
 |---|---|---|---|
@@ -49,7 +49,7 @@ Where "unchanged" appears, the key is either truly worker-shareable (read-only s
 
 ## How to apply at test boot
 
-In Plan 61's per-worker fixture (likely `components/test-helpers/src/parallelWorkerSetup.ts`):
+In the future per-worker fixture (likely `components/test-helpers/src/parallelWorkerSetup.ts`):
 
 ```ts
 import { ready } from '@pryv/boiler';
@@ -72,13 +72,13 @@ config.set('http:previewsPort', 3001 + id * 10);
 config.set('tcpBroker:port', 4222 + id * 10);
 ```
 
-Then a `just clean-test-data-parallel` recipe (also Plan 61 scope) drops the N PG databases, removes the N user-dir trees, and resets each rqlited.
+Then a `just clean-test-data-parallel` recipe (same future work) drops the N PG databases, removes the N user-dir trees, and resets each rqlited.
 
 ## Why this lives in `open-pryv.io/docs/`
 
 The list is tied to the code that consumes these keys — when those consumers change, this doc has to track. Keeping it in the same repo as the consumers gives reviewers a single place to verify the contract on every PR touching `bin/master.js`, `components/messages/src/tcp_pubsub.ts`, or any storage engine.
 
-The corresponding plan (Plan 70) lives in `macroPryv/_plans/`; Plan 61 (which will consume this list) also lives there. The doc here is the canonical contract; the plans reference it.
+The doc here is the canonical contract; the work that consumes it references it from the development backlog.
 
 ## Pre-existing fallback behaviour
 

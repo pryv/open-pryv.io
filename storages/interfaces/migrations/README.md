@@ -5,7 +5,7 @@ Engine-agnostic schema/data migration runner for v2. Replaces the legacy MongoDB
 ## Scope
 
 - **What this handles:** runtime data and schema evolution inside a single engine (e.g. PostgreSQL `ALTER TABLE`, MongoDB `updateMany`, rqlite new key schemas).
-- **What this doesn't handle:** boot-time engine-plugin compatibility with the host's interface contracts — that's `_plans/XXX-Backlog/INTERFACE-VERSIONING.md`.
+- **What this doesn't handle:** boot-time engine-plugin compatibility with the host's interface contracts — that's a separate interface-versioning concern (planned, not yet designed).
 - **v1 → v2 migration is not an in-place upgrade.** It goes: bring to v1.9.3 on the `release/1.9.3` branch → export via `dev-migrate-v1-v2` → `bin/backup.js --restore` into v2.
 
 ## Version model

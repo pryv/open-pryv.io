@@ -96,8 +96,8 @@ The switch path (sticky sessions) is **not free**: it requires either
    workers share session state — adds a Redis dependency the deploy
    stack doesn't otherwise need.
 
-Either is a properly-scoped project, not an emergency response. Track
-under a dedicated plan in `_plans/` if/when the trigger conditions hit.
+Either is a properly-scoped project, not an emergency response — to be
+planned as dedicated work if/when the trigger conditions hit.
 
 ## Operational notes
 

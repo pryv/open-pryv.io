@@ -122,7 +122,7 @@ if (isMissingOrSentinel(get('storages.base.engine'))) {
   }
 }
 
-// storages.platform.engine must be rqlite (only supported value since Plan 25)
+// storages.platform.engine must be rqlite (the only platform engine since the rqlite consolidation)
 {
   const platformEngine = get('storages.platform.engine');
   if (platformEngine && platformEngine !== 'rqlite') {
