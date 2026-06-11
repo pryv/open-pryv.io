@@ -11,6 +11,9 @@ import type { StoredAccess } from 'storages/interfaces/_shared/domain.ts';
 
 const require = createRequire(import.meta.url);
 
+// NOTE: deliberately untyped require — a typed handle surfaces ~10 callback
+// variance mismatches per subclass (Callback<Item> vs Callback<StoredItem|null>)
+// that need their own alignment pass; tracked as stage follow-up.
 const { BaseStoragePG } = require('./BaseStoragePG.ts');
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const { _internals } = require('../_internals.ts');
@@ -71,7 +74,9 @@ class AccessesPG extends BaseStoragePG {
     return generateId();
   }
 
-  findDeletions (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<AccessItem[]>): void {
+  /** Query-shaped deletion lookup (accesses-specific; the base
+   *  findDeletions keeps its deletedSince signature). */
+  findDeletionRecords (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<AccessItem[]>): void {
     query = query || {};
     query.deleted = { $ne: null };
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);

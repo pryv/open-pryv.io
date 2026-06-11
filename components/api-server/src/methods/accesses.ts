@@ -142,7 +142,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       query.createdBy = currentAccess.id;
     }
     try {
-      const deletions = await fromCallback((cb: NodeCallback) => accessesRepository.findDeletions(context.user, query, { projection: { calls: 0 } }, cb));
+      const deletions = await fromCallback((cb: NodeCallback) => accessesRepository.findDeletionRecords(context.user, query, { projection: { calls: 0 } }, cb));
       result.accessDeletions = (deletions || []).map((d: unknown) => composeWireAccess(d));
       next();
     } catch (err) {

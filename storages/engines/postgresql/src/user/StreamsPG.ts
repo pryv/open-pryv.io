@@ -20,6 +20,9 @@ type Update = UpdateData;
 type Options = FindOptions;
 type PgDb = { query (sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
 
+// NOTE: deliberately untyped require — a typed handle surfaces ~10 callback
+// variance mismatches per subclass (Callback<Item> vs Callback<StoredItem|null>)
+// that need their own alignment pass; tracked as stage follow-up.
 const { BaseStoragePG } = require('./BaseStoragePG.ts');
 const { _internals } = require('../_internals.ts');
 const timestamp = require('unix-timestamp');

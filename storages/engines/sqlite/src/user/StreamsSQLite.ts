@@ -19,6 +19,9 @@ type StreamRow = Record<string, unknown>;
 type Options = FindOptions;
 type Update = UpdateData;
 
+// NOTE: deliberately untyped require — a typed handle surfaces ~10 callback
+// variance mismatches per subclass (Callback<Item> vs Callback<StoredItem|null>)
+// that need their own alignment pass; tracked as stage follow-up.
 const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const timestamp = require('unix-timestamp');

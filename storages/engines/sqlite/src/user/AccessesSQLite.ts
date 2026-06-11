@@ -10,6 +10,9 @@ import type { Callback, UserOrId, UpdateData } from '../../../../interfaces/_sha
 import type { StoredAccess } from '../../../../interfaces/_shared/domain.ts';
 const require = createRequire(import.meta.url);
 
+// NOTE: deliberately untyped require — a typed handle surfaces ~10 callback
+// variance mismatches per subclass (Callback<Item> vs Callback<StoredItem|null>)
+// that need their own alignment pass; tracked as stage follow-up.
 const { BaseStorageSQLite } = require('./BaseStorageSQLite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const { createId: generateId } = require('@paralleldrive/cuid2');
@@ -57,7 +60,9 @@ class AccessesSQLite extends BaseStorageSQLite {
     return generateId();
   }
 
-  findDeletions (userOrUserId: UserOrId, query: Record<string, unknown>, options: unknown, callback: Callback<AccessItem[]>): void {
+  /** Query-shaped deletion lookup (accesses-specific; the base
+   *  findDeletions keeps its deletedSince signature). */
+  findDeletionRecords (userOrUserId: UserOrId, query: Record<string, unknown>, options: unknown, callback: Callback<AccessItem[]>): void {
     const q = Object.assign({}, query || {}, { deleted: { $ne: null } });
     this.findIncludingDeletionsAndVersions(userOrUserId, q, options, callback);
   }
