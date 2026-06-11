@@ -148,9 +148,17 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       const u = await usersRepository.getUserById(userId);
       return u?.username;
     },
-    invalidateAccessCache: (userId: string, accessId: string) => {
+    invalidateAccessCache: (userId: string, accessId: string, accessToken?: string) => {
       const cached = cache.getAccessLogicForId(userId, accessId);
-      if (cached != null) cache.unsetAccessLogic(userId, cached);
+      if (cached != null) {
+        cache.unsetAccessLogic(userId, cached);
+        return;
+      }
+      // Not cached on THIS worker — still broadcast the unset so sibling
+      // workers holding the entry drop it (cross-worker stale-read race).
+      if (accessToken != null) {
+        cache.unsetAccessLogic(userId, { id: accessId, token: accessToken });
+      }
     },
     logger: getLogger('cmc:mall-accesses-adapter'),
   });

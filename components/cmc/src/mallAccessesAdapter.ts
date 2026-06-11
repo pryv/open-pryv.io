@@ -65,12 +65,16 @@ type AdapterDeps = {
   /**
    * Best-effort cache invalidation: called by update/delete after the
    * storage write succeeds. The api-server wires this to clear the
-   * per-user access-logic cache (`cache.unsetAccessLogic` after a
-   * `cache.getAccessLogicForId` lookup) so subsequent token-auth
-   * resolutions on the updated access see fresh permissions. No-op
-   * when undefined (e.g. unit tests).
+   * per-user access-logic cache (`cache.unsetAccessLogic`) so
+   * subsequent token-auth resolutions on the updated access see fresh
+   * permissions. `accessToken` (when available) lets the implementation
+   * broadcast the invalidation to OTHER workers even if the calling
+   * worker never cached the access itself — without it, a worker that
+   * handled the write but not the original auth would skip the
+   * cross-worker unset and siblings would serve stale permissions until
+   * cache TTL. No-op when undefined (e.g. unit tests).
    */
-  invalidateAccessCache?: (userId: string, accessId: string) => void | Promise<void>;
+  invalidateAccessCache?: (userId: string, accessId: string, accessToken?: string) => void | Promise<void>;
   logger?: CmcLogger;
 };
 
@@ -148,27 +152,30 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
       const update: AccessUpdate = { ...params.update, modified: Date.now() / 1000 };
       await fromCallback((cb: Cb<unknown>) =>
         storageAccesses.updateOne!({ id: userId }, { id: params.id }, update, cb));
+      // Re-read the updated access for the caller (also provides the
+      // token for cross-worker cache invalidation below). Best-effort.
+      let after: AccessRow | null = null;
+      if (storageAccesses.findOne != null) {
+        after = await fromCallback((cb: Cb<AccessRow | null>) =>
+          storageAccesses.findOne!({ id: userId }, { id: params.id }, { projection: { calls: 0, deleted: 0 } }, cb)) as AccessRow | null;
+        if (after != null && username != null && after.token != null) {
+          after.apiEndpoint = apiEndpointBuild(username, after.token);
+        }
+      }
       // Cache invalidation — without this the per-user access-logic
       // cache keeps stale permissions and subsequent token-auth
       // resolutions on the updated access miss the new scope until
-      // the cache TTL expires. Best-effort; failure logged but not
-      // fatal.
+      // the cache TTL expires. The token lets the invalidation reach
+      // OTHER workers even when this worker never cached the access.
+      // Best-effort; failure logged but not fatal.
       try {
-        await deps.invalidateAccessCache?.(userId, params.id);
+        await deps.invalidateAccessCache?.(userId, params.id, after?.token ?? undefined);
       } catch (err: unknown) {
         deps.logger?.warn?.('cmc/mall-accesses-adapter: cache invalidation failed (update)', {
           userId, accessId: params.id, error: String((err as Error)?.message || err),
         });
       }
-      // Re-read the updated access for the caller. Best-effort.
-      if (storageAccesses.findOne != null) {
-        const after = await fromCallback((cb: Cb<AccessRow | null>) =>
-          storageAccesses.findOne!({ id: userId }, { id: params.id }, { projection: { calls: 0, deleted: 0 } }, cb)) as AccessRow | null;
-        if (after != null && username != null && after.token != null) {
-          after.apiEndpoint = apiEndpointBuild(username, after.token);
-        }
-        return after as AccessRow;
-      }
+      if (after != null) return after;
       return { id: params.id, ...update } as AccessRow;
     },
 
@@ -181,10 +188,21 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
       if (storageAccesses.removeOne == null) {
         throw new Error('cmc-mall-accesses-adapter: storageAccesses.removeOne not available');
       }
+      // Capture the token BEFORE removal so the cache invalidation can be
+      // broadcast cross-worker (a sibling worker serving a deleted access
+      // from cache is the security-relevant variant of the stale read).
+      let token: string | undefined;
+      if (storageAccesses.findOne != null) {
+        try {
+          const row = await fromCallback((cb: Cb<AccessRow | null>) =>
+            storageAccesses.findOne!({ id: userId }, { id: params.id }, { projection: { calls: 0, deleted: 0 } }, cb)) as AccessRow | null;
+          token = row?.token ?? undefined;
+        } catch (err: unknown) { /* best-effort — fall back to id-only invalidation */ }
+      }
       await fromCallback((cb: Cb<unknown>) =>
         storageAccesses.removeOne!({ id: userId }, { id: params.id }, cb));
       try {
-        await deps.invalidateAccessCache?.(userId, params.id);
+        await deps.invalidateAccessCache?.(userId, params.id, token);
       } catch (err: unknown) {
         deps.logger?.warn?.('cmc/mall-accesses-adapter: cache invalidation failed (delete)', {
           userId, accessId: params.id, error: String((err as Error)?.message || err),
