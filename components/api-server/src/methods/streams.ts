@@ -24,8 +24,12 @@ const Readable = require('stream').Readable;
 
 import type { MethodNext } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type MethodContext = BaseMethodContext & { [key: string]: any }; // scratchpad context (context.stream etc.); see methods/account.ts note
+// Scratchpad fields the streams middleware chain stashes on the context,
+// named and typed (populated mid-chain, hence all optional).
+type MethodContext = BaseMethodContext & {
+  stream?: import('mall/src/types.ts').StoredStream | null;
+  streamToDeleteAndDescendantIds?: string[];
+};
 type Stream = {
   id?: string;
   name?: string;
@@ -310,7 +314,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     next();
   }
   function deleteStream (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
-    if (context.stream.trashed == null) {
+    // Invariant: the preceding canDeleteStream step verified context.stream.
+    if (context.stream!.trashed == null) {
       // move to trash
       flagAsTrashed(context, params, result, next);
     } else {
@@ -408,7 +413,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     }
     updatedEventsStream.add(null); // close stream
     // finally delete stream
-    for (const streamIdToDelete of context.streamToDeleteAndDescendantIds) {
+    // Invariant: populated by the find-descendants step earlier in this chain.
+    for (const streamIdToDelete of context.streamToDeleteAndDescendantIds!) {
       try {
         await mall.streams.delete(context.user.id, streamIdToDelete);
       } catch (err) {

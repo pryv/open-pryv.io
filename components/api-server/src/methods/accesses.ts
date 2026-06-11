@@ -59,10 +59,7 @@ type Access = {
 import type { MethodNext, NodeCallback } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 import type { PermissionLevel, AccessType } from 'business/src/types/public.ts';
-// One scratchpad field landed by middleware steps for downstream consumers.
-type MethodContext = BaseMethodContext & {
-  auditIntegrityPayload?: unknown;
-};
+type MethodContext = BaseMethodContext;
 
 type UpdatesSettingsHolder = {
   ignoreProtectedFields: boolean;

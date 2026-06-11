@@ -11,12 +11,23 @@ import type { MethodContext as BaseMethodContext } from 'business/src/MethodCont
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 
+/** The user business object loaded from the users repository — the slice
+ *  this pipeline touches. */
+type UserBusinessLike = {
+  id: string;
+  username: string;
+  email?: string;
+  language?: string;
+  getLegacyAccount: () => unknown;
+  [k: string]: unknown;
+};
+
+// Scratchpad fields the account middleware chain stashes on the context,
+// named and typed (populated mid-chain, hence all optional).
 type MethodContext = BaseMethodContext & {
-  // scratchpad context: the method pipeline stashes typed-elsewhere objects
-  // (userBusiness, passwordResetRequest, ...) here. Stays `any` until those
-  // get real types (strongly-typed interface I/O follow-up plan).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  [key: string]: any;
+  resetToken?: string;
+  userBusiness?: UserBusinessLike;
+  passwordResetRequest?: import('storages/interfaces/baseStorage/PasswordResetRequests.ts').PasswordResetDoc;
 };
 
 const errors = require('errors').factory;
@@ -64,7 +75,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     addUserBusinessToContext,
     async function (context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
-        result.account = context.userBusiness.getLegacyAccount();
+        // Invariant: addUserBusinessToContext ran earlier in this chain.
+        result.account = context.userBusiness!.getLegacyAccount();
         next();
       } catch (err) {
         return next(errors.unexpectedError(err));
@@ -177,7 +189,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   async function setPassword (context: MethodContext, params: { newPassword: string }, _result: ResultBag, next: Next) {
     try {
       const usersRepository = await getUsersRepository();
-      await usersRepository.setUserPassword(context.userBusiness.id, params.newPassword, 'system');
+      // Invariant: addUserBusinessToContext ran earlier in this chain.
+      await usersRepository.setUserPassword(context.userBusiness!.id, params.newPassword, 'system');
       pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCOUNT_CHANGED);
     } catch (err) {
       return next(err);
@@ -199,10 +212,11 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     // boot is the right place to catch missing config, not the
     // per-request mail path.
     const passwordResetPageURL = getAuth().passwordResetPageURL;
-    const resetLink = passwordResetPageURL + '?resetToken=' + encodeURIComponent(context.resetToken);
+    // Invariant: generatePasswordResetRequest ran earlier in this chain.
+    const resetLink = passwordResetPageURL + '?resetToken=' + encodeURIComponent(context.resetToken!);
     const recipient = {
-      email: context.userBusiness.email,
-      name: context.userBusiness.username,
+      email: context.userBusiness!.email,
+      name: context.userBusiness!.username,
       type: 'to'
     };
     const substitutions = {
@@ -210,7 +224,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       RESET_URL: passwordResetPageURL,
       RESET_LINK: resetLink
     };
-    mailing.sendmail(emailSettings, emailSettings.resetPasswordTemplate, recipient, substitutions, context.userBusiness.language, next);
+    mailing.sendmail(emailSettings, emailSettings.resetPasswordTemplate, recipient, substitutions, context.userBusiness!.language, next);
   }
 
   // RESET PASSWORD
@@ -232,7 +246,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     if (username == null) {
       return next(new Error('AF: username is not empty.'));
     }
-    passwordResetRequestsStorage.get(params.resetToken, username, function (err: Error | null, reqData: Record<string, unknown> | null) {
+    passwordResetRequestsStorage.get(params.resetToken, username, function (err: Error | null, reqData: import('storages/interfaces/baseStorage/PasswordResetRequests.ts').PasswordResetDoc | null) {
       if (err) {
         return next(errors.unexpectedError(err));
       }
@@ -281,7 +295,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   }
 
   async function destroyPasswordResetToken (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
-    const id = context.passwordResetRequest._id;
+    // Invariant: checkPasswordResetToken ran earlier in this chain.
+    const id = context.passwordResetRequest!._id;
     await fromCallback((cb: (err?: unknown, result?: unknown) => void) => passwordResetRequestsStorage.destroy(id, context.user.username, cb));
     next();
   }
@@ -293,7 +308,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     Object.keys(params.update).forEach((key: string) => {
       (context.user as Record<string, unknown>)[key] = params.update[key];
     });
-    result.account = context.userBusiness.getLegacyAccount();
+    // Invariant: addUserBusinessToContext ran earlier in this chain.
+    result.account = context.userBusiness!.getLegacyAccount();
     next();
   }
 };

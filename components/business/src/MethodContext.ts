@@ -43,6 +43,9 @@ class MethodContext {
    */
   customAuthStepFn: CustomAuthFunction | null;
   mall: Mall | null;
+  /** Audit payload landed by api-server create steps (events/accesses) and
+   *  consumed by the audit component when recording the call. */
+  auditIntegrityPayload?: { key: string; integrity: string };
   _tracing: unknown;
   /**
    * Used in events.get
