@@ -391,7 +391,7 @@ class BaseStoragePG {
     this._findInternal(userId, query, options, callback);
   }
 
-  insertOne (userOrUserId: UserOrId, item: StoredItem, callback: Callback<StoredItem | null>, _options?: unknown): void {
+  insertOne (userOrUserId: UserOrId, item: StoredItem, callback: Callback<StoredItem | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     item = this.applyDefaults(item);
 

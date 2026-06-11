@@ -184,9 +184,9 @@ class UsersRepository {
       modified: timestamp.now(),
       modifiedBy: UserRepositoryOptions.SYSTEM_USER_ACCESS_ID
     };
-    return await fromCallback((cb: (err: Error | null, value?: unknown) => void) => this.accessStorage.insertOne({ id: userId }, accessData, cb, {
-      transactionSession
-    }));
+    // NOTE: the former 4th `{ transactionSession }` argument was a mongo-era
+    // vestige — no baseStorage engine ever read it after the mongo removal.
+    return await fromCallback((cb: (err: Error | null, value?: unknown) => void) => this.accessStorage.insertOne({ id: userId }, accessData, cb));
   }
 
   validateAllStorageObjectsInitialized () {
