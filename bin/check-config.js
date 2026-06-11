@@ -122,11 +122,27 @@ if (isMissingOrSentinel(get('storages.base.engine'))) {
   }
 }
 
-// storages.platform.engine must be rqlite (the only platform engine since the rqlite consolidation)
+// storages.platform.engine — rqlite (default, multi-core capable) or
+// postgresql (single-core dnsLess diskless shape; mirrors
+// checkPlatformEngineTopology in config/plugins/config-validation.js)
 {
   const platformEngine = get('storages.platform.engine');
-  if (platformEngine && platformEngine !== 'rqlite') {
-    problems.push(`storages.platform.engine="${platformEngine}" but only "rqlite" is supported`);
+  if (platformEngine && platformEngine !== 'rqlite' && platformEngine !== 'postgresql') {
+    problems.push(`storages.platform.engine="${platformEngine}" but only "rqlite" or "postgresql" are supported`);
+  }
+  if (platformEngine === 'postgresql') {
+    if (get('dnsLess.isActive') !== true) {
+      problems.push('storages.platform.engine=postgresql requires dnsLess.isActive: true (single-core only; multi-core keeps rqlite)');
+    }
+    if (get('storages.base.engine') !== 'postgresql') {
+      problems.push('storages.platform.engine=postgresql requires storages.base.engine: postgresql (full PG mode)');
+    }
+    if (get('dns.active') === true) {
+      problems.push('storages.platform.engine=postgresql cannot run with dns.active: true (embedded DNS implies multi-core / per-user subdomains)');
+    }
+    if (get('cluster.discoveryEnabled') === true) {
+      problems.push('storages.platform.engine=postgresql cannot run with cluster.discoveryEnabled: true (multi-core rqlite discovery)');
+    }
   }
 }
 

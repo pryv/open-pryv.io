@@ -367,6 +367,69 @@ The container writes to two distinct roots. Only these need to survive restart:
 
 The Dockerfile declares `VOLUME ["/app/var-pryv/rqlite-data"]` so this is the default persistent path for docker operators. **Do NOT bind-mount `/app/var-pryv` wholesale** — earlier image builds placed the rqlited binary at `/app/var-pryv/rqlite-bin/rqlited`, and a stray broad mount used to shadow it. The binary is now at `/app/bin-ext/rqlited`, outside any data path, so the trap is avoided by default.
 
+### Diskless (PostgreSQL + S3) — nothing to persist on the app host
+
+Single-core **dnsLess** deployments in full PostgreSQL mode can run with **no persistent filesystem at all** on the app container: every durable byte lives in PostgreSQL and an S3-compatible object store. This suits hosts with ephemeral disks and storage backends (SMB/NFS) that embedded databases can't run on.
+
+Config recipe (the `init` wizard offers all of this when you pick dnsLess + postgresql):
+
+```yaml
+storages:
+  base:     { engine: postgresql }
+  platform: { engine: postgresql }   # no rqlite process, no Raft ports
+  series:   { engine: postgresql }
+  audit:    { engine: postgresql }
+  file:     { engine: s3 }
+  engines:
+    postgresql:
+      host: <pg-host>
+      database: pryv_db
+      user: pryv
+      password: <password>
+    s3:
+      endpoint: https://s3.example.com   # omit for AWS (region-derived)
+      region: us-east-1
+      bucket: pryv-attachments
+      accessKeyId: null                  # null = AWS credential chain / IAM
+      secretAccessKey: null
+      forcePathStyle: true               # MinIO / most self-hosted stores
+      keyPrefix: ''
+    # The remaining paths are caches / unused placeholders — point them at
+    # ephemeral storage (tmpfs). Nothing durable is written there.
+    filesystem:
+      attachmentsDirPath: /tmp/pryv/attachments   # unused with file.engine: s3
+      previewsDirPath: /tmp/pryv/previews         # preview cache — rebuilt on demand
+    sqlite:
+      path: /tmp/pryv/users                       # unused in full PG mode
+logs:
+  file: { active: false }                         # console logging only
+# letsEncrypt.tlsDir (when TLS is enabled) is also ephemeral-safe: certs are
+# authoritative in the platform DB and re-materialized at boot.
+# letsEncrypt:
+#   tlsDir: /tmp/pryv/tls
+```
+
+Constraints (enforced at boot): `dnsLess.isActive: true`, `storages.base.engine: postgresql`, no embedded DNS (`dns.active`), no rqlite cluster discovery. Going **multi-core** later requires moving platform data back to rqlite first:
+
+```bash
+# master stopped; PostgreSQL reachable; rqlited started
+node bin/migrate-platform.js --from postgresql --to rqlite
+# then set storages.platform.engine: rqlite and restart
+```
+
+The same CLI migrates the other way (`--from rqlite --to postgresql`) when adopting the diskless shape on an existing deployment.
+
+The shape is verifiable: the app container runs with `--read-only` rootfs + tmpfs mounts, e.g.
+
+```bash
+docker run -d --name pryvio --read-only \
+  --tmpfs /tmp --tmpfs /app/var-pryv \
+  -v /host/config:/app/pryv:ro \
+  -p 3000:3000 \
+  pryvio/open-pryv.io \
+  node bin/master.js --config /app/pryv/pryv-config.yml
+```
+
 ### Docker (plain)
 
 If you generated the config + launcher via the wizard (see **Configuration → Quickest path** above), just run the sibling `run-pryv.sh`. Otherwise, the manual form:
