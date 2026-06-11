@@ -10,12 +10,12 @@ const { createId: cuid } = require('@paralleldrive/cuid2');
 const accountStreams = require('business/src/system-streams/index.ts');
 
 type SystemStream = { id: string; isUnique?: boolean; isShown?: boolean; children?: SystemStream[]; [k: string]: unknown };
-type Event = { streamIds: string[]; content: unknown; [k: string]: unknown };
+type EventLike = { streamIds: string[]; content: unknown; [k: string]: unknown };
 type UserParams = {
   id?: string;
   username?: string;
   password?: string;
-  events?: Event[];
+  events?: EventLike[];
   [k: string]: unknown;
 };
 
@@ -41,7 +41,7 @@ class User {
 
   accessId: string | undefined;
 
-  events: Event[] | undefined;
+  events: EventLike[] | undefined;
   /** @default [] */
   accountFields: string[] = [];
   /** @default [] */
@@ -127,7 +127,7 @@ function loadAccountData (user: User, params: UserParams) {
 /**
  * Assign events data to user account fields
  */
-function buildAccountDataFromListOfEvents (user: User, events: Event[]) {
+function buildAccountDataFromListOfEvents (user: User, events: EventLike[]) {
   const account = buildAccountRecursive(accountStreams.accountChildren, events, {});
   Object.keys(account).forEach((param) => {
     user[param] = account[param];
@@ -141,7 +141,7 @@ function buildAccountDataFromListOfEvents (user: User, events: Event[]) {
  * @param array events
  * @param object user
  */
-function buildAccountRecursive (streams: SystemStream[], events: Event[], user: Record<string, unknown>): Record<string, unknown> {
+function buildAccountRecursive (streams: SystemStream[], events: EventLike[], user: Record<string, unknown>): Record<string, unknown> {
   let streamIndex;
   for (streamIndex = 0; streamIndex < streams.length; streamIndex++) {
     const currentStream = streams[streamIndex];

@@ -20,14 +20,14 @@ import type { MallStreams, StreamsGetParams, StoredStream, StoreSupports } from 
 
 /** Mall-level stream: the stored shape, plus pass-through of store-specific
  *  extra fields. */
-type Stream = StoredStream & { [k: string]: unknown };
+type StreamLike = StoredStream & { [k: string]: unknown };
 type StreamsStore = {
-  getOne (userId: string, streamId: string, opts: Record<string, unknown>): Promise<Stream | null>;
-  get (userId: string, opts: Record<string, unknown>): Promise<Stream[]>;
-  getDeletions (userId: string, opts: { deletedSince: number }): Promise<Stream[]>;
-  create (userId: string, streamData: Stream): Promise<Stream>;
-  createDeleted (userId: string, streamData: Stream): Promise<Stream>;
-  update (userId: string, streamData: Stream): Promise<Stream>;
+  getOne (userId: string, streamId: string, opts: Record<string, unknown>): Promise<StreamLike | null>;
+  get (userId: string, opts: Record<string, unknown>): Promise<StreamLike[]>;
+  getDeletions (userId: string, opts: { deletedSince: number }): Promise<StreamLike[]>;
+  create (userId: string, streamData: StreamLike): Promise<StreamLike>;
+  createDeleted (userId: string, streamData: StreamLike): Promise<StreamLike>;
+  update (userId: string, streamData: StreamLike): Promise<StreamLike>;
   delete (userId: string, streamId: string): Promise<unknown>;
   deleteAll (userId: string): Promise<unknown>;
   hasFeatureGetParamsExcludedIds?: boolean;
@@ -79,7 +79,7 @@ class MallUserStreams implements MallStreams {
    * Will not expand children.
    * @param [storeId]
    */
-  async getOneWithNoChildren (userId: string, streamId: string, storeId?: string | null): Promise<Stream | null> {
+  async getOneWithNoChildren (userId: string, streamId: string, storeId?: string | null): Promise<StreamLike | null> {
     if (storeId == null) {
       [storeId, streamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamId);
     }
@@ -111,7 +111,7 @@ class MallUserStreams implements MallStreams {
    * @param userId  undefined
    * @param params  undefined
    */
-  async get (userId: string, params: GetParams): Promise<Stream[]> {
+  async get (userId: string, params: GetParams): Promise<StreamLike[]> {
     // -------- cleanup params --------- //
     let streamId = params.id || '*';
     let storeIdRaw = params.storeId;
@@ -123,7 +123,7 @@ class MallUserStreams implements MallStreams {
     const excludedIds = params.excludedIds || [];
     const hideStoreRoots = params.hideStoreRoots || false;
     // ------- create result ------//
-    let res: Stream[] = [];
+    let res: StreamLike[] = [];
     // *** root query we just expose store handles & local streams
     // might be moved in localDataStore ?
     if (streamId === '*' &&
@@ -184,8 +184,8 @@ class MallUserStreams implements MallStreams {
       }
     }
     return res;
-    function getChildlessRootStreamsForOtherStores (self: MallUserStreams): Stream[] {
-      const res: Stream[] = [];
+    function getChildlessRootStreamsForOtherStores (self: MallUserStreams): StreamLike[] {
+      const res: StreamLike[] = [];
       for (const [storeId, storeName] of self.storeNames) {
         // Passthrough stores (local, account) don't get pseudo-root streams
         if (!storeDataUtils.isPassthroughStore(storeId)) {
@@ -201,8 +201,8 @@ class MallUserStreams implements MallStreams {
       }
       return res;
     }
-    function performExclusion (res: Stream[], excludedIds: string[]): Stream[] {
-      return treeUtils.filterTree(res, false, (stream: Stream) => !excludedIds.includes(stream.id));
+    function performExclusion (res: StreamLike[], excludedIds: string[]): StreamLike[] {
+      return treeUtils.filterTree(res, false, (stream: StreamLike) => !excludedIds.includes(stream.id));
     }
   }
 
@@ -210,10 +210,10 @@ class MallUserStreams implements MallStreams {
    * @param [deletedSince]
    * @param [storeIds]
    */
-  async getDeletions (userId: string, deletedSince?: number | null, storeIds?: string[]): Promise<Stream[]> {
+  async getDeletions (userId: string, deletedSince?: number | null, storeIds?: string[]): Promise<StreamLike[]> {
     if (deletedSince == null) { deletedSince = Number.MIN_SAFE_INTEGER; }
     storeIds = storeIds || [storeDataUtils.LocalStoreId];
-    const result: Stream[] = [];
+    const result: StreamLike[] = [];
     for (const storeId of storeIds) {
       const streamsStore = this.streamsStores.get(storeId)!;
       const deletedStreams = await streamsStore.getDeletions(userId, { deletedSince });
@@ -227,7 +227,7 @@ class MallUserStreams implements MallStreams {
    * A "local" cache of deleted streams could be implemented
    * This is mostly used by tests fixtures for now
    */
-  async createDeleted (userId: string, streamData: Stream): Promise<Stream> {
+  async createDeleted (userId: string, streamData: StreamLike): Promise<StreamLike> {
     const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(streamData.id);
     if (streamData.deleted == null) { throw errorFactory.invalidRequestStructure('Missing deleted timestamp for deleted stream', streamData); }
     const streamsStore = this.streamsStores.get(storeId)!;
@@ -235,7 +235,7 @@ class MallUserStreams implements MallStreams {
     return res;
   }
 
-  async create (userId: string, streamData: Stream): Promise<Stream> {
+  async create (userId: string, streamData: StreamLike): Promise<StreamLike> {
     if (streamData.deleted != null) {
       return await this.createDeleted(userId, streamData);
     }
@@ -289,7 +289,7 @@ class MallUserStreams implements MallStreams {
     return res;
   }
 
-  async update (userId: string, streamData: Stream): Promise<Stream> {
+  async update (userId: string, streamData: StreamLike): Promise<StreamLike> {
     const streamForStore = structuredClone(streamData);
     const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamData.id);
     streamForStore.id = storeStreamId;
@@ -346,7 +346,7 @@ class MallUserStreams implements MallStreams {
       childrenDepth: 1,
       includeTrashed: true
     });
-    let streamsToCheck: Stream[] = [];
+    let streamsToCheck: StreamLike[] = [];
     if (streamId == null) {
       // root
       streamsToCheck = streams;
@@ -354,8 +354,8 @@ class MallUserStreams implements MallStreams {
       streamsToCheck = streams[0].children || [];
     }
     const names = streamsToCheck
-      .filter((s: Stream) => !exludedIds.includes(s.id))
-      .map((s: Stream) => s.name);
+      .filter((s: StreamLike) => !exludedIds.includes(s.id))
+      .map((s: StreamLike) => s.name);
     return names;
   }
 }

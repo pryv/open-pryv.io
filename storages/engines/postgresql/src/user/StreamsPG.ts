@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
 /** Storage item for this collection: the canonical stored shape plus the
  *  PG-only materialized-path column (`path`, stripped on read) and the
  *  legacy `singleActivity` flag this engine still round-trips. */
-type Stream = StoredStream & { path?: string; singleActivity?: boolean };
+type StreamLike = StoredStream & { path?: string; singleActivity?: boolean };
 type StreamRow = Record<string, unknown>;
 type Update = UpdateData;
 type Options = FindOptions;
@@ -28,7 +28,7 @@ const { treeUtils } = require('utils');
 /**
  * PostgreSQL persistence for streams.
  */
-class StreamsPG extends BaseStoragePG<Stream> {
+class StreamsPG extends BaseStoragePG<StreamLike> {
   constructor (db: PgDbLike) {
     super(db);
     this.tableName = 'streams';
@@ -37,7 +37,7 @@ class StreamsPG extends BaseStoragePG<Stream> {
     this.defaultSort = 'name ASC';
   }
 
-  rowToItem (row: StreamRow): Stream | null {
+  rowToItem (row: StreamRow): StreamLike | null {
     const item = super.rowToItem(row);
     if (item) {
       delete item.path;
@@ -50,7 +50,7 @@ class StreamsPG extends BaseStoragePG<Stream> {
     return item;
   }
 
-  _findInternal (userId: string, query: Query, options: Options, callback: Callback<Array<Stream | null>>): void {
+  _findInternal (userId: string, query: Query, options: Options, callback: Callback<Array<StreamLike | null>>): void {
     const { select, excludeProps } = this.buildSelect(options);
     const where = this.buildWhere(userId, query);
     const orderBy = this.buildOrderBy(options);
@@ -69,7 +69,7 @@ class StreamsPG extends BaseStoragePG<Stream> {
     this.count(userOrUserId, {}, callback);
   }
 
-  insertOne (userOrUserId: UserOrId, stream: Stream, callback: Callback<Stream | null>): void {
+  insertOne (userOrUserId: UserOrId, stream: StreamLike, callback: Callback<StreamLike | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     _internals.cache.unsetUserData(userId);
     if (!stream.path) {
@@ -81,7 +81,7 @@ class StreamsPG extends BaseStoragePG<Stream> {
     super.insertOne(userOrUserId, stream, callback);
   }
 
-  async _computePath (userId: string, stream: Stream): Promise<void> {
+  async _computePath (userId: string, stream: StreamLike): Promise<void> {
     if (stream.parentId) {
       const res = await this.db.query(
         'SELECT path FROM streams WHERE user_id = $1 AND id = $2',
@@ -94,7 +94,7 @@ class StreamsPG extends BaseStoragePG<Stream> {
     }
   }
 
-  updateOne (userOrUserId: UserOrId, query: Query, updatedData: Update & { parentId?: unknown }, callback: Callback<Stream | null>): void {
+  updateOne (userOrUserId: UserOrId, query: Query, updatedData: Update & { parentId?: unknown }, callback: Callback<StreamLike | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     if (typeof updatedData.parentId !== 'undefined') {
       _internals.cache.unsetUserData(userId);
@@ -122,10 +122,10 @@ class StreamsPG extends BaseStoragePG<Stream> {
     }, callback);
   }
 
-  insertMany (userOrUserId: UserOrId, items: Stream[], callback: Callback<void>): void {
-    let flatItems: Stream[] = treeUtils.flattenTree(items);
+  insertMany (userOrUserId: UserOrId, items: StreamLike[], callback: Callback<void>): void {
+    let flatItems: StreamLike[] = treeUtils.flattenTree(items);
     const pathMap: Record<string, string> = {};
-    flatItems = flatItems.map((s: Stream) => {
+    flatItems = flatItems.map((s: StreamLike) => {
       const copy = Object.assign({}, s);
       if (copy.deleted) {
         delete copy.parentId;

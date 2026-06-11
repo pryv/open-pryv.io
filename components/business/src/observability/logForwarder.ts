@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { Logger, LogFn } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 /**
  * Mirror boiler logger calls to the active observability provider,
@@ -23,13 +24,6 @@ const require = createRequire(import.meta.url);
 const observability = require('./index.ts');
 
 type LogLevel = 'error' | 'warn' | 'info' | 'debug';
-type LogFn = (msg: unknown, ...rest: unknown[]) => unknown;
-type BoilerLogger = {
-  error: LogFn;
-  warn: LogFn;
-  info: LogFn;
-  debug: LogFn;
-};
 
 const LEVEL_ORDER: Record<LogLevel, number> = { error: 0, warn: 1, info: 2, debug: 3 };
 
@@ -58,8 +52,8 @@ function shouldForward (level: string): boolean {
  * provider before (or after) calling the original. Existing boiler
  * behaviour is preserved; this is a pure add-on.
  */
-function wrap (logger: BoilerLogger, loggerName: string): BoilerLogger {
-  const wrapped: BoilerLogger = Object.create(logger);
+function wrap (logger: Logger, loggerName: string): Logger {
+  const wrapped: Logger = Object.create(logger);
 
   wrapped.error = function (msg: unknown, ...rest: unknown[]): unknown {
     try {

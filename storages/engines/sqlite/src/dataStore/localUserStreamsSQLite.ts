@@ -18,16 +18,15 @@ import type { UserStorage } from '../../../../interfaces/baseStorage/UserStorage
 
 import type { StoredStream } from '../../../../interfaces/_shared/domain.ts';
 /** Datastore-level stream — the canonical stored shape. */
-type Stream = StoredStream;
-type StreamQuery = { includeTrashed?: boolean; childrenDepth?: number };
+type StreamGetOptions = { includeTrashed?: boolean; childrenDepth?: number };
 type DeletionsQuery = { deletedSince: number };
 type DeletionsOptions = Record<string, unknown> | null;
 type NodeCallback<T = unknown> = (err: Error | null | undefined, value?: T) => void;
 type Store = {
   userStreamsStorage: UserStorage;
   // own helper methods of the store literal, so `this.<helper>()` typechecks
-  _getAllFromAccountAndCache (userId: string): Promise<Stream[]>;
-  getDeletions (userId: string, query: DeletionsQuery, options?: DeletionsOptions): Promise<Stream[]>;
+  _getAllFromAccountAndCache (userId: string): Promise<StoredStream[]>;
+  getDeletions (userId: string, query: DeletionsQuery, options?: DeletionsOptions): Promise<StoredStream[]>;
 };
 
 const STREAM_PROPERTIES = [
@@ -41,10 +40,10 @@ function pick<T extends Record<string, unknown>> (obj: T, keys: string[]): Parti
   return out;
 }
 
-function cloneStream (stream: Stream, childrenDepth: number): Stream {
+function cloneStream (stream: StoredStream, childrenDepth: number): StoredStream {
   if (childrenDepth === -1) return structuredClone(stream);
   const StreamPropsWithoutChildren = STREAM_PROPERTIES.filter((p) => p !== 'children');
-  const copy = pick(stream as unknown as Record<string, unknown>, StreamPropsWithoutChildren) as Stream;
+  const copy = pick(stream as unknown as Record<string, unknown>, StreamPropsWithoutChildren) as StoredStream;
   if (childrenDepth === 0) {
     copy.childrenHidden = true;
     copy.children = [];
@@ -66,7 +65,7 @@ const userStreams = ds.createUserStreams({
     this.userStreamsStorage = userStreamsStorage;
   },
 
-  async _getAllFromAccountAndCache (this: Store, userId: string): Promise<Stream[]> {
+  async _getAllFromAccountAndCache (this: Store, userId: string): Promise<StoredStream[]> {
     if (_internals.cache) {
       const cached = _internals.cache.getStreams(userId, 'local');
       if (cached != null) return cached;
@@ -74,16 +73,16 @@ const userStreams = ds.createUserStreams({
     const all = await fromCallback((cb: NodeCallback<unknown[]>) =>
       this.userStreamsStorage.find({ id: userId }, {}, null, cb));
     if (_internals.cache) _internals.cache.setStreams(userId, 'local', all);
-    return all as Stream[];
+    return all as StoredStream[];
   },
 
-  async get (this: Store, userId: string, query: StreamQuery): Promise<Stream[]> {
+  async get (this: Store, userId: string, query: StreamGetOptions): Promise<StoredStream[]> {
     const all = await this._getAllFromAccountAndCache(userId);
     if (query.includeTrashed) return structuredClone(all);
-    return treeUtils.filterTree(all, false, (s: Stream) => !s.trashed);
+    return treeUtils.filterTree(all, false, (s: StoredStream) => !s.trashed);
   },
 
-  async getOne (this: Store, userId: string, streamId: string, query: StreamQuery): Promise<Stream | null> {
+  async getOne (this: Store, userId: string, streamId: string, query: StreamGetOptions): Promise<StoredStream | null> {
     assert.ok(streamId !== '*' && streamId != null);
 
     const all = await this._getAllFromAccountAndCache(userId);
@@ -95,17 +94,17 @@ const userStreams = ds.createUserStreams({
 
     if (!query.includeTrashed) {
       if (stream.trashed) return null;
-      stream.children = treeUtils.filterTree(stream.children, false, (s: Stream) => !s.trashed);
+      stream.children = treeUtils.filterTree(stream.children, false, (s: StoredStream) => !s.trashed);
     }
     return stream;
   },
 
-  async getDeletions (this: Store, userId: string, query: DeletionsQuery, options?: DeletionsOptions): Promise<Stream[]> {
+  async getDeletions (this: Store, userId: string, query: DeletionsQuery, options?: DeletionsOptions): Promise<StoredStream[]> {
     return await fromCallback((cb: NodeCallback<unknown[]>) =>
-      this.userStreamsStorage.findDeletions({ id: userId }, query.deletedSince, options ?? null, cb)) as Stream[];
+      this.userStreamsStorage.findDeletions({ id: userId }, query.deletedSince, options ?? null, cb)) as StoredStream[];
   },
 
-  async createDeleted (this: Store, userId: string, streamData: Stream): Promise<void> {
+  async createDeleted (this: Store, userId: string, streamData: StoredStream): Promise<void> {
     const udb = await UserBaseStorageDb.forUser(userId);
     await udb.ensureTable('streams', { withDeleted: true, withHeadId: false });
 
@@ -124,20 +123,20 @@ const userStreams = ds.createUserStreams({
     }
   },
 
-  async create (this: Store, userId: string, streamData: Stream): Promise<Stream> {
+  async create (this: Store, userId: string, streamData: StoredStream): Promise<StoredStream> {
     const deleted = await this.getDeletions(userId, { deletedSince: Number.MIN_SAFE_INTEGER });
-    const match = deleted.filter((s: Stream) => s.id === streamData.id);
+    const match = deleted.filter((s: StoredStream) => s.id === streamData.id);
     if (match.length > 0) {
       await fromCallback((cb: NodeCallback) =>
         this.userStreamsStorage.removeOne({ id: userId }, { id: match[0].id }, cb));
     }
     return (await fromCallback((cb: NodeCallback<unknown>) =>
-      this.userStreamsStorage.insertOne({ id: userId }, streamData, cb))) as Stream;
+      this.userStreamsStorage.insertOne({ id: userId }, streamData, cb))) as StoredStream;
   },
 
-  async update (this: Store, userId: string, streamData: Stream): Promise<Stream> {
+  async update (this: Store, userId: string, streamData: StoredStream): Promise<StoredStream> {
     return (await fromCallback((cb: NodeCallback<unknown>) =>
-      this.userStreamsStorage.updateOne({ id: userId }, { id: streamData.id }, streamData, cb))) as Stream;
+      this.userStreamsStorage.updateOne({ id: userId }, { id: streamData.id }, streamData, cb))) as StoredStream;
   },
 
   async delete (this: Store, userId: string, streamId: string): Promise<unknown> {

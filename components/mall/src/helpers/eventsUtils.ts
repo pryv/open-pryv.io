@@ -12,7 +12,7 @@ const Transform = require('stream').Transform;
 const storeDataUtils = require('./storeDataUtils.ts');
 const errorFactory = require('errors').factory;
 
-type Event = {
+type EventLike = {
   id?: string;
   time?: number | null;
   endTime?: number | null;
@@ -25,7 +25,7 @@ type Event = {
 };
 
 // ------------  Duration -----------//
-function durationToStoreEndTime (eventData: Event): Event {
+function durationToStoreEndTime (eventData: EventLike): EventLike {
   if (eventData.time == null) {
     delete eventData.duration;
     return eventData;
@@ -44,7 +44,7 @@ function durationToStoreEndTime (eventData: Event): Event {
   delete eventData.duration;
   return eventData;
 }
-function endTimeFromStoreToDuration (eventData: Event): Event {
+function endTimeFromStoreToDuration (eventData: EventLike): EventLike {
   if (eventData.time == null) {
     delete eventData.endTime;
     return eventData;
@@ -66,23 +66,23 @@ function endTimeFromStoreToDuration (eventData: Event): Event {
   return eventData;
 }
 // state
-function stateToStore (eventData: Event) {
+function stateToStore (eventData: EventLike) {
   eventData.trashed = eventData.trashed === true;
   return eventData;
 }
-function stateFromStore (eventData: Event) {
+function stateFromStore (eventData: EventLike) {
   if (eventData.trashed !== true) { delete eventData.trashed; }
   return eventData;
 }
 // ---------  deletion ------ //
-function deletionToStore (eventData: Event) {
+function deletionToStore (eventData: EventLike) {
   if (eventData.deleted === undefined) {
     // undefined => null
     eventData.deleted = null;
   }
   return eventData;
 }
-function deletionFromStore (eventData: Event) {
+function deletionFromStore (eventData: EventLike) {
   if (eventData == null) {
     return eventData;
   }
@@ -112,7 +112,7 @@ const ALL_FIELDS = [
 /**
  * set to null all undefined fields
  */
-function nullifyToStore (eventData: Event) {
+function nullifyToStore (eventData: EventLike) {
   for (const field of ALL_FIELDS) {
     if (eventData[field] === undefined) {
       eventData[field] = null;
@@ -120,7 +120,7 @@ function nullifyToStore (eventData: Event) {
   }
   return eventData;
 }
-function nullifyFromStore (eventData: Event) {
+function nullifyFromStore (eventData: EventLike) {
   for (const field of ALL_FIELDS) {
     if (eventData[field] === null && field !== 'endTime') {
       delete eventData[field];
@@ -129,7 +129,7 @@ function nullifyFromStore (eventData: Event) {
   return eventData;
 }
 // ------------ storeId ------------- //
-function removeStoreIds (storeId: string, eventData: Event) {
+function removeStoreIds (storeId: string, eventData: EventLike) {
   const original = structuredClone(eventData);
   const [eventStoreId, storeEventId] = storeDataUtils.parseStoreIdAndStoreItemId(eventData.id);
   if (eventStoreId !== storeId) {
@@ -159,21 +159,21 @@ function removeStoreIds (storeId: string, eventData: Event) {
   }
   return eventData;
 }
-function addStoreId (storeId: string, eventData: Event) {
+function addStoreId (storeId: string, eventData: EventLike) {
   eventData.id = storeDataUtils.getFullItemId(storeId, eventData.id);
   if (eventData.streamIds) {
     eventData.streamIds = eventData.streamIds.map(storeDataUtils.getFullItemId.bind(null, storeId));
   }
   return eventData;
 }
-function removeEmptyAttachments (eventData: Event) {
+function removeEmptyAttachments (eventData: EventLike) {
   if (eventData?.attachments != null && eventData.attachments.length === 0) {
     delete eventData.attachments;
   }
   return eventData;
 }
 // ------------- pack ----------------//
-function convertEventToStore (storeId: string, eventData: Event) {
+function convertEventToStore (storeId: string, eventData: EventLike) {
   const event = structuredClone(eventData);
   if (storeId === storeDataUtils.AccountStoreId) {
     // Account events: extract field name from stream-ID-based event ID
@@ -189,7 +189,7 @@ function convertEventToStore (storeId: string, eventData: Event) {
   nullifyToStore(event);
   return event;
 }
-function convertEventFromStore (storeId: string, eventData: Event) {
+function convertEventFromStore (storeId: string, eventData: EventLike) {
   const event = structuredClone(eventData);
   endTimeFromStoreToDuration(event);
   stateFromStore(event);
@@ -221,7 +221,7 @@ class ConvertEventFromStoreStream extends Transform {
    *     callback();
    *   }
    */
-  _transform = function (this: ConvertEventFromStoreStream, event: Event, _encoding: string, callback: () => void) {
+  _transform = function (this: ConvertEventFromStoreStream, event: EventLike, _encoding: string, callback: () => void) {
     this.push(convertEventFromStore(this.storeId, event));
     callback();
   };

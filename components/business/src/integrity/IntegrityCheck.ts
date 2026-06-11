@@ -13,14 +13,14 @@ const { fromCallback } = require('utils');
  * Per-user and system-wide integrity verification.
  * Recomputes hashes on events and accesses and compares against stored values.
  */
-type StorageLayer = { accesses: { exportAll: (user: { id: string }, cb: (err: Error | null, items?: Access[]) => void) => void } };
+type StorageLayer = { accesses: { exportAll: (user: { id: string }, cb: (err: Error | null, items?: AccessLike[]) => void) => void } };
 type UsersIndexLike = { getAllByUsername: () => Promise<Record<string, string>> };
 type Integrity = {
-  events: { isActive: boolean; compute (e: Event): { integrity: string } };
-  accesses: { isActive: boolean; compute (a: Access): { integrity: string } };
+  events: { isActive: boolean; compute (e: EventLike): { integrity: string } };
+  accesses: { isActive: boolean; compute (a: AccessLike): { integrity: string } };
 };
-type Event = { id?: string; _id?: unknown; __v?: unknown; userId?: string; user_id?: string; integrity?: string; headId?: string; [k: string]: unknown };
-type Access = { id?: string; _id?: unknown; __v?: unknown; userId?: string; user_id?: string; integrity?: string; [k: string]: unknown };
+type EventLike = { id?: string; _id?: unknown; __v?: unknown; userId?: string; user_id?: string; integrity?: string; headId?: string; [k: string]: unknown };
+type AccessLike = { id?: string; _id?: unknown; __v?: unknown; userId?: string; user_id?: string; integrity?: string; [k: string]: unknown };
 type Report = {
   userId: string;
   username?: string;
@@ -103,17 +103,17 @@ class IntegrityCheck {
     const database = storages.database || storages.databasePG;
     if (!database) return;
 
-    let events: Event[] | undefined;
+    let events: EventLike[] | undefined;
     if (storages.database) {
-      events = await fromCallback((cb: (err: Error | null, items?: Event[]) => void) =>
+      events = await fromCallback((cb: (err: Error | null, items?: EventLike[]) => void) =>
         database.find({ name: 'events' }, { userId }, {}, cb)
-      ) as Event[];
+      ) as EventLike[];
     } else {
       // PostgreSQL path
       events = await database.query(
         'SELECT * FROM events WHERE user_id = $1',
         [userId]
-      ) as Event[];
+      ) as EventLike[];
     }
 
     if (!events) return;
@@ -141,7 +141,7 @@ class IntegrityCheck {
     }
   }
 
-  _verifyEventIntegrity (event: Event, report: Report, originalId?: string) {
+  _verifyEventIntegrity (event: EventLike, report: Report, originalId?: string) {
     if (event.integrity === undefined) {
       report.events.errors.push({
         eventId: originalId || event.id,
@@ -174,9 +174,9 @@ class IntegrityCheck {
 
   async _checkUserAccesses (userId: string, report: Report) {
     const user = { id: userId };
-    const accesses = await fromCallback((cb: (err: Error | null, items?: Access[]) => void) =>
+    const accesses = await fromCallback((cb: (err: Error | null, items?: AccessLike[]) => void) =>
       this.storageLayer!.accesses.exportAll(user, cb)
-    ) as Access[];
+    ) as AccessLike[];
 
     if (!accesses) return;
 

@@ -47,7 +47,7 @@ type StreamCreateParams = {
 };
 
 import type { MallStreamsLike } from './_types.ts';
-type Mall = { streams: MallStreamsLike };
+type MallStreamsOnly = { streams: MallStreamsLike };
 
 type ProvisionLogger = {
   debug: (msg: string, ...rest: unknown[]) => void;
@@ -84,7 +84,7 @@ function isAlreadyExistsError (err: unknown): boolean {
  * (does not include ids that were already present).
  */
 async function provisionUserStreams (params: {
-  mall: Mall;
+  mall: MallStreamsOnly;
   userId: string;
   accessId?: string;
   logger?: ProvisionLogger;

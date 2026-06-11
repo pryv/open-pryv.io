@@ -17,7 +17,7 @@ const { matchesConditions } = require('../../shared/contentQueryConditions.ts');
 import type { NormalizedCondition } from '../../shared/contentQueryConditions.ts';
 
 type StreamConfig = { id: string; type: string; [k: string]: unknown };
-type Event = {
+type EventLike = {
   id: string;
   headId?: string;
   streamIds: string[];
@@ -71,7 +71,7 @@ type Storage = {
 function create (fieldStreamMap: Map<string, StreamConfig>, getStorage: () => Promise<Storage>) {
   return ds.createUserEvents({
 
-    async getOne (userId: string, eventId: string): Promise<Event | null> {
+    async getOne (userId: string, eventId: string): Promise<EventLike | null> {
       const storage = await getStorage();
       const fieldName = toFieldName(eventId);
       const streamConfig = fieldStreamMap.get(fieldName);
@@ -81,10 +81,10 @@ function create (fieldStreamMap: Map<string, StreamConfig>, getStorage: () => Pr
       return fieldToEvent(fieldName, value, streamConfig);
     },
 
-    async get (userId: string, query: EventQuery, options: EventOptions): Promise<Event[]> {
+    async get (userId: string, query: EventQuery, options: EventOptions): Promise<EventLike[]> {
       const storage = await getStorage();
       const fields = await storage.getAccountFields(userId);
-      let events: Event[] = [];
+      let events: EventLike[] = [];
       for (const [fieldName, value] of Object.entries(fields)) {
         const streamConfig = fieldStreamMap.get(fieldName);
         if (!streamConfig) continue;
@@ -96,7 +96,7 @@ function create (fieldStreamMap: Map<string, StreamConfig>, getStorage: () => Pr
     },
 
     async getStreamed (userId: string, query: EventQuery, options: EventOptions): Promise<ReadableType> {
-      const events = await (this as { get: (uid: string, q: EventQuery, o: EventOptions) => Promise<Event[]> }).get(userId, query, options);
+      const events = await (this as { get: (uid: string, q: EventQuery, o: EventOptions) => Promise<EventLike[]> }).get(userId, query, options);
       return Readable.from(events);
     },
 
@@ -104,7 +104,7 @@ function create (fieldStreamMap: Map<string, StreamConfig>, getStorage: () => Pr
       return Readable.from([]);
     },
 
-    async getHistory (userId: string, eventId: string): Promise<Event[]> {
+    async getHistory (userId: string, eventId: string): Promise<EventLike[]> {
       const storage = await getStorage();
       const fieldName = toFieldName(eventId);
       const streamConfig = fieldStreamMap.get(fieldName);
@@ -126,7 +126,7 @@ function create (fieldStreamMap: Map<string, StreamConfig>, getStorage: () => Pr
       }));
     },
 
-    async create (userId: string, eventData: Partial<Event>): Promise<Event> {
+    async create (userId: string, eventData: Partial<EventLike>): Promise<EventLike> {
       const fieldName = eventIdFromStreamIds(eventData.streamIds, fieldStreamMap);
       if (!fieldName) {
         throw ds.errors.invalidRequestStructure('Event must belong to a known account stream');
@@ -144,7 +144,7 @@ function create (fieldStreamMap: Map<string, StreamConfig>, getStorage: () => Pr
       return fieldToEvent(fieldName, eventData.content, streamConfig, time, createdBy);
     },
 
-    async update (userId: string, eventData: Partial<Event>): Promise<boolean> {
+    async update (userId: string, eventData: Partial<EventLike>): Promise<boolean> {
       const fieldName = toFieldName(eventData.id!);
       const streamConfig = fieldStreamMap.get(fieldName);
       if (!streamConfig) return false;
@@ -181,7 +181,7 @@ function toFieldName (eventId: string): string {
 /**
  * Convert a stored field to an event object.
  */
-function fieldToEvent (fieldName: string, value: unknown, streamConfig: StreamConfig, time?: number, createdBy?: string): Event {
+function fieldToEvent (fieldName: string, value: unknown, streamConfig: StreamConfig, time?: number, createdBy?: string): EventLike {
   const now = time || timestamp.now();
   return {
     id: fieldName,
@@ -219,7 +219,7 @@ function eventIdFromStreamIds (streamIds: string[] | undefined, fieldMap: Map<st
  *   Within a group: AND (all conditions must match)
  *   Between groups: OR (any group matching is enough)
  */
-function filterByQuery (events: Event[], query: EventQuery | null | undefined): Event[] {
+function filterByQuery (events: EventLike[], query: EventQuery | null | undefined): EventLike[] {
   if (!query) return events;
 
   // Account events are never trashed — return empty for 'trashed' state
@@ -297,7 +297,7 @@ function matchesGroup (sids: Set<string>, group: StreamGroup): boolean {
 /**
  * Apply skip/limit/sort options.
  */
-function applyOptions (events: Event[], options: EventOptions | null | undefined): Event[] {
+function applyOptions (events: EventLike[], options: EventOptions | null | undefined): EventLike[] {
   if (!options) return events;
   if (options.sortAscending === true) {
     events.sort((a, b) => a.time - b.time);

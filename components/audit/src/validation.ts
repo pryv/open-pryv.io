@@ -32,7 +32,7 @@ const filterSchema = helpers.object({
   additionalProperties: false
 });
 
-interface AuditEvent {
+interface AuditEventLike {
   type?: string;
   createdBy?: string;
   streamIds?: string[];
@@ -46,13 +46,13 @@ interface AuditFilter {
   };
 }
 
-function eventForUser (userId: string | null | undefined, event: AuditEvent | null | undefined): string | true {
+function eventForUser (userId: string | null | undefined, event: AuditEventLike | null | undefined): string | true {
   // validate uiserid
   if (!userId) return 'missing userId passed in validation';
   return eventWithoutUser(event);
 }
 
-function eventWithoutUser (event: AuditEvent | null | undefined): string | true {
+function eventWithoutUser (event: AuditEventLike | null | undefined): string | true {
   if (!event) return 'event is null';
   if (!event.type) return 'event.type is missisng';
   if (!event.createdBy) return 'event.createBy is missing';

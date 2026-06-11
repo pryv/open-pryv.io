@@ -10,12 +10,12 @@ const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
 
-type Stream = {
+type StreamLike = {
   id: string;
   name?: string;
   parentId?: string | null;
   clientData?: Record<string, unknown>;
-  children?: Stream[];
+  children?: StreamLike[];
   childrenHidden?: boolean;
   trashed?: boolean;
   created?: number;
@@ -25,7 +25,7 @@ type Stream = {
   isShown?: boolean;
   [k: string]: unknown;
 };
-type StreamQuery = {
+type StreamQueryLike = {
   parentId?: string | null;
   excludedIds?: string[];
   childrenDepth?: number;
@@ -42,7 +42,7 @@ const STREAM_PROPERTIES = new Set([
 /**
  * Strip non-stream properties from a stream tree (mutates in place).
  */
-function cleanStreamTree (streams: Stream[]): void {
+function cleanStreamTree (streams: StreamLike[]): void {
   for (const s of streams) {
     for (const key of Object.keys(s)) {
       if (!STREAM_PROPERTIES.has(key)) delete s[key];
@@ -58,8 +58,8 @@ function cleanStreamTree (streams: Stream[]): void {
  * Non-shown streams and their subtrees are removed.
  * Must be called BEFORE cleanStreamTree (which strips isShown).
  */
-function filterShown (streams: Stream[]): Stream[] {
-  const result: Stream[] = [];
+function filterShown (streams: StreamLike[]): StreamLike[] {
+  const result: StreamLike[] = [];
   for (const s of streams) {
     if (s.isShown === false) continue;
     const clone = Object.assign({}, s);
@@ -78,7 +78,7 @@ function filterShown (streams: Stream[]): Stream[] {
  *
  * @param streamTree - system stream tree (fully built, with prefixed IDs)
  */
-function create (streamTree: Stream[]) {
+function create (streamTree: StreamLike[]) {
   // Build a readable-only tree for get() responses (before stripping config props)
   const readableTree = filterShown(streamTree);
   cleanStreamTree(readableTree);
@@ -90,10 +90,10 @@ function create (streamTree: Stream[]) {
   ds.defaults.applyOnStreams(streamTree);
 
   // Build a flat index from the full tree (for getOne lookups)
-  const streamIndex: Map<string, Stream> = new Map();
+  const streamIndex: Map<string, StreamLike> = new Map();
   indexTree(streamTree);
 
-  function indexTree (streams: Stream[]) {
+  function indexTree (streams: StreamLike[]) {
     for (const s of streams) {
       streamIndex.set(s.id, s);
       if (s.children && s.children.length > 0) {
@@ -103,8 +103,8 @@ function create (streamTree: Stream[]) {
   }
 
   return ds.createUserStreams({
-    async get (_userId: string, query: StreamQuery) {
-      let streams: Stream[];
+    async get (_userId: string, query: StreamQueryLike) {
+      let streams: StreamLike[];
       if (query.parentId === '*' || query.parentId == null) {
         streams = readableTree;
       } else {
@@ -116,7 +116,7 @@ function create (streamTree: Stream[]) {
       return applyQuery(structuredClone(streams), query);
     },
 
-    async getOne (_userId: string, streamId: string, _query: StreamQuery) {
+    async getOne (_userId: string, streamId: string, _query: StreamQueryLike) {
       const stream = streamIndex.get(streamId);
       return stream ? structuredClone(stream) : null;
     },
@@ -125,15 +125,15 @@ function create (streamTree: Stream[]) {
       return [];
     },
 
-    async create (_userId: string, _streamData: Stream) {
+    async create (_userId: string, _streamData: StreamLike) {
       throw ds.errors.invalidOperation('It is forbidden to modify system streams.');
     },
 
-    async createDeleted (_userId: string, _streamData: Stream) {
+    async createDeleted (_userId: string, _streamData: StreamLike) {
       throw ds.errors.invalidOperation('It is forbidden to modify system streams.');
     },
 
-    async update (_userId: string, _updateData: Stream) {
+    async update (_userId: string, _updateData: StreamLike) {
       throw ds.errors.invalidOperation('It is forbidden to modify system streams.');
     },
 
@@ -146,14 +146,14 @@ function create (streamTree: Stream[]) {
 /**
  * Apply childrenDepth and excludedIds to a list of streams.
  */
-function applyQuery (streams: Stream[], query: StreamQuery): Stream[] {
+function applyQuery (streams: StreamLike[], query: StreamQueryLike): StreamLike[] {
   let result = streams;
   if (query.excludedIds && query.excludedIds.length > 0) {
     const excluded = new Set(query.excludedIds);
-    result = result.filter((s: Stream) => !excluded.has(s.id));
+    result = result.filter((s: StreamLike) => !excluded.has(s.id));
   }
   if (query.childrenDepth === 0) {
-    result = result.map((s: Stream) => Object.assign({}, s, { children: [], childrenHidden: true }));
+    result = result.map((s: StreamLike) => Object.assign({}, s, { children: [], childrenHidden: true }));
   }
   return result;
 }

@@ -15,15 +15,15 @@ const path = require('path');
 const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('audit:syslog:templates');
 
-type AuditEvent = { type: string; content?: Record<string, unknown>; [k: string]: unknown };
+type AuditEventLike = { type: string; content?: Record<string, unknown>; [k: string]: unknown };
 type LogItem = { level: string; message: string };
-type PluginFn = (userId: string, event: AuditEvent) => LogItem;
+type PluginFn = (userId: string, event: AuditEventLike) => LogItem;
 type FormatDef = { template?: string; level?: string; plugin?: string };
 
 class SyslogTransform {
   key: string;
   constructor (key: string) { this.key = key; }
-  transform (_userId: string, _event: AuditEvent): LogItem { throw new Error('Transform must be implemented'); }
+  transform (_userId: string, _event: AuditEventLike): LogItem { throw new Error('Transform must be implemented'); }
 }
 
 /**
@@ -41,7 +41,7 @@ class Plugin extends SyslogTransform {
     logger.debug('Loaded plugin for [' + key + ']: ' + format.plugin);
   }
 
-  transform (userId: string, event: AuditEvent): LogItem {
+  transform (userId: string, event: AuditEventLike): LogItem {
     logger.debug('Using plugin ' + this.key);
     return this.plugin(userId, event);
   }
@@ -62,7 +62,7 @@ class Template extends SyslogTransform {
     logger.debug('Loaded template for [' + key + ']: ' + format.template);
   }
 
-  transform (userId: string, event: AuditEvent): LogItem {
+  transform (userId: string, event: AuditEventLike): LogItem {
     logger.debug('Using template ' + this.key);
     return {
       level: this.level,
@@ -80,7 +80,7 @@ class Template extends SyslogTransform {
 /**
  * Get the Syslog string correspondig to this event
  */
-function logForEvent (userId: string, event: AuditEvent): LogItem {
+function logForEvent (userId: string, event: AuditEventLike): LogItem {
   if (event.type in templates) {
     return templates[event.type].transform(userId, event);
   }
@@ -110,7 +110,7 @@ export { loadTemplates, logForEvent };
  * @param template - of the form "{userid} {content.message}"
  * @param userId  - the userid
  */
-function transformFromTemplate (template: string, userId: string, event: AuditEvent): string {
+function transformFromTemplate (template: string, userId: string, event: AuditEventLike): string {
   logger.debug('transformFromTemplate', template);
   const result = template.replace('{userid}', userId);
   return result.replace(/{([^}]*)}/g, function (match: string, key: string): string {

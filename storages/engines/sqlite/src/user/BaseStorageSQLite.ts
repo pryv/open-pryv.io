@@ -27,7 +27,7 @@ import type { SqlParam, SqliteDb } from '../types.ts';
  * promoted to SQL columns (so they must be bind-able), everything else is
  * packed into the JSON `data` column.
  */
-type StoredItem = StoredItemBase & { headId?: SqlParam, deleted?: SqlParam };
+type SqliteStoredItem = StoredItemBase & { headId?: SqlParam, deleted?: SqlParam };
 
 /** A row read back from a baseStorage table. */
 type DbRow = { id: string, head_id?: number | string | null, deleted?: number | null, data?: string, cnt?: number, [k: string]: unknown };
@@ -73,7 +73,7 @@ function colSql (name: string): string {
  *
  * applyDefaults(item) can be overridden to inject defaults at insertOne.
  */
-class BaseStorageSQLite<TItem extends StoredItem = StoredItem> implements UserStorage<TItem> {
+class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> implements UserStorage<TItem> {
   tableName: string | null = null;
   idField: string = 'id';
   defaultSort: string | null = null;
@@ -93,7 +93,7 @@ class BaseStorageSQLite<TItem extends StoredItem = StoredItem> implements UserSt
   }
 
   /** Subclasses override to complete partial items (mint ids, defaults). The
-   *  base copy-through cast is honest for the default `TItem = StoredItem`
+   *  base copy-through cast is honest for the default `TItem = SqliteStoredItem`
    *  (all fields optional); collection subclasses MUST refine when `TItem`
    *  has required fields. */
   applyDefaults (item: Partial<TItem>): TItem {
@@ -115,7 +115,7 @@ class BaseStorageSQLite<TItem extends StoredItem = StoredItem> implements UserSt
   rowToItem (row: DbRow | null | undefined): TItem | null {
     if (!row) return null;
     const dataJson = row.data ? JSON.parse(row.data) : {};
-    const item: StoredItem = Object.assign({}, dataJson);
+    const item: SqliteStoredItem = Object.assign({}, dataJson);
     item.id = row.id;
     if (this.hasHeadIdCol && row.head_id != null) item.headId = row.head_id;
     if (this.hasDeletedCol && row.deleted != null) item.deleted = row.deleted;
@@ -128,7 +128,7 @@ class BaseStorageSQLite<TItem extends StoredItem = StoredItem> implements UserSt
     return rows.map((r) => this.rowToItem(r));
   }
 
-  private itemToRow (item: StoredItem): { id: string, head_id: SqlParam, deleted: SqlParam, data: string } {
+  private itemToRow (item: SqliteStoredItem): { id: string, head_id: SqlParam, deleted: SqlParam, data: string } {
     const copy = Object.assign({}, item);
     // Document field → column-type narrowing (the document↔column boundary).
     const id = copy.id as string;
@@ -258,7 +258,7 @@ class BaseStorageSQLite<TItem extends StoredItem = StoredItem> implements UserSt
     if (excludeProps.length === 0) return items;
     for (const item of items) {
       if (item == null) continue;
-      for (const prop of excludeProps) delete (item as StoredItem)[prop];
+      for (const prop of excludeProps) delete (item as SqliteStoredItem)[prop];
     }
     return items;
   }
@@ -467,8 +467,8 @@ class BaseStorageSQLite<TItem extends StoredItem = StoredItem> implements UserSt
 
   // ---- Update merging ----
 
-  private applyUpdateToItem (item: StoredItem | null, updatedData: UpdateData): StoredItem {
-    const merged: StoredItem = Object.assign({}, item);
+  private applyUpdateToItem (item: SqliteStoredItem | null, updatedData: UpdateData): SqliteStoredItem {
+    const merged: SqliteStoredItem = Object.assign({}, item);
     const $set: Record<string, unknown> = updatedData.$set || {};
     const $unset: Record<string, unknown> = updatedData.$unset || {};
     const $inc: Record<string, unknown> = updatedData.$inc || {};
@@ -556,7 +556,7 @@ class BaseStorageSQLite<TItem extends StoredItem = StoredItem> implements UserSt
     return cur;
   }
 
-  private _writeMerged (udb: UserDb, id: string, merged: StoredItem): void {
+  private _writeMerged (udb: UserDb, id: string, merged: SqliteStoredItem): void {
     const row = this.itemToRow(Object.assign({}, merged, { id }));
     const cols: string[] = [];
     const vals: SqlParam[] = [];

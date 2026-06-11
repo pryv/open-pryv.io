@@ -45,10 +45,6 @@ type WebhooksSettingsHolder = {
   maxRetries: number;
   runsSize: number;
 };
-type Access = {
-  id: string;
-  isApp(): Boolean;
-};
 export default async function produceWebhooksApiMethods (api: { register: (...args: unknown[]) => void }) {
   const config = await ready();
   // Lazy getter instead of slice capture.

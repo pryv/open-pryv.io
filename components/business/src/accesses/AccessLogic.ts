@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { PermissionLevel, AccessType } from '../types/public.ts';
+import type { PermissionLevel, AccessType, Permission, StreamPermission, FeaturePermission } from '../types/public.ts';
 const require = createRequire(import.meta.url);
 /**
  * Business logic for access objects.
@@ -18,15 +18,6 @@ const { parseAccessRef } = require('./refs.ts');
 const { getConfigSync } = require('@pryv/boiler');
 const { storeDataUtils, getMall } = require('mall');
 
-type StreamPermission = {
-  streamId: string;
-  level: PermissionLevel;
-};
-type FeaturePermission = {
-  feature: string;
-  setting: string;
-};
-type Permission = StreamPermission | FeaturePermission;
 type StorePermissionEntry = { streamId: string; level: string | null };
 
 let auditIsActive: boolean | null = null;

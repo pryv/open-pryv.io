@@ -520,7 +520,7 @@ function createAccessUpdateForgePreventionHook (deps: Deps): Middleware {
  * worse.
  */
 
-type Mall = { streams: import('./_types.ts').MallStreamsLike };
+type MallStreamsOnly = { streams: import('./_types.ts').MallStreamsLike };
 
 type ProvisionLogger = {
   debug?: (msg: string, ...rest: unknown[]) => void;
@@ -528,7 +528,7 @@ type ProvisionLogger = {
 };
 
 type ProvisionDeps = {
-  mall: Mall;
+  mall: MallStreamsOnly;
   logger?: ProvisionLogger;
 };
 

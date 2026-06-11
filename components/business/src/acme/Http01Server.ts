@@ -31,7 +31,7 @@ import type { AddressInfo } from 'node:net';
 // Type-only import is fine via the same relative path (no runtime require).
 import type { Http01ChallengeStore } from './Http01ChallengeStore.ts';
 
-type LogFn = (msg: string) => void;
+type LogLine = (msg: string) => void;
 
 const ACME_PATH_RE = /^\/\.well-known\/acme-challenge\/([A-Za-z0-9_-]+)\/?$/;
 
@@ -39,7 +39,7 @@ interface Http01ServerOpts {
   store: Http01ChallengeStore;
   port?: number; // default 80
   host?: string; // default '0.0.0.0'
-  log?: LogFn;
+  log?: LogLine;
 }
 
 /**

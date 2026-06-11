@@ -22,7 +22,7 @@ import type { NormalizedCondition } from '../../../../shared/contentQueryConditi
 import type { StoredEvent } from '../../../../interfaces/_shared/domain.ts';
 /** Datastore-level event: the canonical stored shape plus the open tail the
  *  deletion-mode field scrubbing indexes dynamically. */
-type Event = StoredEvent & { [k: string]: unknown };
+type EventLike = StoredEvent & { [k: string]: unknown };
 type DeletionSettings = {
   mode: 'keep-nothing' | 'keep-authors' | 'keep-everything' | string;
   fields: string[];
@@ -43,12 +43,12 @@ type Store = {
   db: DbLike;
   eventsFileStorage: EventsFileStorageLike;
   settings: Settings;
-  setIntegrityOnEvent: (event: Event) => void;
+  setIntegrityOnEvent: (event: EventLike) => void;
   accountStreamIds: string[];
   deletionSettings: DeletionSettings;
   keepHistory: boolean;
   // own helper methods of the store literal, so `this.<helper>()` typechecks
-  _generateVersionIfNeeded (userId: string, eventId: string, originalEvent: Event | null, queryFn: QueryFn): Promise<void>;
+  _generateVersionIfNeeded (userId: string, eventId: string, originalEvent: EventLike | null, queryFn: QueryFn): Promise<void>;
   _syncEventStreams (userId: string, eventId: string, streamIds: string[], queryFn: QueryFn): Promise<void>;
 };
 
@@ -94,7 +94,7 @@ function toPGValue (col: string, val: unknown): unknown {
   return val;
 }
 
-function rowToEvent (row: Record<string, unknown> | null | undefined): Event | null {
+function rowToEvent (row: Record<string, unknown> | null | undefined): EventLike | null {
   if (!row) return null;
   const event: Record<string, unknown> = {};
   for (const [col, val] of Object.entries(row)) {
@@ -120,7 +120,7 @@ function rowToEvent (row: Record<string, unknown> | null | undefined): Event | n
   if (event.deleted == null) delete event.deleted;
   // Remove headId if null
   if (event.headId == null) delete event.headId;
-  return event as Event;
+  return event as EventLike;
 }
 
 /**
@@ -134,7 +134,7 @@ const userEvents = ds.createUserEvents({
   keepHistory: false,
   setIntegrityOnEvent: null,
 
-  init (this: Store, db: DbLike, eventsFileStorage: EventsFileStorageLike, settings: Settings, setIntegrityOnEventFn: (event: Event) => void, systemStreams: SystemStreams): void {
+  init (this: Store, db: DbLike, eventsFileStorage: EventsFileStorageLike, settings: Settings, setIntegrityOnEventFn: (event: EventLike) => void, systemStreams: SystemStreams): void {
     this.db = db;
     this.eventsFileStorage = eventsFileStorage;
     this.settings = settings;
@@ -150,7 +150,7 @@ const userEvents = ds.createUserEvents({
     this.keepHistory = settings.versioning?.forceKeepHistory || false;
   },
 
-  async getOne (this: Store, userId: string, eventId: string): Promise<Event | null> {
+  async getOne (this: Store, userId: string, eventId: string): Promise<EventLike | null> {
     // Return the event regardless of deletion status (matching MongoDB behavior).
     // Only exclude versioned copies (head_id IS NULL = current head).
     const res = await this.db.query(
@@ -160,12 +160,12 @@ const userEvents = ds.createUserEvents({
     return res.rows.length > 0 ? rowToEvent(res.rows[0]) : null;
   },
 
-  async get (this: Store, userId: string, query: unknown, options: unknown): Promise<Event[]> {
+  async get (this: Store, userId: string, query: unknown, options: unknown): Promise<EventLike[]> {
     const localQuery = localStoreEventQueries.localStorePrepareQuery(query);
     const localOptions = localStoreEventQueries.localStorePrepareOptions(options);
     const { sql, params } = buildEventQuery(userId, localQuery, localOptions);
     const res = await this.db.query(sql, params);
-    return res.rows.map(rowToEvent).filter((e): e is Event => e !== null);
+    return res.rows.map(rowToEvent).filter((e): e is EventLike => e !== null);
   },
 
   async getStreamed (this: Store, userId: string, query: unknown, options: unknown): Promise<ReadableType> {
@@ -188,7 +188,7 @@ const userEvents = ds.createUserEvents({
     return readableStreamFromRows(res.rows);
   },
 
-  async getHistory (this: Store, userId: string, eventId: string): Promise<Event[]> {
+  async getHistory (this: Store, userId: string, eventId: string): Promise<EventLike[]> {
     const res = await this.db.query(
       'SELECT * FROM events WHERE user_id = $1 AND head_id = $2 ORDER BY modified ASC',
       [userId, eventId]
@@ -201,7 +201,7 @@ const userEvents = ds.createUserEvents({
     });
   },
 
-  async create (this: Store, userId: string, event: Event, transaction: Transaction): Promise<Event> {
+  async create (this: Store, userId: string, event: EventLike, transaction: Transaction): Promise<EventLike> {
     try {
       const queryFn: QueryFn = transaction ? transaction.query.bind(transaction) : this.db.query.bind(this.db);
       const cols: string[] = ['user_id'];
@@ -240,7 +240,7 @@ const userEvents = ds.createUserEvents({
     }
   },
 
-  async update (this: Store, userId: string, eventData: Event, transaction: Transaction): Promise<boolean> {
+  async update (this: Store, userId: string, eventData: EventLike, transaction: Transaction): Promise<boolean> {
     const queryFn: QueryFn = transaction ? transaction.query.bind(transaction) : this.db.query.bind(this.db);
     await this._generateVersionIfNeeded(userId, eventData.id, null, queryFn);
 
@@ -273,9 +273,9 @@ const userEvents = ds.createUserEvents({
     }
   },
 
-  async delete (this: Store, userId: string, originalEvent: Event): Promise<void> {
+  async delete (this: Store, userId: string, originalEvent: EventLike): Promise<void> {
     await this._generateVersionIfNeeded(userId, originalEvent.id, originalEvent, this.db.query.bind(this.db));
-    const deletedEventContent: Event = structuredClone(originalEvent);
+    const deletedEventContent: EventLike = structuredClone(originalEvent);
     const eventId = deletedEventContent.id;
 
     // Remove attachments if configured
@@ -347,9 +347,9 @@ const userEvents = ds.createUserEvents({
     );
   },
 
-  async _generateVersionIfNeeded (this: Store, userId: string, eventId: string, originalEvent: Event | null, queryFn: QueryFn): Promise<void> {
+  async _generateVersionIfNeeded (this: Store, userId: string, eventId: string, originalEvent: EventLike | null, queryFn: QueryFn): Promise<void> {
     if (!this.keepHistory) return;
-    let versionItem: Event;
+    let versionItem: EventLike;
     if (originalEvent != null) {
       versionItem = structuredClone(originalEvent);
     } else {
@@ -362,7 +362,7 @@ const userEvents = ds.createUserEvents({
     }
     versionItem.headId = eventId;
     const versionId = cuid();
-    delete (versionItem as Partial<Event>).id;
+    delete (versionItem as Partial<EventLike>).id;
 
     const cols: string[] = ['user_id', 'id'];
     const vals: unknown[] = [userId, versionId];

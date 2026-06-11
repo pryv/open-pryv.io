@@ -42,7 +42,7 @@ const DEFAULT_MATERIALIZE_INTERVAL_MS = 60 * 1000;
 // downshifts to the renew cadence and stays there.
 const DEFAULT_INITIAL_RETRY_INTERVAL_MS = 60 * 1000;
 
-type LogFn = (msg: string) => void;
+type LogLine = (msg: string) => void;
 type CertRenewerLike = {
   renew: (opts: { hostname: string; altNames: string[]; dnsWriter?: unknown; http01Store?: unknown; challengePriority?: string[] }) => Promise<{ hostname: string; expiresAt: number; [k: string]: unknown }>;
   getCertificate: (hostname: string) => Promise<{ expiresAt: number; [k: string]: unknown } | null>;
@@ -65,7 +65,7 @@ interface AcmeOrchestratorOpts {
   renewIntervalMs?: number;
   initialRetryIntervalMs?: number;
   materializeIntervalMs?: number;
-  log?: LogFn;
+  log?: LogLine;
 }
 
 class AcmeOrchestrator {
@@ -79,7 +79,7 @@ class AcmeOrchestrator {
   #materializeIntervalMs: number;
   #dnsWriter: DnsWriterLike;
   #http01Store: Http01StoreLike | undefined;
-  #log: LogFn;
+  #log: LogLine;
   #renewTimer: NodeJS.Timeout | null = null;
   #materializeTimer: NodeJS.Timeout | null = null;
   #currentRenewIntervalMs = 0;
@@ -354,7 +354,7 @@ interface BuildOpts {
   http01Store?: unknown;
   onRotate?: (certPath: string, keyPath: string, hostname: string) => Promise<void> | void;
   acmeLib?: unknown;
-  log?: LogFn;
+  log?: LogLine;
 }
 
 function build (opts: BuildOpts = {} as BuildOpts) {

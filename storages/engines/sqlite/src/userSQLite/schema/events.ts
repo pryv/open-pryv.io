@@ -10,12 +10,12 @@ type DbSchemaMap = Record<string, SchemaCol>;
 type Schema = {
   dbSchema: DbSchemaMap;
   ALL_EVENTS_TAG: string;
-  toDB: (event: Event) => DbEvent;
-  fromDB: (dbEvent: DbEvent) => Event;
-  fromDBHistory: (event: DbEvent) => Event;
+  toDB: (event: EventLike) => DbEvent;
+  fromDB: (dbEvent: DbEvent) => EventLike;
+  fromDBHistory: (event: DbEvent) => EventLike;
   coerceValueForColumn: (column: string, value: unknown) => unknown;
 };
-type Event = { id?: string; streamIds?: string[]; time?: number; endTime?: number | null; deleted?: number | null; integrity?: string | null; headId?: string | null; type?: string; content?: unknown; description?: string; created?: number; clientData?: unknown; attachments?: unknown; trashed?: boolean; createdBy?: string; modifiedBy?: string; modified?: number; [k: string]: unknown };
+type EventLike = { id?: string; streamIds?: string[]; time?: number; endTime?: number | null; deleted?: number | null; integrity?: string | null; headId?: string | null; type?: string; content?: unknown; description?: string; created?: number; clientData?: unknown; attachments?: unknown; trashed?: boolean; createdBy?: string; modifiedBy?: string; modified?: number; [k: string]: unknown };
 type DbEvent = { eventid?: string; streamIds?: string | string[]; trashed?: number | boolean; content?: string | null; attachments?: string | null; clientData?: string | null; [k: string]: unknown };
 
 const schema: Schema = {
@@ -49,7 +49,7 @@ const schema: Schema = {
 
 const IDS_SEPARATOR = ' ';
 
-function toDB (event: Event): DbEvent {
+function toDB (event: EventLike): DbEvent {
   const dbEvent: DbEvent = {};
   dbEvent.eventid = event.id;
 
@@ -92,7 +92,7 @@ function nullOrJSON (value: unknown): string | null {
   return JSON.stringify(value);
 }
 
-function fromDB (dbEvent: DbEvent): Event {
+function fromDB (dbEvent: DbEvent): EventLike {
   if (dbEvent.streamIds != null) {
     dbEvent.streamIds = (dbEvent.streamIds as string).split(IDS_SEPARATOR);
     (dbEvent.streamIds as string[]).pop(); // pop removes the last element which is set on all events ALL_EVENTS_TAG
@@ -125,10 +125,10 @@ function fromDB (dbEvent: DbEvent): Event {
     if (key !== 'endTime' && dbEvent[key] == null) delete dbEvent[key];
   }
 
-  return dbEvent as Event;
+  return dbEvent as EventLike;
 }
 
-function fromDBHistory (dbEvent: DbEvent): Event {
+function fromDBHistory (dbEvent: DbEvent): EventLike {
   const event = fromDB(dbEvent);
   event.id = event.headId ?? undefined;
   delete event.headId;

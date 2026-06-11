@@ -36,19 +36,10 @@ const cmc = require('cmc');
 const { getLogger } = require('@pryv/boiler');
 const WebhooksRepository = require('business').webhooks.Repository;
 
-type Permission = {
-  streamId: string;
-  level: PermissionLevel;
-  // Display-only fields that the wire schema accepts on create / update and the
-  // cleanup middleware strips before storage. Kept here so the cleanup forEach
-  // can `delete` them under noImplicitAny.
-  defaultName?: string;
-  name?: string;
-};
-type Access = {
+type AccessLike = {
   id?: string;
   type?: AccessType;
-  permissions?: Array<Permission>;
+  permissions?: Array<StreamPermission>;
   expires?: number | undefined | null;
   clientData?: {} | undefined | null;
   integrity?: string | null;
@@ -58,7 +49,7 @@ type Access = {
 };
 import type { MethodNext, NodeCallback } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
-import type { PermissionLevel, AccessType } from 'business/src/types/public.ts';
+import type { PermissionLevel, AccessType, StreamPermission } from 'business/src/types/public.ts';
 type MethodContext = BaseMethodContext;
 
 type UpdatesSettingsHolder = {
@@ -70,19 +61,19 @@ type UpdatesSettingsHolder = {
 // with that file when the wire schema changes.
 type ItemDeletion = { id: string; deleted?: number };
 type AccessesGetParams = { includeDeletions?: boolean; includeExpired?: boolean };
-type AccessesGetResult = { accesses?: Access[]; accessDeletions?: Access[] };
+type AccessesGetResult = { accesses?: AccessLike[]; accessDeletions?: AccessLike[] };
 type AccessesGetOneParams = { id: string; includeHistory?: boolean };
-type AccessesGetOneResult = { access?: Access; current?: string; history?: Access[] };
-type AccessesCreateParams = Partial<Access> & { name?: string; permissions?: Permission[]; clientData?: Record<string, unknown>; expireAfter?: number; deviceName?: string | null };
-type AccessesCreateResult = { access?: Access };
-type AccessesUpdateParams = { id: string; update: Partial<Access> & { permissions?: Permission[]; expires?: number | null; expireAfter?: number; clientData?: Record<string, unknown> | null }; targetAccess?: Access; targetBase?: string };
+type AccessesGetOneResult = { access?: AccessLike; current?: string; history?: AccessLike[] };
+type AccessesCreateParams = Partial<AccessLike> & { name?: string; permissions?: StreamPermission[]; clientData?: Record<string, unknown>; expireAfter?: number; deviceName?: string | null };
+type AccessesCreateResult = { access?: AccessLike };
+type AccessesUpdateParams = { id: string; update: Partial<AccessLike> & { permissions?: StreamPermission[]; expires?: number | null; expireAfter?: number; clientData?: Record<string, unknown> | null }; targetAccess?: AccessLike; targetBase?: string };
 // __updateNotification: internal scratch slot between snapshotAndApplyUpdate
 // (producer) and emitUpdateNotifications (consumer); deleted before response.
-type AccessesUpdateResult = { access?: Access; __updateNotification?: { baseId: string; serial: number; compositeId: string } };
-type AccessesDeleteParams = { id: string; accessToDelete?: Access };
+type AccessesUpdateResult = { access?: AccessLike; __updateNotification?: { baseId: string; serial: number; compositeId: string } };
+type AccessesDeleteParams = { id: string; accessToDelete?: AccessLike };
 type AccessesDeleteResult = { accessDeletion?: ItemDeletion; relatedDeletions?: ItemDeletion[] };
-type AccessesCheckAppParams = { requestingAppId: string; deviceName?: string; requestedPermissions: Permission[]; clientData?: Record<string, unknown> };
-type AccessesCheckAppResult = { matchingAccess?: Access; mismatchingAccess?: Access; checkedPermissions?: Permission[]; error?: unknown };
+type AccessesCheckAppParams = { requestingAppId: string; deviceName?: string; requestedPermissions: StreamPermission[]; clientData?: Record<string, unknown> };
+type AccessesCheckAppResult = { matchingAccess?: AccessLike; mismatchingAccess?: AccessLike; checkedPermissions?: StreamPermission[]; error?: unknown };
 
 export default async function produceAccessesApiMethods (api: { register (...args: unknown[]): unknown }) {
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };
@@ -110,13 +101,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       query.createdBy = currentAccess.id;
     }
     try {
-      let accesses: Access[] = await fromCallback((cb: NodeCallback) => accessesRepository.find(context.user, query, dbFindOptions, cb));
+      let accesses: AccessLike[] = await fromCallback((cb: NodeCallback) => accessesRepository.find(context.user, query, dbFindOptions, cb));
       if (excludeExpired(params)) {
-        accesses = accesses.filter((a: Access) => !isAccessExpired(a));
+        accesses = accesses.filter((a: AccessLike) => !isAccessExpired(a));
       }
       // Compose wire-format ids + strip internal serial fields, then
       // attach apiEndpoint.
-      result.accesses = accesses.map((a: Access) => {
+      result.accesses = accesses.map((a: AccessLike) => {
         const wire = composeWireAccess(a);
         wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
         return wire;
@@ -197,13 +188,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     } else if (currentSerial != null && ref.serial < currentSerial) {
       // Obsolete composite — historical row, with a `current` hint pointing
       // at the live head's composite id (Q-pivot=a, GitHub-commit-by-sha-style).
-      let history: Access[] = [];
+      let history: AccessLike[] = [];
       try {
         history = await accessesRepository.findHistory(context.user, ref.base);
       } catch (err) {
         return next(errors.unexpectedError(err));
       }
-      const snapshot = (history || []).find((h: Access & { serial?: number }) => (h.serial ?? null) === ref.serial);
+      const snapshot = (history || []).find((h: AccessLike & { serial?: number }) => (h.serial ?? null) === ref.serial);
       if (snapshot == null) return next(errors.unknownResource('access', params.id));
       const wire = composeWireAccess(snapshot, ref.base);
       wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
@@ -217,7 +208,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (params.includeHistory) {
       try {
         const history = await accessesRepository.findHistory(context.user, ref.base);
-        result.history = (history || []).map((h: Access) => {
+        result.history = (history || []).map((h: AccessLike) => {
           const wire = composeWireAccess(h, ref.base);
           wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
           return wire;
@@ -331,7 +322,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       }
     }
 
-    function isStreamBasedPermission (permission: Permission) {
+    function isStreamBasedPermission (permission: StreamPermission) {
       return permission.streamId != null;
     }
 
@@ -356,7 +347,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       }
     }
     return next();
-    async function ensureStream (permission: Permission) {
+    async function ensureStream (permission: StreamPermission) {
       // We ensure stream Exists only if streamid is !== '*' and if a defaultName is providedd
       if (permission.streamId == null ||
                 permission.streamId === '*' ||
@@ -418,7 +409,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (!params.permissions) {
       return next();
     }
-    params.permissions.forEach(function (perm: Permission) {
+    params.permissions.forEach(function (perm: StreamPermission) {
       delete perm.defaultName;
       delete perm.name;
     });
@@ -489,7 +480,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (!params.update || !Array.isArray(params.update.permissions)) {
       return next();
     }
-    params.update.permissions.forEach(function (perm: Permission) {
+    params.update.permissions.forEach(function (perm: StreamPermission) {
       delete perm.defaultName;
       delete perm.name;
     });
@@ -552,7 +543,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (!(await context.access.canUpdateAccess(access))) {
       return next(errors.forbidden('Your access token has insufficient permissions to update this access.'));
     }
-    params.targetAccess = access as Access;
+    params.targetAccess = access as AccessLike;
     params.targetBase = ref.base;
     next();
   }
@@ -580,7 +571,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       return next();
     }
 
-    const after: { type?: string; permissions?: Permission[]; expires?: number | null; [k: string]: unknown } = Object.assign({}, target, updates);
+    const after: { type?: string; permissions?: StreamPermission[]; expires?: number | null; [k: string]: unknown } = Object.assign({}, target, updates);
 
     try {
       if (target.type === 'shared') {
@@ -764,7 +755,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // Subsequent stages address the access by its bare base id (storage
     // doesn't accept composite ids).
     params.id = ref.base;
-    params.accessToDelete = (access ?? undefined) as Access | undefined;
+    params.accessToDelete = (access ?? undefined) as AccessLike | undefined;
     next();
   }
 
@@ -777,7 +768,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (accessToDelete.type === 'personal') {
       return next();
     }
-    let accesses: Access[] = [];
+    let accesses: AccessLike[] = [];
     try {
       accesses = await fromCallback((cb: NodeCallback) => {
         accessesRepository.find(context.user, { createdBy: params.id }, dbFindOptions, cb);
@@ -842,7 +833,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       name: params.requestingAppId,
       deviceName: params.deviceName || null
     };
-    accessesRepository.findOne(context.user, query, dbFindOptions, function (err: Error | null, access: Access | null) {
+    accessesRepository.findOne(context.user, query, dbFindOptions, function (err: Error | null, access: AccessLike | null) {
       if (err != null) { return next(errors.unexpectedError(err)); }
       // Do we have a match?
       if (access != null && accessMatches(access, params.requestedPermissions, params.clientData)) {
@@ -851,7 +842,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       }
       // No, we don't have a match. Return other information:
       if (access != null) { result.mismatchingAccess = composeWireAccess(access); }
-      checkPermissions(context, params.requestedPermissions, function (err: Error | null, checkedPermissions?: Permission[] | null, checkError?: unknown) {
+      checkPermissions(context, params.requestedPermissions, function (err: Error | null, checkedPermissions?: StreamPermission[] | null, checkError?: unknown) {
         if (err != null) { return next(err); }
         result.checkedPermissions = checkedPermissions ?? undefined;
         if (checkError != null) {
@@ -864,7 +855,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
 
   // Returns true if the given access' permissions match the `requestedPermissions`.
   //
-  function accessMatches (access: Access, requestedPermissions: Permission[], clientData?: Record<string, unknown>) {
+  function accessMatches (access: AccessLike, requestedPermissions: StreamPermission[], clientData?: Record<string, unknown>) {
     if (access == null ||
             access.type !== 'app' ||
             access.permissions == null) {
@@ -876,7 +867,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // app requested, so counting them would make every existing app access
     // report as mismatching (the requesting app re-prompts for consent on
     // every sign-in).
-    const isInjectedPermission = (perm: Permission) =>
+    const isInjectedPermission = (perm: StreamPermission) =>
       (perm.streamId === accountStreams.STREAM_ID_ACCOUNT && perm.level === 'none') ||
       (perm.streamId === ':_audit:access-' + access.id && perm.level === 'read');
     const accessPerms = access.permissions.filter((perm) => !isInjectedPermission(perm));
@@ -900,7 +891,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       return false;
     }
     return true;
-    function findByStreamId (permissions: Permission[], streamId: string) {
+    function findByStreamId (permissions: StreamPermission[], streamId: string) {
       return permissions.find((perm) => perm.streamId === streamId);
     }
   }
@@ -909,7 +900,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // with the actual `name` of existing streams. When defined, the callback's
   // `checkError` param signals issues with the requested permissions.
   //
-  function checkPermissions (context: MethodContext, permissions: Permission[], callback: (err: Error | null, checked?: Permission[] | null, checkError?: unknown) => void) {
+  function checkPermissions (context: MethodContext, permissions: StreamPermission[], callback: (err: Error | null, checked?: StreamPermission[] | null, checkError?: unknown) => void) {
     // modify permissions in-place, assume no side fx
     const checkedPermissions = permissions;
     let checkError: unknown = null;
@@ -925,7 +916,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     }
     nextPermission();
 
-    function checkPermission (permission: Permission, done: (err?: unknown) => void) {
+    function checkPermission (permission: StreamPermission, done: (err?: unknown) => void) {
       if (permission.streamId === '*') {
         // cleanup ignored properties just in case
         delete permission.defaultName;

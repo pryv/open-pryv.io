@@ -37,7 +37,7 @@ const { hostnameToDirName } = require('./certUtils.ts');
 type CertRecord = { certPem: string; chainPem?: string; keyPem: string; expiresAt: number };
 type CertRenewer = { getCertificate (hostname: string): Promise<CertRecord | null> };
 type OnRotateFn = (certPath: string, keyPath: string, hostname: string) => Promise<unknown>;
-type LogFn = (msg: string) => void;
+type LogLine = (msg: string) => void;
 type WriteOpts = { mode?: number; [k: string]: unknown };
 
 class FileMaterializer {
@@ -45,7 +45,7 @@ class FileMaterializer {
   #tlsDir: string;
   #hostname: string;
   #onRotate: OnRotateFn;
-  #log: LogFn;
+  #log: LogLine;
 
   /**
    * @param opts.certRenewer  - exposes getCertificate(hostname) returning decrypted record
@@ -54,7 +54,7 @@ class FileMaterializer {
    * @param [opts.onRotate] - (certPath, keyPath, hostname) => Promise; called after a successful swap
    * @param [opts.log]      - default: console.log
    */
-  constructor ({ certRenewer, tlsDir, hostname, onRotate, log }: { certRenewer?: CertRenewer; tlsDir?: string; hostname?: string; onRotate?: OnRotateFn; log?: LogFn } = {}) {
+  constructor ({ certRenewer, tlsDir, hostname, onRotate, log }: { certRenewer?: CertRenewer; tlsDir?: string; hostname?: string; onRotate?: OnRotateFn; log?: LogLine } = {}) {
     if (certRenewer == null) throw new Error('FileMaterializer: certRenewer is required');
     if (!tlsDir) throw new Error('FileMaterializer: tlsDir is required');
     if (!hostname) throw new Error('FileMaterializer: hostname is required');

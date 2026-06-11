@@ -11,7 +11,7 @@ const { getConfig } = require('@pryv/boiler');
 
 const errors = require('errors').factory;
 
-type UserAccountStorage = {
+type UserAccountStorageLike = {
   getCurrentPasswordTime (userId: string): Promise<number>;
   passwordExistsInHistory (userId: string, password: string, historyLength: number): Promise<boolean>;
 };
@@ -30,7 +30,7 @@ type PasswordRules = {
 };
 
 let singleton: PasswordRules | null = null;
-let userAccountStorage: UserAccountStorage | null = null;
+let userAccountStorage: UserAccountStorageLike | null = null;
 
 /**
  * Return the password rules singleton, initializing it with the given settings if needed.
@@ -45,7 +45,7 @@ export default get;
 
 async function init (): Promise<PasswordRules> {
   const { getUserAccountStorage } = require('storage');
-  userAccountStorage = await getUserAccountStorage() as UserAccountStorage;
+  userAccountStorage = await getUserAccountStorage() as UserAccountStorageLike;
   const config = await getConfig();
   const charCategoriesRegExps = {
     lowercase: /[a-z]/,

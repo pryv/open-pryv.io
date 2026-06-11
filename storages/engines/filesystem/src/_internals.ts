@@ -14,7 +14,7 @@ import type { Logger } from '@pryv/boiler';
  */
 
 type UserLocalDirectoryLike = { ensureUserDirectory: (userId: string) => Promise<string> };
-type ConfigLike = { get: (key: string) => unknown };
+import type { ConfigLike } from '@pryv/boiler';
 
 const registry: Record<string, unknown> = {};
 

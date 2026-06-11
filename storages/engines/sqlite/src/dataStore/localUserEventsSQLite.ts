@@ -19,7 +19,7 @@ const { localStoreEventQueries } = require('../../../../shared/localStoreEventQu
 import type { StoredEvent } from '../../../../interfaces/_shared/domain.ts';
 /** Datastore-level event: the canonical stored shape plus the open tail the
  *  deletion-mode field scrubbing indexes dynamically. */
-type Event = StoredEvent & { [k: string]: unknown };
+type EventLike = StoredEvent & { [k: string]: unknown };
 type DeletionSettings = {
   mode: 'keep-nothing' | 'keep-authors' | 'keep-everything' | string;
   fields: string[];
@@ -30,16 +30,16 @@ type SystemStreams = { accountStreamIds?: string[] };
 type StoreQuery = unknown;
 type StoreOptions = unknown;
 // Per-user SQLite DB handle (userSQLite/UserDatabase) — the methods used here.
-// getEvents is modelled as Event[]: better-sqlite3 `.all()` always yields an
+// getEvents is modelled as EventLike[]: better-sqlite3 `.all()` always yields an
 // array, so UserDatabase's `| null` branch is unreachable.
 type UserDbLike = {
-  getOneEvent: (eventId: string) => Event | null;
-  getEvents: (params: { query: unknown[]; options: unknown }) => Event[];
+  getOneEvent: (eventId: string) => EventLike | null;
+  getEvents: (params: { query: unknown[]; options: unknown }) => EventLike[];
   getEventsStreamed: (params: { query: unknown[]; options: unknown }) => ReadableType;
   getEventDeletionsStreamed: (deletedSince: number) => ReadableType;
-  getEventHistory: (eventId: string) => Event[];
-  createEvent: (event: Event) => Promise<void>;
-  updateEvent: (eventId: string, eventData: Event) => Promise<Event | null>;
+  getEventHistory: (eventId: string) => EventLike[];
+  createEvent: (event: EventLike) => Promise<void>;
+  updateEvent: (eventId: string, eventData: EventLike) => Promise<EventLike | null>;
   minimizeEventHistory: (eventId: string, fieldsToRemove: string[]) => Promise<void>;
   deleteEventHistory: (eventId: string) => Promise<void>;
   deleteEvents: (params: { query: unknown[]; options?: unknown }) => Promise<{ changes: number } | null>;
@@ -56,12 +56,12 @@ type Store = {
   storage: StorageFactory;
   eventsFileStorage: EventsFileStorageLike;
   settings: Settings;
-  setIntegrityOnEvent: (event: Event) => void;
+  setIntegrityOnEvent: (event: EventLike) => void;
   accountStreamIds: string[];
   deletionSettings: DeletionSettings;
   keepHistory: boolean;
   // own helper method of the store literal, so `this.<helper>()` typechecks
-  _generateVersionIfNeeded (db: UserDbLike, eventId: string, originalEvent?: Event | null, transaction?: unknown): Promise<void>;
+  _generateVersionIfNeeded (db: UserDbLike, eventId: string, originalEvent?: EventLike | null, transaction?: unknown): Promise<void>;
 };
 
 /**
@@ -74,7 +74,7 @@ const userEvents = ds.createUserEvents({
   keepHistory: null,
   setIntegrityOnEvent: null,
 
-  init (this: Store, storage: StorageFactory, eventsFileStorage: EventsFileStorageLike, settings: Settings, setIntegrityOnEventFn: (event: Event) => void, systemStreams: SystemStreams): void {
+  init (this: Store, storage: StorageFactory, eventsFileStorage: EventsFileStorageLike, settings: Settings, setIntegrityOnEventFn: (event: EventLike) => void, systemStreams: SystemStreams): void {
     this.storage = storage;
     this.eventsFileStorage = eventsFileStorage;
     this.settings = settings;
@@ -90,12 +90,12 @@ const userEvents = ds.createUserEvents({
     this.keepHistory = this.settings.versioning?.forceKeepHistory || false;
   },
 
-  async getOne (this: Store, userId: string, eventId: string): Promise<Event | null> {
+  async getOne (this: Store, userId: string, eventId: string): Promise<EventLike | null> {
     const db = await this.storage.forUser(userId);
     return db.getOneEvent(eventId);
   },
 
-  async get (this: Store, userId: string, storeQuery: StoreQuery, storeOptions: StoreOptions): Promise<Event[]> {
+  async get (this: Store, userId: string, storeQuery: StoreQuery, storeOptions: StoreOptions): Promise<EventLike[]> {
     const db = await this.storage.forUser(userId);
     const query = localStoreEventQueries.localStorePrepareQuery(storeQuery);
     const options = localStoreEventQueries.localStorePrepareOptions(storeOptions);
@@ -114,12 +114,12 @@ const userEvents = ds.createUserEvents({
     return db.getEventDeletionsStreamed(query.deletedSince);
   },
 
-  async getHistory (this: Store, userId: string, eventId: string): Promise<Event[]> {
+  async getHistory (this: Store, userId: string, eventId: string): Promise<EventLike[]> {
     const db = await this.storage.forUser(userId);
     return db.getEventHistory(eventId);
   },
 
-  async create (this: Store, userId: string, event: Event, _transaction: unknown): Promise<Event> {
+  async create (this: Store, userId: string, event: EventLike, _transaction: unknown): Promise<EventLike> {
     const db = await this.storage.forUser(userId);
     try {
       await db.createEvent(event);
@@ -133,7 +133,7 @@ const userEvents = ds.createUserEvents({
   },
 
   // `null` when no row matched — mirrors the PG peer's update semantics.
-  async update (this: Store, userId: string, eventData: Event, transaction: unknown): Promise<Event | null> {
+  async update (this: Store, userId: string, eventData: EventLike, transaction: unknown): Promise<EventLike | null> {
     const db = await this.storage.forUser(userId);
     await this._generateVersionIfNeeded(db, eventData.id, null, transaction);
     try {
@@ -146,10 +146,10 @@ const userEvents = ds.createUserEvents({
     }
   },
 
-  async delete (this: Store, userId: string, originalEvent: Event, transaction: unknown): Promise<unknown> {
+  async delete (this: Store, userId: string, originalEvent: EventLike, transaction: unknown): Promise<unknown> {
     const db = await this.storage.forUser(userId);
     await this._generateVersionIfNeeded(db, originalEvent.id, originalEvent, transaction);
-    const deletedEventContent: Event = structuredClone(originalEvent);
+    const deletedEventContent: EventLike = structuredClone(originalEvent);
     const eventId = deletedEventContent.id;
 
     // if attachments are to be deleted
@@ -168,13 +168,13 @@ const userEvents = ds.createUserEvents({
       delete deletedEventContent[field];
     }
     this.setIntegrityOnEvent(deletedEventContent);
-    delete (deletedEventContent as Partial<Event>).id;
+    delete (deletedEventContent as Partial<EventLike>).id;
     return await db.updateEvent(eventId, deletedEventContent);
   },
 
-  async _generateVersionIfNeeded (this: Store, db: UserDbLike, eventId: string, originalEvent: Event | null = null, _transaction: unknown = null): Promise<void> {
+  async _generateVersionIfNeeded (this: Store, db: UserDbLike, eventId: string, originalEvent: EventLike | null = null, _transaction: unknown = null): Promise<void> {
     if (!this.keepHistory) return;
-    let versionItem: Event;
+    let versionItem: EventLike;
     if (originalEvent != null) {
       versionItem = structuredClone(originalEvent);
     } else {

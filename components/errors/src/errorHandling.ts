@@ -15,9 +15,9 @@ const require = createRequire(import.meta.url);
 const { APIError } = require('./APIError.ts');
 const { ErrorIds } = require('./ErrorIds.ts');
 
-type LogFn = (msg: string, metadata?: unknown) => void;
+type LogFnLike = (msg: string, metadata?: unknown) => void;
 type ReqLike = { url?: string, method?: string, body?: unknown } | null;
-type LoggerLike = { debug: LogFn, info: LogFn, warn: LogFn, error: LogFn };
+type LoggerLike = { debug: LogFnLike, info: LogFnLike, warn: LogFnLike, error: LogFnLike };
 type PublicErrorData = { id: string, message: string, data?: unknown };
 interface ErrorHandling {
   logError: (error: Error, req: ReqLike, logger: LoggerLike) => void;

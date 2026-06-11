@@ -42,7 +42,7 @@ type MethodContext = {
   [k: string]: unknown;
 };
 type ResultBag = Record<string, unknown> & { addToConcatArrayStream: (key: string, stream: unknown) => void; closeConcatArrayStream: (key: string) => void; events?: unknown[] };
-type Mall = {
+type MallLike = {
   streams: { get: (userId: string, query: Record<string, unknown>) => Promise<Array<{ id: string; trashed?: boolean; [k: string]: unknown }>> };
   events: {
     getWithParamsByStore: (userId: string, params: Record<string, unknown>) => Promise<Array<{ time: number; attachments?: Array<{ id: string; readToken?: string }>; [k: string]: unknown }>>;
@@ -51,7 +51,7 @@ type Mall = {
   };
 };
 
-let mall: Mall;
+let mall: MallLike;
 
 const { validateAndNormalizeConditions } = require('storages/shared/contentQueryConditions.ts');
 

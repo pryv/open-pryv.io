@@ -14,7 +14,7 @@ const DataMatrix = require('./data_matrix.ts').default;
  * @param v - timestamp in seconds or ISO date string
  */
 type Timestamp = number;
-type Query = {
+type SeriesQuery = {
   from?: Timestamp;
   to?: Timestamp;
 };
@@ -90,7 +90,7 @@ class Series {
 
   /** Queries the given series, returning a data matrix.
    */
-  query (query: Query) {
+  query (query: SeriesQuery) {
     const queryOptions = { database: this.namespace };
     const measurementName = this.name;
     const condition = this.buildExpression(query);
@@ -123,7 +123,7 @@ class Series {
 
   /** Builds an expression that can be used within `WHERE` from a query.
    */
-  buildExpression (query: Query): string[] {
+  buildExpression (query: SeriesQuery): string[] {
     const subConditions: string[] = [];
     if (query.from) {
       subConditions.push(`time >= ${timestampToDateString(query.from)}`);

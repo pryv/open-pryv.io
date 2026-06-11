@@ -14,7 +14,7 @@ const timestamp = require('unix-timestamp');
 
 /**
  * Orchestrates restore from a backup archive into the current core.
- * Reads from a BackupReader and writes into StorageLayer, UserAccountStorage,
+ * Reads from a BackupReaderLike and writes into StorageLayer, UserAccountStorage,
  * AuditStorage, EventFiles, PlatformDB.
  */
 class RestoreOrchestrator {
@@ -55,7 +55,7 @@ class RestoreOrchestrator {
    * @param [options.deleteOnSuccess=false] - delete backup data after successful restore
    * @param [options.moveOnSuccess] - move backup data to this path after successful restore
    */
-  async restoreAllUsers (reader: BackupReader, options: RestoreOptions = {}) {
+  async restoreAllUsers (reader: BackupReaderLike, options: RestoreOptions = {}) {
     const opts: RestoreOptions = Object.assign({ overwrite: true, skipPlatform: false, skipConflicts: false }, options);
 
     if (opts.skipConflicts && !opts.deleteOnSuccess && !opts.moveOnSuccess) {
@@ -104,7 +104,7 @@ class RestoreOrchestrator {
    * @param [options.skipPlatform=true] - skip platform data
    * @param [options.remapUserId] - remap to a different userId
    */
-  async restoreUser (userId: string, reader: BackupReader, options: RestoreOptions = {}) {
+  async restoreUser (userId: string, reader: BackupReaderLike, options: RestoreOptions = {}) {
     const opts: RestoreOptions = Object.assign({ overwrite: false, skipPlatform: true }, options);
     const manifest = await reader.readManifest();
 
@@ -135,7 +135,7 @@ class RestoreOrchestrator {
   /**
    * Restore platform data only.
    */
-  async restorePlatform (reader: BackupReader) {
+  async restorePlatform (reader: BackupReaderLike) {
     await reader.readManifest();
     await this._restorePlatform(reader);
   }
@@ -144,7 +144,7 @@ class RestoreOrchestrator {
   // Internal
   // -------------------------------------------------------------------------
 
-  async _restoreSingleUser (reader: BackupReader, userId: string, username: string, opts: RestoreOptions, targetUserId?: string) {
+  async _restoreSingleUser (reader: BackupReaderLike, userId: string, username: string, opts: RestoreOptions, targetUserId?: string) {
     targetUserId = targetUserId || userId;
 
     this.logger.info(`Restoring user: ${username} (${userId}${targetUserId !== userId ? ' -> ' + targetUserId : ''})`);
@@ -384,7 +384,7 @@ class RestoreOrchestrator {
     return conflicts;
   }
 
-  async _restorePlatform (reader: BackupReader) {
+  async _restorePlatform (reader: BackupReaderLike) {
     if (!this.platformDB) return;
     const data: unknown[] = [];
     let skipped = 0;
@@ -472,7 +472,7 @@ export default RestoreOrchestrator;
 export { RestoreOrchestrator };
 
 // Local type aliases for the shapes this orchestrator threads through.
-// BackupReader is a structural interface — the concrete reader implementations
+// BackupReaderLike is a structural interface — the concrete reader implementations
 // live alongside (BackupReaderTar, BackupReaderDir, ...) and don't formally
 // implement an interface yet.
 type UserRef = { id: string };
@@ -527,7 +527,7 @@ type UserReader = {
   readAudit (): AsyncIterable<unknown>;
   readSeries (): AsyncIterable<unknown>;
 };
-type BackupReader = {
+type BackupReaderLike = {
   readManifest (): Promise<Manifest>;
   openUser (userId: string): Promise<UserReader>;
   readPlatformData (): AsyncIterable<{ username?: string; field?: string; value?: string; isUnique?: boolean; key?: string }>;

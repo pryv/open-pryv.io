@@ -37,7 +37,7 @@ const C = require('./constants.ts');
 const outbound = require('./outbound.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 
-type Permission = { streamId: string; level: string };
+type PermissionLike = { streamId: string; level: string };
 type OfferContent = {
   request?: { permissions?: Array<{ streamId: unknown; level: unknown }> };
   requesterMeta?: { appId?: string };
@@ -153,7 +153,7 @@ async function readOfferViaCapability (params: {
  * sanity contract (streamId + level present); deeper CMC chain rules
  * are checked on the requester's side.
  */
-function permissionsFromOffer (offerEvent: OfferEvent): Permission[] {
+function permissionsFromOffer (offerEvent: OfferEvent): PermissionLike[] {
   const perms = offerEvent?.content?.request?.permissions;
   if (!Array.isArray(perms) || perms.length === 0) {
     const err: ApiError = new Error('cmc/accept: offer has no permissions');
@@ -182,7 +182,7 @@ function buildDataGrantPayload (params: {
   counterparty: { username: string; host: string };
   accessName?: string;
   features?: { chat?: boolean; systemMessaging?: boolean };
-  extraPermissions?: Permission[];
+  extraPermissions?: PermissionLike[];
   // The id of the local `consent/accept-cmc` event that triggered this
   // data-grant. Stamped on `clientData.cmc.acceptEventId` so client
   // code can find the resulting access by the event id it just wrote,

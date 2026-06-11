@@ -23,8 +23,8 @@ const algorithm = config.get('integrity:algorithm');
  * @private
  * mapping algo codes to https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Digest supported codes
  */
-type Event = { integrity?: string; [k: string]: unknown };
-type Access = { integrity?: string; [k: string]: unknown };
+type EventLike = { integrity?: string; [k: string]: unknown };
+type AccessLike = { integrity?: string; [k: string]: unknown };
 type IntegrityResult = { integrity: string; key: string };
 
 const subResourceCodeToDigestMap: Record<string, string> = {
@@ -93,19 +93,19 @@ type IntegrityItem<T> = {
 };
 // ------------- events ------------------ //
 
-function computeEvent (event: Event): IntegrityResult {
+function computeEvent (event: EventLike): IntegrityResult {
   return stableRepresentation.event.compute(event, algorithm);
 }
 
-function keyEvent (event: Event): string {
+function keyEvent (event: EventLike): string {
   return stableRepresentation.event.key(event);
 }
 
-function hashEvent (event: Event): string {
+function hashEvent (event: EventLike): string {
   return stableRepresentation.event.hash(event, algorithm);
 }
 
-function setOnEvent (event: Event): Event | undefined {
+function setOnEvent (event: EventLike): EventLike | undefined {
   delete event.integrity;
   if (!eventsIsActive) return;
   event.integrity = hashEvent(event);
@@ -122,19 +122,19 @@ const events = {
 
 // ------------- accesses ------------------ //
 
-function computeAccess (access: Access): IntegrityResult {
+function computeAccess (access: AccessLike): IntegrityResult {
   return stableRepresentation.access.compute(access, algorithm);
 }
 
-function keyAccess (access: Access): string {
+function keyAccess (access: AccessLike): string {
   return stableRepresentation.access.key(access);
 }
 
-function hashAccess (access: Access): string {
+function hashAccess (access: AccessLike): string {
   return stableRepresentation.access.hash(access, algorithm);
 }
 
-function setOnAccess (access: Access): Access | undefined {
+function setOnAccess (access: AccessLike): AccessLike | undefined {
   if (!accessesIsActive) return;
   access.integrity = hashAccess(access);
   return access;

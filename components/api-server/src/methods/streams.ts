@@ -30,18 +30,18 @@ type MethodContext = BaseMethodContext & {
   stream?: import('mall/src/types.ts').StoredStream | null;
   streamToDeleteAndDescendantIds?: string[];
 };
-type Stream = {
+type StreamLike = {
   id?: string;
   name?: string;
   parentId?: string | null;
   clientData?: Record<string, unknown> | null;
-  children?: Stream[];
+  children?: StreamLike[];
   trashed?: boolean;
   deleted?: number;
   [k: string]: unknown;
 };
-type StreamsParams = { id?: string; parentId?: string | null; includeDeletionsSince?: number | null; state?: string; expandChildren?: boolean; storeId?: string; includeTrashed?: boolean; update?: Partial<Stream>; mergeEventsWithParent?: boolean | null; [k: string]: unknown };
-type StreamsResult = { streams?: Stream[]; stream?: Stream; streamDeletions?: Array<{ id: string }>; addStream?: (name: string, stream: unknown, isArray?: boolean) => void; [k: string]: unknown };
+type StreamsParams = { id?: string; parentId?: string | null; includeDeletionsSince?: number | null; state?: string; expandChildren?: boolean; storeId?: string; includeTrashed?: boolean; update?: Partial<StreamLike>; mergeEventsWithParent?: boolean | null; [k: string]: unknown };
+type StreamsResult = { streams?: StreamLike[]; stream?: StreamLike; streamDeletions?: Array<{ id: string }>; addStream?: (name: string, stream: unknown, isArray?: boolean) => void; [k: string]: unknown };
 
 /**
  * Event streams API methods implementation.
@@ -103,7 +103,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
        *  - pass a list of streamIds to store.streams.get() to get a consolidated answer
        *********************************/
       const listables = context.access.getListableStreamIds();
-      const filteredStreams: Stream[] = [];
+      const filteredStreams: StreamLike[] = [];
       for (const listable of listables) {
         const listableFullStreamId = storeDataUtils.getFullItemId(listable.storeId, listable.streamId);
         const inResult = treeUtils.findById(streams, listableFullStreamId);
@@ -280,7 +280,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   }
   async function updateStream (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     try {
-      const updateData: Partial<Stream> = structuredClone(params.update!);
+      const updateData: Partial<StreamLike> = structuredClone(params.update!);
       updateData.id = params.id;
       const updatedStream = await mall.streams.update(context.user.id, updateData);
       result.stream = updatedStream;
@@ -324,7 +324,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     }
   }
   async function flagAsTrashed (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
-    const updatedData: Partial<Stream> = { trashed: true };
+    const updatedData: Partial<StreamLike> = { trashed: true };
     context.updateTrackingProperties(updatedData);
     updatedData.id = params.id;
     try {

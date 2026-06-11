@@ -9,13 +9,13 @@ const require = createRequire(import.meta.url);
 const __ex_AccessLogic = require('./AccessLogic.ts').default;
 export { __ex_AccessLogic as AccessLogic };
 
-type Access = {
+type AccessLike = {
   id: string;
   token: string;
   type: string;
   name: string;
   deviceName: string | undefined | null;
-  permissions: Array<Permission>;
+  permissions: Array<PermissionLike>;
   lastUsed: number | undefined | null;
   expireAfter: number | undefined | null;
   expires: number | undefined | null;
@@ -26,7 +26,7 @@ type Access = {
   modified: number;
   modifiedBy: string;
 };
-type Permission = {
+type PermissionLike = {
   streamId: string;
   level: string;
   feature: string | undefined | null;

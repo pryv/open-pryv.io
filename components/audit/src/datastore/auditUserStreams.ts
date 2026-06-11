@@ -19,7 +19,7 @@ type AuditStreamItem = {
   trashed?: boolean;
 };
 
-type StreamQuery = {
+type StreamQueryLike = {
   parentId?: string | null;
   [k: string]: unknown;
 };
@@ -28,8 +28,8 @@ type AuditAccess = { term: string };
 type AuditAction = { term: string };
 
 interface AuditUserStreams {
-  get (userId: string, query: StreamQuery): Promise<AuditStreamItem[]>;
-  getOne (userId: string, streamId: string, query: StreamQuery): Promise<AuditStreamItem | null>;
+  get (userId: string, query: StreamQueryLike): Promise<AuditStreamItem[]>;
+  getOne (userId: string, streamId: string, query: StreamQueryLike): Promise<AuditStreamItem | null>;
 }
 
 /**
@@ -59,7 +59,7 @@ const auditStreams: AuditStreamItem[] = [accessesStream, actionsStream];
 Object.freeze(auditStreams);
 
 const auditUserStreams: AuditUserStreams = ds.createUserStreams({
-  async get (userId: string, query: StreamQuery): Promise<AuditStreamItem[]> {
+  async get (userId: string, query: StreamQueryLike): Promise<AuditStreamItem[]> {
     if (query.parentId === '*' || query.parentId == null) {
       // Return fresh clones: `auditStreams` and its members are Object.freeze'd
       // module-scope singletons. The caller (mall's addStoreIdPrefixToStreams)
@@ -73,7 +73,7 @@ const auditUserStreams: AuditUserStreams = ds.createUserStreams({
     return parent.children;
   },
 
-  async getOne (userId: string, streamId: string, query: StreamQuery): Promise<AuditStreamItem | null> {
+  async getOne (userId: string, streamId: string, query: StreamQueryLike): Promise<AuditStreamItem | null> {
     // list accesses
     if (streamId === accessesStream.id) {
       const userStorage = await audit.storage.forUser(userId);
