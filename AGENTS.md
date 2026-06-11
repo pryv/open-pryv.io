@@ -177,7 +177,8 @@ Naming: a bare `Xxx` is a canonical type defined once and imported (`import type
 
 - **Method-context scratch fields**: api-server method chains refine the context as `type MethodContext = BaseMethodContext & { myField?: T }` with *named, typed* fields — never `[key: string]: any`. A field written by one component and read by another belongs on the base `MethodContext` class. Mid-chain reads of step-populated fields use one capture with an invariant comment: `const x = context.x!; // Invariant: <populating step> ran earlier in this chain.`
 - **DI-seam narrow views**: modules that receive dependencies for fake-based unit testing (CMC handlers) type them with the shared narrow views (`cmc/src/_types.ts`), not the full interfaces.
-- **Typed require handles**: when a `require()`d module erases a useful signature (e.g. a `: never` throw helper), re-bind it: `const m: typeof import('./m.ts') = require('./m.ts');`.
+- **Typed require handles**: when a `require()`d module erases a useful signature (e.g. a `: never` throw helper), re-bind it: `const m: typeof import('./m.ts') = require('./m.ts');`. This applies to **class extends too** — `class X extends require('./Base.ts').Base` makes the parent `any` and silences ALL override-compatibility checking; re-bind the require (`const { Base } = require('./Base.ts') as typeof import('./Base.ts');`) so the inheritance seam is checked.
+- **Generic storage bases**: `BaseStoragePG<T>` / `BaseStorageSQLite<TItem>` are generic over the stored item shape and declare `implements UserStorage<T>`. Collection subclasses bind their item type (`extends BaseStoragePG<StoredAccess>`); free-form collections (profile) stay on the default `StoredItem`. Override callbacks carry `T | null` to match the base contracts — don't strip the `| null`.
 
 ## Config precedence
 

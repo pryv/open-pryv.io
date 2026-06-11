@@ -1,5 +1,9 @@
 # Changelog - Internal (no API impact)
 
+## refactor(types): typed inheritance seam on the storage engine classes
+
+The per-store engine classes (Accesses/Streams/Webhooks/Profile × PG/SQLite) used to extend their bases through an untyped `require()`, which made the parent type `any` and silenced all override-compatibility checking — the blind spot the `findDeletions` shadowing shipped through. The bases are now generic over the stored item shape (`BaseStoragePG<T>` / `BaseStorageSQLite<TItem>`), declare `implements UserStorage<T>`, and every subclass extends through a typed require handle binding its item type (new `StoredWebhook` in `interfaces/_shared/domain.ts`). One cross-engine payload fix shipped with it (latent — no caller reads it): `AccessesPG.delete` in the integrity path now delivers `{ modifiedCount, integrityRecomputed }` like the SQLite twin, instead of the raw recompute result. Type-coverage floor unchanged at 81 (actual 81.97%).
+
 ## refactor(types): strongly-typed storage and data-access contracts
 
 The storage interfaces, their engine implementations and the main callers now exchange real domain types instead of structural bags. All type-level — no runtime behavior changed (two deliberate exceptions below); both engine matrices and CI stayed green throughout.
