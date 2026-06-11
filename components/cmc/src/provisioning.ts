@@ -46,12 +46,8 @@ type StreamCreateParams = {
   [k: string]: unknown;
 };
 
-type Mall = {
-  streams: {
-    create (userId: string, params: StreamCreateParams): Promise<unknown>;
-    getOne?: (userId: string, params: Record<string, unknown>) => Promise<unknown>;
-  };
-};
+import type { MallStreamsLike } from './_types.ts';
+type Mall = { streams: MallStreamsLike };
 
 type ProvisionLogger = {
   debug: (msg: string, ...rest: unknown[]) => void;

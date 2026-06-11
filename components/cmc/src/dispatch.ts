@@ -49,30 +49,13 @@ type CmcEvent = {
   [k: string]: unknown;
 };
 
-type CmcAccess = {
-  id?: string;
-  clientData?: { cmc?: { role?: string; [k: string]: unknown }; [k: string]: unknown };
-  [k: string]: unknown;
-};
+import type { CmcAccessLike as CmcAccess, MallLike } from './_types.ts';
 
 // Mall proxy types — these methods accept and return runtime payloads that
 // vary by call site (Mongo-style queries, partial events, partial accesses).
 // Keep param/result as `unknown` rather than `any` so consumers get the
 // is-undefined check signal at least, but don't model the deep variants.
-type MallLike = {
-  accesses: {
-    create: (userId: string, params: unknown) => Promise<unknown>;
-    delete?: (userId: string, params: unknown) => Promise<unknown>;
-    update?: (userId: string, params: unknown) => Promise<unknown>;
-    get?: (userId: string, params?: unknown) => Promise<CmcAccess[]>;
-  };
-  events: {
-    update: (userId: string, params: unknown) => Promise<unknown>;
-    create: (userId: string, params: unknown) => Promise<unknown>;
-    get?: (userId: string, params?: unknown) => Promise<unknown[]>;
-  };
-  streams: { create: (userId: string, params: unknown) => Promise<unknown> };
-};
+
 
 
 type DispatchDeps = {

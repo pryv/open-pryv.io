@@ -74,16 +74,12 @@ function parseChatStreamId (streamId: string): ParsedChatStream | null {
 
 type Counterparty = { username: string; host: string };
 
-type AccessLike = {
-  id: string;
-  type?: string;
-  clientData?: { cmc?: { role?: string; counterparty?: Counterparty; appCode?: string; [k: string]: unknown }; [k: string]: unknown };
-};
+import type { CmcAccessLike as AccessLike, MallAccessesLike } from './_types.ts';
 
 type FindAccessParams = {
   userId: string;
   counterparty: Counterparty;
-  mall: { accesses: { get: (userId: string, params?: Record<string, unknown>) => Promise<AccessLike[]> } };
+  mall: { accesses: MallAccessesLike };
 };
 
 /**

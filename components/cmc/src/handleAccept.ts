@@ -43,14 +43,8 @@ type OfferShape = {
   [k: string]: unknown;
 };
 
-type MallLike = {
-  accesses: {
-    create: (userId: string, params: unknown) => Promise<unknown>;
-    delete?: (userId: string, params: unknown) => Promise<unknown>;
-  };
-  events: { update: (userId: string, params: unknown) => Promise<unknown> };
-  streams?: { create: (userId: string, params: unknown) => Promise<unknown> };
-};
+import type { MallAccessesLike, MallEventsLike, MallStreamsLike } from './_types.ts';
+type MallLike = { accesses: MallAccessesLike; events: MallEventsLike; streams?: MallStreamsLike };
 
 
 type AcceptHandlerResult =
@@ -197,7 +191,9 @@ async function handleAccept (params: {
   // 3. Create the local data-grant access.
   let dataGrantAccess: { id?: string; token?: string; apiEndpoint?: string; [k: string]: unknown } | undefined;
   try {
-    dataGrantAccess = (await mall.accesses.create(userId, dataGrantPayload)) as { id?: string; token?: string; apiEndpoint?: string; [k: string]: unknown };
+    // Invariant: dataGrantPayload is assigned in the build step above; the
+    // earlier catch returns before reaching this call.
+    dataGrantAccess = (await mall.accesses.create(userId, dataGrantPayload!)) as { id?: string; token?: string; apiEndpoint?: string; [k: string]: unknown };
   } catch (err: unknown) {
     return {
       ok: false,

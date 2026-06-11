@@ -44,16 +44,8 @@ type CmcAccessCd = {
   capability?: CapabilityCd;
   [k: string]: unknown;
 };
-type AccessRow = { id: string; token?: string; apiEndpoint?: string; clientData?: { cmc?: CmcAccessCd; [k: string]: unknown }; [k: string]: unknown };
-type MallParams = Record<string, unknown>;
-type MallLike = {
-  streams: { create: (userId: string, params: MallParams) => Promise<unknown>; delete?: (userId: string, params: MallParams) => Promise<unknown> };
-  events:  { create: (userId: string, params: MallParams) => Promise<unknown> };
-  accesses:{ create: (userId: string, params: MallParams) => Promise<AccessRow>;
-             update?: (userId: string, params: MallParams) => Promise<AccessRow>;
-             get?:    (userId: string, params?: MallParams) => Promise<AccessRow[]>;
-             delete?: (userId: string, params: MallParams) => Promise<unknown> };
-};
+import type { CmcAccessLike as AccessRow, MallLike } from './_types.ts';
+
 
 /**
  * Capability semantics chosen at mint time.

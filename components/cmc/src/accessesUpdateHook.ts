@@ -51,26 +51,9 @@ function runWithSuppression<T> (fn: () => Promise<T>): Promise<T> {
   return suppressionStorage.run({ suppressed: true }, fn);
 }
 
-type CmcAccessClientData = {
-  cmc?: {
-    role?: string;
-    appCode?: string;
-    counterparty?: { username?: string; host?: string; apiEndpoint?: string; [k: string]: unknown };
-    [k: string]: unknown;
-  };
-  [k: string]: unknown;
-};
+import type { CmcAccessLike as AccessLike, MallEventsLike, MallAccessesLike } from './_types.ts';
 
-type AccessLike = {
-  id: string;
-  permissions?: unknown[];
-  clientData?: CmcAccessClientData;
-};
-
-type MallLike = {
-  events: { create: (userId: string, params: Record<string, unknown>) => Promise<{ id?: string; [k: string]: unknown }> };
-  accesses?: { get: (userId: string, params?: Record<string, unknown>) => Promise<AccessLike[]> };
-};
+type MallLike = { events: MallEventsLike; accesses?: MallAccessesLike };
 
 
 

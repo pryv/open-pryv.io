@@ -34,18 +34,9 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const capabilityMod = require('./capability.ts');
 
-type AccessLike = {
-  id: string;
-  clientData?: { cmc?: { capability?: { mode?: string; [k: string]: unknown }; [k: string]: unknown }; [k: string]: unknown };
-  [k: string]: unknown;
-};
+import type { CmcAccessLike as AccessLike, MallAccessesLike } from './_types.ts';
 
-type MallLike = {
-  accesses: {
-    update?: (userId: string, params: Record<string, unknown>) => Promise<unknown>;
-    get?: (userId: string, params?: Record<string, unknown>) => Promise<AccessLike[]>;
-  };
-};
+type MallLike = { accesses: MallAccessesLike };
 
 type InvalidateLinkEventContent = {
   capabilityId?: unknown;

@@ -49,26 +49,10 @@ import type { OutboundDeps } from './_types.ts';
 
 type Counterparty = { username: string; host: string };
 
-type CmcClientData = {
-  role?: string;
-  appCode?: string;
-  counterparty?: { username?: string; host?: string; apiEndpoint?: string };
-  peerAccessId?: string;
-  [k: string]: unknown;
-};
-type AccessLike = {
-  id: string;
-  type?: string;
-  clientData?: { cmc?: CmcClientData; [k: string]: unknown };
-};
+import type { CmcAccessLike as AccessLike, MallAccessesLike } from './_types.ts';
 type MallParams = Record<string, unknown>;
 
-type MallLike = {
-  accesses: {
-    get: (userId: string, params?: MallParams) => Promise<AccessLike[]>;
-    delete?: (userId: string, params: MallParams) => Promise<unknown>;
-  };
-};
+type MallLike = { accesses: MallAccessesLike };
 
 
 type RevokeHandlerResult =

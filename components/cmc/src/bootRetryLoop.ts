@@ -31,7 +31,7 @@ const { dispatch } = require('./dispatch.ts');
 
 // Mall handle — pure pass-through to dispatch/retryScheduler (untyped
 // requires); never inspected here.
-type MallLike = unknown;
+import type { MallLike } from './_types.ts';
 type Identity = { username?: string; host?: string; apiEndpoint?: string; [k: string]: unknown };
 type BootDeps = {
   config: { get: (key: string) => unknown };

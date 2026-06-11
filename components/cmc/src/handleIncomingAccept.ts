@@ -55,14 +55,7 @@ const capabilityMod = require('./capability.ts');
 
 type Counterparty = { username: string; host: string };
 
-type AccessLike = {
-  id: string;
-  name?: string;
-  apiEndpoint?: string;
-  permissions?: Array<Record<string, unknown>>;
-  clientData?: Record<string, unknown>;
-  [k: string]: unknown;
-};
+import type { CmcAccessLike as AccessLike, MallLike } from './_types.ts';
 
 type IncomingAcceptResult =
   | {
@@ -79,19 +72,6 @@ type IncomingAcceptResult =
       detail?: unknown;
     };
 
-type MallLike = {
-  accesses: {
-    create: (userId: string, params: unknown) => Promise<AccessLike>;
-    update?: (userId: string, params: unknown) => Promise<AccessLike | null | undefined>;
-    get?: (userId: string, params?: unknown) => Promise<unknown[]>;
-  };
-  events: {
-    get: (userId: string, params?: unknown) => Promise<unknown[]>;
-    create: (userId: string, params: unknown) => Promise<unknown>;
-    update?: (userId: string, params: unknown) => Promise<unknown>;
-  };
-  streams: { create: (userId: string, params: unknown) => Promise<unknown> };
-};
 
 type SelfIdentity = { username: string; host: string };
 

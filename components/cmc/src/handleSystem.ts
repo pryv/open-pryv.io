@@ -67,12 +67,7 @@ function parseCollectorStreamId (streamId: string): ParsedCollectorStream | null
   return { appCode, scopeStreamId, counterpartySlug, counterparty };
 }
 
-type AccessLike = {
-  id: string;
-  type?: string;
-  clientData?: Record<string, unknown>;
-  permissions?: Array<Record<string, unknown>>;
-};
+import type { CmcAccessLike as AccessLike, MallAccessesLike } from './_types.ts';
 
 
 type SystemHandlerResult =
@@ -139,7 +134,7 @@ async function handleSystemEvent (params: {
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
   deps: {
-    mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } };
+    mall: { accesses: MallAccessesLike };
     fetch: OutboundDeps['fetch'];
     timeoutMs?: number;
     logger?: CmcLogger;
@@ -255,7 +250,7 @@ async function handleSystemAlert (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: CmcLogger; [k: string]: unknown };
+  deps: { mall: { accesses: MallAccessesLike }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: CmcLogger; [k: string]: unknown };
 }): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_ALERT) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
@@ -270,7 +265,7 @@ async function handleSystemAck (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: CmcLogger; [k: string]: unknown };
+  deps: { mall: { accesses: MallAccessesLike }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: CmcLogger; [k: string]: unknown };
 }): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_ACK) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
@@ -294,7 +289,7 @@ async function handleSystemScopeRequest (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: CmcLogger; [k: string]: unknown };
+  deps: { mall: { accesses: MallAccessesLike }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: CmcLogger; [k: string]: unknown };
 }): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_SCOPE_REQUEST) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };
@@ -320,7 +315,7 @@ async function handleSystemScopeUpdate (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[] };
   selfIdentity: Counterparty;
-  deps: { mall: { accesses: { get: (userId: string, params?: unknown) => Promise<AccessLike[]>; update: (userId: string, params: { id: string; update: Record<string, unknown> }) => Promise<unknown> } }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: CmcLogger; [k: string]: unknown };
+  deps: { mall: { accesses: MallAccessesLike }; fetch: (url: string, init?: RequestInit) => Promise<Response>; logger?: CmcLogger; [k: string]: unknown };
 }): Promise<SystemHandlerResult> {
   if (params.triggerEvent.type !== C.ET_SYSTEM_SCOPE_UPDATE) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: params.triggerEvent.type } };

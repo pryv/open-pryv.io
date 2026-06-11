@@ -40,7 +40,7 @@ const require = createRequire(import.meta.url);
  *     local-apply branch).
  */
 
-type AccessRow = { id: string; token?: string; apiEndpoint?: string; [k: string]: unknown };
+import type { CmcAccessLike as AccessRow } from './_types.ts';
 type AccessQuery = Record<string, unknown>;
 type AccessUpdate = Record<string, unknown>;
 type AccessOptions = Record<string, unknown>;

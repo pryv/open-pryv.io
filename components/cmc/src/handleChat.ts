@@ -35,22 +35,7 @@ const chatOrch = require('./chatOrchestration.ts');
 
 type Counterparty = { username: string; host: string };
 
-type CmcClientData = {
-  cmc?: {
-    role?: string;
-    appCode?: string;
-    features?: { chat?: boolean; [k: string]: unknown };
-    counterparty?: { username?: string; host?: string; apiEndpoint?: string; remoteChatStreamId?: string; [k: string]: unknown };
-    [k: string]: unknown;
-  };
-  [k: string]: unknown;
-};
-
-type AccessLike = {
-  id: string;
-  type?: string;
-  clientData?: CmcClientData;
-};
+import type { CmcAccessLike as AccessLike } from './_types.ts';
 
 
 type ChatHandlerResult =

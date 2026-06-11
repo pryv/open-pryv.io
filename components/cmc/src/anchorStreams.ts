@@ -25,9 +25,8 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 
-type MallLike = {
-  streams: { create: (userId: string, params: Record<string, unknown>) => Promise<unknown> };
-};
+import type { MallStreamsLike } from './_types.ts';
+type MallLike = { streams: MallStreamsLike };
 
 type ProvisionResult = {
   ok: boolean;

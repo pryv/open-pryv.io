@@ -29,11 +29,7 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const capabilityMod = require('./capability.ts');
 
-type MallLike = {
-  streams: { create: (userId: string, params: Record<string, unknown>) => Promise<unknown> };
-  events:  { create: (userId: string, params: Record<string, unknown>) => Promise<unknown> };
-  accesses:{ create: (userId: string, params: Record<string, unknown>) => Promise<unknown> };
-};
+import type { MallLike } from './_types.ts';
 
 type ErrorFactory = {
   invalidOperation: (message: string, details?: Record<string, unknown>) => Error;

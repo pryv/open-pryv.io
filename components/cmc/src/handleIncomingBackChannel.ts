@@ -42,23 +42,8 @@ type Counterparty = {
   remoteCollectorStreamId?: string;
 };
 
-type CmcAccessClientData = {
-  role?: string;
-  counterparty?: Counterparty;
-  appCode?: string;
-  backChannelApiEndpoint?: string;
-  [k: string]: unknown;
-};
-
-type AccessClientData = {
-  cmc?: CmcAccessClientData;
-  [k: string]: unknown;
-};
-
-type AccessLike = {
-  id: string;
-  clientData?: AccessClientData;
-};
+import type { CmcAccessLike as AccessLike, MallAccessesLike, CmcClientData, CounterpartyRef } from './_types.ts';
+type AccessClientData = { cmc?: CmcClientData; [k: string]: unknown };
 
 type AccessGetParams = Record<string, unknown>;
 type AccessUpdateParams = {
@@ -66,12 +51,7 @@ type AccessUpdateParams = {
   update: { clientData: AccessClientData };
 };
 
-type MallLike = {
-  accesses: {
-    get?: (userId: string, params?: AccessGetParams) => Promise<AccessLike[]>;
-    update?: (userId: string, params: AccessUpdateParams) => Promise<unknown>;
-  };
-};
+type MallLike = { accesses: MallAccessesLike };
 
 type BackChannelEventContent = {
   from?: { username?: unknown; host?: unknown };
@@ -155,8 +135,8 @@ async function handleIncomingBackChannel (params: {
     return { ok: false, reason: 'cmc-back-channel-mall-no-update' };
   }
 
-  const existingCmc: CmcAccessClientData = chosen.clientData?.cmc || {};
-  const existingCp: Counterparty = existingCmc.counterparty || { username: fromUsername, host: fromHost };
+  const existingCmc: CmcClientData = chosen.clientData?.cmc || {};
+  const existingCp: CounterpartyRef = existingCmc.counterparty || { username: fromUsername, host: fromHost };
   const updatedCp: Counterparty = {
     ...existingCp,
     username: fromUsername,

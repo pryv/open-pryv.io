@@ -520,9 +520,7 @@ function createAccessUpdateForgePreventionHook (deps: Deps): Middleware {
  * worse.
  */
 
-type Mall = {
-  streams: { create: (userId: string, params: Record<string, unknown>) => Promise<unknown> };
-};
+type Mall = { streams: import('./_types.ts').MallStreamsLike };
 
 type ProvisionLogger = {
   debug?: (msg: string, ...rest: unknown[]) => void;
