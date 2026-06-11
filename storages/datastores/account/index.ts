@@ -25,6 +25,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const ds = require('@pryv/datastore');
+const { CONTENT_QUERY_SUPPORT } = require('../../shared/contentQueryConditions.ts');
 const AccountUserStreams = require('./AccountUserStreams.ts');
 const AccountUserEvents = require('./AccountUserEvents.ts');
 
@@ -79,6 +80,8 @@ const accountStore = (ds.createDataStore as (impl: unknown) => unknown)({
 
   streams: null,
   events: null,
+
+  supports () { return CONTENT_QUERY_SUPPORT; },
 
   async deleteUser (userId: string) {
     if (userAccountStorage) {

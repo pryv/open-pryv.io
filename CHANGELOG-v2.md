@@ -1,5 +1,19 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Content queries: filter `events.get` by `content` / `clientData`
+
+Two new `events.get` parameters — `content` and `clientData` — each an array of conditions on dot-paths into the corresponding event field, e.g. `[{"path":"drug.codes.atc","in":["G03DA04","B01AC06"]},{"path":"taken","eq":true}]`. Conditions AND together and compose with all existing parameters (`streams`, `types`, time bounds, paging).
+
+- **Operators:** `eq`, `neq`, `in`, `exists`, `gt`, `gte`, `lt`, `lte`, `prefix` (`prefix` covers hierarchical code classes, e.g. ATC `"G03DA"`). Paths use dot-separated segments (`[a-zA-Z0-9_:-]`; colon-namespaced `clientData` keys are queryable) or the reserved `$` addressing the root value of scalar content.
+- **Strict JSON-type matching** on both engines: `eq: true` matches JSON `true` only — never `1`, never `"true"`; numbers likewise. A missing path never matches; current event versions only.
+- **Always available, indexes optional.** Queries are correct on every deployment with no migration (engines scan). The new platform-wide `storages.contentIndexes` config declares paths to accelerate; the PostgreSQL engine reconciles partial expression indexes against the declaration at startup (created `CONCURRENTLY`, dropped when undeclared). SQLite serves content queries by scan.
+- **Capability discovery.** `GET /service/info` advertises `features.contentQueries: true`; custom data stores declare per-field/per-operator support via the new `DataStore.supports` (`@pryv/datastore` 1.1.0), surfaced to clients in the `clientData` of the store's root pseudo-stream (`pryv-datastore:supports`). Conditions aimed at a store without the capability are rejected with `invalid-operation` instead of returning silently-unfiltered results.
+- **Errors:** malformed conditions yield `invalid-parameters-format` naming the offending condition; older servers reject the unknown parameters with the same hard 400 signal.
+- **lib-js** (`pryv` npm, unreleased branch): conditions pass through `events.get`/`getEventsStreamed`; new `Connection.getLatestByContent(path, values, baseQuery)` (latest event per value, paged — typical form-prefill) and `Service.supportsContentQueries()`.
+- **Cross-reference convention:** outbound event references live under the bare `related` key of `clientData` as `{ "<eventId>": "<relation-label>" }`; reverse lookup is an ordinary `clientData` query (`{"path":"related.<eventId>","exists":true}`).
+
 ## 2.0.0-rc.1 — 2026-06-03
 
 First Release Candidate of open-pryv.io v2. The runtime has been production-deployed since 2026-04-23 on pryv.me (two-core cluster, 14 real users, 28K events, 264 attachments). lib-js conformance against deployed infra: 168/169 (the missing one is the documented HF case on raw deploys without nginx ingress, see "Known gaps in v2.0.0" below).

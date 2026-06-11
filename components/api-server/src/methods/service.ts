@@ -38,6 +38,12 @@ export default function (api: { register: (...args: unknown[]) => void }) {
     if (serviceInfo.features.noHF === undefined && (config.get('cluster:hfsWorkers') || 0) === 0) {
       serviceInfo.features.noHF = true;
     }
+    // Content-query support flag (events.get `content` / `clientData`
+    // condition parameters) — lets clients pick the content-query path
+    // instead of probing for a 400 on older servers.
+    if (serviceInfo.features.contentQueries === undefined) {
+      serviceInfo.features.contentQueries = true;
+    }
     // Surface the API version so SDKs can pick the direct-core
     // registration endpoint (>=1.6.0) — the legacy fallback POSTs to
     // `/reg/user` via reg.{domain} which round-robins across cores and

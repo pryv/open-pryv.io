@@ -22,6 +22,10 @@ const boolean = helpers.boolean;
 const __ex_get = {
     params: object({
       streams: {},
+      // content / clientData conditions are coerced + validated
+      // programmatically (storages/shared/contentQueryConditions.ts)
+      content: {},
+      clientData: {},
       types: array(string({ pattern: '^(series:)?[a-z0-9-]+/(\\*|[a-z0-9-]+)$' }), { nullable: true }),
       fromTime: number(),
       toTime: number(),

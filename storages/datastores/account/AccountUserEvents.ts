@@ -12,6 +12,8 @@ const require = createRequire(import.meta.url);
 const ds = require('@pryv/datastore');
 const { Readable } = require('stream');
 const timestamp = require('unix-timestamp');
+const { matchesConditions } = require('../../shared/contentQueryConditions.ts');
+import type { NormalizedCondition } from '../../shared/contentQueryConditions.ts';
 
 type StreamConfig = { id: string; type: string; [k: string]: unknown };
 type Event = {
@@ -34,6 +36,8 @@ type EventQuery = {
   fromTime?: number;
   toTime?: number;
   modifiedSince?: number;
+  content?: NormalizedCondition[];
+  clientData?: NormalizedCondition[];
 };
 type StreamCondition = { any?: string[]; not?: string[] };
 type StreamGroup = StreamCondition | StreamCondition[];
@@ -245,6 +249,12 @@ function filterByQuery (events: Event[], query: EventQuery | null | undefined): 
 
   if (query.modifiedSince != null) {
     events = events.filter((e) => e.modified >= query.modifiedSince!);
+  }
+
+  if (query.content != null || query.clientData != null) {
+    const conditions = [...(query.content ?? []), ...(query.clientData ?? [])];
+    // Account events carry no clientData — the matcher treats it as absent.
+    events = events.filter((e) => matchesConditions({ content: e.content }, conditions));
   }
 
   return events;

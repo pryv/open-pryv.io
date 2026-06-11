@@ -17,6 +17,7 @@ const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 const eventsSchema = require('./schema/events.ts');
 const fullTextSearch = require('./fullTextSearch.ts');
 const { toSQLiteQuery } = require('./streamQueryUtils.ts');
+import type { NormalizedCondition, ScalarValue } from '../../../../shared/contentQueryConditions.ts';
 
 // ---- Types ----
 
@@ -358,8 +359,74 @@ const converters: Record<string, (content: unknown) => string | null> = {
     const str = toSQLiteQuery(content);
     if (str === null) return null;
     return 'streamIds MATCH \'' + str + '\'';
+  },
+  jsonCondition: (content: unknown) => {
+    return jsonConditionToSql(content as NormalizedCondition);
   }
 };
+
+/**
+ * Translate a normalized content/clientData condition to SQL.
+ * Matching is strict on JSON types (semantics defined by the reference
+ * matcher in storages/shared/contentQueryConditions.ts): `json_type()`
+ * guards keep JSON `true` from matching `1` (json_extract maps both to 1)
+ * and keep array/object values out of scalar comparisons.
+ */
+function jsonConditionToSql (condition: NormalizedCondition): string {
+  const col = condition.field === 'clientData' ? 'clientData' : 'content';
+  // Segments are grammar-validated ([a-zA-Z0-9_:-]) — always quote them so
+  // ':' and '-' never need json-path escaping rules.
+  const jsonPath = condition.path === null
+    ? '$'
+    : '$' + condition.path.map((segment) => `."${segment}"`).join('');
+  const jx = `json_extract(${col}, '${jsonPath}')`;
+  const jt = `json_type(${col}, '${jsonPath}')`;
+
+  const eqSql = (value: ScalarValue): string => {
+    if (typeof value === 'boolean') return `${jt} = '${value ? 'true' : 'false'}'`;
+    if (typeof value === 'number') return `(${jt} IN ('integer', 'real') AND ${jx} = ${value})`;
+    return `(${jt} = 'text' AND ${jx} = ${sqliteString(value)})`;
+  };
+
+  switch (condition.op) {
+    case 'eq':
+      return eqSql(condition.value as ScalarValue);
+    case 'neq':
+      return `(${jt} IS NOT NULL AND NOT ${eqSql(condition.value as ScalarValue)})`;
+    case 'in': {
+      const values = condition.value as ScalarValue[];
+      const strings = values.filter((v): v is string => typeof v === 'string');
+      const numbers = values.filter((v): v is number => typeof v === 'number');
+      const booleans = values.filter((v): v is boolean => typeof v === 'boolean');
+      const groups: string[] = [];
+      if (strings.length > 0) groups.push(`(${jt} = 'text' AND ${jx} IN (${strings.map(sqliteString).join(', ')}))`);
+      if (numbers.length > 0) groups.push(`(${jt} IN ('integer', 'real') AND ${jx} IN (${numbers.join(', ')}))`);
+      if (booleans.includes(true) && booleans.includes(false)) groups.push(`${jt} IN ('true', 'false')`);
+      else if (booleans.length > 0) groups.push(`${jt} = '${booleans[0] ? 'true' : 'false'}'`);
+      return groups.length === 1 ? groups[0] : `(${groups.join(' OR ')})`;
+    }
+    case 'exists':
+      return `${jt} IS ${condition.value === true ? 'NOT ' : ''}NULL`;
+    case 'gt':
+    case 'gte':
+    case 'lt':
+    case 'lte': {
+      const sqlOp = { gt: '>', gte: '>=', lt: '<', lte: '<=' }[condition.op];
+      return `(${jt} IN ('integer', 'real') AND ${jx} ${sqlOp} ${condition.value as number})`;
+    }
+    case 'prefix': {
+      const escaped = (condition.value as string).replace(/[!%_]/g, (m) => '!' + m);
+      return `(${jt} = 'text' AND ${jx} LIKE ${sqliteString(escaped + '%')} ESCAPE '!')`;
+    }
+    default:
+      throw new Error(`Unsupported JSON condition operator: ${(condition as { op: string }).op}`);
+  }
+}
+
+/** Proper SQLite string literal ('' doubling — backslash is NOT an escape in SQL). */
+function sqliteString (value: string): string {
+  return "'" + value.replaceAll("'", "''") + "'";
+}
 
 function prepareQuery (params: GetParams = { query: [] }, isDelete = false): string {
   const ands: string[] = [];
@@ -399,4 +466,4 @@ function prepareQuery (params: GetParams = { query: [] }, isDelete = false): str
   return queryString;
 }
 
-export { UserDatabase };
+export { UserDatabase, jsonConditionToSql };

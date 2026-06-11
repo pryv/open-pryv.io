@@ -12,6 +12,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const timestamp = require('unix-timestamp');
+import type { NormalizedCondition } from './contentQueryConditions.ts';
 const DELTA_TO_CONSIDER_IS_NOW = 5; // 5 seconds
 
 const localStoreEventQueries = {
@@ -34,6 +35,8 @@ type StoreQuery = {
   fromTime?: number | null;
   toTime?: number | null;
   running?: boolean;
+  content?: NormalizedCondition[];
+  clientData?: NormalizedCondition[];
 };
 type LocalQueryItem = { type: string; content: unknown };
 type LocalOptions = {
@@ -83,6 +86,14 @@ function localStorePrepareQuery (query: StoreQuery): LocalQueryItem[] {
   // if streams are defined
   if (query.streams && query.streams.length !== 0) {
     localQuery.push({ type: 'streamsQuery', content: query.streams });
+  }
+
+  // content / clientData JSON conditions (one item per condition, ANDed)
+  for (const fieldConditions of [query.content, query.clientData]) {
+    if (fieldConditions == null) continue;
+    for (const condition of fieldConditions) {
+      localQuery.push({ type: 'jsonCondition', content: condition });
+    }
   }
 
   // -------------- time selection -------------- //

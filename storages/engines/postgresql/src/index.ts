@@ -210,6 +210,20 @@ function createAuditStorage (): unknown {
 }
 
 /**
+ * Reconcile content-query acceleration indexes against the platform-wide
+ * `storages.contentIndexes` declaration. Optional engine capability —
+ * engines without it (e.g. SQLite, scan-only) are simply skipped.
+ */
+async function reconcileContentIndexes (declarations: unknown): Promise<unknown> {
+  const { reconcileContentIndexes: reconcile } = require('./contentIndexReconciler.ts');
+  return await reconcile(
+    _internals.databasePG,
+    declarations,
+    _internals.lazyLogger('content-index-reconciler')
+  );
+}
+
+/**
  * Build the migrations capability for the engine-agnostic MigrationRunner.
  * Returns null when the engine hasn't been initialized yet (databasePG not registered).
  */
@@ -227,4 +241,5 @@ export { init,
   createPlatformDB,
   createSeriesConnection,
   createAuditStorage,
-  getMigrationsCapability };
+  getMigrationsCapability,
+  reconcileContentIndexes };

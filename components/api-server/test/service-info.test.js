@@ -59,6 +59,14 @@ describe('[SINF] Service', () => {
       assert.ok(version, 'expected version field to be populated');
     });
 
+    it('[SN03] advertises features.contentQueries=true', async () => {
+      const path = '/' + username + '/service/info';
+      const res = await coreRequest.get(path);
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.features && res.body.features.contentQueries, true,
+        'expected features.contentQueries=true');
+    });
+
     it('[SN02] auto-derives features.noHF=true when cluster.hfsWorkers===0', async () => {
       // Test-config defaults `cluster.hfsWorkers: 1`, so noHF is NOT
       // auto-derived in the [FR4K] response. Force the no-HF case by

@@ -10,6 +10,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const storeDataUtils = require('./storeDataUtils.ts');
+import type { NormalizedCondition } from '../../../../storages/shared/contentQueryConditions.ts';
 
 type StreamId = string;
 type StreamQueryItem = {
@@ -30,6 +31,8 @@ type EventsParams = {
   sortAscending?: boolean;
   skip?: number;
   limit?: number;
+  content?: NormalizedCondition[];
+  clientData?: NormalizedCondition[];
   [k: string]: unknown;
 };
 type StoreContext = { storeId: string | null };
@@ -184,5 +187,7 @@ function getStoreQueryFromParams (params: EventsParams) {
   if (params.types != null && params.types.length > 0) { query.types = params.types; }
   if (params.running != null) { query.running = params.running; }
   if (params.modifiedSince != null) { query.modifiedSince = params.modifiedSince; }
+  if (params.content != null) { query.content = params.content; }
+  if (params.clientData != null) { query.clientData = params.clientData; }
   return query;
 }

@@ -17,7 +17,10 @@ const eventsUtils = require('./helpers/eventsUtils.ts');
 const eventsQueryUtils = require('./helpers/eventsQueryUtils.ts');
 
 const errorFactory = require('errors').factory;
+const { getConditionsSupportError } = require('../../../storages/shared/contentQueryConditions.ts');
+import type { NormalizedCondition, StoreSupports } from '../../../storages/shared/contentQueryConditions.ts';
 const integrity = require('business/src/integrity/index.ts').default;
+
 
 const { Readable } = require('stream');
 
@@ -48,7 +51,7 @@ type EventsStore = any; // Each store's UserEvents implementation; varied per ba
 type StoreSettings = Record<string, unknown>;
 type ParamsByStore = Record<string, { query?: EventQuery; options?: EventOptions } | undefined>;
 type StoresHolder = {
-  storesById: Map<string, { events: EventsStore }>;
+  storesById: Map<string, { events: EventsStore, supports?: () => StoreSupports }>;
   storeDescriptionsByStore: Map<unknown, { settings: StoreSettings }>;
 };
 type Transaction = { getStoreTransaction?: (storeId: string) => unknown; [k: string]: unknown } | null | undefined;
@@ -68,12 +71,33 @@ type UpdateStreamedManyUpdate = {
 class MallUserEvents {
   eventsStores: Map<string, EventsStore> = new Map();
   storeSettings: Map<string, StoreSettings> = new Map();
+  storeSupports: Map<string, StoreSupports> = new Map();
 
   constructor (storesHolder: StoresHolder) {
     for (const [storeId, store] of storesHolder.storesById) {
       this.eventsStores.set(storeId, store.events);
       this.storeSettings.set(storeId, storesHolder.storeDescriptionsByStore.get(store)!.settings);
+      this.storeSupports.set(storeId, typeof store.supports === 'function' ? store.supports() : {});
     }
+  }
+
+  /**
+   * Check content/clientData conditions in `params` against the store's
+   * capability declaration (`DataStore.supports`). Returns an error detail
+   * string, or null when the store can serve the query.
+   */
+  getContentQuerySupportError (storeId: string, params: unknown): string | null {
+    if (params == null || typeof params !== 'object') return null;
+    const p = params as { content?: NormalizedCondition[], clientData?: NormalizedCondition[] };
+    if (p.content == null && p.clientData == null) return null;
+    const conditions = [...(p.content ?? []), ...(p.clientData ?? [])];
+    const detail = getConditionsSupportError(this.storeSupports.get(storeId), conditions);
+    return detail == null ? null : `Store '${storeId}': ${detail}.`;
+  }
+
+  _assertContentQuerySupported (storeId: string, params: unknown): void {
+    const detail = this.getContentQuerySupportError(storeId, params);
+    if (detail != null) throw errorFactory.invalidOperation(detail);
   }
 
   // ----------------- GET ----------------- //
@@ -155,6 +179,7 @@ class MallUserEvents {
     for (const storeId of Object.keys(paramsByStore)) {
       const eventsStore = this.eventsStores.get(storeId);
       const params = paramsByStore[storeId];
+      this._assertContentQuerySupported(storeId, params);
       try {
         const query = eventsQueryUtils.getStoreQueryFromParams(params);
         const options = eventsQueryUtils.getStoreOptionsFromParams(params);
@@ -179,6 +204,7 @@ class MallUserEvents {
     const storeId = Object.keys(paramsByStore)[0];
     const eventsStore = this.eventsStores.get(storeId);
     const params = paramsByStore[storeId];
+    this._assertContentQuerySupported(storeId, params);
     try {
       const query = eventsQueryUtils.getStoreQueryFromParams(params);
       const options = eventsQueryUtils.getStoreOptionsFromParams(params);
