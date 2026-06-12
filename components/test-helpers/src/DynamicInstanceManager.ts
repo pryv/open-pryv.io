@@ -15,7 +15,9 @@ const require = createRequire(import.meta.url);
 const { EventEmitter } = require('events');
 const fs = require('fs');
 const { spawn } = require('child_process');
-const temp = require('temp');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
 const util = require('util');
 
 const { getLogger } = require('@pryv/boiler');
@@ -56,7 +58,7 @@ class DynamicInstanceManager extends EventEmitter {
     super();
     this.config = config;
     this.messagePrefix = options.messagePrefix || '';
-    this.tempConfigPath = temp.path({ suffix: '.json' });
+    this.tempConfigPath = path.join(os.tmpdir(), `dim-${crypto.randomBytes(8).toString('hex')}.json`);
     this.logger = getLogger('dynamic-instance-manager');
 
     this.ensureStartedAsync = util.promisify(this.ensureStarted).bind(this);

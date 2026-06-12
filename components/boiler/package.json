@@ -21,8 +21,7 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "license": "source-licenser -c .licenser.yml .",
-    "lint": "semistandard"
+    "license": "source-licenser -c .licenser.yml ."
   },
   "dependencies": {
     "debug": "^4.3.4",
@@ -32,7 +31,6 @@
     "winston-daily-rotate-file": "^4.7.1"
   },
   "devDependencies": {
-    "semistandard": "^17.0.0",
     "source-licenser": "^2.0.5"
   }
 }

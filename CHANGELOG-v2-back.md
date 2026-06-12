@@ -1,5 +1,9 @@
 # Changelog - Internal (no API impact)
 
+## chore(deps): dev-tooling refresh — zero npm-audit vulnerabilities, zero install deprecation noise
+
+Dev-dependency refresh; no production dependency changed. mocha 10→11, nyc 15→18, sinon 14→22, superagent 8→10, supertest 6→7. The `temp` package is replaced by a native `os.tmpdir()` path in the test-helpers instance manager. The vendored boiler component drops its unused `semistandard` lint setup (linting is covered by the repo-wide neostandard config). New `diff: ^8.0.3` override clears the jsdiff DoS advisory that mocha 11 still pins. `npm audit` reports 0 vulnerabilities; a fresh `npm ci` now prints a single deprecation line (`glob@10`, pinned by latest mocha) instead of fifteen.
+
 ## fix(storage): SQLite literal escaping + cross-process PG schema-init serialization
 
 Storage-layer and registration robustness fixes, no API impact:
