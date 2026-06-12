@@ -754,7 +754,7 @@ async function main () {
       console.log('  embedded rqlite — one process and zero durable files on local disk.');
       console.log('  NOTE: moving to multi-core later requires a one-shot platform-data');
       console.log('  migration back to rqlite (node bin/migrate-platform.js).');
-      const diskless = await askYesNo('Store platform data in PostgreSQL (diskless)?', true);
+      const diskless = await askYesNo('Store platform data in PostgreSQL (diskless)?', false);
       if (diskless) platformEngine = 'postgresql';
       console.log();
     }
