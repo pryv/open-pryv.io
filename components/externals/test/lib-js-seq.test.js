@@ -14,10 +14,9 @@
  *
  * Test files are required directly - mocha flags (--grep, --reporter, -b) work normally.
  *
- * Prerequisites:
- *   cd external-ressources/lib-js && npm install
- *
- * Skipped automatically if lib-js is not cloned or not installed.
+ * lib-js is provisioned automatically on first run: cloned into
+ * `external-ressources/lib-js` + `npm install`ed when missing. A failed
+ * provisioning fails the suite — it never skips.
  */
 
 const path = require('node:path');
@@ -42,13 +41,27 @@ function libJsAvailable () {
   return fs.existsSync(path.join(LIB_JS_DIR, 'node_modules'));
 }
 
-if (!libJsAvailable()) {
-  describe('[ELJS] lib-js integration', function () {
-    it('SKIPPED — lib-js not installed (run: cd external-ressources/lib-js && npm install)', function () {
-      this.skip();
+// Provision lib-js on the fly so the integration suite always runs.
+// Synchronous on purpose: the suite's test files are require()d at module
+// load below, so the checkout must exist before this module finishes
+// loading. One-time cost per checkout; a failure here fails the suite.
+function provisionLibJs () {
+  if (!fs.existsSync(path.join(LIB_JS_DIR, '.git'))) {
+    console.log('[ELJS] lib-js not found — cloning into external-ressources/ …');
+    fs.mkdirSync(path.dirname(LIB_JS_DIR), { recursive: true });
+    execSync('git clone --depth 1 https://github.com/pryv/lib-js.git lib-js', {
+      cwd: path.dirname(LIB_JS_DIR), stdio: 'inherit'
     });
-  });
-} else {
+  }
+  console.log('[ELJS] installing lib-js dependencies …');
+  execSync('npm install --no-audit --no-fund', { cwd: LIB_JS_DIR, stdio: 'inherit' });
+}
+
+if (!libJsAvailable()) {
+  provisionLibJs();
+}
+
+{
   // --- Setup env before any lib-js require ---
   process.env.TEST_PRYVLIB_DNSLESS_URL = SERVER_URL;
 

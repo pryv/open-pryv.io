@@ -211,7 +211,14 @@ function ensurePrefixForStreamIds (systemStreams, prefix = PRYV_PREFIX) {
 function validateSystemStreamWithSchema (systemStream) {
   validation.validate(systemStream, systemStreamSchema, function (err) {
     if (err) {
-      throw err;
+      // The validator yields an array of {code, message, path} entries,
+      // not an Error — wrap it so boot failures carry an actionable
+      // message instead of an opaque object.
+      const details = Array.isArray(err)
+        ? err.map((e) => `${e.path}: ${e.message}`).join('; ')
+        : (err.message || String(err));
+      throw new Error('Config error: invalid custom system stream (' + details +
+        '). Stream: ' + JSON.stringify(systemStream, null, 2));
     }
   });
   throwIfUniqueAndNotIndexed(systemStream);

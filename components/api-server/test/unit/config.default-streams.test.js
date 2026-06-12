@@ -210,10 +210,7 @@ describe('[SSDC] SystemStreams config', () => {
     });
   });
   describe('[SD05] When providing a custom system stream that has an invalid type', () => {
-    // SYMPTOM: this assertion checks the SD04 error message
-    // ("cannot be unique and not indexed"), but SD05 tests an invalid
-    // TYPE — wrong error text. Test needs fixing not just unskipping.
-    it.skip('[LU0A] must throw a config error', () => {
+    it('[LU0A] must throw a config error', () => {
       const store = new nconf.Provider();
       store.use('memory');
       store.set('custom:systemStreams:account', [
@@ -226,7 +223,10 @@ describe('[SSDC] SystemStreams config', () => {
         systemStreamsConfig.load(store);
         assert.fail('supposed to throw.');
       } catch (err) {
-        assert.ok(err.message.includes('Config error: custom system stream cannot be unique and not indexed. Stream: '));
+        assert.ok(err.message.includes('Config error: invalid custom system stream'),
+          'unexpected error: ' + err.message);
+        assert.ok(err.message.includes('must match pattern'));
+        assert.ok(err.message.includes('faulty-type'));
       }
     });
   });
