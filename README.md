@@ -1,4 +1,4 @@
-# Open Pryv.io v2.0.0-pre
+# Open Pryv.io v2.0.0-rc.2
 
 ![Pryv.io](readme/logo-data-privacy-management-pryv.png)
 
@@ -6,7 +6,7 @@
 
 [![Digital Public Good](readme/dpg-badge.png)](https://digitalpublicgoods.net/registry/pryv-io.html)
 
-> **Pre-release warning:** This is the v2 pre-release of Open Pryv.io. It is under active development and not yet recommended for production workloads. For the last stable v1 release, see the [`release/1.9.3`](https://github.com/pryv/open-pryv.io/tree/release/1.9.3) branch.
+> **Release-candidate warning:** This is the v2 release candidate of Open Pryv.io. It is under active stabilization and not yet recommended for production workloads. For the last stable v1 release, see the [`release/1.9.3`](https://github.com/pryv/open-pryv.io/tree/release/1.9.3) branch.
 
 ## What is Pryv.io
 
@@ -18,7 +18,7 @@ Pryv.io serves as the backend for applications in health, quantified self, smart
 
 ## What's new in v2
 
-- **Pluggable storage engines** — PostgreSQL (default), SQLite, InfluxDB, filesystem, rqlite. Engines are plugins under `storages/engines/` with manifest-driven configuration.
+- **Pluggable storage engines** — PostgreSQL (default), SQLite, InfluxDB, filesystem, S3, rqlite. Engines are plugins under `storages/engines/` with manifest-driven configuration. A full-PostgreSQL diskless shape (optionally with S3 attachments) keeps every durable byte off the local filesystem.
 - **Unified master process** — single `bin/master.js` manages N API workers + M HFS workers + optional previews worker. Single Docker image replaces multi-container orchestration.
 - **Built-in user registration** — no external service-register needed. Registration fully self-contained via PlatformDB.
 - **Built-in MFA** — SMS-based two-factor authentication as `mfa.*` API methods.
@@ -31,27 +31,25 @@ For the full v2 change history, see [CHANGELOG-v2.md](./CHANGELOG-v2.md) (API-fa
 
 ## Quick start — single-core with Docker
 
+The Docker image ships an interactive install wizard. Pick (or create) the directory where your install should live, run the wizard, then start with the generated launcher:
+
 ```bash
-docker run -d --name pryv-core \
-  -p 3000:3000 \
-  -e http__ip=0.0.0.0 \
-  -e dnsLess__isActive=true \
-  -e "dnsLess__publicUrl=http://localhost:3000/" \
-  -e auth__adminAccessKey=my-admin-key \
-  pryvio/open-pryv.io:2.0.0-pre
+mkdir -p /opt/pryv && cd /opt/pryv
+docker run -it --rm -v "$(pwd):/app/pryv" pryvio/open-pryv.io:2.0.0-rc.2 init
+./run-pryv.sh
 ```
 
 Test it:
 ```bash
-curl http://localhost:3000/
+curl http://localhost:3000/   # adjust to the public URL you chose in the wizard
 # {"meta":{"apiVersion":"..."},"cheersFrom":"Pryv API","learnMoreAt":"https://pryv.github.io/"}
 ```
 
-For a complete Docker deployment with PostgreSQL, see [INSTALL.md](./INSTALL.md).
+**[INSTALL.md](./INSTALL.md) is the single source of truth for installation** — wizard details, hand-crafted configs, TLS strategies, nginx fronting, Dokku, the diskless shape (PostgreSQL + S3 — or PostgreSQL only for low attachment volumes), and v1 → v2 upgrades.
 
 ## Native installation
 
-Prerequisites: Node.js 22.x, PostgreSQL 14+ (or SQLite — bundled), [just](https://github.com/casey/just#installation).
+Prerequisites: Node.js 24.x, PostgreSQL 14+ (or SQLite — bundled), [just](https://github.com/casey/just#installation).
 
 ```bash
 just setup-dev-env    # setup local file structure + PostgreSQL + rqlite
@@ -121,10 +119,11 @@ node bin/master.js
 
 | Engine | Storage types | Status |
 |--------|--------------|--------|
-| PostgreSQL | base, dataStore, series, audit | Production (default) |
-| SQLite | base, dataStore, user account, user index, audit (per-user files) | Production (alternative) |
+| PostgreSQL | base, dataStore, series, audit, platform (diskless single-core), file (attachments — low volume only) | Production (default) |
+| SQLite | base, dataStore, series, audit (per-user files) | Production (alternative) |
 | rqlite | platform (single- and multi-core) | Production |
-| Filesystem | file (attachments) | Production |
+| Filesystem | file (attachments) | Production (default for file) |
+| S3 | file (attachments — AWS S3, MinIO, Ceph RGW, …) | Production |
 | InfluxDB | series (HFS) | Production |
 
 ### Project structure
@@ -149,7 +148,7 @@ open-pryv.io/
 |   +-- webhooks/           # Webhook business logic (runs in api-server)
 |   +-- test-helpers/       # Test infrastructure
 +-- storages/               # Plugin system (npm workspace)
-|   +-- engines/            # postgresql, sqlite, filesystem, influxdb, rqlite
+|   +-- engines/            # postgresql, sqlite, filesystem, s3, influxdb, rqlite
 |   +-- interfaces/         # Formal contracts per storage type
 +-- config/                 # Default and environment configs
 +-- Dockerfile              # Single-image Docker build

@@ -1,4 +1,4 @@
-# Installing service-core
+# Installing Open Pryv.io
 
 ## Prerequisites
 
@@ -12,7 +12,7 @@
 ## Setup
 
 ```bash
-git clone <repo-url> service-core && cd service-core
+git clone https://github.com/pryv/open-pryv.io.git && cd open-pryv.io
 just setup-dev-env    # local file structure + PostgreSQL + rqlite (dev)
 just install          # npm install across all workspaces
 ```
@@ -36,7 +36,7 @@ Pick (or create) the host directory where you want your install to live, `cd` in
 mkdir -p /opt/pryv && cd /opt/pryv
 docker run -it --rm \
   -v "$(pwd):/app/pryv" \
-  pryvio/open-pryv.io:2.0.0-rc.1 init
+  pryvio/open-pryv.io:2.0.0-rc.2 init
 ```
 
 After the wizard finishes, `$PWD` contains `pryv-config.yml` + `run-pryv.sh` + a `data/` folder for user data. Start the server with `./run-pryv.sh`.
@@ -69,7 +69,7 @@ If you prefer hand-crafting the YAML (or already have one), skip to **Minimal pr
 ```bash
 docker run --rm \
   -v "$(pwd):/app/pryv" \
-  pryvio/open-pryv.io:2.0.0-rc.1 \
+  pryvio/open-pryv.io:2.0.0-rc.2 \
   check-config /app/pryv/pryv-config.yml
 ```
 
@@ -367,9 +367,11 @@ The container writes to two distinct roots. Only these need to survive restart:
 
 The Dockerfile declares `VOLUME ["/app/var-pryv/rqlite-data"]` so this is the default persistent path for docker operators. **Do NOT bind-mount `/app/var-pryv` wholesale** — earlier image builds placed the rqlited binary at `/app/var-pryv/rqlite-bin/rqlited`, and a stray broad mount used to shadow it. The binary is now at `/app/bin-ext/rqlited`, outside any data path, so the trap is avoided by default.
 
-### Diskless (PostgreSQL + S3) — nothing to persist on the app host
+### Diskless (PostgreSQL + S3, or PostgreSQL only) — nothing to persist on the app host
 
 Single-core **dnsLess** deployments in full PostgreSQL mode can run with **no persistent filesystem at all** on the app container: every durable byte lives in PostgreSQL and an S3-compatible object store. This suits hosts with ephemeral disks and storage backends (SMB/NFS) that embedded databases can't run on.
+
+When **low attachment volume** is foreseen, the S3 store can be dropped entirely: `storages.file.engine: postgresql` keeps attachments as chunked rows inside PostgreSQL — one durable service, one `pg_dump` covering everything. ⚠ Attachment bytes then inflate the database, its WAL and every backup; the server logs a warning at boot to that effect. Pick S3 for anything attachment-heavy.
 
 Config recipe (the `init` wizard offers all of this when you pick dnsLess + postgresql):
 
@@ -379,7 +381,7 @@ storages:
   platform: { engine: postgresql }   # no rqlite process, no Raft ports
   series:   { engine: postgresql }
   audit:    { engine: postgresql }
-  file:     { engine: s3 }
+  file:     { engine: s3 }             # or: postgresql (LOW attachment volume only)
   engines:
     postgresql:
       host: <pg-host>
@@ -442,7 +444,7 @@ docker run \
   -e NODE_ENV=production \
   -e PRYV_DATADIR=/app/data \
   -p 3000:3000 \
-  pryvio/open-pryv.io:2.0.0-rc.1
+  pryvio/open-pryv.io:2.0.0-rc.2
 ```
 
 The default entrypoint dispatches on the first arg: no args boots `bin/master.js` (the normal server); `init <path>` runs the wizard; `check-config <path>` runs the validator; anything else passes through (e.g. `docker run pryvio/open-pryv.io node --version`).
@@ -456,7 +458,7 @@ docker run \
   ... \
   -p 443:443/tcp \
   -p 80:80/tcp \
-  pryvio/open-pryv.io:2.0.0-rc.1
+  pryvio/open-pryv.io:2.0.0-rc.2
 ```
 
 The Dockerfile already declares `EXPOSE 80 443 3000 3001 4000 53/udp`; the

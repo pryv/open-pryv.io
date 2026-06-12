@@ -9,6 +9,7 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
+    "@paralleldrive/cuid2": "^2.2.2",
     "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
     "bluebird": "^3.5.0",
     "cuid": "^2.1.8",

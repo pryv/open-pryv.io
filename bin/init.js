@@ -316,7 +316,7 @@ function section (yaml, title, doc, obj) {
  * coverage for the appendix is at `bin/test/init-appendix.test.js` (TODO
  * — currently exercised only by manual smoke tests).
  */
-function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite', s3Configured = false }) {
+function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite', fileEngine = 'filesystem' }) {
   // Diskless platform storage — only meaningful for single-core dnsLess in
   // full PG mode; omitted entirely when the wizard already enabled it.
   const PLATFORM_DISKLESS_BLOCK = (dnsLess && platformEngine === 'rqlite')
@@ -324,8 +324,9 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # # storages.platform — single-core dnsLess deployments in full PG mode can
 # # keep platform data (registrations index, DNS records, TLS certs, …) in
 # # PostgreSQL instead of the embedded rqlite: no rqlite process and no
-# # platform files on local disk (diskless shape — pair with S3 attachments
-# # below). Migrate existing platform data FIRST (master stopped):
+# # platform files on local disk (diskless shape — pair with off-disk
+# # attachments, storages.file.engine: s3 or postgresql). Migrate existing
+# # platform data FIRST (master stopped):
 # #   node bin/migrate-platform.js --from rqlite --to postgresql
 # # Moving to multi-core later requires migrating back to rqlite.
 # # storages:
@@ -334,8 +335,9 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 `
     : '';
 
-  // S3 attachment storage — shown whenever the wizard did not configure it.
-  const S3_BLOCK = s3Configured
+  // Off-disk attachment storage — shown when the wizard left attachments on
+  // the local filesystem.
+  const ATTACHMENTS_BLOCK = fileEngine !== 'filesystem'
     ? ''
     : `
 # # storages.file + storages.engines.s3 — store event attachments on an
@@ -353,6 +355,13 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #       secretAccessKey: null
 # #       forcePathStyle: true               # required by MinIO / most self-hosted
 # #       keyPrefix: ''
+# #
+# # Alternative for LOW attachment volume only: keep attachments inside
+# # PostgreSQL (no extra service; attachment bytes inflate the database,
+# # its WAL and every backup):
+# # storages:
+# #   file:
+# #     engine: postgresql
 `;
 
   const HOSTINGS_BLOCK = dnsLess
@@ -437,7 +446,7 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #           bodyTemplate: '{"to": "{{phoneNumber}}", "text": "{{message}}"}'
 
 ${HOSTINGS_BLOCK}
-${PLATFORM_DISKLESS_BLOCK}${S3_BLOCK}
+${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # custom.systemStreams — extend the account schema (e.g. add 'phone',
 # # 'address', 'organization' alongside the built-in 'username' / 'email').
 # # custom:
@@ -696,25 +705,21 @@ async function main () {
   }
 
   // 3b. Diskless options — single-core dnsLess deployments in full PG mode
-  // can keep ALL durable state off the local filesystem: platform data in
-  // PostgreSQL (no rqlite process, no Raft ports, no platform data dir) +
-  // event attachments on an S3-compatible object store.
+  // can keep ALL durable state off the local filesystem: event attachments
+  // on an S3-compatible object store (or, for low volumes, inside
+  // PostgreSQL itself) + platform data in PostgreSQL (no rqlite process,
+  // no Raft ports, no platform data dir). Attachments come first: with
+  // filesystem attachments the files stay on disk anyway, so the platform
+  // question is only offered once an off-disk attachments engine is chosen.
   let platformEngine = 'rqlite';
+  let fileEngine = 'filesystem';
   let s3Config = null;
   if (dnsLess && dbEngine === 'postgresql') {
-    console.log('▸ Platform storage (diskless option)');
-    console.log('  Platform data (registrations index, DNS records, TLS certs, …) can live in');
-    console.log('  PostgreSQL instead of the embedded rqlite — one process and zero platform');
-    console.log('  files on local disk. NOTE: moving to multi-core later requires a one-shot');
-    console.log('  platform-data migration back to rqlite (node bin/migrate-platform.js).');
-    const diskless = await askYesNo('Store platform data in PostgreSQL (diskless)?', false);
-    if (diskless) platformEngine = 'postgresql';
-    console.log();
-
     console.log('▸ Event attachments storage');
     console.log('  filesystem → attachment files under the data folder (default)');
     console.log('  s3         → attachments on an S3-compatible object store (AWS S3, MinIO, …)');
-    const fileEngine = await askChoice('Choose:', ['filesystem', 's3'], diskless ? 1 : 0);
+    console.log('  postgresql → attachments inside the PostgreSQL database (low file volume only)');
+    fileEngine = await askChoice('Choose:', ['filesystem', 's3', 'postgresql'], 0);
     if (fileEngine === 's3') {
       const endpoint = await ask('  S3 endpoint URL (empty for AWS — derived from region)', '');
       const accessKeyId = await ask('  Access key id (empty = AWS credential chain / IAM role)', '');
@@ -727,12 +732,29 @@ async function main () {
         forcePathStyle: await askYesNo('  Path-style addressing (required for MinIO / most self-hosted)?', true),
         keyPrefix: await ask('  Key prefix inside the bucket', '')
       };
+    } else if (fileEngine === 'postgresql') {
+      console.log('  ⚠ PostgreSQL attachment storage is intended for installations where LOW');
+      console.log('    file volume is foreseen — attachment bytes inflate the database, its WAL');
+      console.log('    and every backup. Pick s3 for anything attachment-heavy.');
     }
     console.log();
+
+    if (fileEngine !== 'filesystem') {
+      console.log('▸ Platform storage (diskless option)');
+      console.log('  With attachments off the local disk, platform data (registrations index,');
+      console.log('  DNS records, TLS certs, …) can live in PostgreSQL too instead of the');
+      console.log('  embedded rqlite — one process and zero durable files on local disk.');
+      console.log('  NOTE: moving to multi-core later requires a one-shot platform-data');
+      console.log('  migration back to rqlite (node bin/migrate-platform.js).');
+      const diskless = await askYesNo('Store platform data in PostgreSQL (diskless)?', true);
+      if (diskless) platformEngine = 'postgresql';
+      console.log();
+    }
   } else if (dnsLess && dbEngine === 'sqlite') {
     console.log('  ℹ Diskless option: with the postgresql engine, platform data can live in');
-    console.log('    PostgreSQL and attachments on S3 — no durable local files at all.');
-    console.log('    Re-run the wizard and pick postgresql to enable it.');
+    console.log('    PostgreSQL and attachments on S3 (or in PostgreSQL for low volumes) —');
+    console.log('    no durable local files at all. Re-run the wizard and pick postgresql');
+    console.log('    to enable it.');
     console.log();
   }
 
@@ -1033,7 +1055,7 @@ async function main () {
     storages: {
       base: { engine: dbEngine },
       platform: { engine: platformEngine },
-      file: { engine: s3Config ? 's3' : 'filesystem' },
+      file: { engine: fileEngine },
       series: { engine: dbEngine === 'postgresql' ? 'postgresql' : 'sqlite' },
       audit: { engine: platformEngine === 'postgresql' ? 'postgresql' : 'sqlite' },
       engines: {
@@ -1193,7 +1215,7 @@ async function main () {
     dnsLess,
     dataFolder,
     platformEngine,
-    s3Configured: s3Config != null
+    fileEngine
   });
   fs.writeFileSync(absConfigPath, yamlBody + appendix);
 

@@ -1,6 +1,13 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.2 — 2026-06-12
+
+### PostgreSQL attachment storage (low file volume)
+
+- **`storages.file.engine: postgresql`** — event attachments stored as chunked rows (1 MiB) in an `attachment_files` table in the same PostgreSQL instance as user data; no extra service. Completes the diskless shape without an S3 dependency: combined with `storages.platform.engine: postgresql`, every durable byte lives in PostgreSQL and a single `pg_dump` covers the whole deployment.
+- Intended for installations where **low attachment volume** is foreseen — attachment bytes inflate the database, its WAL and every backup; the server logs a warning at boot to that effect. Pick the s3 engine for attachment-heavy deployments.
+- **Install wizard** — the attachments question now comes before the platform-storage question and offers `filesystem` / `s3` / `postgresql`; the diskless platform option is only proposed once attachments are off the local disk (it previously could be enabled with filesystem attachments, which is not actually diskless).
+- **Fix: missing attachment content returns 404 instead of crashing the worker** — `GET /events/<id>/<fileId>` for an attachment whose content is absent from the store crashed the api-server worker with the s3 engine (and would have with postgresql): the attachment-access middleware didn't catch async rejections, and unlike the filesystem engine those engines reject up front. Now a regular `unknown-resource` (404).
 
 ### Diskless deployment: PostgreSQL platform storage + S3 attachments
 

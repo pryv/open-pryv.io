@@ -469,6 +469,19 @@ CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_events(user_id, type);
 CREATE INDEX IF NOT EXISTS idx_audit_deleted ON audit_events(user_id, deleted) WHERE deleted IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_audit_head_id ON audit_events(user_id, head_id) WHERE head_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_audit_created_by ON audit_events(user_id, created_by);
+
+-- Event attachment content (storages.file.engine: postgresql) — one row per
+-- fixed-size chunk so reads/writes stream without holding whole files in
+-- memory. Intended for low attachment volume; see EventPGFiles.ts.
+
+CREATE TABLE IF NOT EXISTS attachment_files (
+  user_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  file_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  data BYTEA NOT NULL,
+  PRIMARY KEY (user_id, event_id, file_id, seq)
+);
 `;
 
 export { DatabasePG };

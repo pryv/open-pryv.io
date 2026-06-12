@@ -52,7 +52,7 @@ storages/         Plugin tree for storage engines (npm workspace)
     baseStorage/  dataStore/  platformStorage/  fileStorage/
     seriesStorage/  auditStorage/  backup/  migrations/
   engines/
-    postgresql/     baseStorage, dataStore, seriesStorage, auditStorage, platformStorage
+    postgresql/     baseStorage, dataStore, seriesStorage, auditStorage, platformStorage, fileStorage (low-volume attachments)
     sqlite/         per-user SQLite (baseStorage, dataStore, auditStorage)
     rqlite/         distributed SQLite (platformStorage default; required multi-core)
     filesystem/     attachments + previews on disk (fileStorage)

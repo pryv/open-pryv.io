@@ -209,6 +209,13 @@ function createAuditStorage (): unknown {
   return new AuditStoragePG(auditDb);
 }
 
+// -- FileStorage (PostgreSQL) -------------------------------------------
+
+async function createFileStorage (): Promise<unknown> {
+  const { EventPGFiles } = require('./EventPGFiles.ts');
+  return new EventPGFiles();
+}
+
 /**
  * Reconcile content-query acceleration indexes against the platform-wide
  * `storages.contentIndexes` declaration. Optional engine capability —
@@ -241,5 +248,6 @@ export { init,
   createPlatformDB,
   createSeriesConnection,
   createAuditStorage,
+  createFileStorage,
   getMigrationsCapability,
   reconcileContentIndexes };
