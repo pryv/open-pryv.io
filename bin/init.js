@@ -55,6 +55,14 @@ try {
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
 const lineIter = rl[Symbol.asyncIterator]();
 
+// Ctrl+C must abort the wizard. Inside `docker run` node is PID 1, where the
+// kernel applies no default signal dispositions — without an explicit handler
+// SIGINT is dropped and only Ctrl+D (EOF) ends the wizard. 130 = 128 + SIGINT.
+process.on('SIGINT', () => {
+  process.stdout.write('\n✗ Aborted (Ctrl+C).\n');
+  process.exit(130);
+});
+
 async function ask (question, defaultValue) {
   const prompt = defaultValue !== undefined && defaultValue !== ''
     ? `${question} [${defaultValue}]: `
