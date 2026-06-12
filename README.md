@@ -176,7 +176,15 @@ just clean-test-data              # reset test databases
 
 If you are an AI coding assistant (Claude Code, Cursor, Copilot, etc.) bootstrapping against this repo, start with [AGENTS.md](./AGENTS.md) — a fast-orientation guide to the tree, entry points, storage-engine plugin system, and things not to touch without asking.
 
+## Sponsors
 
+Open Pryv.io development is supported by:
+
+<a href="https://www.healthdatasafe.org"><img src="readme/hds-logo.svg" alt="Health Data Safe" width="240"></a>
+
+The [Health Data Safe Foundation](https://www.healthdatasafe.org) empowers individuals to securely collect, manage, control, and share their health data on their own terms.
+
+Want to support the project? [Become a sponsor](https://pryv.github.io/www/).
 
 # License
 
