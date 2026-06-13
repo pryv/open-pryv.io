@@ -41,6 +41,36 @@ function libJsAvailable () {
   return fs.existsSync(path.join(LIB_JS_DIR, 'node_modules'));
 }
 
+// The API/HFS servers below are spawned with NODE_ENV=development (the
+// lib-js flow needs the relaxed dev validation), so they DON'T load
+// config/test-config.yml — meaning they'd ignore this workspace's engine
+// port offsets and hit the canonical PG :5432 / rqlite :4001 / influx :8086.
+// In a parallel-workspace checkout (or alongside another local test run)
+// that shared infra is neither isolated nor reset by `just clean-test-data`, so
+// a stale `jslibtest6` survives on the shared PG while its platform email
+// index on the shared rqlite gets wiped — split state, [UEMA] fails 404.
+// Boiler honors `storages__engines__*` ENV overrides regardless of
+// NODE_ENV, so re-derive the workspace's offsets from test-config.yml and
+// pass them through, pinning the spawned servers to the SAME isolated,
+// clean-test-data-reset instances the rest of the suite uses.
+function engineEnvFromTestConfig () {
+  const env = {};
+  try {
+    const cfg = fs.readFileSync(path.resolve(SERVICE_CORE_DIR, 'config/test-config.yml'), 'utf8');
+    const pgPort = cfg.match(/postgresql:[\s\S]*?port:\s*(\d+)/);
+    const rqUrl = cfg.match(/rqlite:[\s\S]*?url:\s*(\S+)/);
+    const rqRaft = cfg.match(/rqlite:[\s\S]*?raftPort:\s*(\d+)/);
+    const influxPort = cfg.match(/influxdb:[\s\S]*?port:\s*(\d+)/);
+    if (pgPort) env.storages__engines__postgresql__port = pgPort[1];
+    if (rqUrl) env.storages__engines__rqlite__url = rqUrl[1];
+    if (rqRaft) env.storages__engines__rqlite__raftPort = rqRaft[1];
+    if (influxPort) env.storages__engines__influxdb__port = influxPort[1];
+  } catch (e) {
+    console.log('[ELJS] could not read test-config.yml engine ports — spawned servers use canonical ports:', e.message);
+  }
+  return env;
+}
+
 // Provision lib-js on the fly so the integration suite always runs.
 // Synchronous on purpose: the suite's test files are require()d at module
 // load below, so the checkout must exist before this module finishes
@@ -86,17 +116,22 @@ if (!libJsAvailable()) {
     // Child output goes to log files — boot failures are undiagnosable otherwise
     const logFd = (name) => fs.openSync('/tmp/externals-' + name + '.log', 'w');
 
+    // Pin spawned dev servers to this workspace's isolated engine instances
+    // (see engineEnvFromTestConfig above) — otherwise they hit shared
+    // canonical ports and [UEMA] flakes on split platform state.
+    const engineEnv = engineEnvFromTestConfig();
+
     // 1. API server (HTTP, no SSL — proxy handles HTTPS)
     childProcesses.push(spawn(process.execPath, [API_SERVER_BIN], {
       cwd: SERVICE_CORE_DIR,
-      env: { ...process.env, NODE_ENV: 'development', PRYV_BOILER_SUFFIX: '-libjs-api' },
+      env: { ...process.env, ...engineEnv, NODE_ENV: 'development', PRYV_BOILER_SUFFIX: '-libjs-api' },
       stdio: ['ignore', logFd('api'), logFd('api-err')]
     }));
 
     // 2. HFS server (HTTP)
     childProcesses.push(spawn(process.execPath, [HFS_SERVER_BIN], {
       cwd: SERVICE_CORE_DIR,
-      env: { ...process.env, NODE_ENV: 'development', PRYV_BOILER_SUFFIX: '-libjs-hfs' },
+      env: { ...process.env, ...engineEnv, NODE_ENV: 'development', PRYV_BOILER_SUFFIX: '-libjs-hfs' },
       stdio: ['ignore', logFd('hfs'), logFd('hfs-err')]
     }));
 

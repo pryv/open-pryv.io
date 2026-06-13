@@ -69,6 +69,75 @@ describe('[RGAC] Register access authorization', () => {
     });
   });
 
+  describe('POST /reg/access with client-supplied authUrl (access:trustedAuthUrls)', () => {
+    // Config mutation goes through withInjectedConfig (snapshot + restore) —
+    // raw config.set() in matrix mode poisons later injectTestConfig resets.
+    const { withInjectedConfig } = require('test-helpers');
+    const TRUSTED = { access: { trustedAuthUrls: ['https://auth.example.com/my-auth/'] } };
+    const BODY = {
+      requestingAppId: 'test-app',
+      requestedPermissions: [{ streamId: 'diary', level: 'read' }]
+    };
+
+    it('[RA50] must use a client authUrl that matches a trusted entry', async () => {
+      await withInjectedConfig(TRUSTED, async () => {
+        const res = await coreRequest.post('/reg/access')
+          .send({ ...BODY, authUrl: 'https://auth.example.com/my-auth/custom.html' });
+        assert.strictEqual(res.status, 201);
+        assert.ok(res.body.authUrl.startsWith('https://auth.example.com/my-auth/custom.html?'),
+          `authUrl should start with the client page, got: ${res.body.authUrl}`);
+        // flow params are appended exactly as for the default auth page
+        assert.ok(res.body.authUrl.includes('key=' + res.body.key));
+        assert.ok(res.body.authUrl.includes('poll='));
+      });
+    });
+
+    it('[RA51] must reject an authUrl not covered by trustedAuthUrls', async () => {
+      await withInjectedConfig(TRUSTED, async () => {
+        const res = await coreRequest.post('/reg/access')
+          .send({ ...BODY, authUrl: 'https://evil.example.net/my-auth/custom.html' });
+        assert.strictEqual(res.status, 400);
+        assert.strictEqual(res.body.error.id, 'invalid-parameters');
+        assert.ok(res.body.error.message.includes('trustedAuthUrls'));
+      });
+    });
+
+    it('[RA52] must reject any authUrl when no trustedAuthUrls are configured', async () => {
+      const res = await coreRequest.post('/reg/access')
+        .send({ ...BODY, authUrl: 'https://auth.example.com/my-auth/custom.html' });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error.id, 'invalid-parameters');
+      assert.ok(res.body.error.message.includes('none configured'));
+    });
+
+    it('[RA53] must not be fooled by host-suffix or path-prefix tricks', async () => {
+      await withInjectedConfig({ access: { trustedAuthUrls: ['https://auth.example.com/my-auth'] } }, async () => {
+        for (const sneaky of [
+          'https://auth.example.com.evil.net/my-auth/x.html', // host suffix
+          'https://auth.example.com/my-auth-evil/x.html', // path segment prefix
+          'http://auth.example.com/my-auth/x.html', // protocol downgrade
+          'https://user:pass@auth.example.com/my-auth/x.html', // credentials
+          'not-a-url'
+        ]) {
+          const res = await coreRequest.post('/reg/access').send({ ...BODY, authUrl: sneaky });
+          assert.strictEqual(res.status, 400, `expected 400 for ${sneaky}`);
+        }
+      });
+    });
+
+    it('[RA54] default flow stays unchanged when no authUrl is sent, even with trustedAuthUrls configured', async () => {
+      await withInjectedConfig(TRUSTED, async () => {
+        const res = await coreRequest.post('/reg/access').send(BODY);
+        assert.strictEqual(res.status, 201);
+        // default-config test setup has no access:defaultAuthUrl → authUrl null
+        // (or the configured default when one is set — either way NOT the trusted entry)
+        if (res.body.authUrl != null) {
+          assert.ok(!res.body.authUrl.startsWith('https://auth.example.com/'));
+        }
+      });
+    });
+  });
+
   describe('GET /reg/access/:key', () => {
     it('[RA10] must return current state for valid key', async () => {
       const createRes = await coreRequest.post('/reg/access')

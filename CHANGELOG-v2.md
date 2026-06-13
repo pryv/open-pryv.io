@@ -9,6 +9,25 @@
 - **Install wizard** — the attachments question now comes before the platform-storage question and offers `filesystem` / `s3` / `postgresql`; the diskless platform option is only proposed once attachments are off the local disk (it previously could be enabled with filesystem attachments, which is not actually diskless).
 - **Fix: missing attachment content returns 404 instead of crashing the worker** — `GET /events/<id>/<fileId>` for an attachment whose content is absent from the store crashed the api-server worker with the s3 engine (and would have with postgresql): the attachment-access middleware didn't catch async rejections, and unlike the filesystem engine those engines reject up front. Now a regular `unknown-resource` (404).
 
+### Client-selectable auth page on access requests (`access.trustedAuthUrls`)
+
+`POST /reg/access` accepts an optional **`authUrl`** body field: apps can request that the sign-in popup open THEIR auth page instead of the platform-wide `access.defaultAuthUrl`. Honored only when the URL matches an operator-configured **`access.trustedAuthUrls`** entry (array of URL prefixes) — the endpoint is unauthenticated, so an open passthrough would be a phishing/redirect vector.
+
+- Matching is strict: same protocol, same host(:port), and the path must equal the entry's path or extend it on a `/` segment boundary (`https://a.com/auth` does not trust `https://a.com/auth-evil`, nor `https://a.com.evil.io`); URLs carrying credentials are rejected.
+- An `authUrl` that matches no entry (or any `authUrl` when the list is unset) is **rejected with `400 invalid-parameters`** rather than silently falling back — silent fallback is exactly the integration trap this feature removes.
+- The same flow query parameters (`key`, `poll`, `lang`, …) are appended to the client page as to the default one; `GET /reg/access/:key` echoes the resulting `authUrl` unchanged.
+
+### Structured JSON log output (`logs.console.format.json` / `LOG_FORMAT=json`)
+
+Console logs can be emitted as one JSON object per line — `{timestamp, level, name, pid, message, context}` — for log collectors and log-based alerting (`WHERE level = 'error'` matches nothing against the human-readable lines). Enable per-config (`logs.console.format.json: true`) or per-run (`LOG_FORMAT=json` env, no config change). Sensitive-value masking (tokens, passwords) applies unchanged; the default human-readable format is untouched.
+
+### Fix: full-platform backup export (`bin/backup.js`) on both engines
+
+- **PostgreSQL:** the per-user events export forwarded the raw driver result object instead of the row array, crashing every full-platform backup on the first user with `Backup export shape mismatch … from "events"`. Events now export as canonical event objects (the exact shape the restore path consumes).
+- **SQLite:** backups silently contained **zero events** and restores dropped them (the engine had no events export and a no-op import) — both now wired to the live per-user events store; `--restore` round-trips events on both engines.
+- The post-restore `--verify` integrity pass read events the same broken ways (crash on PostgreSQL, silent skip on SQLite) — now engine-agnostic via the same store.
+- The admin partial-delete endpoint's guidance message now points at the existing full cascading delete (`DELETE /users/:username` with the admin key, enabled by default via `user-account.delete: ['adminToken']`) instead of claiming none exists.
+
 ### Diskless deployment: PostgreSQL platform storage + S3 attachments
 
 Single-core dnsLess deployments in full PostgreSQL mode can now run with **no persistent filesystem on the app host** — every durable byte lives in PostgreSQL and an S3-compatible object store. Verified end-to-end with the app container on a `--read-only` rootfs (tmpfs for caches only).

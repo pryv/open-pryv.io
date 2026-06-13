@@ -31,7 +31,7 @@ type StorageLayer = {
   profile?: unknown;
   streams?: unknown;
   webhooks?: unknown;
-  events?: { importAll: (u: UserOrId, items: EventRow[], cb: (err: Error | null) => void) => unknown; clearAll: (u: UserOrId, cb: (err: Error | null) => void) => unknown };
+  events?: { exportAll: (u: UserOrId, cb: (err: Error | null, items?: EventRow[]) => void) => unknown; importAll: (u: UserOrId, items: EventRow[], cb: (err: Error | null) => void) => unknown; clearAll: (u: UserOrId, cb: (err: Error | null) => void) => unknown };
   iterateAllEvents?: () => AsyncIterableIterator<unknown>;
   getAllUserIdsFromCollection?: (col: string) => Promise<string[]>;
   clearCollection?: (col: string) => Promise<void>;
@@ -72,9 +72,20 @@ function initStorageLayer (storageLayer: StorageLayer, connection: PgConnection,
   storageLayer.streams = new StreamsPG(connection);
   storageLayer.webhooks = new WebhooksPG(connection);
 
-  // Events import/clear for backup restore (not used in normal operation —
-  // normal event CRUD goes through the DataStore/Mall layer).
+  // Events export/import/clear for backup + restore (not used in normal
+  // operation — normal event CRUD goes through the DataStore/Mall layer).
+  // exportAll returns canonical (camelCase) event objects — the exact shape
+  // importAll consumes — so backup archives round-trip across engines.
   storageLayer.events = {
+    exportAll (userOrUserId: UserOrId, callback: (err: Error | null, items?: EventRow[]) => void) {
+      const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
+      const { rowToEvent } = require('./dataStore/localUserEventsPG.ts');
+      connection.query('SELECT * FROM events WHERE user_id = $1', [userId])
+        // NOT the bare query result: pg returns {command,rowCount,oid,rows,fields};
+        // forwarding it instead of `.rows` crashed bin/backup.js on every PG platform.
+        .then((res: { rows: Array<Record<string, unknown>> }) => callback(null, res.rows.map(rowToEvent)))
+        .catch(callback);
+    },
     importAll (userOrUserId: UserOrId, items: EventRow[], callback: (err: Error | null) => void) {
       const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
       if (!items || items.length === 0) return callback(null);

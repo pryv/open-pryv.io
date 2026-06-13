@@ -1,5 +1,11 @@
 # Changelog - Internal (no API impact)
 
+## fix(backup/test-infra): engine events stores + parallel-checkout test hygiene
+
+- Both storage engines now expose `storageLayer.events.exportAll` returning canonical (camelCase) event objects — the exact shape `events.importAll` consumes — and the backup/restore orchestrators plus the integrity check go through that store instead of querying engine databases directly. This fixes the PostgreSQL full-backup crash (raw driver result object forwarded as the events array) and the SQLite events black hole (no export, no-op import, and `iterateAllEvents`/`events.clearAll` reading an `events` table in the per-user baseStorage file while live events live in the per-user dataStore file — the teardown integrity pass silently covered zero events). Live round-trip tests cover export/import/clear/iterate on both engines.
+- `just clean-test-data` resolves PG/rqlite host+port from env overrides, then `config/test-config.yml` (where parallel checkouts actually carry their port offsets), then canonical defaults — previously an offset checkout reset ANOTHER checkout's databases while leaving its own dirty. The rqlite full state reset now keys on the local pidfile (any port) and restarts on the same ports; the keyValue-wipe fallback curl gets `--max-time 10` (an unresponsive rqlited once stalled the recipe for 40 minutes). `rqlite/scripts/start` accepts `RQLITE_HTTP_PORT`/`RQLITE_RAFT_PORT`.
+- The per-test platform-vs-repository integrity-check failure now names the usual cause and remedy (stale test DBs from another suite or an aborted run → `just clean-test-data`) instead of a bare "Check should be empty" dump.
+
 ## chore(deps): dev-tooling refresh — zero npm-audit vulnerabilities, zero install deprecation noise
 
 Dev-dependency refresh; no production dependency changed. mocha 10→11, nyc 15→18, sinon 14→22, superagent 8→10, supertest 6→7. The `temp` package is replaced by a native `os.tmpdir()` path in the test-helpers instance manager. The vendored boiler component drops its unused `semistandard` lint setup (linting is covered by the repo-wide neostandard config). New `diff: ^8.0.3` override clears the jsdiff DoS advisory that mocha 11 still pins. `npm audit` reports 0 vulnerabilities; a fresh `npm ci` now prints a single deprecation line (`glob@10`, pinned by latest mocha) instead of fifteen.

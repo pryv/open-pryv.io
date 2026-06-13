@@ -257,7 +257,13 @@ function getMochaHooks (isParallelMode = false) {
     for (const check of checks) {
       if (check.errors.length > 0) {
         const checkStr = util.inspect(checks, false, null, true);
-        throw new Error(`${title} => Check should be empty \n${checkStr}`);
+        // Most often NOT a product bug: leftover users from another
+        // component's suite (or an aborted run) desync platform vs
+        // repository, and every test in this suite then fails here.
+        throw new Error(`${title} => Check should be empty \n${checkStr}\n` +
+          'HINT: this usually means stale test DBs (a prior suite or aborted run ' +
+          'left users behind) — run `just clean-test-data` and retry before ' +
+          'suspecting the code under test.');
       }
     }
   }

@@ -13,7 +13,10 @@ const { fromCallback } = require('utils');
  * Per-user and system-wide integrity verification.
  * Recomputes hashes on events and accesses and compares against stored values.
  */
-type StorageLayer = { accesses: { exportAll: (user: { id: string }, cb: (err: Error | null, items?: AccessLike[]) => void) => void } };
+type StorageLayer = {
+  accesses: { exportAll: (user: { id: string }, cb: (err: Error | null, items?: AccessLike[]) => void) => void };
+  events?: { exportAll: (user: { id: string }, cb: (err: Error | null, items?: EventLike[]) => void) => void };
+};
 type UsersIndexLike = { getAllByUsername: () => Promise<Record<string, string>> };
 type Integrity = {
   events: { isActive: boolean; compute (e: EventLike): { integrity: string } };
@@ -99,22 +102,17 @@ class IntegrityCheck {
   // -------------------------------------------------------------------------
 
   async _checkUserEvents (userId: string, report: Report) {
-    const storages = require('storages');
-    const database = storages.database || storages.databasePG;
-    if (!database) return;
+    // Engine-agnostic: each engine's storageLayer.events store exposes
+    // exportAll returning canonical (camelCase) event objects. Querying
+    // the engine database directly here used to break on PG (pg's query()
+    // resolves to a non-iterable result object, not a row array) and
+    // silently skipped events on SQLite (no shared database handle).
+    const eventsStore = this.storageLayer?.events;
+    if (!eventsStore || typeof eventsStore.exportAll !== 'function') return;
 
-    let events: EventLike[] | undefined;
-    if (storages.database) {
-      events = await fromCallback((cb: (err: Error | null, items?: EventLike[]) => void) =>
-        database.find({ name: 'events' }, { userId }, {}, cb)
-      ) as EventLike[];
-    } else {
-      // PostgreSQL path
-      events = await database.query(
-        'SELECT * FROM events WHERE user_id = $1',
-        [userId]
-      ) as EventLike[];
-    }
+    const events = await fromCallback((cb: (err: Error | null, items?: EventLike[]) => void) =>
+      eventsStore.exportAll({ id: userId }, cb)
+    ) as EventLike[];
 
     if (!events) return;
 

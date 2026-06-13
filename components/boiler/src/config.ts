@@ -46,7 +46,12 @@ const defaults = {
       format: {
         color: true,
         time: true,
-        aligned: true
+        aligned: true,
+        // emit one JSON object per line ({timestamp, level, name, pid,
+        // message, context}) instead of human-readable text — for
+        // log-based alerting / collectors. Overridable per-run with
+        // LOG_FORMAT=json.
+        json: false
       }
     },
     file: {

@@ -19,7 +19,35 @@ const require = createRequire(import.meta.url);
 
 const accessState = require('./accessState.ts');
 
-
+/**
+ * Whether `candidate` (a caller-supplied auth-page URL) matches one of the
+ * operator-configured `access:trustedAuthUrls` entries.
+ *
+ * An entry trusts: same protocol + same host(:port), and the candidate's
+ * pathname must equal the entry's pathname or extend it on a `/` segment
+ * boundary (so `https://a.com/auth` doesn't trust `https://a.com/auth-evil`,
+ * and `https://a.com` doesn't trust `https://a.com.evil.io`). Query strings
+ * are free — the page itself is what's being trusted. URLs carrying
+ * credentials (`user:pass@`) are rejected outright.
+ */
+function isTrustedAuthUrl (candidate: string, trustedEntries: unknown): boolean {
+  if (!Array.isArray(trustedEntries) || trustedEntries.length === 0) return false;
+  let url: URL;
+  try { url = new URL(candidate); } catch { return false; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
+  if (url.username !== '' || url.password !== '') return false;
+  for (const entry of trustedEntries) {
+    if (typeof entry !== 'string') continue;
+    let trusted: URL;
+    try { trusted = new URL(entry); } catch { continue; }
+    if (trusted.protocol !== url.protocol) continue;
+    if (trusted.host !== url.host) continue; // host includes the port
+    if (url.pathname === trusted.pathname) return true;
+    const prefix = trusted.pathname.endsWith('/') ? trusted.pathname : trusted.pathname + '/';
+    if (url.pathname.startsWith(prefix)) return true;
+  }
+  return false;
+}
 
 export default function (expressApp: ExpressApp, app: AppLike) {
   /**
@@ -62,10 +90,33 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // for the user to sign in. Base URL comes from `access.defaultAuthUrl`
       // in config — operators deploy app-web-auth3 (or an equivalent auth UI)
       // at that address and set the config.
+      //
+      // Apps may request their OWN auth page via `authUrl` in the body —
+      // honored only when it matches an operator-configured
+      // `access:trustedAuthUrls` entry (this endpoint is unauthenticated;
+      // an open `authUrl` passthrough would be a phishing/redirect vector).
+      // An untrusted value is rejected loudly rather than silently falling
+      // back: silent behaviour here has already cost integrators debugging
+      // sessions.
       const defaultAuthUrl = app.config.get('access:defaultAuthUrl') as string | undefined;
+      let authUrlBase = defaultAuthUrl;
+      const clientAuthUrl = req.body.authUrl;
+      if (clientAuthUrl != null) {
+        const trustedAuthUrls = app.config.get('access:trustedAuthUrls');
+        if (typeof clientAuthUrl !== 'string' || !isTrustedAuthUrl(clientAuthUrl, trustedAuthUrls)) {
+          return res.status(400).json({
+            error: {
+              id: 'invalid-parameters',
+              message: 'authUrl does not match any access:trustedAuthUrls entry' +
+                (Array.isArray(trustedAuthUrls) && trustedAuthUrls.length > 0 ? '' : ' (none configured)')
+            }
+          });
+        }
+        authUrlBase = clientAuthUrl;
+      }
       let authUrl: string | null = null;
-      if (defaultAuthUrl) {
-        const sep = defaultAuthUrl.indexOf('?') >= 0 ? '&' : '?';
+      if (authUrlBase) {
+        const sep = authUrlBase.indexOf('?') >= 0 ? '&' : '?';
         const params = [
           'lang=' + encodeURIComponent(req.body.languageCode || 'en'),
           'key=' + encodeURIComponent(key),
@@ -76,7 +127,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
         ];
         if (state.returnURL) params.push('returnURL=' + encodeURIComponent(state.returnURL));
         if (state.oauthState) params.push('oauthState=' + encodeURIComponent(state.oauthState));
-        authUrl = defaultAuthUrl + sep + params.join('&');
+        authUrl = authUrlBase + sep + params.join('&');
       }
 
       // Stash pollUrl + authUrl on state so GET /reg/access/:key can echo

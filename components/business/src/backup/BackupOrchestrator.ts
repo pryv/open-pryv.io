@@ -287,29 +287,22 @@ class BackupOrchestrator {
   }
 
   async _exportEvents (userId: string) {
-    // Events are in a shared collection, filtered by userId.
-    // Use the database directly with BaseStorage-style query.
-    const storages = require('storages');
-    const database = storages.database || storages.databasePG;
-    if (!database) return [];
-
-    if (storages.database) {
-      // MongoDB: query events collection filtered by userId
-      return await fromCallback((cb: NodeCallback) =>
-        database.find({ name: 'events' }, { userId }, {}, cb)
-      );
+    // Events are engine-private (shared table on PG, per-user file on
+    // SQLite), so the engine's storageLayer.events store owns the export.
+    // exportAll returns canonical (camelCase) event objects — the exact
+    // shape events.importAll consumes on restore. Querying the engine's
+    // database directly here is wrong twice over: pg's query() resolves to
+    // a {command,rowCount,oid,rows,fields} result object (not an array),
+    // and raw snake_case rows don't round-trip through importAll.
+    const eventsStore = this.storageLayer.events;
+    if (!eventsStore || typeof eventsStore.exportAll !== 'function') {
+      this.logger.warn(`Events export skipped for user ${userId}: storage engine exposes no events.exportAll`);
+      return [];
     }
-
-    // PostgreSQL: use the events table
-    if (storages.databasePG) {
-      const rows = await database.query(
-        'SELECT * FROM events WHERE user_id = $1',
-        [userId]
-      );
-      return rows || [];
-    }
-
-    return [];
+    const events = await fromCallback(
+      (cb: NodeCallback) => eventsStore.exportAll({ id: userId }, cb)
+    );
+    return events || [];
   }
 
   async _backupAttachments (userWriter: UserWriter, userId: string, events: Array<{ id: string; attachments?: Array<{ id?: string }> }>) {
@@ -360,6 +353,7 @@ type StorageLayerLike = {
   accesses: ExportStore;
   profile: ExportStore;
   webhooks: ExportStore;
+  events?: ExportStore;
   engine: string;
 };
 type UsersLocalIndexLike = {

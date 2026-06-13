@@ -94,6 +94,37 @@ function generateFormat (options: { color?: boolean; time?: boolean; align?: boo
 }
 
 /**
+ * Structured console format: one JSON object per line, with `level`,
+ * `name`, `pid` (and timestamp/message/context) as proper fields so
+ * log-based alerting can query e.g. `WHERE level = 'error'` — the
+ * human-readable text lines are unparseable for collectors.
+ *
+ * Activated via `logs:console:format:json: true` or `LOG_FORMAT=json`.
+ */
+function generateJsonFormat () {
+  function printf (info: { timestamp?: string; level: string; message: string; [k: string | symbol]: unknown }) {
+    const { timestamp, level, message } = info;
+    // globalLog always prefixes the logger name as `[a:b:c] ` — lift it
+    // back out into a proper field (names never contain `]`).
+    let name: string | undefined;
+    let msg = message;
+    const m = /^\[([^\]]*)\] /.exec(message);
+    if (m) { name = m[1]; msg = message.slice(m[0].length); }
+
+    const entry: Record<string, unknown> = { timestamp, level, name, pid: process.pid, message: msg };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- winston splat payload, heterogeneous by design
+    const items: any = info[Symbol.for('splat')] || [];
+    if (items.length === 1 && items[0] && items[0].context !== undefined) {
+      entry.context = items[0].context;
+    } else if (items.length > 0 && items[0] !== undefined) {
+      entry.context = items.length === 1 ? items[0] : items;
+    }
+    return JSON.stringify(entry);
+  }
+  return winston.format.combine(winston.format.timestamp(), winston.format.printf(printf));
+}
+
+/**
  * Helper to pass log instructions to winston
  */
 function globalLog (level: LogLevel, key: string, message: string, context: unknown) {
@@ -127,7 +158,9 @@ async function initLoggerWithConfig (config: BoilerConfig) {
     isSilent = false;
   }
 
-  const consoleFormat = generateFormat(logConsole.format);
+  // LOG_FORMAT env var can force the structured console output
+  const jsonMode = process.env.LOG_FORMAT === 'json' || logConsole.format?.json === true;
+  const consoleFormat = jsonMode ? generateJsonFormat() : generateFormat(logConsole.format);
   const myconsole = new winston.transports.Console({ format: consoleFormat, level: logConsole.level, silent: isSilent });
   winstonInstance!.add(myconsole);
 

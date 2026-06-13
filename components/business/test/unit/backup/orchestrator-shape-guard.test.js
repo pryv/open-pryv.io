@@ -63,6 +63,31 @@ describe('[BKP-SHAPE] BackupOrchestrator shape guards', function () {
     });
   });
 
+  describe('_exportEvents (engine events store wiring)', function () {
+    it('[BKP-SHAPE-08] delegates to storageLayer.events.exportAll and returns its array', async function () {
+      const o = Object.create(BackupOrchestrator.prototype);
+      const exported = [{ id: 'e1' }, { id: 'e2' }];
+      let calledWith = null;
+      o.storageLayer = {
+        events: { exportAll (user, cb) { calledWith = user; cb(null, exported); } }
+      };
+      const out = await o._exportEvents('user-id-1');
+      assert.deepStrictEqual(calledWith, { id: 'user-id-1' });
+      assert.strictEqual(out, exported);
+    });
+
+    it('[BKP-SHAPE-09] returns [] with a warning when the engine exposes no events.exportAll (never a result-object passthrough)', async function () {
+      const o = Object.create(BackupOrchestrator.prototype);
+      const warnings = [];
+      o.storageLayer = { events: { importAll () {} } }; // store without exportAll
+      o.logger = { warn: (m) => warnings.push(m) };
+      const out = await o._exportEvents('user-id-2');
+      assert.deepStrictEqual(out, []);
+      assert.strictEqual(warnings.length, 1);
+      assert.ok(warnings[0].includes('events.exportAll'));
+    });
+  });
+
   describe('_assertArray (called for non-filtered exports like profile)', function () {
     it('[BKP-SHAPE-06] passes silently for arrays', function () {
       orch._assertArray([], 'profile');

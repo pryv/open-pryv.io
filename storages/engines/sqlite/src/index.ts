@@ -107,49 +107,86 @@ async function initStorageLayer (storageLayer: StorageLayerLike, _connection: un
   storageLayer.streams = new StreamsSQLite();
   storageLayer.webhooks = new WebhooksSQLite();
 
+  // Events export/import/clear for backup + restore. Live events for the
+  // SQLite engine are in the per-user dataStore file (userSQLite storage
+  // 'local', `<userDir>/local-<version>.sqlite`) — NOT in the per-user
+  // baseStorage file, which only holds accesses/profile/streams/webhooks.
+  // exportAll/importAll speak canonical (camelCase) event objects via
+  // eventsSchema fromDB/toDB so backup archives round-trip across engines.
   storageLayer.events = {
-    importAll (_userOrUserId: UserOrId, _items: unknown[], callback: (err: Error | null) => void) {
-      // No-op: events are routed through the dataStore layer for the
-      // SQLite engine. Backup-restore goes via the user-events dataStore
-      // path; nothing in the live code path calls this.
-      callback(null);
-    },
-    async clearAll (userOrUserId: UserOrId, callback: (err: Error | null) => void) {
+    exportAll (userOrUserId: UserOrId, callback: (err: Error | null, items?: unknown[]) => void) {
       const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
-      try {
-        const { UserBaseStorageDb } = require('./userBaseStorage/UserBaseStorageDb.ts');
-        const udb = await UserBaseStorageDb.forUser(userId);
-        try { udb.db.prepare('DELETE FROM events').run(); } catch (_e) { /* table may not exist */ }
-        callback(null);
-      } catch (e) {
-        callback(e as Error);
-      }
+      (async () => {
+        const udb = await openUserEventsDbSafe(userId, false);
+        if (!udb) return [];
+        const eventsSchema = require('./userSQLite/schema/events.ts');
+        return udb.exportAllEvents().map((row: Record<string, unknown>) => eventsSchema.fromDB(row));
+      })().then((items) => callback(null, items)).catch(callback);
+    },
+    importAll (userOrUserId: UserOrId, items: unknown[], callback: (err: Error | null) => void) {
+      const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
+      if (!items || items.length === 0) return callback(null);
+      (async () => {
+        const udb = await openUserEventsDbSafe(userId, true);
+        if (!udb) throw new Error(`SQLite events.importAll: cannot open events DB for user ${userId}`);
+        const eventsSchema = require('./userSQLite/schema/events.ts');
+        await udb.importAllEvents(items.map((event) => eventsSchema.toDB(event)));
+      })().then(() => callback(null)).catch(callback);
+    },
+    clearAll (userOrUserId: UserOrId, callback: (err: Error | null) => void) {
+      const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
+      (async () => {
+        const udb = await openUserEventsDbSafe(userId, false);
+        if (!udb) return;
+        await udb.deleteEvents({ query: [] });
+      })().then(() => callback(null)).catch(callback);
     }
   };
 
   storageLayer.iterateAllEvents = async function * () {
     // Walk every user known to the local index, yield events from each
-    // per-user baseStorage file. Used by the integrity-final-check at
-    // test teardown.
+    // per-user dataStore ('local') file. Used by the integrity-final-check
+    // at test teardown.
+    const eventsSchema = require('./userSQLite/schema/events.ts');
     const userIds = await listKnownUserIdsForCleanup();
     for (const userId of userIds) {
-      const udb = await openUserBaseStorageDbSafe(userId);
+      const udb = await openUserEventsDbSafe(userId, false);
       if (!udb) continue;
+      let rows: Array<Record<string, unknown>>;
       try {
-        const rows = udb.db.prepare('SELECT * FROM events').all() as Array<Record<string, unknown>>;
-        for (const row of rows) {
-          const event: Record<string, unknown> = row.data ? JSON.parse(row.data as string) : {};
-          event.id = row.id;
-          if (row.head_id != null) event.headId = row.head_id;
-          if (row.deleted != null) event.deleted = row.deleted;
-          event.userId = userId;
-          yield event;
-        }
+        rows = udb.exportAllEvents();
       } catch (_e) {
-        // Table doesn't exist for this user — no events to yield.
+        continue; // events table doesn't exist for this user yet
+      }
+      for (const row of rows) {
+        // Yield the canonical event shape WITHOUT a user marker — same as
+        // the PG engine (rowToEvent strips user_id). The integrity hash is
+        // computed over this shape; an extra userId property breaks it.
+        yield eventsSchema.fromDB(row);
       }
     }
   };
+
+  /**
+   * Open the per-user events DB (userSQLite storage 'local'). When
+   * `create` is false and the user has no events file yet, returns null
+   * instead of lazily creating an empty one (read paths must not leave
+   * empty `local-*.sqlite` files behind for users that never had events).
+   */
+  async function openUserEventsDbSafe (userId: string, create: boolean): Promise<{ exportAllEvents: () => Array<Record<string, unknown>>; importAllEvents: (rows: unknown[]) => Promise<void>; deleteEvents: (params: Record<string, unknown>) => Promise<unknown> } | null> {
+    try {
+      const fs = require('node:fs');
+      const { getStorage } = require('./userSQLite/index.ts');
+      const userStorage = await getStorage('local');
+      if (!create) {
+        const dbPath = await userStorage.dbgetPathForUser(userId);
+        if (!fs.existsSync(dbPath)) return null;
+      }
+      return await userStorage.forUser(userId);
+    } catch (_e) {
+      return null;
+    }
+  }
 
   storageLayer.getAllUserIdsFromCollection = async function (_collectionName: string): Promise<string[]> {
     // The integrity check uses this to walk userIds with rows in a

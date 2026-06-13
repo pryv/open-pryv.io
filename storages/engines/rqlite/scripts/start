@@ -38,11 +38,15 @@ fi
 
 # HTTP API on loopback only: it is plaintext + unauthenticated (full
 # PlatformDB read/write), and every dev/test client connects via localhost.
+# Ports are overridable for parallel checkouts running per-checkout
+# instances on offset ports (e.g. RQLITE_HTTP_PORT=4101 RQLITE_RAFT_PORT=4102).
+RQLITE_HTTP_PORT=${RQLITE_HTTP_PORT:-4001}
+RQLITE_RAFT_PORT=${RQLITE_RAFT_PORT:-4002}
 ARGS=(
   -node-id single
-  -http-addr 127.0.0.1:4001
-  -http-adv-addr 127.0.0.1:4001
-  -raft-addr 127.0.0.1:4002
+  -http-addr 127.0.0.1:$RQLITE_HTTP_PORT
+  -http-adv-addr 127.0.0.1:$RQLITE_HTTP_PORT
+  -raft-addr 127.0.0.1:$RQLITE_RAFT_PORT
   -raft-cluster-remove-shutdown
   "$RQLITE_DATA"
 )
@@ -57,7 +61,7 @@ else
 
   # Wait for HTTP API to become ready
   for i in $(seq 1 60); do
-    if curl -fs http://127.0.0.1:4001/readyz >/dev/null 2>&1; then
+    if curl -fs "http://127.0.0.1:$RQLITE_HTTP_PORT/readyz" >/dev/null 2>&1; then
       echo "rqlited running (PID $(cat "$PIDFILE"))."
       echo "  Logs: $RQLITE_LOGS/rqlited.log"
       echo "  Stop: kill \$(cat $PIDFILE)"

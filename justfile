@@ -203,15 +203,27 @@ clean-test-data:
     else
       TIMEOUT=""
     fi
-    # Engine host/port: honor the same env overrides the test commands use
-    # (parallel dev setups run several checkouts against per-checkout
-    # PG/rqlite instances on offset ports — resetting the default ports
-    # from such a checkout would wipe ANOTHER checkout's databases while
-    # leaving this one dirty).
-    PG_HOST="${storages__engines__postgresql__host:-127.0.0.1}"
-    PG_PORT="${storages__engines__postgresql__port:-5432}"
-    RQLITE_HOST="${storages__engines__rqlite__host:-localhost}"
-    RQLITE_PORT="${storages__engines__rqlite__port:-4001}"
+    # Engine host/port: env overrides win; otherwise read the test
+    # harness's actual source of truth, config/test-config.yml (parallel
+    # dev setups run several checkouts against per-checkout PG/rqlite
+    # instances on offset ports, and those offsets live in the config
+    # file, NOT in the environment). Falling back to the canonical ports
+    # from an offset checkout wipes ANOTHER checkout's databases while
+    # leaving this one dirty — observed live: a sibling checkout's
+    # pryv-node + pryv-node-test dropped and its rqlite keyValue DELETE
+    # left hanging for 40 minutes (see the curl --max-time below).
+    TCFG=./config/test-config.yml
+    PG_HOST_CFG=$(awk '/[[:space:]]postgresql:/{f=1} f&&/host:/{print $2; exit}' "$TCFG" 2>/dev/null)
+    PG_PORT_CFG=$(awk '/[[:space:]]postgresql:/{f=1} f&&/port:/{print $2; exit}' "$TCFG" 2>/dev/null)
+    RQLITE_URL_CFG=$(awk '/[[:space:]]rqlite:/{f=1} f&&/url:/{print $2; exit}' "$TCFG" 2>/dev/null)
+    RQLITE_HOST_CFG=$(echo "$RQLITE_URL_CFG" | sed -nE 's|https?://([^:/]+).*|\1|p')
+    RQLITE_PORT_CFG=$(echo "$RQLITE_URL_CFG" | sed -nE 's|.*:([0-9]+).*|\1|p')
+    RQLITE_RAFT_CFG=$(awk '/[[:space:]]rqlite:/{f=1} f&&/raftPort:/{print $2; exit}' "$TCFG" 2>/dev/null)
+    PG_HOST="${storages__engines__postgresql__host:-${PG_HOST_CFG:-127.0.0.1}}"
+    PG_PORT="${storages__engines__postgresql__port:-${PG_PORT_CFG:-5432}}"
+    RQLITE_HOST="${storages__engines__rqlite__host:-${RQLITE_HOST_CFG:-localhost}}"
+    RQLITE_PORT="${storages__engines__rqlite__port:-${RQLITE_PORT_CFG:-4001}}"
+    RQLITE_RAFT_PORT="${storages__engines__rqlite__raftPort:-${RQLITE_RAFT_CFG:-$((RQLITE_PORT + 1))}}"
     if [ -n "$DROPDB" ] && [ -n "$CREATEDB" ]; then
       ($TIMEOUT "$DROPDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv --if-exists --force pryv-node-test 2>/dev/null && \
           $TIMEOUT "$CREATEDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv pryv-node-test 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg test reset)"
@@ -226,20 +238,25 @@ clean-test-data:
     # "DELETE FROM keyValue" alone is NOT enough: the raft log + on-disk
     # db.sqlite retain historical writes that replay on restart, and after
     # many runs the integrity check observes ghost users (api-server
-    # matrix degrades from ~1068 passing to ~252). So for the canonical
-    # pidfile-managed local instance: stop it, wipe the raft + db files,
-    # restart. Overridden host/port (parallel workspaces / remote rqlite)
-    # keep the keyValue-only wipe — their data dir is not ours to touch.
-    if [ "$RQLITE_PORT" = "4001" ] && { [ "$RQLITE_HOST" = "localhost" ] || [ "$RQLITE_HOST" = "127.0.0.1" ]; } && [ -f ./var-pryv/rqlite-data/rqlited.pid ]; then
+    # matrix degrades from ~1068 passing to ~252). So when this checkout's
+    # OWN pidfile-managed local instance is in charge (whatever its port —
+    # offset checkouts run e.g. 4101): stop it, wipe the raft + db files,
+    # restart on the same ports. A remote/unmanaged rqlite (no local
+    # pidfile) keeps the keyValue-only wipe — its data dir is not ours to
+    # touch.
+    if { [ "$RQLITE_HOST" = "localhost" ] || [ "$RQLITE_HOST" = "127.0.0.1" ]; } && [ -f ./var-pryv/rqlite-data/rqlited.pid ]; then
       RQLITED_PID=$(cat ./var-pryv/rqlite-data/rqlited.pid)
       kill "$RQLITED_PID" 2>/dev/null || true
       for i in $(seq 1 40); do kill -0 "$RQLITED_PID" 2>/dev/null || break; sleep 0.25; done
       rm -rf ./var-pryv/rqlite-data/db.sqlite* ./var-pryv/rqlite-data/raft ./var-pryv/rqlite-data/raft.db \
              ./var-pryv/rqlite-data/wsnapshots ./var-pryv/rqlite-data/clean_snapshot ./var-pryv/rqlite-data/rqlited.pid
-      ./storages/engines/rqlite/scripts/start > /dev/null 2>&1 || echo "rqlited restart FAILED — run storages/engines/rqlite/scripts/start manually"
+      RQLITE_HTTP_PORT="$RQLITE_PORT" RQLITE_RAFT_PORT="$RQLITE_RAFT_PORT" ./storages/engines/rqlite/scripts/start > /dev/null 2>&1 || echo "rqlited restart FAILED — run storages/engines/rqlite/scripts/start manually"
     else
-      curl -s -X POST -H 'Content-Type: application/json' "http://${RQLITE_HOST}:${RQLITE_PORT}/db/execute" -d '[["DELETE FROM keyValue"]]' > /dev/null 2>&1 || echo "rqlite not reachable (skipping rqlite reset)"
-      echo "rqlite at ${RQLITE_HOST}:${RQLITE_PORT} (non-canonical or unmanaged): wiped keyValue only — for a full raft-state reset stop that rqlited, wipe its data dir, restart it"
+      # --max-time guards against an unresponsive rqlited (a hung HTTP API
+      # once stalled this recipe for 40 minutes — same failure mode the PG
+      # steps above wrap in `timeout`).
+      curl -s --max-time 10 -X POST -H 'Content-Type: application/json' "http://${RQLITE_HOST}:${RQLITE_PORT}/db/execute" -d '[["DELETE FROM keyValue"]]' > /dev/null 2>&1 || echo "rqlite not reachable (skipping rqlite reset)"
+      echo "rqlite at ${RQLITE_HOST}:${RQLITE_PORT} (remote or unmanaged — no local pidfile): wiped keyValue only — for a full raft-state reset stop that rqlited, wipe its data dir, restart it"
     fi
     # Stale customAuthStepFn from a prior aborted permissions-seq test (the [P4OM] invalid-fixture test crashes the api-server bin and leaves the file behind, polluting subsequent matrix runs with [api-server fatal] Not a function (string)). Safe to delete unconditionally — committed file is .gitkeep.
     rm -f ./custom-extensions/customAuthStepFn.js

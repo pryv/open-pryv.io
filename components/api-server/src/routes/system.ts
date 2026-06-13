@@ -346,8 +346,11 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
           'fields (uniqueFields like email + indexedFields). It does NOT delete ' +
           'the user\'s base storage (events, streams, attachments, audit log). ' +
           'Pass ?onlyReg=true to acknowledge this partial-delete semantic, or ' +
-          '?onlyReg=true&dryRun=true to preview without writing. A full ' +
-          'cascading user delete is not yet implemented as a single admin endpoint.'
+          '?onlyReg=true&dryRun=true to preview without writing. For a FULL ' +
+          'cascading delete (base storage + attachments + HF + audit + sessions ' +
+          '+ platform fields + index), use DELETE /users/:username on the ' +
+          'user\'s core with the admin key in the Authorization header — ' +
+          'enabled when `user-account.delete` includes \'adminToken\' (the default).'
         ));
       }
 

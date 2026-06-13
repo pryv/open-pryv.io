@@ -643,6 +643,10 @@ describe('[EVPC] events (Pattern C)', function () {
         .post(basePath)
         .set('Authorization', token)
         .send({ streamIds: [stream1Id], type: 'note/txt', content: 'To delete' });
+      // Surface a failed create as a legible assertion instead of a cryptic
+      // `undefined.id` TypeError (matrix-context flakes land here).
+      assert.strictEqual(res.status, 201,
+        `event create failed in [EPC05] beforeEach: ${JSON.stringify(res.body)}`);
       eventId = res.body.event.id;
       notifications.reset();
     });

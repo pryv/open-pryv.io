@@ -493,6 +493,22 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   cooldownMs: 5000
 # #   maxRetries: 5
 
+# # access.trustedAuthUrls — let apps request their OWN auth page on
+# # POST /reg/access (optional 'authUrl' body field). Only URLs matching an
+# # entry below are honored (same protocol + host, path on a '/' boundary);
+# # anything else is rejected with 400. Unset = client authUrl always refused.
+# # access:
+# #   trustedAuthUrls:
+# #     - https://auth.example.com/my-auth/
+
+# # logs.console.format.json — one JSON object per line ({timestamp, level,
+# # name, pid, message, context}) for log collectors / log-based alerting.
+# # Also switchable per-run with the LOG_FORMAT=json environment variable.
+# # logs:
+# #   console:
+# #     format:
+# #       json: true
+
 # # storages.contentIndexes — acceleration indexes for events.get content/
 # # clientData query conditions (PLATFORM-WIDE: declare identically on every
 # # core). Queries are correct without indexes; declaring paths only speeds
