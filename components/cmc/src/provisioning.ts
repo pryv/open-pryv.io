@@ -43,7 +43,6 @@ type StreamCreateParams = {
   clientData?: Record<string, unknown>;
   createdBy?: string;
   modifiedBy?: string;
-  [k: string]: unknown;
 };
 
 import type { MallStreamsLike } from './_types.ts';

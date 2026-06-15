@@ -41,7 +41,6 @@ type PermissionLike = { streamId: string; level: string };
 type OfferContent = {
   request?: { permissions?: Array<{ streamId: unknown; level: unknown }> };
   requesterMeta?: { appId?: string };
-  [k: string]: unknown;
 };
 
 type OfferEvent = {

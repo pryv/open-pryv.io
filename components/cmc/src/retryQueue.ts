@@ -65,7 +65,6 @@ type RetryContent = {
   lastFailureDetail?: unknown;
   nextAttemptAfter?: number;
   status: 'pending' | 'succeeded' | 'failed-permanent';
-  [k: string]: unknown;
 };
 
 type MallParams = Record<string, unknown>;

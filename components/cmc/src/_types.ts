@@ -19,7 +19,6 @@ type FetchInit = {
   headers?: Record<string, string>;
   body?: string;
   signal?: AbortSignal;
-  [k: string]: unknown;
 };
 
 type FetchLike = (url: string, init?: FetchInit) => Promise<{
@@ -52,7 +51,6 @@ export type CounterpartyRef = {
   apiEndpoint?: string;
   remoteChatStreamId?: string;
   remoteCollectorStreamId?: string;
-  [k: string]: unknown;
 };
 
 /** The `clientData.cmc` bag CMC stamps on accesses — union of all fields
@@ -69,7 +67,6 @@ export type CmcClientData = {
   capabilityId?: string;
   requestEventId?: string | null;
   singleUse?: boolean;
-  [k: string]: unknown;
 };
 
 /** Access as seen through the CMC mall view (mallAccessesAdapter output). */
@@ -81,7 +78,11 @@ export type CmcAccessLike = {
   apiEndpoint?: string;
   permissions?: Array<Record<string, unknown>>;
   clientData?: { cmc?: CmcClientData; [k: string]: unknown };
-  [k: string]: unknown;
+  created?: number;
+  createdBy?: string;
+  modified?: number;
+  modifiedBy?: string;
+  expires?: number | null;
 };
 
 export type MallParams = Record<string, unknown>;

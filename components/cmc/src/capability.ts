@@ -28,13 +28,12 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const slug = require('./slug.ts');
 
-type AcceptedByEntry = { username?: string; host?: string; acceptedAt?: number; [k: string]: unknown };
+type AcceptedByEntry = { username?: string; host?: string; acceptedAt?: number };
 type CapabilityCd = {
   mode?: string;
   state?: string;
   stateChangedAt?: number;
   acceptedBy?: AcceptedByEntry[];
-  [k: string]: unknown;
 };
 type CmcAccessCd = {
   kind?: string;
@@ -42,7 +41,6 @@ type CmcAccessCd = {
   requestEventId?: string | null;
   singleUse?: boolean;
   capability?: CapabilityCd;
-  [k: string]: unknown;
 };
 import type { CmcAccessLike as AccessRow, MallLike } from './_types.ts';
 
