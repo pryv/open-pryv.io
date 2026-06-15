@@ -1,5 +1,9 @@
 # Changelog - Internal (no API impact)
 
+## chore(audit): drop the legacy /audit/logs route plumbing
+
+Removed the route handler, the `audit.getLogs` method + its parameter schema, and every registration site (`Paths.Audit`, `application.ts` route wiring, `server.ts` method wiring, the `audit.getLogs` entry in the audit `ApiMethods` list, and the two test-helper registrations). The audit datastore is untouched: recording, the `:_audit:` store, `auditUserStreams`/`auditUserEvents`, syslog, and the storage interfaces all stay — `events.get` over `:_audit:` is the supported (and now sole) read path. Audit acceptance tests were repointed to `events.get` (the deleted `legacy-route.test.js` is fully covered by the existing `[ASTE]` events.get suite); `Audit.test.js` reads audit logs through a dedicated personal "audit reader" access and filters out its own self-audited reads. Dead `isAuditActive` field in `server.ts` and dead `auditLogs` field in `Result.ts` removed.
+
 ## fix(backup/test-infra): engine events stores + parallel-checkout test hygiene
 
 - Both storage engines now expose `storageLayer.events.exportAll` returning canonical (camelCase) event objects — the exact shape `events.importAll` consumes — and the backup/restore orchestrators plus the integrity check go through that store instead of querying engine databases directly. This fixes the PostgreSQL full-backup crash (raw driver result object forwarded as the events array) and the SQLite events black hole (no export, no-op import, and `iterateAllEvents`/`events.clearAll` reading an `events` table in the per-user baseStorage file while live events live in the per-user dataStore file — the teardown integrity pass silently covered zero events). Live round-trip tests cover export/import/clear/iterate on both engines.

@@ -62,8 +62,7 @@ const ALL_METHODS = [
   'system.getUserInfo',
   'system.listUsers',
   'system.listCores',
-  'auth.hostings',
-  'audit.getLogs'
+  'auth.hostings'
 ];
 
 const NOT_AUDITED_METHODS = [

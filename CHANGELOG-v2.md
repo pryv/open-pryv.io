@@ -1,5 +1,14 @@
 # Changelog - API Changes
 
+## 2.0.0-rc.3
+
+### BREAKING: removed the deprecated `GET /audit/logs` route (`audit.getLogs`)
+
+The legacy audit-logs route has been removed. Audit logs are queried through the **Events API** exactly as documented in the [Audit logs guide](https://pryv.github.io/guides/audit-logs/): call `events.get` with the audit streams in the `streams` parameter — `:_audit:` for everything, `:_audit:access-<access-id>` for a given access, `:_audit:action-<method-id>` for a given action. The same access-scoping rules apply (a personal token sees all audit logs; an app/shared token sees only the access it authorizes, plus any `:_audit:access-*` permissions explicitly granted to it).
+
+- The route had no capability the Events API lacks — it was a thin wrapper over the same audit store. Migration is a one-to-one swap of `GET /audit/logs` for `GET /events?streams[]=:_audit:…`; the returned objects are standard audit events (`audit-log/pryv-api` / `audit-log/pryv-api-error`) rather than the old `auditLogs` envelope.
+- No official SDK (lib-js) used the route, so no SDK upgrade is required.
+
 ## 2.0.0-rc.2 — 2026-06-12
 
 ### PostgreSQL attachment storage (low file volume)
@@ -410,8 +419,8 @@ See `components/cmc/README.md` for the canonical design, `IMPLEMENTERS-GUIDE.md`
 - **NEW (multi-core only)**: `GET /service/info` at the root of reserved subdomains (e.g. `https://reg.{domain}/service/info`, `https://access.{domain}/service/info`). Alias for `/reg/service/info`. Lets SDKs bootstrap from the register subdomain directly without knowing the `/reg/` path prefix.
 - **NEW (multi-core only)**: Hostname-path mapping — requests to `reg.{domain}/<path>`, `access.{domain}/<path>`, `mfa.{domain}/<path>` are handled as `/reg/<path>` internally. Lets clients use v1-style rootless URLs (`reg.pryv.me/perki/server`) while the internal routing stays under `/reg/*`. Idempotent — clients that still send the `/reg/` prefix continue to work.
 - **CHANGED**: `POST /reg/:uid/server` now looks up the user's home core via the replicated PlatformDB (`user-core/<username>`) instead of the per-core SQLite index, so any core in a multi-core cluster answers correctly. Returns 404 with `unknown-user` when no mapping exists, same shape as before.
-- **CHANGED**: `POST /reg/access` response now includes `authUrl` (popup sign-in URL, built from `access.defaultAuthUrl` + query params), `url` (deprecated alias for `authUrl`), `lang`, `returnUrl` (camelCase alias for the existing `returnURL`), and `serviceInfo` (embedded v1-compatible). `poll` is built from the local `core.url` rather than the cluster-wide `service.register`, making it core-affine: subsequent poll GETs reliably hit the core that owns the in-memory state.
-- **CHANGED**: `GET /reg/access/:key` NEED_SIGNIN response now also includes `poll`, `authUrl`, `url`, `lang`, `returnUrl`, and `serviceInfo`. Clients that re-hydrate their state from the poll body (some lib-js / app-web-auth3 code paths) now see a complete state shape.
+- **CHANGED**: `POST /reg/access` response includes `authUrl` (popup sign-in URL, built from `access.defaultAuthUrl` + query params) alongside `status`, `key`, `poll`, and `poll_rate_ms`. `poll` is built from the local `core.url` rather than the cluster-wide `service.register`, making it core-affine: subsequent poll GETs reliably hit the core that owns the in-memory state.
+- **CHANGED**: `GET /reg/access/:key` NEED_SIGNIN response also includes `poll`, `authUrl`, `lang`, `returnURL`, and `serviceInfo`. Clients that re-hydrate their state from the poll body (some lib-js / app-web-auth3 code paths) now see a complete state shape.
 - **CONFIG (multi-core only)**: `service.{name,serial,home,support,terms,eventTypes}` are now **required** — master fails fast at startup with a clear "Configuration is invalid at [service]" error listing the missing fields. Previously a missing `service:` block resulted in an api-server crash loop with no surfaced cause.
 - **CONFIG**: `access.defaultAuthUrl` — URL of the deployed auth UI (e.g. `https://pryv.github.io/app-web-auth3/access/access.html` for the public static build, or your own fork). Populated into the `authUrl` field of `/reg/access` responses.
 - **CONFIG**: Unresolved `${VAR}` env-var placeholders in any config string now fail startup fast with a clear error naming the missing variable. Previously `path: "${PRYV_LOGSDIR}/api-server.errors.log"` with `PRYV_LOGSDIR` unset would silently create a literal `${PRYV_LOGSDIR}` directory on disk. Respects the `active: false` / `enabled: false` block-skip (placeholders inside disabled blocks are ignored).

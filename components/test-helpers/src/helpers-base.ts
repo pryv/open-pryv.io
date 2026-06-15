@@ -196,11 +196,6 @@ async function initCore () {
     }
   }
 
-  // Load audit if config says so
-  if (_global.config.get('audit:active')) {
-    await require('audit/src/methods/audit-logs.ts').default(_global.app.api);
-  }
-
   _global.coreRequest = supertest(_global.app.expressApp);
 
   // Hook after initialization

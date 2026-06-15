@@ -144,16 +144,18 @@ describe('[AUDI] Audit logs events (Pattern C)', () => {
     });
   });
 
-  describe('[AU02] GET /audit/logs', () => {
-    it('[RV4W] must return a valid id field', async () => {
+  describe('[AU02] audit events via events.get', () => {
+    it('[RV4W] must return audit events with a valid :_audit:-prefixed id field', async () => {
       const res = await coreRequest
-        .get(basePath + '/audit/logs')
-        .set('Authorization', personalToken);
+        .get(basePath + '/events')
+        .set('Authorization', personalToken)
+        .query({ streams: [':_audit:'] });
 
-      const logs = res.body.auditLogs || [];
-      assert.ok(logs.length > 0, 'Should have audit logs');
+      const logs = res.body.events || [];
+      assert.ok(logs.length > 0, 'Should have audit events');
       for (const log of logs) {
-        assert.notStrictEqual(log.id.substring(':_audit:'.length), 'undefined');
+        assert.strictEqual(typeof log.id, 'string');
+        assert.ok(log.id.startsWith(':_audit:'), 'audit event id should be prefixed with :_audit:');
       }
     });
   });

@@ -233,9 +233,6 @@ class Application {
     require('./routes/streams.ts').default(this.expressApp, this);
 
     require('./routes/webhooks.ts').default(this.expressApp, this);
-    if (this.isAuditActive) {
-      require('audit/src/routes/audit.route.ts').default(this.expressApp, this);
-    }
   }
 
   produceLogSubsystem () {

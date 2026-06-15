@@ -12,8 +12,8 @@ const require = createRequire(import.meta.url);
 const timestamp = require('unix-timestamp');
 
 describe('[AUDT] Audit', function () {
-  let user, username, password, access, readAccess;
-  let eventsPath, auditPath;
+  let user, username, password, access, readAccess, auditReader;
+  let eventsPath;
 
   let sysLogSpy, storageSpy;
   let fixtures;
@@ -43,9 +43,19 @@ describe('[AUDT] Audit', function () {
       permissions: [{ streamId: 'yo', level: 'read' }]
     });
     readAccess = readAccess.attrs;
+    // Dedicated personal access used ONLY to read audit logs via events.get.
+    // Its reads are themselves audited under its own access stream, which the
+    // getAuditEvents() helper filters out — so each assertion sees only the
+    // action under test. (Audit logs are queried through the Events API since
+    // the legacy /audit/logs route was removed.)
+    auditReader = await user.access({
+      type: 'personal',
+      token: cuid()
+    });
+    auditReader = auditReader.attrs;
+    await user.session(auditReader.token);
     user = user.attrs;
     eventsPath = '/' + username + '/events/';
-    auditPath = '/' + username + '/audit/logs/';
   });
 
   function createUserPath (suffixPath) {
@@ -55,6 +65,20 @@ describe('[AUDT] Audit', function () {
   function resetSpies () {
     sysLogSpy.resetHistory();
     storageSpy.resetHistory();
+  }
+
+  /**
+   * Fetch audit logs through events.get over the `:_audit:` store, excluding the
+   * reader's own (self-audited) events.get entries. Replaces the removed
+   * `GET /audit/logs` route. Accepts the same time-window query the route did.
+   */
+  async function getAuditEvents (query = {}) {
+    const res = await coreRequest
+      .get(eventsPath)
+      .set('Authorization', auditReader.token)
+      .query(Object.assign({ streams: [':_audit:'] }, query));
+    assert.strictEqual(res.status, 200);
+    return res.body.events.filter((e) => !e.streamIds.includes(addAccessStreamIdPrefix(auditReader.id)));
   }
 
   after(async function () {
@@ -76,10 +100,7 @@ describe('[AUDT] Audit', function () {
       assert.strictEqual(res.status, 200);
     });
     it('[UZEV] must return logs when queried', async function () {
-      res = await coreRequest
-        .get(auditPath)
-        .set('Authorization', access.token);
-      const logs = res.body.auditLogs;
+      const logs = await getAuditEvents();
       assert.ok(logs);
       assert.strictEqual(logs.length, 1);
       const log = logs[0];
@@ -127,15 +148,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(sysLogSpy.calledOnce, true, '[L92X] must log it in syslog');
       });
       it('[G7UV] must return logs when queried', async function () {
-        res = await coreRequest
-          .get(auditPath)
-          .set('Authorization', access.token)
-          .query({ fromTime: now });
-        assert.strictEqual(res.status, 200);
-        // The audit query of the PREVIOUS test is itself audited; its async
-        // write can land after this test sampled `now` (tight timing, e.g.
-        // parallel mode). Only the action under test is asserted on.
-        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
+        const entries = await getAuditEvents({ fromTime: now });
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         log = entries[0];
@@ -194,15 +207,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 400);
       });
       it('[N5OS] must return logs when queried', async function () {
-        res = await coreRequest
-          .get(auditPath)
-          .set('Authorization', access.token)
-          .query({ fromTime: now });
-        assert.strictEqual(res.status, 200);
-        // The audit query of the PREVIOUS test is itself audited; its async
-        // write can land after this test sampled `now` (tight timing, e.g.
-        // parallel mode). Only the action under test is asserted on.
-        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
+        const entries = await getAuditEvents({ fromTime: now });
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -225,15 +230,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 400);
       });
       it('[BZT8] must return logs when queried', async function () {
-        res = await coreRequest
-          .get(auditPath)
-          .set('Authorization', access.token)
-          .query({ fromTime: now });
-        assert.strictEqual(res.status, 200);
-        // The audit query of the PREVIOUS test is itself audited; its async
-        // write can land after this test sampled `now` (tight timing, e.g.
-        // parallel mode). Only the action under test is asserted on.
-        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
+        const entries = await getAuditEvents({ fromTime: now });
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -256,15 +253,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 400);
       });
       it('[OBQ8] must return logs when queried', async function () {
-        res = await coreRequest
-          .get(auditPath)
-          .set('Authorization', access.token)
-          .query({ fromTime: now });
-        assert.strictEqual(res.status, 200);
-        // The audit query of the PREVIOUS test is itself audited; its async
-        // write can land after this test sampled `now` (tight timing, e.g.
-        // parallel mode). Only the action under test is asserted on.
-        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
+        const entries = await getAuditEvents({ fromTime: now });
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -285,15 +274,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 403);
       });
       it('[6CZ0] must return logs when queried', async function () {
-        res = await coreRequest
-          .get(auditPath)
-          .set('Authorization', access.token)
-          .query({ fromTime: now });
-        assert.strictEqual(res.status, 200);
-        // The audit query of the PREVIOUS test is itself audited; its async
-        // write can land after this test sampled `now` (tight timing, e.g.
-        // parallel mode). Only the action under test is asserted on.
-        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
+        const entries = await getAuditEvents({ fromTime: now });
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -319,15 +300,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 403);
       });
       it('[14LS] must return logs when queried', async function () {
-        res = await coreRequest
-          .get(auditPath)
-          .set('Authorization', access.token)
-          .query({ fromTime: now });
-        assert.strictEqual(res.status, 200);
-        // The audit query of the PREVIOUS test is itself audited; its async
-        // write can land after this test sampled `now` (tight timing, e.g.
-        // parallel mode). Only the action under test is asserted on.
-        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
+        const entries = await getAuditEvents({ fromTime: now });
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -347,15 +320,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 404);
       });
       it('[7132] must return logs when queried', async function () {
-        res = await coreRequest
-          .get(auditPath)
-          .set('Authorization', access.token)
-          .query({ fromTime: now });
-        assert.strictEqual(res.status, 200);
-        // The audit query of the PREVIOUS test is itself audited; its async
-        // write can land after this test sampled `now` (tight timing, e.g.
-        // parallel mode). Only the action under test is asserted on.
-        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
+        const entries = await getAuditEvents({ fromTime: now });
         assert.ok(entries);
         assert.strictEqual(entries.length, 1);
         const log = entries[0];
@@ -377,14 +342,7 @@ describe('[AUDT] Audit', function () {
         assert.strictEqual(res.status, 400);
       });
       it('[ZNP4] must not record logs', async function () {
-        res = await coreRequest
-          .get(auditPath)
-          .set('Authorization', access.token)
-          .query({ fromTime: now });
-        assert.strictEqual(res.status, 200);
-        // Self-auditing of the previous test's audit query can land in the
-        // window (see the filter in the [AT5x] cases above).
-        const entries = res.body.auditLogs.filter((e) => !e.streamIds.includes(addActionStreamIdPrefix('audit.getLogs')));
+        const entries = await getAuditEvents({ fromTime: now });
         assert.ok(entries);
         assert.strictEqual(entries.length, 0);
       });

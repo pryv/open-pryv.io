@@ -49,10 +49,6 @@ base.init({
     await audit.init();
     global.audit = audit;
   },
-  afterInitCore: async () => {
-    // Load audit-logs method
-    require('audit/src/methods/audit-logs.ts').default(global.app.api);
-  },
   globals: {
     apiMethods: require('audit/src/ApiMethods.ts'),
     MethodContextUtils: require('audit/src/MethodContextUtils.ts'),

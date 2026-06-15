@@ -74,7 +74,6 @@ class Result {
 
   webhookDeletion?: unknown;
 
-  auditLogs?: unknown;
   [key: string]: unknown;
   constructor (params: ResultOptions | undefined) {
     this._private = {

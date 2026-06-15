@@ -46,7 +46,6 @@ class Server {
   logger!: Logger;
   config!: BoilerConfig;
   httpsServer: HttpsLike | undefined;
-  isAuditActive!: boolean; // initialized in start()
 
   async start () {
     this.logger = getLogger('server');
@@ -56,7 +55,6 @@ class Server {
     await app.initiate();
     const config = await getConfig();
     this.config = config;
-    this.isAuditActive = config.get('audit:active') as boolean;
     const defaultParam = this.findDefaultParam();
     if (defaultParam != null) {
       this.logger.error(`Config parameter "${defaultParam}" has a default value, please change it`);
@@ -146,9 +144,6 @@ class Server {
     await require('./methods/profile.ts').default(app.api);
     await require('./methods/streams.ts').default(app.api);
     await require('./methods/events.ts').default(app.api);
-    if (this.isAuditActive) {
-      require('audit/src/methods/audit-logs.ts').default(app.api);
-    }
     this.logger.debug('api methods registered');
   }
 
