@@ -349,7 +349,7 @@ class Connection {
 
   private async addScopes (payload: unknown): Promise<void> {
     for (const { key, kind, query } of normalizeScopePayload(payload)) {
-      if (kind !== 'events') {
+      if (kind !== 'events' && kind !== 'streams') {
         throw errors.invalidRequestStructure(`scope kind '${kind}' is not yet supported`);
       }
       const prepared = await prepareScopeQuery(this.methodContext, query);

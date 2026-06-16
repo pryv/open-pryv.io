@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import type { EventMatchQuery } from 'utils';
 const require = createRequire(import.meta.url);
 const { pubsub } = require('messages');
-const { eventMatchesQuery } = require('utils').eventMatchQuery;
+const { eventMatchesQuery, matchesStreamQuery } = require('utils').eventMatchQuery;
 
 /**
  * Worker-local notification engine.
@@ -45,6 +45,7 @@ type ScopedSignal = {
   kind: ScopeKind;
   changeType?: string;
   event?: { id?: string; streamIds: string[]; type?: string; content?: unknown; clientData?: unknown };
+  stream?: { id: string; parentId?: string | null };
 };
 
 class NotificationEngine {
@@ -109,8 +110,16 @@ class NotificationEngine {
     switch (scope.kind) {
       case 'events':
         return payload.event != null && eventMatchesQuery(payload.event, scope.query);
-      // 'streams' / 'accesses' kinds are matched once their change signals and
-      // kind-specific matchers land.
+      case 'streams': {
+        // A changed stream matches if it — or its parent — falls within the
+        // scope's (already access-bound, recursively-expanded) stream set. Using
+        // the parent too lets a newly-created child match a watched parent scope.
+        if (payload.stream == null) return false;
+        const ids = [payload.stream.id];
+        if (payload.stream.parentId != null) ids.push(payload.stream.parentId);
+        return matchesStreamQuery(ids, scope.query.streams ?? []);
+      }
+      // 'accesses' kind is matched once its change signal + matcher land.
       default:
         return false;
     }

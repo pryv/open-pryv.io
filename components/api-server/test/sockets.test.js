@@ -460,6 +460,21 @@ describe('[SK01] Socket.IO', function () {
       });
     });
 
+    it('[SNST1] delivers a streams-kind scope when a child stream is created under the watched parent', function () {
+      ioCons.con1 = connect(namespace, { auth: token });
+      return new Promise((resolve, reject) => {
+        ioCons.con1.on('notificationsChanged', (payload) => {
+          try { assert.deepStrictEqual(payload.keys, ['st']); resolve(); } catch (e) { reject(e); }
+        });
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 'st', kind: 'streams', query: { streams: [inScopeStream] } }, function (err) {
+            if (err) return reject(err);
+            ioCons.con1.emit('streams.create', { name: 'scoped-child-' + Date.now(), parentId: inScopeStream }, function (err2) { if (err2) reject(err2); });
+          });
+        });
+      });
+    });
+
     it('[SNSK4] stops delivering after unsubscribe', function () {
       ioCons.con1 = connect(namespace, { auth: token });
       return new Promise((resolve, reject) => {

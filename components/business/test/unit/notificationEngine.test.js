@@ -61,6 +61,19 @@ describe('[SNEN] NotificationEngine', function () {
       assert.equal(b.deliveries.length, 0);
     });
 
+    it('[SNED6] matches a streams-kind signal by id or parentId', function () {
+      const engine = new NotificationEngine();
+      const sub = fakeSubscriber('s1', [{ key: 'diaryTree', kind: 'streams', query: { streams: [{ any: ['diary'] }] } }]);
+      engine.register('alice', sub);
+      // a newly created child of :diary — matched via parentId
+      engine.onSignal('alice', { kind: 'streams', changeType: 'create', stream: { id: 'diary-2025', parentId: 'diary' } });
+      // the watched stream itself updated — matched via id
+      engine.onSignal('alice', { kind: 'streams', changeType: 'update', stream: { id: 'diary', parentId: null } });
+      // an unrelated stream — no match
+      engine.onSignal('alice', { kind: 'streams', changeType: 'update', stream: { id: 'health', parentId: null } });
+      assert.deepEqual(sub.deliveries, [['diaryTree'], ['diaryTree']]);
+    });
+
     it('[SNED5] ignores signals for other usernames', function () {
       const engine = new NotificationEngine();
       const sub = fakeSubscriber('s1', [{ key: 'd', kind: 'events', query: { streams: [{ any: ['diary'] }] } }]);
