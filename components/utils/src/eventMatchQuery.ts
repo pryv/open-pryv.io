@@ -29,11 +29,37 @@ type NormalizedCondition = {
   value: ScalarValue | ScalarValue[];
 };
 
+/** One stream condition: at least one of `any` present, none of `not` present. */
+type StreamCondition = { any?: string[]; not?: string[] };
+/** A normalized stream-query group (single condition or AND-ed array). */
+type StreamGroup = StreamCondition | StreamCondition[];
+
+/** Minimal event shape the matcher inspects. */
+type EventToMatch = {
+  streamIds: string[];
+  type: string;
+  content?: unknown;
+  clientData?: unknown;
+};
+/**
+ * The standing-filter subset of an `events.get` query the matcher evaluates.
+ * Time window / pagination / `state` are the caller's concern, not part of it.
+ */
+type EventMatchQuery = {
+  streams?: StreamGroup[];
+  types?: string[];
+  content?: NormalizedCondition[];
+  clientData?: NormalizedCondition[];
+};
+
 const ROOT_PATH = '$';
 const SEGMENT_REGEXP = /^[a-zA-Z0-9_:-]+$/;
 
-export { ROOT_PATH, SEGMENT_REGEXP, parseJsonPath, resolveJsonPath, matchesConditions };
-export type { NormalizedCondition, ScalarValue, ConditionOp };
+export {
+  ROOT_PATH, SEGMENT_REGEXP, parseJsonPath, resolveJsonPath,
+  matchesConditions, matchesStreamQuery, eventMatchesQuery
+};
+export type { NormalizedCondition, ScalarValue, ConditionOp, StreamCondition, StreamGroup, EventToMatch, EventMatchQuery };
 
 /**
  * Parse a raw path string per the content-query path grammar.
@@ -111,4 +137,49 @@ function matchesCondition (fieldValue: unknown, condition: NormalizedCondition):
 
 function strictEquals (value: unknown, expected: ScalarValue): boolean {
   return typeof value === typeof expected && value === expected;
+}
+
+/**
+ * Check whether an event's streamIds satisfy a normalized stream query.
+ * Groups are OR-ed; within a group, conditions are AND-ed; a `{ any }`
+ * condition needs at least one match, a `{ not }` condition needs none.
+ */
+function matchesStreamQuery (eventStreamIds: string[], streamGroups: StreamGroup[]): boolean {
+  const sids = new Set(eventStreamIds);
+  for (const group of streamGroups) { // OR between groups
+    if (matchesGroup(sids, group)) return true;
+  }
+  return false;
+}
+
+function matchesGroup (sids: Set<string>, group: StreamGroup): boolean {
+  // Accept both the normalized array form and a single-condition object.
+  const conditions: StreamCondition[] = Array.isArray(group) ? group : [group];
+  for (const cond of conditions) {
+    if (cond.any && !cond.any.some((sid) => sids.has(sid))) return false;
+    if (cond.not && cond.not.some((sid) => sids.has(sid))) return false;
+  }
+  return true;
+}
+
+/**
+ * The composed predicate: does this in-memory event satisfy the standing
+ * `events.get`-shaped filter (streams + types + content/clientData)? All
+ * present dimensions must hold (AND). Empty/absent dimensions are skipped.
+ * Time window, `state` and `modifiedSince` are NOT evaluated here — they are
+ * not part of a standing filter and are the caller's responsibility.
+ */
+function eventMatchesQuery (event: EventToMatch, query: EventMatchQuery): boolean {
+  if (query.streams && query.streams.length > 0) {
+    if (!matchesStreamQuery(event.streamIds, query.streams)) return false;
+  }
+  if (query.types && query.types.length > 0) {
+    if (!query.types.includes(event.type)) return false;
+  }
+  if ((query.content != null && query.content.length > 0) ||
+      (query.clientData != null && query.clientData.length > 0)) {
+    const conditions = [...(query.content ?? []), ...(query.clientData ?? [])];
+    if (!matchesConditions({ content: event.content, clientData: event.clientData }, conditions)) return false;
+  }
+  return true;
 }
