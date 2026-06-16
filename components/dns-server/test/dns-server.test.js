@@ -566,3 +566,154 @@ describe('[DNP] DNS Server — PlatformDB persistence', function () {
     }
   });
 });
+
+// =============================================================================
+// [DNH] DNS Server — hashed PII mode (Plan 99 Phase B.3)
+//
+// When platform.piiMode is hashed, subdomain row keys in PlatformDB are
+// HMAC tokens. The DnsServer must keep its in-memory cache in the same
+// storage form so PlatformDB-sourced runtime entries match incoming DNS
+// query prefixes (which arrive plaintext from the wire). This block
+// exercises that round-trip with a mock platform that exposes hashFor.
+// =============================================================================
+
+describe('[DNH] DNS Server — hashed PII mode', function () {
+  this.timeout(30000);
+
+  // Trivial deterministic non-identity hashFor for the mock — `H:` prefix
+  // proves storage form is opaque + distinct from plaintext.
+  function fakeHashFor (field, value) {
+    return 'H:' + field + ':' + value;
+  }
+
+  function createHashedPlatform (initialMap = {}) {
+    // Keyed by storage form (i.e. fakeHashFor('dns-subdomain', plaintext)).
+    const persisted = new Map(Object.entries(initialMap));
+    return {
+      async getUserCore () { return null; },
+      async getCoreInfo () { return null; },
+      async getAllCoreInfos () { return []; },
+      async setDnsRecord (subdomain, records) {
+        // Mirror what Platform.setDnsRecord would do: hash before persisting.
+        persisted.set(fakeHashFor('dns-subdomain', subdomain), records);
+      },
+      async getDnsRecord (subdomain) {
+        const key = fakeHashFor('dns-subdomain', subdomain);
+        return persisted.has(key) ? persisted.get(key) : null;
+      },
+      async getAllDnsRecords () {
+        // Returns entries in their storage form — matches what rqlite layer hands back.
+        return Array.from(persisted.entries()).map(([subdomain, records]) => ({ subdomain, records }));
+      },
+      async deleteDnsRecord (subdomain) {
+        persisted.delete(fakeHashFor('dns-subdomain', subdomain));
+      },
+      hashFor: fakeHashFor
+    };
+  }
+
+  it('[DNH01] PlatformDB-sourced runtime entries resolve when queried with plaintext prefix', async () => {
+    // PlatformDB row stored with storage-form key (operator-level write).
+    const initial = { 'H:dns-subdomain:_acme-challenge': { txt: ['hashed-token-value'] } };
+    const server = createDnsServer({
+      config: createMockConfig(),
+      platform: createHashedPlatform(initial),
+      logger: createMockLogger(),
+      platformRefreshIntervalMs: 0
+    });
+    await server.start({ port: 0, ip: '127.0.0.1', ip6: null });
+    const port = server._getAddresses().udp.port;
+    const resolver = new dns.promises.Resolver();
+    resolver.setServers([`127.0.0.1:${port}`]);
+
+    try {
+      const records = await resolver.resolveTxt(`_acme-challenge.${TEST_DOMAIN}`);
+      assert.strictEqual(records.length, 1);
+      assert.deepStrictEqual(records[0], ['hashed-token-value']);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('[DNH02] config-static entries remain resolvable by plaintext prefix (constructor pre-hashes config keys)', async () => {
+    const server = createDnsServer({
+      config: createMockConfig(),
+      platform: createHashedPlatform(),
+      logger: createMockLogger(),
+      platformRefreshIntervalMs: 0
+    });
+    await server.start({ port: 0, ip: '127.0.0.1', ip6: null });
+    const port = server._getAddresses().udp.port;
+    const resolver = new dns.promises.Resolver();
+    resolver.setServers([`127.0.0.1:${port}`]);
+
+    try {
+      // `api: { a: ['5.6.7.8'] }` is in the mock config's dns.staticEntries.
+      // It loads at construction time; in hashed mode the cache key is
+      // fakeHashFor('dns-subdomain', 'api'). Lookup by plaintext 'api' must
+      // route through the same hash and hit.
+      const ips = await resolver.resolve4(`api.${TEST_DOMAIN}`);
+      assert.deepStrictEqual(ips, ['5.6.7.8']);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('[DNH03] updateStaticEntry persists with hashed key + serves plaintext queries', async () => {
+    const platform = createHashedPlatform();
+    const server = createDnsServer({
+      config: createMockConfig(),
+      platform,
+      logger: createMockLogger(),
+      platformRefreshIntervalMs: 0
+    });
+    await server.start({ port: 0, ip: '127.0.0.1', ip6: null });
+
+    try {
+      await server.updateStaticEntry('_acme-newh', { txt: ['fresh-token-hashed'] });
+      // platform.getDnsRecord hashes 'subdomain' internally — round-trip.
+      const stored = await platform.getDnsRecord('_acme-newh');
+      assert.deepStrictEqual(stored, { txt: ['fresh-token-hashed'] });
+
+      // And the DNS-query path also resolves.
+      const port = server._getAddresses().udp.port;
+      const resolver = new dns.promises.Resolver();
+      resolver.setServers([`127.0.0.1:${port}`]);
+      const records = await resolver.resolveTxt(`_acme-newh.${TEST_DOMAIN}`);
+      assert.deepStrictEqual(records[0], ['fresh-token-hashed']);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('[DNH04] config-static entry shadows a PlatformDB row with the same plaintext subdomain', async () => {
+    // PlatformDB tries to override an api-config entry with a different IP.
+    const initial = { 'H:dns-subdomain:api': { a: ['1.1.1.1'] } };
+    const warns = [];
+    const logger = { ...createMockLogger(), warn (msg) { warns.push(msg); } };
+
+    const server = createDnsServer({
+      config: createMockConfig(),
+      platform: createHashedPlatform(initial),
+      logger,
+      platformRefreshIntervalMs: 0
+    });
+    await server.start({ port: 0, ip: '127.0.0.1', ip6: null });
+    const port = server._getAddresses().udp.port;
+    const resolver = new dns.promises.Resolver();
+    resolver.setServers([`127.0.0.1:${port}`]);
+
+    try {
+      const ips = await resolver.resolve4(`api.${TEST_DOMAIN}`);
+      assert.deepStrictEqual(ips, ['5.6.7.8'], 'config IP must win over PlatformDB IP');
+      // Shadow warning should carry the cleartext 'api' (the constructor
+      // tracked plaintext-by-storage-key for diagnostic purposes).
+      assert.ok(
+        warns.some((w) => w.includes("'api'") && w.includes('shadowed by config')),
+        `expected a shadow-warning mentioning 'api'; got: ${JSON.stringify(warns)}`
+      );
+    } finally {
+      await server.stop();
+    }
+  });
+});
