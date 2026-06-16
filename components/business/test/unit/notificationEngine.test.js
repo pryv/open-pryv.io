@@ -74,6 +74,21 @@ describe('[SNEN] NotificationEngine', function () {
       assert.deepEqual(sub.deliveries, [['diaryTree'], ['diaryTree']]);
     });
 
+    it('[SNED7] matches an accesses-kind signal by type / streams / accessIds', function () {
+      const engine = new NotificationEngine();
+      const sub = fakeSubscriber('s1', [
+        { key: 'shared', kind: 'accesses', query: { types: ['shared'] } },
+        { key: 'health', kind: 'accesses', query: { streams: [{ any: ['health'] }] } },
+        { key: 'specific', kind: 'accesses', query: { accessIds: ['acc-1'] } }
+      ]);
+      engine.register('alice', sub);
+      engine.onSignal('alice', { kind: 'accesses', changeType: 'create', access: { id: 'acc-1', type: 'shared', streamIds: ['health'] } });
+      assert.deepEqual(sub.deliveries, [['shared', 'health', 'specific']]);
+      // an app access on an unrelated stream with a different id -> no match
+      engine.onSignal('alice', { kind: 'accesses', changeType: 'create', access: { id: 'acc-2', type: 'app', streamIds: ['other'] } });
+      assert.deepEqual(sub.deliveries, [['shared', 'health', 'specific']]);
+    });
+
     it('[SNED5] ignores signals for other usernames', function () {
       const engine = new NotificationEngine();
       const sub = fakeSubscriber('s1', [{ key: 'd', kind: 'events', query: { streams: [{ any: ['diary'] }] } }]);

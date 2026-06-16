@@ -21,4 +21,4 @@ const { toString } = require('./toString.ts');
 const treeUtils = require('./treeUtils.ts');
 
 export { ApiEndpoint, debug, deepMerge, encryption, eventMatchQuery, extension, fromCallback, jsonValidator, slugify, toString, treeUtils };
-export type { NormalizedCondition, ScalarValue, ConditionOp, StreamCondition, StreamGroup, EventToMatch, EventMatchQuery } from './eventMatchQuery.ts';
+export type { NormalizedCondition, ScalarValue, ConditionOp, StreamCondition, StreamGroup, EventToMatch, EventMatchQuery, AccessToMatch } from './eventMatchQuery.ts';

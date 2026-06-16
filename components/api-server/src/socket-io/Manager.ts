@@ -18,7 +18,7 @@ const { fromCallback } = require('utils');
 const { USERNAME_REGEXP_STR } = require('../schema/helpers.ts');
 const { pubsub } = require('messages');
 const notificationEngine = require('business').notificationEngine;
-const { prepareScopeQuery } = require('../methods/helpers/scopeQueryUtils.ts');
+const { prepareScopeQuery, prepareAccessScopeQuery } = require('../methods/helpers/scopeQueryUtils.ts');
 // socket messages reserved for the scoped-subscription protocol — handled
 // inline instead of being dispatched to the API as method calls (the wildcard
 // '*' handler would otherwise treat them as unknown methods).
@@ -390,10 +390,14 @@ class Connection {
 
   private async addScopes (payload: unknown): Promise<void> {
     for (const { key, kind, query } of normalizeScopePayload(payload)) {
-      if (kind !== 'events' && kind !== 'streams') {
+      let prepared;
+      if (kind === 'events' || kind === 'streams') {
+        prepared = await prepareScopeQuery(this.methodContext, query);
+      } else if (kind === 'accesses') {
+        prepared = await prepareAccessScopeQuery(this.methodContext, query);
+      } else {
         throw errors.invalidRequestStructure(`scope kind '${kind}' is not yet supported`);
       }
-      const prepared = await prepareScopeQuery(this.methodContext, query);
       this.scopes.set(key, { kind, rawQuery: query, prepared });
     }
     this.syncSubscriber();

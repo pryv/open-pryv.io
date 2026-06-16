@@ -10,6 +10,7 @@ import type { NormalizedCondition, StreamGroup, StreamCondition, EventMatchQuery
 const require = createRequire(import.meta.url);
 const eventsGetUtils = require('./eventsGetUtils.ts');
 const { validateAndNormalizeConditions } = require('storages/shared/contentQueryConditions.ts');
+const errors = require('errors').factory;
 
 /**
  * Resolve a raw notification scope query into the prepared form the
@@ -33,6 +34,7 @@ type RawScopeQuery = {
   content?: unknown;
   clientData?: unknown;
   state?: string;
+  accessIds?: string[]; // accesses-kind only
 };
 
 const STREAM_PREP_STEPS = [
@@ -115,5 +117,34 @@ async function prepareScopeQuery (context: MethodContext, rawScope: RawScopeQuer
   return prepared;
 }
 
-export { prepareScopeQuery };
+/**
+ * Prepare an `accesses`-kind scope. Watching access changes is gated on a
+ * PERSONAL access (it exposes account-wide access lifecycle, not per-stream
+ * data) rather than per-stream read permission — so the events.get per-stream
+ * pipeline is NOT reused for authorization. The optional `streams` filter (used
+ * to match an access's permission streamIds) is expanded only when provided
+ * (no `*` default); `types` and `accessIds` pass through. At least one
+ * dimension is required.
+ */
+async function prepareAccessScopeQuery (context: MethodContext, rawScope: RawScopeQuery & { accessIds?: string[] }): Promise<EventMatchQuery> {
+  if (!context.access?.isPersonal?.()) {
+    throw errors.forbidden('Watching access changes requires a personal access.');
+  }
+  const hasStreams = rawScope.streams != null;
+  const hasTypes = Array.isArray(rawScope.types) && rawScope.types.length > 0;
+  const hasAccessIds = Array.isArray(rawScope.accessIds) && rawScope.accessIds.length > 0;
+  if (!hasStreams && !hasTypes && !hasAccessIds) {
+    throw errors.invalidRequestStructure('An accesses scope requires at least one of: streams, types, accessIds.');
+  }
+  const prepared: EventMatchQuery = {};
+  if (hasStreams) {
+    const streamsPrepared = await prepareScopeQuery(context, { streams: rawScope.streams, state: rawScope.state });
+    prepared.streams = streamsPrepared.streams;
+  }
+  if (hasTypes) prepared.types = rawScope.types;
+  if (hasAccessIds) prepared.accessIds = rawScope.accessIds;
+  return prepared;
+}
+
+export { prepareScopeQuery, prepareAccessScopeQuery };
 export type { RawScopeQuery };

@@ -35,7 +35,7 @@ const methodsSchema = require('../schema/webhooksMethods.ts');
 
 const Webhook = require('business').webhooks.Webhook;
 const WebhooksRepository = require('business').webhooks.Repository;
-const { prepareScopeQuery } = require('./helpers/scopeQueryUtils.ts');
+const { prepareScopeQuery, prepareAccessScopeQuery } = require('./helpers/scopeQueryUtils.ts');
 
 // Validate + prepare a raw webhook scopes map { key -> { kind, query } } into
 // the stored form { key -> { kind, query, prepared } }. Stream resolution
@@ -47,11 +47,15 @@ async function prepareWebhookScopes (context: BaseMethodContext, rawScopes: unkn
   const out: Record<string, { kind: string; query: unknown; prepared: unknown }> = {};
   for (const [key, raw] of Object.entries(rawScopes as Record<string, { kind?: string; query?: unknown }>)) {
     const kind = raw?.kind ?? 'events';
-    if (kind !== 'events' && kind !== 'streams') {
+    const query = raw?.query ?? {};
+    let prepared;
+    if (kind === 'events' || kind === 'streams') {
+      prepared = await prepareScopeQuery(context, query as Record<string, unknown>);
+    } else if (kind === 'accesses') {
+      prepared = await prepareAccessScopeQuery(context, query as Record<string, unknown>);
+    } else {
       throw errors.invalidRequestStructure(`scope '${key}': kind '${kind}' is not yet supported`);
     }
-    const query = raw?.query ?? {};
-    const prepared = await prepareScopeQuery(context, query as Record<string, unknown>);
     out[key] = { kind, query, prepared };
   }
   return out;

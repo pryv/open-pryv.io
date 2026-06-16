@@ -498,6 +498,40 @@ describe('[SK01] Socket.IO', function () {
       });
     });
 
+    it('[SNAC1] delivers an accesses-kind scope when a matching access is created', function () {
+      ioCons.con1 = connect(namespace, { auth: token }); // personal access (required for accesses-kind)
+      return new Promise((resolve, reject) => {
+        ioCons.con1.on('notificationsChanged', (payload) => {
+          try { assert.deepStrictEqual(payload.keys, ['sh']); resolve(); } catch (e) { reject(e); }
+        });
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 'sh', kind: 'accesses', query: { types: ['shared'] } }, function (err) {
+            if (err) return reject(err);
+            superagent
+              .post(server.url + '/' + user.username + '/accesses')
+              .set('Authorization', token)
+              .send({ name: 'snac-' + Date.now(), type: 'shared', permissions: [{ streamId: inScopeStream, level: 'read' }] })
+              .end(function (err2) { if (err2) reject(err2); });
+          });
+        });
+      });
+    });
+
+    it('[SNAC2] rejects an accesses-kind scope from a non-personal access', function () {
+      ioCons.con1 = connect(namespace, { auth: testData.accesses[2].token }); // "read all" app access
+      return new Promise((resolve, reject) => {
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 'sh', kind: 'accesses', query: { types: ['shared'] } }, function (ackErr, ack) {
+            try {
+              const errObj = (ack && ack.error) || ackErr;
+              assert.ok(errObj != null, 'expected a forbidden error for a non-personal accesses scope');
+              resolve();
+            } catch (e) { reject(e); }
+          });
+        });
+      });
+    });
+
     it('[SNSK4] stops delivering after unsubscribe', function () {
       ioCons.con1 = connect(namespace, { auth: token });
       return new Promise((resolve, reject) => {

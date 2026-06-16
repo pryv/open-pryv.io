@@ -44,12 +44,22 @@ type EventToMatch = {
 /**
  * The standing-filter subset of an `events.get` query the matcher evaluates.
  * Time window / pagination / `state` are the caller's concern, not part of it.
+ * `accessIds` applies only to `accesses`-kind scopes (see accessMatchesQuery).
  */
 type EventMatchQuery = {
   streams?: StreamGroup[];
   types?: string[];
   content?: NormalizedCondition[];
   clientData?: NormalizedCondition[];
+  accessIds?: string[];
+};
+
+/** Minimal access shape the access-scope matcher inspects. */
+type AccessToMatch = {
+  id: string;
+  type?: string;
+  /** streamIds the access grants permissions on. */
+  streamIds?: string[];
 };
 
 const ROOT_PATH = '$';
@@ -57,9 +67,9 @@ const SEGMENT_REGEXP = /^[a-zA-Z0-9_:-]+$/;
 
 export {
   ROOT_PATH, SEGMENT_REGEXP, parseJsonPath, resolveJsonPath,
-  matchesConditions, matchesStreamQuery, eventMatchesQuery
+  matchesConditions, matchesStreamQuery, eventMatchesQuery, accessMatchesQuery
 };
-export type { NormalizedCondition, ScalarValue, ConditionOp, StreamCondition, StreamGroup, EventToMatch, EventMatchQuery };
+export type { NormalizedCondition, ScalarValue, ConditionOp, StreamCondition, StreamGroup, EventToMatch, EventMatchQuery, AccessToMatch };
 
 /**
  * Parse a raw path string per the content-query path grammar.
@@ -180,6 +190,25 @@ function eventMatchesQuery (event: EventToMatch, query: EventMatchQuery): boolea
       (query.clientData != null && query.clientData.length > 0)) {
     const conditions = [...(query.content ?? []), ...(query.clientData ?? [])];
     if (!matchesConditions({ content: event.content, clientData: event.clientData }, conditions)) return false;
+  }
+  return true;
+}
+
+/**
+ * Does a changed access satisfy an `accesses`-kind scope? All present
+ * dimensions must hold (AND): `accessIds` (id membership), `types` (access
+ * type), `streams` (the access grants a permission on a stream within the
+ * scope's expanded set). At least one dimension is required at registration.
+ */
+function accessMatchesQuery (access: AccessToMatch, query: EventMatchQuery): boolean {
+  if (query.accessIds != null && query.accessIds.length > 0) {
+    if (!query.accessIds.includes(access.id)) return false;
+  }
+  if (query.types != null && query.types.length > 0) {
+    if (access.type == null || !query.types.includes(access.type)) return false;
+  }
+  if (query.streams != null && query.streams.length > 0) {
+    if (access.streamIds == null || !matchesStreamQuery(access.streamIds, query.streams)) return false;
   }
   return true;
 }
