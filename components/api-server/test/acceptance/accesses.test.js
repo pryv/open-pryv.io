@@ -544,7 +544,11 @@ describe('[AC01] accesses', () => {
           });
           it('[8B65] creates an expired access', () => {
             assert.strictEqual(res.status, 201);
-            assert.ok(timestamp.now() > access.expires);
+            // `expireAfter: 0` ⇒ `access.expires === access.created` ⇒
+            // `timestamp.now()` may equal (not exceed) `access.expires` on
+            // sub-millisecond-fast machines. The contract is "expired right
+            // now or already past", which is `>=`.
+            assert.ok(timestamp.now() >= access.expires);
           });
         });
         describe('[AC19] when called with expireAfter<0', () => {
