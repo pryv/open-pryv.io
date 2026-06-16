@@ -40,6 +40,7 @@ interface NewCoreOpts {
     adminAccessKey: string;
     filesReadTokenSecret: string;
     letsEncryptAtRestKey?: string | null;
+    piiHmacKey?: string | null;
   };
   rqlite: { raftPort: number; httpPort: number };
   coreId: string;
@@ -87,6 +88,7 @@ const OVERRIDE_HEADER_SUFFIX =
  * @param opts.secrets.adminAccessKey
  * @param opts.secrets.filesReadTokenSecret
  * @param [opts.secrets.letsEncryptAtRestKey=null] - propagated to bundle.platformSecrets.letsEncrypt.atRestKey when set
+ * @param [opts.secrets.piiHmacKey=null] - propagated to bundle.platformSecrets.platform.piiHmacKey when set
  * @param opts.rqlite
  * @param opts.rqlite.raftPort
  * @param opts.rqlite.httpPort
@@ -124,7 +126,11 @@ async function newCore (opts: NewCoreOpts) {
     registered = true;
 
     const ackUrl = ackUrlBase.replace(/\/+$/, '') + ACK_PATH;
-    const platformSecrets: { auth: { adminAccessKey: string; filesReadTokenSecret: string }; letsEncrypt?: { atRestKey: string } } = {
+    const platformSecrets: {
+      auth: { adminAccessKey: string; filesReadTokenSecret: string };
+      letsEncrypt?: { atRestKey: string };
+      platform?: { piiHmacKey: string };
+    } = {
       auth: {
         adminAccessKey: secrets.adminAccessKey,
         filesReadTokenSecret: secrets.filesReadTokenSecret
@@ -132,6 +138,9 @@ async function newCore (opts: NewCoreOpts) {
     };
     if (secrets.letsEncryptAtRestKey != null) {
       platformSecrets.letsEncrypt = { atRestKey: secrets.letsEncryptAtRestKey };
+    }
+    if (secrets.piiHmacKey != null) {
+      platformSecrets.platform = { piiHmacKey: secrets.piiHmacKey };
     }
     const bundle = Bundle.assemble({
       cluster: {

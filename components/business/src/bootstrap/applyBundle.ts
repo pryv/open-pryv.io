@@ -38,6 +38,7 @@ interface BundleShape {
   platformSecrets: {
     auth: { adminAccessKey: string; filesReadTokenSecret: string };
     letsEncrypt?: { atRestKey?: string };
+    platform?: { piiHmacKey?: string };
   };
   [k: string]: unknown;
 }
@@ -157,6 +158,14 @@ function writeOverrideConfig (configDir: string, bundle: BundleShape, tlsPaths: 
   // ACME account rows in rqlite can be decrypted on either side.
   if (bundle.platformSecrets?.letsEncrypt?.atRestKey) {
     override.letsEncrypt = { atRestKey: bundle.platformSecrets.letsEncrypt.atRestKey };
+  }
+
+  // Bundle v3: propagate platform.piiHmacKey when issuer shipped one. Joiner
+  // ends up with the same HMAC pepper as the rest of the cluster, so equality
+  // lookups on hashed PlatformDB columns resolve consistently regardless of
+  // which core wrote the row.
+  if (bundle.platformSecrets?.platform?.piiHmacKey) {
+    override.platform = { piiHmacKey: bundle.platformSecrets.platform.piiHmacKey };
   }
 
   const header =

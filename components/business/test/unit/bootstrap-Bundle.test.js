@@ -171,11 +171,11 @@ describe('[BUNDLE] Bundle assembly & validation', () => {
       assert.equal(Bundle.validate(b), b);
     });
 
-    it('accepts a v2 bundle carrying platformSecrets.letsEncrypt.atRestKey', () => {
+    it('accepts a bundle carrying platformSecrets.letsEncrypt.atRestKey (v2 field, still optional in current version)', () => {
       const input = validInput();
       input.platformSecrets.letsEncrypt = { atRestKey: 'YQ==' };
       const b = Bundle.assemble(input);
-      assert.equal(b.version, 2);
+      assert.equal(b.version, Bundle.BUNDLE_VERSION);
       assert.equal(Bundle.validate(b), b);
     });
 
@@ -189,6 +189,32 @@ describe('[BUNDLE] Bundle assembly & validation', () => {
       const b = Bundle.assemble(validInput());
       b.platformSecrets.letsEncrypt = { atRestKey: 42 };
       assert.throws(() => Bundle.validate(b), /atRestKey must be a non-empty string/);
+    });
+
+    it('accepts a v3 bundle carrying platformSecrets.platform.piiHmacKey', () => {
+      const input = validInput();
+      input.platformSecrets.platform = { piiHmacKey: 'cGVwcGVy' };
+      const b = Bundle.assemble(input);
+      assert.equal(b.version, 3);
+      assert.equal(Bundle.validate(b), b);
+      assert.equal(b.platformSecrets.platform.piiHmacKey, 'cGVwcGVy');
+    });
+
+    it('omits platformSecrets.platform when issuer has no piiHmacKey', () => {
+      const b = Bundle.assemble(validInput());
+      assert.equal(b.platformSecrets.platform, undefined);
+    });
+
+    it('rejects platformSecrets.platform without piiHmacKey', () => {
+      const b = Bundle.assemble(validInput());
+      b.platformSecrets.platform = {};
+      assert.throws(() => Bundle.validate(b), /piiHmacKey must be a non-empty string/);
+    });
+
+    it('rejects platformSecrets.platform.piiHmacKey of wrong type', () => {
+      const b = Bundle.assemble(validInput());
+      b.platformSecrets.platform = { piiHmacKey: 42 };
+      assert.throws(() => Bundle.validate(b), /piiHmacKey must be a non-empty string/);
     });
 
     it('rejects missing top-level key', () => {

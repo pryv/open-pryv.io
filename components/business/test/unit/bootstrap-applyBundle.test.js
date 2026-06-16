@@ -180,6 +180,52 @@ describe('[APPLYBUNDLE] applyBundle', function () {
     assert.deepEqual(parsed.letsEncrypt, { atRestKey: ATKEY });
   });
 
+  it('writes platform.piiHmacKey when bundle ships one (v3 bundle)', async () => {
+    const PEPPER = 'cGVwcGVyLXBlcHBlci1wZXBwZXItcGVwcGVyLXg9PQ==';
+    const ca = new ClusterCA({ dir: path.join(tmp, 'issuer-ca-v3') });
+    ca.ensure();
+    const { certPem, keyPem } = ca.issueNodeCert({
+      coreId: 'core-c', ip: '203.0.113.8', hostname: 'core-c.mc.example.com'
+    });
+    const bundle = Bundle.assemble({
+      cluster: {
+        domain: 'mc.example.com',
+        ackUrl: 'https://core-a.mc.example.com/system/admin/cores/ack',
+        joinToken: '0123456789abcdef0123456789abcdef',
+        caCertPem: ca.getCACertPem()
+      },
+      node: {
+        id: 'core-c',
+        ip: '203.0.113.8',
+        hosting: 'eu-central-1',
+        url: 'https://core-c.mc.example.com',
+        certPem,
+        keyPem
+      },
+      platformSecrets: {
+        auth: {
+          adminAccessKey: 'admin-key-0123456789abcdef0123',
+          filesReadTokenSecret: 'files-secret-0123456789abcdef0'
+        },
+        platform: { piiHmacKey: PEPPER }
+      },
+      rqlite: { raftPort: 4002, httpPort: 4001 }
+    });
+    const armored = BundleEncryption.encrypt(bundle, PASSPHRASE);
+
+    const result = await applyBundleMod.applyBundle({
+      armoredBundle: armored,
+      passphrase: PASSPHRASE,
+      configDir: path.join(tmp, 'config-v3'),
+      tlsDir: path.join(tmp, 'tls-v3')
+    });
+
+    const parsed = yaml.load(fs.readFileSync(result.overridePath, 'utf8'));
+    assert.deepEqual(parsed.platform, { piiHmacKey: PEPPER });
+    // letsEncrypt block must NOT be materialized when issuer didn't ship one
+    assert.equal(parsed.letsEncrypt, undefined);
+  });
+
   it('omits dnsLess override when bundle has no domain (DNSless multi-core)', async () => {
     const armored = makeArmoredBundle(path.join(tmp, 'ca'), {
       cluster: {

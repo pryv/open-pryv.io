@@ -285,6 +285,13 @@ function resolveContext (config, args) {
     ? config.get('letsEncrypt:atRestKey')
     : null;
 
+  // Propagate platform.piiHmacKey when set on the issuing core, so joiners
+  // share the same HMAC pepper used by PiiHasher to derive hashed PlatformDB
+  // tokens. Same omit-if-placeholder rule as letsEncryptAtRestKey.
+  const piiHmacKey = isUsableSecret(config.get('platform:piiHmacKey'))
+    ? config.get('platform:piiHmacKey')
+    : null;
+
   const raftPort = config.get('storages:engines:rqlite:raftPort') ?? 4002;
   const httpPort = httpPortFromUrl(config.get('storages:engines:rqlite:url')) ?? 4001;
 
@@ -293,7 +300,7 @@ function resolveContext (config, args) {
     tokensPath,
     dnsDomain,
     ackUrlBase,
-    secrets: { adminAccessKey, filesReadTokenSecret, letsEncryptAtRestKey },
+    secrets: { adminAccessKey, filesReadTokenSecret, letsEncryptAtRestKey, piiHmacKey },
     rqlite: { raftPort, httpPort }
   };
 }

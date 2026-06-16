@@ -483,6 +483,17 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   newrelic:
 # #     licenseKey: ''   # leave blank; set via 'bin/observability.js newrelic set-license-key'
 
+# # platform.piiMode — store PlatformDB PII as HMAC tokens instead of
+# # cleartext, so rqlite Raft replication does not carry plaintext
+# # usernames / emails across regions. 'cleartext' is the default;
+# # 'hashed' requires platform.piiHmacKey to be set + identical on every
+# # core in the cluster. Pseudonymisation (Art.32(1)(a) evidence), NOT
+# # anonymisation — see config/default-config.yml comment for the legal
+# # framing. Plan multi-region clusters around this.
+# # platform:
+# #   piiMode: hashed
+# #   piiHmacKey: 'REPLACE ME'   # base64 of 32 random bytes; same across all cores
+
 # # eventFiles — attachments + previews size limits.
 # # eventFiles:
 # #   attachmentSizeMaxKB: 10240   # 10 MiB per attachment

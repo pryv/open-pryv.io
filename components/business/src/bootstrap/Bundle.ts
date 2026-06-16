@@ -29,9 +29,16 @@ import type {} from 'node:fs';
  *     override-config.yml so cluster-wide AtRestEncryption keys agree.
  *     Bundle stays v2-shaped even when the field is absent — the field is
  *     optional, the version is not.
+ * v3: optional `platformSecrets.platform.piiHmacKey` — base64 32-byte
+ *     pepper used by PiiHasher to HMAC every value stored in PlatformDB
+ *     when `platform.piiMode: hashed` is active. Same distribution shape
+ *     as `letsEncrypt.atRestKey`: issuing core embeds it when its own
+ *     config has `platform.piiHmacKey` set, joiner copies it into
+ *     override-config.yml so every core in the cluster derives the same
+ *     HMAC tokens. Bundle stays v3-shaped even when the field is absent.
  */
 
-const BUNDLE_VERSION = 2;
+const BUNDLE_VERSION = 3;
 
 const REQUIRED_TOP_LEVEL = ['version', 'issuedAt', 'cluster', 'node', 'platformSecrets', 'rqlite'];
 const REQUIRED_CLUSTER = ['domain', 'ackUrl', 'joinToken', 'ca'];
@@ -71,6 +78,7 @@ type AssembleInput = {
   platformSecrets: {
     auth: { adminAccessKey: string; filesReadTokenSecret: string };
     letsEncrypt?: { atRestKey?: string };
+    platform?: { piiHmacKey?: string };
   };
   rqlite?: { raftPort?: number; httpPort?: number };
 };
@@ -78,6 +86,7 @@ type AssembleInput = {
 type PlatformSecretsAssembled = {
   auth: { adminAccessKey: string; filesReadTokenSecret: string };
   letsEncrypt?: { atRestKey: string };
+  platform?: { piiHmacKey: string };
 };
 
 type BundleShape = {
@@ -109,6 +118,10 @@ function assemble (input: AssembleInput): BundleShape {
   const atRestKey = input.platformSecrets.letsEncrypt?.atRestKey;
   if (atRestKey != null) {
     platformSecrets.letsEncrypt = { atRestKey };
+  }
+  const piiHmacKey = input.platformSecrets.platform?.piiHmacKey;
+  if (piiHmacKey != null) {
+    platformSecrets.platform = { piiHmacKey };
   }
   return {
     version: BUNDLE_VERSION,
@@ -172,6 +185,14 @@ function validate (bundleIn: unknown): BundleShape {
     }
     if (typeof bundle.platformSecrets.letsEncrypt.atRestKey !== 'string' || bundle.platformSecrets.letsEncrypt.atRestKey.length === 0) {
       throw new Error('Bundle.validate: bundle.platformSecrets.letsEncrypt.atRestKey must be a non-empty string');
+    }
+  }
+  if (bundle.platformSecrets.platform != null) {
+    if (typeof bundle.platformSecrets.platform !== 'object') {
+      throw new Error('Bundle.validate: bundle.platformSecrets.platform must be an object');
+    }
+    if (typeof bundle.platformSecrets.platform.piiHmacKey !== 'string' || bundle.platformSecrets.platform.piiHmacKey.length === 0) {
+      throw new Error('Bundle.validate: bundle.platformSecrets.platform.piiHmacKey must be a non-empty string');
     }
   }
   requireAll(bundle.rqlite, REQUIRED_RQLITE, 'bundle.rqlite');
