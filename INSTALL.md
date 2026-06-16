@@ -656,6 +656,61 @@ When you go multi-core, the Raft channel between cores carries replicated Platfo
 
 Single-core deployments do not need any of this — `tls: null` (the default) leaves the Raft setup at plain loopback TCP, which is fine for a single host.
 
+## PlatformDB PII hashing (multi-region clusters)
+
+When PlatformDB is replicated across regions, every PlatformDB row also crosses every region's Raft ring. By default those rows carry plaintext usernames and `isUnique` system-stream values (the default `isUnique` field is `email`), so PII transits jurisdictions purely as a side effect of the routing/uniqueness index.
+
+`platform.piiMode: hashed` swaps those columns to deterministic HMAC-SHA-256 tokens derived from a cluster-wide pepper. Equality lookups still work; the inverse is infeasible without the pepper. The mode is pseudonymisation under EDPB / WP29 Opinion 05/2014 — strengthens Art.32(1)(a) evidence + defence-in-depth; **does NOT** lift the requirement for an Art.46 mechanism (SCCs / BCRs) for cross-border replication. Recital 26 still applies to HMAC'd PII.
+
+### Configuration
+
+```yaml
+platform:
+  piiMode: hashed                                 # cleartext (default) | hashed
+  piiHmacKey: <BASE64-32-BYTES>                   # MUST be identical on every core
+```
+
+Generate the pepper with:
+
+```sh
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+Paste the same value into every core's `override-config.yml`. The bootstrap bundle (`bin/bootstrap.js new-core`) propagates `platform.piiHmacKey` to joiners alongside `letsEncrypt.atRestKey` (bundle v3), so a newly-joined core comes up agreeing on the pepper.
+
+**Loss of the pepper strands every hashed row** — there is no way to derive usernames/emails from PlatformDB without both the pepper and the home core's user-account storage. Back the key up alongside the cluster CA (`/etc/pryv/ca/`).
+
+### Initial cutover (cleartext → hashed)
+
+For a deployment that has been running in cleartext mode and is switching to hashed:
+
+```sh
+# 1. Pause writers (or take the cluster offline) and back up.
+bin/backup.js --output /tmp/backup-pre-pii-rehash
+
+# 2. Set platform.piiMode: hashed + platform.piiHmacKey in EVERY core's override-config.yml.
+
+# 3. From any single core: report what will change.
+node bin/platform-pii-migrate.js status
+
+# 4. Apply.
+node bin/platform-pii-migrate.js up
+
+# 5. Restart the cluster so all workers boot with the new mode.
+```
+
+The tool is idempotent — partial runs continue safely. It touches `user-core/*`, `user-unique/*`, `user-indexed/*`, and `dns-record/*` rows only.
+
+### Pepper rotation
+
+Use `bin/platform-pii-rotate.js` (see `--help` for the full procedure). Single-core: one invocation. Multi-core: run on each core in turn, after distributing the new pepper to every core's config. The tool re-derives HMAC tokens from the home core's user-account storage; cleartext for runtime DNS records is not recoverable, so any runtime `dns-record/*` rows (ACME challenges, admin-added subdomains) must be deleted and re-created after rotation.
+
+### Hashed-mode caveats
+
+- `GET /reg/:email/username` and `GET /reg/:email/uid` (legacy v1 email→username recovery) return **410 Gone** in hashed mode. Recovery flows must accept the username as user input instead; full two-hop recovery (hash email → identify home core → fetch cleartext username) is on the backlog.
+- The single-core "find username by email" path in `auth.cores` surfaces "unknown" rather than attempting a HMAC username against the local users index.
+- Admin endpoints under `/reg/admin/servers/:server/users` return `username` fields as HMAC tokens — clients consuming these need to recognise the hashed shape.
+
 ## Troubleshooting
 
 ### Socket.IO: "Transport unknown" or "xhr poll error"
