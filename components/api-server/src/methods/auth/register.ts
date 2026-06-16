@@ -139,8 +139,15 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
 
     // Schema validation guarantees username xor email is present.
     let username: string | null | undefined = params.username;
+    // True when `username` came from the email→PlatformDB lookup and is
+    // therefore already in PlatformDB storage form (HMAC token in hashed
+    // mode). Determines whether subsequent platform calls use the
+    // plaintext-taking or pre-hashed Platform variants.
+    let usernameIsPreHashed = false;
 
-    // Resolve email → username via PlatformDB unique field
+    // Resolve email → username via PlatformDB unique field. The returned
+    // value is the row VALUE: plaintext username in cleartext mode,
+    // HMAC-username token in hashed mode (B.2 chained-lookup contract).
     if (params.email != null) {
       username = await platform.getUsersUniqueField('email', params.email);
       if (username == null) {
@@ -148,11 +155,14 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         result.core = { url: (withTrailingSlash(platform.coreUrl || ApiEndpoint.build('', null)) || '') as string };
         return next();
       }
+      usernameIsPreHashed = platform.piiModeIsHashed;
     }
 
-    // Multi-core: look up which core hosts this user via shared PlatformDB
+    // Multi-core: look up which core hosts this user via shared PlatformDB.
     if (!platform.isSingleCore) {
-      const userCoreId = await platform.getUserCore(username!);
+      const userCoreId = usernameIsPreHashed
+        ? await platform.getUserCoreByPreHashedUsername(username!)
+        : await platform.getUserCore(username!);
       if (userCoreId != null) {
         result.core = { url: platform.coreIdToUrl(userCoreId) };
         return next();
@@ -161,7 +171,17 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       return next(errors.unknownResource('user', username));
     }
 
-    // Single-core: check local users_index
+    // Single-core: check local users_index. The repository wants a
+    // PLAINTEXT username — in hashed mode the email→username path
+    // can't supply that (cleartext lives only on the home core's
+    // user-account storage), so we degrade to "unknown" rather than
+    // double-look up against a HMAC token.
+    if (usernameIsPreHashed) {
+      // Hashed-mode single-core: there is no plaintext to feed
+      // usersRepository.usernameExists; surface unknown so the client
+      // re-tries with username input instead of email.
+      return next(errors.unknownResource('user', '<hashed>'));
+    }
     if (!(await usersRepository.usernameExists(username))) {
       return next(errors.unknownResource('user', username));
     }

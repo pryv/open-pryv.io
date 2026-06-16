@@ -474,6 +474,80 @@ class Platform {
   }
 
   /**
+   * Variant of `setUserCore` for callers that already hold the hashed
+   * username token (e.g. from `getAllUserCores()` mappings). In
+   * `cleartext` mode this is equivalent to `setUserCore`.
+   */
+  async setUserCoreByPreHashedUsername (usernameToken: string, coreId: string) {
+    await this.#db.setUserCore(usernameToken, coreId);
+  }
+
+  // ---------------- Low-level field accessors (mode-aware) ----------------
+  //
+  // These public methods mirror the engine's PlatformDB surface but apply
+  // the hashing transform on the way in. Callers that need fine-grained
+  // PlatformDB access (e.g. the legacy /reg/admin/users routes + the
+  // `/system/users` reservation endpoint) MUST go through these rather
+  // than `require('storages').platformDB.*` directly, otherwise hashed
+  // mode would drift between two write paths.
+
+  /**
+   * Atomically reserve a unique field — fails if another user already owns
+   * the (field, value) pair. Plaintext inputs; hashed internally.
+   */
+  async setUserUniqueFieldIfNotExists (username: string, field: string, value: string): Promise<boolean> {
+    return await this.#db.setUserUniqueFieldIfNotExists(
+      this.hashFor(USERNAME_FIELD, username),
+      field,
+      this.hashFor(field, value)
+    );
+  }
+
+  /**
+   * Write/overwrite a unique-field row. Plaintext inputs; hashed internally.
+   */
+  async setUserUniqueField (username: string, field: string, value: string): Promise<void> {
+    await this.#db.setUserUniqueField(
+      this.hashFor(USERNAME_FIELD, username),
+      field,
+      this.hashFor(field, value)
+    );
+  }
+
+  /**
+   * Remove a unique-field row by (field, value). Plaintext input; hashed
+   * internally. No-op if no row matches.
+   */
+  async deleteUserUniqueField (field: string, value: string): Promise<void> {
+    await this.#db.deleteUserUniqueField(field, this.hashFor(field, value));
+  }
+
+  /**
+   * Write/overwrite an indexed (non-unique) field. The username key is
+   * hashed; the field VALUE is non-PII routing metadata and stays
+   * cleartext (consistent with `#applyOperations`).
+   */
+  async setUserIndexedField (username: string, field: string, value: string): Promise<void> {
+    await this.#db.setUserIndexedField(this.hashFor(USERNAME_FIELD, username), field, value);
+  }
+
+  /**
+   * Read an indexed field by (username, field). Plaintext username input;
+   * hashed internally. Returns the stored cleartext value or null.
+   */
+  async getUserIndexedField (username: string, field: string): Promise<string | null> {
+    return await this.#db.getUserIndexedField(this.hashFor(USERNAME_FIELD, username), field);
+  }
+
+  /**
+   * Remove an indexed field row by (username, field). Plaintext username
+   * input; hashed internally.
+   */
+  async deleteUserIndexedField (username: string, field: string): Promise<void> {
+    await this.#db.deleteUserIndexedField(this.hashFor(USERNAME_FIELD, username), field);
+  }
+
+  /**
    * Get all user-to-core mappings.
    */
   async getAllUserCores () {

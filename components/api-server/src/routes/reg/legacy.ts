@@ -53,12 +53,25 @@ export default function (expressApp: ExpressApp, app: App) {
   /**
    * GET /:email/username — get username from email.
    * Returns { username } or 404.
+   *
+   * Hashed-mode caveat: `platform.getUsersUniqueField('email', email)`
+   * returns the HMAC username token (the cleartext username never crosses
+   * Raft). Returning that to the client would be useless. Phase B
+   * intentionally degrades this endpoint to 410 Gone when piiMode=hashed;
+   * the full "find username by email" recovery flow needs a home-core
+   * round-trip (PLATFORMDB-PII-HASHING — Posture 1, two-hop recovery).
    */
   expressApp.get('/reg/:email/username', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const email = req.params.email;
-      const platformDB = getPlatformDB();
-      const username = await platformDB.getUsersUniqueField('email', email);
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
+      if (platform.piiModeIsHashed) {
+        return res.status(410).json({
+          error: { id: 'gone', message: 'email→username lookup is disabled when platform.piiMode=hashed; user must enter username at recovery' }
+        });
+      }
+      const username = await platform.getUsersUniqueField('email', email);
       if (username == null) {
         return res.status(404).json({
           error: { id: 'unknown-email', message: 'Unknown email' }
@@ -72,12 +85,19 @@ export default function (expressApp: ExpressApp, app: App) {
 
   /**
    * GET /:email/uid — deprecated alias, returns { uid }.
+   * Same hashed-mode caveat as /:email/username above.
    */
   expressApp.get('/reg/:email/uid', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const email = req.params.email;
-      const platformDB = getPlatformDB();
-      const username = await platformDB.getUsersUniqueField('email', email);
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
+      if (platform.piiModeIsHashed) {
+        return res.status(410).json({
+          error: { id: 'gone', message: 'email→username lookup is disabled when platform.piiMode=hashed; user must enter username at recovery' }
+        });
+      }
+      const username = await platform.getUsersUniqueField('email', email);
       if (username == null) {
         return res.status(404).json({
           error: { id: 'unknown-email', message: 'Unknown email' }
@@ -151,13 +171,16 @@ export default function (expressApp: ExpressApp, app: App) {
           error: { id: 'unknown-user', message: 'User not found' }
         });
       }
-      const platformDB = getPlatformDB();
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
       const systemStreams = require('business/src/system-streams/index.ts');
       const userInfo: Record<string, unknown> = { username };
 
-      // Collect indexed fields from PlatformDB
+      // Collect indexed fields via Platform (mode-aware: hashes username
+      // key in hashed mode, identity in cleartext). Field VALUES on
+      // indexed fields stay cleartext in both modes.
       for (const field of systemStreams.indexedFieldNames) {
-        const value = await platformDB.getUserIndexedField(username, field);
+        const value = await platform.getUserIndexedField(username, field);
         if (value != null) userInfo[field] = value;
       }
 
@@ -242,13 +265,18 @@ export default function (expressApp: ExpressApp, app: App) {
     try {
       const srcName = req.params.srcServerName;
       const dstName = req.params.dstServerName;
-      const platformDB = getPlatformDB();
-      const allUserCores = await platformDB.getAllUserCores();
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
+      // getAllUserCores returns mappings with `username` in PlatformDB
+      // storage form (HMAC token in hashed mode). Re-writing must skip
+      // the hashing layer to avoid double-hashing — use the
+      // *ByPreHashedUsername variant.
+      const allUserCores = await platform.getAllUserCores();
 
       let count = 0;
       for (const uc of allUserCores) {
         if (uc.coreId === srcName) {
-          await platformDB.setUserCore(uc.username, dstName);
+          await platform.setUserCoreByPreHashedUsername(uc.username, dstName);
           count++;
         }
       }

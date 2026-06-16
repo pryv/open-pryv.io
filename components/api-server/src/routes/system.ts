@@ -244,7 +244,6 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       const { username, invitationToken, uniqueFields = {} } = req.body;
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
-      const platformDB = require('storages').platformDB;
 
       // 1. Check invitation token via Platform (PlatformDB + config fallback)
       const isTokenValid = await platform.isInvitationTokenValid(invitationToken);
@@ -259,11 +258,11 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
         return res.status(400).json({ reservation: false, error: { id: 'item-already-exists', data: { username } } });
       }
 
-      // 3. Check unique fields
+      // 3. Check unique fields (mode-aware via Platform).
       delete uniqueFields.username;
       const conflicts: Record<string, unknown> = {};
       for (const [field, value] of Object.entries(uniqueFields)) {
-        const existing = await platformDB.getUsersUniqueField(field, value);
+        const existing = await platform.getUsersUniqueField(field, value);
         if (existing) {
           conflicts[field] = value;
         }
@@ -272,18 +271,18 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
         return res.status(400).json({ reservation: false, error: { id: 'item-already-exists', data: conflicts } });
       }
 
-      // 4. Reserve unique fields
+      // 4. Reserve unique fields via Platform (hashing applied internally).
       uniqueFields.username = username;
       for (const [field, value] of Object.entries(uniqueFields)) {
-        const reserved = await platformDB.setUserUniqueFieldIfNotExists(username, field, value);
+        const reserved = await platform.setUserUniqueFieldIfNotExists(username, field, value as string);
         if (!reserved) {
           return res.status(400).json({ reservation: false, error: { id: 'item-already-exists', data: { [field]: value } } });
         }
       }
 
-      // 5. Set user-to-core mapping if provided
+      // 5. Set user-to-core mapping if provided (plaintext input, hashed internally).
       if (req.body.core && !platform.isSingleCore) {
-        await platformDB.setUserCore(username, req.body.core);
+        await platform.setUserCore(username, req.body.core);
       }
 
       res.status(200).json({ reservation: true });
@@ -298,33 +297,38 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       if (!username) {
         return next(errors.invalidParametersFormat('Missing username'));
       }
-      const platformDB = require('storages').platformDB;
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
 
       // Prevent username change
       delete fieldsForUpdate.username;
       delete fieldsToDelete.username;
 
-      // Update indexed/unique fields
+      // Update indexed/unique fields via Platform (mode-aware).
       const systemStreams = require('business/src/system-streams/index.ts');
+      const usernameToken = platform.hashFor('username', username);
       for (const [field, value] of Object.entries(fieldsForUpdate)) {
         if (systemStreams.uniqueFieldNames.includes(field)) {
-          await platformDB.setUserUniqueField(username, field, value);
+          await platform.setUserUniqueField(username, field, value as string);
         }
         if (systemStreams.indexedFieldNames.includes(field)) {
-          await platformDB.setUserIndexedField(username, field, value);
+          await platform.setUserIndexedField(username, field, value as string);
         }
       }
 
-      // Delete fields
+      // Delete fields. For unique fields the "did this user own that
+      // value?" check compares the row's value (storage form — HMAC in
+      // hashed mode) against the hashed username token, so the check
+      // works consistently in both modes.
       for (const field of Object.keys(fieldsToDelete)) {
         if (systemStreams.uniqueFieldNames.includes(field)) {
-          const currentValue = await platformDB.getUsersUniqueField(field, fieldsToDelete[field]);
-          if (currentValue === username) {
-            await platformDB.deleteUserUniqueField(field, fieldsToDelete[field]);
+          const currentValue = await platform.getUsersUniqueField(field, fieldsToDelete[field]);
+          if (currentValue === usernameToken) {
+            await platform.deleteUserUniqueField(field, fieldsToDelete[field]);
           }
         }
         if (systemStreams.indexedFieldNames.includes(field)) {
-          await platformDB.deleteUserIndexedField(username, field);
+          await platform.deleteUserIndexedField(username, field);
         }
       }
 
