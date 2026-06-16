@@ -24,6 +24,7 @@ class WebhooksPG extends BaseStoragePG<StoredWebhook> {
     this.tableName = 'webhooks';
     this.hasDeletedCol = true;
     this.hasHeadIdCol = false;
+    this.jsonbColumns = new Set(['scopes']); // named-scope map stored as JSONB
   }
 
   applyDefaults (item: Partial<StoredWebhook>): StoredWebhook {
@@ -50,7 +51,8 @@ class WebhooksPG extends BaseStoragePG<StoredWebhook> {
         created: 1,
         createdBy: 1,
         modified: 1,
-        modifiedBy: 1
+        modifiedBy: 1,
+        scopes: 1
       }
     }, callback);
   }

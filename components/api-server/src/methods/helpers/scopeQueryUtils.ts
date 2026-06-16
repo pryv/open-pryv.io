@@ -87,10 +87,13 @@ async function prepareScopeQuery (context: MethodContext, rawScope: RawScopeQuer
   };
   const result = {};
 
-  // MethodContext's `tracing` getter logs noisily + substitutes a DummyTracing
-  // when unset; set a no-op tracer up front (via the setter, no read) to avoid
-  // that, and clear it afterwards. Stream prep runs outside a traced method
-  // call, so there is no real span to preserve.
+  // Run the prep steps with a no-op tracer to avoid the MethodContext `tracing`
+  // getter's noisy null-substitution. Save/restore the RAW `_tracing` field
+  // (not via the getter, which would log when null) so that — when called
+  // inside a real traced method (e.g. webhooks.create) — the live tracer is
+  // preserved for downstream steps/audit.
+  const rawCtx = context as unknown as { _tracing: unknown };
+  const savedTracing = rawCtx._tracing;
   const savedAccept = context.acceptStreamsQueryNonStringified;
   context.tracing = noopTracing as unknown as MethodContext['tracing'];
   context.acceptStreamsQueryNonStringified = true;
@@ -99,7 +102,7 @@ async function prepareScopeQuery (context: MethodContext, rawScope: RawScopeQuer
       await runStep(step, context, params, result);
     }
   } finally {
-    context.tracing = null as unknown as MethodContext['tracing'];
+    rawCtx._tracing = savedTracing;
     context.acceptStreamsQueryNonStringified = savedAccept;
   }
 

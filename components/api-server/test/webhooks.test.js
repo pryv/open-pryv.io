@@ -833,6 +833,45 @@ describe('[WH01] webhooks', () => {
     });
   });
 
+  describe('[SNWA] scoped webhooks', () => {
+    let scUsername, appToken;
+    const streamId = 'snwa-stream';
+    const scopes = { s: { kind: 'events', query: { streams: [streamId] } } };
+    before(async () => {
+      await fixtures.clean();
+      scUsername = cuid();
+      appToken = cuid();
+      await fixtures.user(scUsername, {}, async (user) => {
+        user.stream({ id: streamId, name: 'SNWA' });
+        user.access({ id: cuid(), type: 'app', token: appToken, permissions: [{ streamId, level: 'read' }] });
+      });
+    });
+    after(async () => { await fixtures.clean(); });
+
+    it('[SNWA1] creates a webhook with scopes and echoes them without the internal prepared form', async () => {
+      const res = await coreRequest
+        .post(`/${scUsername}/webhooks`)
+        .set('Authorization', appToken)
+        .send({ url: 'https://sc1.example/hook', scopes });
+      assert.strictEqual(res.status, 201);
+      assert.deepStrictEqual(res.body.webhook.scopes, scopes);
+      assert.strictEqual(res.body.webhook.scopes.s.prepared, undefined, 'prepared must not be exposed via the API');
+    });
+
+    it('[SNWA2] getOne returns the scopes', async () => {
+      const createRes = await coreRequest
+        .post(`/${scUsername}/webhooks`)
+        .set('Authorization', appToken)
+        .send({ url: 'https://sc2.example/hook', scopes });
+      const id = createRes.body.webhook.id;
+      const res = await coreRequest
+        .get(`/${scUsername}/webhooks/${id}`)
+        .set('Authorization', appToken);
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(res.body.webhook.scopes, scopes);
+    });
+  });
+
   describe('[WH07] POST /:webhookId/test', () => {
     const port = 5553;
     const postPath = '/notifications';
