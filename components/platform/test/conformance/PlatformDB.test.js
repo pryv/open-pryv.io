@@ -170,6 +170,25 @@ export default function conformanceTests (getDB) {
       });
     });
 
+    describe('deleteUserCore()', () => {
+      it('must remove the user-to-core mapping', async () => {
+        const username = 'user-' + cuid();
+        const coreId = 'core-' + cuid().slice(0, 6);
+        await db.setUserCore(username, coreId);
+        assert.strictEqual(await db.getUserCore(username), coreId);
+
+        await db.deleteUserCore(username);
+        assert.strictEqual(await db.getUserCore(username), null);
+      });
+
+      it('must be a no-op for unknown user', async () => {
+        // Symmetric with deleteUserUniqueField/deleteUserIndexedField: the
+        // platform-pii-migrate tool reruns may delete after the row is
+        // already gone; a missing row must not throw.
+        await db.deleteUserCore('never-existed-' + cuid());
+      });
+    });
+
     describe('getAllUserCores()', () => {
       it('must return all user-to-core mappings', async () => {
         const u1 = 'user1-' + cuid();

@@ -107,6 +107,7 @@ export interface PlatformDB {
   // --- User-to-core mapping (multi-core) --------------------------
   setUserCore (username: string, coreId: string): Promise<void>;
   getUserCore (username: string): Promise<string | null>;
+  deleteUserCore (username: string): Promise<void>;
   getAllUserCores (): Promise<UserCoreMapping[]>;
 
   // --- Core registration (multi-core) -----------------------------
@@ -197,6 +198,8 @@ const PlatformDB: PlatformDB = {
   async setUserCore (username: string, coreId: string): Promise<void> { throw new Error('Not implemented'); },
 
   async getUserCore (username: string): Promise<string | null> { throw new Error('Not implemented'); },
+
+  async deleteUserCore (username: string): Promise<void> { throw new Error('Not implemented'); },
 
   async getAllUserCores (): Promise<UserCoreMapping[]> { throw new Error('Not implemented'); },
 

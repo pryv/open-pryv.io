@@ -169,6 +169,10 @@ class DBpostgresql {
     return await this.#get(getUserCoreKey(username));
   }
 
+  async deleteUserCore (username: string): Promise<void> {
+    await this.#delete(getUserCoreKey(username));
+  }
+
   async getAllUserCores (): Promise<Array<{ username: string, coreId: string }>> {
     const rows = await this.#getWithPrefix('user-core/');
     return rows.map((row) => ({

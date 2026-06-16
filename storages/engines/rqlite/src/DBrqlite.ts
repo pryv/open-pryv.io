@@ -215,6 +215,11 @@ class DBrqlite {
     return rows.length === 0 ? null : rows[0].value;
   }
 
+  async deleteUserCore (username: string) {
+    const key = getUserCoreKey(username);
+    await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
+  }
+
   async getAllUserCores () {
     const rows = await this.query(
       "SELECT key, value FROM keyValue WHERE key LIKE 'user-core/%'"
