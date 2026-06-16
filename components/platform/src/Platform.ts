@@ -24,10 +24,26 @@ const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
 
 const getPlatformDB = require('./getPlatformDB.ts').default;
+const { PiiHasher } = require('./PiiHasher.ts');
 
 const platformCheckIntegrity = require('./platformCheckIntegrity.ts').default;
 
 const reservedWords = new Set(require('./reserved-words.json').list);
+
+/**
+ * Field name used when hashing a username as a key (i.e. when the
+ * username itself is the PII being hashed, not when it's the value of
+ * some other field). Centralised so the PiiHasher input is stable across
+ * every call-site.
+ */
+const USERNAME_FIELD = 'username';
+
+/**
+ * Field name used when hashing a DNS subdomain. Subdomains are stored in
+ * PlatformDB and replicated cluster-wide; in hashed mode the subdomain
+ * key becomes opaque so the cleartext doesn't cross Raft.
+ */
+const SUBDOMAIN_FIELD = 'dns-subdomain';
 
 /**
  * @class Platform
@@ -40,6 +56,21 @@ class Platform {
   initialized: boolean = false;
   // In-memory cache of coreId → public URL.
   #coreUrlCache: Map<string, string>;
+
+  // Null in `cleartext` mode (default); a PiiHasher instance when
+  // `platform.piiMode === 'hashed'`. Wrapped by `#hashFor(field, value)`
+  // — every PlatformDB call that takes a PII argument routes through
+  // that helper so `cleartext` mode is byte-identical to pre-hashing
+  // behaviour while `hashed` mode swaps in HMAC-SHA-256 tokens.
+  //
+  // Chained-lookup contract: methods that return PII-shaped values
+  // (e.g. `getUsersUniqueField` returns a username) return the row VALUE
+  // exactly as PlatformDB holds it. In `cleartext` mode that is the
+  // plaintext username; in `hashed` mode that is the HMAC token. Callers
+  // that pass the result back into Platform for a chained lookup must
+  // use the explicit pre-hashed variants (`*ByPreHashedUsername`) to
+  // avoid double-hashing — see B.4 follow-up.
+  #piiHasher: InstanceType<typeof PiiHasher> | null = null;
 
   constructor () {
     this.#initialized = false;
@@ -61,6 +92,8 @@ class Platform {
         'storages.platformDB is the singleton this class depends on.');
     }
 
+    this.#initPiiHasher();
+
     // Register this core in PlatformDB so other cores can discover it
     await this.registerSelf();
 
@@ -75,8 +108,53 @@ class Platform {
     return this;
   }
 
+  /**
+   * Initialise the PII hashing layer from config. Called once from init().
+   * Fails loudly when piiMode=hashed but piiHmacKey is missing/placeholder —
+   * a silent fallback to cleartext would defeat the operator's intent.
+   */
+  #initPiiHasher () {
+    const piiMode = this.#config.get('platform:piiMode') || 'cleartext';
+    if (piiMode === 'cleartext') {
+      this.#piiHasher = null;
+      return;
+    }
+    if (piiMode !== 'hashed') {
+      throw new Error(`Platform.init: platform.piiMode="${piiMode}" is not recognised; allowed values are "cleartext" | "hashed"`);
+    }
+    const pepper = this.#config.get('platform:piiHmacKey');
+    if (typeof pepper !== 'string' || pepper === '' || pepper === 'REPLACE ME') {
+      throw new Error('Platform.init: platform.piiMode="hashed" requires platform.piiHmacKey to be set ' +
+        '(base64 of exactly 32 random bytes). Generate with ' +
+        '`node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"` ' +
+        'and place the SAME value in every core\'s override-config.yml.');
+    }
+    this.#piiHasher = new PiiHasher(pepper);
+    logger.info('[platform] piiMode=hashed; PlatformDB writes will store HMAC-SHA-256 tokens for username + isUnique field values');
+  }
+
+  /**
+   * Apply the PII hash if `piiMode === 'hashed'`; pass through otherwise.
+   *
+   * Public so callers that need to compare a plaintext against a PlatformDB
+   * row value (which may itself be hashed) can derive the comparison token
+   * consistently with this layer's writes. Cleartext-mode return is the
+   * input verbatim (post-normalisation in hashed mode; raw in cleartext
+   * mode — normalisation is part of the hashing contract, not of cleartext
+   * storage).
+   */
+  hashFor (field: string, value: string): string {
+    if (this.#piiHasher == null) return value;
+    return this.#piiHasher.hashFor(field, value);
+  }
+
+  /** True when this core stores PlatformDB rows as HMAC tokens. */
+  get piiModeIsHashed (): boolean {
+    return this.#piiHasher != null;
+  }
+
   async checkIntegrity () {
-    return await platformCheckIntegrity(this.#db);
+    return await platformCheckIntegrity(this.#db, { hasher: this.#piiHasher });
   }
 
   // for tests only - called by repository
@@ -85,10 +163,14 @@ class Platform {
   }
 
   /**
-   * Get if value exists for this unique key
+   * Get the row-value stored for an isUnique field. In cleartext mode that
+   * value is the owning username; in hashed mode it is the HMAC-username
+   * token (since `setUserUniqueField` hashed both sides on write). Callers
+   * comparing the return against a plaintext username must route the
+   * plaintext through `hashFor('username', ...)` first.
    */
   async getUsersUniqueField (field: string, value: string) {
-    return await this.#db.getUsersUniqueField(field, value);
+    return await this.#db.getUsersUniqueField(field, this.hashFor(field, value));
   }
 
   /**
@@ -97,10 +179,11 @@ class Platform {
    */
   async checkUpdateOperationUniqueness (username: string, operations: PlatformOperation[]) {
     const uniquenessErrors: Record<string, string> = {};
+    const usernameToken = this.hashFor(USERNAME_FIELD, username);
     for (const op of operations) {
       if (op.action !== 'delete' && op.isUnique) {
-        const value = await this.#db.getUsersUniqueField(op.key, op.value as string);
-        if (value != null && value !== username) uniquenessErrors[op.key] = op.value as string;
+        const owner = await this.#db.getUsersUniqueField(op.key, this.hashFor(op.key, op.value as string));
+        if (owner != null && owner !== usernameToken) uniquenessErrors[op.key] = op.value as string;
       }
     }
     return uniquenessErrors;
@@ -119,20 +202,34 @@ class Platform {
 
   /**
    * Apply operations to PlatformDB.
+   *
+   * In hashed mode: the `username` argument (still plaintext as received
+   * from the caller) is hashed once into `usernameToken`; every comparison
+   * and write below uses that token so the PlatformDB row VALUE for an
+   * isUnique-field row is the HMAC username (matching what
+   * `getUsersUniqueField` returns to chained callers). Unique-field
+   * VALUES are hashed per-call with their own field as salt — distinct
+   * fields holding the same plaintext never collide.
+   *
+   * Indexed-field values are non-PII routing/metadata (e.g. preferred
+   * language) and stay cleartext; only the field's enumeration key
+   * (username) gets hashed.
    */
   async #applyOperations (username: string, operations: PlatformOperation[]) {
+    const usernameToken = this.hashFor(USERNAME_FIELD, username);
     for (const op of operations) {
       switch (op.action) {
         case 'create':
           if (op.isUnique) {
             if (!op.isActive) break;
-            const potentialCollisionUsername = await this.#db.getUsersUniqueField(op.key, op.value);
-            if (potentialCollisionUsername !== null && potentialCollisionUsername !== username) {
+            const valueToken = this.hashFor(op.key, op.value);
+            const potentialCollisionUsername = await this.#db.getUsersUniqueField(op.key, valueToken);
+            if (potentialCollisionUsername !== null && potentialCollisionUsername !== usernameToken) {
               throw (errors.itemAlreadyExists('user', { [op.key]: op.value }));
             }
-            await this.#db.setUserUniqueField(username, op.key, op.value);
+            await this.#db.setUserUniqueField(usernameToken, op.key, valueToken);
           } else {
-            await this.#db.setUserIndexedField(username, op.key, op.value);
+            await this.#db.setUserIndexedField(usernameToken, op.key, op.value);
           }
           break;
 
@@ -140,32 +237,35 @@ class Platform {
           if (!op.isActive) break;
           if (op.isUnique) {
             const previousValue = op.previousValue ?? '';
-            const existingUsernameValue = await this.#db.getUsersUniqueField(op.key, previousValue);
-            if (existingUsernameValue !== null && existingUsernameValue === username) {
-              await this.#db.deleteUserUniqueField(op.key, previousValue);
+            const previousToken = this.hashFor(op.key, previousValue);
+            const existingUsernameValue = await this.#db.getUsersUniqueField(op.key, previousToken);
+            if (existingUsernameValue !== null && existingUsernameValue === usernameToken) {
+              await this.#db.deleteUserUniqueField(op.key, previousToken);
             }
 
-            const potentialCollisionUsername = await this.#db.getUsersUniqueField(op.key, op.value);
-            if (potentialCollisionUsername !== null && potentialCollisionUsername !== username) {
+            const valueToken = this.hashFor(op.key, op.value);
+            const potentialCollisionUsername = await this.#db.getUsersUniqueField(op.key, valueToken);
+            if (potentialCollisionUsername !== null && potentialCollisionUsername !== usernameToken) {
               throw (errors.itemAlreadyExists('user', { [op.key]: op.value }));
             }
-            await this.#db.setUserUniqueField(username, op.key, op.value);
+            await this.#db.setUserUniqueField(usernameToken, op.key, valueToken);
           } else {
-            await this.#db.setUserIndexedField(username, op.key, op.value);
+            await this.#db.setUserIndexedField(usernameToken, op.key, op.value);
           }
           break;
 
         case 'delete':
           if (op.isUnique) {
-            const existingValue = await this.#db.getUsersUniqueField(op.key, op.value);
-            if (existingValue !== null && existingValue !== username) {
+            const valueToken = this.hashFor(op.key, op.value);
+            const existingValue = await this.#db.getUsersUniqueField(op.key, valueToken);
+            if (existingValue !== null && existingValue !== usernameToken) {
               throw (errors.forbidden('unique field ' + op.key + ' with value ' + op.value + ' is associated to another user'));
             }
             if (existingValue != null) {
-              await this.#db.deleteUserUniqueField(op.key, op.value);
+              await this.#db.deleteUserUniqueField(op.key, valueToken);
             }
           } else {
-            await this.#db.deleteUserIndexedField(username, op.key);
+            await this.#db.deleteUserIndexedField(usernameToken, op.key);
           }
           break;
 
@@ -189,20 +289,25 @@ class Platform {
    * backwards compatibility with existing callers.
    */
   async deleteUser (username: string, _user: unknown) {
+    // `getAllWithPrefix('user')` returns entries whose `username` and (for
+    // unique fields) `value` are stored in PlatformDB exactly as written.
+    // In hashed mode those are HMAC tokens — comparing or deleting them
+    // through `#applyOperations` (which assumes plaintext inputs and would
+    // hash again) would double-hash and silently miss every row. Match +
+    // delete directly against the engine here, using the token form of
+    // `username` for the row-match.
+    const usernameToken = this.hashFor(USERNAME_FIELD, username);
     const entries = await this.#db.getAllWithPrefix('user');
-    const operations: PlatformOperation[] = [];
     for (const entry of entries) {
-      if (entry.username !== username) continue;
+      if (entry.username !== usernameToken) continue;
       if (entry.field == null || entry.field.startsWith('_')) continue;
-      operations.push({
-        action: 'delete',
-        key: entry.field,
-        value: entry.value,
-        isUnique: entry.isUnique === true,
-        isActive: true
-      });
+      if (entry.isUnique === true) {
+        // `entry.value` is already in storage form (cleartext or HMAC).
+        await this.#db.deleteUserUniqueField(entry.field, entry.value);
+      } else {
+        await this.#db.deleteUserIndexedField(usernameToken, entry.field);
+      }
     }
-    await this.#applyOperations(username, operations);
   }
 
   // ----------------  Core identity (multi-core)  ----------------
@@ -341,16 +446,31 @@ class Platform {
 
   /**
    * Get which core hosts a user.
+   *
+   * Takes a PLAINTEXT username; hashes internally when `piiMode='hashed'`.
+   * Callers that already hold the hashed-username token (e.g. from
+   * `getUsersUniqueField` in hashed mode) must use the explicit
+   * `getUserCoreByPreHashedUsername` variant to avoid double-hashing.
    */
   async getUserCore (username: string) {
-    return await this.#db.getUserCore(username);
+    return await this.#db.getUserCore(this.hashFor(USERNAME_FIELD, username));
   }
 
   /**
-   * Set which core hosts a user.
+   * Variant of `getUserCore` for callers that already hold the hashed
+   * token (e.g. as the return value of `getUsersUniqueField` in hashed
+   * mode). In `cleartext` mode this is equivalent to `getUserCore` —
+   * tokens and plaintexts coincide.
+   */
+  async getUserCoreByPreHashedUsername (usernameToken: string) {
+    return await this.#db.getUserCore(usernameToken);
+  }
+
+  /**
+   * Set which core hosts a user. Plaintext input; hashed internally.
    */
   async setUserCore (username: string, coreId: string) {
-    await this.#db.setUserCore(username, coreId);
+    await this.#db.setUserCore(this.hashFor(USERNAME_FIELD, username), coreId);
   }
 
   /**
@@ -379,21 +499,31 @@ class Platform {
   /**
    * Set a persistent DNS record. Runtime-managed entries like ACME challenges.
    * Static infrastructure records stay in YAML config; admin MUST NOT shadow them.
+   *
+   * In `hashed` mode the subdomain key becomes opaque so the cleartext
+   * subdomain doesn't cross Raft. The record VALUE (txt / a / cname etc.)
+   * stays cleartext — it's the DNS payload, not PII.
    */
   async setDnsRecord (subdomain: string, records: DnsRecord) {
-    await this.#db.setDnsRecord(subdomain, records);
+    await this.#db.setDnsRecord(this.hashFor(SUBDOMAIN_FIELD, subdomain), records);
   }
 
   async getDnsRecord (subdomain: string) {
-    return await this.#db.getDnsRecord(subdomain);
+    return await this.#db.getDnsRecord(this.hashFor(SUBDOMAIN_FIELD, subdomain));
   }
 
+  /**
+   * Return every persistent DNS record. In `hashed` mode each entry's
+   * `subdomain` field is the HMAC token — the cleartext was never stored
+   * and cannot be recovered from PlatformDB alone. Operator tooling
+   * (`bin/dns-records.js list`) should label hashed entries as such.
+   */
   async getAllDnsRecords () {
     return await this.#db.getAllDnsRecords();
   }
 
   async deleteDnsRecord (subdomain: string) {
-    await this.#db.deleteDnsRecord(subdomain);
+    await this.#db.deleteDnsRecord(this.hashFor(SUBDOMAIN_FIELD, subdomain));
   }
 
   /**
@@ -475,6 +605,8 @@ class Platform {
       throw errors.itemAlreadyExists('user', { username });
     }
 
+    const usernameToken = this.hashFor(USERNAME_FIELD, username);
+
     // 3. Check username existence (lazy require to avoid circular dependency)
     const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
@@ -483,7 +615,7 @@ class Platform {
       const allConflicts: Record<string, string> = { username };
       for (const [field, value] of Object.entries(uniqueFields)) {
         if (field === 'username') continue;
-        const existingUsername = await this.#db.getUsersUniqueField(field, value);
+        const existingUsername = await this.#db.getUsersUniqueField(field, this.hashFor(field, value));
         if (existingUsername != null) {
           allConflicts[field] = value;
         }
@@ -496,7 +628,7 @@ class Platform {
     for (const [field, value] of Object.entries(uniqueFields)) {
       if (field === 'username') continue;
       if (value == null) continue;
-      const success = await this.#db.setUserUniqueFieldIfNotExists(username, field, value);
+      const success = await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, this.hashFor(field, value));
       if (!success) {
         conflicts[field] = value;
       }
@@ -510,7 +642,7 @@ class Platform {
     //    just because the latter happens to have fewer users).
     const selectedCoreId = await this.selectCoreForRegistration(hosting);
     if (selectedCoreId != null) {
-      await this.#db.setUserCore(username, selectedCoreId);
+      await this.#db.setUserCore(usernameToken, selectedCoreId);
     }
 
     // 6. If selected core is not self, return redirect
