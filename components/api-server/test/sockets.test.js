@@ -402,6 +402,82 @@ describe('[SK01] Socket.IO', function () {
     });
   });
 
+  describe('[SK05] scoped notifications', function () {
+    const inScopeStream = testData.streams[0].id;
+    const otherStream = testData.streams[8].id;
+
+    function createParams (streamId) {
+      return { time: timestamp.now(), type: 'test/test', streamIds: [streamId] };
+    }
+
+    it('[SNSK1] delivers notificationsChanged with the matched key, not the legacy eventsChanged', function () {
+      ioCons.con1 = connect(namespace, { auth: token });
+      return new Promise((resolve, reject) => {
+        ioCons.con1.on('eventsChanged', () => reject(new Error('scoped connection must not receive legacy eventsChanged')));
+        ioCons.con1.on('notificationsChanged', (payload) => {
+          try { assert.deepStrictEqual(payload.keys, ['s0']); resolve(); } catch (e) { reject(e); }
+        });
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 's0', kind: 'events', query: { streams: [inScopeStream] } }, function (err, ack) {
+            if (err) return reject(err);
+            try { assert.deepStrictEqual(ack.keys, ['s0']); } catch (e) { return reject(e); }
+            ioCons.con1.emit('events.create', createParams(inScopeStream), function (err2) { if (err2) reject(err2); });
+          });
+        });
+      });
+    });
+
+    it('[SNSK2] getSubscriptions returns the registered scopes', function () {
+      ioCons.con1 = connect(namespace, { auth: token });
+      return new Promise((resolve, reject) => {
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 's0', kind: 'events', query: { streams: [inScopeStream] } }, function (err) {
+            if (err) return reject(err);
+            ioCons.con1.emit('getSubscriptions', null, function (err2, res) {
+              if (err2) return reject(err2);
+              try {
+                assert.ok(res.scopes.s0, 'expected scope s0');
+                assert.strictEqual(res.scopes.s0.kind, 'events');
+                resolve();
+              } catch (e) { reject(e); }
+            });
+          });
+        });
+      });
+    });
+
+    it('[SNSK3] does not deliver for an out-of-scope change', function () {
+      ioCons.con1 = connect(namespace, { auth: token });
+      return new Promise((resolve, reject) => {
+        ioCons.con1.on('notificationsChanged', () => reject(new Error('must not fire for out-of-scope change')));
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 'sOther', kind: 'events', query: { streams: [otherStream] } }, function (err) {
+            if (err) return reject(err);
+            ioCons.con1.emit('events.create', createParams(inScopeStream), function (err2) { if (err2) reject(err2); });
+            setTimeout(resolve, 300);
+          });
+        });
+      });
+    });
+
+    it('[SNSK4] stops delivering after unsubscribe', function () {
+      ioCons.con1 = connect(namespace, { auth: token });
+      return new Promise((resolve, reject) => {
+        ioCons.con1.on('notificationsChanged', () => reject(new Error('must not fire after unsubscribe')));
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 's0', kind: 'events', query: { streams: [inScopeStream] } }, function (err) {
+            if (err) return reject(err);
+            ioCons.con1.emit('unsubscribe', { key: 's0' }, function (err2) {
+              if (err2) return reject(err2);
+              ioCons.con1.emit('events.create', createParams(inScopeStream), function (err3) { if (err3) reject(err3); });
+              setTimeout(resolve, 300);
+            });
+          });
+        });
+      });
+    });
+  });
+
   describe('[SK04] when spawning 2 api-server processes, A and B', () => {
     // Servers A and B, length will be 2
     let servers = [];

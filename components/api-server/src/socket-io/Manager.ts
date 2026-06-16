@@ -7,12 +7,22 @@
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 import type { MethodContext, CustomAuthFunction } from 'business/src/MethodContext.ts';
+import type { EventMatchQuery } from 'utils';
+import type { RawScopeQuery } from '../methods/helpers/scopeQueryUtils.ts';
+import type { Subscriber } from 'business/src/notifications/NotificationEngine.ts';
 const require = createRequire(import.meta.url);
 const errorHandling = require('errors').errorHandling;
+const errors = require('errors').factory;
 const commonMeta = require('../methods/helpers/setCommonMeta.ts');
 const { fromCallback } = require('utils');
 const { USERNAME_REGEXP_STR } = require('../schema/helpers.ts');
 const { pubsub } = require('messages');
+const notificationEngine = require('business').notificationEngine;
+const { prepareScopeQuery } = require('../methods/helpers/scopeQueryUtils.ts');
+// socket messages reserved for the scoped-subscription protocol — handled
+// inline instead of being dispatched to the API as method calls (the wildcard
+// '*' handler would otherwise treat them as unknown methods).
+const SUBSCRIPTION_OPS = new Set(['subscribe', 'unsubscribe', 'getSubscriptions']);
 (async () => {
   await commonMeta.loadSettings();
 })();
@@ -178,9 +188,28 @@ class NamespaceContext {
     }
     const message = pubsubMessageToSocket(payload);
     if (message != null) {
-      this.socketNs.emit(message);
+      this.emitCoarse(message);
     } else {
       console.log('XXXXXXX Unknown payload', payload);
+    }
+  }
+
+  // Emit a legacy coarse signal (eventsChanged / streamsChanged / accessesChanged).
+  // Connections that registered at least one scope opt out of the broadcast —
+  // they receive the unified `notificationsChanged` from the engine instead, so
+  // they never double-fire. When no connection is scoped, the fast namespace
+  // broadcast is used unchanged.
+  emitCoarse (message: string) {
+    let hasScoped = false;
+    for (const conn of this.connections.values()) {
+      if (conn.hasScopes()) { hasScoped = true; break; }
+    }
+    if (!hasScoped) {
+      this.socketNs.emit(message);
+      return;
+    }
+    for (const conn of this.connections.values()) {
+      if (!conn.hasScopes()) conn.socket.emit(message);
     }
   }
 
@@ -214,6 +243,8 @@ class NamespaceContext {
   async onDisconnect (conn: Connection) {
     const logger = this.logger;
     const namespace = this.socketNs;
+    // Tear down any scoped-notification subscriptions this connection held.
+    conn.teardownScopes();
     // Remove the connection from our connection list.
     this.deleteConnection(conn);
     const remaining = this.connections.size;
@@ -239,6 +270,11 @@ class Connection {
   apiVersion: string | null;
 
   hostname: string;
+
+  // Scoped-notification subscriptions held by this connection (key -> scope).
+  scopes: Map<string, { kind: string; rawQuery: RawScopeQuery; prepared: EventMatchQuery }>;
+
+  subscriber: Subscriber | null;
   constructor (logger: Logger, socket: SocketLike, namespaceContext: NamespaceContext, methodContext: MethodContext, api: Api, apiVersion: string | null, hostname: string) {
     this.socket = socket;
     this.methodContext = methodContext;
@@ -246,6 +282,80 @@ class Connection {
     this.logger = logger;
     this.apiVersion = apiVersion;
     this.hostname = hostname;
+    this.scopes = new Map();
+    this.subscriber = null;
+  }
+
+  hasScopes (): boolean {
+    return this.scopes.size > 0;
+  }
+
+  // Unregister from the engine and drop all scopes (on disconnect or last unsubscribe).
+  teardownScopes (): void {
+    if (this.subscriber != null) {
+      notificationEngine.unregister(this.methodContext.user.username, this.subscriber);
+      this.subscriber = null;
+    }
+    this.scopes.clear();
+  }
+
+  // Register with the engine (once) and keep its scope array in sync.
+  private syncSubscriber (): void {
+    if (this.scopes.size === 0) {
+      this.teardownScopes();
+      return;
+    }
+    if (this.subscriber == null) {
+      this.subscriber = {
+        id: this.socket.id,
+        scopes: [],
+        deliver: (keys: string[]) => this.socket.emit('notificationsChanged', { keys })
+      };
+      notificationEngine.register(this.methodContext.user.username, this.subscriber);
+    }
+    this.subscriber.scopes = [...this.scopes.entries()].map(([key, s]) => ({ key, kind: s.kind as 'events' | 'streams' | 'accesses', query: s.prepared }));
+  }
+
+  // Dispatch a scoped-subscription protocol message.
+  async onSubscriptionOp (op: string, payload: unknown, callback: SocketCallback): Promise<void> {
+    try {
+      if (op === 'getSubscriptions') {
+        return callback(null, { scopes: this.scopesForDisplay() });
+      }
+      if (op === 'unsubscribe') {
+        this.removeScopes(payload);
+        return callback(null, { ok: true, keys: [...this.scopes.keys()] });
+      }
+      await this.addScopes(payload); // op === 'subscribe'
+      return callback(null, { ok: true, keys: [...this.scopes.keys()] });
+    } catch (err) {
+      return callback(commonMeta.setCommonMeta({ error: errorHandling.getPublicErrorData(err) }));
+    }
+  }
+
+  private scopesForDisplay (): Record<string, { kind: string; query: RawScopeQuery }> {
+    const out: Record<string, { kind: string; query: RawScopeQuery }> = {};
+    for (const [key, s] of this.scopes) out[key] = { kind: s.kind, query: s.rawQuery };
+    return out;
+  }
+
+  private removeScopes (payload: unknown): void {
+    const p = (payload ?? {}) as { key?: string; keys?: string[]; all?: boolean };
+    if (p.all === true) this.scopes.clear();
+    else if (Array.isArray(p.keys)) for (const k of p.keys) this.scopes.delete(k);
+    else if (p.key != null) this.scopes.delete(p.key);
+    this.syncSubscriber();
+  }
+
+  private async addScopes (payload: unknown): Promise<void> {
+    for (const { key, kind, query } of normalizeScopePayload(payload)) {
+      if (kind !== 'events') {
+        throw errors.invalidRequestStructure(`scope kind '${kind}' is not yet supported`);
+      }
+      const prepared = await prepareScopeQuery(this.methodContext, query);
+      this.scopes.set(key, { kind, rawQuery: query, prepared });
+    }
+    this.syncSubscriber();
   }
 
   // This should be used as a key when storing the connection inside a Map.
@@ -261,14 +371,6 @@ class Connection {
   // Called when the socket wants to call a Pryv IO method.
   //
   async onMethodCall (callData: CallData, callback: SocketCallback) {
-    const methodContext = this.methodContext;
-    const tracing = initRootSpan('socket.io', {
-      apiVersion: this.apiVersion,
-      hostname: this.hostname
-    }) as { finishSpan: (n: string) => void; setError: (n: string, err: unknown) => void };
-    methodContext.tracing = tracing;
-    const api = this.api;
-    const logger = this.logger;
     if (!callData || !callData.data || callData.data.length !== 3) {
       if (callback) {
         callback(new Error('invalid data'));
@@ -278,6 +380,19 @@ class Connection {
     const apiMethod = callData.data[0];
     const params = callData.data[1];
     callback = callback || callData.data[2];
+    // Scoped-subscription protocol messages are handled inline, not dispatched
+    // to the API (the wildcard '*' handler catches every emitted event).
+    if (SUBSCRIPTION_OPS.has(apiMethod)) {
+      return this.onSubscriptionOp(apiMethod, params, callback);
+    }
+    const methodContext = this.methodContext;
+    const tracing = initRootSpan('socket.io', {
+      apiVersion: this.apiVersion,
+      hostname: this.hostname
+    }) as { finishSpan: (n: string) => void; setError: (n: string, err: unknown) => void };
+    methodContext.tracing = tracing;
+    const api = this.api;
+    const logger = this.logger;
     methodContext.methodId = apiMethod;
 
     const userName = methodContext.user.username;
@@ -317,6 +432,19 @@ function pubsubMessageToSocket (payload: unknown): string | undefined {
   const key = typeof payload === 'object' ? JSON.stringify(payload) : (payload as string);
   return messageMap[key];
 }
+
+// Normalize the client `subscribe` payload into a flat list of scope specs.
+// Accepts a single `{ key, kind?, query }` or a bulk `{ scopes: { key -> { kind?, query } } }`.
+function normalizeScopePayload (payload: unknown): Array<{ key: string; kind: string; query: RawScopeQuery }> {
+  const p = (payload ?? {}) as { key?: string; kind?: string; query?: RawScopeQuery; scopes?: Record<string, { kind?: string; query?: RawScopeQuery }> };
+  if (p.scopes != null && typeof p.scopes === 'object') {
+    return Object.entries(p.scopes).map(([key, v]) => ({ key, kind: v.kind ?? 'events', query: v.query ?? {} }));
+  }
+  if (p.key != null) {
+    return [{ key: p.key, kind: p.kind ?? 'events', query: p.query ?? {} }];
+  }
+  throw errors.invalidRequestStructure('subscribe requires { key, query } or { scopes: { key: { query } } }');
+}
 export default Manager;
 export { Manager };
 
@@ -335,6 +463,7 @@ type SocketLike = {
   methodContext: MethodContext;
   on (event: string, listener: (...args: unknown[]) => unknown): unknown;
   once (event: string, listener: (...args: unknown[]) => unknown): unknown;
+  emit (event: string, ...args: unknown[]): unknown;
 };
 type Api = {
   call (context: MethodContext, params: unknown, cb: (err: Error | null, result?: unknown) => void): void;
