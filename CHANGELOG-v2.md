@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.3 — 2026-06-16
 
 ### Opt-in HMAC pseudonymisation of PlatformDB rows (`platform.piiMode: hashed`)
 
@@ -45,8 +45,6 @@ pepper.
   replication of HMAC'd PII (Recital 26 still applies). See
   `INSTALL.md § PlatformDB PII hashing (multi-region clusters)` for
   the full operator runbook.
-
-## 2.0.0-rc.3
 
 ### BREAKING: removed the deprecated `GET /audit/logs` route (`audit.getLogs`)
 
