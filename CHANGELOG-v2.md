@@ -1,5 +1,51 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Opt-in HMAC pseudonymisation of PlatformDB rows (`platform.piiMode: hashed`)
+
+Multi-region deployments can now opt into storing every PlatformDB
+identification + uniqueness row as a deterministic HMAC-SHA-256 token
+instead of cleartext. In `platform.piiMode: hashed`, the cluster-wide
+rqlite ring carries opaque tokens for usernames + every `isUnique`
+system-stream field value (default `email`) + persistent DNS subdomain
+keys. Lookups still work by-value (the writer derives the same HMAC the
+reader queries with); the inverse is infeasible without the cluster
+pepper.
+
+- Closes pryv/open-pryv.io#80 + pryv/open-pryv.io#97.
+- New config block: `platform.piiMode: cleartext | hashed` (default
+  `cleartext` — existing deployments are byte-identical until they opt
+  in) + `platform.piiHmacKey` (base64-encoded 32-byte cluster pepper,
+  operator-sync responsibility like `letsEncrypt.atRestKey`). Bundle
+  schema bumped to v3 to ship the pepper to joining cores.
+- Operator tooling:
+  - `bin/platform-pii-migrate.js status | up [--dry-run]` — one-shot
+    cleartext → hashed cutover of existing PlatformDB rows. Idempotent
+    + restartable.
+  - `bin/platform-pii-rotate.js up --old-pepper <BASE64>` — rotate
+    the pepper end-to-end on a single core (multi-core: run on each
+    core in turn). Re-derives HMACs from the home core's user-account
+    storage.
+- Affected admin/recovery surfaces in hashed mode:
+  - `GET /reg/:email/username` + `GET /reg/:email/uid` return **410
+    Gone** — the legacy email→username recovery flow needs a home-core
+    round-trip and is not implemented in this iteration; clients must
+    accept the username as user input instead.
+  - `auth.cores` with an `email` query single-core surface returns
+    `unknown-resource` rather than try a HMAC username against the
+    local users index.
+  - `/reg/admin/servers/:server/users` returns `username` fields as
+    HMAC tokens (admin tooling that consumes this must recognise the
+    hashed shape).
+- Legal framing: this is **pseudonymisation** under EDPB / WP29
+  Opinion 05/2014 — strengthens GDPR Art.32(1)(a) + Art.5(1)(f)
+  evidence and ISO 27001 A.8.11 / A.8.24. It does NOT lift the
+  requirement for an Art.46 mechanism (SCCs / BCRs) for cross-border
+  replication of HMAC'd PII (Recital 26 still applies). See
+  `INSTALL.md § PlatformDB PII hashing (multi-region clusters)` for
+  the full operator runbook.
+
 ## 2.0.0-rc.3
 
 ### BREAKING: removed the deprecated `GET /audit/logs` route (`audit.getLogs`)
