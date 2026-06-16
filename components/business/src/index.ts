@@ -23,6 +23,8 @@ const __ex_users = require('./users/index.ts');
 export { __ex_users as users };
 const __ex_MethodContext = require('./MethodContext.ts').default;
 export { __ex_MethodContext as MethodContext };
+const __ex_notificationEngine = require('./notifications/NotificationEngine.ts').default;
+export { __ex_notificationEngine as notificationEngine };
 
 // Public types for Pryv.io API consumers.
 export type {

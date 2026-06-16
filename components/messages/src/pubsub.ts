@@ -145,6 +145,7 @@ class PubSubFactory {
   _webhooks: PubSub | null = null;
   _series: PubSub | null = null;
   _notifications: PubSub | null = null;
+  _scopedNotifications: PubSub | null = null;
   _cache: PubSub | null = null;
   get status () {
     if (this._status == null) this._status = new PubSub('status', { transport: CONSTANTS.TRANSPORT_MODE_NONE, forwardToTests: true });
@@ -170,6 +171,19 @@ class PubSubFactory {
       this._notifications.setMaxListeners(100); // Number of max socket.io or webhooks connections
     }
     return this._notifications;
+  }
+
+  // Dedicated channel for scope-matched notifications: structured payloads
+  // carrying the changed resource so a notification engine can match standing
+  // scopes without re-querying. Keyed by username, like `notifications`, but
+  // kept separate so legacy coarse-signal consumers are never exposed to these
+  // payloads.
+  get scopedNotifications () {
+    if (this._scopedNotifications == null) {
+      this._scopedNotifications = new PubSub('scopedNotifications', { transport: CONSTANTS.TRANSPORT_MODE_KEY });
+      this._scopedNotifications.setMaxListeners(100);
+    }
+    return this._scopedNotifications;
   }
 
   get cache () {

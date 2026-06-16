@@ -820,6 +820,25 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     // notify is called by create, update and delete
     // depending on the case the event properties will be found in context or event
     const notifiedEvent = context.event || result.event;
+    // Scoped notifications (additive — the coarse signal above is untouched):
+    // emit a structured payload carrying the changed event's matchable fields so
+    // a notification engine can evaluate standing scopes without re-querying.
+    const scopedSource = (notifiedEvent ?? result.eventDeletion) as {
+      id?: string; streamIds?: string[]; type?: string; content?: unknown; clientData?: unknown;
+    } | null | undefined;
+    if (scopedSource != null) {
+      pubsub.scopedNotifications.emit(context.user.username, {
+        kind: 'events',
+        changeType: result.eventDeletion != null ? 'delete' : 'change',
+        event: {
+          id: scopedSource.id,
+          streamIds: scopedSource.streamIds ?? [],
+          type: scopedSource.type,
+          content: scopedSource.content,
+          clientData: scopedSource.clientData
+        }
+      });
+    }
     if (notifiedEvent != null && isSeriesEvent(notifiedEvent)) {
       const isDelete = !!result.eventDeletion;
       // if event is a deletion 'id' is given by result.eventDeletion
