@@ -475,6 +475,29 @@ describe('[SK01] Socket.IO', function () {
       });
     });
 
+    it('[SND10R] disconnects a socket whose access is revoked (deleted)', function () {
+      return new Promise((resolve, reject) => {
+        superagent
+          .post(server.url + '/' + user.username + '/accesses')
+          .set('Authorization', token)
+          .send({ name: 'd10-' + Date.now(), type: 'app', permissions: [{ streamId: inScopeStream, level: 'read' }] })
+          .end(function (err, res) {
+            if (err) return reject(err);
+            const accessId = res.body.access.id;
+            const appToken = res.body.access.token;
+            ioCons.con1 = connect(namespace, { auth: appToken });
+            ioCons.con1.on('disconnect', function () { resolve(); });
+            ioCons.con1.once('connect', function () {
+              // Revoke the access -> accessesChanged -> revalidate -> disconnect.
+              superagent
+                .del(server.url + '/' + user.username + '/accesses/' + accessId)
+                .set('Authorization', token)
+                .end(function (err2) { if (err2) reject(err2); });
+            });
+          });
+      });
+    });
+
     it('[SNSK4] stops delivering after unsubscribe', function () {
       ioCons.con1 = connect(namespace, { auth: token });
       return new Promise((resolve, reject) => {

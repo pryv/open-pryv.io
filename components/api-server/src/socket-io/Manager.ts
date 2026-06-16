@@ -102,7 +102,7 @@ class Manager {
     let context = this.contexts.get(username);
     // Value is not missing, return it.
     if (typeof context === 'undefined') {
-      context = new NamespaceContext(username, this.io.of(namespaceName), this.api, this.logger, this.apiVersion, this.hostname);
+      context = new NamespaceContext(username, this.io.of(namespaceName), this.api, this.logger, this.apiVersion, this.hostname, this.storageLayer);
       this.contexts.set(username, context);
     }
     await context.open();
@@ -132,7 +132,9 @@ class NamespaceContext {
   connections: Map<string, Connection>;
 
   pubsubRemover: PubsubRemover | null;
-  constructor (username: string | null, socketNs: SocketNamespace, api: Api, logger: Logger, apiVersion: string | null, hostname: string) {
+
+  storageLayer: unknown;
+  constructor (username: string | null, socketNs: SocketNamespace, api: Api, logger: Logger, apiVersion: string | null, hostname: string, storageLayer: unknown) {
     this.username = username;
     this.socketNs = socketNs;
     this.api = api;
@@ -141,6 +143,16 @@ class NamespaceContext {
     this.pubsubRemover = null;
     this.apiVersion = apiVersion;
     this.hostname = hostname;
+    this.storageLayer = storageLayer;
+  }
+
+  // D10: an access change (narrow / revoke / delete) may invalidate live
+  // connections. Re-validate each: a revoked/deleted token drops the socket; a
+  // narrowed token has its now-forbidden scopes pruned.
+  revalidateConnections (): void {
+    for (const conn of this.connections.values()) {
+      conn.revalidate(this.storageLayer).catch((err: unknown) => this.logger.warn('scoped-notification revalidate failed', err));
+    }
   }
 
   // Adds a connection to the namespace. This produces a `Connection` instance
@@ -148,7 +160,7 @@ class NamespaceContext {
   //
   addConnection (socket: SocketLike, _methodContext?: MethodContext) {
     // This will represent state that we keep for every connection.
-    const connection = new Connection(this.logger, socket, this, socket.methodContext, this.api, this.apiVersion, this.hostname);
+    const connection = new Connection(this.logger, socket, this, socket.methodContext, this.api, this.apiVersion, this.hostname, this.storageLayer);
     // Permanently store the connection in this namespace.
     this.storeConnection(connection);
     socket.once('disconnect', () => this.onDisconnect(connection));
@@ -181,6 +193,7 @@ class NamespaceContext {
       const message = messageMap[payload.type];
       if (message != null) {
         this.socketNs.emit(message, payload);
+        if (message === 'accessUpdated') this.revalidateConnections(); // D10
       } else {
         console.log('XXXXXXX Unknown structured payload', payload);
       }
@@ -189,6 +202,7 @@ class NamespaceContext {
     const message = pubsubMessageToSocket(payload);
     if (message != null) {
       this.emitCoarse(message);
+      if (message === 'accessesChanged') this.revalidateConnections(); // D10
     } else {
       console.log('XXXXXXX Unknown payload', payload);
     }
@@ -275,7 +289,9 @@ class Connection {
   scopes: Map<string, { kind: string; rawQuery: RawScopeQuery; prepared: EventMatchQuery }>;
 
   subscriber: Subscriber | null;
-  constructor (logger: Logger, socket: SocketLike, namespaceContext: NamespaceContext, methodContext: MethodContext, api: Api, apiVersion: string | null, hostname: string) {
+
+  storageLayer: unknown;
+  constructor (logger: Logger, socket: SocketLike, namespaceContext: NamespaceContext, methodContext: MethodContext, api: Api, apiVersion: string | null, hostname: string, storageLayer: unknown) {
     this.socket = socket;
     this.methodContext = methodContext;
     this.api = api;
@@ -284,10 +300,35 @@ class Connection {
     this.hostname = hostname;
     this.scopes = new Map();
     this.subscriber = null;
+    this.storageLayer = storageLayer;
   }
 
   hasScopes (): boolean {
     return this.scopes.size > 0;
+  }
+
+  // D10: re-resolve this connection's access after an access change. A
+  // revoked/deleted token can no longer be resolved -> drop the connection
+  // (also closing the general "revoked token keeps working on an open socket"
+  // hole). A surviving-but-narrowed token has its now-forbidden scopes pruned.
+  async revalidate (storageLayer: unknown): Promise<void> {
+    this.methodContext.access = null; // force a fresh read (the getter caches)
+    try {
+      await this.methodContext.retrieveExpandedAccess(storageLayer as Parameters<MethodContext['retrieveExpandedAccess']>[0]);
+    } catch (err) {
+      this.teardownScopes();
+      this.socket.disconnect();
+      return;
+    }
+    if (this.scopes.size === 0) return;
+    for (const [key, s] of [...this.scopes]) {
+      try {
+        s.prepared = await prepareScopeQuery(this.methodContext, s.rawQuery);
+      } catch (err) {
+        this.scopes.delete(key); // scope now out of permission -> drop it
+      }
+    }
+    this.syncSubscriber();
   }
 
   // Unregister from the engine and drop all scopes (on disconnect or last unsubscribe).
@@ -464,6 +505,7 @@ type SocketLike = {
   on (event: string, listener: (...args: unknown[]) => unknown): unknown;
   once (event: string, listener: (...args: unknown[]) => unknown): unknown;
   emit (event: string, ...args: unknown[]): unknown;
+  disconnect (): unknown;
 };
 type Api = {
   call (context: MethodContext, params: unknown, cb: (err: Error | null, result?: unknown) => void): void;
