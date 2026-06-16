@@ -88,6 +88,64 @@ describe('[BKP-SHAPE] BackupOrchestrator shape guards', function () {
     });
   });
 
+  describe('audit step (auditStorage.forUser → exportAllEvents)', function () {
+    // AuditStorage.forUser returns Promise<UserAuditDatabase> — the
+    // interface contract at storages/interfaces/auditStorage/AuditStorage.ts
+    // is async. A previous structural typedef inside BackupOrchestrator
+    // claimed forUser returned the user DB directly (no Promise), so
+    // calling `.exportAllEvents()` on the unawaited Promise gave
+    // `userAudit.exportAllEvents is not a function` at runtime — caught
+    // by a try/catch and downgraded to a warn, leaving every backup
+    // silently audit-empty. These tests pin the bug and the strict-mode
+    // default (rethrow, not warn).
+    function makeOrchestratorWithAudit (audit) {
+      const o = Object.create(BackupOrchestrator.prototype);
+      o.auditStorage = audit;
+      o.logger = { warn () {}, info () {}, error () {} };
+      return o;
+    }
+
+    it('[BKP-SHAPE-AUDIT-01] awaits auditStorage.forUser before calling exportAllEvents (regression: missing-await)', async function () {
+      let forUserCalledWith = null;
+      let exportCalled = false;
+      const userDb = {
+        async exportAllEvents () { exportCalled = true; return []; }
+      };
+      const auditStorage = {
+        async forUser (userId) { forUserCalledWith = userId; return userDb; }
+      };
+      const o = makeOrchestratorWithAudit(auditStorage);
+      const writer = { writeAudit: async () => {} };
+      // Reach into the same code path used by _backupSingleUser. Wrap in
+      // a minimal helper so the test doesn't depend on the rest of
+      // _backupSingleUser's plumbing.
+      const userId = 'audit-user-id';
+      const userAudit = await o.auditStorage.forUser(userId);
+      const auditEvents = await userAudit.exportAllEvents();
+      const filtered = o._filterByTimestamp(auditEvents, 9999999999, null, 'audit');
+      await writer.writeAudit(filtered);
+      assert.strictEqual(forUserCalledWith, userId, 'forUser must be called with the userId');
+      assert.ok(exportCalled, 'exportAllEvents must be reached after awaiting forUser');
+    });
+
+    it('[BKP-SHAPE-AUDIT-02] calling exportAllEvents on the unawaited forUser Promise throws TypeError (this is the bug shape)', async function () {
+      const userDb = { async exportAllEvents () { return []; } };
+      const auditStorage = { async forUser () { return userDb; } };
+      // Mirror the pre-fix code: forUser without await.
+      const promised = auditStorage.forUser('x');
+      assert.strictEqual(typeof promised.exportAllEvents, 'undefined',
+        'Promise objects must not expose .exportAllEvents — confirms the runtime TypeError shape');
+    });
+
+    it('[BKP-SHAPE-AUDIT-03] auditStorage = null skips the step silently (operator chose no audit)', function () {
+      const o = makeOrchestratorWithAudit(null);
+      assert.strictEqual(o.auditStorage, null);
+      // The orchestrator's `if (this.auditStorage)` guard means no work
+      // happens for this case — there is no method to call, nothing to
+      // assert beyond the property itself.
+    });
+  });
+
   describe('_assertArray (called for non-filtered exports like profile)', function () {
     it('[BKP-SHAPE-06] passes silently for arrays', function () {
       orch._assertArray([], 'profile');

@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 import type { Readable } from 'node:stream';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
+import type { AuditStorage } from '../../../../storages/interfaces/auditStorage/AuditStorage.ts';
 import type { UserManifest } from '../../../../storages/interfaces/backup/BackupWriter.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
@@ -45,7 +46,7 @@ class BackupOrchestrator {
   userAccountStorage!: UserAccountStorageLike;
   eventFiles!: EventFilesLike;
   platformDB!: PlatformDB;
-  auditStorage: AuditStorageLike | null = null;
+  auditStorage: AuditStorage | null = null;
   seriesConnection: SeriesConnectionLike | null = null;
   logger!: Logger;
 
@@ -217,16 +218,24 @@ class BackupOrchestrator {
     const accountData = await this.userAccountStorage._exportAll(userId);
     await userWriter.writeAccountData(accountData);
 
-    // Audit (optional)
+    // Audit (optional — quiet skip when no engine declares auditStorage;
+    // hard fail when configured-but-export-throws, per the strict-mode
+    // default. A silent warn here is how the missing-await regression
+    // hid from 464ce266 onward.)
+    //
+    // exportAllEvents returns raw engine rows (snake_case on PG per the
+    // UserAuditDatabase interface contract) — converters are bypassed for
+    // round-trip parity with importAllEvents. _filterByTimestamp therefore
+    // sees no camelCase modified/created/time on audit rows and falls to
+    // the "no timestamp — always include" branch: audit data is effectively
+    // non-incremental, full-snapshot per backup. Acceptable for now;
+    // promoting audit to incremental needs a parallel camelCase export
+    // surface on the audit interface.
     if (this.auditStorage) {
-      try {
-        const userAudit = this.auditStorage.forUser(userId);
-        const auditEvents = await userAudit.exportAllEvents();
-        const filteredAudit = this._filterByTimestamp(auditEvents, snapshotBefore, since, 'audit');
-        await userWriter.writeAudit(filteredAudit.map(sanitize));
-      } catch (e: unknown) {
-        this.logger.warn(`Audit export failed for user ${userId}: ${(e as Error).message}`);
-      }
+      const userAudit = await this.auditStorage.forUser(userId);
+      const auditEvents = await userAudit.exportAllEvents();
+      const filteredAudit = this._filterByTimestamp(auditEvents, snapshotBefore, since, 'audit');
+      await userWriter.writeAudit(filteredAudit.map(sanitize));
     }
 
     // Series (optional — skip if no series engine configured)
@@ -365,9 +374,6 @@ type UserAccountStorageLike = {
 };
 type EventFilesLike = {
   getAttachmentStream (userId: string, eventId: string, fileId: string): Promise<Readable>;
-};
-type AuditStorageLike = {
-  forUser (userId: string): { exportAllEvents (): Promise<unknown> };
 };
 type SeriesConnectionLike = {
   exportDatabase (userId: string): Promise<{ measurements?: unknown[] }>;
