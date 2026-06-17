@@ -394,6 +394,16 @@ cluster:
 platform:
   piiMode: hashed                                 # hashed (default since 2.0.0-rc.3) | cleartext (legacy opt-out)
   piiHmacKey: ''                                  # base64 of 32 random bytes; REQUIRED when piiMode=hashed (wizard generates)
+  # piiAlgorithm is a CLUSTER-WIDE choice (every core must agree), NOT a
+  # per-token attribute — tokens are stored bare (no scheme prefix). Today
+  # the only value is hmac-sha256. To upgrade later (e.g. a slow KDF that
+  # hardens the low-entropy input domain against brute force): add the new
+  # algorithm, run a coordinated re-derive-from-plaintext migration (the
+  # same bin/platform-pii-rotate.js tooling that swaps the pepper), then
+  # flip this key on every core. A new algorithm changes every digest, so
+  # the migration is all-at-once — which is why no per-token scheme tag is
+  # needed.
+  piiAlgorithm: hmac-sha256                       # cluster-wide; only hmac-sha256 today
 
 # === MIXED ===
 # `enabled` + `email` + `atRestKey` are PLATFORM-WIDE (every core must agree);

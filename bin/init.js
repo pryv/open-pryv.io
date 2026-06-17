@@ -1133,7 +1133,8 @@ async function main () {
   // can hand-edit override-config.yml after the wizard.
   config.platform = {
     piiMode: 'hashed',
-    piiHmacKey: genSecrets ? genSecret(32) : await askNonEmpty('  platform.piiHmacKey (base64 of 32 random bytes — pepper for HMAC pseudonymisation of PlatformDB rows; identical on every core)')
+    piiHmacKey: genSecrets ? genSecret(32) : await askNonEmpty('  platform.piiHmacKey (base64 of 32 random bytes — pepper for HMAC pseudonymisation of PlatformDB rows; identical on every core)'),
+    piiAlgorithm: 'hmac-sha256'
   };
 
   if (tlsStrategy === 'letsEncrypt') {

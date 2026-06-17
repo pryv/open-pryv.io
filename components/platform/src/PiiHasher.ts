@@ -48,6 +48,23 @@ const crypto = require('node:crypto');
 const PEPPER_BYTES = 32;
 
 /**
+ * Supported PII hashing algorithms, keyed by the `platform.piiAlgorithm`
+ * config value. Today there is exactly one (`hmac-sha256`). The algorithm
+ * is a CLUSTER-WIDE choice (like the pepper) — every core must agree —
+ * NOT a per-token attribute, so tokens are stored bare (no scheme prefix).
+ *
+ * Upgrade path when a second algorithm is introduced (e.g. a slow KDF to
+ * harden against brute-force of the low-entropy input domain): add it here,
+ * then run a coordinated re-derive-from-plaintext migration (the same
+ * rotation tooling that swaps the pepper) and flip `platform.piiAlgorithm`
+ * cluster-wide. Because a new algorithm produces different digests, the
+ * migration is all-at-once anyway — there is no need for per-token scheme
+ * tags or mixed-scheme operation.
+ */
+const SUPPORTED_ALGORITHMS = new Set<string>(['hmac-sha256']);
+const DEFAULT_ALGORITHM = 'hmac-sha256';
+
+/**
  * Fields whose values are normalised to lowercase (and trimmed) before
  * hashing. Anything not in this set is only trimmed — case is preserved.
  *
@@ -61,13 +78,17 @@ const CASE_INSENSITIVE_FIELDS = new Set<string>(['email']);
 
 class PiiHasher {
   #pepper: Buffer;
+  #algorithm: string;
 
   /**
    * @param pepperBase64 - base64 of exactly 32 random bytes. Generate with
    *   `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
    *   Same shape + ops responsibility as `letsEncrypt.atRestKey`.
+   * @param [algorithm='hmac-sha256'] - cluster-wide hashing algorithm
+   *   (`platform.piiAlgorithm`). Must be one of SUPPORTED_ALGORITHMS + the
+   *   same on every core.
    */
-  constructor (pepperBase64: string) {
+  constructor (pepperBase64: string, algorithm: string = DEFAULT_ALGORITHM) {
     if (typeof pepperBase64 !== 'string' || pepperBase64.length === 0) {
       throw new Error('PiiHasher: pepperBase64 is required (32 random bytes, base64-encoded)');
     }
@@ -80,7 +101,11 @@ class PiiHasher {
     if (buf.length !== PEPPER_BYTES) {
       throw new Error(`PiiHasher: pepper must decode to exactly ${PEPPER_BYTES} bytes, got ${buf.length}`);
     }
+    if (!SUPPORTED_ALGORITHMS.has(algorithm)) {
+      throw new Error(`PiiHasher: unsupported platform.piiAlgorithm "${algorithm}"; supported: ${[...SUPPORTED_ALGORITHMS].join(', ')}`);
+    }
     this.#pepper = buf;
+    this.#algorithm = algorithm;
   }
 
   /**
@@ -126,4 +151,4 @@ class PiiHasher {
 }
 
 export default PiiHasher;
-export { PiiHasher, PEPPER_BYTES, CASE_INSENSITIVE_FIELDS };
+export { PiiHasher, PEPPER_BYTES, CASE_INSENSITIVE_FIELDS, SUPPORTED_ALGORITHMS, DEFAULT_ALGORITHM };

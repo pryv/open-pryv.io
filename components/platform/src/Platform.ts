@@ -24,7 +24,7 @@ const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
 
 const getPlatformDB = require('./getPlatformDB.ts').default;
-const { PiiHasher } = require('./PiiHasher.ts');
+const { PiiHasher, DEFAULT_ALGORITHM: DEFAULT_PII_ALGORITHM } = require('./PiiHasher.ts');
 
 const platformCheckIntegrity = require('./platformCheckIntegrity.ts').default;
 
@@ -122,8 +122,12 @@ class Platform {
         '`node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"` ' +
         'and place the SAME value in every core\'s override-config.yml.');
     }
-    this.#piiHasher = new PiiHasher(pepper);
-    logger.info('[platform] piiMode=hashed; PlatformDB writes will store HMAC-SHA-256 tokens for username + isUnique field values');
+    // Cluster-wide algorithm (NOT per-token). Defaults to hmac-sha256; the
+    // PiiHasher constructor rejects an unknown value. A future swap is a
+    // coordinated re-migration + a flip of this key, cluster-wide.
+    const algorithm = (this.#config.get('platform:piiAlgorithm') as string) || DEFAULT_PII_ALGORITHM;
+    this.#piiHasher = new PiiHasher(pepper, algorithm);
+    logger.info(`[platform] piiMode=hashed (algorithm=${algorithm}); PlatformDB stores hashed tokens for username + isUnique field values`);
   }
 
   /**
