@@ -15,6 +15,18 @@ const componentsPath = path.resolve(__dirname, '../components'),
       storagesPath = path.resolve(__dirname, '../storages'),
       args = process.argv.slice(2);
 
+// platform.piiMode defaults to "hashed" since 2.0.0-rc.3, and Platform.init
+// refuses to boot without a piiHmacKey. The mocha process gets a fixed test
+// pepper via components/test-helpers (in-memory injection), but tests that
+// spawn SEPARATE node processes (bin/nightly, bin/dns-records.js, multi-core
+// child cores) boot fresh from config files where the pepper is absent.
+// Export the pepper as a boiler `__`-separated env var here so every spawned
+// process — which runs full boiler init reading env config — inherits it.
+// Same fixed value as components/test-helpers/src/helpers-base.ts.
+if (!process.env.platform__piiHmacKey) {
+  process.env.platform__piiHmacKey = process.env.PII_HMAC_KEY || 'WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0=';
+}
+
 if (args.length === 0) {
   logError('No command given');
   process.exit(1);

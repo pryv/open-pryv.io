@@ -656,11 +656,13 @@ When you go multi-core, the Raft channel between cores carries replicated Platfo
 
 Single-core deployments do not need any of this — `tls: null` (the default) leaves the Raft setup at plain loopback TCP, which is fine for a single host.
 
-## PlatformDB PII hashing (multi-region clusters)
+## PlatformDB PII hashing (default since 2.0.0-rc.3)
 
-When PlatformDB is replicated across regions, every PlatformDB row also crosses every region's Raft ring. By default those rows carry plaintext usernames and `isUnique` system-stream values (the default `isUnique` field is `email`), so PII transits jurisdictions purely as a side effect of the routing/uniqueness index.
+PlatformDB rows are stored as deterministic HMAC-SHA-256 tokens (not cleartext) by default since 2.0.0-rc.3. In multi-region clusters every PlatformDB row crosses every region's Raft ring — without hashing, plaintext usernames + `isUnique` system-stream values (default: `email`) + persistent DNS subdomain keys would transit jurisdictions purely as a side effect of the routing/uniqueness index.
 
-`platform.piiMode: hashed` swaps those columns to deterministic HMAC-SHA-256 tokens derived from a cluster-wide pepper. Equality lookups still work; the inverse is infeasible without the pepper. The mode is pseudonymisation under EDPB / WP29 Opinion 05/2014 — strengthens Art.32(1)(a) evidence + defence-in-depth; **does NOT** lift the requirement for an Art.46 mechanism (SCCs / BCRs) for cross-border replication. Recital 26 still applies to HMAC'd PII.
+`platform.piiMode: hashed` (the default) swaps those columns to opaque, deterministic tokens derived from a cluster-wide pepper. Equality lookups still work; the inverse is infeasible without the pepper. The mode is pseudonymisation under EDPB / WP29 Opinion 05/2014 — strengthens Art.32(1)(a) evidence + defence-in-depth; **does NOT** lift the requirement for an Art.46 mechanism (SCCs / BCRs) for cross-border replication. Recital 26 still applies to HMAC'd PII.
+
+Legacy single-region deployments that prefer plaintext can opt out by setting `platform.piiMode: cleartext` in `override-config.yml`.
 
 ### Configuration
 
@@ -682,7 +684,7 @@ Paste the same value into every core's `override-config.yml`. The bootstrap bund
 
 ### Initial cutover (cleartext → hashed)
 
-For a deployment that has been running in cleartext mode and is switching to hashed:
+For a deployment that has been running in cleartext mode under an earlier release and is switching to hashed (now the default):
 
 ```sh
 # 1. Pause writers (or take the cluster offline) and back up.
@@ -699,11 +701,11 @@ node bin/platform-pii-migrate.js up
 # 5. Restart the cluster so all workers boot with the new mode.
 ```
 
-The tool is idempotent — partial runs continue safely. It touches `user-core/*`, `user-unique/*`, `user-indexed/*`, and `dns-record/*` rows only.
+The tool is idempotent — partial runs continue safely. It touches `user-core/*`, `user-unique/*`, and `user-indexed/*` rows only. Persistent DNS records (`dns-record/*`) stay cleartext (operator infrastructure names, not user PII).
 
 ### Pepper rotation
 
-Use `bin/platform-pii-rotate.js` (see `--help` for the full procedure). Single-core: one invocation. Multi-core: run on each core in turn, after distributing the new pepper to every core's config. The tool re-derives HMAC tokens from the home core's user-account storage; cleartext for runtime DNS records is not recoverable, so any runtime `dns-record/*` rows (ACME challenges, admin-added subdomains) must be deleted and re-created after rotation.
+Use `bin/platform-pii-rotate.js` (see `--help` for the full procedure). Single-core: one invocation. Multi-core: run on each core in turn, after distributing the new pepper to every core's config. The tool re-derives HMAC tokens for usernames + `isUnique` fields from the home core's user-account storage. Persistent DNS records are unaffected — their subdomains are stored cleartext (operator infrastructure names, not user PII).
 
 ### Hashed-mode caveats
 

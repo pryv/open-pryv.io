@@ -71,6 +71,8 @@ if (process.env.STORAGE_ENGINE) {
   cfg.set('storages:series:engine', testConfig.storages.series.engine);
   cfg.set('storages:audit:engine', testConfig.storages.audit.engine);
   cfg.set('storages:file:engine', testConfig.storages.file.engine);
+  // (platform.piiHmacKey is set unconditionally in helpers-base.ts, which
+  // this module requires — no need to repeat it here.)
 }
 
 if (isAuditMode) {

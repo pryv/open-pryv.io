@@ -39,13 +39,6 @@ const reservedWords = new Set(require('./reserved-words.json').list);
 const USERNAME_FIELD = 'username';
 
 /**
- * Field name used when hashing a DNS subdomain. Subdomains are stored in
- * PlatformDB and replicated cluster-wide; in hashed mode the subdomain
- * key becomes opaque so the cleartext doesn't cross Raft.
- */
-const SUBDOMAIN_FIELD = 'dns-subdomain';
-
-/**
  * @class Platform
  * @property {Users} users
  */
@@ -574,30 +567,26 @@ class Platform {
    * Set a persistent DNS record. Runtime-managed entries like ACME challenges.
    * Static infrastructure records stay in YAML config; admin MUST NOT shadow them.
    *
-   * In `hashed` mode the subdomain key becomes opaque so the cleartext
-   * subdomain doesn't cross Raft. The record VALUE (txt / a / cname etc.)
-   * stays cleartext — it's the DNS payload, not PII.
+   * DNS-record subdomains are operator infrastructure names (`_acme-challenge`,
+   * `www`, static records), NOT user PII — so they are stored cleartext even
+   * in `hashed` mode. (Usernames used as `<username>.<domain>` DNS names are
+   * resolved through the hashed `user-core/` mapping via `getUserCore`, not
+   * through this persistent-record store.)
    */
   async setDnsRecord (subdomain: string, records: DnsRecord) {
-    await this.#db.setDnsRecord(this.hashFor(SUBDOMAIN_FIELD, subdomain), records);
+    await this.#db.setDnsRecord(subdomain, records);
   }
 
   async getDnsRecord (subdomain: string) {
-    return await this.#db.getDnsRecord(this.hashFor(SUBDOMAIN_FIELD, subdomain));
+    return await this.#db.getDnsRecord(subdomain);
   }
 
-  /**
-   * Return every persistent DNS record. In `hashed` mode each entry's
-   * `subdomain` field is the HMAC token — the cleartext was never stored
-   * and cannot be recovered from PlatformDB alone. Operator tooling
-   * (`bin/dns-records.js list`) should label hashed entries as such.
-   */
   async getAllDnsRecords () {
     return await this.#db.getAllDnsRecords();
   }
 
   async deleteDnsRecord (subdomain: string) {
-    await this.#db.deleteDnsRecord(this.hashFor(SUBDOMAIN_FIELD, subdomain));
+    await this.#db.deleteDnsRecord(subdomain);
   }
 
   /**

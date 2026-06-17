@@ -64,6 +64,10 @@ const http = require('node:http');
   config.set('core:available', true);
   config.set('dns:domain', domain);
   config.set('auth:adminAccessKey', adminKey);
+  // platform.piiMode defaults to "hashed" since 2.0.0-rc.3; multi-core child
+  // cores must share the same pepper as the parent. Same fixed test pepper as
+  // components/test-helpers/src/helpers-c.ts so HMAC tokens collide.
+  config.set('platform:piiHmacKey', process.env.PII_HMAC_KEY || 'WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0=');
   config.set('storages:platform:engine', 'rqlite');
   config.set('storages:engines:rqlite:url', rqliteUrl);
   config.set('dnsLess:publicUrl', `http://127.0.0.1:${port}`);

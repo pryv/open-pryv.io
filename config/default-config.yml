@@ -363,28 +363,37 @@ cluster:
     path: /var/lib/pryv/bootstrap-tokens.json     # one-time join-token store
 
 # === PLATFORM-WIDE ===
-# `piiMode` decides whether PlatformDB stores PII as cleartext (default —
-# backwards-compatible) or as HMAC-SHA-256 tokens derived from `piiHmacKey`
-# ("hashed" mode). In a multi-region cluster, rqlite Raft replicates every
-# PlatformDB row to every core, so plaintext usernames + isUnique-field
-# values (default: email) cross every jurisdiction. "hashed" mode swaps
-# those columns to opaque, deterministic tokens — equality lookups still
-# work, but the cleartext never leaves the user's home core.
+# `piiMode` decides whether PlatformDB stores PII as HMAC-SHA-256 tokens
+# derived from `piiHmacKey` ("hashed", default since 2.0.0-rc.3) or as
+# cleartext ("cleartext", opt-out for legacy single-region deployments).
+# In a multi-region cluster, rqlite Raft replicates every PlatformDB row
+# to every core, so plaintext usernames + isUnique-field values (default:
+# email) would cross every jurisdiction without hashed mode — opaque,
+# deterministic tokens still answer equality lookups but the cleartext
+# never leaves the user's home core.
 #
 # `piiHmacKey` is operator-sync responsibility — same shape as
 # `auth.adminAccessKey`: must be IDENTICAL across every core in the
-# cluster, pasted into each override-config.yml. Generate with
-# `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
+# cluster, pasted into each override-config.yml. The wizard (`bin/init.js`)
+# generates a fresh pepper for new installs; multi-core operators sync it
+# via the bootstrap bundle (v3+).
+# Manual generation:
+#   `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
 # Losing the key strands every hashed row (no way to re-derive without
 # both the plaintext + the pepper) — back it up alongside the cluster CA.
+#
+# Upgrading from a cleartext deployment: run `bin/platform-pii-migrate.js
+# up` to rehash existing PlatformDB rows before the new code boots, OR
+# explicitly opt out by setting `platform.piiMode: cleartext` in
+# override-config.yml.
 #
 # Hashing is pseudonymisation (EDPB / WP29 Opinion 05/2014), NOT
 # anonymisation. Cross-border replication of HMAC'd PII still needs an
 # Art.46 mechanism (SCCs / BCRs); what hashed mode achieves is the
 # defence-in-depth + Art.32(1)(a) pseudonymisation evidence.
 platform:
-  piiMode: cleartext                              # cleartext (default) | hashed
-  piiHmacKey: ''                                  # base64 of 32 random bytes; required when piiMode=hashed
+  piiMode: hashed                                 # hashed (default since 2.0.0-rc.3) | cleartext (legacy opt-out)
+  piiHmacKey: ''                                  # base64 of 32 random bytes; REQUIRED when piiMode=hashed (wizard generates)
 
 # === MIXED ===
 # `enabled` + `email` + `atRestKey` are PLATFORM-WIDE (every core must agree);

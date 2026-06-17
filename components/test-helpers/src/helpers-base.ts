@@ -75,6 +75,18 @@ if (process.env.STORAGE_ENGINE === 'sqlite') {
   cfg.set('storages:file:engine', 'filesystem');
 }
 
+// platform.piiMode defaults to "hashed" since 2.0.0-rc.3, and Platform.init
+// refuses to boot when piiHmacKey is unset. EVERY component test boots
+// Platform through this base helper, so inject a fixed test pepper at
+// module-load here (memory scope, survives injectTestConfig resets) — the
+// matrix then exercises the production-default hashed path. Multi-core
+// child cores set the same value via core-process.js + PII_HMAC_KEY. An
+// operator opting a real deployment OUT sets platform.piiMode: cleartext.
+{
+  const cfg = getConfigUnsafe(true);
+  cfg.set('platform:piiHmacKey', process.env.PII_HMAC_KEY || 'WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0=');
+}
+
 const storage = require('storage');
 const supertest = require('supertest');
 const { getApplication } = require('api-server/src/application.ts');

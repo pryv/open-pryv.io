@@ -21,8 +21,7 @@
 //
 // Behaviour:
 //   - Reads every cleartext row in PlatformDB by enumerating the engine's
-//     prefix scans (`user-core/`, `user-unique/`, `user-indexed/`,
-//     `dns-record/`).
+//     prefix scans (`user-core/`, `user-unique/`, `user-indexed/`).
 //   - For each row, computes the hashed equivalent (key + value, where the
 //     value is itself a username on `user-unique/*` rows). Writes the
 //     hashed row, then deletes the cleartext row. Atomic enough at the
@@ -30,10 +29,12 @@
 //     that the next run finishes.
 //   - Skips rows whose key already looks HMAC-shaped (64 lowercase hex
 //     chars). Hence the script is idempotent + restartable.
-//   - Touches only `user-*` and `dns-record/*` keys. Other PlatformDB
-//     namespaces (`core-info/`, `invitation/`, `tls-cert/`, `acme-account`,
-//     `observability/*`, `mail-template/*`, `access-state/*`, `platform-secrets/*`)
-//     do NOT carry PII tied to a user; they stay untouched.
+//   - Touches only `user-*` keys (user-core / user-unique / user-indexed).
+//     DNS-record subdomains are operator infrastructure names, NOT user
+//     PII, so they are stored cleartext and left untouched. Other
+//     PlatformDB namespaces (`core-info/`, `invitation/`, `tls-cert/`,
+//     `acme-account`, `observability/*`, `mail-template/*`,
+//     `access-state/*`, `platform-secrets/*`) likewise stay untouched.
 //
 // Usage:
 //   node bin/platform-pii-migrate.js status    # report what would change
@@ -63,7 +64,6 @@ require('@pryv/boiler').init({
 
 const HEX_64 = /^[0-9a-f]{64}$/;
 const USERNAME_FIELD = 'username';
-const SUBDOMAIN_FIELD = 'dns-subdomain';
 
 (async () => {
   try {
@@ -95,7 +95,6 @@ const SUBDOMAIN_FIELD = 'dns-subdomain';
     console.log('  user-core/      ' + plan.userCore.length.toString().padStart(6) + ' cleartext  ' + plan.alreadyHashed.userCore.toString().padStart(6) + ' already-hashed');
     console.log('  user-unique/    ' + plan.userUnique.length.toString().padStart(6) + ' cleartext  ' + plan.alreadyHashed.userUnique.toString().padStart(6) + ' already-hashed');
     console.log('  user-indexed/   ' + plan.userIndexed.length.toString().padStart(6) + ' cleartext  ' + plan.alreadyHashed.userIndexed.toString().padStart(6) + ' already-hashed');
-    console.log('  dns-record/     ' + plan.dnsRecord.length.toString().padStart(6) + ' cleartext  ' + plan.alreadyHashed.dnsRecord.toString().padStart(6) + ' already-hashed');
 
     if (args.command === 'status') {
       process.exit(0);
@@ -114,7 +113,6 @@ const SUBDOMAIN_FIELD = 'dns-subdomain';
     console.log('  user-core/      ' + counts.userCore);
     console.log('  user-unique/    ' + counts.userUnique);
     console.log('  user-indexed/   ' + counts.userIndexed);
-    console.log('  dns-record/     ' + counts.dnsRecord);
     process.exit(0);
   } catch (err) {
     console.error('platform-pii-migrate: ' + ((err && err.stack) || err));
@@ -130,8 +128,7 @@ async function buildPlan ({ platformDB }) {
     userCore: [],         // [{ username, coreId }]
     userUnique: [],       // [{ field, value, ownerUsername }]
     userIndexed: [],      // [{ username, field, value }]
-    dnsRecord: [],        // [{ subdomain, records }]
-    alreadyHashed: { userCore: 0, userUnique: 0, userIndexed: 0, dnsRecord: 0 }
+    alreadyHashed: { userCore: 0, userUnique: 0, userIndexed: 0 }
   };
 
   // --- user-core ---
@@ -157,12 +154,8 @@ async function buildPlan ({ platformDB }) {
     }
   }
 
-  // --- dns-record ---
-  const dnsRecords = await platformDB.getAllDnsRecords();
-  for (const { subdomain, records } of dnsRecords) {
-    if (HEX_64.test(subdomain)) { plan.alreadyHashed.dnsRecord++; continue; }
-    plan.dnsRecord.push({ subdomain, records });
-  }
+  // DNS-record subdomains are operator infrastructure names, not user PII —
+  // stored cleartext in all modes, so they are intentionally NOT migrated.
 
   return plan;
 }
@@ -171,7 +164,7 @@ async function buildPlan ({ platformDB }) {
  *  atomicity — a crash mid-loop leaves rows half-migrated which the next
  *  run completes. */
 async function applyPlan ({ platformDB, hasher, plan }) {
-  const counts = { userCore: 0, userUnique: 0, userIndexed: 0, dnsRecord: 0 };
+  const counts = { userCore: 0, userUnique: 0, userIndexed: 0 };
 
   for (const { username, coreId } of plan.userCore) {
     const usernameToken = hasher.hashFor(USERNAME_FIELD, username);
@@ -200,15 +193,6 @@ async function applyPlan ({ platformDB, hasher, plan }) {
       await platformDB.deleteUserIndexedField(username, field);
     }
     counts.userIndexed++;
-  }
-
-  for (const { subdomain, records } of plan.dnsRecord) {
-    const subdomainToken = hasher.hashFor(SUBDOMAIN_FIELD, subdomain);
-    await platformDB.setDnsRecord(subdomainToken, records);
-    if (subdomainToken !== subdomain) {
-      await platformDB.deleteDnsRecord(subdomain);
-    }
-    counts.dnsRecord++;
   }
 
   return counts;
