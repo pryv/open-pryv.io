@@ -115,6 +115,30 @@ describe('[BOOTSTRAPCONSUMER] consumer.consume', function () {
     assert.ok(fs.existsSync(result.tlsPaths.caFile));
   });
 
+  it('trustSystemCa drops the cluster-CA pin on the ack POST', async () => {
+    const { bundlePath } = writeBundle(tmp);
+    const calls = [];
+    const fakeClient = async (url, body, ca) => {
+      calls.push({ url, body, ca });
+      return { statusCode: 200, body: { ok: true, cluster: { cores: [] } } };
+    };
+
+    const result = await consumer.consume({
+      bundlePath,
+      passphrase: PASSPHRASE,
+      configDir: path.join(tmp, 'config'),
+      tlsDir: path.join(tmp, 'tls'),
+      httpClient: fakeClient,
+      trustSystemCa: true,
+      log: () => {}
+    });
+
+    assert.equal(result.coreId, 'core-b');
+    assert.equal(calls.length, 1);
+    // No cluster CA pinned — defaultHttpClient falls back to the system store.
+    assert.ok(!calls[0].ca, 'expected falsy ca when trustSystemCa is set');
+  });
+
   it('throws and does NOT delete bundle when ack returns non-200', async () => {
     const { bundlePath } = writeBundle(tmp);
     const fakeClient = async () => ({ statusCode: 401, body: { error: { id: 'token-invalid' } } });

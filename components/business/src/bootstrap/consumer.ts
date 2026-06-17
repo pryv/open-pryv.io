@@ -19,6 +19,9 @@ const require = createRequire(import.meta.url);
  *   4. POST {coreId, token, tlsFingerprint} to the bundle's ackUrl, with the
  *      bundled CA cert pinned (`ca:` option on the https request) so we
  *      refuse to ack any TLS endpoint that isn't issued by the cluster CA.
+ *      `trustSystemCa` drops the pin and verifies against the system CA
+ *      store instead (for cores whose API origin is fronted by a public/ACME
+ *      cert); the join token remains the authenticator.
  *   5. Delete the original bundle file on success — once acked, the bundle
  *      is spent (the join token has been burned on the issuing core).
  *
@@ -47,6 +50,7 @@ interface ConsumeOpts {
   configDir: string;
   tlsDir: string;
   httpClient?: HttpClient;
+  trustSystemCa?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -78,6 +82,7 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
   const {
     bundlePath, passphrase, passphraseFile, configDir, tlsDir,
     httpClient = defaultHttpClient,
+    trustSystemCa = false,
     log = (m: string) => console.log('[bootstrap] ' + m)
   } = opts || ({} as ConsumeOpts);
 
@@ -98,6 +103,18 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
   log(`Wrote ${applied.overridePath}`);
   log(`Wrote TLS files in ${tlsDir}`);
 
+  // By default we pin the cluster CA on the ack POST, refusing any TLS
+  // endpoint not issued by the cluster CA. But the ack URL is the existing
+  // core's normal API origin, which on any internet-facing deploy terminates
+  // TLS with a PUBLIC CA (ACME) cert — so the pin would fail with
+  // `unable to get local issuer certificate`. `trustSystemCa` relaxes only
+  // TRANSPORT trust to "DNS + public CA" (still rejectUnauthorized); the
+  // one-shot join token remains the real authenticator of the ack.
+  const ackCa = trustSystemCa ? '' : applied.bundle.cluster.ca.certPem;
+  if (trustSystemCa) {
+    log('ack-trust-system-ca: verifying ack against the system CA store ' +
+      '(transport trust = DNS + public CA; join token remains the authenticator)');
+  }
   log(`Acking to ${applied.ackUrl} ...`);
   const ackResponse = await httpClient(
     applied.ackUrl,
@@ -106,7 +123,7 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
       token: applied.joinToken,
       tlsFingerprint: applied.tlsFingerprint
     },
-    applied.bundle.cluster.ca.certPem
+    ackCa
   );
   if (ackResponse.statusCode !== 200) {
     throw new Error(
@@ -172,8 +189,11 @@ function defaultHttpClient (url: string, payload: Record<string, unknown>, caCer
         'content-length': body.length
       }
     };
-    if (isHttps && caCertPem) {
-      options.ca = caCertPem;
+    if (isHttps) {
+      // Always verify the server cert. When a cluster CA is supplied we pin
+      // it; otherwise (ack-trust-system-ca) we fall back to the system CA
+      // store. rejectUnauthorized stays true in both cases.
+      if (caCertPem) options.ca = caCertPem;
       options.rejectUnauthorized = true;
     }
     const req = lib.request(options, (res: IncomingMessage) => {

@@ -144,10 +144,12 @@ node bin/master.js \
     --bootstrap-passphrase-file /root/core-b.pass
 ```
 
+> **If the existing core's API is fronted by a public/ACME certificate** (the normal internet-facing case), add `--bootstrap-ack-trust-system-ca`. By default the ack POST pins the cluster CA, which fails with `unable to get local issuer certificate` against a public cert. The flag verifies the ack against the system CA store instead (still `rejectUnauthorized`); the one-shot join token remains the authenticator. Omit the flag only when the existing core presents the cluster CA on its API origin (e.g. an internal-only deployment).
+
 The master process:
 - decrypts and validates the bundle,
 - writes `override-config.yml` to its config directory and `/etc/pryv/tls/{ca,node}.{crt,key}` (mode 0600 for the key),
-- POSTs an ack to the URL embedded in the bundle, with TLS pinned to the bundled CA,
+- POSTs an ack to the URL embedded in the bundle, with TLS pinned to the bundled CA (or, with `--bootstrap-ack-trust-system-ca`, verified against the system CA store),
 - on success, deletes the bundle file (the token is single-use; replay attempts get a 401 from the ack endpoint),
 - continues into normal startup — `rqlited` joins the cluster over mTLS.
 
@@ -181,6 +183,36 @@ curl -s 'https://core-a.mc.example.com/reg/cores?username=newuser'
 - **Bundles are AES-256-GCM encrypted** with a passphrase derived via scrypt. Tampering breaks GCM auth at decrypt time.
 - **The ack endpoint bypasses admin-key auth.** It's gated by the join token instead — the new core doesn't yet have the admin key in a usable place when it acks. Once acked, every subsequent admin call uses the standard `auth.adminAccessKey`.
 - **The Raft port (default 4002) is no longer required to be VPN-protected** between cores by default. Plain TCP between cores is rejected by `verifyClient: true`.
+
+## Cluster availability & container orchestrators
+
+Read this before adding a core under Dokku, Kubernetes, Docker Compose, or any orchestrator that runs health checks — **adding a core can take a previously-healthy core's control plane offline** if you skip these precautions.
+
+### Quorum: a new core counts as a voter immediately
+
+rqlite is a Raft cluster. A new core joins **as a voter** as soon as it registers, and a Raft cluster needs a **majority** of voters reachable to elect a leader and accept platform writes:
+
+| Voters | Majority needed | Tolerates losing |
+|---|---|---|
+| 1 | 1 | 0 |
+| 2 | 2 | **0** |
+| 3 | 2 | 1 |
+
+A **two-core cluster is a trap for availability**: quorum is 2-of-2, so if *either* core becomes unreachable (crash, restart, redeploy, network blip) the survivor loses majority, steps down, and its control plane stalls — platform writes block and API calls that read the platform DB hang. A two-core cluster is *less* resilient to a single-core outage than a lone single core. The moment a brand-new, not-yet-proven core registers and then goes away, it can stall the core you already had.
+
+**Recommendations:**
+- Run **three or more cores** if you want fault tolerance. Don't treat two cores as a high-availability setup.
+- Add cores **one at a time**, and confirm each is stable and reachable before adding the next.
+- Keep a recovery runbook ready: if you lose quorum, a surviving core can be forced back to a single-node cluster with an rqlite `peers.json` recovery file in its data directory (`storages.engines.rqlite` `dataDir`). See the rqlite recovery docs for the exact file format.
+
+### Health checks can strand an unreachable voter
+
+When a core binds privileged ports (443, 53/udp) **directly** (proxy disabled, master owns the port), an orchestrator's **zero-downtime / rolling health check** can start the new core's container, fail the check during the brief window where the old and new containers coexist (the privileged bind can't succeed twice), and **stop the new container** — but only *after* `--bootstrap` has already acked and joined the cluster as a voter. You're left with a registered-but-unreachable voter, which immediately triggers the quorum problem above.
+
+**Deploy contract for cores that bind privileged ports directly:**
+- **Disable zero-downtime / rolling health checks** for the core app (e.g. on Dokku, set `CHECKS` to skip or use `zero-downtime: false`), so the orchestrator does not start-then-stop a container that has already joined the cluster.
+- **Or front the core with nginx** terminating TLS on 443 and run master on `http.port: 3000` (see "Nginx notes" and `INSTALL.md`). Then no container needs a privileged direct bind and standard health checks work.
+- Either way, ensure a freshly-started core stays up long enough to be reachable before you consider the join complete — verify with step 6 below before adding another core.
 
 ## Operations: managing in-flight bundles
 

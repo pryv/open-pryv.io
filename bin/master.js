@@ -19,6 +19,12 @@ require('./_observability-boot');
 //   node bin/master.js [--config <path>]
 //   node bin/master.js --bootstrap <bundle-file> --bootstrap-passphrase-file <path>
 //                      [--bootstrap-tls-dir <path>] [--bootstrap-config-dir <path>]
+//                      [--bootstrap-ack-trust-system-ca]
+//
+// --bootstrap-ack-trust-system-ca: verify the ack POST against the system CA
+//   store instead of pinning the cluster CA. Needed when the existing core's
+//   API origin is fronted by a public/ACME cert (the normal internet-facing
+//   case). The one-shot join token remains the authenticator.
 //
 // In --bootstrap mode the master decrypts the bundle, writes
 // `override-config.yml` + TLS files, posts an ack to the issuing core, then
@@ -622,7 +628,7 @@ function parseBootstrapArgs (argv) {
   const out = { enabled: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--bootstrap') { out.enabled = true; out.bundlePath = argv[++i]; } else if (a === '--bootstrap-passphrase-file') { out.passphraseFile = argv[++i]; } else if (a === '--bootstrap-tls-dir') { out.tlsDir = argv[++i]; } else if (a === '--bootstrap-config-dir') { out.configDir = argv[++i]; }
+    if (a === '--bootstrap') { out.enabled = true; out.bundlePath = argv[++i]; } else if (a === '--bootstrap-passphrase-file') { out.passphraseFile = argv[++i]; } else if (a === '--bootstrap-tls-dir') { out.tlsDir = argv[++i]; } else if (a === '--bootstrap-config-dir') { out.configDir = argv[++i]; } else if (a === '--bootstrap-ack-trust-system-ca') { out.trustSystemCa = true; }
   }
   if (out.enabled) {
     if (!out.bundlePath) throw new Error('--bootstrap requires <bundle-file>');
@@ -641,6 +647,7 @@ async function runBootstrap (args) {
     passphraseFile: args.passphraseFile,
     configDir: args.configDir,
     tlsDir: args.tlsDir,
+    trustSystemCa: args.trustSystemCa === true,
     log: (m) => console.log('[bootstrap] ' + m)
   });
   console.log('[bootstrap] joined cluster as ' + result.coreId);
