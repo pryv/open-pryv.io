@@ -31,7 +31,10 @@ export default function (action: string) {
     runs: array(run),
     currentRetries: number(),
     maxRetries: number(),
-    minIntervalMs: number()
+    minIntervalMs: number(),
+    // Optional named-scope map { key -> { kind, query } } restricting which
+    // changes fire this webhook. Validated/normalized in the webhooks method.
+    scopes: object({}, { additionalProperties: true })
   },
   {
     additionalProperties: false
@@ -62,7 +65,7 @@ export default function (action: string) {
       base.required = ['url'];
       break;
     case Action.UPDATE:
-      base.alterableProperties = ['state'];
+      base.alterableProperties = ['state', 'scopes'];
       break;
   }
 

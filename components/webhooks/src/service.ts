@@ -103,9 +103,18 @@ class WebhooksService {
     const username = usernameWebhook.username;
     const usersRepository = await getUsersRepository();
     const userId = await usersRepository.getUserIdForUsername(username);
+    const user = { id: userId, username };
+    // Reload from storage rather than rebuilding from the (API-shaped) pubsub
+    // payload, so the webhook carries the stored `scopes` incl. their prepared
+    // (access-bound, expanded) query for engine matching.
+    const stored = await this.repository.getById(user, usernameWebhook.webhook.id);
+    if (stored != null) {
+      this.addWebhook(username, stored);
+      return;
+    }
     this.addWebhook(username, new Webhook(Object.assign({}, usernameWebhook.webhook, {
       webhooksRepository: this.repository,
-      user: { id: userId, username }
+      user
     })));
   }
 

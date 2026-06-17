@@ -43,8 +43,8 @@ components/       Source code split by domain
   audit/            Audit logging (uses SQLite directly)
   business/         Cross-domain logic:
     accesses/  acme/  auth/  backup/  bootstrap/  integrity/
-    mfa/  observability/  series/  system-streams/  users/  webhooks/
-  webhooks/         Outbound event delivery
+    mfa/  notifications/  observability/  series/  system-streams/  users/  webhooks/
+  webhooks/         Outbound event delivery (optional named `scopes` filter)
   errors/ messages/ test-helpers/ tracing/ utils/ externals/
 
 storages/         Plugin tree for storage engines (npm workspace)

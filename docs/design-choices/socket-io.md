@@ -16,6 +16,18 @@ connected sockets via the in-master `tcp_pubsub` broker that fans changes
 out to every worker (so any worker can push notifications to the sockets
 it holds).
 
+### Scoped notifications
+
+A connection may opt into **scoped** delivery: it registers named scopes over the
+socket with `subscribe({ key, kind, query })` / `unsubscribe` / `getSubscriptions`
+(handled inline in `Manager`, not dispatched as API method calls). Matching
+changes are then delivered as a single `notificationsChanged({ keys })` carrying
+only the matched scope key names, and the connection no longer receives the coarse
+broadcast above. Matching runs worker-local in
+`components/business/src/notifications/NotificationEngine`, fed by a dedicated
+`pubsub.scopedNotifications` channel (the coarse `notifications` channel is
+untouched). See the API CHANGELOG entry "Scoped notifications".
+
 ## Problem
 
 Engine.IO (the transport layer under socket.io) opens with HTTP long-polling

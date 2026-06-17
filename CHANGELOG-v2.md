@@ -1,5 +1,41 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Scoped notifications — filter socket.io + webhook delivery by named scopes
+
+Real-time change notifications can now be filtered to **named scopes** instead of
+the coarse "something changed" signal. Each scope is an `events.get`-shaped query
+of one resource `kind` (`events` — default, `streams`, or `accesses`). The
+delivery carries only the **matched scope key names** — never an id or content.
+Fully additive: existing socket clients and webhooks behave exactly as before.
+
+- **Socket.io:** a connection registers scopes over the socket with
+  `subscribe({ key, kind, query })` / `unsubscribe({ key | keys | all })` /
+  `getSubscriptions`. Matching changes arrive as a single
+  `notificationsChanged({ keys: [...] })`. A connection that has registered at
+  least one scope receives only `notificationsChanged` (it opted out of the legacy
+  `eventsChanged` / `streamsChanged` / `accessesChanged` broadcast); connections
+  with no scopes are unchanged.
+- **Webhooks:** `webhooks.create` / `webhooks.update` accept an optional `scopes`
+  map (`{ <key>: { kind, query } }`); `webhooks.get` / `getOne` return it. A scoped
+  webhook fires only when a change matches one of its scopes, delivering the
+  matched keys in `messages`. A webhook with no `scopes` keeps firing on every
+  change. The webhook POST body shape is unchanged.
+- **Query shape:** `events` scopes use the `events.get` filter (`streams` recursive,
+  `types`, `content` / `clientData` JSON conditions; optional `state`). `streams`
+  scopes watch a stream subtree (a newly-created child of a watched parent matches).
+  `accesses` scopes filter by `streams` / `types` / `accessIds` and require a
+  **personal** access (account-wide lifecycle, not per-stream data).
+- **Security:** every scope is bound at registration to what the token can read
+  (the same permission + recursive stream-expansion `events.get` performs); an
+  unreadable stream is rejected. When an access is later **narrowed**, its out-of-
+  permission scopes are pruned; when an access is **revoked/deleted**, its socket
+  connections are dropped.
+- **Storage:** PostgreSQL adds a `webhooks.scopes` JSONB column (migration
+  included; existing deployments unaffected until they create a scoped webhook);
+  SQLite stores scopes in its existing JSON document column.
+
 ## 2.0.0-rc.3 — 2026-06-16
 
 ### Opt-in HMAC pseudonymisation of PlatformDB rows (`platform.piiMode: hashed`)

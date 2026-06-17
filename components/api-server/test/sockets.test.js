@@ -402,6 +402,154 @@ describe('[SK01] Socket.IO', function () {
     });
   });
 
+  describe('[SK05] scoped notifications', function () {
+    const inScopeStream = testData.streams[0].id;
+    const otherStream = testData.streams[8].id;
+
+    function createParams (streamId) {
+      return { time: timestamp.now(), type: 'test/test', streamIds: [streamId] };
+    }
+
+    it('[SNSK1] delivers notificationsChanged with the matched key, not the legacy eventsChanged', function () {
+      ioCons.con1 = connect(namespace, { auth: token });
+      return new Promise((resolve, reject) => {
+        ioCons.con1.on('eventsChanged', () => reject(new Error('scoped connection must not receive legacy eventsChanged')));
+        ioCons.con1.on('notificationsChanged', (payload) => {
+          try { assert.deepStrictEqual(payload.keys, ['s0']); resolve(); } catch (e) { reject(e); }
+        });
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 's0', kind: 'events', query: { streams: [inScopeStream] } }, function (err, ack) {
+            if (err) return reject(err);
+            try { assert.deepStrictEqual(ack.keys, ['s0']); } catch (e) { return reject(e); }
+            ioCons.con1.emit('events.create', createParams(inScopeStream), function (err2) { if (err2) reject(err2); });
+          });
+        });
+      });
+    });
+
+    it('[SNSK2] getSubscriptions returns the registered scopes', function () {
+      ioCons.con1 = connect(namespace, { auth: token });
+      return new Promise((resolve, reject) => {
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 's0', kind: 'events', query: { streams: [inScopeStream] } }, function (err) {
+            if (err) return reject(err);
+            ioCons.con1.emit('getSubscriptions', null, function (err2, res) {
+              if (err2) return reject(err2);
+              try {
+                assert.ok(res.scopes.s0, 'expected scope s0');
+                assert.strictEqual(res.scopes.s0.kind, 'events');
+                resolve();
+              } catch (e) { reject(e); }
+            });
+          });
+        });
+      });
+    });
+
+    it('[SNSK3] does not deliver for an out-of-scope change', function () {
+      ioCons.con1 = connect(namespace, { auth: token });
+      return new Promise((resolve, reject) => {
+        ioCons.con1.on('notificationsChanged', () => reject(new Error('must not fire for out-of-scope change')));
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 'sOther', kind: 'events', query: { streams: [otherStream] } }, function (err) {
+            if (err) return reject(err);
+            ioCons.con1.emit('events.create', createParams(inScopeStream), function (err2) { if (err2) reject(err2); });
+            setTimeout(resolve, 300);
+          });
+        });
+      });
+    });
+
+    it('[SNST1] delivers a streams-kind scope when a child stream is created under the watched parent', function () {
+      ioCons.con1 = connect(namespace, { auth: token });
+      return new Promise((resolve, reject) => {
+        ioCons.con1.on('notificationsChanged', (payload) => {
+          try { assert.deepStrictEqual(payload.keys, ['st']); resolve(); } catch (e) { reject(e); }
+        });
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 'st', kind: 'streams', query: { streams: [inScopeStream] } }, function (err) {
+            if (err) return reject(err);
+            ioCons.con1.emit('streams.create', { name: 'scoped-child-' + Date.now(), parentId: inScopeStream }, function (err2) { if (err2) reject(err2); });
+          });
+        });
+      });
+    });
+
+    it('[SND10R] disconnects a socket whose access is revoked (deleted)', function () {
+      return new Promise((resolve, reject) => {
+        superagent
+          .post(server.url + '/' + user.username + '/accesses')
+          .set('Authorization', token)
+          .send({ name: 'd10-' + Date.now(), type: 'app', permissions: [{ streamId: inScopeStream, level: 'read' }] })
+          .end(function (err, res) {
+            if (err) return reject(err);
+            const accessId = res.body.access.id;
+            const appToken = res.body.access.token;
+            ioCons.con1 = connect(namespace, { auth: appToken });
+            ioCons.con1.on('disconnect', function () { resolve(); });
+            ioCons.con1.once('connect', function () {
+              // Revoke the access -> accessesChanged -> revalidate -> disconnect.
+              superagent
+                .del(server.url + '/' + user.username + '/accesses/' + accessId)
+                .set('Authorization', token)
+                .end(function (err2) { if (err2) reject(err2); });
+            });
+          });
+      });
+    });
+
+    it('[SNAC1] delivers an accesses-kind scope when a matching access is created', function () {
+      ioCons.con1 = connect(namespace, { auth: token }); // personal access (required for accesses-kind)
+      return new Promise((resolve, reject) => {
+        ioCons.con1.on('notificationsChanged', (payload) => {
+          try { assert.deepStrictEqual(payload.keys, ['sh']); resolve(); } catch (e) { reject(e); }
+        });
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 'sh', kind: 'accesses', query: { types: ['shared'] } }, function (err) {
+            if (err) return reject(err);
+            superagent
+              .post(server.url + '/' + user.username + '/accesses')
+              .set('Authorization', token)
+              .send({ name: 'snac-' + Date.now(), type: 'shared', permissions: [{ streamId: inScopeStream, level: 'read' }] })
+              .end(function (err2) { if (err2) reject(err2); });
+          });
+        });
+      });
+    });
+
+    it('[SNAC2] rejects an accesses-kind scope from a non-personal access', function () {
+      ioCons.con1 = connect(namespace, { auth: testData.accesses[2].token }); // "read all" app access
+      return new Promise((resolve, reject) => {
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 'sh', kind: 'accesses', query: { types: ['shared'] } }, function (ackErr, ack) {
+            try {
+              const errObj = (ack && ack.error) || ackErr;
+              assert.ok(errObj != null, 'expected a forbidden error for a non-personal accesses scope');
+              resolve();
+            } catch (e) { reject(e); }
+          });
+        });
+      });
+    });
+
+    it('[SNSK4] stops delivering after unsubscribe', function () {
+      ioCons.con1 = connect(namespace, { auth: token });
+      return new Promise((resolve, reject) => {
+        ioCons.con1.on('notificationsChanged', () => reject(new Error('must not fire after unsubscribe')));
+        whenAllConnectedDo(function () {
+          ioCons.con1.emit('subscribe', { key: 's0', kind: 'events', query: { streams: [inScopeStream] } }, function (err) {
+            if (err) return reject(err);
+            ioCons.con1.emit('unsubscribe', { key: 's0' }, function (err2) {
+              if (err2) return reject(err2);
+              ioCons.con1.emit('events.create', createParams(inScopeStream), function (err3) { if (err3) reject(err3); });
+              setTimeout(resolve, 300);
+            });
+          });
+        });
+      });
+    });
+  });
+
   describe('[SK04] when spawning 2 api-server processes, A and B', () => {
     // Servers A and B, length will be 2
     let servers = [];

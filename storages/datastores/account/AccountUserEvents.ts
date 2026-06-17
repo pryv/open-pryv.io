@@ -13,8 +13,8 @@ const require = createRequire(import.meta.url);
 const ds = require('@pryv/datastore');
 const { Readable } = require('stream');
 const timestamp = require('unix-timestamp');
-const { matchesConditions } = require('../../shared/contentQueryConditions.ts');
-import type { NormalizedCondition } from '../../shared/contentQueryConditions.ts';
+const { matchesConditions, matchesStreamQuery } = require('utils').eventMatchQuery;
+import type { NormalizedCondition, StreamGroup } from 'utils';
 
 type StreamConfig = { id: string; type: string; [k: string]: unknown };
 type EventLike = {
@@ -40,8 +40,6 @@ type EventQuery = {
   content?: NormalizedCondition[];
   clientData?: NormalizedCondition[];
 };
-type StreamCondition = { any?: string[]; not?: string[] };
-type StreamGroup = StreamCondition | StreamCondition[];
 type EventOptions = { sortAscending?: boolean; skip?: number; limit?: number };
 type FieldHistoryEntry = { value: unknown; time: number; createdBy?: string };
 type Storage = {
@@ -259,39 +257,6 @@ function filterByQuery (events: EventLike[], query: EventQuery | null | undefine
   }
 
   return events;
-}
-
-/**
- * Check if an event's streamIds match the normalized stream query.
- * @param streamGroups - normalized stream query groups
- */
-function matchesStreamQuery (eventStreamIds: string[], streamGroups: StreamGroup[]): boolean {
-  const sids = new Set(eventStreamIds);
-  // OR between groups
-  for (const group of streamGroups) {
-    if (matchesGroup(sids, group)) return true;
-  }
-  return false;
-}
-
-/**
- * Check if streamIds match all conditions in a group (AND).
- * A group is an array of condition objects: { any: [...] } or { not: [...] }
- */
-function matchesGroup (sids: Set<string>, group: StreamGroup): boolean {
-  // Handle both normalized format (array of conditions) and simple format (single object)
-  const conditions: StreamCondition[] = Array.isArray(group) ? group : [group];
-  for (const cond of conditions) {
-    if (cond.any) {
-      // At least one of 'any' must be in the event's streamIds
-      if (!cond.any.some((sid) => sids.has(sid))) return false;
-    }
-    if (cond.not) {
-      // None of 'not' must be in the event's streamIds
-      if (cond.not.some((sid) => sids.has(sid))) return false;
-    }
-  }
-  return true;
 }
 
 /**

@@ -22,6 +22,20 @@ const { getMall, storeDataUtils } = require('mall');
 const { pubsub } = require('messages');
 const Readable = require('stream').Readable;
 
+// Scoped notifications: structured stream-change signal carrying the changed
+// stream id + parentId. Matching either against a scope's expanded stream set
+// lets a notification engine catch changes to watched streams and newly-created
+// children of a watched parent. Additive — the coarse USERNAME_BASED_STREAMS_CHANGED
+// signal is untouched.
+function notifyScopedStreamChange (username: string, stream: { id?: string; parentId?: string | null } | null | undefined, changeType: string): void {
+  if (stream?.id == null) return;
+  pubsub.scopedNotifications.emit(username, {
+    kind: 'streams',
+    changeType,
+    stream: { id: stream.id, parentId: stream.parentId ?? null }
+  });
+}
+
 import type { MethodNext } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 // Scratchpad fields the streams middleware chain stashes on the context,
@@ -222,6 +236,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       const newStream = await mall.streams.create(context.user.id, params);
       result.stream = newStream;
       pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_STREAMS_CHANGED);
+      notifyScopedStreamChange(context.user.username, newStream, 'create');
       next();
     } catch (err) {
       // Already an API error
@@ -285,6 +300,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       const updatedStream = await mall.streams.update(context.user.id, updateData);
       result.stream = updatedStream;
       pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_STREAMS_CHANGED);
+      notifyScopedStreamChange(context.user.username, updatedStream, 'update');
       return next();
     } catch (err) {
       if (err instanceof APIError) {
@@ -331,6 +347,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       const updatedStream = await mall.streams.update(context.user.id, updatedData);
       result.stream = updatedStream;
       pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_STREAMS_CHANGED);
+      notifyScopedStreamChange(context.user.username, updatedStream, 'trash');
       return next();
     } catch (err) {
       if (err instanceof APIError) {
@@ -424,6 +441,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     singleItemDeletedStream.push({ id: params.id });
     singleItemDeletedStream.push(null); // close stream
     pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_STREAMS_CHANGED);
+    notifyScopedStreamChange(context.user.username, { id: params.id }, 'delete');
   }
 };
 

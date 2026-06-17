@@ -6,8 +6,11 @@
  */
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
+import type { EventMatchQuery } from 'utils';
+import type { Subscriber } from '../notifications/NotificationEngine.ts';
 const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
+const notificationEngine = require('../notifications/NotificationEngine.ts').default;
 
 function pick<T extends object> (obj: T, keys: string[]): Partial<T> {
   const out: Partial<T> = {};
@@ -69,6 +72,12 @@ class Webhook {
   logger!: Logger | null;
 
   pubsubTurnOffListener!: (() => void) | null;
+
+  // Optional named-scope map. Each entry carries the user-facing `kind`/`query`
+  // plus the `prepared` (access-bound, expanded) query the engine matches.
+  scopes: WebhookScopes | null;
+
+  engineSubscriber!: Subscriber | null;
   constructor (params: WebhookCtorParams) {
     this.id = params.id || cuid();
     this.accessId = params.accessId;
@@ -91,12 +100,31 @@ class Webhook {
     this.timeout = null;
     this.isSending = false;
     this.runsSize = params.runsSize || 50;
+    this.scopes = params.scopes || null;
+    this.engineSubscriber = null;
   }
 
   startListenting (username: string) {
     if (this.pubsubTurnOffListener != null) {
       throw new Error('Cannot listen twice');
     }
+    if (this.scopes != null && Object.keys(this.scopes).length > 0) {
+      // Scoped webhook: match standing scopes via the notification engine and
+      // deliver only the matched scope keys (no ids/content). The keys are
+      // buffered through the same `send` throttling/retry path.
+      this.engineSubscriber = {
+        id: this.id,
+        scopes: Object.entries(this.scopes).map(([key, s]) => ({ key, kind: s.kind as 'events' | 'streams' | 'accesses', query: s.prepared })),
+        deliver: (keys: string[]) => { for (const key of keys) this.send(key); }
+      };
+      notificationEngine.register(username, this.engineSubscriber);
+      this.pubsubTurnOffListener = () => {
+        if (this.engineSubscriber != null) notificationEngine.unregister(username, this.engineSubscriber);
+        this.engineSubscriber = null;
+      };
+      return;
+    }
+    // Unfiltered webhook: legacy coarse behaviour — fire on every change.
     this.pubsubTurnOffListener = pubsub.notifications.onAndGetRemovable(username, (payload: { eventName: string; [k: string]: unknown }) => {
       this.send(payload.eventName);
     });
@@ -254,7 +282,11 @@ class Webhook {
   }
 
   forStorage () {
-    return pick(this, [
+    // Only persist `scopes` when the webhook is actually scoped — an unfiltered
+    // webhook must not carry a `scopes: null` field (SQLite serializes the whole
+    // object into its JSON `data` column, which would then differ from a
+    // pre-feature record).
+    const fields = [
       'id',
       'accessId',
       'url',
@@ -270,11 +302,13 @@ class Webhook {
       'createdBy',
       'modified',
       'modifiedBy'
-    ]);
+    ];
+    if (this.scopes != null) fields.push('scopes'); // stored with the `prepared` query for matching
+    return pick(this, fields);
   }
 
   forApi () {
-    return pick(this, [
+    const out = pick(this, [
       'id',
       'accessId',
       'url',
@@ -290,7 +324,15 @@ class Webhook {
       'createdBy',
       'modified',
       'modifiedBy'
-    ]);
+    ]) as Record<string, unknown>;
+    // Expose only the user-facing { kind, query } per scope — never the
+    // internal `prepared` (access-bound, expanded) form.
+    if (this.scopes != null) {
+      const publicScopes: Record<string, { kind: string; query: unknown }> = {};
+      for (const [key, s] of Object.entries(this.scopes)) publicScopes[key] = { kind: s.kind, query: s.query };
+      out.scopes = publicScopes;
+    }
+    return out;
   }
 
   setApiVersion (version: string) {
@@ -361,4 +403,7 @@ type WebhookCtorParams = {
   user: User;
   webhooksRepository: WebhooksRepository | null;
   messageBuffer?: Set<WebhookMessage>;
+  scopes?: WebhookScopes | null;
 };
+type WebhookScope = { kind: string; query: unknown; prepared: EventMatchQuery };
+type WebhookScopes = Record<string, WebhookScope>;

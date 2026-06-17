@@ -32,6 +32,22 @@ const { getStorageLayer } = require('storage');
 const { integrity } = require('business');
 const { parseAccessRef, serializeAccessRef, composeWireAccess } = require('business/src/accesses/refs.ts');
 const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
+
+// Scoped notifications: structured access-change signal carrying the changed
+// access id + type + the streamIds it grants permissions on, so a notification
+// engine can match standing accesses-kind scopes. Additive — the coarse
+// USERNAME_BASED_ACCESSES_CHANGED signal is untouched. (A deletion carries only
+// the id; type/permissions are no longer available.)
+function notifyScopedAccessChange (username: string, access: { id?: string; type?: string; permissions?: Array<{ streamId?: string }> } | null | undefined, changeType: string): void {
+  if (access?.id == null) return;
+  const permissions = Array.isArray(access.permissions) ? access.permissions : [];
+  const streamIds = permissions.map((p) => p?.streamId).filter((s): s is string => s != null);
+  pubsub.scopedNotifications.emit(username, {
+    kind: 'accesses',
+    changeType,
+    access: { id: access.id, type: access.type, streamIds }
+  });
+}
 const cmc = require('cmc');
 const { getLogger } = require('@pryv/boiler');
 const WebhooksRepository = require('business').webhooks.Repository;
@@ -441,6 +457,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
       result.access = wire;
       pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
+      notifyScopedAccessChange(context.user.username, wire, 'create');
       next();
     });
   }
@@ -697,6 +714,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // change. String payload matches the legacy create/delete shape so
     // `Manager.pubsubMessageToSocket` translates it to `accessesChanged`.
     pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
+    notifyScopedAccessChange(context.user.username, result.access, 'update');
     // Fine-grained event — payload is a structured `{ type, … }` object
     // so socket.io can forward both the event name (via type) and the
     // data fields (accessId, serial) to subscribers.
@@ -814,6 +832,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     }
     result.accessDeletion = { id: params.id };
     pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
+    notifyScopedAccessChange(context.user.username, result.accessDeletion, 'delete');
     next();
   }
 
