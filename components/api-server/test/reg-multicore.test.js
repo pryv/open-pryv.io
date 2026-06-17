@@ -185,8 +185,8 @@ describe('[RGMC] register: multi-core', function () {
       await setupMultiCore(CORE_A);
       await seedCore(CORE_B, { hosting: 'us-east-1' });
       // Give core-a some users so core-b is preferred by selectCoreForRegistration
-      await getPlatformDB().setUserCore('existing1', CORE_A);
-      await getPlatformDB().setUserCore('existing2', CORE_A);
+      await platform.setUserCore('existing1', CORE_A);
+      await platform.setUserCore('existing2', CORE_A);
 
       const app = getApplication(true);
       await app.initiate();
@@ -208,8 +208,8 @@ describe('[RGMC] register: multi-core', function () {
       }
       await platform.registerSelf();
       await seedCore(CORE_B, { hosting: 'us-east-1' });
-      await getPlatformDB().setUserCore('existing1', CORE_A);
-      await getPlatformDB().setUserCore('existing2', CORE_A);
+      await platform.setUserCore('existing1', CORE_A);
+      await platform.setUserCore('existing2', CORE_A);
     });
 
     after(restoreSingleCore);
@@ -300,7 +300,7 @@ describe('[RGMC] register: multi-core', function () {
       await usersRepository.insertOne(user, true);
 
       // Set user-core mapping to core-b
-      await getPlatformDB().setUserCore(testUser, CORE_B);
+      await platform.setUserCore(testUser, CORE_B);
     });
 
     after(restoreSingleCore);
@@ -316,6 +316,60 @@ describe('[RGMC] register: multi-core', function () {
     it('[MC02B] must return error for unknown username', async function () {
       const res = await request.get('/reg/cores')
         .query({ username: 'nonexistent' + cuid.slug() });
+      assert.strictEqual(res.status, 404);
+    });
+  });
+
+  // ----------------------------------------------------------------
+  // 2b. email→username recovery (hashed): non-home core redirects to the
+  //     user's home core (which reverse-resolves the HMAC token locally).
+  // ----------------------------------------------------------------
+  describe('[MC17] email→username recovery (hashed)', function () {
+    let request;
+    let recEmail;
+
+    before(async function () {
+      await setupMultiCore(CORE_A);
+      await seedCore(CORE_B);
+
+      const app = getApplication(true);
+      await app.initiate();
+      request = supertest(app.expressApp);
+
+      // Seed a user whose home core is CORE_B. The unique email row + the
+      // user-core mapping are written through the hashing layer so the
+      // recovery lookup (which also hashes) matches. No local user is
+      // created here — the recovery MUST redirect, not resolve locally.
+      const recUser = 'mc17u' + cuid.slug().toLowerCase();
+      recEmail = recUser + '@mc17.example.com';
+      await platform.setUserUniqueField(recUser, 'email', recEmail);
+      await platform.setUserCore(recUser, CORE_B);
+    });
+
+    after(restoreSingleCore);
+
+    it('[MC17A] must 307-redirect email→username to the home core', async function () {
+      const res = await request
+        .get('/reg/' + encodeURIComponent(recEmail) + '/username')
+        .redirects(0);
+      assert.strictEqual(res.status, 307);
+      assert.ok(res.headers.location && res.headers.location.includes(CORE_B),
+        'Location must point at the home core: ' + res.headers.location);
+      assert.ok(res.body.server && res.body.server.includes(CORE_B),
+        'JSON body must carry the home-core URL: ' + JSON.stringify(res.body));
+    });
+
+    it('[MC17B] same redirect for the deprecated /uid alias', async function () {
+      const res = await request
+        .get('/reg/' + encodeURIComponent(recEmail) + '/uid')
+        .redirects(0);
+      assert.strictEqual(res.status, 307);
+      assert.ok(res.headers.location && res.headers.location.endsWith('/uid'),
+        'Location must target the /uid path: ' + res.headers.location);
+    });
+
+    it('[MC17C] unknown email returns 404', async function () {
+      const res = await request.get('/reg/nobody-' + cuid.slug() + '@x.com/username');
       assert.strictEqual(res.status, 404);
     });
   });
@@ -457,7 +511,7 @@ describe('[RGMC] register: multi-core', function () {
       await seedCore(cb, { hosting: 'mc05-hosting' });
       await seedCore(cc, { hosting: 'mc05-hosting' });
       // core-a (self): many users from other tests; cb: 1 user; cc: 0 users
-      await getPlatformDB().setUserCore('mc05u1', cb);
+      await platform.setUserCore('mc05u1', cb);
 
       const selected = await platform.selectCoreForRegistration('mc05-hosting');
       assert.strictEqual(selected, cc, 'should pick core with 0 users');
@@ -539,9 +593,9 @@ describe('[RGMC] register: multi-core', function () {
       config.set('auth:adminAccessKey', 'some_key_yo');
       await setupMultiCore(CORE_A);
       await seedCore(CORE_B, { hosting: 'us-east-1' });
-      await getPlatformDB().setUserCore('mc07alice', CORE_A);
-      await getPlatformDB().setUserCore('mc07bob', CORE_A);
-      await getPlatformDB().setUserCore('mc07carol', CORE_B);
+      await platform.setUserCore('mc07alice', CORE_A);
+      await platform.setUserCore('mc07bob', CORE_A);
+      await platform.setUserCore('mc07carol', CORE_B);
 
       const app = getApplication(true);
       await app.initiate();
@@ -620,7 +674,7 @@ describe('[RGMC] register: multi-core', function () {
 
     it('[MC09A] must return 421 wrong-core when user is hosted on a different core', async function () {
       const username = 'mc09-other-' + cuid.slug();
-      await getPlatformDB().setUserCore(username, CORE_B);
+      await platform.setUserCore(username, CORE_B);
 
       const res = await request.get('/' + username + '/events');
       assert.strictEqual(res.status, 421);
@@ -631,7 +685,7 @@ describe('[RGMC] register: multi-core', function () {
 
     it('[MC09B] must let through requests for users hosted on this core', async function () {
       const username = 'mc09-self-' + cuid.slug();
-      await getPlatformDB().setUserCore(username, CORE_A);
+      await platform.setUserCore(username, CORE_A);
 
       const res = await request.get('/' + username + '/events');
       // Either 401 (no auth) or some other downstream error — the only thing
@@ -665,7 +719,7 @@ describe('[RGMC] register: multi-core', function () {
       // Even if PlatformDB has the user mapped to CORE_B, single-core mode
       // must NOT return 421 — there is only one core.
       const username = 'mc09e-' + cuid.slug();
-      await getPlatformDB().setUserCore(username, CORE_B);
+      await platform.setUserCore(username, CORE_B);
       const res = await scRequest.get('/' + username + '/events');
       assert.notStrictEqual(res.status, 421);
       // Restore multi-core for the rest of this describe block (after hook).
@@ -746,7 +800,7 @@ describe('[RGMC] register: multi-core', function () {
       require('middleware/src/checkUserCore.ts')._resetPlatformCache();
 
       const username = 'mc10c-' + cuid.slug();
-      await getPlatformDB().setUserCore(username, CORE_B);
+      await platform.setUserCore(username, CORE_B);
 
       const res = await request.get('/' + username + '/events');
       assert.strictEqual(res.status, 421);

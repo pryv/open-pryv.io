@@ -429,9 +429,15 @@ class RestoreOrchestrator {
       const availableCores = cores.filter((c) => c.available !== false);
       const defaultCoreId = availableCores.length === 1 ? availableCores[0].id : null;
       if (defaultCoreId != null) {
+        // Write through the Platform hashing layer (not the raw engine) so
+        // the user-core key is the HMAC token in hashed mode — otherwise a
+        // restored mapping is stored cleartext and `platform.getUserCore`
+        // (which hashes the lookup) never finds it.
+        const { getPlatform } = require('platform');
+        const platform = await getPlatform();
         for await (const mapping of await reader.readServerMappings()) {
           if (typeof mapping.username !== 'string') continue;
-          await this.platformDB.setUserCore(mapping.username, defaultCoreId);
+          await platform.setUserCore(mapping.username, defaultCoreId);
           serverMappingsCount++;
         }
       }

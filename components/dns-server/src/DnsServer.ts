@@ -69,18 +69,7 @@ type PlatformLike = {
   getAllCoreInfos: () => Promise<CoreInfo[]>;
   getCoreInfo: (coreId: string) => Promise<CoreInfo | null>;
   getUserCore: (username: string) => Promise<string | null>;
-  // Optional: present when platform.piiMode is wired (Plan 99 Phase B).
-  // Identity in cleartext mode; HMAC-SHA-256 token in hashed mode. The
-  // DnsServer uses this to keep its in-memory cache keyed in the same
-  // form PlatformDB stores rows, so PlatformDB-sourced runtime entries
-  // and incoming DNS query prefixes share a lookup space.
-  hashFor?: (field: string, value: string) => string;
 };
-
-/** Field name used to derive the storage-form key for a DNS subdomain.
- *  Must match `SUBDOMAIN_FIELD` in components/platform/src/Platform.ts so
- *  the cache key matches the PlatformDB row key on the same value. */
-const DNS_SUBDOMAIN_FIELD = 'dns-subdomain';
 
 class DnsServer {
   #config: BoilerConfig;
@@ -90,16 +79,8 @@ class DnsServer {
   #domain: string;
   #ttl: number;
   #rootRecords: Record<string, unknown>;
-  // Keys here are the PlatformDB STORAGE form of the subdomain — plaintext in
-  // cleartext mode, HMAC token in hashed mode. Lookups from `#handleRequest`
-  // must run incoming query prefixes through `#storageKeyFor(...)` to match.
   #staticEntries: Record<string, DnsRecordEntry>;       // working map: config entries + runtime entries
-  #configKeys: Set<string>;          // Set of storage-form keys that came from YAML config (immutable)
-  // Parallel plaintext map (subdomain → plaintext) for config-sourced entries.
-  // Lets log/diagnostic output keep the cleartext name even when the storage
-  // key is opaque. PlatformDB-sourced entries have NO plaintext available in
-  // hashed mode — runtime-record diagnostics for those carry the token.
-  #configKeysPlaintextByStorageKey: Map<string, string>;
+  #configKeys: Set<string>;          // Set of subdomain keys that came from YAML config (immutable)
   #platformRefreshTimer: NodeJS.Timeout | null = null;
   #platformRefreshIntervalMs: number;
 
@@ -116,34 +97,11 @@ class DnsServer {
     this.#domain = config.get('dns:domain') as string;
     this.#ttl = (config.get('dns:defaultTTL') as number) || 300;
     this.#rootRecords = (config.get('dns:records:root') as Record<string, unknown>) || {};
-    // Deep-copy static entries from config so runtime updates don't mutate config.
-    // In hashed mode the cache keys are HMAC tokens so PlatformDB-sourced
-    // entries (already in storage form) and config-sourced entries (rehashed
-    // here from their plaintext) share a single lookup space.
+    // Deep-copy static entries from config so runtime updates don't mutate config
     const configEntries = (config.get('dns:staticEntries') as Record<string, DnsRecordEntry>) || {};
-    this.#staticEntries = {};
-    this.#configKeys = new Set();
-    this.#configKeysPlaintextByStorageKey = new Map();
-    for (const [plaintext, records] of Object.entries(configEntries)) {
-      const storageKey = this.#storageKeyFor(plaintext);
-      this.#staticEntries[storageKey] = records;
-      this.#configKeys.add(storageKey);
-      this.#configKeysPlaintextByStorageKey.set(storageKey, plaintext);
-    }
+    this.#staticEntries = Object.assign({}, configEntries);
+    this.#configKeys = new Set(Object.keys(configEntries));
     this.#platformRefreshIntervalMs = platformRefreshIntervalMs ?? DEFAULT_PLATFORM_REFRESH_INTERVAL_MS;
-  }
-
-  /**
-   * Translate a plaintext subdomain to the form PlatformDB stores it under.
-   * Identity in cleartext mode (Platform's `hashFor` is the identity), HMAC
-   * token in hashed mode. When the platform mock used in tests does not
-   * expose `hashFor`, identity is used — matches cleartext semantics.
-   */
-  #storageKeyFor (subdomain: string): string {
-    if (this.#platform && typeof this.#platform.hashFor === 'function') {
-      return this.#platform.hashFor(DNS_SUBDOMAIN_FIELD, subdomain);
-    }
-    return subdomain;
   }
 
   /**
@@ -218,25 +176,22 @@ class DnsServer {
       return;
     }
     const persisted = await this.#platform.getAllDnsRecords!();
-    // `subdomain` in each row is already in storage form (HMAC in hashed
-    // mode, plaintext in cleartext). It matches `#configKeys` directly —
-    // both are storage form thanks to the constructor's hashing pass.
-    const seenStorageKeys = new Set<string>();
-    for (const { subdomain: storageKey, records } of persisted) {
-      if (this.#configKeys.has(storageKey)) {
-        const plaintextOrToken = this.#configKeysPlaintextByStorageKey.get(storageKey) ?? storageKey;
+    const seenSubdomains = new Set<string>();
+    for (const { subdomain, records } of persisted) {
+      if (this.#configKeys.has(subdomain)) {
+        // Config wins — log drift once per refresh if different
         this.#logger.warn(
-          `DNS runtime record for '${plaintextOrToken}' is shadowed by config static entry; ignoring PlatformDB value`
+          `DNS runtime record for '${subdomain}' is shadowed by config static entry; ignoring PlatformDB value`
         );
         continue;
       }
-      this.#staticEntries[storageKey] = records;
-      seenStorageKeys.add(storageKey);
+      this.#staticEntries[subdomain] = records;
+      seenSubdomains.add(subdomain);
     }
     // Prune in-memory runtime entries that were deleted from PlatformDB
     for (const key of Object.keys(this.#staticEntries)) {
       if (this.#configKeys.has(key)) continue;
-      if (!seenStorageKeys.has(key)) {
+      if (!seenSubdomains.has(key)) {
         delete this.#staticEntries[key];
       }
     }
@@ -277,20 +232,15 @@ class DnsServer {
    * @param records - e.g. { txt: ['validation-token'] } or { cname: 'target.example.com' }
    */
   async updateStaticEntry (subdomain: string, records: DnsRecordEntry) {
-    // Callers pass plaintext subdomain (operator/ACME orchestrator side).
-    // The cache + config-shadow check use storage form so both modes work.
-    const storageKey = this.#storageKeyFor(subdomain);
-    if (this.#configKeys.has(storageKey)) {
+    if (this.#configKeys.has(subdomain)) {
       const msg = `DNS runtime update rejected: '${subdomain}' is a config-static entry and cannot be overwritten at runtime`;
       this.#logger.warn(msg);
       throw new Error(msg);
     }
     if (this.#platform && typeof this.#platform.setDnsRecord === 'function') {
-      // Platform.setDnsRecord hashes the subdomain internally (Phase B.2) so
-      // we pass plaintext through — single hashing point on the persistence path.
       await this.#platform.setDnsRecord(subdomain, records);
     }
-    this.#staticEntries[storageKey] = records;
+    this.#staticEntries[subdomain] = records;
     this.#logger.info(`DNS runtime entry updated: ${subdomain}`);
   }
 
@@ -298,8 +248,7 @@ class DnsServer {
    * Delete a runtime DNS entry. No-op for config-sourced static entries.
    */
   async deleteStaticEntry (subdomain: string) {
-    const storageKey = this.#storageKeyFor(subdomain);
-    if (this.#configKeys.has(storageKey)) {
+    if (this.#configKeys.has(subdomain)) {
       const msg = `DNS runtime delete rejected: '${subdomain}' is a config-static entry`;
       this.#logger.warn(msg);
       throw new Error(msg);
@@ -307,7 +256,7 @@ class DnsServer {
     if (this.#platform && typeof this.#platform.deleteDnsRecord === 'function') {
       await this.#platform.deleteDnsRecord(subdomain);
     }
-    delete this.#staticEntries[storageKey];
+    delete this.#staticEntries[subdomain];
     this.#logger.info(`DNS runtime entry deleted: ${subdomain}`);
   }
 
@@ -347,12 +296,10 @@ class DnsServer {
         // precedence over operator-provided staticEntries with the same
         // name to keep behaviour consistent across deployments.
         await this.#answerClusterDiscovery(response, qname, qtype);
-      } else if (this.#staticEntries[this.#storageKeyFor(prefix)]) {
+      } else if (this.#staticEntries[prefix]) {
         // Static subdomain (www, sw, reg, _acme-challenge, etc.). Operator
         // overrides win over PlatformDB-derived core entries below.
-        // The cache is keyed in storage form (Phase B.3) so we hash the
-        // incoming plaintext prefix to look it up.
-        this.#answerStatic(response, qname, qtype, this.#staticEntries[this.#storageKeyFor(prefix)]);
+        this.#answerStatic(response, qname, qtype, this.#staticEntries[prefix]);
       } else if (await this.#tryAnswerCoreInfo(response, qname, qtype, prefix)) {
         // Was a `<coreId>.<domain>` query — answered from PlatformDB.
       } else {

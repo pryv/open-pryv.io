@@ -37,6 +37,23 @@ describe('[PIIH] PiiHasher', function () {
       const tooLong = Buffer.alloc(64).toString('base64');
       assert.throws(() => new PiiHasher(tooLong), /must decode to exactly 32 bytes, got 64/);
     });
+
+    it('[PIIH-05] defaults to hmac-sha256 when no algorithm is given', function () {
+      const h = new PiiHasher(PEPPER);
+      // bare-hex digest, deterministic — proves the default algorithm runs
+      assert.match(h.hashFor('email', 'a@x.com'), /^[0-9a-f]{64}$/);
+    });
+
+    it('[PIIH-06] accepts the explicit hmac-sha256 algorithm + matches the default', function () {
+      const a = new PiiHasher(PEPPER, 'hmac-sha256');
+      const b = new PiiHasher(PEPPER);
+      assert.equal(a.hashFor('email', 'a@x.com'), b.hashFor('email', 'a@x.com'));
+    });
+
+    it('[PIIH-07] rejects an unsupported algorithm', function () {
+      assert.throws(() => new PiiHasher(PEPPER, 'argon2id'), /unsupported platform\.piiAlgorithm "argon2id"/);
+      assert.throws(() => new PiiHasher(PEPPER, 'md5'), /unsupported platform\.piiAlgorithm "md5"/);
+    });
   });
 
   describe('hashFor', function () {

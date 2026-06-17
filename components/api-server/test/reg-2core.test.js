@@ -157,10 +157,25 @@ describe('[RG2C] Two-core integration tests', function () {
     await seedCoreInfo(CORE_B_ID, CORE_B_IP);
 
     // Start DNS server (in-process, ephemeral port)
-    // platformDB (DBrqlite) exposes getUserCore, getCoreInfo, getAllCoreInfos directly
+    // platformDB (DBrqlite) exposes getUserCore, getCoreInfo, getAllCoreInfos
+    // directly — at the RAW engine level (no hashing). The real Platform
+    // wrapper hashes the username for the user-core lookup when
+    // platform.piiMode=hashed (the default since 2.0.0-rc.3), and
+    // registration wrote the row under HMAC(username). So this mock must
+    // apply the same hash before the raw engine lookup, otherwise it queries
+    // the cleartext key and misses the hashed row ([2C20] ENOTFOUND). Mirror
+    // Platform.hashFor('username', …) using the cluster pepper from config.
+    // The cluster pepper is the one scripts/components-run exports as
+    // platform__piiHmacKey — the same value the spawned child cores used when
+    // they wrote the user-core rows. Absent it (cleartext opt-out), hashing
+    // is identity.
+    const { PiiHasher } = require('platform/src/PiiHasher.ts');
+    const piiHmacKey = process.env.platform__piiHmacKey;
+    const piiHasher = piiHmacKey ? new PiiHasher(piiHmacKey) : null;
+    const hashUsername = (username) => piiHasher ? piiHasher.hashFor('username', username) : username;
     const mockPlatform = {
       async getUserCore (username) {
-        return platformDB.getUserCore(username);
+        return platformDB.getUserCore(hashUsername(username));
       },
       async getCoreInfo (coreId) {
         return platformDB.getCoreInfo(coreId);

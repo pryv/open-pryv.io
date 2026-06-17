@@ -37,6 +37,19 @@ const API_PORT = parseInt(process.env.EXTERNALS_API_PORT || '3001', 10); // HTTP
 const HFS_PORT = parseInt(process.env.EXTERNALS_HFS_PORT || '4000', 10); // HTTP — HFS server
 const SERVER_URL = 'https://l.backloop.dev:' + PROXY_PORT + '/';
 
+// Test files skipped against this server because of its platform.piiMode.
+//
+// Service.userIdForEmail.test.js — exercises lib-js's email->username
+// recovery (`GET /reg/:email/username`). The server runs in the hashed
+// platform.piiMode default (2.0.0-rc.3+), where that route returns 410
+// Gone by design, so both its assertions ([UEMA] expects a username,
+// [UEMB] expects null) cannot pass. The route + lib-js method still work
+// against a cleartext-opt-out deployment; open-pryv.io's own suite covers
+// the 410 behaviour. Skipped here rather than running externals in a
+// different mode than the rest of the matrix (which would leave cleartext
+// rows that later hashed components' integrity checks trip on).
+const SKIP_TEST_FILES = new Set(['Service.userIdForEmail.test.js']);
+
 function libJsAvailable () {
   return fs.existsSync(path.join(LIB_JS_DIR, 'node_modules'));
 }
@@ -120,6 +133,14 @@ if (!libJsAvailable()) {
     // (see engineEnvFromTestConfig above) — otherwise they hit shared
     // canonical ports and [UEMA] flakes on split platform state.
     const engineEnv = engineEnvFromTestConfig();
+
+    // The dev servers inherit platform__piiHmacKey from scripts/components-run
+    // and run in the hashed default — same mode as every other component, so
+    // the rows this suite writes to the shared PlatformDB stay consistent with
+    // the matrix's hashed integrity checks. (Running cleartext here would leave
+    // cleartext rows that every later hashed component's integrity check trips
+    // on.) The lib-js Service.userIdForEmail conformance is skipped instead —
+    // see loadTestFiles below.
 
     // 1. API server (HTTP, no SSL — proxy handles HTTPS)
     childProcesses.push(spawn(process.execPath, [API_SERVER_BIN], {
@@ -206,6 +227,7 @@ function loadTestFiles (component) {
   if (!fs.existsSync(testDir)) return;
   fs.readdirSync(testDir)
     .filter(f => f.endsWith('.test.js'))
+    .filter(f => !SKIP_TEST_FILES.has(f))
     .sort()
     .forEach(f => require(path.join(testDir, f)));
 }

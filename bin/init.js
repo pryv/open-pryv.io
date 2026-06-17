@@ -483,16 +483,13 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   newrelic:
 # #     licenseKey: ''   # leave blank; set via 'bin/observability.js newrelic set-license-key'
 
-# # platform.piiMode — store PlatformDB PII as HMAC tokens instead of
-# # cleartext, so rqlite Raft replication does not carry plaintext
-# # usernames / emails across regions. 'cleartext' is the default;
-# # 'hashed' requires platform.piiHmacKey to be set + identical on every
-# # core in the cluster. Pseudonymisation (Art.32(1)(a) evidence), NOT
-# # anonymisation — see config/default-config.yml comment for the legal
-# # framing. Plan multi-region clusters around this.
+# # platform.piiMode — DEFAULT since 2.0.0-rc.3 is "hashed". The wizard
+# # writes piiMode + a fresh piiHmacKey into the generated config above,
+# # so this commented block is only useful when an operator wants to
+# # opt OUT of hashed mode (legacy single-region deployments) by
+# # uncommenting the piiMode: cleartext line below.
 # # platform:
-# #   piiMode: hashed
-# #   piiHmacKey: 'REPLACE ME'   # base64 of 32 random bytes; same across all cores
+# #   piiMode: cleartext   # opt-out; default is hashed
 
 # # eventFiles — attachments + previews size limits.
 # # eventFiles:
@@ -1130,6 +1127,16 @@ async function main () {
     config.dns = { active: true, domain: dnsDomain, port: 53, publicIp: dnsPublicIp };
   }
 
+  // platform.piiMode hashed (default since 2.0.0-rc.3) — every install gets
+  // a fresh cluster pepper. Multi-core operators sync it via the bootstrap
+  // bundle (v3). Operators opting out for legacy single-region deployments
+  // can hand-edit override-config.yml after the wizard.
+  config.platform = {
+    piiMode: 'hashed',
+    piiHmacKey: genSecrets ? genSecret(32) : await askNonEmpty('  platform.piiHmacKey (base64 of 32 random bytes — pepper for HMAC pseudonymisation of PlatformDB rows; identical on every core)'),
+    piiAlgorithm: 'hmac-sha256'
+  };
+
   if (tlsStrategy === 'letsEncrypt') {
     // master.js's selfSignedPlaceholder + ACME orchestrator both need
     // `http.ssl.keyFile` + `http.ssl.certFile` set so they know where to
@@ -1215,6 +1222,15 @@ async function main () {
         '`staging: true` issues from the LE staging CA (untrusted by browsers) — flip to false for production.'],
       { letsEncrypt: config.letsEncrypt });
   }
+
+  yamlBody += section(yaml, 'PlatformDB PII hashing',
+    ['piiMode hashed (default since 2.0.0-rc.3) stores PlatformDB rows (user-core,',
+      'user-unique, user-indexed, dns-record) as HMAC-SHA-256 tokens derived from',
+      'piiHmacKey. Multi-region clusters: replicated rows carry opaque tokens.',
+      'piiHmacKey MUST be IDENTICAL across every core (sync via bootstrap bundle v3+,',
+      'or paste the same value into each override-config.yml). Losing the pepper',
+      'strands every routing-index row.'],
+    { platform: config.platform });
 
   yamlBody += section(yaml, 'Auth secrets + trusted apps',
     ['adminAccessKey + filesReadTokenSecret MUST be backed up — losing them locks',
@@ -1433,9 +1449,10 @@ async function main () {
   console.log('Next steps');
   console.log(bar());
   if (genSecrets) {
-    console.log('Generated secrets (BACK THESE UP — losing them locks you out of audit + cert decryption):');
+    console.log('Generated secrets (BACK THESE UP — losing them locks you out of audit + cert decryption + the PlatformDB routing index):');
     console.log(`  auth.adminAccessKey       = ${adminAccessKey}`);
     console.log(`  auth.filesReadTokenSecret = ${filesReadTokenSecret}`);
+    console.log(`  platform.piiHmacKey       = ${config.platform.piiHmacKey}`);
     if (leConfig) {
       console.log(`  letsEncrypt.atRestKey     = ${leConfig.atRestKey}`);
     }

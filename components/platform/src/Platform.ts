@@ -24,7 +24,7 @@ const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
 
 const getPlatformDB = require('./getPlatformDB.ts').default;
-const { PiiHasher } = require('./PiiHasher.ts');
+const { PiiHasher, DEFAULT_ALGORITHM: DEFAULT_PII_ALGORITHM } = require('./PiiHasher.ts');
 
 const platformCheckIntegrity = require('./platformCheckIntegrity.ts').default;
 
@@ -37,13 +37,6 @@ const reservedWords = new Set(require('./reserved-words.json').list);
  * every call-site.
  */
 const USERNAME_FIELD = 'username';
-
-/**
- * Field name used when hashing a DNS subdomain. Subdomains are stored in
- * PlatformDB and replicated cluster-wide; in hashed mode the subdomain
- * key becomes opaque so the cleartext doesn't cross Raft.
- */
-const SUBDOMAIN_FIELD = 'dns-subdomain';
 
 /**
  * @class Platform
@@ -71,6 +64,12 @@ class Platform {
   // use the explicit pre-hashed variants (`*ByPreHashedUsername`) to
   // avoid double-hashing — see B.4 follow-up.
   #piiHasher: InstanceType<typeof PiiHasher> | null = null;
+
+  // Lazy HMAC(username) → cleartext-username map for THIS core's local
+  // users (built from usersLocalIndex). Powers reverse resolution in the
+  // recovery flows; never replicated. Null until first built; rebuilt on
+  // a miss. See resolveLocalUsernameFromToken.
+  #reverseUsernameMap: Map<string, string> | null = null;
 
   constructor () {
     this.#initialized = false;
@@ -129,8 +128,12 @@ class Platform {
         '`node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"` ' +
         'and place the SAME value in every core\'s override-config.yml.');
     }
-    this.#piiHasher = new PiiHasher(pepper);
-    logger.info('[platform] piiMode=hashed; PlatformDB writes will store HMAC-SHA-256 tokens for username + isUnique field values');
+    // Cluster-wide algorithm (NOT per-token). Defaults to hmac-sha256; the
+    // PiiHasher constructor rejects an unknown value. A future swap is a
+    // coordinated re-migration + a flip of this key, cluster-wide.
+    const algorithm = (this.#config.get('platform:piiAlgorithm') as string) || DEFAULT_PII_ALGORITHM;
+    this.#piiHasher = new PiiHasher(pepper, algorithm);
+    logger.info(`[platform] piiMode=hashed (algorithm=${algorithm}); PlatformDB stores hashed tokens for username + isUnique field values`);
   }
 
   /**
@@ -467,6 +470,48 @@ class Platform {
   }
 
   /**
+   * Resolve an HMAC username token back to its cleartext username — but
+   * ONLY for users hosted on THIS core. The reverse map is derived from
+   * this core's local user index (`usersLocalIndex.getAllByUsername()`),
+   * which is per-core and never replicated, so cleartext usernames never
+   * leave their home region. Used by the email→username / email→uid
+   * recovery + password-reset flows, where PlatformDB hands back the
+   * HMAC token and the home core must turn it back into the cleartext
+   * username it owns.
+   *
+   * Cleartext mode: the token IS the plaintext, so this is identity.
+   *
+   * Lazy + self-healing: the map is built on first use and cached; a miss
+   * triggers exactly one rebuild-and-retry so a just-registered local user
+   * resolves without an explicit invalidation hook (recovery is rare, so
+   * the rebuild cost is acceptable). Returns null when no local user owns
+   * the token (i.e. the user is not hosted here).
+   */
+  async resolveLocalUsernameFromToken (usernameToken: string): Promise<string | null> {
+    if (!this.piiModeIsHashed) return usernameToken;
+    if (this.#reverseUsernameMap == null) await this.#buildReverseUsernameMap();
+    let username = this.#reverseUsernameMap!.get(usernameToken);
+    if (username == null) {
+      // Stale cache (e.g. user registered after the map was built) →
+      // rebuild once and retry before giving up.
+      await this.#buildReverseUsernameMap();
+      username = this.#reverseUsernameMap!.get(usernameToken);
+    }
+    return username ?? null;
+  }
+
+  async #buildReverseUsernameMap (): Promise<void> {
+    const { getUsersLocalIndex } = require('storage');
+    const usersLocalIndex = await getUsersLocalIndex();
+    const byUsername: Record<string, string> = await usersLocalIndex.getAllByUsername();
+    const map = new Map<string, string>();
+    for (const username of Object.keys(byUsername)) {
+      map.set(this.hashFor(USERNAME_FIELD, username), username);
+    }
+    this.#reverseUsernameMap = map;
+  }
+
+  /**
    * Set which core hosts a user. Plaintext input; hashed internally.
    */
   async setUserCore (username: string, coreId: string) {
@@ -574,30 +619,26 @@ class Platform {
    * Set a persistent DNS record. Runtime-managed entries like ACME challenges.
    * Static infrastructure records stay in YAML config; admin MUST NOT shadow them.
    *
-   * In `hashed` mode the subdomain key becomes opaque so the cleartext
-   * subdomain doesn't cross Raft. The record VALUE (txt / a / cname etc.)
-   * stays cleartext — it's the DNS payload, not PII.
+   * DNS-record subdomains are operator infrastructure names (`_acme-challenge`,
+   * `www`, static records), NOT user PII — so they are stored cleartext even
+   * in `hashed` mode. (Usernames used as `<username>.<domain>` DNS names are
+   * resolved through the hashed `user-core/` mapping via `getUserCore`, not
+   * through this persistent-record store.)
    */
   async setDnsRecord (subdomain: string, records: DnsRecord) {
-    await this.#db.setDnsRecord(this.hashFor(SUBDOMAIN_FIELD, subdomain), records);
+    await this.#db.setDnsRecord(subdomain, records);
   }
 
   async getDnsRecord (subdomain: string) {
-    return await this.#db.getDnsRecord(this.hashFor(SUBDOMAIN_FIELD, subdomain));
+    return await this.#db.getDnsRecord(subdomain);
   }
 
-  /**
-   * Return every persistent DNS record. In `hashed` mode each entry's
-   * `subdomain` field is the HMAC token — the cleartext was never stored
-   * and cannot be recovered from PlatformDB alone. Operator tooling
-   * (`bin/dns-records.js list`) should label hashed entries as such.
-   */
   async getAllDnsRecords () {
     return await this.#db.getAllDnsRecords();
   }
 
   async deleteDnsRecord (subdomain: string) {
-    await this.#db.deleteDnsRecord(this.hashFor(SUBDOMAIN_FIELD, subdomain));
+    await this.#db.deleteDnsRecord(subdomain);
   }
 
   /**
