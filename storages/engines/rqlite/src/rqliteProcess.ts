@@ -39,6 +39,7 @@ interface RqliteOpts {
   raftPort?: number;
   dnsDomain?: string | null;
   discoveryEnabled?: boolean;
+  nonVoter?: boolean;
   coreIp?: string | null;
   tls?: TlsConfig | null;
   log?: (msg: string) => void;
@@ -56,6 +57,7 @@ function buildArgs (opts: RqliteOpts): string[] {
     raftPort = 4002,
     dnsDomain = null,
     discoveryEnabled = false,
+    nonVoter = false,
     coreIp = null,
     tls = null,
     dataDir
@@ -88,17 +90,31 @@ function buildArgs (opts: RqliteOpts): string[] {
   // fragile under orchestrators. Permanent removal of a node is a deliberate
   // operator action, not a side effect of the process stopping.
 
+  // A non-voter (read-only) node replicates the store and forwards writes to
+  // the leader but does NOT count toward quorum or vote in elections. Joining
+  // a new core as a non-voter means an unreachable/stranded joiner can never
+  // stall the existing cluster. Promotion to voter is a deliberate operator
+  // step (remove + rejoin as voter), reserved for >=3-core clusters.
+  if (nonVoter) {
+    args.push('-raft-non-voter');
+  }
+
   if (dnsDomain != null && discoveryEnabled) {
     const discoName = 'lsc.' + dnsDomain;
     args.push(
       '-disco-mode', 'dns',
-      '-disco-config', JSON.stringify({ name: discoName, port: raftPort }),
-      // rqlited requires -bootstrap-expect together with -disco-mode for
-      // voting nodes. 1 lets the first core come up alone; subsequent
-      // cores find it via the DNS record and join. Once the cluster is
-      // formed, -bootstrap-expect is ignored on restarts (raft log wins).
-      '-bootstrap-expect', '1'
+      '-disco-config', JSON.stringify({ name: discoName, port: raftPort })
     );
+    // rqlited requires -bootstrap-expect together with -disco-mode for
+    // VOTING nodes. 1 lets the first core come up alone; subsequent cores
+    // find it via the DNS record and join. Once the cluster is formed,
+    // -bootstrap-expect is ignored on restarts (raft log wins).
+    // A non-voter must NOT get -bootstrap-expect: read-only nodes cannot
+    // bootstrap a cluster, and rqlited terminates with an error if it sees
+    // both flags together.
+    if (!nonVoter) {
+      args.push('-bootstrap-expect', '1');
+    }
   }
   // Single-core (discoveryEnabled=false) deliberately gets neither flag —
   // rqlited auto-bootstraps a 1-node cluster on first run from an empty

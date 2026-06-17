@@ -134,6 +134,35 @@ describe('[APPLYBUNDLE] applyBundle', function () {
     assert.equal(fs.statSync(result.overridePath).mode & 0o777, 0o600);
     // v1-shaped bundle (no platformSecrets.letsEncrypt) ⇒ no override.letsEncrypt
     assert.equal(parsed.letsEncrypt, undefined);
+    // default join is a voter — no core.nonVoter key
+    assert.equal(parsed.core.nonVoter, undefined);
+  });
+
+  it('writes core.nonVoter: true when asNonVoter is set', async () => {
+    const armored = makeArmoredBundle(path.join(tmp, 'issuer-ca-nv'));
+    const result = await applyBundleMod.applyBundle({
+      armoredBundle: armored,
+      passphrase: PASSPHRASE,
+      configDir: path.join(tmp, 'config-nv'),
+      tlsDir: path.join(tmp, 'tls-nv'),
+      asNonVoter: true
+    });
+    const parsed = yaml.load(fs.readFileSync(result.overridePath, 'utf8'));
+    assert.equal(parsed.core.nonVoter, true);
+    // identity still written
+    assert.equal(parsed.core.id, 'core-b');
+  });
+
+  it('omits core.nonVoter by default (voter join)', async () => {
+    const armored = makeArmoredBundle(path.join(tmp, 'issuer-ca-v'));
+    const result = await applyBundleMod.applyBundle({
+      armoredBundle: armored,
+      passphrase: PASSPHRASE,
+      configDir: path.join(tmp, 'config-v'),
+      tlsDir: path.join(tmp, 'tls-v')
+    });
+    const parsed = yaml.load(fs.readFileSync(result.overridePath, 'utf8'));
+    assert.equal(parsed.core.nonVoter, undefined);
   });
 
   it('writes letsEncrypt.atRestKey when bundle ships one (v2 bundle)', async () => {

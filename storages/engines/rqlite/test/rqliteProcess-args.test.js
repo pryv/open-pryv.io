@@ -109,6 +109,40 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
     });
   });
 
+  describe('non-voter (read-only join)', () => {
+    it('adds -raft-non-voter when nonVoter is true', () => {
+      const args = buildArgs({ ...baseOpts, nonVoter: true });
+      assert(args.includes('-raft-non-voter'));
+    });
+
+    it('does NOT add -raft-non-voter by default', () => {
+      assert(!buildArgs({ ...baseOpts }).includes('-raft-non-voter'));
+    });
+
+    it('suppresses -bootstrap-expect for a non-voter under DNS discovery (both flags together is fatal in rqlited)', () => {
+      const args = buildArgs({
+        ...baseOpts, coreIp: '10.0.0.5', dnsDomain: 'mc.example.com', discoveryEnabled: true, nonVoter: true
+      });
+      assert(args.includes('-disco-mode'), 'non-voter still discovers via DNS');
+      assert(args.includes('-raft-non-voter'));
+      assert(!args.includes('-bootstrap-expect'),
+        `non-voter must not get -bootstrap-expect: ${args.join(' ')}`);
+    });
+
+    it('a voter under DNS discovery still gets -bootstrap-expect', () => {
+      const args = buildArgs({
+        ...baseOpts, coreIp: '10.0.0.5', dnsDomain: 'mc.example.com', discoveryEnabled: true
+      });
+      assert.equal(args[args.indexOf('-bootstrap-expect') + 1], '1');
+      assert(!args.includes('-raft-non-voter'));
+    });
+
+    it('keeps the data dir last even with -raft-non-voter', () => {
+      const args = buildArgs({ ...baseOpts, nonVoter: true });
+      assert.equal(args[args.length - 1], '/var/pryv/rqlite-data');
+    });
+  });
+
   describe('TLS', () => {
     const tls = {
       caFile: '/etc/pryv/tls/ca.crt',

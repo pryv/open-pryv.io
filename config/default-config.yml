@@ -300,6 +300,11 @@ core:
   cname: null            # CNAME record (used if no ip/ipv6)
   hosting: null          # hosting key this core belongs to (null = default)
   available: true        # false = not accepting new registrations
+  nonVoter: false        # true = join Raft as a non-voting (read-only) core:
+                         # replicates the platform DB + forwards writes to the
+                         # leader, but never counts toward quorum. Recommended
+                         # for the extra cores of a 2-core deployment; promote
+                         # to voter only at >=3 cores (see SINGLE-TO-MULTIPLE.md)
 
 # === MIXED ===
 # `dns.domain` is BOOTSTRAP → PLATFORM-WIDE (seeded from YAML, PlatformDB authoritative after first boot — targeted for v2).

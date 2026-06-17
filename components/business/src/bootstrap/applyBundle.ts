@@ -50,6 +50,7 @@ interface ApplyBundleOpts {
   passphrase: string;
   configDir: string;
   tlsDir: string;
+  asNonVoter?: boolean;
 }
 
 const TLS_FILE_NAMES = {
@@ -72,7 +73,7 @@ const TLS_FILE_NAMES = {
  *   coreId: string
  * }>}
  */
-async function applyBundle ({ armoredBundle, passphrase, configDir, tlsDir }: ApplyBundleOpts) {
+async function applyBundle ({ armoredBundle, passphrase, configDir, tlsDir, asNonVoter = false }: ApplyBundleOpts) {
   if (typeof armoredBundle !== 'string' || armoredBundle.length === 0) {
     throw new Error('applyBundle: armoredBundle is required');
   }
@@ -87,7 +88,7 @@ async function applyBundle ({ armoredBundle, passphrase, configDir, tlsDir }: Ap
   const tlsPaths = writeTlsFiles(tlsDir, bundle);
   const tlsFingerprint = sha256Fingerprint(bundle.node.certPem);
 
-  const overridePath = writeOverrideConfig(configDir, bundle, tlsPaths);
+  const overridePath = writeOverrideConfig(configDir, bundle, tlsPaths, asNonVoter);
 
   return {
     bundle,
@@ -111,7 +112,7 @@ function writeTlsFiles (tlsDir: string, bundle: BundleShape): TlsPaths {
   return { caFile, certFile, keyFile };
 }
 
-function writeOverrideConfig (configDir: string, bundle: BundleShape, tlsPaths: TlsPaths): string {
+function writeOverrideConfig (configDir: string, bundle: BundleShape, tlsPaths: TlsPaths, asNonVoter: boolean = false): string {
   fs.mkdirSync(configDir, { recursive: true });
   const overridePath = path.join(configDir, 'override-config.yml');
 
@@ -120,7 +121,12 @@ function writeOverrideConfig (configDir: string, bundle: BundleShape, tlsPaths: 
       id: bundle.node.id,
       url: bundle.node.url,
       ip: bundle.node.ip,
-      hosting: bundle.node.hosting
+      hosting: bundle.node.hosting,
+      // Join as a non-voter: replicate the platform DB + forward writes to the
+      // leader, but never count toward Raft quorum. An unreachable non-voter
+      // can't stall the cluster. Recommended for the extra cores of a 2-core
+      // deployment; promote to voter only at >=3 cores.
+      nonVoter: asNonVoter ? true : undefined
     }),
     auth: {
       adminAccessKey: bundle.platformSecrets.auth.adminAccessKey,
