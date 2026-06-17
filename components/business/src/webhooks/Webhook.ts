@@ -282,7 +282,11 @@ class Webhook {
   }
 
   forStorage () {
-    return pick(this, [
+    // Only persist `scopes` when the webhook is actually scoped — an unfiltered
+    // webhook must not carry a `scopes: null` field (SQLite serializes the whole
+    // object into its JSON `data` column, which would then differ from a
+    // pre-feature record).
+    const fields = [
       'id',
       'accessId',
       'url',
@@ -297,9 +301,10 @@ class Webhook {
       'created',
       'createdBy',
       'modified',
-      'modifiedBy',
-      'scopes' // stored with the `prepared` query for matching
-    ]);
+      'modifiedBy'
+    ];
+    if (this.scopes != null) fields.push('scopes'); // stored with the `prepared` query for matching
+    return pick(this, fields);
   }
 
   forApi () {
