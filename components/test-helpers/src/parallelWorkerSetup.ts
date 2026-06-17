@@ -305,7 +305,6 @@ export async function spawnWorkerRqlited (o: WorkerOverrides): Promise<void> {
     '-http-addr', `0.0.0.0:${httpPort}`,
     '-http-adv-addr', `127.0.0.1:${httpPort}`,
     '-raft-addr', `127.0.0.1:${raftPort}`,
-    '-raft-cluster-remove-shutdown',
     dataDir
   ];
   // Note: raft tuning for faster startup was attempted but reverted —

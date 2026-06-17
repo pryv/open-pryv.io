@@ -82,7 +82,11 @@ function buildArgs (opts: RqliteOpts): string[] {
   if (isMultiCore) {
     args.push('-raft-adv-addr', `${advAddr}:${raftPort}`);
   }
-  args.push('-raft-cluster-remove-shutdown'); // graceful leave on shutdown
+  // A node must NOT remove itself from the Raft cluster on shutdown: a
+  // restart (crash, upgrade, container reschedule) is not a decommission.
+  // Auto-removal made multi-core clusters shrink on every restart and be
+  // fragile under orchestrators. Permanent removal of a node is a deliberate
+  // operator action, not a side effect of the process stopping.
 
   if (dnsDomain != null && discoveryEnabled) {
     const discoName = 'lsc.' + dnsDomain;

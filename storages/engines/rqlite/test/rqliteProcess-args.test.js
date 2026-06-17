@@ -34,7 +34,6 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
         '-http-addr', '127.0.0.1:4001',
         '-http-adv-addr', '127.0.0.1:4001',
         '-raft-addr', '127.0.0.1:4002',
-        '-raft-cluster-remove-shutdown',
         '/var/pryv/rqlite-data'
       ]);
     });
@@ -61,6 +60,11 @@ describe('[RQARGS] rqliteProcess.buildArgs', () => {
     it('single-core binds the HTTP API on loopback (unauthenticated API must not be public)', () => {
       const args = buildArgs({ ...baseOpts });
       assert.equal(args[args.indexOf('-http-addr') + 1], '127.0.0.1:4001');
+    });
+
+    it('never passes -raft-cluster-remove-shutdown (a restart is not a decommission)', () => {
+      assert(!buildArgs({ ...baseOpts }).includes('-raft-cluster-remove-shutdown'));
+      assert(!buildArgs({ ...baseOpts, coreIp: '10.0.0.5' }).includes('-raft-cluster-remove-shutdown'));
     });
 
     it('does not add any TLS flag when tls option is null', () => {

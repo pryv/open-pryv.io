@@ -1,5 +1,9 @@
 # Changelog - Internal (no API impact)
 
+## fix(rqlite): embedded rqlited no longer leaves the Raft cluster on shutdown
+
+`rqliteProcess.buildArgs()` passed `-raft-cluster-remove-shutdown` unconditionally, so every node removed itself from the cluster membership whenever its process stopped. A process stop is not a decommission: crashes, upgrades, and container reschedules all trip it, so multi-core clusters shrank on every restart and were fragile under orchestrators that recycle containers routinely (the single-core case re-bootstrapped its lone node, which masked the bug in the common deployment). The flag is removed — a restarting node keeps its membership and rejoins via its existing node id and Raft log; permanently removing a node is now strictly a deliberate operator action, not a side effect of the process exiting. The per-worker parallel-test launcher carried the same flag and is cleaned up too. `[RQARGS]` argv tests updated, with a regression assertion that the flag is never emitted (single- or multi-core); the two-node mTLS cluster integration test confirms cluster formation + replication are unaffected. (open-pryv.io#98)
+
 ## fix(backup): audit logs are now actually included in `bin/backup.js` output
 
 `BackupOrchestrator` was calling `auditStorage.forUser(userId).exportAllEvents()` without awaiting `forUser` — which returns `Promise<UserAuditDatabase>` per the interface contract. The unawaited Promise has no `.exportAllEvents` method, so every per-user iteration threw `userAudit.exportAllEvents is not a function`. The surrounding `try/catch` downgraded the failure to a `warn`, and the backup completed `EXIT=0` with **zero audit data** for every user. This had been live since `464ce266` (the events-export fix that first allowed the audit step to be reached). Restore from such backups silently dropped the audit trail — a problem for operators relying on it as part of their retained record.
