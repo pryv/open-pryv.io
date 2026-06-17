@@ -51,59 +51,88 @@ export default function (expressApp: ExpressApp, app: App) {
   // =====================================================================
 
   /**
-   * GET /:email/username — get username from email.
-   * Returns { username } or 404.
+   * Resolve the cleartext username owning `email`, handling hashed mode.
    *
-   * Hashed-mode caveat: `platform.getUsersUniqueField('email', email)`
-   * returns the HMAC username token (the cleartext username never crosses
-   * Raft). Returning that to the client would be useless. Phase B
-   * intentionally degrades this endpoint to 410 Gone when piiMode=hashed;
-   * the full "find username by email" recovery flow needs a home-core
-   * round-trip (PLATFORMDB-PII-HASHING — Posture 1, two-hop recovery).
+   * In `cleartext` mode PlatformDB hands back the cleartext username
+   * directly. In `hashed` mode it hands back the HMAC username token; the
+   * cleartext only exists on the user's HOME core (in its local,
+   * non-replicated user index). So:
+   *  - single-core / home-is-this-core → reverse-resolve the token locally.
+   *  - home is another core → return a redirect to it; that core runs the
+   *    same resolution against its own local index.
+   *
+   * Returns one of:
+   *  - `{ username }`        — resolved here
+   *  - `{ redirect: url }`   — home core is elsewhere (slash-terminated url)
+   *  - `{ notFound: true }`  — no user owns this email (or token not
+   *                            resolvable locally even though it should be)
+   */
+  async function resolveUsernameByEmail (email: string):
+  Promise<{ username?: string; redirect?: string; notFound?: boolean }> {
+    const { getPlatform } = require('platform');
+    const platform = await getPlatform();
+    // `getUsersUniqueField` hashes `email` internally in hashed mode and
+    // returns the row VALUE (cleartext username, or HMAC username token).
+    const usernameOrToken = await platform.getUsersUniqueField('email', email);
+    if (usernameOrToken == null) return { notFound: true };
+
+    if (!platform.piiModeIsHashed) return { username: usernameOrToken };
+
+    // Hashed mode: usernameOrToken is the HMAC username token.
+    if (!platform.isSingleCore) {
+      const homeCoreId = await platform.getUserCoreByPreHashedUsername(usernameOrToken);
+      if (homeCoreId == null) return { notFound: true };
+      if (homeCoreId !== platform.coreId) {
+        return { redirect: platform.coreIdToUrl(homeCoreId) };
+      }
+    }
+    const username = await platform.resolveLocalUsernameFromToken(usernameOrToken);
+    if (username == null) return { notFound: true };
+    return { username };
+  }
+
+  /**
+   * GET /:email/username — get username from email. Returns { username },
+   * a 307 redirect to the user's home core (hashed multi-core), or 404.
+   *
+   * The 307 carries a `Location` header AND a JSON body (`{ server }`) so
+   * non-redirect-following clients can act on it. The home core resolves
+   * the HMAC username token back to cleartext from its in-region local
+   * index — cleartext usernames never cross Raft.
    */
   expressApp.get('/reg/:email/username', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const email = req.params.email;
-      const { getPlatform } = require('platform');
-      const platform = await getPlatform();
-      if (platform.piiModeIsHashed) {
-        return res.status(410).json({
-          error: { id: 'gone', message: 'email→username lookup is disabled when platform.piiMode=hashed; user must enter username at recovery' }
-        });
+      const email = String(req.params.email);
+      const r = await resolveUsernameByEmail(email);
+      if (r.notFound) {
+        return res.status(404).json({ error: { id: 'unknown-email', message: 'Unknown email' } });
       }
-      const username = await platform.getUsersUniqueField('email', email);
-      if (username == null) {
-        return res.status(404).json({
-          error: { id: 'unknown-email', message: 'Unknown email' }
-        });
+      if (r.redirect != null) {
+        const target = r.redirect + 'reg/' + encodeURIComponent(email) + '/username';
+        return res.status(307).location(target).json({ server: r.redirect });
       }
-      res.json({ username });
+      res.json({ username: r.username });
     } catch (err) {
       next(err);
     }
   });
 
   /**
-   * GET /:email/uid — deprecated alias, returns { uid }.
-   * Same hashed-mode caveat as /:email/username above.
+   * GET /:email/uid — deprecated alias, returns { uid }. Same redirect/
+   * resolve behaviour as /:email/username above.
    */
   expressApp.get('/reg/:email/uid', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const email = req.params.email;
-      const { getPlatform } = require('platform');
-      const platform = await getPlatform();
-      if (platform.piiModeIsHashed) {
-        return res.status(410).json({
-          error: { id: 'gone', message: 'email→username lookup is disabled when platform.piiMode=hashed; user must enter username at recovery' }
-        });
+      const email = String(req.params.email);
+      const r = await resolveUsernameByEmail(email);
+      if (r.notFound) {
+        return res.status(404).json({ error: { id: 'unknown-email', message: 'Unknown email' } });
       }
-      const username = await platform.getUsersUniqueField('email', email);
-      if (username == null) {
-        return res.status(404).json({
-          error: { id: 'unknown-email', message: 'Unknown email' }
-        });
+      if (r.redirect != null) {
+        const target = r.redirect + 'reg/' + encodeURIComponent(email) + '/uid';
+        return res.status(307).location(target).json({ server: r.redirect });
       }
-      res.json({ uid: username });
+      res.json({ uid: r.username });
     } catch (err) {
       next(err);
     }

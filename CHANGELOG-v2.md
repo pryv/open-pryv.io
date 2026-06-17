@@ -72,11 +72,16 @@ queries with); the inverse is infeasible without the cluster pepper.
     the pepper end-to-end on a single core (multi-core: run on each
     core in turn). Re-derives HMACs from the home core's user-account
     storage.
-- Affected admin/recovery surfaces in hashed mode:
-  - `GET /reg/:email/username` + `GET /reg/:email/uid` return **410
-    Gone** — the legacy email→username recovery flow needs a home-core
-    round-trip and is not implemented in this iteration; clients must
-    accept the username as user input instead.
+- Email → username recovery in hashed mode:
+  - `GET /reg/:email/username` + `GET /reg/:email/uid` resolve the
+    cleartext username from the user's **home core**. Any node hashes
+    the email to find the home core; if that is a different node it
+    answers **307** with the home node's URL (`Location` header + a
+    `{ server }` JSON body for clients that do not auto-follow
+    redirects). The home node reverse-resolves the HMAC token to the
+    cleartext username from its own in-region, non-replicated user
+    index — cleartext never crosses jurisdictions. Single-core
+    deployments resolve locally with no redirect. Unknown email → 404.
   - `auth.cores` with an `email` query single-core surface returns
     `unknown-resource` rather than try a HMAC username against the
     local users index.

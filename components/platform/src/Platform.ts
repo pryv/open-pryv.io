@@ -65,6 +65,12 @@ class Platform {
   // avoid double-hashing — see B.4 follow-up.
   #piiHasher: InstanceType<typeof PiiHasher> | null = null;
 
+  // Lazy HMAC(username) → cleartext-username map for THIS core's local
+  // users (built from usersLocalIndex). Powers reverse resolution in the
+  // recovery flows; never replicated. Null until first built; rebuilt on
+  // a miss. See resolveLocalUsernameFromToken.
+  #reverseUsernameMap: Map<string, string> | null = null;
+
   constructor () {
     this.#initialized = false;
     this.#coreUrlCache = new Map();
@@ -461,6 +467,48 @@ class Platform {
    */
   async getUserCoreByPreHashedUsername (usernameToken: string) {
     return await this.#db.getUserCore(usernameToken);
+  }
+
+  /**
+   * Resolve an HMAC username token back to its cleartext username — but
+   * ONLY for users hosted on THIS core. The reverse map is derived from
+   * this core's local user index (`usersLocalIndex.getAllByUsername()`),
+   * which is per-core and never replicated, so cleartext usernames never
+   * leave their home region. Used by the email→username / email→uid
+   * recovery + password-reset flows, where PlatformDB hands back the
+   * HMAC token and the home core must turn it back into the cleartext
+   * username it owns.
+   *
+   * Cleartext mode: the token IS the plaintext, so this is identity.
+   *
+   * Lazy + self-healing: the map is built on first use and cached; a miss
+   * triggers exactly one rebuild-and-retry so a just-registered local user
+   * resolves without an explicit invalidation hook (recovery is rare, so
+   * the rebuild cost is acceptable). Returns null when no local user owns
+   * the token (i.e. the user is not hosted here).
+   */
+  async resolveLocalUsernameFromToken (usernameToken: string): Promise<string | null> {
+    if (!this.piiModeIsHashed) return usernameToken;
+    if (this.#reverseUsernameMap == null) await this.#buildReverseUsernameMap();
+    let username = this.#reverseUsernameMap!.get(usernameToken);
+    if (username == null) {
+      // Stale cache (e.g. user registered after the map was built) →
+      // rebuild once and retry before giving up.
+      await this.#buildReverseUsernameMap();
+      username = this.#reverseUsernameMap!.get(usernameToken);
+    }
+    return username ?? null;
+  }
+
+  async #buildReverseUsernameMap (): Promise<void> {
+    const { getUsersLocalIndex } = require('storage');
+    const usersLocalIndex = await getUsersLocalIndex();
+    const byUsername: Record<string, string> = await usersLocalIndex.getAllByUsername();
+    const map = new Map<string, string>();
+    for (const username of Object.keys(byUsername)) {
+      map.set(this.hashFor(USERNAME_FIELD, username), username);
+    }
+    this.#reverseUsernameMap = map;
   }
 
   /**
