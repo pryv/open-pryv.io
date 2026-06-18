@@ -84,7 +84,7 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
     bundlePath, passphrase, passphraseFile, configDir, tlsDir,
     httpClient = defaultHttpClient,
     trustSystemCa = false,
-    asNonVoter = false,
+    asNonVoter = true,
     log = (m: string) => console.log('[bootstrap] ' + m)
   } = opts || ({} as ConsumeOpts);
 
@@ -100,9 +100,13 @@ async function consume (opts: ConsumeOpts): Promise<ConsumeResult> {
 
   log(`Applying bundle ${bundlePath} ...`);
   if (asNonVoter) {
-    log('Joining as a NON-VOTER (read-only): this core will replicate the ' +
-      'platform DB and forward writes to the leader, but will not count toward ' +
-      'Raft quorum. Recommended for the extra cores of a 2-core deployment.');
+    log('Joining as a NON-VOTER (default): this core replicates the platform ' +
+      'DB and forwards writes to the leader, but does not count toward Raft ' +
+      'quorum, so it cannot stall the cluster if it becomes unreachable.');
+  } else {
+    log('Joining as a VOTER (--bootstrap-as-voter): this core counts toward ' +
+      'Raft quorum. Only safe at >=3 voters — two voters give a 2-of-2 cluster ' +
+      'where either core dying is an outage.');
   }
   const applied = await applyBundleMod.applyBundle({
     armoredBundle, passphrase: resolvedPassphrase, configDir, tlsDir, asNonVoter

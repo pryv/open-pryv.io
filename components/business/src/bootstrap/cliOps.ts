@@ -332,4 +332,96 @@ function requireOpts (opts: object | null | undefined, keys: string[]) {
   }
 }
 
-export { ACK_PATH, TLS_FILE_NAMES, newCore, listTokens, revokeToken, initCaHolder };
+// Max number of Raft log entries a non-voter may lag the leader by and still
+// be considered "caught up" for promotion. Small but non-zero: replication is
+// asynchronous, so a few entries of drift at the instant we check is normal.
+const MAX_PROMOTE_LAG = 50;
+
+interface NodeInfo {
+  voter?: boolean;
+  reachable?: boolean;
+  api_addr?: string;
+}
+
+interface PromoteCoreOpts {
+  rqliteBaseUrl: string;
+  coreId: string;
+  force?: boolean;
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * Promote a non-voting core to a voter via the leader's rqlite HTTP API.
+ *
+ * rqlite has no in-place promotion: the leader removes the node from the Raft
+ * configuration, then the operator restarts the target with `core.nonVoter`
+ * unset so it rejoins as a voter. This function performs the validated,
+ * leader-side removal; the caller prints the operator the target-side steps.
+ *
+ * Guards (all overridable with `force`, except an already-voter / missing node):
+ *   - target must be a non-voter that is currently reachable,
+ *   - target must be caught up with the leader (within MAX_PROMOTE_LAG),
+ *   - the resulting cluster must NOT be exactly 2 voters (the 2-of-2 quorum
+ *     trap) — run >=3 voters for real fault tolerance.
+ *
+ * @param opts.rqliteBaseUrl - leader's rqlite HTTP base, e.g. http://127.0.0.1:4001
+ * @param opts.coreId        - id of the non-voter to promote
+ * @param [opts.force]       - override the reachability/lag/2-voter guards
+ * @param [opts.fetchImpl]   - injectable fetch (tests)
+ */
+async function promoteCore (opts: PromoteCoreOpts) {
+  requireOpts(opts, ['rqliteBaseUrl', 'coreId']);
+  const { rqliteBaseUrl, coreId, force = false, fetchImpl = fetch } = opts;
+  const base = rqliteBaseUrl.replace(/\/$/, '');
+
+  const res = await fetchImpl(`${base}/nodes?nonvoters`);
+  if (!res.ok) throw new Error(`cannot read cluster nodes from ${base}: HTTP ${res.status}`);
+  const nodes = await res.json() as Record<string, NodeInfo>;
+
+  const target = nodes[coreId];
+  if (target == null) throw new Error(`core "${coreId}" is not in the cluster`);
+  if (target.voter === true) throw new Error(`core "${coreId}" is already a voter`);
+  if (target.reachable !== true && !force) {
+    throw new Error(`core "${coreId}" is not reachable from the leader — refusing to promote an unreachable node (pass --force to override)`);
+  }
+
+  const voterCount = Object.values(nodes).filter((n) => n.voter === true).length;
+  const afterPromotion = voterCount + 1;
+  if (afterPromotion === 2 && !force) {
+    throw new Error(
+      `promoting "${coreId}" would create a 2-voter cluster (quorum 2-of-2: either core dying is an outage). ` +
+      'Run >=3 voters for fault tolerance, or pass --force to override.'
+    );
+  }
+
+  // Caught-up check via the target's own /status (api_addr from /nodes).
+  let lag: number | null = null;
+  if (target.api_addr) {
+    try {
+      const tStatus = await (await fetchImpl(`${target.api_addr.replace(/\/$/, '')}/status`)).json() as RaftStatus;
+      const lStatus = await (await fetchImpl(`${base}/status`)).json() as RaftStatus;
+      const tApplied = tStatus?.store?.raft?.applied_index;
+      const lApplied = lStatus?.store?.raft?.applied_index;
+      if (Number.isFinite(tApplied) && Number.isFinite(lApplied)) lag = (lApplied as number) - (tApplied as number);
+    } catch { lag = null; }
+  }
+  if (lag == null && !force) {
+    throw new Error(`could not verify "${coreId}" is caught up with the leader; pass --force to skip the check`);
+  }
+  if (lag != null && lag > MAX_PROMOTE_LAG && !force) {
+    throw new Error(`core "${coreId}" is behind the leader by ${lag} entries — wait for it to catch up, or pass --force`);
+  }
+
+  const del = await fetchImpl(`${base}/remove`, {
+    method: 'DELETE',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: coreId })
+  });
+  if (!del.ok) throw new Error(`leader /remove failed for "${coreId}": HTTP ${del.status}`);
+
+  return { coreId, voterCountBefore: voterCount, voterCountAfter: afterPromotion, lag };
+}
+
+interface RaftStatus { store?: { raft?: { applied_index?: number } } }
+
+export { ACK_PATH, TLS_FILE_NAMES, newCore, listTokens, revokeToken, initCaHolder, promoteCore };

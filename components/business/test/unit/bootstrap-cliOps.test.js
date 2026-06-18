@@ -236,4 +236,92 @@ describe('[BOOTSTRAPCLI] cliOps', function () {
       assert.equal(db._dns.get('lsc'), undefined);
     });
   });
+
+  describe('promoteCore()', function () {
+    const LEADER = 'http://leader-host:4001';
+
+    function makeFetch ({ nodes, leaderApplied = 100, targetApplied = 100, removeStatus = 200 }) {
+      const calls = { remove: null, removeCount: 0 };
+      const jsonRes = (obj) => ({ ok: true, status: 200, json: async () => obj });
+      const fetchImpl = async (url, opts) => {
+        if (url.includes('/nodes')) return jsonRes(nodes);
+        if (url.includes('/remove')) {
+          calls.removeCount++;
+          calls.remove = JSON.parse(opts.body);
+          return { ok: removeStatus === 200, status: removeStatus };
+        }
+        if (url.includes('/status')) {
+          const applied = url.includes('target-host') ? targetApplied : leaderApplied;
+          return jsonRes({ store: { raft: { applied_index: applied } } });
+        }
+        throw new Error('unexpected url ' + url);
+      };
+      return { fetchImpl, calls };
+    }
+
+    const threeVoterNodes = {
+      'core-a': { voter: true, reachable: true, api_addr: LEADER },
+      'core-x': { voter: true, reachable: true },
+      'core-b': { voter: false, reachable: true, api_addr: 'http://target-host:4001' }
+    };
+
+    it('removes a reachable, caught-up non-voter when result is >=3 voters', async () => {
+      const { fetchImpl, calls } = makeFetch({ nodes: threeVoterNodes });
+      const result = await cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'core-b', fetchImpl });
+      assert.equal(result.voterCountBefore, 2);
+      assert.equal(result.voterCountAfter, 3);
+      assert.equal(calls.removeCount, 1);
+      assert.deepEqual(calls.remove, { id: 'core-b' });
+    });
+
+    it('refuses when the target is already a voter (no remove)', async () => {
+      const nodes = { 'core-a': { voter: true, reachable: true, api_addr: LEADER }, 'core-b': { voter: true, reachable: true } };
+      const { fetchImpl, calls } = makeFetch({ nodes });
+      await assert.rejects(cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'core-b', fetchImpl }), /already a voter/);
+      assert.equal(calls.removeCount, 0);
+    });
+
+    it('refuses when the target is not in the cluster', async () => {
+      const { fetchImpl } = makeFetch({ nodes: { 'core-a': { voter: true, reachable: true, api_addr: LEADER } } });
+      await assert.rejects(cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'ghost', fetchImpl }), /not in the cluster/);
+    });
+
+    it('refuses to create a 2-voter cluster without --force', async () => {
+      const nodes = {
+        'core-a': { voter: true, reachable: true, api_addr: LEADER },
+        'core-b': { voter: false, reachable: true, api_addr: 'http://target-host:4001' }
+      };
+      const { fetchImpl, calls } = makeFetch({ nodes });
+      await assert.rejects(cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'core-b', fetchImpl }), /2-voter cluster/);
+      assert.equal(calls.removeCount, 0);
+    });
+
+    it('allows a 2-voter promotion with --force', async () => {
+      const nodes = {
+        'core-a': { voter: true, reachable: true, api_addr: LEADER },
+        'core-b': { voter: false, reachable: true, api_addr: 'http://target-host:4001' }
+      };
+      const { fetchImpl, calls } = makeFetch({ nodes });
+      const result = await cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'core-b', force: true, fetchImpl });
+      assert.equal(result.voterCountAfter, 2);
+      assert.equal(calls.removeCount, 1);
+    });
+
+    it('refuses an unreachable target without --force', async () => {
+      const nodes = {
+        'core-a': { voter: true, reachable: true, api_addr: LEADER },
+        'core-x': { voter: true, reachable: true },
+        'core-b': { voter: false, reachable: false, api_addr: 'http://target-host:4001' }
+      };
+      const { fetchImpl, calls } = makeFetch({ nodes });
+      await assert.rejects(cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'core-b', fetchImpl }), /not reachable/);
+      assert.equal(calls.removeCount, 0);
+    });
+
+    it('refuses a lagging target without --force', async () => {
+      const { fetchImpl, calls } = makeFetch({ nodes: threeVoterNodes, leaderApplied: 1000, targetApplied: 100 });
+      await assert.rejects(cliOps.promoteCore({ rqliteBaseUrl: LEADER, coreId: 'core-b', fetchImpl }), /behind the leader/);
+      assert.equal(calls.removeCount, 0);
+    });
+  });
 });

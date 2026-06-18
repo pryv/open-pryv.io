@@ -50,6 +50,8 @@ interface ApplyBundleOpts {
   passphrase: string;
   configDir: string;
   tlsDir: string;
+  // Default true: a joining core is safe-by-default (non-voter — can't affect
+  // quorum). Pass false only to join as a voter for a >=3-core HA cluster.
   asNonVoter?: boolean;
 }
 
@@ -73,7 +75,7 @@ const TLS_FILE_NAMES = {
  *   coreId: string
  * }>}
  */
-async function applyBundle ({ armoredBundle, passphrase, configDir, tlsDir, asNonVoter = false }: ApplyBundleOpts) {
+async function applyBundle ({ armoredBundle, passphrase, configDir, tlsDir, asNonVoter = true }: ApplyBundleOpts) {
   if (typeof armoredBundle !== 'string' || armoredBundle.length === 0) {
     throw new Error('applyBundle: armoredBundle is required');
   }
@@ -112,7 +114,7 @@ function writeTlsFiles (tlsDir: string, bundle: BundleShape): TlsPaths {
   return { caFile, certFile, keyFile };
 }
 
-function writeOverrideConfig (configDir: string, bundle: BundleShape, tlsPaths: TlsPaths, asNonVoter: boolean = false): string {
+function writeOverrideConfig (configDir: string, bundle: BundleShape, tlsPaths: TlsPaths, asNonVoter: boolean = true): string {
   fs.mkdirSync(configDir, { recursive: true });
   const overridePath = path.join(configDir, 'override-config.yml');
 
@@ -122,10 +124,11 @@ function writeOverrideConfig (configDir: string, bundle: BundleShape, tlsPaths: 
       url: bundle.node.url,
       ip: bundle.node.ip,
       hosting: bundle.node.hosting,
-      // Join as a non-voter: replicate the platform DB + forward writes to the
-      // leader, but never count toward Raft quorum. An unreachable non-voter
-      // can't stall the cluster. Recommended for the extra cores of a 2-core
-      // deployment; promote to voter only at >=3 cores.
+      // Joining cores default to non-voter (safe by default): replicate the
+      // platform DB + forward writes to the leader, but never count toward Raft
+      // quorum, so an unreachable joiner can't stall the cluster. Joining as a
+      // voter (asNonVoter=false, --bootstrap-as-voter) is the deliberate choice
+      // for a >=3-core HA cluster.
       nonVoter: asNonVoter ? true : undefined
     }),
     auth: {

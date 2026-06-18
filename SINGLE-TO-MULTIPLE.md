@@ -144,19 +144,20 @@ node bin/master.js \
     --bootstrap-passphrase-file /root/core-b.pass
 ```
 
-> **Recommended for a second core: add `--bootstrap-as-non-voter`.** A non-voting core replicates the platform DB and forwards writes to the leader, but never counts toward Raft quorum — so if it ever becomes unreachable it **cannot** stall the existing core. This keeps a two-core deployment safe (the first core stays a 1-of-1 quorum). Only join as a *voter* (omit the flag) when you are building a **3-or-more-core** cluster and want leader-failover high availability. See "Cluster availability & container orchestrators" below for the full rationale and a preset table.
+> **Join role — a joining core defaults to a non-voter (safe by default).** A non-voting core replicates the platform DB and forwards writes to the leader, but never counts toward Raft quorum — so if it ever becomes unreachable it **cannot** stall the existing core. This keeps a two-core deployment safe (the first core stays a 1-of-1 quorum). Pass `--bootstrap-as-voter` **only** when you are building a **3-or-more-core** cluster and want leader-failover high availability. See "Cluster availability & container orchestrators" below for the full rationale and a preset table.
 >
 > **If the existing core's API is fronted by a public/ACME certificate** (the normal internet-facing case), also add `--bootstrap-ack-trust-system-ca`. By default the ack POST pins the cluster CA, which fails with `unable to get local issuer certificate` against a public cert. The flag verifies the ack against the system CA store instead (still `rejectUnauthorized`); the one-shot join token remains the authenticator. Omit the flag only when the existing core presents the cluster CA on its API origin (e.g. an internal-only deployment).
 
-So a typical internet-facing second-core join is:
+So a typical internet-facing second-core join is just (non-voter is the default):
 
 ```bash
 node bin/master.js \
     --bootstrap /root/core-b.bundle.age \
     --bootstrap-passphrase-file /root/core-b.pass \
-    --bootstrap-as-non-voter \
     --bootstrap-ack-trust-system-ca
 ```
+
+For a ≥3-core HA cluster, add `--bootstrap-as-voter` to each core that should vote.
 
 The master process:
 - decrypts and validates the bundle,
@@ -214,23 +215,23 @@ A **two-core cluster is a trap for availability**: quorum is 2-of-2, so if *eith
 
 **Recommendations:**
 - Add cores **one at a time**, and confirm each is stable and reachable before adding the next.
-- **Join extra cores as non-voters** (`--bootstrap-as-non-voter`) unless you are deliberately building a ≥3-voter HA cluster. A non-voter replicates everything and serves its users, but cannot drag the cluster down if it goes away.
+- **Extra cores join as non-voters by default** — pass `--bootstrap-as-voter` only when deliberately building a ≥3-voter HA cluster. A non-voter replicates everything and serves its users, but cannot drag the cluster down if it goes away.
 - Keep a recovery runbook ready: if you lose quorum, a surviving core can be forced back to a single-node cluster with an rqlite `peers.json` recovery file in its data directory (`storages.engines.rqlite` `dataDir`). See the rqlite recovery docs for the exact file format.
 
 ### Presets — which role for which topology
 
-Pick the preset that matches what you're building. The role is set **at join time** with `--bootstrap-as-non-voter` (and persisted as `core.nonVoter` in the new core's generated `override-config.yml`).
+Pick the preset that matches what you're building. The default join role is **non-voter**; pass `--bootstrap-as-voter` to join as a voter (persisted as `core.nonVoter` in the new core's generated `override-config.yml`).
 
 | Your goal | First core (`core-a`) | Each additional core | Quorum | Survives a core dying? |
 |---|---|---|---|---|
-| **Two cores, geo/locality split** (recommended default) | voter | **non-voter** (`--bootstrap-as-non-voter`) | 1-of-1 on core-a | Yes if a non-voter dies; core-a is the only SPOF (same as single-core) |
-| **High availability / leader failover** | voter | **voter** — and run **≥3 voters total** | majority of voters | Yes — 3 voters tolerate losing 1 |
+| **Two cores, geo/locality split** (recommended default) | voter | **non-voter** (default) | 1-of-1 on core-a | Yes if a non-voter dies; core-a is the only SPOF (same as single-core) |
+| **High availability / leader failover** | voter | **voter** (`--bootstrap-as-voter`) — and run **≥3 voters total** | majority of voters | Yes — 3 voters tolerate losing 1 |
 | **Read scaling / many edge cores** | voter | **non-voter** for all edges; keep voters at 1 or 3 | on the voter set | Yes for edge deaths |
 
 **Rules of thumb:**
 - **Never run exactly two voters.** 2-of-2 quorum means either core dying is an outage. Use 1 voter + 1 non-voter, or 3 voters.
 - A voter count of **1 or an odd number ≥3** is what you want. Even voter counts add no fault tolerance over the next-lower odd number.
-- `core.nonVoter: true` in a core's config (set automatically by `--bootstrap-as-non-voter`) is the switch. Changing a running core's role is a deliberate remove-and-rejoin operation, not just a config edit — see "Changing a core's role" below.
+- `core.nonVoter: true` in a core's config (written automatically by the default join; `--bootstrap-as-voter` omits it) is the switch. Changing a running core's role is a deliberate remove-and-rejoin operation, not just a config edit — see "Changing a core's role" below.
 
 ### Changing a core's role (voter ⇄ non-voter)
 

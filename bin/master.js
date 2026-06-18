@@ -19,18 +19,19 @@ require('./_observability-boot');
 //   node bin/master.js [--config <path>]
 //   node bin/master.js --bootstrap <bundle-file> --bootstrap-passphrase-file <path>
 //                      [--bootstrap-tls-dir <path>] [--bootstrap-config-dir <path>]
-//                      [--bootstrap-ack-trust-system-ca] [--bootstrap-as-non-voter]
+//                      [--bootstrap-ack-trust-system-ca] [--bootstrap-as-voter]
 //
 // --bootstrap-ack-trust-system-ca: verify the ack POST against the system CA
 //   store instead of pinning the cluster CA. Needed when the existing core's
 //   API origin is fronted by a public/ACME cert (the normal internet-facing
 //   case). The one-shot join token remains the authenticator.
 //
-// --bootstrap-as-non-voter: join the cluster as a non-voting (read-only) core.
-//   It replicates the platform DB and forwards writes to the leader, but never
+// Join role: a joining core defaults to a NON-VOTER (safe by default). It
+//   replicates the platform DB and forwards writes to the leader, but never
 //   counts toward Raft quorum — so it cannot stall the cluster if it becomes
-//   unreachable. Recommended for the extra cores of a 2-core deployment;
-//   promote to voter only at >=3 cores.
+//   unreachable. Pass --bootstrap-as-voter to join as a voter instead; only do
+//   this when building a >=3-voter HA cluster (two voters give a fragile 2-of-2
+//   quorum where either core dying is an outage).
 //
 // In --bootstrap mode the master decrypts the bundle, writes
 // `override-config.yml` + TLS files, posts an ack to the issuing core, then
@@ -640,7 +641,7 @@ function parseBootstrapArgs (argv) {
   const out = { enabled: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--bootstrap') { out.enabled = true; out.bundlePath = argv[++i]; } else if (a === '--bootstrap-passphrase-file') { out.passphraseFile = argv[++i]; } else if (a === '--bootstrap-tls-dir') { out.tlsDir = argv[++i]; } else if (a === '--bootstrap-config-dir') { out.configDir = argv[++i]; } else if (a === '--bootstrap-ack-trust-system-ca') { out.trustSystemCa = true; } else if (a === '--bootstrap-as-non-voter') { out.asNonVoter = true; }
+    if (a === '--bootstrap') { out.enabled = true; out.bundlePath = argv[++i]; } else if (a === '--bootstrap-passphrase-file') { out.passphraseFile = argv[++i]; } else if (a === '--bootstrap-tls-dir') { out.tlsDir = argv[++i]; } else if (a === '--bootstrap-config-dir') { out.configDir = argv[++i]; } else if (a === '--bootstrap-ack-trust-system-ca') { out.trustSystemCa = true; } else if (a === '--bootstrap-as-voter') { out.asVoter = true; } else if (a === '--bootstrap-as-non-voter') { out.asNonVoter = true; }
   }
   if (out.enabled) {
     if (!out.bundlePath) throw new Error('--bootstrap requires <bundle-file>');
@@ -660,7 +661,9 @@ async function runBootstrap (args) {
     configDir: args.configDir,
     tlsDir: args.tlsDir,
     trustSystemCa: args.trustSystemCa === true,
-    asNonVoter: args.asNonVoter === true,
+    // Default to non-voter join (safe by default). --bootstrap-as-voter opts
+    // into a voting node for >=3-core HA clusters.
+    asNonVoter: args.asVoter !== true,
     log: (m) => console.log('[bootstrap] ' + m)
   });
   console.log('[bootstrap] joined cluster as ' + result.coreId);

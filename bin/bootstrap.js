@@ -29,6 +29,7 @@
 //   node bin/bootstrap.js list-tokens [--tokens-path <path>]
 //   node bin/bootstrap.js revoke-token <coreId> [--ip <ip>]
 //                                               [--tokens-path <path>]
+//   node bin/bootstrap.js promote-core <coreId> [--force]
 //
 // All orchestration lives in business/src/bootstrap/cliOps.js — this file
 // only handles argv parsing, config loading and operator-facing output.
@@ -67,6 +68,7 @@ require('@pryv/boiler').init({
       case 'init-ca-holder': await runInitCaHolder(args); break;
       case 'list-tokens': await runListTokens(args); break;
       case 'revoke-token': await runRevokeToken(args); break;
+      case 'promote-core': await runPromoteCore(args); break;
       default:
         console.error('Unknown command: ' + args.command);
         printUsage(process.stderr);
@@ -230,6 +232,32 @@ async function runRevokeToken (args) {
   }
 }
 
+async function runPromoteCore (args) {
+  if (!args.coreId) throw new Error('promote-core: <coreId> is required');
+  const { cliOps } = require('business/src/bootstrap/index.ts');
+  const config = await getConfig();
+  const rqliteBaseUrl = config.get('storages:engines:rqlite:url') || 'http://localhost:4001';
+
+  console.log(`Promoting "${args.coreId}" to voter via leader ${rqliteBaseUrl} ...`);
+  const result = await cliOps.promoteCore({
+    rqliteBaseUrl,
+    coreId: args.coreId,
+    force: args.force === true
+  });
+
+  console.log(
+    `Removed "${result.coreId}" from the Raft configuration ` +
+    `(voters ${result.voterCountBefore} -> ${result.voterCountAfter} once it rejoins).`
+  );
+  console.log('');
+  console.log(`Now, ON ${result.coreId} itself, finish the promotion:`);
+  console.log('  1. Unset core.nonVoter (remove the key or set false) in its override-config.yml / host-config.yml.');
+  console.log('  2. Clear its stale rqlite Raft data dir so it rejoins cleanly (the platform DB re-replicates from the leader; user data is untouched).');
+  console.log('  3. Restart the core — it rejoins as a voter via the cluster\'s DNS discovery.');
+  console.log('');
+  console.log('Verify with: node bin/bootstrap.js list-tokens  (and the leader\'s /nodes endpoint).');
+}
+
 // ---------------------------------------------------------------------------
 // Init helpers
 // ---------------------------------------------------------------------------
@@ -355,7 +383,7 @@ function parseArgs (argv) {
     }
   }
   out.command = positional[0] || null;
-  if (out.command === 'revoke-token') out.coreId = positional[1] || null;
+  if (out.command === 'revoke-token' || out.command === 'promote-core') out.coreId = positional[1] || null;
   return out;
 }
 
@@ -371,6 +399,7 @@ function printUsage (stream = process.stderr) {
   node bin/bootstrap.js list-tokens [--tokens-path <path>]
   node bin/bootstrap.js revoke-token <coreId> [--ip <ip>]
                                               [--tokens-path <path>]
+  node bin/bootstrap.js promote-core <coreId> [--force]
 
 Flags:
   --id              new core's identifier (required for new-core)
@@ -382,6 +411,7 @@ Flags:
   --ca-dir          CA directory (default: /etc/pryv/ca or cluster.ca.path)
   --tls-dir         TLS material dir for init-ca-holder (default: /etc/pryv/tls
                      or http.ssl.tlsDir)
+  --force           promote-core: override the reachability / caught-up / 2-voter guards
   --no-write-config init-ca-holder: do not merge rqlite.tls.* into override-config
   --tokens-path     token-store JSON file (default: /var/lib/pryv/bootstrap-tokens.json
                      or cluster.tokens.path)
@@ -394,5 +424,13 @@ init-ca-holder:
   node.key into --tls-dir, and merges storages.engines.rqlite.tls.*
   (caFile/certFile/keyFile/verifyClient:true) into override-config.yml.
   Idempotent — safe to re-run.
+
+promote-core:
+  Promote a non-voting core to a voter. Run on the leader. Validates the
+  target is a reachable, caught-up non-voter and refuses to create a 2-voter
+  cluster (the 2-of-2 quorum trap), then removes it from the Raft config.
+  Finish by unsetting core.nonVoter on the target and restarting it so it
+  rejoins as a voter. Promote only when going to >=3 voters. See
+  SINGLE-TO-MULTIPLE.md.
 `);
 }
