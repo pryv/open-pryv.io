@@ -1,5 +1,9 @@
 # Changelog - API Changes
 
+## 2.0.0-rc.4 — 2026-06-18
+
+No API-facing changes. This release hardens multi-core operations: cores now join the cluster as **non-voters by default**, so adding a core can no longer take an existing core's control plane offline (see CHANGELOG-v2-back.md for the full description and the new `--bootstrap-as-voter` / `bin/bootstrap.js promote-core` operator surface).
+
 ## 2.0.0-rc.3 — 2026-06-17
 
 ### Scoped notifications — filter socket.io + webhook delivery by named scopes
