@@ -46,10 +46,16 @@ if (process.env.STORAGE_ENGINE) {
   // Parallel mode's per-worker `beforeAll` setup pushes
   // injectTestConfig BEFORE first barrel init, exposing the latent
   // broken PG/Mongo PlatformDB.
+  // fileStorage is independently overridable via `storages__file__engine`
+  // (honoured by `resolveTestFileEngine`) so the in-process mall agrees
+  // with the env source a DIM-forked child server reads — otherwise the
+  // hardcoded 'filesystem' below (forced into the memory scope at :73)
+  // shadows the override and the two sides split-brain.
+  const { resolveTestFileEngine } = require('./resolveTestFileEngine.ts');
   testConfig.storages = {
     base: { engine: eng },
     series: { engine: eng },
-    file: { engine: 'filesystem' },
+    file: { engine: resolveTestFileEngine() },
     audit: { engine: eng === 'postgresql' ? 'postgresql' : 'sqlite' }
   };
   // CRITICAL: apply the engine override at MODULE LOAD time (not at

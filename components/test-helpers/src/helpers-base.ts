@@ -69,10 +69,13 @@ const { getConfig, getConfigUnsafe } = require('@pryv/boiler');
 // helpers-base.ts) — leaving audit untouched here keeps that suite
 // green while still aligning the rest of the storage engine choice.
 if (process.env.STORAGE_ENGINE === 'sqlite') {
+  const { resolveTestFileEngine } = require('./resolveTestFileEngine.ts');
   const cfg = getConfigUnsafe(true);
   cfg.set('storages:base:engine', 'sqlite');
   cfg.set('storages:series:engine', 'sqlite');
-  cfg.set('storages:file:engine', 'filesystem');
+  // Honour `storages__file__engine` over the 'filesystem' default so this
+  // memory-scope set agrees with the env source DIM-forked children read.
+  cfg.set('storages:file:engine', resolveTestFileEngine());
 }
 
 // platform.piiMode defaults to "hashed" since 2.0.0-rc.3, and Platform.init
