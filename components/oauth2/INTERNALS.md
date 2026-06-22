@@ -18,13 +18,13 @@ Open Pryv.io deployments can run multiple cores fronted by a load balancer. Each
 
 `.well-known/oauth-authorization-server` is served by every core, but the `iss` field (and `authorization_endpoint`, `token_endpoint`, etc.) advertises the **load-balancer-facing URL** (e.g. `https://reg.pryv.me`), not the per-core URL. Every core's discovery doc MUST agree. Per-core URLs are internal routing detail; clients use the canonical service URL.
 
-Operators MUST keep the `oauth.*` config block in sync across cores; the discovery doc cannot accommodate disagreement. Optional polish: `bin/oauth-client.js doctor` (deferred — file as backlog if not in M6 scope).
+Operators MUST keep the `oauth.*` config block in sync across cores; the discovery doc cannot accommodate disagreement. An optional `bin/oauth-client.js doctor` subcommand may surface config drift in a later commit.
 
 ### Why vanilla OAuth clients need the `apiEndpoint` extension
 
 After `/oauth2/token` returns an access token, that token is bound to a specific user on a specific home core. Vanilla RFC 6749 clients don't know about Pryv's home-core routing — they'd hit `reg.pryv.me/<user>/<api>`, receive `421 + coreUrl` from `checkUserCore.ts`, and fail (RFC 6749 doesn't define 421-handling).
 
-The Pryv-specific `apiEndpoint` field in the token response (carried over from the existing `/reg/access` ACCEPTED response shape) tells the client the home-core URL directly. lib-js reads it automatically; vanilla clients MUST be told to read it (Phase G doc deliverable). Single-core deployments: `apiEndpoint` equals the LB URL — no client-side change needed.
+The Pryv-specific `apiEndpoint` field in the token response (carried over from the existing `/reg/access` ACCEPTED response shape) tells the client the home-core URL directly. lib-js reads it automatically; vanilla clients MUST be told to read it (operator-facing doc deliverable). Single-core deployments: `apiEndpoint` equals the LB URL — no client-side change needed.
 
 ## PlatformDB keyspaces
 
@@ -38,7 +38,7 @@ The component uses three PlatformDB keyspaces, all designed to fit the existing 
 
 ### Why client metadata is cluster-wide (no `coreId` prefix)
 
-Frozen-contract Invariant 2 permits client REGISTRATION METADATA in PlatformDB (NOT credentials). Cluster-wide reads are essential: `/oauth2/authorize` can land on any core, and the validator MUST resolve `client_id` → `redirect_uris` instantly. A `coreId` prefix would force a cross-core fetch on every authorize.
+By design, client REGISTRATION METADATA may live in PlatformDB (NOT credentials — the only secret-derived value cached is the Argon2id hash, which is one-way). Cluster-wide reads are essential: `/oauth2/authorize` can land on any core, and the validator MUST resolve `client_id` → `redirect_uris` instantly. A `coreId` prefix would force a cross-core fetch on every authorize.
 
 The App account's own `:_app:*` streams remain the authoritative source. The PlatformDB row is a denormalized read-cache; the operator CLI updates both atomically (single transaction at the write boundary).
 
@@ -47,8 +47,8 @@ The App account's own `:_app:*` streams remain the authoritative source. The Pla
 Authorization codes and refresh tokens are bound to the **issuing core** because:
 
 1. The granted access row lives in that core's per-user accesses table — only that core can revoke/inspect/touch it.
-2. Refresh-token rotation + reuse-detection (T-10 / Phase F) requires single-writer semantics; a cluster-wide row would invite race conditions.
-3. Per multi-core invariant 5: refresh tokens are core-sticky by design.
+2. Refresh-token rotation + reuse-detection requires single-writer semantics; a cluster-wide row would invite race conditions.
+3. Refresh tokens are core-sticky by multi-core design.
 
 The `coreId` prefix lets any core look up a row and immediately know whether to forward (`forwardIfCrossCore` if `coreId ≠ self`) or process locally.
 
@@ -73,7 +73,7 @@ presented  = "com.example.app:/cb"                 → MATCH (private-use URI sc
 
 No regex, no prefix matching, no scheme normalization. RFC 9700 §2.1 + RFC 8252 §7.5. Phishers exploit lax matching; we don't blink.
 
-The exhaustive matcher test family (`[OAUTH-REDIR]`) lands in M6 hardening but its callers exist from M2.
+An exhaustive matcher test family (`[OAUTH-REDIR]`) is planned alongside the hardening pass; the callers are wired as the grant handlers land.
 
 ## Audit-event awaiting
 
@@ -81,13 +81,13 @@ Every audit emission MUST be `await`ed. Silent fire-and-forget is a deliberate a
 
 Performance: audit writes are local (SQLite per-user audit DB); typical latency &lt; 5 ms. Not a hot-path concern.
 
-## Future Phase F hooks
+## DPoP extension points (not yet wired)
 
-Phase F adds DPoP (RFC 9449). The substrate to look for:
+DPoP (RFC 9449) is planned as a follow-up. The substrate to look for:
 
-- `componenets/oauth2/src/grants/authorization_code.ts` will gain a `jkt` (JWK thumbprint) binding to the issued access row when the token request carries a `DPoP` header.
+- `components/oauth2/src/grants/authorization_code.ts` will gain a `jkt` (JWK thumbprint) binding to the issued access row when the token request carries a `DPoP` header.
 - `/oauth2/token` response will switch `token_type: "Bearer"` → `"DPoP"` when the request carries a `DPoP` header (RFC 9449 §5).
 - `components/middleware/src/getAuth.ts` will gain a `DPoP` scheme branch alongside the existing `Bearer` branch.
 - New keyspace `dpop-nonce/<jkt>/<jti>` for single-use proof replay defence (short TTL ≈ clock-skew window).
 
-None of this lands in M1.
+None of this is wired in the current substrate.

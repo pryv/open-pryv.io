@@ -12,10 +12,10 @@
  *   import * as oauth2 from 'oauth2';
  *   oauth2.registerRoutes(app, { platform, config });
  *
- * M1 mounts ONLY `.well-known/oauth-authorization-server`. M2 adds
- * `/oauth2/authorize` + `/oauth2/authorize/accept` + `/oauth2/token`;
- * M3 + M4 extend the token endpoint with `refresh_token` +
- * `client_credentials` grants.
+ * If `service:api` is not configured, the OAuth surface is skipped
+ * with a single warn log — the host app boots normally. This lets
+ * deployments that do not yet enable OAuth (and the test matrix)
+ * load this module without any extra config wiring.
  */
 
 import { createRequire } from 'node:module';
@@ -24,49 +24,35 @@ const require = createRequire(import.meta.url);
 const { handleWellKnown } = require('./wellKnown.ts');
 const { listNamespaces } = require('./scopeRegistry.ts');
 
-/**
- * Shape of the deps the host app injects. `config` is the boiler-
- * style config; `oauth.*` and `service.api` must be populated.
- * PlatformDB is fetched lazily via `require('platform').getPlatform()`
- * inside individual route handlers (M2+) — same pattern as
- * `/reg/access` — so M1's mount path doesn't need it.
- */
 export type Deps = {
   config: { get (key: string): unknown };
 };
 
 /**
  * Mount OAuth2 routes on an Express app. Idempotent across calls
- * (re-mount during hot reload is safe).
+ * (re-mount during hot reload is safe). Soft-degrades to a no-op
+ * when `service:api` is not configured.
  */
 export function registerRoutes (app: { get?: Function }, deps: Deps): void {
   if (typeof app?.get !== 'function') {
     throw new Error('registerRoutes: app must be an Express-like instance');
   }
 
-  const issuer = String(deps.config.get('service.api') ?? '').replace(/\/$/, '');
+  const issuer = String(deps.config.get('service:api') ?? '').replace(/\/$/, '');
   if (!issuer) {
-    throw new Error('registerRoutes: service.api must be configured for the discovery doc');
+    console.warn('[oauth2] service:api not configured — OAuth routes not mounted');
+    return;
   }
 
-  // Scopes-supported derived from the live registry — Plan E.M1 ships
-  // `pryv:read pryv:write pryv:manage`; SMART plugin (follow-up plan)
-  // will add `smart:*` automatically once it registers.
   const scopesSupported = buildScopesSupported();
 
-  const grantTypesSupported = (deps.config.get('oauth.grantTypesSupported') as string[] | undefined)
+  const grantTypesSupported = (deps.config.get('oauth:grantTypesSupported') as string[] | undefined)
     ?? ['authorization_code'];
 
   app.get!(
     '/.well-known/oauth-authorization-server',
     handleWellKnown({ issuer, scopesSupported, grantTypesSupported }),
   );
-
-  // M2 will mount here:
-  //   app.get('/oauth2/authorize', handleAuthorize(deps));
-  //   app.post('/oauth2/authorize/accept', handleAccept(deps));
-  //   app.post('/oauth2/token', corsMiddleware, handleToken(deps));
-  //   app.options('/oauth2/token', corsPreflight);
 }
 
 /**

@@ -4,7 +4,7 @@ How to extend this component without re-litigating design decisions.
 
 ## Adding a new scope parser
 
-The scope parser registry (`src/scopeRegistry.ts`) is keyed by **namespace**. The default deployment registers only the `pryv:` namespace; the SMART on FHIR follow-up plan registers a `smart` parser the same way.
+The scope parser registry (`src/scopeRegistry.ts`) is keyed by **namespace**. The default deployment registers only the `pryv:` namespace; other grammars (e.g. SMART on FHIR) layer on by registering an additional parser.
 
 ```ts
 import { registerScopeParser } from './scopeRegistry.ts';
@@ -79,6 +79,6 @@ The App account IS the OAuth2 client. Its `:_app:*` streams carry RFC 7591 metad
 ## What NOT to do here
 
 - **Do not store `client_secret` plaintext anywhere.** The CLI hashes it with Argon2id at creation time; only the hash leaves the operator's terminal.
-- **Do not extend `oauth-client/<clientId>` with credentials.** Per frozen-contract Invariant 2, that keyspace is metadata-only. `client_secret_hash` IS permitted (one-way; not a usable credential by itself); plaintexts and reversible encryption are not.
+- **Do not extend `oauth-client/<clientId>` with credentials.** By design, that keyspace is metadata-only. `client_secret_hash` IS permitted (one-way; not a usable credential by itself); plaintexts and reversible encryption are not.
 - **Do not match `redirect_uri` with regex or prefix.** Exact match only, with the loopback carve-out (`127.0.0.1` / `[::1]` may vary port). See `INTERNALS.md` for the matcher rules.
 - **Do not redirect back to a supplied `redirect_uri` on validation failure.** Render an HTML 400 instead — defends against open-redirector phishing.

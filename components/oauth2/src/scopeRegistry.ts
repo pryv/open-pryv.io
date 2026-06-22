@@ -13,14 +13,10 @@
  * `pryv:read`, `pryv:write`, `pryv:manage`). The namespace selects a
  * parser registered in this module.
  *
- * Ships with the `pryv` namespace registered (the three coarse
- * named-scopes from Phase A §17 Q3 close). The SMART on FHIR
- * follow-up plan will register a `smart` parser without rewriting
- * any of this — see IMPLEMENTERS-GUIDE.md.
- *
- * Why pluggable from day one: Leaves room for
- * SMART scope grammar (`patient/Observation.read`, etc.) without a
- * persisted-scope-data migration. design decision.
+ * Ships with the `pryv` namespace registered (three coarse named
+ * scopes). Other grammars — SMART on FHIR `patient/Observation.read`
+ * for instance — layer on by registering a parser; no migration of
+ * persisted scope data is needed. See IMPLEMENTERS-GUIDE.md.
  */
 
 import { createRequire } from 'node:module';

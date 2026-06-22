@@ -8,12 +8,12 @@
 /**
  * OAuth2 — hand-maintained Pryv error.id → RFC 6749 §5.2 error enum map.
  *
- * Per Phase A §17 Q5 close (2026-06-19): map at the endpoint edge,
- * NOT auto-derived from the Pryv error catalogue. Reasons:
- * - keeps the OAuth surface decoupled from internal error churn
- * - one file to review for OAuth compliance
- * - explicit default (unmapped → invalid_request) avoids leaking
- *   Pryv-specific error.ids to vanilla OAuth clients
+ * Mapping at the endpoint edge (rather than auto-deriving from the
+ * Pryv error catalogue) keeps the OAuth surface decoupled from
+ * internal error churn, gives one file to review for OAuth
+ * compliance, and ensures unmapped errors fall through to the
+ * deliberate `invalid_request` default rather than leaking
+ * Pryv-specific error.ids to vanilla OAuth clients.
  *
  * Add new entries here whenever a Pryv error.id surfaces on an
  * /oauth2/* route. See IMPLEMENTERS-GUIDE.md.
@@ -86,7 +86,7 @@ export const errorMap: Record<string, OAuth2Error> = {
   'internal-error': 'server_error',
   'platform-storage-unavailable': 'temporarily_unavailable',
 
-  // --- resource-server (M2+ uses these via WWW-Authenticate) ---
+  // --- resource-server (used via WWW-Authenticate on protected resources) ---
   'expired-access-token': 'invalid_token',
   'revoked-access-token': 'invalid_token',
   'unknown-access-token': 'invalid_token',

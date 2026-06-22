@@ -37,9 +37,10 @@ export function WWW_AUTHENTICATE_BEARER (
 }
 
 /**
- * Phase F preview — `DPoP`-scheme challenge. Same shape, different
- * scheme keyword. M1 doesn't emit it; left here so M2's middleware
- * edit can reference both consistently.
+ * `DPoP`-scheme challenge — same shape as Bearer, different scheme
+ * keyword. Not emitted by the current surface; reserved so the
+ * middleware edit that adds DPoP support can reference both schemes
+ * consistently.
  */
 export function WWW_AUTHENTICATE_DPOP (
   realm: string = 'pryv.io',

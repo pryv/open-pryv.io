@@ -129,7 +129,8 @@ async function runCreate (platform, args, persistClient) {
   console.log('     grant_types:   ' + grantTypes.join(', '));
   console.log();
   console.log('NOTE: this writes the PlatformDB cache row only. The full');
-  console.log('      App-account :_app:* stream sync lands in M2/M4.');
+  console.log('      App-account :_app:* stream sync lands when the grant');
+  console.log('      handlers are wired.');
 }
 
 async function runShow (platform, args, getClient) {
@@ -183,8 +184,9 @@ async function runRevoke (platform, args, removeClient) {
   await removeClient(platform, clientId);
   console.log('OK   client revoked: ' + clientId);
   console.log();
-  console.log('NOTE: PlatformDB cache row removed. M2+ will also invalidate');
-  console.log('      access caches cluster-wide via the OAUTH_CLIENT_REVOKE pubsub channel.');
+  console.log('NOTE: PlatformDB cache row removed. Cluster-wide access-cache');
+  console.log('      invalidation via the OAUTH_CLIENT_REVOKE pubsub channel');
+  console.log('      lands with the grant handlers.');
 }
 
 // ---------------------------------------------------------------------------

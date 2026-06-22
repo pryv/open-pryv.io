@@ -8,14 +8,10 @@
 /**
  * OAuth2 — RFC 8414 `.well-known/oauth-authorization-server` handler.
  *
- * The discovery document is **per-deployment**, NOT per-core. All
- * cores in a deployment advertise the same `issuer` + endpoints
- * (LB-facing URL), so the operator MUST keep `oauth.*` config in
- * sync across cores. See INTERNALS.md — "Why iss is per-deployment".
- *
- * M1 ships the doc + the handler that emits it. M2 + M4 extend it
- * (`grant_types_supported` initially = `authorization_code`; M3 adds
- * `refresh_token`; M4 adds `client_credentials`).
+ * The discovery document is per-deployment, NOT per-core. All cores
+ * in a deployment advertise the same `issuer` + endpoints (LB-facing
+ * URL), so the operator MUST keep `oauth.*` config in sync across
+ * cores. See INTERNALS.md — "Why iss is per-deployment".
  */
 
 import { createRequire } from 'node:module';

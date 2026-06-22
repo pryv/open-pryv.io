@@ -9,17 +9,11 @@
  * OAuth2 — audit-event emission helper (skeleton).
  *
  * Thin wrapper around components/audit/'s primitives so every OAuth
- * grant + revoke path emits structured audit rows without each
- * caller knowing the audit-DB API.
- *
- * M1 ships the skeleton + type definitions. Actual `await audit(...)`
- * call-sites land in M2 (/oauth2/authorize, /oauth2/token
- * authorization_code), M3 (refresh), M4 (client_credentials).
- *
- * Per the design: all token-issuance + revoke
- * events are audited. M1 itself emits no audit events — CLI is
- * operator-side (separate admin trail). See IMPLEMENTERS-GUIDE.md
- * for the catalogue.
+ * grant + revoke path emits structured audit rows without each caller
+ * knowing the audit-DB API. All token-issuance + revoke events are
+ * audited; CLI operations are operator-side (separate admin trail)
+ * and intentionally do not emit here. See IMPLEMENTERS-GUIDE.md for
+ * the event catalogue.
  */
 
 import { createRequire } from 'node:module';
@@ -61,13 +55,12 @@ export type OAuthAuditPayload = {
  * deliberate anti-pattern (audit failures must surface per the
  * existing components/audit/ contract).
  *
- * M1 stub: no-op + logs at debug. M2 wires this to the real audit
- * subsystem (`components/audit/`'s public API).
+ * Current implementation is a stub (no-op + optional debug log); a
+ * later commit wires this to components/audit/'s public API when the
+ * grant handlers need it. The async signature lets callers await the
+ * call sites unchanged through that swap.
  */
 export async function audit (event: OAuthAuditEvent, payload: OAuthAuditPayload): Promise<void> {
-  // M1 skeleton — actual call into components/audit/ added when M2's
-  // grant handlers need it. Keeping a stub so M1 modules can `await`
-  // the call sites without conditional imports.
   if (process.env.OAUTH_AUDIT_DEBUG === '1') {
     // eslint-disable-next-line no-console
     console.debug('[oauth.audit]', event, payload);

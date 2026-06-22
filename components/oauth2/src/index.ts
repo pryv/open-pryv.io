@@ -10,9 +10,9 @@ const require = createRequire(import.meta.url);
 /**
  * OAuth2 component — public entry point.
  *
- * Re-exports the substrate from M1 (scope registry, error map,
- * client registry, well-known handler, audit helper, WWW-Authenticate
- * builder). Routes barrel + grant handlers added in M2+.
+ * Re-exports the substrate: scope registry, error map, client registry,
+ * well-known handler, audit helper, WWW-Authenticate builder, and the
+ * routes barrel consumed by api-server's boot pipeline.
  */
 
 const scopeRegistry = require('./scopeRegistry.ts');
