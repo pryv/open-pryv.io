@@ -652,5 +652,67 @@ export default function conformanceTests (getDB) {
         assert.strictEqual(await db.getObservabilityValue('iso-' + suffix), 'obs-value');
       });
     });
+
+    describe('[PLKV] setPlatformKv / getPlatformKv / deletePlatformKv / listPlatformKvKeys', () => {
+      it('[PLKV01] set + get round-trips a string value', async () => {
+        const key = 'kv-' + cuid();
+        await db.setPlatformKv(key, 'hello');
+        assert.strictEqual(await db.getPlatformKv(key), 'hello');
+      });
+
+      it('[PLKV02] get on unknown key returns null', async () => {
+        assert.strictEqual(await db.getPlatformKv('missing-' + cuid()), null);
+      });
+
+      it('[PLKV03] set replaces an existing value (idempotent upsert)', async () => {
+        const key = 'kv-' + cuid();
+        await db.setPlatformKv(key, 'v1');
+        await db.setPlatformKv(key, 'v2');
+        assert.strictEqual(await db.getPlatformKv(key), 'v2');
+      });
+
+      it('[PLKV04] delete is idempotent on missing keys', async () => {
+        await db.deletePlatformKv('missing-' + cuid()); // no throw
+      });
+
+      it('[PLKV05] delete removes the row', async () => {
+        const key = 'kv-' + cuid();
+        await db.setPlatformKv(key, 'x');
+        await db.deletePlatformKv(key);
+        assert.strictEqual(await db.getPlatformKv(key), null);
+      });
+
+      it('[PLKV06] listPlatformKvKeys returns matching keys (no prefix stripping)', async () => {
+        const ns = 'plkv-list-' + cuid() + '/';
+        const a = ns + 'alpha';
+        const b = ns + 'beta';
+        await db.setPlatformKv(a, '1');
+        await db.setPlatformKv(b, '2');
+        const keys = await db.listPlatformKvKeys(ns);
+        assert.ok(keys.includes(a));
+        assert.ok(keys.includes(b));
+      });
+
+      it('[PLKV07] listPlatformKvKeys rejects SQL LIKE wildcards in prefix', async () => {
+        await assert.rejects(() => db.listPlatformKvKeys('foo%'), /wildcard/);
+        await assert.rejects(() => db.listPlatformKvKeys('foo_'), /wildcard/);
+      });
+
+      it('[PLKV08] listPlatformKvKeys rejects empty prefix', async () => {
+        await assert.rejects(() => db.listPlatformKvKeys(''));
+      });
+
+      it('[PLKV09] platform-kv keyspace isolated from access-state / user-core', async () => {
+        const suffix = cuid();
+        const kvKey = 'iso-plkv/' + suffix;
+        await db.setPlatformKv(kvKey, 'kv-value');
+        await db.setAccessState('iso-as-' + suffix, { v: 1 }, Date.now() + 60_000);
+        await db.setUserCore('iso-uc-' + suffix, 'core-a');
+
+        assert.strictEqual(await db.getPlatformKv(kvKey), 'kv-value');
+        assert.ok(await db.getAccessState('iso-as-' + suffix));
+        assert.strictEqual(await db.getUserCore('iso-uc-' + suffix), 'core-a');
+      });
+    });
   });
 }

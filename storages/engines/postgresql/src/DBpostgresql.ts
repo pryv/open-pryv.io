@@ -385,6 +385,31 @@ class DBpostgresql {
     }
     return { removed };
   }
+
+  // --- Generic cluster-wide key-value (indefinite) --- //
+
+  async setPlatformKv (key: string, value: string): Promise<void> {
+    await this.#set(key, value);
+  }
+
+  async getPlatformKv (key: string): Promise<string | null> {
+    return await this.#get(key);
+  }
+
+  async deletePlatformKv (key: string): Promise<void> {
+    await this.#delete(key);
+  }
+
+  async listPlatformKvKeys (prefix: string): Promise<string[]> {
+    if (typeof prefix !== 'string' || prefix.length === 0) {
+      throw new Error('listPlatformKvKeys: prefix must be a non-empty string');
+    }
+    if (prefix.includes('%') || prefix.includes('_')) {
+      throw new Error('listPlatformKvKeys: prefix must not contain SQL LIKE wildcards');
+    }
+    const rows = await this.#getWithPrefix(prefix);
+    return rows.map((r) => r.key);
+  }
 }
 
 // --- Key helpers (same namespaces as the rqlite engine) --- //
@@ -433,5 +458,6 @@ function getMailTemplateKey (type: string, lang: string, part: string) {
 function getAccessStateKey (key: string) {
   return 'access-state/' + key;
 }
+
 
 export { DBpostgresql };
