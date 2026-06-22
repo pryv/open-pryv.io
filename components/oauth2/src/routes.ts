@@ -23,17 +23,42 @@ const require = createRequire(import.meta.url);
 
 const { handleWellKnown } = require('./wellKnown.ts');
 const { listNamespaces } = require('./scopeRegistry.ts');
+const { handleAuthorize } = require('./routes/authorize.ts');
+const { handleAccept } = require('./routes/accept.ts');
+const { handleToken } = require('./routes/token.ts');
+const { corsMiddleware } = require('./cors.ts');
 
 export type Deps = {
   config: { get (key: string): unknown };
+  /**
+   * Raw PlatformDB instance (`require('storages').platformDB`). Required
+   * for the public auth flow (/oauth2/authorize, /accept, /token);
+   * `.well-known` works without it.
+   */
+  platform?: any;
+  /**
+   * Resolve a user's personal access token to { userId, username } or
+   * null. Wired by the host app from the existing personal-token
+   * validation path. Required for /oauth2/authorize/accept.
+   */
+  resolveUser?: (userToken: string) => Promise<{ userId: string; username: string } | null>;
+  /**
+   * Mint an access for the given user + client + scope. Wired by the
+   * host app to the existing accesses.create path. Required for
+   * /oauth2/token.
+   */
+  issueAccess?: (params: { userId: string; clientId: string; scope: string[]; expiresAt: number }) =>
+    Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
 };
 
 /**
  * Mount OAuth2 routes on an Express app. Idempotent across calls
  * (re-mount during hot reload is safe). Soft-degrades to a no-op
- * when `service:api` is not configured.
+ * when `service:api` is not configured. The public auth flow routes
+ * (/oauth2/authorize, /accept, /token) mount only when their required
+ * deps (platform + resolveUser + issueAccess) are provided.
  */
-export function registerRoutes (app: { get?: Function }, deps: Deps): void {
+export function registerRoutes (app: { get?: Function; post?: Function; options?: Function }, deps: Deps): void {
   if (typeof app?.get !== 'function') {
     throw new Error('registerRoutes: app must be an Express-like instance');
   }
@@ -53,6 +78,27 @@ export function registerRoutes (app: { get?: Function }, deps: Deps): void {
     '/.well-known/oauth-authorization-server',
     handleWellKnown({ issuer, scopesSupported, grantTypesSupported }),
   );
+
+  if (deps.platform == null) {
+    console.warn('[oauth2] platform not provided — only the discovery doc is mounted');
+    return;
+  }
+  if (typeof deps.resolveUser !== 'function' || typeof deps.issueAccess !== 'function') {
+    console.warn('[oauth2] resolveUser / issueAccess not provided — /oauth2/authorize, /accept, /token not mounted');
+    return;
+  }
+
+  app.get!('/oauth2/authorize',
+    handleAuthorize({ config: deps.config, platform: deps.platform }));
+
+  app.post!('/oauth2/authorize/accept',
+    handleAccept({ config: deps.config, platform: deps.platform, resolveUser: deps.resolveUser }));
+
+  if (typeof app.options === 'function') {
+    app.options!('/oauth2/token', corsMiddleware);
+  }
+  app.post!('/oauth2/token', corsMiddleware,
+    handleToken({ config: deps.config, platform: deps.platform, issueAccess: deps.issueAccess }));
 }
 
 /**
