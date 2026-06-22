@@ -1,5 +1,17 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### `/service/info` can advertise adapters
+
+`/service/info` may now carry an optional `adapters` array — a list of adapter
+base URLs. Adapters are transient converters between Pryv and an external
+standard (for example iCalendar). Each URL serves the adapter's web UI and a
+`manifest.json` describing its name, type, version and capabilities; clients
+fetch `<url>/manifest.json` for the details. `{username}` templating is
+supported, as for the `api` field. Fully additive — the field is absent unless
+configured.
+
 ## 2.0.0-rc.4 — 2026-06-18
 
 No API-facing changes. This release hardens multi-core operations: cores now join the cluster as **non-voters by default**, so adding a core can no longer take an existing core's control plane offline (see CHANGELOG-v2-back.md for the full description and the new `--bootstrap-as-voter` / `bin/bootstrap.js promote-core` operator surface).
