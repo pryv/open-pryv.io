@@ -13,6 +13,7 @@ const require = createRequire(import.meta.url);
 const helpers = require('./helpers.ts');
 const object = helpers.object;
 const string = helpers.string;
+const array = helpers.array;
 
 export default function () {
   const schema = object({
@@ -32,7 +33,13 @@ export default function () {
     // it they fall back to the legacy `/reg/user` path that round-robins
     // through reg.{domain} and breaks cross-core registration on
     // multi-core deployments.
-    version: string()
+    version: string(),
+    // Optional list of adapter base URLs. Adapters are transient converters
+    // between Pryv and an external standard (e.g. iCalendar). Each URL serves
+    // the adapter's web UI and a `manifest.json` under it; clients fetch
+    // `<url>/manifest.json` for the adapter's name, type, version and
+    // capabilities. `{username}` templating is allowed, as for `api`.
+    adapters: array(string(), { nullable: true })
   }, {
     required: ['serial', 'api', 'access', 'register', 'name', 'home', 'support', 'terms', 'eventTypes'],
     additionalProperties: false
