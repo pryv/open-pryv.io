@@ -196,15 +196,16 @@ async function runRevoke (platform, args, removeClient) {
 async function initPlatform () {
   const { getConfig } = require('@pryv/boiler');
   const config = await getConfig();
-  await require('storages').init(config);
-  const { getPlatform } = require('platform');
-  return await getPlatform();
+  const storages = require('storages');
+  await storages.init(config);
+  // Use the raw PlatformDB directly (same pattern as /reg/access); the
+  // Platform.ts wrapper exposes only a curated subset of methods.
+  return storages.platformDB;
 }
 
 async function usernameExists (username) {
-  const { getStorageLayer } = require('storage');
-  const storageLayer = await getStorageLayer();
-  const usersIndex = await storageLayer.getUsersLocalIndex();
+  const { getUsersLocalIndex } = require('storage');
+  const usersIndex = await getUsersLocalIndex();
   return await usersIndex.usernameExists(username);
 }
 

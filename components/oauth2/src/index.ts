@@ -51,6 +51,9 @@ export const {
 export const {
   getClient,
   validateRedirectUri,
+  persistClient,
+  removeClient,
+  listClientIds,
 } = clientRegistry;
 
 export const {
