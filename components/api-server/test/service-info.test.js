@@ -67,6 +67,15 @@ describe('[SINF] Service', () => {
         'expected features.contentQueries=true');
     });
 
+    it('[SN04] passes configured adapters[] through to /service/info', async () => {
+      const adapters = ['https://{username}.pryv.me/adapter/calendar/'];
+      await withInjectedConfig({ service: Object.assign({}, mockInfo, { adapters }) }, async () => {
+        const res = await coreRequest.get('/' + username + '/service/info');
+        assert.strictEqual(res.status, 200);
+        assert.deepStrictEqual(res.body.adapters, adapters);
+      });
+    });
+
     it('[SN02] auto-derives features.noHF=true when cluster.hfsWorkers===0', async () => {
       // Test-config defaults `cluster.hfsWorkers: 1`, so noHF is NOT
       // auto-derived in the [FR4K] response. Force the no-HF case by
