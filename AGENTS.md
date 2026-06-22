@@ -20,7 +20,8 @@ The v1 line (pre-single-binary) is preserved on the [`release/1.9.3`](https://gi
 bin/              Entry points and admin CLIs
   master.js         Supervisor — forks cluster workers, runs rqlited, AcmeOrchestrator
   bootstrap.js      Multi-core onboarding (issue/consume sealed bundle)
-  backup.js         Engine-agnostic backup + restore (JSONL + gzip)
+  backup.js         Engine-agnostic backup + restore (JSONL + gzip; opt-in
+                    on-demand encryption — storages/interfaces/backup/BackupCipher.ts)
   migrate.js        Schema migration runner (status / up)
   dns-records.js    Persistent DNS record admin
   migrate-platform.js  Move platform data between rqlite and postgresql
