@@ -9,8 +9,9 @@
 # data roots under CEV_MOUNT via override-config, and run with --privileged (LUKS).
 # See INSTALL.md "Encryption at rest" and the companion's docs/OPERATING.md.
 #
-# Prerequisite: the payload image ghcr.io/pryv/container-encrypted-volume must be
-# pullable (public, or the builder authenticated to ghcr).
+# The payload image pryvio/container-encrypted-volume is public on Docker Hub
+# (same registry + org as this image), so the build pulls it with the Docker Hub
+# auth the release job already has.
 ARG IMAGE_TAG=2.0.0-pre
 FROM pryvio/open-pryv.io:${IMAGE_TAG}
 
@@ -19,7 +20,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends cryptsetup e2fsprogs openssl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/pryv/container-encrypted-volume:v0.1.0 /cev /opt/cev
+COPY --from=pryvio/container-encrypted-volume:v0.1.1 /cev /opt/cev
 
 ENV CEV_ENABLED=false \
     CEV_BACKEND=luks \
