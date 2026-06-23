@@ -7,7 +7,7 @@
 
 **Personal data & privacy management — open source**
 
-[![Digital Public Good](readme/dpg-badge.png)](https://digitalpublicgoods.net/registry/pryv-io.html)
+[![Digital Public Good](readme/dpg-badge.png)](https://www.digitalpublicgoods.net/r/open-pryvio)
 
 > **Release-candidate warning:** This is the v2 release candidate of Open Pryv.io. It is under active stabilization and not yet recommended for production workloads. For the last stable v1 release, see the [`release/1.9.3`](https://github.com/pryv/open-pryv.io/tree/release/1.9.3) branch.
 
