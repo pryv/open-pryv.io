@@ -113,7 +113,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
     }
     assert.equal(authRes.status, 302);
     const loc = authRes.headers.location;
-    const signedState = decodeURIComponent(loc.split('state=')[1]);
+    const signedState = decodeURIComponent(loc.split("state=")[1].split("&")[0]);
 
     // 2. /authorize/accept
     const acceptRes = await coreRequest
@@ -223,7 +223,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
           code_challenge_method: 'S256',
           scope: 'pryv:read',
         });
-      const signedState = decodeURIComponent(authRes.headers.location.split('state=')[1]);
+      const signedState = decodeURIComponent(authRes.headers.location.split("state=")[1].split("&")[0]);
       const acceptRes = await coreRequest
         .post('/oauth2/authorize/accept')
         .send({
@@ -268,7 +268,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
           code_challenge_method: 'S256',
           scope: 'pryv:read',
         });
-      const signedState = decodeURIComponent(authRes.headers.location.split('state=')[1]);
+      const signedState = decodeURIComponent(authRes.headers.location.split("state=")[1].split("&")[0]);
       const refuseRes = await coreRequest
         .post('/oauth2/authorize/refuse')
         .send({ state: signedState });

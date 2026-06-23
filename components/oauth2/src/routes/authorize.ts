@@ -131,8 +131,13 @@ export function handleAuthorize (deps: AuthorizeDeps) {
       userIdHint: isNonEmptyString(q.login_hint) ? String(q.login_hint) : undefined,
     });
 
+    // Pass the API endpoint to the consent UI as `pryvApi` so the UI
+    // can target /oauth2/authorize/accept + /refuse without needing
+    // its own config (operators can serve app-web-auth3 from anywhere).
     const sep = consentUrl.indexOf('?') >= 0 ? '&' : '?';
-    const consentRedirect = consentUrl + sep + 'state=' + encodeURIComponent(signed);
+    const consentRedirect = consentUrl + sep +
+      'state=' + encodeURIComponent(signed) +
+      '&pryvApi=' + encodeURIComponent(issuer);
     res.statusCode = 302;
     res.setHeader('Location', consentRedirect);
     res.setHeader('Cache-Control', 'no-store');

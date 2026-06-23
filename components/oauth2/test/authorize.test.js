@@ -90,7 +90,8 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       assert.equal(res.statusCode, 302);
       const loc = res.headers.location;
       assert.ok(loc.startsWith(CONSENT_URL + '?state='));
-      const stateParam = decodeURIComponent(loc.split('state=')[1]);
+      assert.match(loc, /&pryvApi=https%3A%2F%2Freg\.pryv\.me/);
+      const stateParam = decodeURIComponent(loc.split('state=')[1].split('&')[0]);
       const v = verifyState(ADMIN_KEY, stateParam);
       assert.equal(v.ok, true);
       assert.equal(v.payload.clientId, 'myapp');
@@ -103,7 +104,7 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       const handler = handleAuthorize({ config: fakeConfig(), platform });
       const res = fakeRes();
       await handler(fakeReq({ ...VALID_QUERY, login_hint: 'alice' }), res);
-      const v = verifyState(ADMIN_KEY, decodeURIComponent(res.headers.location.split('state=')[1]));
+      const v = verifyState(ADMIN_KEY, decodeURIComponent(res.headers.location.split('state=')[1].split('&')[0]));
       assert.equal(v.payload.userIdHint, 'alice');
     });
     it('[OA-OK3] response is cache-control: no-store', async () => {
