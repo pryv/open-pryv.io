@@ -38,6 +38,7 @@ const require = createRequire(import.meta.url);
 const oauth2 = require('oauth2');
 const { MethodContext } = require('business');
 const storages = require('storages');
+const cuid = require('cuid');
 
 // Map a coarse OAuth scope token to a Pryv permission entry on the
 // `*` wildcard stream id. This matches how /reg/access typically
@@ -113,12 +114,20 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     }
     const permissions = scopesToPermissions(scope);
     const expireAfter = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+    // Pryv enforces (type, name, deviceName) uniqueness on access rows.
+    // Every OAuth authorize-then-token flow mints a fresh access (its
+    // own refresh-token chain) — disambiguate via a session-unique
+    // deviceName, keeping the human-readable name on the clientId.
     const params = {
       type: 'app',
       name: 'oauth:' + clientId,
+      deviceName: 'oauth-session-' + cuid(),
       permissions,
       expireAfter,
     };
+    // The api dispatcher reads this off the context (set by setMethodId
+    // middleware on the normal route path; we set it directly here).
+    context.methodId = 'accesses.create';
     return await new Promise((resolve, reject) => {
       api.call(context, params, (err: unknown, result: any) => {
         if (err != null) return reject(err);
