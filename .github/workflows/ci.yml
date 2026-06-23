@@ -163,3 +163,18 @@ jobs:
           tags: |
             pryvio/open-pryv.io:${{ github.ref_name }}
             pryvio/open-pryv.io:2.0.0-pre
+      # Encryption-at-rest variant: layers the container-encrypted-volume payload
+      # onto the stock image just pushed above (base image unchanged; encryption
+      # opt-in via CEV_ENABLED at runtime). Pulls the payload from ghcr, which
+      # must be public (or add a ghcr docker/login-action step here).
+      - name: Build + push encryption-at-rest variant
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.encrypted
+          push: true
+          build-args: |
+            IMAGE_TAG=${{ github.ref_name }}
+          tags: |
+            pryvio/open-pryv.io-encrypted:${{ github.ref_name }}
+            pryvio/open-pryv.io-encrypted:2.0.0-pre

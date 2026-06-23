@@ -1,0 +1,33 @@
+# Encryption-at-rest variant of pryvio/open-pryv.io.
+#
+# Layers the `container-encrypted-volume` payload onto the stock image — the base
+# image is NOT modified. Encryption is OFF by default (CEV_ENABLED=false), so this
+# image boots exactly like the stock one until an operator opts in; the wrapper is
+# then a transparent pass-through to the normal entrypoint.
+#
+# To enable at runtime: set CEV_ENABLED=true, choose a key provider, relocate the
+# data roots under CEV_MOUNT via override-config, and run with --privileged (LUKS).
+# See INSTALL.md "Encryption at rest" and the companion's docs/OPERATING.md.
+#
+# Prerequisite: the payload image ghcr.io/pryv/container-encrypted-volume must be
+# pullable (public, or the builder authenticated to ghcr).
+ARG IMAGE_TAG=2.0.0-pre
+FROM pryvio/open-pryv.io:${IMAGE_TAG}
+
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends cryptsetup e2fsprogs openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/pryv/container-encrypted-volume:v0.1.0 /cev /opt/cev
+
+ENV CEV_ENABLED=false \
+    CEV_BACKEND=luks \
+    CEV_KEY_PROVIDER=env \
+    CEV_CONTAINER=/app/var-pryv/encrypted/data.img \
+    CEV_MOUNT=/app/var-pryv/encrypted/mnt \
+    CEV_SIZE_GIB=50 \
+    CEV_EXEC=/app/scripts/docker-entrypoint.sh
+
+ENTRYPOINT ["/opt/cev/entrypoint-wrapper.sh"]
+CMD []
