@@ -56,9 +56,18 @@ export interface OAuthCode {
   codeChallenge: string;
   codeChallengeMethod: 'S256';
   userId: string;
+  username: string;
   scope: string[];
   expiresAt: number;
+  /**
+   * The access is created at /accept time (when the user is
+   * authenticated) and these fields carry the result through to the
+   * /token exchange. Optional so legacy/test rows that don't carry
+   * them still parse; the grant handler defends against missing.
+   */
   accessId?: string;
+  accessToken?: string;
+  apiEndpoint?: string;
 }
 
 /** Refresh-token row (per-issuing-core, sliding 30d + 90d absolute). */

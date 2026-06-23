@@ -53,12 +53,6 @@ function fakePlatform () {
   };
 }
 
-const ISSUE_ACCESS_FAKE = async ({ userId, clientId }) => ({
-  accessId: 'acc-' + userId,
-  accessToken: 'tok-' + userId + '-' + clientId,
-  apiEndpoint: 'https://alice.pryv.me/',
-});
-
 function pkceVerifier () { return 'verifier-1234567890-abcdefg-hijklmnop'; }
 function pkceChallenge (verifier) {
   return crypto.createHash('sha256').update(verifier).digest('base64')
@@ -73,8 +67,12 @@ async function seedCode (platform, code, overrides = {}) {
     codeChallenge: pkceChallenge(verifier),
     codeChallengeMethod: 'S256',
     userId: 'u-alice',
+    username: 'alice',
     scope: ['pryv:read'],
     expiresAt: Date.now() + 60_000,
+    accessId: 'acc-u-alice',
+    accessToken: 'tok-u-alice-myapp',
+    apiEndpoint: 'https://alice.pryv.me/',
     ...overrides,
   });
   return verifier;
@@ -95,7 +93,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
     it('[OTA-OK1] valid exchange returns access_token + refresh_token + expires_in + scope + apiEndpoint', async () => {
       const platform = fakePlatform();
       const verifier = await seedCode(platform, 'CODE-OK1');
-      const handler = handleToken({ config: fakeConfig(), platform, issueAccess: ISSUE_ACCESS_FAKE });
+      const handler = handleToken({ config: fakeConfig(), platform });
       const res = fakeRes();
       await handler({
         body: {
@@ -117,7 +115,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
     it('[OTA-OK2] response carries Cache-Control: no-store + Pragma: no-cache', async () => {
       const platform = fakePlatform();
       const verifier = await seedCode(platform, 'CODE-OK2');
-      const handler = handleToken({ config: fakeConfig(), platform, issueAccess: ISSUE_ACCESS_FAKE });
+      const handler = handleToken({ config: fakeConfig(), platform });
       const res = fakeRes();
       await handler({
         body: {
@@ -137,7 +135,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
     it('[OTA-R1] reusing a code after success → invalid_grant', async () => {
       const platform = fakePlatform();
       const verifier = await seedCode(platform, 'CODE-R1');
-      const handler = handleToken({ config: fakeConfig(), platform, issueAccess: ISSUE_ACCESS_FAKE });
+      const handler = handleToken({ config: fakeConfig(), platform });
       const params = {
         grant_type: 'authorization_code',
         code: 'CODE-R1',
@@ -153,7 +151,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
     });
     it('[OTA-R2] unknown code → invalid_grant (same shape as reuse)', async () => {
       const platform = fakePlatform();
-      const handler = handleToken({ config: fakeConfig(), platform, issueAccess: ISSUE_ACCESS_FAKE });
+      const handler = handleToken({ config: fakeConfig(), platform });
       const res = fakeRes();
       await handler({
         body: {
@@ -173,7 +171,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
     it('[OTA-P1] wrong verifier → invalid_grant; code consumed (single-use even on PKCE fail)', async () => {
       const platform = fakePlatform();
       await seedCode(platform, 'CODE-P1');
-      const handler = handleToken({ config: fakeConfig(), platform, issueAccess: ISSUE_ACCESS_FAKE });
+      const handler = handleToken({ config: fakeConfig(), platform });
       const res = fakeRes();
       await handler({
         body: {
@@ -206,7 +204,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
     it('[OTA-M1] client_id mismatch → invalid_grant', async () => {
       const platform = fakePlatform();
       const verifier = await seedCode(platform, 'CODE-M1');
-      const handler = handleToken({ config: fakeConfig(), platform, issueAccess: ISSUE_ACCESS_FAKE });
+      const handler = handleToken({ config: fakeConfig(), platform });
       const res = fakeRes();
       await handler({
         body: {
@@ -223,7 +221,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
     it('[OTA-M2] redirect_uri mismatch → invalid_grant', async () => {
       const platform = fakePlatform();
       const verifier = await seedCode(platform, 'CODE-M2');
-      const handler = handleToken({ config: fakeConfig(), platform, issueAccess: ISSUE_ACCESS_FAKE });
+      const handler = handleToken({ config: fakeConfig(), platform });
       const res = fakeRes();
       await handler({
         body: {
@@ -242,7 +240,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
   describe('[OAUTH-TKN-AC-GRANT] grant-type dispatch', () => {
     it('[OTA-G1] missing grant_type → invalid_request', async () => {
       const platform = fakePlatform();
-      const handler = handleToken({ config: fakeConfig(), platform, issueAccess: ISSUE_ACCESS_FAKE });
+      const handler = handleToken({ config: fakeConfig(), platform });
       const res = fakeRes();
       await handler({ body: {} }, res);
       assert.equal(res.statusCode, 400);
@@ -250,7 +248,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
     });
     it('[OTA-G2] unknown grant_type → unsupported_grant_type', async () => {
       const platform = fakePlatform();
-      const handler = handleToken({ config: fakeConfig(), platform, issueAccess: ISSUE_ACCESS_FAKE });
+      const handler = handleToken({ config: fakeConfig(), platform });
       const res = fakeRes();
       await handler({ body: { grant_type: 'password' } }, res);
       assert.equal(res.statusCode, 400);
@@ -261,7 +259,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
   describe('[OAUTH-TKN-AC-PARAM] grant-input validation', () => {
     it('[OTA-PV1] missing code → invalid_request', async () => {
       const platform = fakePlatform();
-      const handler = handleToken({ config: fakeConfig(), platform, issueAccess: ISSUE_ACCESS_FAKE });
+      const handler = handleToken({ config: fakeConfig(), platform });
       const res = fakeRes();
       await handler({ body: { grant_type: 'authorization_code', code_verifier: 'v', client_id: 'c', redirect_uri: 'u' } }, res);
       assert.equal(res.body.error, 'invalid_request');
@@ -269,7 +267,7 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
     it('[OTA-PV2] missing code_verifier → invalid_request (PKCE mandatory)', async () => {
       const platform = fakePlatform();
       await seedCode(platform, 'CODE-PV2');
-      const handler = handleToken({ config: fakeConfig(), platform, issueAccess: ISSUE_ACCESS_FAKE });
+      const handler = handleToken({ config: fakeConfig(), platform });
       const res = fakeRes();
       await handler({ body: { grant_type: 'authorization_code', code: 'CODE-PV2', client_id: 'myapp', redirect_uri: 'https://app.example/cb' } }, res);
       assert.equal(res.body.error, 'invalid_request');

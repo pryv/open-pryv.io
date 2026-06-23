@@ -26,7 +26,6 @@ const { handleAuthorizationCode } = require('../grants/authorization_code.ts');
 export type TokenDeps = {
   config: { get (key: string): unknown };
   platform: any;
-  issueAccess: any;
 };
 
 export function handleToken (deps: TokenDeps) {
@@ -37,7 +36,7 @@ export function handleToken (deps: TokenDeps) {
     let outcome;
     if (grantType === 'authorization_code') {
       outcome = await handleAuthorizationCode(
-        { config: deps.config, platform: deps.platform, issueAccess: deps.issueAccess },
+        { config: deps.config, platform: deps.platform },
         body,
       );
     } else if (grantType === '') {

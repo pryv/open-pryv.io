@@ -37,18 +37,23 @@ export type Deps = {
    */
   platform?: any;
   /**
-   * Resolve a user's personal access token to { userId, username } or
-   * null. Wired by the host app from the existing personal-token
-   * validation path. Required for /oauth2/authorize/accept.
+   * Resolve a user's personal access token to a session handle, or
+   * null on failure. Wired by the host app from the existing
+   * personal-token validation path. Required for /oauth2/authorize/accept.
    */
-  resolveUser?: (userToken: string) => Promise<{ userId: string; username: string } | null>;
+  resolveUser?: (params: { username: string; userToken: string })
+    => Promise<{ userId: string; username: string; [key: string]: unknown } | null>;
   /**
-   * Mint an access for the given user + client + scope. Wired by the
-   * host app to the existing accesses.create path. Required for
-   * /oauth2/token.
+   * Mint an app access under the resolved user. Wired by the host app
+   * to api.call('accesses.create', ...) (or equivalent). Required for
+   * /oauth2/authorize/accept.
    */
-  issueAccess?: (params: { userId: string; clientId: string; scope: string[]; expiresAt: number }) =>
-    Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
+  createAccess?: (params: {
+    session: { userId: string; username: string; [key: string]: unknown };
+    clientId: string;
+    scope: string[];
+    expiresAt: number;
+  }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
 };
 
 /**
@@ -56,7 +61,7 @@ export type Deps = {
  * (re-mount during hot reload is safe). Soft-degrades to a no-op
  * when `service:api` is not configured. The public auth flow routes
  * (/oauth2/authorize, /accept, /token) mount only when their required
- * deps (platform + resolveUser + issueAccess) are provided.
+ * deps (platform + resolveUser + createAccess) are provided.
  */
 export function registerRoutes (app: { get?: Function; post?: Function; options?: Function }, deps: Deps): void {
   if (typeof app?.get !== 'function') {
@@ -83,8 +88,8 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
     console.warn('[oauth2] platform not provided — only the discovery doc is mounted');
     return;
   }
-  if (typeof deps.resolveUser !== 'function' || typeof deps.issueAccess !== 'function') {
-    console.warn('[oauth2] resolveUser / issueAccess not provided — /oauth2/authorize, /accept, /token not mounted');
+  if (typeof deps.resolveUser !== 'function' || typeof deps.createAccess !== 'function') {
+    console.warn('[oauth2] resolveUser / createAccess not provided — /oauth2/authorize, /accept, /token not mounted');
     return;
   }
 
@@ -92,13 +97,18 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
     handleAuthorize({ config: deps.config, platform: deps.platform }));
 
   app.post!('/oauth2/authorize/accept',
-    handleAccept({ config: deps.config, platform: deps.platform, resolveUser: deps.resolveUser }));
+    handleAccept({
+      config: deps.config,
+      platform: deps.platform,
+      resolveUser: deps.resolveUser,
+      createAccess: deps.createAccess,
+    }));
 
   if (typeof app.options === 'function') {
     app.options!('/oauth2/token', corsMiddleware);
   }
   app.post!('/oauth2/token', corsMiddleware,
-    handleToken({ config: deps.config, platform: deps.platform, issueAccess: deps.issueAccess }));
+    handleToken({ config: deps.config, platform: deps.platform }));
 }
 
 /**

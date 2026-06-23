@@ -9,15 +9,15 @@
  * OAuth2 — `grant_type=authorization_code` handler.
  *
  * Exchange flow:
- *   1. Load the code row (key: `oauth-code/<coreId>/<code>`).
- *   2. Delete the row atomically (single-use; reuse → revoke + error).
+ *   1. Load the code row (key: `oauth-code/<coreId>/<code>`). The row
+ *      carries the already-minted access details — see accept.ts for
+ *      why creation happens at /accept, not here.
+ *   2. Delete the row atomically (single-use; reuse → invalid_grant).
  *   3. Verify PKCE: SHA256(code_verifier) base64url == codeChallenge.
  *   4. Verify client_id + redirect_uri match the row.
- *   5. Issue an access token via the injected `issueAccess` callback
- *      (the route mount wires this to the per-user access repository).
- *   6. Mint a refresh token CUID, persist via storage.setRefresh.
- *   7. Return RFC 6749 §5.1 JSON + Pryv `apiEndpoint` extension for the
- *      multi-core home-core hint.
+ *   5. Mint a refresh token CUID, persist via storage.setRefresh.
+ *   6. Return RFC 6749 §5.1 JSON + Pryv `apiEndpoint` extension for the
+ *      multi-core home-core hint, both pulled from the stored row.
  *
  * Reuse-detection (T-05 mitigation): a second presentation of an
  * already-deleted code SHOULD trigger a cluster-wide revoke of every
@@ -34,18 +34,9 @@ const cuid = require('cuid');
 const storage = require('../storage.ts');
 const { audit } = require('../audit.ts');
 
-/** Callback shape: mint an access token for the user, return its opaque id + URL. */
-export type IssueAccess = (params: {
-  userId: string;
-  clientId: string;
-  scope: string[];
-  expiresAt: number;
-}) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
-
 export type AuthCodeDeps = {
   config: { get (key: string): unknown };
   platform: any;
-  issueAccess: IssueAccess;
 };
 
 export type GrantParams = {
@@ -116,18 +107,15 @@ export async function handleAuthorizationCode (
     return { ok: false, status: 400, error: 'invalid_grant', description: 'redirect_uri mismatch' };
   }
 
-  // Issue access via the injected callback.
-  const { accessTokenTTL, refreshTokenTTL, refreshTokenAbsoluteTTL } = lifetimes(deps.config);
-  const now = Date.now();
-  const accessExpiresAt = now + accessTokenTTL * 1000;
-  const issued = await deps.issueAccess({
-    userId: row.userId,
-    clientId: row.clientId,
-    scope: row.scope,
-    expiresAt: accessExpiresAt,
-  });
+  if (!row.accessToken || !row.accessId || !row.apiEndpoint) {
+    // Should not happen if accept.ts ran cleanly. Defensive guard so a
+    // future refactor doesn't silently return a half-formed response.
+    return { ok: false, status: 500, error: 'server_error', description: 'code row missing access details (accept-time provisioning skipped?)' };
+  }
 
   // Mint refresh token. Sliding TTL with absolute cap.
+  const { accessTokenTTL, refreshTokenTTL, refreshTokenAbsoluteTTL } = lifetimes(deps.config);
+  const now = Date.now();
   const refreshToken = cuid();
   await storage.setRefresh(deps.platform, coreId, refreshToken, {
     clientId: row.clientId,
@@ -149,18 +137,18 @@ export async function handleAuthorizationCode (
     clientId: row.clientId,
     userId: row.userId,
     grantedScope: row.scope,
-    accessId: issued.accessId,
+    accessId: row.accessId,
   });
 
   return {
     ok: true,
     body: {
-      access_token: issued.accessToken,
+      access_token: row.accessToken,
       token_type: 'Bearer',
       expires_in: accessTokenTTL,
       refresh_token: refreshToken,
       scope: row.scope.join(' '),
-      apiEndpoint: issued.apiEndpoint,
+      apiEndpoint: row.apiEndpoint,
     },
   };
 }
