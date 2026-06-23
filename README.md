@@ -1,6 +1,9 @@
 # Open Pryv.io v2.0.0-rc.2
 
-![Pryv.io](readme/logo-data-privacy-management-pryv.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="readme/logo-data-privacy-management-pryv-dark.png">
+  <img alt="Pryv.io" src="readme/logo-data-privacy-management-pryv.png" width="256">
+</picture>
 
 **Personal data & privacy management — open source**
 
