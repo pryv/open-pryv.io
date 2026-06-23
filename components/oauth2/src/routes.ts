@@ -25,6 +25,7 @@ const { handleWellKnown } = require('./wellKnown.ts');
 const { listNamespaces } = require('./scopeRegistry.ts');
 const { handleAuthorize } = require('./routes/authorize.ts');
 const { handleAccept } = require('./routes/accept.ts');
+const { handleRefuse } = require('./routes/refuse.ts');
 const { handleToken } = require('./routes/token.ts');
 const { corsMiddleware } = require('./cors.ts');
 
@@ -103,6 +104,9 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
       resolveUser: deps.resolveUser,
       createAccess: deps.createAccess,
     }));
+
+  app.post!('/oauth2/authorize/refuse',
+    handleRefuse({ config: deps.config }));
 
   if (typeof app.options === 'function') {
     app.options!('/oauth2/token', corsMiddleware);

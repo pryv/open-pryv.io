@@ -254,6 +254,31 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
     });
   });
 
+  describe('[OAUTH-E2E-REFUSE] refuse path', function () {
+    it('[OE14] POST /oauth2/authorize/refuse returns redirect URL with error=access_denied', async function () {
+      const { challenge } = pkce();
+      const authRes = await coreRequest
+        .get('/oauth2/authorize')
+        .query({
+          client_id: clientId,
+          redirect_uri: REDIRECT_URI,
+          response_type: 'code',
+          state: 'csrf-refuse',
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+          scope: 'pryv:read',
+        });
+      const signedState = decodeURIComponent(authRes.headers.location.split('state=')[1]);
+      const refuseRes = await coreRequest
+        .post('/oauth2/authorize/refuse')
+        .send({ state: signedState });
+      assert.equal(refuseRes.status, 200, JSON.stringify(refuseRes.body));
+      assert.ok(refuseRes.body.redirectTo.startsWith(REDIRECT_URI + '?error=access_denied'));
+      assert.match(refuseRes.body.redirectTo, /&state=csrf-refuse/);
+      assert.match(refuseRes.body.redirectTo, /&iss=/);
+    });
+  });
+
   describe('[OAUTH-E2E-WK] discovery doc', function () {
     it('[OE20] GET /.well-known/oauth-authorization-server returns RFC 8414 doc', async function () {
       const res = await coreRequest.get('/.well-known/oauth-authorization-server');
