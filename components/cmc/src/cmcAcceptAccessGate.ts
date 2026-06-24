@@ -8,25 +8,36 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * CMC plugin — events.create middleware that gates Bucket-1 lifecycle
- * triggers (consent/accept-cmc, consent/scope-update-cmc,
- * consent/revoke-cmc) to require a personal token.
+ * CMC plugin — events.create middleware that gates the lifecycle
+ * triggers (consent/accept-cmc, consent/scope-update-cmc) that mint
+ * or widen access on the user's account to require a personal token.
  *
- * Bucket-1 triggers either mint a local data-grant access (`accept`),
- * mutate an existing counterparty access (`scope-update`), or delete
- * the access pair (`revoke`). The plugin's orchestrator treats the
- * trigger event as "the user clicked the action in the consent UI"
- * and acts with full authority — but a non-personal token can be
- * held by any app the user authorized for the trigger stream, with
- * no guarantee the user was present or aware of the offer being
- * accepted. Personal tokens are only minted via the login flow, so
- * requiring one enforces user-presence + user-authentication at the
- * moment the trigger is written.
+ * These triggers mint a new local data-grant access (`accept`) or
+ * widen permissions on an existing counterparty access
+ * (`scope-update`). The plugin's orchestrator treats the trigger
+ * event as "the user clicked the action in the consent UI" and acts
+ * with full authority — but a non-personal token can be held by any
+ * app the user authorized for the trigger stream, with no guarantee
+ * the user was present or aware of the offer being accepted.
+ * Personal tokens are only minted via the login flow, so requiring
+ * one enforces user-presence + user-authentication at the moment the
+ * trigger is written.
  *
  * Apps without a personal token should hand off to app-web-auth3 via
- * @pryv/cmc.requestAccept (or .requestRevoke / .requestScopeUpdate).
+ * @pryv/cmc.requestAccept / requestScopeUpdate.
  *
- * Out of gate:
+ * **Revoke is NOT in this gate.** Revoke is a contraction, not an
+ * escalation — the access being deleted bounds the impact. Revoke is
+ * gated inside handleRevoke via the standard
+ * `AccessLogic.canDeleteAccess` rule (the same rule the
+ * `accesses.delete` route enforces), which honours the
+ * `selfRevoke` feature permission. This means apps holding the
+ * relationship's data-grant access can self-revoke without bouncing
+ * through app-web-auth3 — the natural Pryv access-management model.
+ *
+ * Out of this gate (un-gated at events.create — orchestrator may
+ * apply per-handler permission checks):
+ *   - consent/revoke-cmc — see handleRevoke's canDeleteAccess check.
  *   - consent/request-cmc — publishing an offer is chain-checked on
  *     the requester side at access-mint time (capability access perms
  *     ⊆ requester's own held perms).
@@ -48,7 +59,6 @@ const { CmcErrorIds } = require('./errorIds.ts');
 const GATED_EVENT_TYPES = new Set<string>([
   C.ET_ACCEPT,
   C.ET_SYSTEM_SCOPE_UPDATE,
-  C.ET_REVOKE,
 ]);
 
 type ErrorFactory = {

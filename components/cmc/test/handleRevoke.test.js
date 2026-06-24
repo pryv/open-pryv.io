@@ -201,6 +201,104 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.deepEqual(r.deletedAccessIds.sort(), ['acc-counterparty', 'acc-data-grant'].sort());
     });
 
+    it('[HR-AUTH-PT] passes when triggerAccess is personal (canDeleteAccess → true)', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const triggerAccess = { canDeleteAccess: () => true };
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: {},
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch, triggerAccess },
+      });
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.deletedAccessIds.sort(), ['acc-counterparty', 'acc-data-grant'].sort());
+    });
+
+    it('[HR-AUTH-SELF] passes when triggerAccess can self-revoke the target', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      // Sim a shared token that IS the data-grant access self-revoking:
+      // canDeleteAccess({id: acc-data-grant, ...}) → true.
+      const triggerAccess = {
+        canDeleteAccess: (target) => target.id === 'acc-data-grant' || target.id === 'acc-counterparty',
+      };
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: {},
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch, triggerAccess },
+      });
+      assert.equal(r.ok, true);
+    });
+
+    it('[HR-AUTH-NO] rejects with cmc-revoke-forbidden when triggerAccess cannot delete the data-grant', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const triggerAccess = { canDeleteAccess: () => false };
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: {},
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch, triggerAccess },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-revoke-forbidden');
+      // No outbound delivery + no deletes when the permission check fails.
+      assert.equal(calls.length, 0);
+    });
+
+    it('[HR-AUTH-PARTIAL] rejects when the counterparty access cannot be deleted (data-grant ok, counterparty no)', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const triggerAccess = {
+        canDeleteAccess: (target) => target.id === 'acc-data-grant',
+      };
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: {},
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch, triggerAccess },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-revoke-forbidden');
+      // Both checks happen before any delete or outbound; nothing fired.
+      assert.equal(calls.length, 0);
+    });
+
+    it('[HR-AUTH-SKIP] passes through when triggerAccess is absent (unit-test mocked deps)', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      // No triggerAccess in deps — the chain check skips.
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: {},
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+    });
+
     it('[HR12] from-collectors-stream routes the same way', async () => {
       const mall = fakeMall([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
       const { fetch, calls } = fakeFetch({ status: 201, body: {} });

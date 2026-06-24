@@ -32,6 +32,7 @@ const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const outbound = require('./outbound.ts');
 const accessesUpdateHookMod = require('./accessesUpdateHook.ts');
+const { CmcErrorIds } = require('./errorIds.ts');
 
 // Matches the trailing :collectors:<counterparty-slug> portion of a
 // system-channel stream-id. Captures (1) the prefix (app scope), (2) the
@@ -357,6 +358,41 @@ async function handleSystemScopeUpdate (params: {
           mergedPerms = [...userFacing, ...machinery];
         }
       }
+      // Chain check (defense in depth) — the api-server's accesses.update
+      // route runs the equivalent `canUpdateAccess` + `canCreateAccess`
+      // permission-subset checks in applyPrerequisitesForUpdate. The
+      // mall.accesses.update path bypasses them. Personal tokens
+      // short-circuit both to true; non-personal tokens are blocked by
+      // cmcAcceptAccessGateHook at events.create already, so this re-check
+      // closes the bypass for any path that reaches the handler without
+      // the gate. Skip when triggerAccess isn't plumbed (unit-test dispatch
+      // with mocked deps) — the gate is the primary guard.
+      const triggerAccess = (params.deps as { triggerAccess?: { canUpdateAccess?: (target: Record<string, unknown>) => boolean | Promise<boolean>; canCreateAccess?: (payload: Record<string, unknown>) => boolean | Promise<boolean> } })?.triggerAccess;
+      if (triggerAccess?.canUpdateAccess != null && triggerAccess?.canCreateAccess != null) {
+        let canUpdate = true;
+        let canGrant = true;
+        try {
+          canUpdate = await triggerAccess.canUpdateAccess({ id: accessId, type: 'shared' });
+        } catch (_e) { canUpdate = false; }
+        try {
+          canGrant = await triggerAccess.canCreateAccess({ type: 'shared', permissions: mergedPerms });
+        } catch (_e) { canGrant = false; }
+        if (!canUpdate || !canGrant) {
+          return {
+            ok: false,
+            reason: CmcErrorIds.INSUFFICIENT_PERMISSIONS,
+            detail: {
+              accessId,
+              canUpdate,
+              canGrant,
+              message: canUpdate
+                ? 'trigger-writing access cannot grant the proposed new permissions'
+                : 'trigger-writing access cannot update the target counterparty access',
+            },
+          };
+        }
+      }
+
       await accessesUpdateHookMod.runWithSuppression(async () => {
         await params.deps.mall.accesses.update(params.userId, {
           id: accessId,
