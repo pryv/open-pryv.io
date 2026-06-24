@@ -144,9 +144,59 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     });
   }
 
+  // ---------------------------------------------------------------------
+  // mintRefreshedAccess — storage-layer-direct path used at /oauth2/token
+  // refresh-grant time, when the user is no longer present. The original
+  // accesses.create chain ran at /accept and already validated the grant;
+  // refresh rotates credentials, never widens authority. Falls back to
+  // ApiEndpoint.build for the new token's apiEndpoint URL.
+  // ---------------------------------------------------------------------
+  async function mintRefreshedAccess ({ userId, username, clientId, scope, expiresAt }: {
+    userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
+  }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
+    if (typeof username !== 'string' || username.length === 0) {
+      throw new Error('mintRefreshedAccess: username required');
+    }
+    const accessesRepository = (storageLayer as any).accesses;
+    if (accessesRepository == null) {
+      throw new Error('mintRefreshedAccess: storageLayer.accesses unavailable');
+    }
+    const permissions = scopesToPermissions(scope);
+    const now = Math.floor(Date.now() / 1000);
+    const newToken = accessesRepository.generateToken();
+    const newAccessRow: any = {
+      type: 'app',
+      name: 'oauth:' + clientId,
+      deviceName: 'oauth-session-' + cuid(),
+      token: newToken,
+      permissions,
+      created: now,
+      createdBy: 'system',
+      modified: now,
+      modifiedBy: 'system',
+      expires: Math.floor(expiresAt / 1000),
+    };
+    const ApiEndpoint = require('utils').ApiEndpoint;
+    return await new Promise((resolve, reject) => {
+      accessesRepository.insertOne({ id: userId, username }, newAccessRow,
+        (err: any, newAccess: any) => {
+          if (err != null) return reject(err);
+          if (newAccess == null || typeof newAccess.id !== 'string' || typeof newAccess.token !== 'string') {
+            return reject(new Error('mintRefreshedAccess: accesses.insertOne returned no usable access'));
+          }
+          resolve({
+            accessId: newAccess.id,
+            accessToken: newAccess.token,
+            apiEndpoint: ApiEndpoint.build(username, newAccess.token),
+          });
+        });
+    });
+  }
+
   oauth2.registerRoutes(expressApp, {
     config,
     platform: storages.platformDB,
+    mintRefreshedAccess,
     resolveUser,
     createAccess,
   });

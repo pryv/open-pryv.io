@@ -22,10 +22,15 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { handleAuthorizationCode } = require('../grants/authorization_code.ts');
+const { handleRefreshToken } = require('../grants/refresh_token.ts');
 
 export type TokenDeps = {
   config: { get (key: string): unknown };
   platform: any;
+  /** Required when grant_type=refresh_token is dispatched. */
+  mintRefreshedAccess?: (params: {
+    userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
+  }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
 };
 
 export function handleToken (deps: TokenDeps) {
@@ -39,6 +44,15 @@ export function handleToken (deps: TokenDeps) {
         { config: deps.config, platform: deps.platform },
         body,
       );
+    } else if (grantType === 'refresh_token') {
+      if (typeof deps.mintRefreshedAccess !== 'function') {
+        outcome = { ok: false, status: 501, error: 'unsupported_grant_type', description: 'refresh_token grant is not wired on this deployment' };
+      } else {
+        outcome = await handleRefreshToken(
+          { config: deps.config, platform: deps.platform, mintRefreshedAccess: deps.mintRefreshedAccess },
+          body,
+        );
+      }
     } else if (grantType === '') {
       outcome = { ok: false, status: 400, error: 'invalid_request', description: 'grant_type is required' };
     } else {

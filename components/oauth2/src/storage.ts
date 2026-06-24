@@ -74,6 +74,7 @@ export interface OAuthCode {
 export interface OAuthRefresh {
   clientId: string;
   userId: string;
+  username: string;
   scope: string[];
   issuedAt: number;
   lastUsedAt: number;

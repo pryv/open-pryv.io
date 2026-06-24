@@ -55,6 +55,17 @@ export type Deps = {
     scope: string[];
     expiresAt: number;
   }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
+  /**
+   * Mint a refreshed app access at /oauth2/token refresh-grant time.
+   * The user is gone by then, so the host app uses the storage layer
+   * directly (no user-context-auth available). The original
+   * accesses.create chain ran at /accept time and already validated
+   * permissions; refresh rotates credentials, never widens authority.
+   * If not provided, refresh_token grant returns 501 unsupported_grant_type.
+   */
+  mintRefreshedAccess?: (params: {
+    userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
+  }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
 };
 
 /**
@@ -112,7 +123,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
     app.options!('/oauth2/token', corsMiddleware);
   }
   app.post!('/oauth2/token', corsMiddleware,
-    handleToken({ config: deps.config, platform: deps.platform }));
+    handleToken({ config: deps.config, platform: deps.platform, mintRefreshedAccess: deps.mintRefreshedAccess }));
 }
 
 /**

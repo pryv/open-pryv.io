@@ -254,6 +254,41 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
     });
   });
 
+  describe('[OAUTH-E2E-REFRESH] refresh_token grant', function () {
+    it('[OE15] refresh round-trip: code-grant → refresh-grant → new Bearer usable on /events', async function () {
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200);
+      const firstAccess = r.tokenRes.body.access_token;
+      const firstRefresh = r.tokenRes.body.refresh_token;
+      // Refresh
+      const refreshRes = await coreRequest
+        .post('/oauth2/token')
+        .type('form')
+        .send({ grant_type: 'refresh_token', refresh_token: firstRefresh, client_id: clientId });
+      assert.equal(refreshRes.status, 200, JSON.stringify(refreshRes.body));
+      assert.equal(refreshRes.body.token_type, 'Bearer');
+      assert.notEqual(refreshRes.body.access_token, firstAccess, 'refresh must mint a new access');
+      assert.notEqual(refreshRes.body.refresh_token, firstRefresh, 'refresh must rotate the refresh token');
+      assert.equal(refreshRes.body.scope, 'pryv:read');
+      // New token works on the resource server.
+      const eventsRes = await coreRequest
+        .get('/' + username + '/events')
+        .set('Authorization', refreshRes.body.access_token);
+      assert.equal(eventsRes.status, 200);
+    });
+
+    it('[OE16] reused refresh token → invalid_grant', async function () {
+      const r = await runFullFlow();
+      const firstRefresh = r.tokenRes.body.refresh_token;
+      const params = { grant_type: 'refresh_token', refresh_token: firstRefresh, client_id: clientId };
+      const r1 = await coreRequest.post('/oauth2/token').type('form').send(params);
+      assert.equal(r1.status, 200);
+      const r2 = await coreRequest.post('/oauth2/token').type('form').send(params);
+      assert.equal(r2.status, 400);
+      assert.equal(r2.body.error, 'invalid_grant');
+    });
+  });
+
   describe('[OAUTH-E2E-REFUSE] refuse path', function () {
     it('[OE14] POST /oauth2/authorize/refuse returns redirect URL with error=access_denied', async function () {
       const { challenge } = pkce();

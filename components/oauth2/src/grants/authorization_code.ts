@@ -120,6 +120,7 @@ export async function handleAuthorizationCode (
   await storage.setRefresh(deps.platform, coreId, refreshToken, {
     clientId: row.clientId,
     userId: row.userId,
+    username: row.username,
     scope: row.scope,
     issuedAt: now,
     lastUsedAt: now,
