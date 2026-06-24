@@ -44,6 +44,7 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const outbound = require('./outbound.ts');
+const { CmcErrorIds } = require('./errorIds.ts');
 
 import type { OutboundDeps } from './_types.ts';
 
@@ -167,6 +168,57 @@ async function handleRevoke (params: {
   // Find the paired data-grant (issued by us; readable to peer). Look-up
   // priority: peerAccessId pointer, then counterparty-tuple match.
   const dataGrantAccess = findPairedDataGrant(accesses, counterpartyAccess, counterparty, appCode);
+
+  // Permission check — the trigger-writing access must be able to delete
+  // each target (data-grant + counterparty) per the standard
+  // AccessLogic.canDeleteAccess rule (the same rule the api-server's
+  // accesses.delete route enforces). Reuses the existing primitive —
+  // honours the `selfRevoke` feature permission on the target accesses.
+  // No parallel "can revoke" logic.
+  //
+  // Personal token: always passes (isPersonal short-circuits).
+  // Self-revoke (the access being revoked is the same as the trigger
+  //   writer): passes if the target carries selfRevoke != 'forbidden'
+  //   (default allow). This is the natural Pryv model — a relationship's
+  //   data-grant access can be used by its holder to terminate the
+  //   relationship without bouncing to the user.
+  // App-token created the target: passes (createdBy match).
+  // Otherwise: rejected with cmc-revoke-forbidden.
+  //
+  // Plugin-managed peer-delivered revokes never reach this handler — the
+  // dispatch's `isPeerDeliveredEvent` short-circuit on OUTBOUND_LOOPABLE_TYPES
+  // returns 'skipped' before this code runs. So we don't need to special-case
+  // counterparty/capability accesses here.
+  const triggerAccess = (deps as { triggerAccess?: { canDeleteAccess?: (access: { type: string; id?: string; createdBy?: string }) => boolean | Promise<boolean> } })?.triggerAccess;
+  async function canTriggerDelete (target: { type?: string; id?: string; createdBy?: string }): Promise<boolean> {
+    if (triggerAccess?.canDeleteAccess == null) return true;
+    if (typeof target.type !== 'string' || typeof target.id !== 'string') return true;
+    try {
+      return await triggerAccess.canDeleteAccess({ type: target.type, id: target.id, createdBy: target.createdBy });
+    } catch (_e) {
+      return false;
+    }
+  }
+  if (dataGrantAccess != null) {
+    const ok = await canTriggerDelete(dataGrantAccess as { type?: string; id?: string; createdBy?: string });
+    if (!ok) {
+      return {
+        ok: false,
+        reason: CmcErrorIds.REVOKE_FORBIDDEN,
+        detail: { message: 'trigger-writing access lacks permissions to delete the data-grant access', accessId: dataGrantAccess.id },
+      };
+    }
+  }
+  {
+    const ok = await canTriggerDelete(counterpartyAccess as { type?: string; id?: string; createdBy?: string });
+    if (!ok) {
+      return {
+        ok: false,
+        reason: CmcErrorIds.REVOKE_FORBIDDEN,
+        detail: { message: 'trigger-writing access lacks permissions to delete the counterparty access', accessId: counterpartyAccess.id },
+      };
+    }
+  }
 
   // Step 3: delete the data-grant first (revokes peer's read immediately).
   const deletedIds: string[] = [];

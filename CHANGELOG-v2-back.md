@@ -1,41 +1,82 @@
 # Changelog - Internal (no API impact)
 
-## feat(cmc): personal-token gate on accept/scope-update/revoke + chain check in handleAccept
+## feat(cmc): access-permission gates on all access-mutating lifecycle triggers + chain checks in handlers
 
-CMC orchestration treated `consent/accept-cmc` (and the sibling `scope-update`/`revoke`
-triggers) as authoritative user consent regardless of which access wrote them: an app
-token with `:_cmc:apps:<app>:*, contribute` could write a `consent/accept-cmc` event
-whose `capabilityUrl` pointed at a colluding requester offering `permissions: [{streamId: '*', level: 'manage'}]`,
-and the recipient's plugin would dutifully mint a `shared` data-grant access on the
-user with `*/manage` — no consent UI shown, no user-presence guarantee. Two stacking
-fixes close the surface:
+CMC orchestration previously treated `consent/{accept,scope-update,revoke}-cmc`
+as authoritative user consent regardless of which access wrote them: an app
+token with `:_cmc:apps:<app>:*, contribute` could write a `consent/accept-cmc`
+event whose `capabilityUrl` pointed at a colluding requester offering
+`permissions: [{streamId: '*', level: 'manage'}]`, and the recipient's plugin
+would dutifully mint a `shared` data-grant access on the user with `*/manage`
+— no consent UI shown, no user-presence guarantee. The fix layers an
+events.create gate for the access-mint/widen triggers, an access-permission
+gate inside the revoke handler, and defense-in-depth chain checks in all
+three orchestrators that mutate access state.
 
-1. **`cmcAcceptAccessGateHook`** — new `events.create` middleware in
-   `components/cmc/src/cmcAcceptAccessGate.ts`. Rejects writes of the three gated
-   trigger types when `context.access.isPersonal()` returns false, with
-   `cmc-accept-requires-personal-token` (matches the existing CMC error convention:
-   400 invalid-operation, CMC id at `error.data.id`). Plugin-managed accesses
-   (`clientData.cmc.kind === 'capability'` or `clientData.cmc.role === 'counterparty'`)
-   are explicitly exempted so the cross-platform handshake — bob's capability POST
-   to alice's `:_cmc:_internal:responses:<capId>` and counterparty deliveries via
-   the shared data-grant pair — continues to work. Re-uses `AccessLogic.isPersonal()`
-   primitive; no parallel "is personal" implementation.
-2. **Defense-in-depth chain check in `handleAccept`** — before
-   `mall.accesses.create(userId, dataGrantPayload)`, the handler now calls
-   `triggerAccess.canCreateAccess(dataGrantPayload)` (re-using the same
-   `AccessLogic.canCreateAccess` method the api-server's `accesses.create` route
-   runs in `applyPrerequisitesForCreation`). Closes the long-standing bypass where
-   the storage-layer call skipped the chain check that the public route enforces.
-   The trigger-writer's access is plumbed through the dispatch's per-request deps
-   (`triggerAccess: context?.access`) so the handler can reach it.
+### Token-class gate (mint + widen — accept + scope-update)
 
-Test coverage: `[CMCAUTH-*]` (10 unit + 8 integration) cover personal-pass, app-reject,
-shared-reject, gated-trigger matrix, un-gated passthrough, and the capability/counterparty
-exemption. Existing cross-platform handshake (`[CMCHS-*]` 14 tests) green.
+`cmcAcceptAccessGateHook` (`components/cmc/src/cmcAcceptAccessGate.ts`) is a
+new `events.create` middleware. It rejects `consent/accept-cmc` and
+`consent/scope-update-cmc` writes when `context.access.isPersonal()` returns
+false, with `cmc-accept-requires-personal-token` (400 invalid-operation,
+CMC id at `error.data.id`). Plugin-managed accesses
+(`clientData.cmc.kind === 'capability'` or `clientData.cmc.role === 'counterparty'`)
+are explicitly exempted so the cross-platform handshake — bob's capability
+POST to alice's `:_cmc:_internal:responses:<capId>` and counterparty
+deliveries via the shared data-grant pair — continues to work. Reuses
+`AccessLogic.isPersonal()`; no parallel "is personal" implementation.
 
-User-facing impact: see `CHANGELOG-v2.md` "BREAKING — CMC trigger writes that mutate
-accesses now require a personal token" for the wire-level error contract + the
-`@pryv/cmc.requestAccept` helper hand-off path.
+### Access-permission gate (revoke)
+
+Revoke is a contraction, not an escalation — the access being deleted bounds
+the impact. `consent/revoke-cmc` is NOT in the events.create gate; instead
+`handleRevoke` calls `triggerAccess.canDeleteAccess(target)` before each
+`mall.accesses.delete` (data-grant + counterparty). This is the same
+primitive `accesses.delete` uses, so the existing `selfRevoke` feature
+permission carries over:
+
+- a personal token always passes;
+- a relationship's data-grant access can be used by its holder to self-revoke (default `selfRevoke: allow`) — no auth-page bounce needed;
+- an app token that created the access can revoke it;
+- everything else is rejected with `cmc-revoke-forbidden`.
+
+Peer-delivered revokes never reach `handleRevoke` (dispatch's
+`isPeerDeliveredEvent` short-circuit on `OUTBOUND_LOOPABLE_TYPES` returns
+`'skipped'` first), so the check doesn't interfere with cross-platform
+delivery.
+
+### Defense-in-depth chain checks inside the access-mutating handlers
+
+The api-server's `accesses.{create,update,delete}` routes enforce
+`access.can{Create,Update,Delete}Access(...)` in `applyPrerequisitesFor{...}`,
+but the CMC plugin used to call `mall.accesses.*` directly — bypassing those
+checks. All three handlers now run the same primitive before the
+storage-layer call, no parallel implementation:
+
+- `handleAccept` → `triggerAccess.canCreateAccess(dataGrantPayload)` before `mall.accesses.create`. Failure: `cmc-insufficient-permissions`.
+- `handleSystemScopeUpdate` → `triggerAccess.canUpdateAccess(target)` + `triggerAccess.canCreateAccess({permissions: mergedPerms, type: 'shared'})` before `mall.accesses.update`. Failure: `cmc-insufficient-permissions`.
+- `handleRevoke` → `triggerAccess.canDeleteAccess(target)` (see above) before each `mall.accesses.delete`. Failure: `cmc-revoke-forbidden`.
+
+The trigger-writer's `AccessLogic` is plumbed through the dispatch's
+per-request deps (`triggerAccess: context?.access`) so the handlers can reach
+it. `handleIncomingAccept`'s back-channel mint stays on direct
+`mall.accesses.create` — its permissions are bounded by the original
+request, which is chain-checked requester-side at publish time.
+
+### Test coverage
+
+- `[CMCAUTH-*]` 10 unit + 8 integration — the events.create gate (now covers accept + scope-update; revoke moved to a separate suite).
+- `[HR-AUTH-*]` 5 unit — `handleRevoke.canDeleteAccess` matrix (personal pass, self-revoke pass, total-no reject, partial reject, skip-when-no-triggerAccess).
+- `[HS-AUTH-*]` 4 unit — `handleSystemScopeUpdate` chain check (personal pass, canUpdate=false reject, canCreate=false reject, skip-when-no-triggerAccess).
+- Existing cross-platform handshake (`[CMCHS-*]` 14 tests) + the full CMC integration surface stay green.
+
+User-facing impact: see `CHANGELOG-v2.md` "BREAKING — CMC trigger writes
+that mint or widen accesses now require a personal token; revoke is
+access-permission-gated" for the wire-level error contracts + the
+`@pryv/cmc.requestAccept` / `requestScopeUpdate` hand-off helpers. No
+`requestRevoke` helper is needed — apps holding the relationship access
+self-revoke directly via the existing `cmc.revokeAcceptance` /
+`cmc.revokeRelationship` calls.
 
 ## feat(multi-core): cores join as non-voters by default, so adding a core can't take an existing core offline
 

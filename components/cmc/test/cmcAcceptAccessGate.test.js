@@ -8,11 +8,13 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * CMC plugin — Bucket-1 trigger access-gate tests.
+ * CMC plugin — access-mint/widen trigger access-gate tests.
  *
  * [CMCAUTH] covers the events.create middleware that rejects
- * consent/accept-cmc, consent/scope-update-cmc, and consent/revoke-cmc
- * writes when context.access is not personal.
+ * consent/accept-cmc and consent/scope-update-cmc writes when
+ * context.access is not personal. (Revoke is access-permission-
+ * gated inside handleRevoke via AccessLogic.canDeleteAccess —
+ * NOT personal-token-gated at events.create.)
  */
 
 const assert = require('node:assert/strict');
@@ -98,17 +100,22 @@ describe('[CMCAUTH] cmc/cmcAcceptAccessGate', () => {
     assert.equal(err.details.eventType, 'consent/scope-update-cmc');
   });
 
-  it('[CMCAUTH-RV] rejects revoke from a non-personal access', async () => {
+  it('[CMCAUTH-RV] passes revoke through this gate regardless of token class', async () => {
+    // Revoke is access-permission-gated inside handleRevoke (via
+    // AccessLogic.canDeleteAccess — honours the `selfRevoke` feature
+    // permission), NOT personal-token-gated at events.create. The gate
+    // here must pass any token class through; the handler decides.
     const errors = fakeErrors();
     const mw = createCmcAcceptAccessGateHook({ errors: errors.factory });
-    const ctx = {
-      newEvent: { streamIds: [':_cmc:apps:my-app:collectors:peer'], type: 'consent/revoke-cmc', content: {} },
-      access: SHARED,
-    };
-    const err = await runMiddleware(mw, ctx, {}, {});
-    assert.ok(err instanceof Error);
-    assert.equal(err.details.id, 'cmc-accept-requires-personal-token');
-    assert.equal(err.details.eventType, 'consent/revoke-cmc');
+    for (const access of [PERSONAL, APP, SHARED]) {
+      const ctx = {
+        newEvent: { streamIds: [':_cmc:apps:my-app:collectors:peer'], type: 'consent/revoke-cmc', content: {} },
+        access,
+      };
+      const err = await runMiddleware(mw, ctx, {}, {});
+      assert.equal(err, undefined, 'expected pass for revoke with ' + access.type);
+    }
+    assert.equal(errors.captured.length, 0);
   });
 
   it('[CMCAUTH-UN] passes through un-gated trigger types regardless of token class', async () => {

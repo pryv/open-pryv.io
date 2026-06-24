@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+<<<<<<< HEAD
 ### Optional encryption-at-rest image variant
 
 A new published image variant `pryvio/open-pryv.io-encrypted` adds optional
@@ -23,41 +24,70 @@ fetch `<url>/manifest.json` for the details. `{username}` templating is
 supported, as for the `api` field. Fully additive — the field is absent unless
 configured.
 
-### BREAKING — CMC trigger writes that mutate accesses now require a personal token
+### BREAKING — CMC trigger writes that mint or widen accesses now require a personal token; revoke is access-permission-gated
 
-Writing `consent/accept-cmc`, `consent/scope-update-cmc`, or `consent/revoke-cmc`
-to a `:_cmc:apps:*` stream now requires the calling access to be **personal**.
-These three trigger types mint, mutate, or delete data-grant accesses on the
-user's account; requiring a personal token enforces that the user is provably
-present and authenticated at the moment the action is recorded — closing a
-scope-escalation surface where an app token with narrow `:_cmc:apps:*` write
-permission could trigger creation of a much broader `shared` data-grant access
-derived from a colluding requester's offer.
+Writing `consent/accept-cmc` or `consent/scope-update-cmc` to a `:_cmc:apps:*`
+stream now requires the calling access to be **personal**. These two trigger
+types mint (`accept`) or widen (`scope-update`) data-grant accesses on the
+user's account; requiring a personal token enforces user-presence at the
+moment the action is recorded — closing a scope-escalation surface where an
+app token with narrow `:_cmc:apps:*` write permission could trigger creation
+of a much broader `shared` data-grant access derived from a colluding
+requester's offer.
 
-- **Wire-level rejection:** non-personal tokens receive
-  `HTTP 400 invalid-operation` with `error.data.id = "cmc-accept-requires-personal-token"`
-  and `error.data.eventType = "<the rejected event type>"`. Clients pattern-match on
-  `error.data.id` for the hand-off UX.
+**Revoke uses the standard access-permission gate, not a token-class check.**
+`consent/revoke-cmc` is a contraction (deletion), not an escalation — the
+access being deleted bounds the impact. The `handleRevoke` orchestrator now
+runs `triggerAccess.canDeleteAccess(target)` (the same primitive
+`accesses.delete` uses) before deleting each access in the counterparty pair.
+This honours the `selfRevoke` feature permission on the target accesses, so:
+
+- a personal token can always revoke (covers everything);
+- a relationship's data-grant access can be used by its holder to **self-revoke** the relationship (default `selfRevoke: allow`), without bouncing through `app-web-auth3` — the natural Pryv access-management model;
+- an app token that **created** the access can revoke it;
+- everything else is rejected with `error.data.id === "cmc-revoke-forbidden"`.
+
+Operators who set `selfRevoke: forbidden` on a counterparty access at mint
+time block the self-revoke path explicitly — the existing feature-permission
+contract carries over unchanged.
+
+- **Wire-level rejection (accept + scope-update):** non-personal tokens receive
+  `HTTP 400 invalid-operation` with
+  `error.data.id = "cmc-accept-requires-personal-token"` and
+  `error.data.eventType = "<the rejected event type>"`.
+- **Wire-level rejection (revoke):** `HTTP 400 invalid-operation` with
+  `error.data.id = "cmc-revoke-forbidden"` returned by the orchestrator (the
+  trigger event is persisted with `content.status = "failed"` +
+  `content.failure.reason = "cmc-revoke-forbidden"`).
 - **Un-gated trigger types** are unchanged: `consent/request-cmc`,
-  `consent/refuse-cmc`, `consent/invalidate-link-cmc`, `consent/scope-request-cmc`,
-  and the chat / system / notification families continue to accept any token class
-  with the appropriate stream-write permission.
-- **Plugin-managed access exemption:** the gate passes through cross-platform
-  protocol deliveries — capability accesses (`clientData.cmc.kind === "capability"`)
-  and counterparty data-grant accesses (`clientData.cmc.role === "counterparty"`).
-  The cross-user handshake is unaffected.
-- **Defense in depth:** `handleAccept` now also runs the standard
-  `AccessLogic.canCreateAccess` chain check on the data-grant payload before
-  `mall.accesses.create` — mirroring what the `accesses.create` route enforces
-  in `applyPrerequisitesForCreation`. The bypass that allowed the storage-layer
-  call to side-step the chain check is closed.
+  `consent/refuse-cmc`, `consent/invalidate-link-cmc`,
+  `consent/scope-request-cmc`, and the chat / system / notification families
+  continue to accept any token class with the appropriate stream-write
+  permission.
+- **Plugin-managed access exemption (accept + scope-update):** the gate passes
+  through cross-platform protocol deliveries — capability accesses
+  (`clientData.cmc.kind === "capability"`) and counterparty data-grant accesses
+  (`clientData.cmc.role === "counterparty"`). The cross-user handshake is
+  unaffected.
+- **Defense-in-depth chain checks inside handlers** — closing the long-standing
+  bypass where `mall.accesses.*` calls skipped what the api-server's routes
+  enforce in `applyPrerequisitesFor{Creation,Update}`:
+  - `handleAccept` runs `triggerAccess.canCreateAccess(dataGrantPayload)` before
+    `mall.accesses.create`.
+  - `handleSystemScopeUpdate` runs `triggerAccess.canUpdateAccess(target)` +
+    `triggerAccess.canCreateAccess({permissions: mergedPerms, type: 'shared'})`
+    before `mall.accesses.update`.
+  - `handleRevoke` runs `triggerAccess.canDeleteAccess(target)` (see revoke
+    behaviour above) before each `mall.accesses.delete`.
 
 **Upgrade path for apps without a personal token** — adopt the new
-`@pryv/cmc.requestAccept` / `requestRevoke` / `requestScopeUpdate` helpers
-(lib-js ≥ next minor), which open `app-web-auth3` (≥ next minor) so the user
-authenticates, the personal token writes the trigger, and the data-grant
-apiEndpoint is returned to the app via popup `postMessage` or `returnUrl`
-redirect.
+`@pryv/cmc.requestAccept` / `requestScopeUpdate` helpers (lib-js ≥ next
+minor), which open `app-web-auth3` (≥ next minor) so the user authenticates,
+the personal token writes the trigger, and the data-grant apiEndpoint is
+returned to the app via popup `postMessage` or `returnUrl` redirect. **No
+`requestRevoke` is needed** — apps holding the relationship access can
+self-revoke directly via `cmc.revokeAcceptance(...)` / `cmc.revokeRelationship(...)`
+without bouncing through the auth pages.
 
 ## 2.0.0-rc.4 — 2026-06-18
 

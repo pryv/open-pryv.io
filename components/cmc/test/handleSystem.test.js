@@ -627,6 +627,105 @@ describe('[CMCHS] cmc/handleSystem', () => {
       assert.equal(calls.length, 1);
     });
 
+    it('[HS-AUTH-PT] passes the chain check when triggerAccess is personal', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      let updated = false;
+      mall.accesses.update = async () => { updated = true; };
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const triggerAccess = { canUpdateAccess: () => true, canCreateAccess: () => true };
+      const trigger = {
+        ...SCOPE_UPDATE_TRIGGER,
+        content: {
+          ...SCOPE_UPDATE_TRIGGER.content,
+          accessId: 'acc-back-channel',
+          newPermissions: [{ streamId: 'fertility', level: 'read' }],
+        },
+      };
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1',
+        triggerEvent: trigger,
+        selfIdentity: SELF,
+        deps: { mall, fetch, triggerAccess },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(updated, true);
+    });
+
+    it('[HS-AUTH-NUP] rejects with cmc-insufficient-permissions when canUpdateAccess is false', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      let updated = false;
+      mall.accesses.update = async () => { updated = true; };
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const triggerAccess = { canUpdateAccess: () => false, canCreateAccess: () => true };
+      const trigger = {
+        ...SCOPE_UPDATE_TRIGGER,
+        content: {
+          ...SCOPE_UPDATE_TRIGGER.content,
+          accessId: 'acc-back-channel',
+          newPermissions: [{ streamId: 'fertility', level: 'read' }],
+        },
+      };
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1',
+        triggerEvent: trigger,
+        selfIdentity: SELF,
+        deps: { mall, fetch, triggerAccess },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-insufficient-permissions');
+      assert.equal(r.detail.canUpdate, false);
+      assert.equal(updated, false);
+    });
+
+    it('[HS-AUTH-NCR] rejects with cmc-insufficient-permissions when canCreateAccess is false (cannot grant the proposed perms)', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      let updated = false;
+      mall.accesses.update = async () => { updated = true; };
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const triggerAccess = { canUpdateAccess: () => true, canCreateAccess: () => false };
+      const trigger = {
+        ...SCOPE_UPDATE_TRIGGER,
+        content: {
+          ...SCOPE_UPDATE_TRIGGER.content,
+          accessId: 'acc-back-channel',
+          newPermissions: [{ streamId: 'fertility', level: 'read' }],
+        },
+      };
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1',
+        triggerEvent: trigger,
+        selfIdentity: SELF,
+        deps: { mall, fetch, triggerAccess },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-insufficient-permissions');
+      assert.equal(r.detail.canGrant, false);
+      assert.equal(updated, false);
+    });
+
+    it('[HS-AUTH-SKIP] passes through when triggerAccess is absent (unit-test mocked deps)', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      let updated = false;
+      mall.accesses.update = async () => { updated = true; };
+      const { fetch } = fakeFetch({ status: 201, body: {} });
+      const trigger = {
+        ...SCOPE_UPDATE_TRIGGER,
+        content: {
+          ...SCOPE_UPDATE_TRIGGER.content,
+          accessId: 'acc-back-channel',
+          newPermissions: [{ streamId: 'fertility', level: 'read' }],
+        },
+      };
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1',
+        triggerEvent: trigger,
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(updated, true);
+    });
+
     it('[HS28] local-apply failure surfaces as cmc-scope-update-local-apply-failed', async () => {
       const mall = fakeMall([COUNTERPARTY_ACCESS]);
       mall.accesses.update = async () => { throw new Error('access-update-fail'); };
