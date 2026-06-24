@@ -161,6 +161,28 @@ const CmcErrorIds = {
   // counterparty role on its own access, bypassing the handshake
   // entirely. Reject up-front.
   CLIENTDATA_CMC_FORBIDDEN: 'cmc-clientdata-cmc-forbidden',
+
+  // --- Token-class gate on accept/scope-update/revoke triggers ---
+  // The events.create trigger for consent/accept-cmc,
+  // consent/scope-update-cmc, or consent/revoke-cmc was written by a
+  // non-personal access (app or shared). These triggers mutate or mint
+  // local accesses on the user's account; a personal token is required
+  // so the user is provably present + authenticated at the moment of
+  // acceptance / revocation / scope change. Apps without a personal
+  // token should hand off to app-web-auth3 via @pryv/cmc.requestAccept
+  // (or .requestRevoke / .requestScopeUpdate) — the user authenticates
+  // in app-web-auth3, the personal token writes the trigger, and the
+  // result returns to the app via popup postMessage or returnUrl.
+  ACCEPT_REQUIRES_PERSONAL_TOKEN: 'cmc-accept-requires-personal-token',
+
+  // --- Chain-check failure inside handleAccept ---
+  // Defense-in-depth: even if the access-gate above passes (e.g. a
+  // hypothetical future path bypasses it), handleAccept now invokes
+  // context.access.canCreateAccess(dataGrantPayload) before
+  // mall.accesses.create — mirroring the chain check the api-server's
+  // accesses.create route enforces. A non-personal context with
+  // permissions narrower than the offer's would land here.
+  INSUFFICIENT_PERMISSIONS: 'cmc-insufficient-permissions',
 } as const;
 
 type CmcErrorId = (typeof CmcErrorIds)[keyof typeof CmcErrorIds];

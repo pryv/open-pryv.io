@@ -1,5 +1,43 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### BREAKING — CMC trigger writes that mutate accesses now require a personal token
+
+Writing `consent/accept-cmc`, `consent/scope-update-cmc`, or `consent/revoke-cmc`
+to a `:_cmc:apps:*` stream now requires the calling access to be **personal**.
+These three trigger types mint, mutate, or delete data-grant accesses on the
+user's account; requiring a personal token enforces that the user is provably
+present and authenticated at the moment the action is recorded — closing a
+scope-escalation surface where an app token with narrow `:_cmc:apps:*` write
+permission could trigger creation of a much broader `shared` data-grant access
+derived from a colluding requester's offer.
+
+- **Wire-level rejection:** non-personal tokens receive
+  `HTTP 400 invalid-operation` with `error.data.id = "cmc-accept-requires-personal-token"`
+  and `error.data.eventType = "<the rejected event type>"`. Clients pattern-match on
+  `error.data.id` for the hand-off UX.
+- **Un-gated trigger types** are unchanged: `consent/request-cmc`,
+  `consent/refuse-cmc`, `consent/invalidate-link-cmc`, `consent/scope-request-cmc`,
+  and the chat / system / notification families continue to accept any token class
+  with the appropriate stream-write permission.
+- **Plugin-managed access exemption:** the gate passes through cross-platform
+  protocol deliveries — capability accesses (`clientData.cmc.kind === "capability"`)
+  and counterparty data-grant accesses (`clientData.cmc.role === "counterparty"`).
+  The cross-user handshake is unaffected.
+- **Defense in depth:** `handleAccept` now also runs the standard
+  `AccessLogic.canCreateAccess` chain check on the data-grant payload before
+  `mall.accesses.create` — mirroring what the `accesses.create` route enforces
+  in `applyPrerequisitesForCreation`. The bypass that allowed the storage-layer
+  call to side-step the chain check is closed.
+
+**Upgrade path for apps without a personal token** — adopt the new
+`@pryv/cmc.requestAccept` / `requestRevoke` / `requestScopeUpdate` helpers
+(lib-js ≥ next minor), which open `app-web-auth3` (≥ next minor) so the user
+authenticates, the personal token writes the trigger, and the data-grant
+apiEndpoint is returned to the app via popup `postMessage` or `returnUrl`
+redirect.
+
 ## 2.0.0-rc.4 — 2026-06-18
 
 No API-facing changes. This release hardens multi-core operations: cores now join the cluster as **non-voters by default**, so adding a core can no longer take an existing core's control plane offline (see CHANGELOG-v2-back.md for the full description and the new `--bootstrap-as-voter` / `bin/bootstrap.js promote-core` operator surface).

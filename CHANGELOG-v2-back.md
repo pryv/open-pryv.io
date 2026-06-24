@@ -1,5 +1,42 @@
 # Changelog - Internal (no API impact)
 
+## feat(cmc): personal-token gate on accept/scope-update/revoke + chain check in handleAccept
+
+CMC orchestration treated `consent/accept-cmc` (and the sibling `scope-update`/`revoke`
+triggers) as authoritative user consent regardless of which access wrote them: an app
+token with `:_cmc:apps:<app>:*, contribute` could write a `consent/accept-cmc` event
+whose `capabilityUrl` pointed at a colluding requester offering `permissions: [{streamId: '*', level: 'manage'}]`,
+and the recipient's plugin would dutifully mint a `shared` data-grant access on the
+user with `*/manage` — no consent UI shown, no user-presence guarantee. Two stacking
+fixes close the surface:
+
+1. **`cmcAcceptAccessGateHook`** — new `events.create` middleware in
+   `components/cmc/src/cmcAcceptAccessGate.ts`. Rejects writes of the three gated
+   trigger types when `context.access.isPersonal()` returns false, with
+   `cmc-accept-requires-personal-token` (matches the existing CMC error convention:
+   400 invalid-operation, CMC id at `error.data.id`). Plugin-managed accesses
+   (`clientData.cmc.kind === 'capability'` or `clientData.cmc.role === 'counterparty'`)
+   are explicitly exempted so the cross-platform handshake — bob's capability POST
+   to alice's `:_cmc:_internal:responses:<capId>` and counterparty deliveries via
+   the shared data-grant pair — continues to work. Re-uses `AccessLogic.isPersonal()`
+   primitive; no parallel "is personal" implementation.
+2. **Defense-in-depth chain check in `handleAccept`** — before
+   `mall.accesses.create(userId, dataGrantPayload)`, the handler now calls
+   `triggerAccess.canCreateAccess(dataGrantPayload)` (re-using the same
+   `AccessLogic.canCreateAccess` method the api-server's `accesses.create` route
+   runs in `applyPrerequisitesForCreation`). Closes the long-standing bypass where
+   the storage-layer call skipped the chain check that the public route enforces.
+   The trigger-writer's access is plumbed through the dispatch's per-request deps
+   (`triggerAccess: context?.access`) so the handler can reach it.
+
+Test coverage: `[CMCAUTH-*]` (10 unit + 8 integration) cover personal-pass, app-reject,
+shared-reject, gated-trigger matrix, un-gated passthrough, and the capability/counterparty
+exemption. Existing cross-platform handshake (`[CMCHS-*]` 14 tests) green.
+
+User-facing impact: see `CHANGELOG-v2.md` "BREAKING — CMC trigger writes that mutate
+accesses now require a personal token" for the wire-level error contract + the
+`@pryv/cmc.requestAccept` helper hand-off path.
+
 ## feat(oauth2): foundation component — discovery doc, scope/error/client registries, PlatformDB keyspaces, app-account CLI
 
 New top-level component `components/oauth2/` lays the groundwork for the OAuth 2.0 authorization-server surface. No public auth flow yet — `/oauth2/authorize` + `/oauth2/token` arrive in a follow-up — but the substrate is fully wired:

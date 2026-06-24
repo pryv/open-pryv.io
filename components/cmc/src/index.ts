@@ -25,6 +25,7 @@ const dispatch = require('./dispatch.ts');
 const chatOrchestration = require('./chatOrchestration.ts');
 const capabilityMintHook = require('./capabilityMintHook.ts');
 const inboxWriteHook = require('./inboxWriteHook.ts');
+const cmcAcceptAccessGate = require('./cmcAcceptAccessGate.ts');
 const handleSystem = require('./handleSystem.ts');
 const handleChat = require('./handleChat.ts');
 const handleRevoke = require('./handleRevoke.ts');
@@ -57,6 +58,7 @@ export const { createMallAccessesAdapter } = mallAccessesAdapter;
 
 export const { createCapabilityMintHook, createCapabilityPostCreateHook } = capabilityMintHook;
 export const { createInboxWriteHook } = inboxWriteHook;
+export const { createCmcAcceptAccessGateHook } = cmcAcceptAccessGate;
 
 export const { createDispatchMiddleware } = dispatch;
 
