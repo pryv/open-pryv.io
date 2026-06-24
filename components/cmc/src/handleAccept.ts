@@ -188,7 +188,38 @@ async function handleAccept (params: {
     };
   }
 
-  // 3. Create the local data-grant access.
+  // 3. Chain check (defense in depth) — the api-server's accesses.create
+  // route runs `context.access.canCreateAccess(payload)` in
+  // applyPrerequisitesForCreation before insertOne. mall.accesses.create
+  // (storage-layer) bypasses that check. The primary protection is
+  // cmcAcceptAccessGateHook (events.create middleware) which rejects
+  // non-personal tokens before dispatch runs; this re-check closes the
+  // mall bypass for any path that reaches here without the gate. Reuses
+  // AccessLogic.canCreateAccess — no parallel implementation. If
+  // triggerAccess isn't provided (unit-test dispatch with mocked deps),
+  // skip the check; the gate is the primary guard.
+  const triggerAccess = (deps as { triggerAccess?: { canCreateAccess?: (payload: unknown) => boolean | Promise<boolean> } })?.triggerAccess;
+  if (triggerAccess?.canCreateAccess != null) {
+    let canCreate = true;
+    try {
+      canCreate = await triggerAccess.canCreateAccess(dataGrantPayload!);
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        reason: CmcErrorIds.INSUFFICIENT_PERMISSIONS,
+        detail: { message: 'canCreateAccess threw: ' + String((err as Error)?.message || err) },
+      };
+    }
+    if (!canCreate) {
+      return {
+        ok: false,
+        reason: CmcErrorIds.INSUFFICIENT_PERMISSIONS,
+        detail: { message: 'trigger-writing access lacks permissions to mint the data-grant access' },
+      };
+    }
+  }
+
+  // 4. Create the local data-grant access.
   let dataGrantAccess: { id?: string; token?: string; apiEndpoint?: string; [k: string]: unknown } | undefined;
   try {
     // Invariant: dataGrantPayload is assigned in the build step above; the

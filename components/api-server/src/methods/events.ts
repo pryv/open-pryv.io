@@ -305,6 +305,10 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     logger: getLogger('cmc:ensure-reserved-parents'),
   });
   const cmcInboxWriteHook = cmc.createInboxWriteHook({ errors });
+  // Gate Bucket-1 CMC trigger writes (accept / scope-update / revoke) to
+  // require a personal token. Non-personal tokens hand off to
+  // app-web-auth3 via @pryv/cmc helpers. Reuses AccessLogic.isPersonal().
+  const cmcAcceptAccessGateHook = cmc.createCmcAcceptAccessGateHook({ errors });
   // Phase 4 H8: stamp content.from from access identity when a
   // counterparty-marked access writes a chat/system message into a
   // per-app stream. inboxWriteHook covers :_cmc:inbox; this hook covers
@@ -380,6 +384,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
           pubsub.notifications.emit(username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
         }
       },
+      // Carry the trigger-writer's AccessLogic into the dispatch deps so
+      // handleAccept can run canCreateAccess on the data-grant payload
+      // before mall.accesses.create — same chain check the api-server's
+      // accesses.create route enforces. Defense-in-depth complement to
+      // cmcAcceptAccessGateHook (which rejects non-personal tokens before
+      // dispatch even runs).
+      triggerAccess: context?.access,
     };
   });
   api.register(
@@ -395,6 +406,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     cmcEnsureReservedParentsHook,
     verifyCanCreateEventsOnStream,
     cmcContentValidationHook,
+    cmcAcceptAccessGateHook,
     cmcCapabilityMintHook,
     cmcInboxWriteHook,
     cmcCounterpartyFromStampingHook,
