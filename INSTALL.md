@@ -352,6 +352,60 @@ server {
 | `data/previews/` | Generated image previews |
 | `data/rqlite-data/` | Platform DB (rqlite Raft log + SQLite snapshot) |
 
+## Encryption at rest (optional)
+
+By default the data directories above are stored as plaintext on disk; encrypting
+the underlying volume is the operator's responsibility (host full-disk encryption,
+cloud-disk encryption, or PostgreSQL TDE for external PG). Platform *secrets*
+(Let's Encrypt account keys, observability tokens, cluster bootstrap bundles) are
+always encrypted at rest (AES-256-GCM).
+
+For a turnkey option, a separately published image variant
+**`pryvio/open-pryv.io-encrypted`** layers the
+[`container-encrypted-volume`](https://github.com/pryv/container-encrypted-volume)
+facility onto the stock image. It provisions and mounts an encrypted volume inside
+the container on boot, so the data directories sit on ciphertext at rest. It is
+**off by default** (`CEV_ENABLED=false`) — the variant boots exactly like the stock
+image until you opt in — and the stock `pryvio/open-pryv.io` image is unchanged.
+
+What it protects: stolen / decommissioned disks, off-host volume backups,
+snapshots. It does **not** protect a running container (that is access control's
+job). It satisfies the encryption-at-rest expectations of HIPAA §164.312(a)(2)(iv)
+and GDPR Art.32(1)(a).
+
+To enable (LUKS backend shown):
+
+```bash
+docker run --privileged \
+  -e CEV_ENABLED=true \
+  -e CEV_KEY_PROVIDER=aws-kms -e CEV_KMS_BLOB=/run/secrets/cev.blob -e CEV_AWS_REGION=eu-central-2 \
+  -v pryv-encrypted:/app/var-pryv/encrypted \
+  -v "$PWD/override-config.yml":/app/config/override-config.yml:ro \
+  -p 3000:3000 \
+  pryvio/open-pryv.io-encrypted:<tag>
+```
+
+Then relocate the data roots onto the encrypted mount in your `override-config.yml`
+(they support `${ENV}` interpolation; do **not** reuse `/app/var-pryv/rqlite-data`,
+which is a declared `VOLUME`):
+
+```yaml
+storages:
+  base:   { engine: sqlite }      # SQLite base storage lands on the mount
+  engines:
+    sqlite:     { path: /app/var-pryv/encrypted/mnt/users }
+    filesystem: { attachmentsDirPath: /app/var-pryv/encrypted/mnt/attachments }
+    rqlite:     { dataDir: /app/var-pryv/encrypted/mnt/rqlite-data }
+```
+
+Notes:
+- LUKS needs `--privileged` (or `--cap-add SYS_ADMIN` + device mappings); restricted
+  Kubernetes Pod Security profiles may forbid it — use host-side FDE there instead.
+- An **external** PostgreSQL data dir and remote S3 attachments are outside this
+  mount — encrypt those operator-side / with bucket SSE.
+- Key custody, rotation, and disaster recovery (key lost = data lost) are covered in
+  the companion's [`docs/OPERATING.md`](https://github.com/pryv/container-encrypted-volume/blob/master/docs/OPERATING.md).
+
 ## Docker / Dokku deployment
 
 ### What to persist
