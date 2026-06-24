@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Optional encryption-at-rest image variant
+
+A new published image variant `pryvio/open-pryv.io-encrypted` adds optional
+encryption at rest for the data directories (events, attachments, series, audit,
+platform DB). It layers the `container-encrypted-volume` facility onto the stock
+image and mounts an encrypted volume inside the container on boot. The base
+`pryvio/open-pryv.io` image is unchanged, and the variant is off by default
+(`CEV_ENABLED=false`) so it boots identically until opted in. Pluggable backends
+(LUKS / gocryptfs) and key providers (env / file / exec / clevis / aws-kms). See
+the "Encryption at rest" section of `INSTALL.md`.
+
 ### `/service/info` can advertise adapters
 
 `/service/info` may now carry an optional `adapters` array — a list of adapter
