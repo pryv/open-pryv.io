@@ -156,6 +156,7 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 - **Don't hot-wire cert rotation with `fs.watchFile` or cron.** Use the existing `AcmeOrchestrator` → `acme:rotate` IPC → worker `reloadTls()` path.
 - **Don't ship multi-process orchestration shims** (PM2, runit, supervisord configs). master.js replaces those. If you need to restart a worker, master.js already does it (see `cluster.on('exit', ...)`).
 - **Don't write PlatformDB directly.** Go through `components/platform/` — it enforces config-snapshot hashes and cluster-wide semantics. Bypassing it silently desyncs cores.
+- **CMC `accept` / `scope-update` / `revoke` triggers are personal-token-only.** `consent/accept-cmc`, `consent/scope-update-cmc`, and `consent/revoke-cmc` writes mutate access state on the user's account; the gate (`components/cmc/src/cmcAcceptAccessGate.ts`) rejects app- or shared-access tokens with `400 invalid-operation` + `error.data.id === 'cmc-accept-requires-personal-token'`. Don't try to relax this gate to make a test pass — the gate exists to enforce user-presence at the moment of acceptance. Apps without a personal token use `pryv.cmc.requestAccept(...)` (lib-js `@pryv/cmc` ≥ 3.8) to hand off to `app-web-auth3`'s `/cmc-accept` page. The plugin-managed access exemption (`clientData.cmc.kind === 'capability'` / `role === 'counterparty'`) is how cross-platform delivery still works — don't widen it. See `components/cmc/INTERNALS.md` "Token-class gate on lifecycle triggers" for the full story.
 
 ## TypeScript conventions
 

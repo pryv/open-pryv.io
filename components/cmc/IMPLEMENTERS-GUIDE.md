@@ -231,7 +231,15 @@ The patient's app renders the consent screen.
 
 ## Step 4 — User accepts (single write on patient's own platform)
 
+> **Token class.** `consent/accept-cmc`, `consent/scope-update-cmc`, and `consent/revoke-cmc` writes require a **personal** access token. App- or shared-access tokens are rejected `400 invalid-operation` with `error.data.id === 'cmc-accept-requires-personal-token'`. The trust model is that the user has signed in to authorize the action; the personal-token requirement enforces user-presence at the moment of acceptance.
+>
+> **Two flows, same result:**
+>
+> 1. **Direct (when your app already holds a personal token):** post `events.create` from `patientConnection`, as shown below.
+> 2. **Hand-off (when your app holds only an app/shared token):** call [`pryv.cmc.requestAccept(...)`](https://github.com/pryv/lib-js/tree/master/components/pryv-cmc) — it opens app-web-auth3's `/cmc-accept` page where the user signs in, the trigger is written with the fresh personal token, and the data-grant apiEndpoint is returned to your app via popup `postMessage` or `returnUrl` redirect.
+
 ```js
+// Direct flow — patientConnection authenticated with a personal token.
 await patientConnection.api([
   {
     method: 'events.create',
@@ -245,6 +253,15 @@ await patientConnection.api([
     }
   }
 ]);
+
+// Hand-off flow — patient app holds an app/shared token; defer to app-web-auth3.
+const result = await pryv.cmc.requestAccept({
+  authUrl: 'https://access.pryv.me/access/v3/cmc-accept',
+  pryvApi: 'https://reg.pryv.me/',
+  capabilityUrl: 'https://AbC...Xyz@example.com/',
+  scopeStreamId: ':_cmc:apps:patient:incoming'
+});
+// result = { ok: true, dataGrantApiEndpoint, acceptEventId }
 ```
 
 That's the user's only call. Everything else is server-orchestrated by the user's plugin:
