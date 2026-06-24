@@ -20,8 +20,7 @@ The v1 line (pre-single-binary) is preserved on the [`release/1.9.3`](https://gi
 bin/              Entry points and admin CLIs
   master.js         Supervisor — forks cluster workers, runs rqlited, AcmeOrchestrator
   bootstrap.js      Multi-core onboarding (issue/consume sealed bundle)
-  backup.js         Engine-agnostic backup + restore (JSONL + gzip; opt-in
-                    on-demand encryption — storages/interfaces/backup/BackupCipher.ts)
+  backup.js         Engine-agnostic backup + restore (JSONL + gzip)
   migrate.js        Schema migration runner (status / up)
   dns-records.js    Persistent DNS record admin
   migrate-platform.js  Move platform data between rqlite and postgresql
@@ -157,6 +156,7 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
 - **Don't hot-wire cert rotation with `fs.watchFile` or cron.** Use the existing `AcmeOrchestrator` → `acme:rotate` IPC → worker `reloadTls()` path.
 - **Don't ship multi-process orchestration shims** (PM2, runit, supervisord configs). master.js replaces those. If you need to restart a worker, master.js already does it (see `cluster.on('exit', ...)`).
 - **Don't write PlatformDB directly.** Go through `components/platform/` — it enforces config-snapshot hashes and cluster-wide semantics. Bypassing it silently desyncs cores.
+- **CMC access-state-mutating triggers are gated — two distinct gate shapes.** `consent/accept-cmc` (mint) + `consent/scope-update-cmc` (widen) are personal-token-only at `events.create` (`components/cmc/src/cmcAcceptAccessGate.ts`) AND chain-checked in `handleAccept` / `handleSystemScopeUpdate`. `consent/revoke-cmc` (delete) is NOT in the personal-token gate — `handleRevoke` runs `AccessLogic.canDeleteAccess(target)` per delete (honours the `selfRevoke` feature permission so the relationship's data-grant access can self-revoke). Apps without a personal token use `pryv.cmc.requestAccept(...)` (lib-js `@pryv/cmc` ≥ 3.9) or `requestScopeUpdate(...)` to hand off to `app-web-auth3`'s `/cmc-accept` / `/cmc-scope-update` page. There is no `requestRevoke` hand-off — revoke goes through the standard access-permission rule. Don't relax the mint/widen gate to make a test pass — it exists to enforce user-presence at the moment access is created or widened. The plugin-managed access exemption (`clientData.cmc.kind === 'capability'` / `role === 'counterparty'`) is how cross-platform delivery still works — don't widen it. See `components/cmc/INTERNALS.md` "Access-state-mutating triggers — token-class + access-permission gates" for the full story.
 
 ## TypeScript conventions
 

@@ -217,6 +217,26 @@ When a `consent/request-cmc` is written with `capabilityRequested: true`, the pl
 
 The access's `apiEndpoint` IS the capability URL — a standard `pryv.Connection(url)` works against it. Hidden from `accesses.get` by default (filtered by `clientData.cmc.kind: 'capability'`); operators can opt to surface them via a query parameter.
 
+### Access-state-mutating triggers — token-class + access-permission gates
+
+Three CMC lifecycle triggers mutate access state on the recipient's account. Two distinct gate shapes, chosen per trigger by what the orchestrator does with the access:
+
+| Trigger | Gate | Rejection wire shape |
+|---|---|---|
+| `consent/accept-cmc` (mint) | **personal-token only** at `events.create`, AND `triggerAccess.canCreateAccess(payload)` in `handleAccept` | `400 invalid-operation` + `error.data.id === 'cmc-accept-requires-personal-token'` (at the gate) / trigger event `content.status === 'failed'` + `failure.reason === 'cmc-insufficient-permissions'` (at the handler) |
+| `consent/scope-update-cmc` (widen) | **personal-token only** at `events.create`, AND `triggerAccess.canUpdateAccess(target)` + `triggerAccess.canCreateAccess({permissions: mergedPerms, type: 'shared'})` in `handleSystemScopeUpdate` | same shape |
+| `consent/revoke-cmc` (delete) | **access-permission gate only** — `triggerAccess.canDeleteAccess(target)` in `handleRevoke` (per delete) | trigger event `content.status === 'failed'` + `failure.reason === 'cmc-revoke-forbidden'` |
+
+The personal-token gate on mint/widen exists because the orchestration mints a new `shared` access with permissions derived from a remote (capability) offer — without user-presence at the trigger write, a narrow-scope app could drive creation of an arbitrarily-wider access. The personal-token gate is closed via the `cmcAcceptAccessGateHook` middleware; `handleAccept` / `handleSystemScopeUpdate` re-check via `AccessLogic.canCreateAccess` / `canUpdateAccess` for defense in depth.
+
+**Revoke uses the standard access-permission gate, not personal-token.** Revoke deletes accesses; the access being deleted bounds the impact. `handleRevoke` runs `triggerAccess.canDeleteAccess(target)` — the same primitive `accesses.delete` enforces, which honours the `selfRevoke` feature permission on the target. So apps holding the relationship's data-grant access (the peer's "data-grant" copy stored on the user's account) can self-revoke directly without bouncing through the auth pages.
+
+**Plugin-managed access exemption (mint/widen only)**: the gate passes through writes whose access carries `clientData.cmc.kind === 'capability'` (capability access, used for cross-platform accept delivery) or `clientData.cmc.role === 'counterparty'` (data-grant + back-channel pair, used for follow-up protocol deliveries). Both markers are plugin-stamped at mint time and shielded by the existing `cmc-clientdata-cmc-forbidden` forge-prevention hook. Revoke needs no equivalent exemption — peer-delivered revokes are short-circuited as `'skipped'` by dispatch's `isPeerDeliveredEvent` check on `OUTBOUND_LOOPABLE_TYPES` before the handler runs.
+
+**Hand-off for apps without a personal token**: `pryv.cmc.requestAccept` opens `app-web-auth3`'s `/cmc-accept` page; `pryv.cmc.requestScopeUpdate` opens `/cmc-scope-update` (both in `@pryv/cmc` ≥ 3.9). User signs in, the page writes the trigger with the fresh personal token, and the result is returned via popup `postMessage` or `returnUrl` redirect. **No `requestRevoke` helper** — revoke is access-permission-gated, so any holder of the relationship's data-grant access can self-revoke via `pryv.cmc.revokeAcceptance` / `revokeRelationship` directly.
+
+Full architectural notes in [INTERNALS.md](INTERNALS.md#access-state-mutating-triggers--token-class--access-permission-gates).
+
 ### Bidirectional shared accesses (post-acceptance)
 
 When the recipient's app writes `consent/accept-cmc` to a local scope stream, the recipient's plugin orchestrates:

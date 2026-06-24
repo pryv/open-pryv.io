@@ -231,7 +231,17 @@ The patient's app renders the consent screen.
 
 ## Step 4 — User accepts (single write on patient's own platform)
 
+> **Token class.** `consent/accept-cmc` and `consent/scope-update-cmc` writes (which **mint or widen** access state on the user's account) require a **personal** access token. App- or shared-access tokens are rejected `400 invalid-operation` with `error.data.id === 'cmc-accept-requires-personal-token'`. The personal-token requirement enforces user-presence at the moment the trigger is recorded.
+>
+> **Revoke (`consent/revoke-cmc`) uses the standard access-permission gate, not the personal-token gate.** `handleRevoke` runs `triggerAccess.canDeleteAccess(target)` (the same primitive `accesses.delete` uses), which honours the `selfRevoke` feature permission on the target access. Apps holding a relationship's data-grant access can self-revoke directly via [`pryv.cmc.revokeAcceptance(...)`](https://github.com/pryv/lib-js/tree/master/components/pryv-cmc) — no hand-off needed. Unauthorised revokes fail with `error.data.id === 'cmc-revoke-forbidden'`.
+>
+> **Two flows for accept + scope-update:**
+>
+> 1. **Direct (when your app already holds a personal token):** post `events.create` from `patientConnection`, as shown below.
+> 2. **Hand-off (when your app holds only an app/shared token):** call [`pryv.cmc.requestAccept(...)`](https://github.com/pryv/lib-js/tree/master/components/pryv-cmc) — it opens app-web-auth3's `/cmc-accept` page where the user signs in, the trigger is written with the fresh personal token, and the data-grant apiEndpoint is returned to your app via popup `postMessage` or `returnUrl` redirect. The sibling `pryv.cmc.requestScopeUpdate(...)` + `/cmc-scope-update` page handles the scope-update accept the same way.
+
 ```js
+// Direct flow — patientConnection authenticated with a personal token.
 await patientConnection.api([
   {
     method: 'events.create',
@@ -245,6 +255,15 @@ await patientConnection.api([
     }
   }
 ]);
+
+// Hand-off flow — patient app holds an app/shared token; defer to app-web-auth3.
+const result = await pryv.cmc.requestAccept({
+  authUrl: 'https://access.pryv.me/access/v3/cmc-accept',
+  pryvApi: 'https://reg.pryv.me/',
+  capabilityUrl: 'https://AbC...Xyz@example.com/',
+  scopeStreamId: ':_cmc:apps:patient:incoming'
+});
+// result = { ok: true, dataGrantApiEndpoint, acceptEventId }
 ```
 
 That's the user's only call. Everything else is server-orchestrated by the user's plugin:

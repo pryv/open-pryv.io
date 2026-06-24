@@ -558,6 +558,72 @@ sequenceDiagram
 
 ---
 
+# Access-state-mutating triggers — token-class + access-permission gates
+
+The CMC lifecycle triggers that **mint, widen, or delete** data-grant accesses on the recipient's account are gated. Two distinct gate shapes — chosen per trigger by what the orchestrator does with the access state:
+
+| Trigger | Gate at `events.create` | Per-handler permission check | Rationale |
+|---|---|---|---|
+| `consent/accept-cmc` (mint) | Personal-token only (`cmcAcceptAccessGateHook`) | `triggerAccess.canCreateAccess(dataGrantPayload)` in `handleAccept` | New access on the user's account → no existing access bounds the chain; user-presence enforced by the personal-token gate. |
+| `consent/scope-update-cmc` (widen) | Personal-token only (same hook) | `triggerAccess.canUpdateAccess(target)` + `triggerAccess.canCreateAccess({permissions: mergedPerms, type: 'shared'})` in `handleSystemScopeUpdate` | Widens an existing access → user-presence enforced; chain check mirrors `accesses.update`'s `applyPrerequisitesForUpdate`. |
+| `consent/revoke-cmc` (delete) | NOT in the personal-token gate | `triggerAccess.canDeleteAccess(target)` in `handleRevoke` (per delete; covers data-grant + counterparty) | Contraction, not escalation — the target access bounds the impact. The standard `canDeleteAccess` honours the `selfRevoke` feature permission, so the relationship's own data-grant access can self-revoke from any holder. |
+
+## Why personal-token at all (mint + widen)
+
+The orchestration treats the trigger event as authoritative consent — for accept it reads the offer through the capability connection, mints a `shared` data-grant access with permissions derived from the offer, and delivers the accept back to the requester. Without the gate, an app holding only `:_cmc:apps:<app>:*, contribute` could write `consent/accept-cmc` carrying a colluding requester's offer and have the recipient's plugin mint a much broader access on the user's account with no consent UI shown. Requiring a personal token at mint/widen means the user is provably signed in at the moment the trigger is recorded.
+
+## Why NOT personal-token for revoke
+
+Revoke deletes accesses; the access being deleted already bounds the impact. Forcing personal-token would prevent the relationship's data-grant access (held by the peer) from terminating its own side of the relationship without bouncing through the auth pages — clumsy UX with no security benefit. The standard `AccessLogic.canDeleteAccess` rule covers:
+- personal token → always passes;
+- the access being deleted is the same as the trigger writer (self-revoke), AND the target's `selfRevoke` feature permission isn't `forbidden` → passes (default allow);
+- an app token that created the access → passes;
+- anything else → rejected with `cmc-revoke-forbidden`.
+
+This matches what the `accesses.delete` route enforces — same primitive, no parallel implementation.
+
+## Where the code lives
+
+- **Mint/widen gate**: `src/cmcAcceptAccessGate.ts` exports `createCmcAcceptAccessGateHook({errors})`. Wired into the `events.create` middleware chain right after `cmcContentValidationHook`. Uses `AccessLogic.isPersonal()`.
+- **Per-handler chain checks** (defense in depth — the gate is the primary guard for mint/widen, but the handlers also run the check so any future bypass doesn't re-open the surface):
+  - `handleAccept` → `triggerAccess.canCreateAccess(payload)` before `mall.accesses.create`. Failure: `cmc-insufficient-permissions`.
+  - `handleSystemScopeUpdate` → `triggerAccess.canUpdateAccess(target)` + `triggerAccess.canCreateAccess({permissions: mergedPerms, type: 'shared'})` before `mall.accesses.update`. Failure: `cmc-insufficient-permissions`.
+  - `handleRevoke` → `triggerAccess.canDeleteAccess(target)` before each `mall.accesses.delete` (this is the primary guard for revoke since there's no events.create gate). Failure: `cmc-revoke-forbidden`.
+- The trigger-writer's `AccessLogic` is plumbed through `dispatch.ts`'s per-request deps (`triggerAccess: context?.access`) so the handlers can reach it.
+
+## Rejection shapes
+
+| Outcome | Wire shape |
+|---|---|
+| Mint/widen gate rejection | `HTTP 400 invalid-operation` + `error.data.id === 'cmc-accept-requires-personal-token'` + `error.data.eventType === '<rejected>'` |
+| Handler chain-check failure (mint/widen) | trigger event persisted with `content.status === 'failed'` + `content.failure.reason === 'cmc-insufficient-permissions'` |
+| Revoke permission failure | trigger event persisted with `content.status === 'failed'` + `content.failure.reason === 'cmc-revoke-forbidden'` |
+
+All ids match the existing CMC error convention (top-level `invalid-operation`, CMC id under `error.data.id`).
+
+## Exemption for the mint/widen gate — plugin-managed accesses pass through
+
+The hand-off + delivery paths the CMC plugin orchestrates itself use accesses that aren't personal but legitimately carry lifecycle event types:
+
+- **`clientData.cmc.kind === 'capability'`** — the one-shot capability access POSTs `consent/accept-cmc` into the requester's `:_cmc:_internal:responses:<capId>` stream as part of step 3 of the accept flow. Without the exemption this cross-platform protocol message would be rejected.
+- **`clientData.cmc.role === 'counterparty'`** — bidirectional shared accesses created at acceptance deliver follow-up protocol events (`consent/back-channel-cmc`, inbox mirrors of subsequent triggers) into the peer's mall.
+
+Both markers are plugin-stamped at mint time (`capability.ts` / `acceptOrchestration.ts`). User-initiated triggers never carry them; an app trying to spoof the marker is blocked by the existing `cmc-clientdata-cmc-forbidden` forge-prevention hook on `accesses.create` / `accesses.update`.
+
+Revoke needs no equivalent exemption: peer-delivered revokes are short-circuited as `'skipped'` by dispatch's `isPeerDeliveredEvent` check on `OUTBOUND_LOOPABLE_TYPES` before `handleRevoke` runs.
+
+## `handleIncomingAccept` back-channel mint stays direct
+
+`handleIncomingAccept.ts:233` still calls `mall.accesses.create` for the back-channel mint without chain check. The runtime context is a capability access (never personal); a chain check would fail by design. The back-channel's permissions are bounded by the original request, which was chain-checked requester-side at `consent/request-cmc` publish time. Intentional + documented.
+
+## Hand-off for apps without a personal token
+
+- **Accept** — `@pryv/cmc.requestAccept` / `requestAcceptUrl` open `app-web-auth3`'s `/cmc-accept` page; the user signs in, the page writes the trigger with the fresh personal token, the data-grant apiEndpoint is returned via popup `postMessage` or `returnUrl` redirect. See `app-web-auth3/src/components/views/CmcAccept.vue`.
+- **Scope-update** — `@pryv/cmc.requestScopeUpdate` / `requestScopeUpdateUrl` open `/cmc-scope-update`; same shape, input is `scopeRequestEventId` instead of `capabilityUrl`. See `CmcScopeUpdate.vue`.
+- **Revoke** — no hand-off helper exists or is needed. `cmc.revokeAcceptance` / `cmc.revokeRelationship` work from any access that satisfies `canDeleteAccess` on the target (the relationship's own data-grant access by default).
+
+---
+
 # Notes for Phase B specs
 
 Each numbered flow above corresponds to a specification document that needs writing before Phase C coding starts. The mapping:
