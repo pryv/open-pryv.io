@@ -164,8 +164,16 @@ describe('[CMCAUTH] cmc accept access gate (events.create integration)', functio
     });
   });
 
-  describe('[CMCAUTH-RV] consent/revoke-cmc', function () {
-    it('[CMCAUTH-RV-AT] rejects an app token with cmc-accept-requires-personal-token (400)', async function () {
+  describe('[CMCAUTH-RV] consent/revoke-cmc is NOT in the personal-token gate', function () {
+    // Revoke is access-permission-gated INSIDE handleRevoke via
+    // AccessLogic.canDeleteAccess (which honours the `selfRevoke`
+    // feature permission). At events.create the gate must let any
+    // token class through; the handler's per-target check is what
+    // ultimately accepts or refuses the operation. End-to-end
+    // canDeleteAccess behaviour is exercised by handleRevoke's own
+    // tests; here we just confirm the gate is no longer blocking.
+
+    it('[CMCAUTH-RV-AT] app token writes consent/revoke-cmc through the gate (201)', async function () {
       const app = await createAccess(alice.accessesPath, alice.personalToken, {
         name: 'cmcauth-rv-app-' + cuid().slice(-6),
         type: 'app',
@@ -178,15 +186,14 @@ describe('[CMCAUTH] cmc accept access gate (events.create integration)', functio
           type: 'consent/revoke-cmc',
           content: { accessId: 'placeholder' },
         });
-      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
-      // CMC error convention: top-level error.id is the generic category
-      // (`invalid-operation`); the CMC-specific id lives under
-      // error.data.id (matches inboxWriteHook + forge-prevention hooks).
-      assert.strictEqual(res.body?.error?.id, 'invalid-operation');
-      assert.strictEqual(res.body?.error?.data?.id, 'cmc-accept-requires-personal-token');
+      // Gate passes → 201. The handler will run downstream (and may
+      // fail to find a matching counterparty since `accessId` is a
+      // placeholder — but that's a separate concern from the gate).
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.event?.type, 'consent/revoke-cmc');
     });
 
-    it('[CMCAUTH-RV-ST] rejects a shared token with cmc-accept-requires-personal-token (400)', async function () {
+    it('[CMCAUTH-RV-ST] shared token writes consent/revoke-cmc through the gate (201)', async function () {
       const shared = await createAccess(alice.accessesPath, alice.personalToken, {
         name: 'cmcauth-rv-shr-' + cuid().slice(-6),
         type: 'shared',
@@ -199,12 +206,7 @@ describe('[CMCAUTH] cmc accept access gate (events.create integration)', functio
           type: 'consent/revoke-cmc',
           content: { accessId: 'placeholder' },
         });
-      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
-      // CMC error convention: top-level error.id is the generic category
-      // (`invalid-operation`); the CMC-specific id lives under
-      // error.data.id (matches inboxWriteHook + forge-prevention hooks).
-      assert.strictEqual(res.body?.error?.id, 'invalid-operation');
-      assert.strictEqual(res.body?.error?.data?.id, 'cmc-accept-requires-personal-token');
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
     });
   });
 

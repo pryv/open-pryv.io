@@ -183,6 +183,15 @@ const CmcErrorIds = {
   // accesses.create route enforces. A non-personal context with
   // permissions narrower than the offer's would land here.
   INSUFFICIENT_PERMISSIONS: 'cmc-insufficient-permissions',
+
+  // --- Revoke permission failure inside handleRevoke ---
+  // The trigger-writing access cannot delete the target counterparty /
+  // data-grant access pair, per the standard AccessLogic.canDeleteAccess
+  // rule (which honours the `selfRevoke` feature permission on the
+  // target accesses). Examples: a shared access that isn't itself the
+  // target trying to revoke; an app token that didn't create the
+  // target; an access with selfRevoke=forbidden trying to self-revoke.
+  REVOKE_FORBIDDEN: 'cmc-revoke-forbidden',
 } as const;
 
 type CmcErrorId = (typeof CmcErrorIds)[keyof typeof CmcErrorIds];
