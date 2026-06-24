@@ -73,6 +73,18 @@ type DispatchDeps = {
   // pubsub.USERNAME_BASED_EVENTS_CHANGED so the app's socket.io
   // subscription sees the status flip. No-op if undefined.
   notifyEventChanged?: (userId: string, event: CmcEvent) => void;
+  // The AccessLogic instance of the access that wrote the trigger event
+  // (carried over from context.access in the per-request deps closure).
+  // handleAccept uses this to call canCreateAccess(payload) before
+  // mall.accesses.create — mirroring the chain check the api-server's
+  // accesses.create route enforces in applyPrerequisitesForCreation.
+  // Defense-in-depth: cmcAcceptAccessGateHook already rejects non-personal
+  // tokens at the events.create boundary; the chain check here closes
+  // the mall bypass for any path that reaches handleAccept without the
+  // gate (test fixtures, hypothetical future feature). Undefined in
+  // unit-test contexts that mock dispatch directly — the chain check is
+  // skipped in that case (gate is the primary guard).
+  triggerAccess?: { canCreateAccess?: (payload: unknown) => boolean | Promise<boolean> };
 };
 
 type DispatchResult = {
