@@ -217,6 +217,16 @@ When a `consent/request-cmc` is written with `capabilityRequested: true`, the pl
 
 The access's `apiEndpoint` IS the capability URL — a standard `pryv.Connection(url)` works against it. Hidden from `accesses.get` by default (filtered by `clientData.cmc.kind: 'capability'`); operators can opt to surface them via a query parameter.
 
+### Token-class gate on lifecycle triggers
+
+`consent/accept-cmc`, `consent/scope-update-cmc`, and `consent/revoke-cmc` writes that mint, mutate, or delete data-grant accesses on the recipient's account require a **personal** access token. App- and shared-token attempts are rejected `400 invalid-operation` with `error.data.id === 'cmc-accept-requires-personal-token'`. The gate enforces user-presence at the moment of acceptance; without it a narrow-scope app could drive the orchestration to mint a much broader access on the user's account from a colluding requester's offer.
+
+Apps without a personal token use `pryv.cmc.requestAccept(...)` (lib-js `@pryv/cmc` ≥ 3.8) to hand off to `app-web-auth3`'s `/cmc-accept` page — the user signs in, the trigger is written with the fresh personal token, and the data-grant apiEndpoint is returned to the app via popup `postMessage` or `returnUrl` redirect.
+
+Plugin-managed accesses are exempt so the cross-platform handshake (capability POST to the requester's `:_cmc:_internal:responses:<capId>`, counterparty deliveries via the shared data-grant pair) keeps working: the gate passes through writes whose access carries `clientData.cmc.kind === 'capability'` (capability access) or `clientData.cmc.role === 'counterparty'` (data-grant access). Both markers are plugin-stamped at mint time and shielded by the existing `cmc-clientdata-cmc-forbidden` forge-prevention hook.
+
+Defense in depth: `handleAccept` invokes `triggerAccess.canCreateAccess(dataGrantPayload)` (re-uses `AccessLogic.canCreateAccess`) before `mall.accesses.create` — same chain check the api-server's `accesses.create` route enforces, so the storage-layer call no longer bypasses the permission-subset rule. Full architectural notes in [INTERNALS.md](INTERNALS.md#token-class-gate-on-lifecycle-triggers).
+
 ### Bidirectional shared accesses (post-acceptance)
 
 When the recipient's app writes `consent/accept-cmc` to a local scope stream, the recipient's plugin orchestrates:

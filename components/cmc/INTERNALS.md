@@ -558,6 +558,45 @@ sequenceDiagram
 
 ---
 
+# Token-class gate on lifecycle triggers
+
+`consent/accept-cmc`, `consent/scope-update-cmc`, and `consent/revoke-cmc` writes that **mint, mutate, or delete data-grant accesses** on the recipient's account are gated to **personal access tokens only**.
+
+## Why
+
+The orchestration treats the trigger event as authoritative consent — it reads the offer through the capability connection, mints a `shared` data-grant access with permissions derived from the offer, and delivers the accept back to the requester. Without a token-class gate, an app holding only `:_cmc:apps:<app>:*, contribute` could write `consent/accept-cmc` carrying a colluding requester's offer and have the recipient's plugin mint a much broader access on the user's account with no consent UI shown. Requiring a personal token enforces that the user is provably present + authenticated at the moment the trigger is written.
+
+## Where
+
+`src/cmcAcceptAccessGate.ts` exports `createCmcAcceptAccessGateHook({errors})`. The api-server wires it into the `events.create` middleware chain right after `cmcContentValidationHook` (so the content shape is already validated when the gate decides). The hook uses `AccessLogic.isPersonal()` — no parallel implementation.
+
+## Rejection shape
+
+`HTTP 400 invalid-operation` with `error.data.id === 'cmc-accept-requires-personal-token'` and `error.data.eventType === '<the rejected type>'`. Matches the existing CMC error convention (`cmc-not-counterparty`, `cmc-clientdata-cmc-forbidden`, …).
+
+## Exemption — plugin-managed accesses pass through
+
+The hand-off + delivery paths the CMC plugin orchestrates itself use accesses that aren't personal but legitimately carry lifecycle event types:
+
+- **`clientData.cmc.kind === 'capability'`** — the one-shot capability access POSTs `consent/accept-cmc` into the requester's `:_cmc:_internal:responses:<capId>` stream as part of step 3 of the accept flow. Without the exemption this cross-platform protocol message would be rejected.
+- **`clientData.cmc.role === 'counterparty'`** — bidirectional shared accesses created at acceptance deliver follow-up protocol events (`consent/back-channel-cmc`, inbox mirrors of subsequent triggers) into the peer's mall.
+
+Both markers are plugin-stamped at mint time (`capability.ts` / `acceptOrchestration.ts`). User-initiated triggers never carry them; an app trying to spoof the marker is blocked by the existing `cmc-clientdata-cmc-forbidden` forge-prevention hook on `accesses.create` / `accesses.update`.
+
+## Defense-in-depth chain check in handleAccept
+
+The api-server's `accesses.create` route enforces `access.canCreateAccess(payload)` in `applyPrerequisitesForCreation`, but the CMC plugin used to call `mall.accesses.create` directly (storage-layer) and bypassed this check. `handleAccept` now invokes `triggerAccess.canCreateAccess(dataGrantPayload)` before `mall.accesses.create` — same `AccessLogic.canCreateAccess` method, no parallel implementation. The trigger-writer's `AccessLogic` is plumbed through `dispatch.ts`'s per-request deps (`triggerAccess: context?.access`) so the handler can reach it.
+
+For a personal token the chain check is a no-op (`canCreateAccess` returns `true` immediately for personal accesses); for a non-personal token reaching this path (which the gate should already have blocked, but any future code path bypassing the gate would arrive here), the orchestration fails cleanly with `cmc-insufficient-permissions` instead of silently minting an unauthorized access. The `handleIncomingAccept` back-channel mint stays on `mall.accesses.create` direct — its permissions are bounded by the original request, which was chain-checked requester-side at publish time.
+
+## Hand-off for apps without a personal token
+
+`@pryv/cmc.requestAccept` / `requestAcceptUrl` open `app-web-auth3`'s `/cmc-accept` page; the user authenticates, the page writes the trigger with the fresh personal token, the data-grant apiEndpoint is returned via popup `postMessage` or `returnUrl` redirect. See the lib's `pryv-cmc` README + `app-web-auth3/src/components/views/CmcAccept.vue` for the contract.
+
+`requestRevoke` / `requestScopeUpdate` lib helpers are not implemented yet (Phase C scope limited to `requestAccept`; the sibling app-web-auth3 routes would need to land first). Apps revoking or updating scope without a personal token should currently re-authenticate the user via `app-web-auth3`'s `/auth` flow and call `events.create` directly.
+
+---
+
 # Notes for Phase B specs
 
 Each numbered flow above corresponds to a specification document that needs writing before Phase C coding starts. The mapping:
