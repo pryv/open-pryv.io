@@ -172,7 +172,7 @@ just clean-test-data              # reset test databases
 
 - [Pryv.io API reference](https://pryv.github.io/)
 - [Pryv home](https://pryv.com)
-- [GitHub Discussions](https://github.com/pryv/open-pryv.io/discussions)
+- [GitHub Discussions](https://github.com/pryv/discussions/discussions)
 
 ## For LLM coding agents
 
