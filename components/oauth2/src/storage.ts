@@ -44,8 +44,20 @@ export interface OAuthClient {
   logoUri?: string;
   grantTypes: string[];
   applicationType?: 'web' | 'native';
+  /**
+   * bcrypt hash of the client_secret (used for client_credentials
+   * grant + future confidential-client auth on the auth-code grant).
+   * One-way; cluster-wide caching is safe — by design.
+   */
   clientSecretHash?: string;
   jwksRef?: string;
+  /**
+   * Username of the Pryv user account this OAuth client is promoted
+   * from (set by `bin/oauth-client.js create <username>`). Required
+   * for client_credentials grant — the minted access targets THIS
+   * user's per-user storage (the app's own data, no end-user involved).
+   */
+  accountUsername?: string;
   updatedAt: number;
 }
 

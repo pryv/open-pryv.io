@@ -145,21 +145,24 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   }
 
   // ---------------------------------------------------------------------
-  // mintRefreshedAccess — storage-layer-direct path used at /oauth2/token
-  // refresh-grant time, when the user is no longer present. The original
-  // accesses.create chain ran at /accept and already validated the grant;
-  // refresh rotates credentials, never widens authority. Falls back to
-  // ApiEndpoint.build for the new token's apiEndpoint URL.
+  // Storage-layer-direct access-mint path. Shared by:
+  //   - mintRefreshedAccess (refresh_token grant — user gone, original
+  //     accesses.create chain ran at /accept and already validated)
+  //   - mintClientAccess (client_credentials grant — no end-user; the
+  //     app account IS the principal; secret verified by the grant)
+  // The two callbacks are identical except for the audit-event tag at
+  // the grant level; both are safe storage-direct inserts (no widening
+  // of authority — scope, user, permission shape all server-controlled).
   // ---------------------------------------------------------------------
-  async function mintRefreshedAccess ({ userId, username, clientId, scope, expiresAt }: {
+  async function mintAccessDirect ({ userId, username, clientId, scope, expiresAt }: {
     userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
     if (typeof username !== 'string' || username.length === 0) {
-      throw new Error('mintRefreshedAccess: username required');
+      throw new Error('mintAccessDirect: username required');
     }
     const accessesRepository = (storageLayer as any).accesses;
     if (accessesRepository == null) {
-      throw new Error('mintRefreshedAccess: storageLayer.accesses unavailable');
+      throw new Error('mintAccessDirect: storageLayer.accesses unavailable');
     }
     const permissions = scopesToPermissions(scope);
     const now = Math.floor(Date.now() / 1000);
@@ -182,7 +185,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
         (err: any, newAccess: any) => {
           if (err != null) return reject(err);
           if (newAccess == null || typeof newAccess.id !== 'string' || typeof newAccess.token !== 'string') {
-            return reject(new Error('mintRefreshedAccess: accesses.insertOne returned no usable access'));
+            return reject(new Error('mintAccessDirect: accesses.insertOne returned no usable access'));
           }
           resolve({
             accessId: newAccess.id,
@@ -193,10 +196,24 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     });
   }
 
+  // ---------------------------------------------------------------------
+  // resolveAccountUserId — App account's username → its userId. Needed
+  // by client_credentials to target the app's own per-user storage.
+  // ---------------------------------------------------------------------
+  async function resolveAccountUserId (username: string): Promise<string | null> {
+    if (typeof username !== 'string' || username.length === 0) return null;
+    const { getUsersLocalIndex } = require('storage');
+    const usersIndex = await getUsersLocalIndex();
+    const id = await usersIndex.getUserId(username);
+    return typeof id === 'string' && id.length > 0 ? id : null;
+  }
+
   oauth2.registerRoutes(expressApp, {
     config,
     platform: storages.platformDB,
-    mintRefreshedAccess,
+    mintRefreshedAccess: mintAccessDirect,
+    mintClientAccess: mintAccessDirect,
+    resolveAccountUserId,
     resolveUser,
     createAccess,
   });

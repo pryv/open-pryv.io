@@ -73,6 +73,9 @@ require('@pryv/boiler').init({
       case 'revoke':
         await runRevoke(platform, args, removeClient);
         break;
+      case 'rotate-secret':
+        await runRotateSecret(platform, args, getClient, persistClient);
+        break;
       default:
         console.error('Unknown command: ' + args.command);
         printUsage(process.stderr);
@@ -122,6 +125,7 @@ async function runCreate (platform, args, persistClient) {
     logoUri: args.flagsScalar['logo-uri'],
     grantTypes,
     applicationType: args.flagsScalar['application-type'] === 'native' ? 'native' : 'web',
+    accountUsername: username,
   });
 
   console.log('OK   client created: ' + clientId);
@@ -189,6 +193,27 @@ async function runRevoke (platform, args, removeClient) {
   console.log('      lands with the grant handlers.');
 }
 
+async function runRotateSecret (platform, args, getClient, persistClient) {
+  const clientId = args.positional[0];
+  if (!clientId) throw new Error('rotate-secret: <clientId> required');
+  const existing = await getClient(platform, clientId);
+  if (!existing) throw new Error('rotate-secret: client "' + clientId + '" not found');
+
+  const { mintSecret } = require('oauth2/src/clientSecret.ts');
+  const { plaintext, hash } = await mintSecret();
+
+  await persistClient(platform, { ...existing, clientSecretHash: hash });
+
+  console.log('OK   client_secret rotated for: ' + clientId);
+  console.log();
+  console.log('client_id:     ' + clientId);
+  console.log('client_secret: ' + plaintext);
+  console.log();
+  console.log('SHOWN ONCE. Store it now in the consuming app. The hash is');
+  console.log('persisted; the plaintext is never written to disk or logs.');
+  console.log('Re-run this command to mint a new secret (invalidates the old one).');
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -244,7 +269,8 @@ function printUsage (stream) {
     '  node bin/oauth-client.js show <clientId>\n' +
     '  node bin/oauth-client.js list\n' +
     '  node bin/oauth-client.js update <clientId> [flags]\n' +
-    '  node bin/oauth-client.js revoke <clientId> --yes\n\n' +
+    '  node bin/oauth-client.js revoke <clientId> --yes\n' +
+    '  node bin/oauth-client.js rotate-secret <clientId>\n\n' +
     'Flags (create / update):\n' +
     '  --redirect-uri <uri>      (multi-valued; at least one required on create)\n' +
     '  --scope <scope-token>     (multi-valued; default pryv:read)\n' +

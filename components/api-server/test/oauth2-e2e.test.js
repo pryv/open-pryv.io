@@ -113,7 +113,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
     }
     assert.equal(authRes.status, 302);
     const loc = authRes.headers.location;
-    const signedState = decodeURIComponent(loc.split("state=")[1].split("&")[0]);
+    const signedState = decodeURIComponent(loc.split('state=')[1].split('&')[0]);
 
     // 2. /authorize/accept
     const acceptRes = await coreRequest
@@ -223,7 +223,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
           code_challenge_method: 'S256',
           scope: 'pryv:read',
         });
-      const signedState = decodeURIComponent(authRes.headers.location.split("state=")[1].split("&")[0]);
+      const signedState = decodeURIComponent(authRes.headers.location.split('state=')[1].split('&')[0]);
       const acceptRes = await coreRequest
         .post('/oauth2/authorize/accept')
         .send({
@@ -303,7 +303,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
           code_challenge_method: 'S256',
           scope: 'pryv:read',
         });
-      const signedState = decodeURIComponent(authRes.headers.location.split("state=")[1].split("&")[0]);
+      const signedState = decodeURIComponent(authRes.headers.location.split('state=')[1].split('&')[0]);
       const refuseRes = await coreRequest
         .post('/oauth2/authorize/refuse')
         .send({ state: signedState });
@@ -311,6 +311,70 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
       assert.ok(refuseRes.body.redirectTo.startsWith(REDIRECT_URI + '?error=access_denied'));
       assert.match(refuseRes.body.redirectTo, /&state=csrf-refuse/);
       assert.match(refuseRes.body.redirectTo, /&iss=/);
+    });
+  });
+
+  describe('[OAUTH-E2E-CC] client_credentials grant', function () {
+    let ccClientId, ccSecret;
+
+    before(async function () {
+      // Register an OAuth client with a client_secret and the
+      // client_credentials grant enabled. Use the existing test user as
+      // its `accountUsername` so the minted access targets a known user.
+      const { mintSecret } = require('oauth2/src/clientSecret.ts');
+      const mint = await mintSecret();
+      ccSecret = mint.plaintext;
+      ccClientId = 'app-cc-' + cuid();
+      const platformDB = require('storages').platformDB;
+      await storage.setClient(platformDB, {
+        clientId: ccClientId,
+        redirectUris: ['https://app.example/cb'],
+        scope: ['pryv:read', 'pryv:write'],
+        grantTypes: ['client_credentials'],
+        clientName: 'OAuth E2E CC App',
+        clientSecretHash: mint.hash,
+        accountUsername: username,
+        updatedAt: Date.now(),
+      });
+    });
+
+    after(async function () {
+      if (ccClientId != null) {
+        const platformDB = require('storages').platformDB;
+        try { await storage.deleteClient(platformDB, ccClientId); } catch (_) { /* best-effort */ }
+      }
+    });
+
+    it('[OE17] HTTP Basic auth → 200 with Bearer; token works on /<username>/events; no refresh_token', async function () {
+      const basic = 'Basic ' + Buffer.from(ccClientId + ':' + ccSecret).toString('base64');
+      const tokenRes = await coreRequest
+        .post('/oauth2/token')
+        .type('form')
+        .set('Authorization', basic)
+        .send({ grant_type: 'client_credentials' });
+      assert.equal(tokenRes.status, 200, JSON.stringify(tokenRes.body));
+      assert.equal(tokenRes.body.token_type, 'Bearer');
+      assert.equal(tokenRes.body.refresh_token, undefined, 'RFC 6749 §4.4.3 — no refresh_token');
+      assert.equal(typeof tokenRes.body.access_token, 'string');
+      assert.equal(typeof tokenRes.body.apiEndpoint, 'string');
+
+      // Token works on the app account's own resource server.
+      const eventsRes = await coreRequest
+        .get('/' + username + '/events')
+        .set('Authorization', tokenRes.body.access_token);
+      assert.equal(eventsRes.status, 200);
+      assert.ok(Array.isArray(eventsRes.body.events));
+    });
+
+    it('[OE18] wrong client_secret → 401 invalid_client', async function () {
+      const basic = 'Basic ' + Buffer.from(ccClientId + ':wrong').toString('base64');
+      const res = await coreRequest
+        .post('/oauth2/token')
+        .type('form')
+        .set('Authorization', basic)
+        .send({ grant_type: 'client_credentials' });
+      assert.equal(res.status, 401);
+      assert.equal(res.body.error, 'invalid_client');
     });
   });
 

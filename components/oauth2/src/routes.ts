@@ -66,6 +66,18 @@ export type Deps = {
   mintRefreshedAccess?: (params: {
     userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
   }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
+  /**
+   * Mint an app access at /oauth2/token client_credentials-grant time.
+   * Storage-layer-direct (same shape as mintRefreshedAccess). Targets
+   * the App account's own underlying user — no end-user involved. If
+   * not provided alongside `resolveAccountUserId`, client_credentials
+   * grant returns 501 unsupported_grant_type.
+   */
+  mintClientAccess?: (params: {
+    userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
+  }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
+  /** Resolve the App account's username to its userId. Required for client_credentials. */
+  resolveAccountUserId?: (username: string) => Promise<string | null>;
 };
 
 /**
@@ -123,7 +135,13 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
     app.options!('/oauth2/token', corsMiddleware);
   }
   app.post!('/oauth2/token', corsMiddleware,
-    handleToken({ config: deps.config, platform: deps.platform, mintRefreshedAccess: deps.mintRefreshedAccess }));
+    handleToken({
+      config: deps.config,
+      platform: deps.platform,
+      mintRefreshedAccess: deps.mintRefreshedAccess,
+      mintClientAccess: deps.mintClientAccess,
+      resolveAccountUserId: deps.resolveAccountUserId,
+    }));
 }
 
 /**
