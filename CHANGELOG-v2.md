@@ -1,6 +1,8 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.4 — 2026-06-25 (retagged from 2026-06-18 to fold in CMC fix)
+
+> Originally tagged 2026-06-18 with the multi-core non-voter-by-default hardening. Re-tagged 2026-06-25 to fold in the CMC access-state-mutating-trigger gates (BREAKING). The tag was force-moved on `origin`; downstream consumers fetching `2.0.0-rc.4` after 2026-06-25 receive both changes.
 
 ### BREAKING — CMC trigger writes that mint or widen accesses now require a personal token; revoke is access-permission-gated
 
@@ -67,9 +69,9 @@ returned to the app via popup `postMessage` or `returnUrl` redirect. **No
 self-revoke directly via `cmc.revokeAcceptance(...)` / `cmc.revokeRelationship(...)`
 without bouncing through the auth pages.
 
-## 2.0.0-rc.4 — 2026-06-18
+### Multi-core join hardening — cores join as non-voters by default
 
-No API-facing changes. This release hardens multi-core operations: cores now join the cluster as **non-voters by default**, so adding a core can no longer take an existing core's control plane offline (see CHANGELOG-v2-back.md for the full description and the new `--bootstrap-as-voter` / `bin/bootstrap.js promote-core` operator surface).
+(Originally the sole content of the 2026-06-18 rc.4.) Cores now join the cluster as **non-voters by default**, so adding a core can no longer take an existing core's control plane offline. See `CHANGELOG-v2-back.md` for the full description and the new `--bootstrap-as-voter` / `bin/bootstrap.js promote-core` operator surface.
 
 ## 2.0.0-rc.3 — 2026-06-17
 
