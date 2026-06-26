@@ -39,6 +39,10 @@ export default async function platformCheckIntegrity (
   for (const entry of allEntries) {
     // Skip internal fields (e.g. _core for multi-core mapping)
     if (entry.field && entry.field.startsWith('_')) continue;
+    // Skip `alias`: a per-access routable de-identifying name reserved for
+    // cross-core uniqueness. It is NOT a user account (System Streams) field,
+    // so it has no repository counterpart by design.
+    if (entry.field === 'alias') continue;
     // Skip entries without a username (e.g. user-core/ prefix entries)
     if (entry.username == null) continue;
     // Skip reserved usernames (e.g. __cores__ for core registration).

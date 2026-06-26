@@ -17,6 +17,15 @@ export interface UsersLocalIndexDB {
   exportAll (): Promise<Record<string, string>>;
   importAll (data: Record<string, string>): Promise<void>;
   clearAll (): Promise<void>;
+
+  // --- Alias index (many aliases : one userId) --- //
+  // Separate from the 1:1 username map above so getNameForId stays canonical.
+  // Holds routable de-identifying / superseded-username aliases.
+  addAlias (alias: string, userId: string): Promise<unknown>;
+  getIdForAlias (alias: string): Promise<string | undefined>;
+  getAliasesForId (userId: string): Promise<string[]>;
+  deleteAlias (alias: string): Promise<void>;
+  deleteAliasesForId (userId: string): Promise<void>;
 }
 
 /**
@@ -45,7 +54,19 @@ const UsersLocalIndexDB: UsersLocalIndexDB = {
 
   async importAll (data: Record<string, string>): Promise<void> { throw new Error('Not implemented'); },
 
-  async clearAll (): Promise<void> { throw new Error('Not implemented'); }
+  async clearAll (): Promise<void> { throw new Error('Not implemented'); },
+
+  // --- Alias index --- //
+
+  async addAlias (alias: string, userId: string): Promise<unknown> { throw new Error('Not implemented'); },
+
+  async getIdForAlias (alias: string): Promise<string | undefined> { throw new Error('Not implemented'); },
+
+  async getAliasesForId (userId: string): Promise<string[]> { throw new Error('Not implemented'); },
+
+  async deleteAlias (alias: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async deleteAliasesForId (userId: string): Promise<void> { throw new Error('Not implemented'); }
 };
 
 // Limit tampering on existing properties

@@ -87,7 +87,13 @@ class UsersLocalIndex {
   async getUserId (username: string): Promise<string | undefined> {
     let userId = cache.getUserId(username);
     if (userId == null) {
+      // Resolve a primary username first (common path), then fall back to the
+      // alias index so de-identifying / superseded-username aliases route to
+      // the same user. Both kinds share the name->userId cache.
       userId = await this.db.getIdForName(username);
+      if (userId == null) {
+        userId = await this.db.getIdForAlias(username);
+      }
       if (userId != null) {
         cache.setUserId(username, userId);
       }
@@ -96,10 +102,35 @@ class UsersLocalIndex {
     return userId;
   }
 
+  /** Returns the canonical (primary) username for a userId — never an alias. */
   async getUsername (userId: string): Promise<string | undefined> {
     const res = await this.db.getNameForId(userId);
     logger.debug('nameForId', userId, res);
     return res;
+  }
+
+  // --- Alias index (many aliases : one userId) --- //
+
+  async addAlias (alias: string, userId: string): Promise<void> {
+    await this.db.addAlias(alias, userId);
+    logger.debug('addAlias', alias, userId);
+  }
+
+  async getAliasesForId (userId: string): Promise<string[]> {
+    return await this.db.getAliasesForId(userId);
+  }
+
+  async deleteAlias (alias: string): Promise<void> {
+    cache.unsetUser(alias);
+    await this.db.deleteAlias(alias);
+    logger.debug('deleteAlias', alias);
+  }
+
+  async deleteAliasesForId (userId: string): Promise<void> {
+    const aliases = await this.db.getAliasesForId(userId);
+    for (const alias of aliases) { cache.unsetUser(alias); }
+    await this.db.deleteAliasesForId(userId);
+    logger.debug('deleteAliasesForId', userId, aliases.length);
   }
 
   async getAllByUsername (): Promise<Record<string, string>> {

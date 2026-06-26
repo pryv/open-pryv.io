@@ -24,6 +24,12 @@ class DBIndex {
   queryInsert!: SqliteStmt;
   queryDeleteAll!: SqliteStmt;
   queryDeleteById!: SqliteStmt;
+  queryGetIdForAlias!: SqliteStmt;
+  queryGetAliasesForId!: SqliteStmt;
+  queryInsertAlias!: SqliteStmt;
+  queryDeleteAlias!: SqliteStmt;
+  queryDeleteAliasesById!: SqliteStmt;
+  queryDeleteAllAliases!: SqliteStmt;
 
   async init (): Promise<void> {
     const basePath = (_internals.config as { path: string }).path;
@@ -38,6 +44,14 @@ class DBIndex {
     concurrentSafeWrite.execute(() => {
       this.db.prepare('CREATE INDEX IF NOT EXISTS id4name_id ON id4name(userId);').run();
     });
+    // Alias index (many aliases : one userId), kept apart from id4name so the
+    // 1:1 username<->userId mapping stays canonical.
+    concurrentSafeWrite.execute(() => {
+      this.db.prepare('CREATE TABLE IF NOT EXISTS alias4id (alias TEXT PRIMARY KEY, userId TEXT NOT NULL);').run();
+    });
+    concurrentSafeWrite.execute(() => {
+      this.db.prepare('CREATE INDEX IF NOT EXISTS alias4id_id ON alias4id(userId);').run();
+    });
 
     this.queryGetIdForName = this.db.prepare('SELECT userId FROM id4name WHERE username = ?');
     this.queryGetNameForId = this.db.prepare('SELECT username FROM id4name WHERE userId = ?');
@@ -45,6 +59,13 @@ class DBIndex {
     this.queryGetAll = this.db.prepare('SELECT username, userId FROM id4name');
     this.queryDeleteById = this.db.prepare('DELETE FROM id4name WHERE userId = @userId');
     this.queryDeleteAll = this.db.prepare('DELETE FROM id4name');
+
+    this.queryGetIdForAlias = this.db.prepare('SELECT userId FROM alias4id WHERE alias = ?');
+    this.queryGetAliasesForId = this.db.prepare('SELECT alias FROM alias4id WHERE userId = ?');
+    this.queryInsertAlias = this.db.prepare('INSERT INTO alias4id (alias, userId) VALUES (@alias, @userId)');
+    this.queryDeleteAlias = this.db.prepare('DELETE FROM alias4id WHERE alias = @alias');
+    this.queryDeleteAliasesById = this.db.prepare('DELETE FROM alias4id WHERE userId = @userId');
+    this.queryDeleteAllAliases = this.db.prepare('DELETE FROM alias4id');
   }
 
   async getIdForName (username: string): Promise<string | undefined> {
@@ -67,6 +88,9 @@ class DBIndex {
     await concurrentSafeWrite.execute(() => {
       return this.queryDeleteById.run({ userId });
     });
+    await concurrentSafeWrite.execute(() => {
+      return this.queryDeleteAliasesById.run({ userId });
+    });
   }
 
   /**
@@ -83,6 +107,43 @@ class DBIndex {
   async deleteAll (): Promise<void> {
     concurrentSafeWrite.execute(() => {
       return this.queryDeleteAll.run();
+    });
+    concurrentSafeWrite.execute(() => {
+      return this.queryDeleteAllAliases.run();
+    });
+  }
+
+  // --- Alias index --- //
+
+  async addAlias (alias: string, userId: string): Promise<RunResult | null> {
+    let result: RunResult | null = null;
+    await concurrentSafeWrite.execute(() => {
+      result = this.queryInsertAlias.run({ alias, userId });
+    });
+    return result;
+  }
+
+  async getIdForAlias (alias: string): Promise<string | undefined> {
+    return this.queryGetIdForAlias.get(alias)?.userId as string | undefined;
+  }
+
+  async getAliasesForId (userId: string): Promise<string[]> {
+    const aliases: string[] = [];
+    for (const row of this.queryGetAliasesForId.iterate(userId) as Iterable<{ alias: string }>) {
+      aliases.push(row.alias);
+    }
+    return aliases;
+  }
+
+  async deleteAlias (alias: string): Promise<void> {
+    await concurrentSafeWrite.execute(() => {
+      return this.queryDeleteAlias.run({ alias });
+    });
+  }
+
+  async deleteAliasesForId (userId: string): Promise<void> {
+    await concurrentSafeWrite.execute(() => {
+      return this.queryDeleteAliasesById.run({ userId });
     });
   }
 

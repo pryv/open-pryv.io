@@ -30,7 +30,22 @@ const { getLogger } = require('@pryv/boiler');
 const cmcLogger = getLogger('cmc:provisioning');
 const logger = getLogger('users:repository');
 
+const crypto = require('crypto');
+
 export { getUsersRepository };
+
+// Alias = 'r-' + 8 chars from an unambiguous lowercase-alnum alphabet
+// (no 0/o/1/l/i). Length 10 satisfies the username regexp + min length, so
+// aliases route through the subdomain/username path unchanged.
+const ALIAS_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+function generateRandomAlias (): string {
+  let suffix = '';
+  for (let i = 0; i < 8; i++) {
+    suffix += ALIAS_ALPHABET[crypto.randomInt(ALIAS_ALPHABET.length)];
+  }
+  return 'r-' + suffix;
+}
+
 /**
  * Repository of the users
  */
@@ -101,6 +116,47 @@ class UsersRepository {
 
   async getUserIdForUsername (username: string) {
     return await this.usersIndex.getUserId(username);
+  }
+
+  /** Canonical (primary) username for a userId — never an alias. */
+  async getUsernameForUserId (userId: string) {
+    return await this.usersIndex.getUsername(userId);
+  }
+
+  /**
+   * Reserve a routable alias for a user. Three coordinated writes:
+   *  1. platform unique-field `alias` — atomic cross-core uniqueness claim;
+   *  2. local alias index — on-core alias→userId resolution (`getUserId`);
+   *  3. name→core mapping (multi-core only) — so `alias.domain` routes to the
+   *     owning core exactly like the username does.
+   * Generates an `r-` prefixed alias and retries on collision.
+   * @returns the reserved alias string.
+   */
+  async mintAlias (ownerUsername: string, ownerUserId: string): Promise<string> {
+    const MAX_TRIES = 8;
+    let coreId: string | null = null;
+    if (!this.platform.isSingleCore) {
+      coreId = await this.platform.getUserCore(ownerUsername);
+    }
+    for (let i = 0; i < MAX_TRIES; i++) {
+      const alias = generateRandomAlias();
+      const reserved = await this.platform.setUserUniqueFieldIfNotExists(ownerUsername, 'alias', alias);
+      if (!reserved) { continue; } // collision — try another
+      await this.usersIndex.addAlias(alias, ownerUserId);
+      if (coreId != null) { await this.platform.setUserCore(alias, coreId); }
+      return alias;
+    }
+    throw errors.unexpectedError(new Error('Could not allocate a unique alias after ' + MAX_TRIES + ' attempts.'));
+  }
+
+  /**
+   * Release an alias previously reserved with {@link mintAlias} — reverses all
+   * three writes. No-op-safe for missing rows.
+   */
+  async releaseAlias (alias: string): Promise<void> {
+    await this.platform.deleteUserUniqueField('alias', alias);
+    await this.usersIndex.deleteAlias(alias);
+    if (!this.platform.isSingleCore) { await this.platform.deleteUserCore(alias); }
   }
 
   async getUserById (userId: string) {

@@ -527,6 +527,14 @@ class Platform {
     await this.#db.setUserCore(usernameToken, coreId);
   }
 
+  /**
+   * Remove a name→core mapping (e.g. when an alias is released). Plaintext
+   * input; hashed internally. No-op if no mapping exists.
+   */
+  async deleteUserCore (username: string) {
+    await this.#db.deleteUserCore(this.hashFor(USERNAME_FIELD, username));
+  }
+
   // ---------------- Low-level field accessors (mode-aware) ----------------
   //
   // These public methods mirror the engine's PlatformDB surface but apply

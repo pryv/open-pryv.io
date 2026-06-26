@@ -14,9 +14,10 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 type UsersIndexRow = { username: string; user_id: string };
+type AliasIndexRow = { alias: string; user_id: string };
 type PgDbLike = {
   ensureConnect: () => Promise<void>;
-  query: (sql: string, params?: unknown[]) => Promise<{ rows: UsersIndexRow[] }>;
+  query: (sql: string, params?: unknown[]) => Promise<{ rows: (UsersIndexRow & AliasIndexRow)[] }>;
 };
 
 class UsersLocalIndexPG {
@@ -62,10 +63,12 @@ class UsersLocalIndexPG {
 
   async deleteAll (): Promise<void> {
     await this.db.query('DELETE FROM users_index');
+    await this.db.query('DELETE FROM alias_index');
   }
 
   async deleteById (userId: string): Promise<void> {
     await this.db.query('DELETE FROM users_index WHERE user_id = $1', [userId]);
+    await this.db.query('DELETE FROM alias_index WHERE user_id = $1', [userId]);
   }
 
   // -- Migration methods --
@@ -86,6 +89,39 @@ class UsersLocalIndexPG {
 
   async clearAll (): Promise<void> {
     await this.deleteAll();
+  }
+
+  // --- Alias index --- //
+
+  async addAlias (alias: string, userId: string): Promise<void> {
+    await this.db.query(
+      'INSERT INTO alias_index (alias, user_id) VALUES ($1, $2)',
+      [alias, userId]
+    );
+  }
+
+  async getIdForAlias (alias: string): Promise<string | undefined> {
+    const res = await this.db.query(
+      'SELECT user_id FROM alias_index WHERE alias = $1',
+      [alias]
+    );
+    return res.rows.length > 0 ? res.rows[0].user_id : undefined;
+  }
+
+  async getAliasesForId (userId: string): Promise<string[]> {
+    const res = await this.db.query(
+      'SELECT alias FROM alias_index WHERE user_id = $1',
+      [userId]
+    );
+    return res.rows.map((row) => row.alias);
+  }
+
+  async deleteAlias (alias: string): Promise<void> {
+    await this.db.query('DELETE FROM alias_index WHERE alias = $1', [alias]);
+  }
+
+  async deleteAliasesForId (userId: string): Promise<void> {
+    await this.db.query('DELETE FROM alias_index WHERE user_id = $1', [userId]);
   }
 }
 

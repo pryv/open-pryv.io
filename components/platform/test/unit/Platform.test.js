@@ -15,8 +15,8 @@ const { Platform } = require('../../src/Platform.ts');
 const { PiiHasher, PEPPER_BYTES } = require('../../src/PiiHasher.ts');
 
 /**
- * Targeted unit tests for the Platform PII-hashing wrapper layer
- * threaded in Plan 99 Phase B.2. Verifies the structural behaviour:
+ * Targeted unit tests for the Platform PII-hashing wrapper layer.
+ * Verifies the structural behaviour:
  *
  *  - In `cleartext` mode (default), every #db call receives the
  *    plaintext exactly as the caller passed it.
