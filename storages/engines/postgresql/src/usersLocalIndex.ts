@@ -36,6 +36,13 @@ class UsersLocalIndexPG {
     );
   }
 
+  async renameUser (oldUsername: string, newUsername: string): Promise<void> {
+    await this.db.query(
+      'UPDATE users_index SET username = $1 WHERE username = $2',
+      [newUsername, oldUsername]
+    );
+  }
+
   async getIdForName (username: string): Promise<string | undefined> {
     const res = await this.db.query(
       'SELECT user_id FROM users_index WHERE username = $1',

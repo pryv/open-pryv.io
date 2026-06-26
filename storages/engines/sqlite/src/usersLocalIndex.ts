@@ -24,6 +24,7 @@ class DBIndex {
   queryInsert!: SqliteStmt;
   queryDeleteAll!: SqliteStmt;
   queryDeleteById!: SqliteStmt;
+  queryRename!: SqliteStmt;
   queryGetIdForAlias!: SqliteStmt;
   queryGetAliasesForId!: SqliteStmt;
   queryInsertAlias!: SqliteStmt;
@@ -59,6 +60,7 @@ class DBIndex {
     this.queryGetAll = this.db.prepare('SELECT username, userId FROM id4name');
     this.queryDeleteById = this.db.prepare('DELETE FROM id4name WHERE userId = @userId');
     this.queryDeleteAll = this.db.prepare('DELETE FROM id4name');
+    this.queryRename = this.db.prepare('UPDATE id4name SET username = @newUsername WHERE username = @oldUsername');
 
     this.queryGetIdForAlias = this.db.prepare('SELECT userId FROM alias4id WHERE alias = ?');
     this.queryGetAliasesForId = this.db.prepare('SELECT alias FROM alias4id WHERE userId = ?');
@@ -90,6 +92,12 @@ class DBIndex {
     });
     await concurrentSafeWrite.execute(() => {
       return this.queryDeleteAliasesById.run({ userId });
+    });
+  }
+
+  async renameUser (oldUsername: string, newUsername: string): Promise<void> {
+    await concurrentSafeWrite.execute(() => {
+      return this.queryRename.run({ oldUsername, newUsername });
     });
   }
 

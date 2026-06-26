@@ -78,6 +78,14 @@ class UsersLocalIndex {
     logger.debug('addUser', username, userId);
   }
 
+  /** Rename the canonical (primary) username; leaves aliases intact. */
+  async renameUser (oldUsername: string, newUsername: string): Promise<void> {
+    cache.unsetUser(oldUsername);
+    cache.unsetUser(newUsername);
+    await this.db.renameUser(oldUsername, newUsername);
+    logger.debug('renameUser', oldUsername, newUsername);
+  }
+
   async usernameExists (username: string): Promise<boolean> {
     const res = ((await this.getUserId(username)) != null);
     logger.debug('usernameExists', username, res);

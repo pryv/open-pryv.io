@@ -38,6 +38,8 @@ const ALL_METHODS = [
   'account.get',
   'account.update',
   'account.changePassword',
+  'account.changeUsername',
+  'account.usernameChanges',
   'account.requestPasswordReset',
   'account.resetPassword',
   'profile.getPublic',
