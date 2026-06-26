@@ -6,6 +6,7 @@
  */
 
 import type { BackupReader, UserBackupReader } from './BackupReader.js';
+import type { BackupDecryptor } from './BackupCipher.js';
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -17,16 +18,31 @@ const { createBackupReader, createUserBackupReader } = require('./BackupReader.t
 
 /**
  * Create a FilesystemBackupReader that reads a backup tree rooted at `inputPath`.
+ *
+ * For encrypted backups (a cleartext `encryption.json` is present at the root),
+ * pass a `decryptor` built from that envelope plus the matching secret; every
+ * file read is then transparently decrypted before gunzip/parse.
  */
 type Manifest = { compressed?: boolean; [k: string]: unknown };
 
-function createFilesystemBackupReader (inputPath: string): BackupReader {
+interface ReaderOptions {
+  decryptor?: BackupDecryptor | null;
+}
+
+/** Read a file, decrypting first when a decryptor is configured. */
+function loadBytes (filePath: string, decryptor: BackupDecryptor | null): Buffer {
+  const raw = fs.readFileSync(filePath);
+  return decryptor ? decryptor.decryptBuffer(raw) : raw;
+}
+
+function createFilesystemBackupReader (inputPath: string, options?: ReaderOptions): BackupReader {
   let manifest: Manifest | null = null;
+  const decryptor: BackupDecryptor | null = options?.decryptor || null;
 
   return createBackupReader({
     async readManifest () {
       const filePath = path.join(inputPath, 'manifest.json');
-      manifest = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      manifest = JSON.parse(loadBytes(filePath, decryptor).toString('utf8'));
       return manifest;
     },
 
@@ -35,7 +51,7 @@ function createFilesystemBackupReader (inputPath: string): BackupReader {
       const compressed = manifest?.compressed !== false;
       const filePath = path.join(platformDir, jsonlFileName('platform', compressed));
       if (!fs.existsSync(filePath)) return emptyIterator();
-      return readJsonlFile(filePath, compressed);
+      return readJsonlFile(filePath, compressed, decryptor);
     },
 
     /**
@@ -55,12 +71,12 @@ function createFilesystemBackupReader (inputPath: string): BackupReader {
       const compressed = manifest?.compressed !== false;
       const filePath = path.join(registerDir, jsonlFileName('servers', compressed));
       if (!fs.existsSync(filePath)) return emptyIterator();
-      return readJsonlFile(filePath, compressed);
+      return readJsonlFile(filePath, compressed, decryptor);
     },
 
     async openUser (userId: string): Promise<UserBackupReader> {
       const userDir = path.join(inputPath, 'users', userId);
-      return createFilesystemUserBackupReader(userDir, manifest);
+      return createFilesystemUserBackupReader(userDir, manifest, decryptor);
     },
 
     async close () { /* no-op for filesystem */ }
@@ -71,50 +87,50 @@ function createFilesystemBackupReader (inputPath: string): BackupReader {
 // FilesystemUserBackupReader
 // ---------------------------------------------------------------------------
 
-function createFilesystemUserBackupReader (userDir: string, manifest: Manifest | null): UserBackupReader {
+function createFilesystemUserBackupReader (userDir: string, manifest: Manifest | null, decryptor: BackupDecryptor | null): UserBackupReader {
   const compressed = manifest?.compressed !== false;
 
   return createUserBackupReader({
     async readUserManifest () {
       const filePath = path.join(userDir, 'user-manifest.json');
-      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      return JSON.parse(loadBytes(filePath, decryptor).toString('utf8'));
     },
 
     readStreams () {
-      return readUserJsonl(userDir, 'streams', compressed);
+      return readUserJsonl(userDir, 'streams', compressed, decryptor);
     },
 
     readAccesses () {
-      return readUserJsonl(userDir, 'accesses', compressed);
+      return readUserJsonl(userDir, 'accesses', compressed, decryptor);
     },
 
     readProfile () {
-      return readUserJsonl(userDir, 'profile', compressed);
+      return readUserJsonl(userDir, 'profile', compressed, decryptor);
     },
 
     readWebhooks () {
-      return readUserJsonl(userDir, 'webhooks', compressed);
+      return readUserJsonl(userDir, 'webhooks', compressed, decryptor);
     },
 
     readEvents () {
-      return readChunkedJsonl(path.join(userDir, 'events'), 'events', compressed);
+      return readChunkedJsonl(path.join(userDir, 'events'), 'events', compressed, decryptor);
     },
 
     readAudit () {
-      return readChunkedJsonl(path.join(userDir, 'audit'), 'audit', compressed);
+      return readChunkedJsonl(path.join(userDir, 'audit'), 'audit', compressed, decryptor);
     },
 
     readSeries () {
       const seriesDir = path.join(userDir, 'series');
       const filePath = path.join(seriesDir, jsonlFileName('series', compressed));
       if (!fs.existsSync(filePath)) return emptyIterator();
-      return readJsonlFile(filePath, compressed);
+      return readJsonlFile(filePath, compressed, decryptor);
     },
 
     readAttachments () {
       const attachDir = path.join(userDir, 'attachments');
       if (!fs.existsSync(attachDir)) return emptyIterator();
-      return readAttachmentsFromDir(attachDir, userDir);
+      return readAttachmentsFromDir(attachDir, userDir, decryptor);
     },
 
     async readAccountData () {
@@ -122,7 +138,7 @@ function createFilesystemUserBackupReader (userDir: string, manifest: Manifest |
       if (!fs.existsSync(filePath)) return null;
       // Account data is a single JSON object stored as one JSONL line
       const items: unknown[] = [];
-      for await (const item of readJsonlFile(filePath, compressed)) {
+      for await (const item of readJsonlFile(filePath, compressed, decryptor)) {
         items.push(item);
       }
       return items[0] || null;
@@ -138,17 +154,18 @@ function jsonlFileName (baseName: string, compressed: boolean): string {
   return compressed ? baseName + '.jsonl.gz' : baseName + '.jsonl';
 }
 
-function readUserJsonl (userDir: string, baseName: string, compressed: boolean): AsyncIterable<unknown> {
+function readUserJsonl (userDir: string, baseName: string, compressed: boolean, decryptor: BackupDecryptor | null): AsyncIterable<unknown> {
   const filePath = path.join(userDir, jsonlFileName(baseName, compressed));
   if (!fs.existsSync(filePath)) return emptyIterator();
-  return readJsonlFile(filePath, compressed);
+  return readJsonlFile(filePath, compressed, decryptor);
 }
 
 /**
- * Read a JSONL file (optionally gzip-compressed) and yield parsed objects.
+ * Read a JSONL file (optionally encrypted, optionally gzip-compressed) and
+ * yield parsed objects. Decryption is the outermost layer (applied first).
  */
-async function * readJsonlFile (filePath: string, compressed: boolean): AsyncGenerator<unknown> {
-  let buffer = fs.readFileSync(filePath);
+async function * readJsonlFile (filePath: string, compressed: boolean, decryptor: BackupDecryptor | null): AsyncGenerator<unknown> {
+  let buffer = loadBytes(filePath, decryptor);
   if (compressed) {
     buffer = zlib.gunzipSync(buffer);
   }
@@ -165,14 +182,14 @@ async function * readJsonlFile (filePath: string, compressed: boolean): AsyncGen
  * Read chunked JSONL files from a directory, yielding all items in order.
  * Chunk files are sorted alphabetically (events-0001, events-0002, ...).
  */
-async function * readChunkedJsonl (dir: string, baseName: string, compressed: boolean): AsyncGenerator<unknown> {
+async function * readChunkedJsonl (dir: string, baseName: string, compressed: boolean, decryptor: BackupDecryptor | null): AsyncGenerator<unknown> {
   if (!fs.existsSync(dir)) return;
   const ext = compressed ? '.jsonl.gz' : '.jsonl';
   const files = fs.readdirSync(dir)
     .filter((f: string) => f.startsWith(baseName + '-') && f.endsWith(ext))
     .sort();
   for (const file of files) {
-    yield * readJsonlFile(path.join(dir, file), compressed);
+    yield * readJsonlFile(path.join(dir, file), compressed, decryptor);
   }
 }
 
@@ -180,9 +197,9 @@ async function * readChunkedJsonl (dir: string, baseName: string, compressed: bo
  * Iterate attachment files from the attachments directory.
  * Maps fileIds back to eventIds using event JSONL data.
  */
-async function * readAttachmentsFromDir (attachDir: string, userDir: string): AsyncGenerator<{ eventId: string, fileId: string, stream: NodeJS.ReadableStream }> {
+async function * readAttachmentsFromDir (attachDir: string, userDir: string, decryptor: BackupDecryptor | null): AsyncGenerator<{ eventId: string, fileId: string, stream: NodeJS.ReadableStream }> {
   // Build fileId -> eventId mapping from events data
-  const fileIdToEventId = await buildFileIdMapping(userDir);
+  const fileIdToEventId = await buildFileIdMapping(userDir, decryptor);
 
   const files = fs.readdirSync(attachDir).filter((f: string) => {
     const stat = fs.statSync(path.join(attachDir, f));
@@ -191,7 +208,9 @@ async function * readAttachmentsFromDir (attachDir: string, userDir: string): As
 
   for (const fileId of files) {
     const eventId = fileIdToEventId.get(fileId) || 'unknown';
-    const stream = fs.createReadStream(path.join(attachDir, fileId));
+    const fileStream = fs.createReadStream(path.join(attachDir, fileId));
+    // Decrypt the blob on the fly so the consumer receives plaintext bytes.
+    const stream = decryptor ? fileStream.pipe(decryptor.decryptStream()) : fileStream;
     yield { eventId, fileId, stream };
   }
 }
@@ -199,7 +218,7 @@ async function * readAttachmentsFromDir (attachDir: string, userDir: string): As
 /**
  * Scan events JSONL to build a fileId -> eventId mapping for attachment restore.
  */
-async function buildFileIdMapping (userDir: string): Promise<Map<string, string>> {
+async function buildFileIdMapping (userDir: string, decryptor: BackupDecryptor | null): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   const eventsDir = path.join(userDir, 'events');
   if (!fs.existsSync(eventsDir)) return map;
@@ -208,7 +227,7 @@ async function buildFileIdMapping (userDir: string): Promise<Map<string, string>
   const files: string[] = fs.readdirSync(eventsDir);
   const compressed = files.some((f: string) => f.endsWith('.gz'));
 
-  for await (const item of readChunkedJsonl(eventsDir, 'events', compressed)) {
+  for await (const item of readChunkedJsonl(eventsDir, 'events', compressed, decryptor)) {
     // JSONL boundary — events were serialized by the backup writer.
     const event = item as { id: string; attachments?: Array<{ id?: string }> };
     if (event.attachments && Array.isArray(event.attachments)) {

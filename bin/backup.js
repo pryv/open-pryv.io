@@ -16,6 +16,8 @@
 //   node bin/backup.js --output /path/to/backup --since 1679000000
 //   node bin/backup.js --output /path/to/backup --max-chunk-size 50
 //   node bin/backup.js --output /path/to/backup --include-ephemeral
+//   node bin/backup.js --output /path/to/backup --recipient-pubkey recipient.pub.pem
+//   node bin/backup.js --output /path/to/backup --encrypt-passphrase 's3cret'
 //
 // Restore:
 //   node bin/backup.js --restore /path/to/backup
@@ -23,6 +25,8 @@
 //   node bin/backup.js --restore /path/to/backup --user userId123
 //   node bin/backup.js --restore /path/to/backup --skip-conflicts --move-on-success /path/to/done
 //   node bin/backup.js --restore /path/to/backup --skip-conflicts --delete-on-success
+//   node bin/backup.js --restore /path/to/backup --private-key recipient.key.pem
+//   node bin/backup.js --restore /path/to/backup --decrypt-passphrase 's3cret'
 
 const path = require('path');
 const fs = require('fs');
@@ -102,10 +106,13 @@ async function initStorage () {
 // ---------------------------------------------------------------------------
 
 async function runBackup (args) {
-  const { createFilesystemBackupWriter } = require('storages/interfaces/backup/index.ts');
+  const { createFilesystemBackupWriter, createBackupDecryptor } = require('storages/interfaces/backup/index.ts');
   const BackupOrchestrator = require('business/src/backup/BackupOrchestrator.ts').default;
 
+  const encryptor = buildEncryptor(args);
+
   const manifestPath = path.join(args.output, 'manifest.json');
+  const encryptionPath = path.join(args.output, 'encryption.json');
   let previousManifest = null;
 
   if (fs.existsSync(manifestPath)) {
@@ -115,16 +122,29 @@ async function runBackup (args) {
         'Use --incremental for incremental backup, or choose a different output path.'
       );
     }
-    // Read previous manifest for per-user timestamp detection
-    previousManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    // Read previous manifest for per-user timestamp detection. If the existing
+    // backup is encrypted, the matching secret is needed to read it — supply
+    // --decrypt-passphrase / --private-key alongside the encrypt option.
+    if (fs.existsSync(encryptionPath)) {
+      const envelope = JSON.parse(fs.readFileSync(encryptionPath, 'utf8'));
+      const decryptor = createBackupDecryptor(envelope, buildDecryptSecrets(args, true));
+      previousManifest = JSON.parse(decryptor.decryptBuffer(fs.readFileSync(manifestPath)).toString('utf8'));
+    } else {
+      previousManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    }
     console.log(`Incremental backup: using previous backup timestamps from ${args.output}`);
   } else if (args.incremental) {
     console.log('No previous backup found — running full backup instead');
   }
 
+  if (encryptor) {
+    console.log(`Encryption: ${encryptor.envelope.mode} (${encryptor.envelope.alg}) — destination bytes are ciphertext only`);
+  }
+
   const writer = createFilesystemBackupWriter(args.output, {
     maxChunkSize: (args.maxChunkSize || 50) * 1024 * 1024,
-    compress: args.compress
+    compress: args.compress,
+    encryptor
   });
 
   const orchestrator = new BackupOrchestrator();
@@ -153,10 +173,19 @@ async function runBackup (args) {
 // ---------------------------------------------------------------------------
 
 async function runRestore (args) {
-  const { createFilesystemBackupReader } = require('storages/interfaces/backup/index.ts');
+  const { createFilesystemBackupReader, createBackupDecryptor } = require('storages/interfaces/backup/index.ts');
   const RestoreOrchestrator = require('business/src/backup/RestoreOrchestrator.ts').default;
 
-  const reader = createFilesystemBackupReader(args.restore);
+  // Encrypted backups carry a cleartext `encryption.json` envelope at the root.
+  let decryptor = null;
+  const encryptionPath = path.join(args.restore, 'encryption.json');
+  if (fs.existsSync(encryptionPath)) {
+    const envelope = JSON.parse(fs.readFileSync(encryptionPath, 'utf8'));
+    console.log(`Encrypted backup detected: ${envelope.mode} (${envelope.alg})`);
+    decryptor = createBackupDecryptor(envelope, buildDecryptSecrets(args, false));
+  }
+
+  const reader = createFilesystemBackupReader(args.restore, { decryptor });
 
   const orchestrator = new RestoreOrchestrator();
   await orchestrator.init();
@@ -262,6 +291,46 @@ async function runRestore (args) {
 }
 
 // ---------------------------------------------------------------------------
+// Encryption key resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Build an encryptor from the backup-side flags, or null when no encryption
+ * option was given (preserving the default plaintext behaviour). The hybrid
+ * model (--recipient-pubkey) is recommended: the backup host holds no secret
+ * that can decrypt its own output. The passphrase may also come from the
+ * PRYV_BACKUP_PASSPHRASE env var so it doesn't appear in the process list.
+ */
+function buildEncryptor (args) {
+  const { createBackupEncryptor } = require('storages/interfaces/backup/index.ts');
+  const passphrase = args.encryptPassphrase || process.env.PRYV_BACKUP_PASSPHRASE;
+  if (args.recipientPubkey) {
+    return createBackupEncryptor({ recipientPubKeyPem: fs.readFileSync(args.recipientPubkey, 'utf8') });
+  }
+  if (passphrase) {
+    return createBackupEncryptor({ passphrase });
+  }
+  return null;
+}
+
+/** Build the secrets needed to decrypt an encrypted backup (restore or incremental). */
+function buildDecryptSecrets (args, forIncremental) {
+  const passphrase = args.decryptPassphrase || args.encryptPassphrase || process.env.PRYV_BACKUP_PASSPHRASE;
+  const secrets = { passphrase };
+  if (args.privateKey) {
+    secrets.privateKeyPem = fs.readFileSync(args.privateKey, 'utf8');
+    secrets.privateKeyPassphrase = args.privateKeyPassphrase || process.env.PRYV_BACKUP_PRIVATE_KEY_PASSPHRASE;
+  }
+  if (forIncremental && !secrets.passphrase && !secrets.privateKeyPem) {
+    throw new Error(
+      'The existing backup is encrypted; incremental backup needs the matching secret ' +
+      'to read its previous manifest. Pass --decrypt-passphrase or --private-key.'
+    );
+  }
+  return secrets;
+}
+
+// ---------------------------------------------------------------------------
 // Argument parsing
 // ---------------------------------------------------------------------------
 
@@ -279,6 +348,11 @@ function parseArgs (argv) {
     deleteOnSuccess: false,
     moveOnSuccess: null,
     verifyIntegrity: false,
+    encryptPassphrase: null,
+    recipientPubkey: null,
+    decryptPassphrase: null,
+    privateKey: null,
+    privateKeyPassphrase: null,
     help: false
   };
 
@@ -325,6 +399,21 @@ function parseArgs (argv) {
       case '--verify-integrity':
         args.verifyIntegrity = true;
         break;
+      case '--encrypt-passphrase':
+        args.encryptPassphrase = argv[++i];
+        break;
+      case '--recipient-pubkey':
+        args.recipientPubkey = argv[++i];
+        break;
+      case '--decrypt-passphrase':
+        args.decryptPassphrase = argv[++i];
+        break;
+      case '--private-key':
+        args.privateKey = argv[++i];
+        break;
+      case '--private-key-passphrase':
+        args.privateKeyPassphrase = argv[++i];
+        break;
       case '--help':
       case '-h':
         args.help = true;
@@ -338,6 +427,10 @@ function parseArgs (argv) {
   // Validate
   if (args.deleteOnSuccess && args.moveOnSuccess) {
     console.error('Error: --delete-on-success and --move-on-success are mutually exclusive');
+    process.exit(1);
+  }
+  if (args.recipientPubkey && args.encryptPassphrase) {
+    console.error('Error: --recipient-pubkey and --encrypt-passphrase are mutually exclusive (pick one key model)');
     process.exit(1);
   }
 
@@ -356,6 +449,16 @@ Backup:
   --include-ephemeral       Include sessions and password-reset-requests
   --incremental             Only export changes since previous backup (auto-detects per-user)
 
+Encryption (opt-in — without these flags output is plaintext as before):
+  --recipient-pubkey <pem>  Encrypt output with a recipient RSA public key
+                            (recommended): the backup host holds no decrypt
+                            secret — only the private-key holder can restore.
+  --encrypt-passphrase <s>  Encrypt output with a passphrase (scrypt-derived).
+                            Simpler, but this host can decrypt its own backup.
+                            Also read from PRYV_BACKUP_PASSPHRASE if omitted.
+                            (Encrypting an existing incremental backup needs the
+                            matching secret to read the previous manifest.)
+
 Restore:
   --restore, -r <path>      Restore from backup directory
   --user, -u <userId>       Restore a single user (default: all users)
@@ -364,6 +467,10 @@ Restore:
   --delete-on-success       Delete backup data after successful restore
   --move-on-success <path>  Move backup data after successful restore
   --verify-integrity        Verify integrity hashes after restore; roll back on failure
+  --private-key <pem>       Private key to decrypt a hybrid-encrypted backup
+  --private-key-passphrase <s>  Passphrase protecting the private key (if any)
+  --decrypt-passphrase <s>  Passphrase to decrypt a symmetric-encrypted backup
+                            (also read from PRYV_BACKUP_PASSPHRASE)
 
 General:
   --help, -h                Show this help

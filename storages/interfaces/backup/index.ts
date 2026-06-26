@@ -27,6 +27,7 @@ const {
 const { sanitize, INTERNAL_FIELDS } = require('./sanitize.ts');
 const { createFilesystemBackupWriter } = require('./FilesystemBackupWriter.ts');
 const { createFilesystemBackupReader } = require('./FilesystemBackupReader.ts');
+const { createBackupEncryptor, createBackupDecryptor, DEFAULT_CHUNK } = require('./BackupCipher.ts');
 
 export { BackupWriter,
   createBackupWriter,
@@ -46,4 +47,8 @@ export { BackupWriter,
   INTERNAL_FIELDS,
 
   createFilesystemBackupWriter,
-  createFilesystemBackupReader };
+  createFilesystemBackupReader,
+
+  createBackupEncryptor,
+  createBackupDecryptor,
+  DEFAULT_CHUNK };

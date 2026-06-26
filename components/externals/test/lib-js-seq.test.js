@@ -35,6 +35,12 @@ const OVERRIDE_DST = path.resolve(__dirname, '../../../config/override-config.ym
 const PROXY_PORT = parseInt(process.env.EXTERNALS_PROXY_PORT || '3000', 10); // HTTPS — what lib-js connects to
 const API_PORT = parseInt(process.env.EXTERNALS_API_PORT || '3001', 10); // HTTP — API server (plain, behind proxy)
 const HFS_PORT = parseInt(process.env.EXTERNALS_HFS_PORT || '4000', 10); // HTTP — HFS server
+// The tcp_pubsub broker port. Like the engine ports below it is re-derived from
+// this workspace's test-config.yml (default 4222) so parallel checkouts don't
+// collide on the canonical port — the spawned dev servers run
+// NODE_ENV=development and skip test-config.yml, so it is passed through as a
+// `tcpBroker__port` env override (see engineEnvFromTestConfig).
+const TCP_BROKER_PORT = parseInt(process.env.EXTERNALS_TCP_BROKER_PORT || tcpBrokerPortFromTestConfig() || '4222', 10);
 const SERVER_URL = 'https://l.backloop.dev:' + PROXY_PORT + '/';
 
 // Test files skipped against this server because of its platform.piiMode.
@@ -81,7 +87,22 @@ function engineEnvFromTestConfig () {
   } catch (e) {
     console.log('[ELJS] could not read test-config.yml engine ports — spawned servers use canonical ports:', e.message);
   }
+  // Pin the spawned servers' tcp_pubsub broker to this workspace's isolated port
+  // too (the API server acts as broker, HFS connects to it as subscriber), so a
+  // parallel checkout doesn't collide on the canonical 4222.
+  env.tcpBroker__port = String(TCP_BROKER_PORT);
   return env;
+}
+
+/** Read the isolated tcpBroker port from this workspace's test-config.yml, or null. */
+function tcpBrokerPortFromTestConfig () {
+  try {
+    const cfg = fs.readFileSync(path.resolve(SERVICE_CORE_DIR, 'config/test-config.yml'), 'utf8');
+    const m = cfg.match(/tcpBroker:[\s\S]*?port:\s*(\d+)/);
+    return m ? m[1] : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 // Provision lib-js on the fly so the integration suite always runs.
@@ -121,7 +142,7 @@ if (!libJsAvailable()) {
 
     // Kill leftover servers of OUR OWN from a previous run (including tcp_pubsub
     // broker); fail fast if a port is held by a foreign process instead.
-    for (const port of [PROXY_PORT, API_PORT, HFS_PORT, 4222]) {
+    for (const port of [PROXY_PORT, API_PORT, HFS_PORT, TCP_BROKER_PORT]) {
       killOwnLeftoverOnPort(port);
     }
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -270,7 +291,7 @@ function killOwnLeftoverOnPort (port) {
       try { process.kill(pid, 'SIGKILL'); } catch (e) { /* already gone */ }
     } else {
       throw new Error('Port ' + port + ' is in use by a foreign process (pid ' + pid + ': ' + command + '). ' +
-        'Free the port or set EXTERNALS_PROXY_PORT / EXTERNALS_API_PORT / EXTERNALS_HFS_PORT.');
+        'Free the port or set EXTERNALS_PROXY_PORT / EXTERNALS_API_PORT / EXTERNALS_HFS_PORT / EXTERNALS_TCP_BROKER_PORT.');
     }
   }
 }

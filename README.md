@@ -1,10 +1,13 @@
 # Open Pryv.io v2.0.0-rc.2
 
-![Pryv.io](readme/logo-data-privacy-management-pryv.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="readme/logo-data-privacy-management-pryv-dark.png">
+  <img alt="Pryv.io" src="readme/logo-data-privacy-management-pryv.png" width="256">
+</picture>
 
 **Personal data & privacy management — open source**
 
-[![Digital Public Good](readme/dpg-badge.png)](https://digitalpublicgoods.net/registry/pryv-io.html)
+[![Digital Public Good](readme/dpg-badge.png)](https://www.digitalpublicgoods.net/r/open-pryvio)
 
 > **Release-candidate warning:** This is the v2 release candidate of Open Pryv.io. It is under active stabilization and not yet recommended for production workloads. For the last stable v1 release, see the [`release/1.9.3`](https://github.com/pryv/open-pryv.io/tree/release/1.9.3) branch.
 
@@ -169,7 +172,7 @@ just clean-test-data              # reset test databases
 
 - [Pryv.io API reference](https://pryv.github.io/)
 - [Pryv home](https://pryv.com)
-- [GitHub Discussions](https://github.com/pryv/open-pryv.io/discussions)
+- [GitHub Discussions](https://github.com/pryv/discussions/discussions)
 
 ## For LLM coding agents
 

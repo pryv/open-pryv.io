@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## 2.0.0-rc.5 — 2026-06-25
+
+### Optional encryption-at-rest image variant
+
+A new published image variant `pryvio/open-pryv.io-encrypted` adds optional
+encryption at rest for the data directories (events, attachments, series, audit,
+platform DB). It layers the `container-encrypted-volume` facility onto the stock
+image and mounts an encrypted volume inside the container on boot. The base
+`pryvio/open-pryv.io` image is unchanged, and the variant is off by default
+(`CEV_ENABLED=false`) so it boots identically until opted in. Pluggable backends
+(LUKS / gocryptfs) and key providers (env / file / exec / clevis / aws-kms). See
+the "Encryption at rest" section of `INSTALL.md`.
+
+### `/service/info` can advertise adapters
+
+`/service/info` may now carry an optional `adapters` array — a list of adapter
+base URLs. Adapters are transient converters between Pryv and an external
+standard (for example iCalendar). Each URL serves the adapter's web UI and a
+`manifest.json` describing its name, type, version and capabilities; clients
+fetch `<url>/manifest.json` for the details. `{username}` templating is
+supported, as for the `api` field. Fully additive — the field is absent unless
+configured.
+
 ### BREAKING — CMC trigger writes that mint or widen accesses now require a personal token; revoke is access-permission-gated
 
 Writing `consent/accept-cmc` or `consent/scope-update-cmc` to a `:_cmc:apps:*`
@@ -69,7 +92,43 @@ without bouncing through the auth pages.
 
 ## 2.0.0-rc.4 — 2026-06-18
 
-No API-facing changes. This release hardens multi-core operations: cores now join the cluster as **non-voters by default**, so adding a core can no longer take an existing core's control plane offline (see CHANGELOG-v2-back.md for the full description and the new `--bootstrap-as-voter` / `bin/bootstrap.js promote-core` operator surface).
+### Multi-core: non-voter join by default
+
+This release hardens multi-core operations: cores now join the cluster as **non-voters by default**, so adding a core can no longer take an existing core's control plane offline (see CHANGELOG-v2-back.md for the full description and the new `--bootstrap-as-voter` / `bin/bootstrap.js promote-core` operator surface).
+
+### On-demand encrypted backups (`bin/backup.js`)
+
+The full-platform backup tool can now **encrypt its output on demand** so that
+plaintext PHI/PII never touches the destination disk — the bytes written to the
+backup media are ciphertext only. Encryption is **opt-in**: without the flags
+below, backups behave exactly as before (plaintext JSONL, same filenames).
+
+Two key models:
+
+- **Recipient public key (recommended)** — `--recipient-pubkey <pem>`. A fresh
+  random data key encrypts the backup and is itself wrapped with the recipient's
+  RSA public key (RSA-OAEP, SHA-256). The backup-producing host holds **no secret
+  that can decrypt its own output**; only the holder of the matching private key
+  can restore (`--private-key <pem>`, plus `--private-key-passphrase` if the key
+  is protected).
+- **Passphrase** — `--encrypt-passphrase <s>` (or the `PRYV_BACKUP_PASSPHRASE`
+  env var, which keeps the secret out of the process list). The data key is
+  scrypt-derived from the passphrase. Simpler, but the operator can decrypt its
+  own backups. Restore with `--decrypt-passphrase <s>` / `PRYV_BACKUP_PASSPHRASE`.
+
+Format: each file is encrypted independently (streaming AES-256-GCM in
+authenticated chunks; a per-file subkey is HKDF-derived from a random salt), so
+chunking, `--incremental`, `--no-compress` and single-`--user` restore all keep
+working. A small cleartext `encryption.json` at the backup root records the key
+model and the wrapped data key — crypto headers only, never user data;
+`manifest.json` and every per-user file (including the user manifest and
+attachments) are encrypted. Restore auto-detects an encrypted backup from that
+file.
+
+Disaster-recovery note: **a lost key (or passphrase) makes the backup
+unrecoverable** — that is the point of the feature. For an `--incremental` run
+over an already-encrypted backup, supply the matching secret so the tool can read
+the previous manifest.
 
 ## 2.0.0-rc.3 — 2026-06-17
 
