@@ -1,0 +1,11 @@
+{
+  "name": "oauth2",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OAuth 2.0 authorization-code flow + DPoP + signed app-account-based client registration",
+  "homepage": "https://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv <info@pryv.com> (https://pryv.com)",
+  "type": "module",
+  "main": "src/index.ts"
+}

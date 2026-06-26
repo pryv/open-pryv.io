@@ -1,5 +1,7 @@
 # Changelog - API Changes
 
+## Unreleased
+
 ## 2.0.0-rc.5 — 2026-06-25
 
 ### Optional encryption-at-rest image variant

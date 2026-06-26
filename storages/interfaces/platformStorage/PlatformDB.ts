@@ -147,6 +147,16 @@ export interface PlatformDB {
   deleteAccessState (key: string): Promise<void>;
   sweepExpiredAccessStates (now?: number): Promise<{ removed: number }>;
 
+  // --- Generic cluster-wide key-value (indefinite, no TTL) --------
+  // For features that need string-keyed indefinite storage (no expiry,
+  // no lazy-expire). For TTL'd ephemeral state, use setAccessState
+  // above. Callers own their key-prefix conventions (e.g.
+  // `oauth-client/<id>`); the engine treats keys as opaque strings.
+  setPlatformKv (key: string, value: string): Promise<void>;
+  getPlatformKv (key: string): Promise<string | null>;
+  deletePlatformKv (key: string): Promise<void>;
+  listPlatformKvKeys (prefix: string): Promise<string[]>;
+
   // --- Invitation tokens ------------------------------------------
   createInvitationToken (token: string, info: InvitationTokenInfo): Promise<void>;
   getInvitationToken (token: string): Promise<InvitationTokenInfo | null>;
@@ -264,6 +274,16 @@ const PlatformDB: PlatformDB = {
   async deleteAccessState (key: string): Promise<void> { throw new Error('Not implemented'); },
 
   async sweepExpiredAccessStates (now?: number): Promise<{ removed: number }> { throw new Error('Not implemented'); },
+
+  // --- Generic cluster-wide key-value --- //
+
+  async setPlatformKv (key: string, value: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async getPlatformKv (key: string): Promise<string | null> { throw new Error('Not implemented'); },
+
+  async deletePlatformKv (key: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async listPlatformKvKeys (prefix: string): Promise<string[]> { throw new Error('Not implemented'); },
 
   // --- Invitation tokens --- //
 
