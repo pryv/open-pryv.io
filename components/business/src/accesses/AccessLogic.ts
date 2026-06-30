@@ -257,6 +257,8 @@ class AccessLogic {
       case 'account.get':
       case 'account.update':
       case 'account.changePassword':
+      case 'account.changeUsername':
+      case 'account.usernameChanges':
         return this.isPersonal();
 
       // -- Accesses

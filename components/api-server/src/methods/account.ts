@@ -148,6 +148,101 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     }
   }
 
+  // CHANGE USERNAME
+
+  // Operator-configurable cap on how many times a user may change their
+  // username (default 2). The previous username(s) stay routable as aliases.
+  const getUsernameChangeLimit = () => {
+    const limit = getAuth()?.usernameChangeLimit;
+    return Number.isInteger(limit) ? limit : 2;
+  };
+
+  api.register(
+    'account.changeUsername',
+    commonFns.basicAccessAuthorizationCheck,
+    commonFns.getParamsValidation(methodsSchema.changeUsername.params),
+    requirePersonalAccess,
+    changeUsername,
+    addUserBusinessToContext,
+    async function buildChangeUsernameResult (context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
+      // Invariant: addUserBusinessToContext ran earlier in this chain.
+      result.account = context.userBusiness!.getLegacyAccount();
+      next();
+    }
+  );
+  // account.changeUsername is an authenticated personal-token action; it is
+  // audited automatically under the caller's access (no setAuditAccessId,
+  // which is for unauthenticated flows like password reset).
+
+  api.register(
+    'account.usernameChanges',
+    commonFns.basicAccessAuthorizationCheck,
+    commonFns.getParamsValidation(methodsSchema.usernameChanges.params),
+    requirePersonalAccess,
+    async function (context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
+      try {
+        const limit = getUsernameChangeLimit();
+        const used = await usersRepository.getUsernameChangeCount(context.user.id);
+        result.usernameChangesUsed = used;
+        result.usernameChangesLimit = limit;
+        result.usernameChangesRemaining = Math.max(0, limit - used);
+        next();
+      } catch (err) {
+        return next(errors.unexpectedError(err));
+      }
+    }
+  );
+
+  function requirePersonalAccess (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    if (!context.access.isPersonal()) {
+      return next(errors.forbidden('Changing the username requires a personal access token.'));
+    }
+    next();
+  }
+
+  async function changeUsername (context: MethodContext, params: { newUsername: string }, result: ResultBag, next: Next) {
+    try {
+      const userId = context.user.id;
+      const oldUsername = context.user.username;
+      const newUsername = params.newUsername.toLowerCase();
+
+      if (newUsername === oldUsername) {
+        return next(errors.invalidOperation('The new username is identical to the current one.'));
+      }
+      // Enforce the operator's change limit.
+      const limit = getUsernameChangeLimit();
+      const used = await usersRepository.getUsernameChangeCount(userId);
+      if (used >= limit) {
+        return next(errors.invalidOperation(
+          'Username change limit reached.',
+          { usernameChangesUsed: used, usernameChangesLimit: limit }
+        ));
+      }
+      // Reserved words (mirrors registration).
+      if (platform.isUsernameReserved(newUsername)) {
+        return next(errors.invalidOperation('This username is reserved.', { newUsername }));
+      }
+      // Availability: reject if the name resolves to ANY user (primary or alias).
+      const taken = await usersRepository.getUserIdForUsername(newUsername);
+      if (taken != null) {
+        return next(errors.itemAlreadyExists('user', { username: newUsername }));
+      }
+
+      await usersRepository.changeUsername(userId, oldUsername, newUsername, context.access.id);
+
+      // Keep the context coherent for the downstream result builders.
+      context.user.username = newUsername;
+      pubsub.notifications.emit(oldUsername, pubsub.USERNAME_BASED_ACCOUNT_CHANGED);
+      result.usernameChangesRemaining = Math.max(0, limit - (used + 1));
+      next();
+    } catch (err) {
+      if (err != null && (err as { id?: string }).id === ErrorIds.ItemAlreadyExists) {
+        return next(err);
+      }
+      return next(errors.unexpectedError(err));
+    }
+  }
+
   // REQUEST PASSWORD RESET
 
   api.register(

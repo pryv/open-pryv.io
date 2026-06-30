@@ -1,5 +1,28 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Access aliases (`randomAlias`) — de-identifying endpoints
+
+`accesses.create` accepts an optional `randomAlias: true`. When set, the new
+access is issued a platform-unique, routable alias (`r-` followed by 8
+characters) that replaces the username everywhere the access is addressed: the
+returned `apiEndpoint`, and `access-info` (`user.username` reports the alias).
+The real username never appears for that access, so accesses handed to
+different parties cannot be cross-matched back to one account. The alias routes
+to the user exactly like the username (including across cores) and is released
+when the access is deleted. The resolved value is returned as the access's
+`alias` property.
+
+### Changeable username (`account.changeUsername`)
+
+A new personal-token endpoint `POST /account/change-username` lets a user choose
+a new username. Accesses already issued under the previous username keep
+working — the old name is kept as a routable alias — and `access-info` for those
+accesses reports the new (current) username. The number of changes is capped by
+the operator (default 2); `GET /account/username-changes` returns how many
+changes have been used, the limit, and how many remain.
+
 ## 2.0.0-rc.5 — 2026-06-25
 
 ### Optional encryption-at-rest image variant

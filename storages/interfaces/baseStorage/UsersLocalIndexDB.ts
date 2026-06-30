@@ -9,6 +9,9 @@ export interface UsersLocalIndexDB {
   init (): Promise<void>;
   // Result is engine-specific (e.g. a SQLite RunResult) and ignored by consumers.
   addUser (username: string, userId: string): Promise<unknown>;
+  // Rename the canonical (primary) username for a user. Leaves the alias
+  // index untouched — used by the change-username flow.
+  renameUser (oldUsername: string, newUsername: string): Promise<unknown>;
   getIdForName (username: string): Promise<string | undefined>;
   getNameForId (userId: string): Promise<string | undefined>;
   getAllByUsername (): Promise<Record<string, string>>;
@@ -17,6 +20,15 @@ export interface UsersLocalIndexDB {
   exportAll (): Promise<Record<string, string>>;
   importAll (data: Record<string, string>): Promise<void>;
   clearAll (): Promise<void>;
+
+  // --- Alias index (many aliases : one userId) --- //
+  // Separate from the 1:1 username map above so getNameForId stays canonical.
+  // Holds routable de-identifying / superseded-username aliases.
+  addAlias (alias: string, userId: string): Promise<unknown>;
+  getIdForAlias (alias: string): Promise<string | undefined>;
+  getAliasesForId (userId: string): Promise<string[]>;
+  deleteAlias (alias: string): Promise<void>;
+  deleteAliasesForId (userId: string): Promise<void>;
 }
 
 /**
@@ -28,6 +40,8 @@ const UsersLocalIndexDB: UsersLocalIndexDB = {
   async init () { throw new Error('Not implemented'); },
 
   async addUser (username: string, userId: string): Promise<unknown> { throw new Error('Not implemented'); },
+
+  async renameUser (oldUsername: string, newUsername: string): Promise<unknown> { throw new Error('Not implemented'); },
 
   async getIdForName (username: string): Promise<string | undefined> { throw new Error('Not implemented'); },
 
@@ -45,7 +59,19 @@ const UsersLocalIndexDB: UsersLocalIndexDB = {
 
   async importAll (data: Record<string, string>): Promise<void> { throw new Error('Not implemented'); },
 
-  async clearAll (): Promise<void> { throw new Error('Not implemented'); }
+  async clearAll (): Promise<void> { throw new Error('Not implemented'); },
+
+  // --- Alias index --- //
+
+  async addAlias (alias: string, userId: string): Promise<unknown> { throw new Error('Not implemented'); },
+
+  async getIdForAlias (alias: string): Promise<string | undefined> { throw new Error('Not implemented'); },
+
+  async getAliasesForId (userId: string): Promise<string[]> { throw new Error('Not implemented'); },
+
+  async deleteAlias (alias: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async deleteAliasesForId (userId: string): Promise<void> { throw new Error('Not implemented'); }
 };
 
 // Limit tampering on existing properties

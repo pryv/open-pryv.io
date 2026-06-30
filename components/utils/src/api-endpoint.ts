@@ -26,4 +26,13 @@ function build (username: string, token: string | undefined, apiFormat?: string)
   return apiEndpoint;
 }
 
-export { build };
+/**
+ * Build the API endpoint a client should use for a given access: prefer the
+ * access alias (de-identifying / changed-username demotion) over the real
+ * username, so the real username never leaks for aliased accesses.
+ */
+function buildForAccess (access: { alias?: string | null; token?: string }, username: string, apiFormat?: string) {
+  return build((access && access.alias) || username, access != null ? access.token : undefined, apiFormat);
+}
+
+export { build, buildForAccess };

@@ -313,6 +313,41 @@ class Platform {
     }
   }
 
+  /**
+   * Re-key all of a user's PlatformDB rows from `oldUsername` to
+   * `newUsername` (the change-username flow). Operates directly on the engine
+   * in storage form (like {@link deleteUser}) to avoid double-hashing.
+   *  - `username` unique-field: self-referential (its value IS the username) →
+   *    delete the old (field,value) row, recreate it with the new value + owner;
+   *  - other unique fields (email, alias, …): value unchanged → re-own to the
+   *    new username token;
+   *  - indexed fields (language, appId, …): keyed by username → write under the
+   *    new token, delete the old.
+   * The name→core mapping (`user-core/`) is handled by the caller.
+   * Caller must have verified `newUsername` is free (no atomic guard here).
+   */
+  async renameUser (oldUsername: string, newUsername: string) {
+    const oldToken = this.hashFor(USERNAME_FIELD, oldUsername);
+    const newToken = this.hashFor(USERNAME_FIELD, newUsername);
+    const entries = await this.#db.getAllWithPrefix('user');
+    for (const entry of entries) {
+      if (entry.username !== oldToken) continue;
+      if (entry.field == null || entry.field.startsWith('_')) continue;
+      if (entry.isUnique === true) {
+        if (entry.field === USERNAME_FIELD) {
+          await this.#db.deleteUserUniqueField(entry.field, entry.value);
+          await this.#db.setUserUniqueField(newToken, entry.field, this.hashFor(entry.field, newUsername));
+        } else {
+          // value unchanged — just re-own to the new username token.
+          await this.#db.setUserUniqueField(newToken, entry.field, entry.value);
+        }
+      } else {
+        await this.#db.setUserIndexedField(newToken, entry.field, entry.value);
+        await this.#db.deleteUserIndexedField(oldToken, entry.field);
+      }
+    }
+  }
+
   // ----------------  Core identity (multi-core)  ----------------
 
   get coreId (): string {
@@ -525,6 +560,14 @@ class Platform {
    */
   async setUserCoreByPreHashedUsername (usernameToken: string, coreId: string) {
     await this.#db.setUserCore(usernameToken, coreId);
+  }
+
+  /**
+   * Remove a name→core mapping (e.g. when an alias is released). Plaintext
+   * input; hashed internally. No-op if no mapping exists.
+   */
+  async deleteUserCore (username: string) {
+    await this.#db.deleteUserCore(this.hashFor(USERNAME_FIELD, username));
   }
 
   // ---------------- Low-level field accessors (mode-aware) ----------------
@@ -884,6 +927,11 @@ class Platform {
     const lower = username.toLowerCase();
     if (/^pryv/.test(lower)) return true;
     return reservedWords.has(lower);
+  }
+
+  /** Public reserved-username check (e.g. for the change-username flow). */
+  isUsernameReserved (username: string): boolean {
+    return this.#isUsernameReserved(username);
   }
 
   // --- Observability config (optional APM) ---------------------------

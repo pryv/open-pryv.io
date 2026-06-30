@@ -338,6 +338,7 @@ CREATE TABLE IF NOT EXISTS accesses (
   modified_by TEXT,
   modified_by_serial INTEGER,
   deleted DOUBLE PRECISION,
+  alias TEXT,
   PRIMARY KEY (user_id, id)
 );
 -- Index predicates intentionally omit head_id here. SCHEMA_SQL is a
@@ -428,6 +429,15 @@ CREATE TABLE IF NOT EXISTS users_index (
   username TEXT PRIMARY KEY,
   user_id TEXT UNIQUE NOT NULL
 );
+
+-- Alias index (many aliases : one user). Separate from users_index so the
+-- 1:1 username<->user_id mapping (and its integrity check) stays canonical.
+CREATE TABLE IF NOT EXISTS alias_index (
+  alias TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_alias_index_user_id
+  ON alias_index(user_id);
 
 -- Series data (replaces InfluxDB)
 

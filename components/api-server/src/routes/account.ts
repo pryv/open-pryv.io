@@ -27,6 +27,12 @@ export default function (expressApp: ExpressApp, app: AppLike): void {
   expressApp.post(Paths.Account + '/change-password', setMethodId('account.changePassword'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, req.body, methodCallback(res, next, 200));
   });
+  expressApp.post(Paths.Account + '/change-username', setMethodId('account.changeUsername'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
+    api.call(req.context, req.body, methodCallback(res, next, 200));
+  });
+  expressApp.get(Paths.Account + '/username-changes', setMethodId('account.usernameChanges'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
+    api.call(req.context, req.query, methodCallback(res, next, 200));
+  });
   expressApp.post(Paths.Account + '/request-password-reset', setMethodId('account.requestPasswordReset'), function (req: PryvRequest, res: Response, next: NextFunction) {
     const params = req.body;
     params.origin = req.headers.origin;

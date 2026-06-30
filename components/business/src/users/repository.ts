@@ -30,7 +30,25 @@ const { getLogger } = require('@pryv/boiler');
 const cmcLogger = getLogger('cmc:provisioning');
 const logger = getLogger('users:repository');
 
+const crypto = require('crypto');
+
 export { getUsersRepository };
+
+// Alias = 'r-' + 8 chars from an unambiguous lowercase-alnum alphabet
+// (no 0/o/1/l/i). Length 10 satisfies the username regexp + min length, so
+// aliases route through the subdomain/username path unchanged.
+// Per-user account field tracking how many times the username has been changed.
+const USERNAME_CHANGE_COUNT_FIELD = 'usernameChangeCount';
+
+const ALIAS_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+function generateRandomAlias (): string {
+  let suffix = '';
+  for (let i = 0; i < 8; i++) {
+    suffix += ALIAS_ALPHABET[crypto.randomInt(ALIAS_ALPHABET.length)];
+  }
+  return 'r-' + suffix;
+}
+
 /**
  * Repository of the users
  */
@@ -101,6 +119,116 @@ class UsersRepository {
 
   async getUserIdForUsername (username: string) {
     return await this.usersIndex.getUserId(username);
+  }
+
+  /** Canonical (primary) username for a userId — never an alias. */
+  async getUsernameForUserId (userId: string) {
+    return await this.usersIndex.getUsername(userId);
+  }
+
+  /**
+   * Reserve a routable alias for a user. Three coordinated writes:
+   *  1. platform unique-field `alias` — atomic cross-core uniqueness claim;
+   *  2. local alias index — on-core alias→userId resolution (`getUserId`);
+   *  3. name→core mapping (multi-core only) — so `alias.domain` routes to the
+   *     owning core exactly like the username does.
+   * Generates an `r-` prefixed alias and retries on collision.
+   * @returns the reserved alias string.
+   */
+  async mintAlias (ownerUsername: string, ownerUserId: string): Promise<string> {
+    const MAX_TRIES = 8;
+    const coreId = await this.#aliasOwnerCoreId(ownerUsername);
+    for (let i = 0; i < MAX_TRIES; i++) {
+      const alias = generateRandomAlias();
+      const reserved = await this.platform.setUserUniqueFieldIfNotExists(ownerUsername, 'alias', alias);
+      if (!reserved) { continue; } // collision — try another
+      await this.#bindAlias(alias, ownerUserId, coreId);
+      return alias;
+    }
+    throw errors.unexpectedError(new Error('Could not allocate a unique alias after ' + MAX_TRIES + ' attempts.'));
+  }
+
+  /**
+   * Reserve a SPECIFIC alias value (used by the change-username flow to keep
+   * the superseded username routable). Returns true if reserved, false if the
+   * value is already taken by another user.
+   */
+  async reserveSpecificAlias (ownerUsername: string, ownerUserId: string, aliasValue: string): Promise<boolean> {
+    const coreId = await this.#aliasOwnerCoreId(ownerUsername);
+    const reserved = await this.platform.setUserUniqueFieldIfNotExists(ownerUsername, 'alias', aliasValue);
+    if (!reserved) { return false; }
+    await this.#bindAlias(aliasValue, ownerUserId, coreId);
+    return true;
+  }
+
+  async #aliasOwnerCoreId (ownerUsername: string): Promise<string | null> {
+    if (this.platform.isSingleCore) { return null; }
+    return await this.platform.getUserCore(ownerUsername);
+  }
+
+  async #bindAlias (alias: string, ownerUserId: string, coreId: string | null): Promise<void> {
+    await this.usersIndex.addAlias(alias, ownerUserId);
+    if (coreId != null) { await this.platform.setUserCore(alias, coreId); }
+  }
+
+  /**
+   * Release an alias previously reserved with {@link mintAlias} — reverses all
+   * three writes. No-op-safe for missing rows.
+   */
+  async releaseAlias (alias: string): Promise<void> {
+    await this.platform.deleteUserUniqueField('alias', alias);
+    await this.usersIndex.deleteAlias(alias);
+    if (!this.platform.isSingleCore) { await this.platform.deleteUserCore(alias); }
+  }
+
+  /**
+   * Change a user's canonical username from `oldUsername` to `newUsername`,
+   * keeping every access issued under the old name working by demoting the old
+   * name to a (non-`r-`) alias.
+   *
+   * Atomic-ish, ordered to minimise harm on partial failure (mirrors the
+   * registration write order — cross-store transactions aren't available):
+   *  1. platform `username` unique-field swap (collision gate — throws if taken);
+   *  2. re-own the user's OTHER platform unique-field rows (email, existing
+   *     aliases) under the new username (their stored owner is the old-username
+   *     token, otherwise future self-updates would mis-detect collisions);
+   *  3. name→core map for the new name (multi-core);
+   *  4. local users index rename (aliases untouched);
+   *  5. System-Streams `username` account event;
+   *  6. demote the old username to a routable alias;
+   *  7. bump the change counter.
+   * Caller is responsible for limit + format + reserved-word validation.
+   */
+  async changeUsername (userId: string, oldUsername: string, newUsername: string, accessId: string): Promise<void> {
+    const coreId = await this.#aliasOwnerCoreId(oldUsername);
+
+    // 1. re-key ALL PlatformDB rows old→new (username self-row, email + alias
+    //    unique fields re-owned, indexed fields moved). Caller verified the
+    //    new name is free.
+    await this.platform.renameUser(oldUsername, newUsername);
+
+    // 2. route the new name to this core (old name's core mapping stays, so it
+    //    keeps routing as an alias below).
+    if (coreId != null) { await this.platform.setUserCore(newUsername, coreId); }
+
+    // 3. local index rename (leaves the alias index intact)
+    await this.usersIndex.renameUser(oldUsername, newUsername);
+
+    // 4. System-Streams username account field (mirrors registration's write;
+    //    `username` is not in the editable-field map used by updateOne).
+    await this.userAccountStorage.setAccountField(userId, 'username', newUsername, accessId);
+
+    // 5. keep the old username routable as an alias (re-holds the freed name)
+    await this.reserveSpecificAlias(newUsername, userId, oldUsername);
+
+    // 6. record the change
+    const count = Number(await this.userAccountStorage.getAccountField(userId, USERNAME_CHANGE_COUNT_FIELD)) || 0;
+    await this.userAccountStorage.setAccountField(userId, USERNAME_CHANGE_COUNT_FIELD, count + 1, accessId);
+  }
+
+  /** Number of username changes already performed (0 if never). */
+  async getUsernameChangeCount (userId: string): Promise<number> {
+    return Number(await this.userAccountStorage.getAccountField(userId, USERNAME_CHANGE_COUNT_FIELD)) || 0;
   }
 
   async getUserById (userId: string) {
