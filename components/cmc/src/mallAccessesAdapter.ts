@@ -127,7 +127,10 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
     /**
      * List accesses for a user. Optional `query` for filtering — currently
      * accepts no filters and returns all accesses (CMC code filters
-     * client-side on clientData.cmc.role).
+     * client-side on clientData.cmc.role). Rows carry `apiEndpoint` (same
+     * stamping as create) so handlers reusing an existing access — e.g.
+     * an accept re-dispatch finding its own prior data-grant — have a
+     * delivery target without a second storage round-trip.
      */
     async get (userId: string, _query?: AccessQuery): Promise<AccessRow[]> {
       if (storageAccesses.find == null) {
@@ -135,7 +138,11 @@ function createMallAccessesAdapter (deps: AdapterDeps) {
       }
       const accesses = await fromCallback((cb: Cb<AccessRow[]>) =>
         storageAccesses.find!({ id: userId }, {}, { projection: { calls: 0, deleted: 0 } }, cb)) as AccessRow[];
-      return accesses;
+      const username = await Promise.resolve(resolveUsername(userId));
+      if (username == null) return accesses;
+      return accesses.map((a) => (a.token != null
+        ? { ...a, apiEndpoint: apiEndpointBuild(username, a.token as string) }
+        : a));
     },
 
     /**

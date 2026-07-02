@@ -491,4 +491,101 @@ describe('[CMCHA] cmc/handleAccept', () => {
       assert.equal(pickScopeFromTrigger({}), null);
     });
   });
+
+  describe('[CMCHA-DUP] data-grant access-name collision handling', () => {
+    // Accesses are unique on (name, type, deviceName); a fixed client-side
+    // accessName collides with the access minted by a previous accept.
+    const DUP_TRIGGER = {
+      id: 'evt-accept',
+      type: 'consent/accept-cmc',
+      content: { capabilityUrl: 'https://Tok@example.com/', accessName: 'my-app' },
+    };
+
+    // fakeMall variant enforcing name uniqueness like the real engines.
+    function fakeMallWithNames (takenNames, existingAccesses = []) {
+      const mall = fakeMall();
+      const taken = new Set(takenNames);
+      const baseCreate = mall.accesses.create.bind(mall.accesses);
+      mall.calls.createAttemptNames = [];
+      mall.accesses.create = async (userId, params) => {
+        mall.calls.createAttemptNames.push(params.name);
+        if (taken.has(params.name)) {
+          const err = new Error('duplicate key value violates unique constraint "idx_access_name_type_deviceName"');
+          err.isDuplicate = true;
+          throw err;
+        }
+        taken.add(params.name);
+        return baseCreate(userId, params);
+      };
+      mall.accesses.get = async () => existingAccesses;
+      return mall;
+    }
+
+    it('[HA40] retries once with a deterministic per-accept suffix when the name is taken', async () => {
+      const mall = fakeMallWithNames(['my-app']);
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: DUP_TRIGGER,
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      // 'evt-accept'.slice(-8) === 't-accept'
+      assert.deepEqual(mall.calls.createAttemptNames, ['my-app', 'my-app (t-accept)']);
+      assert.equal(mall.calls.accessesCreated.length, 1);
+      assert.equal(mall.calls.accessesCreated[0].name, 'my-app (t-accept)');
+    });
+
+    it('[HA41] fails permanently with a typed id (no raw DB text) when the suffixed name collides too', async () => {
+      const mall = fakeMall();
+      // Raw engine message without the isDuplicate flag — covers the
+      // message-regex detection path.
+      mall.accesses.create = async () => {
+        throw new Error('duplicate key value violates unique constraint "idx_access_name_type_deviceName"');
+      };
+      mall.accesses.get = async () => [];
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+      ]);
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: DUP_TRIGGER,
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-handler-data-grant-name-conflict');
+      assert.equal(r.detail.name, 'my-app');
+      assert.doesNotMatch(String(r.detail.message), /constraint|duplicate key/i,
+        'client-visible detail must not echo the raw DB error');
+    });
+
+    it('[HA42] reuses its own prior data-grant on re-dispatch (idempotent; no second create)', async () => {
+      const existing = {
+        id: 'acc-existing',
+        token: 'tok-e',
+        apiEndpoint: 'https://tok-e@recipient.example.com/',
+        clientData: { cmc: { role: 'counterparty', acceptEventId: 'evt-accept' } },
+      };
+      const mall = fakeMallWithNames(['my-app'], [existing]);
+      const { fetch } = fakeFetch([
+        { status: 200, body: { events: [VALID_OFFER] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: DUP_TRIGGER,
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.dataGrantAccessId, 'acc-existing');
+      assert.equal(r.dataGrantApiEndpoint, 'https://tok-e@recipient.example.com/');
+      assert.equal(mall.calls.accessesCreated.length, 0);
+    });
+  });
 });

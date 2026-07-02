@@ -102,6 +102,10 @@ const CmcErrorIds = {
   // --- Access mint (data-grant + back-channel) ---
   // mall.accesses.create rejected the payload.
   HANDLER_DATA_GRANT_CREATE_FAILED: 'cmc-handler-data-grant-create-failed',
+  // The data-grant access name collided with an existing access AND the
+  // deterministic uniquified retry collided too. Permanent — retrying
+  // cannot converge; the accepter should pick a different accessName.
+  HANDLER_DATA_GRANT_NAME_CONFLICT: 'cmc-handler-data-grant-name-conflict',
   // The created access did not return an `apiEndpoint` — wiring bug
   // (mallAccessesAdapter is supposed to stamp it; surface for ops).
   HANDLER_DATA_GRANT_NO_APIENDPOINT: 'cmc-handler-data-grant-no-apiendpoint',

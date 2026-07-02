@@ -796,7 +796,10 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
 {
   capabilityUrl: string,                      // received out-of-band
   extra?:        { chat?: boolean, systemMessaging?: boolean },
-  accessName?:   string                       // optional override; plugin derives a default
+  accessName?:   string                       // optional override; plugin derives a default.
+                                              // If the name is already taken by another access,
+                                              // the plugin uniquifies it with a deterministic
+                                              // per-accept suffix: `<name> (<8 chars of event id>)`.
 }
 
 // Plugin updates content as orchestration runs
@@ -1290,6 +1293,7 @@ npm package.
 | `HANDLER_OFFER_READ_FAILED` | `cmc-handler-offer-read-failed` | `readOfferViaCapability` threw without a more specific id. |
 | `HANDLER_COUNTERPARTY_UNKNOWN` | `cmc-handler-counterparty-unknown` | The offer didn't carry enough info to derive `{username, host}`. The capability-mint hook now stamps the requester identity on the offer, so this is unreachable in practice — surface for ops if it ever fires. |
 | `HANDLER_DATA_GRANT_CREATE_FAILED` | `cmc-handler-data-grant-create-failed` | `mall.accesses.create` rejected the payload. |
+| `HANDLER_DATA_GRANT_NAME_CONFLICT` | `cmc-handler-data-grant-name-conflict` | The data-grant access name collided with an existing access AND the deterministic uniquified retry collided too. Permanent (non-retryable) — accept again with a different `accessName`. |
 | `HANDLER_DATA_GRANT_NO_APIENDPOINT` | `cmc-handler-data-grant-no-apiendpoint` | The created access lacks `apiEndpoint`. Wiring bug — surface for ops. |
 | `HANDLER_BUILD_DATA_GRANT_FAILED` | `cmc-handler-build-data-grant-failed` | Building the data-grant payload threw before the access call. |
 | `BACK_CHANNEL_CREATE_FAILED` | `cmc-back-channel-create-failed` | Back-channel access mint failed on the requester's side (`handleIncomingAccept`). |

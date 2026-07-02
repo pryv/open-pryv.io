@@ -23,6 +23,19 @@ accesses reports the new (current) username. The number of changes is capped by
 the operator (default 2); `GET /account/username-changes` returns how many
 changes have been used, the limit, and how many remain.
 
+### CMC: accept no longer fails permanently on data-grant access-name collision (#105)
+
+Accepting a CMC invite with an `accessName` already used by an existing access
+(typical for apps passing a fixed app name on every accept) used to fail
+permanently with the raw database duplicate-key message, and the internal
+retry loop kept re-attempting an accept that could never succeed. The handler
+now retries once with a deterministic per-accept suffix (`<name> (<8 chars of
+the accept event id>)`), so distinct accepts never fight over one name. A
+re-dispatch of the same accept (after a delivery failure) reuses its own prior
+data-grant instead of colliding with it. If the uniquified name still
+collides, the accept fails fast with the new typed, non-retryable error id
+`cmc-handler-data-grant-name-conflict` — no raw database text is echoed.
+
 ### Mail-delivery failures no longer leak internal detail in 500 errors (#104)
 
 When a transactional email (password reset, welcome) fails to send, the API

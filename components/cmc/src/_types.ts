@@ -67,6 +67,11 @@ export type CmcClientData = {
   capabilityId?: string;
   requestEventId?: string | null;
   singleUse?: boolean;
+  // Stamped on data-grant accesses at build time (acceptOrchestration.
+  // buildDataGrantPayload); acceptEventId keys the idempotent reuse on
+  // accept re-dispatch.
+  offerEventId?: string | null;
+  acceptEventId?: string | null;
 };
 
 /** Access as seen through the CMC mall view (mallAccessesAdapter output). */
