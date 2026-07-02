@@ -593,6 +593,20 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     // from a different scope, which (per the current matcher) overwrites
     // an existing data-grant's remote-stream pointers. Earlier describes
     // (CMCHS-EXT / CMCHS-SU) need a clean back-channel, so they go first.
+
+    before(async function () {
+      // Full-matrix runs have intermittently seen `404 !== 201` in [CN14]
+      // — an actor fixture going missing/stale deep in a matrix, not
+      // idempotency logic. Fail legibly here instead of cryptically below.
+      for (const actor of [alice, bob]) {
+        const res = await coreRequest
+          .get('/' + actor.username + '/access-info')
+          .set('Authorization', actor.token);
+        assert.strictEqual(res.status, 200,
+          'fixture user/session "' + actor.username + '" is missing or stale entering [CMCHS-IDEMP]: ' +
+          res.status + ' ' + JSON.stringify(res.body));
+      }
+    });
     it('[CN14] second accept from the same peer for a different scope does not collide on back-channel access name', async function () {
       const triggerStreamId = ':_cmc:apps:my-app:study-2';
       await ensureStream(alice.streamsPath, alice.token, {
