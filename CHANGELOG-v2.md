@@ -23,6 +23,16 @@ accesses reports the new (current) username. The number of changes is capped by
 the operator (default 2); `GET /account/username-changes` returns how many
 changes have been used, the limit, and how many remain.
 
+### Mail-delivery failures no longer leak internal detail in 500 errors (#104)
+
+When a transactional email (password reset, welcome) fails to send, the API
+previously returned a `500` whose message included the configured mail-service
+URL and the raw upstream HTTP status or transport error — visible to
+unauthenticated callers of `account.requestPasswordReset`. The client-facing
+message is now a generic "Sending email failed. Please try again later or
+contact support."; the full diagnostic (URL, upstream status/error, SMTP
+transport failures) is logged server-side instead.
+
 ## 2.0.0-rc.5 — 2026-06-25
 
 ### Optional encryption-at-rest image variant

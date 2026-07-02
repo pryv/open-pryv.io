@@ -7,6 +7,14 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
+const { getLogger } = require('@pryv/boiler');
+const logger = getLogger('methods:helpers:mailing');
+
+// Client-facing message for any mail-delivery failure. The diagnostic
+// detail (mail-service URL, upstream HTTP status, transport errors) is
+// operator-only: it is logged, never returned — the reset-password
+// endpoint relays this error message to unauthenticated callers.
+const GENERIC_SENDMAIL_ERROR = 'Sending email failed. Please try again later or contact support.';
 
 /**
  * Helper function that modularizes the sending of an email,
@@ -109,7 +117,10 @@ function _sendmailInProcess (emailSettings: EmailSettings, template: string, rec
       if (err && err.id === 'unknown-resource') {
         return callback(errors.unexpectedError('in-process mail: no template found for ' + template + '/' + lang));
       }
-      return callback(err);
+      // Transport/config errors can carry internal detail (SMTP host,
+      // connection failures) — same operator-only rule as parseError.
+      logger.error('Sending email failed (in-process): ' + (err instanceof Error ? err.message : String(err)));
+      return callback(errors.unexpectedError(GENERIC_SENDMAIL_ERROR));
     }
   );
 }
@@ -130,20 +141,23 @@ function _sendmail (url: string, data: MicroserviceData | MandrillData, cb: Mail
   });
 }
 function parseError (url: string, err: Error | null, res: MailResponse | null): Error {
+  let detail: string;
   // 1. Mail service answered with an error payload
   if (res != null && res.body != null && typeof res.body === 'object' && 'error' in res.body && (res.body as { error: unknown }).error != null) {
-    const baseMsg = 'Sending email failed, mail-service answered with the following error:\n';
-    return errors.unexpectedError(baseMsg + String((res.body as { error: unknown }).error));
+    detail = 'mail-service answered with the following error:\n' + String((res.body as { error: unknown }).error);
+  } else {
+    // 2. HTTP-layer failure (fetch reject or non-2xx without error body)
+    const errorMsg = err != null ? err.message : `HTTP ${res?.status ?? 'unknown'}`;
+    let hint = '';
+    if (errorMsg.match(/certificate/i)) {
+      hint = 'Trying to do SSL but certificates are invalid: ';
+    } else if (errorMsg.match(/not found|ENOTFOUND|ECONNREFUSED/i)) {
+      hint = 'Endpoint seems unreachable: ';
+    }
+    detail = `could not reach mail-service at: ${url}.\n${hint}${errorMsg}`;
   }
-  // 2. HTTP-layer failure (fetch reject or non-2xx without error body)
-  const errorMsg = err != null ? err.message : `HTTP ${res?.status ?? 'unknown'}`;
-  let baseMsg = `Sending email failed while trying to reach mail-service at: ${url}.\n`;
-  if (errorMsg.match(/certificate/i)) {
-    baseMsg += 'Trying to do SSL but certificates are invalid: ';
-  } else if (errorMsg.match(/not found|ENOTFOUND|ECONNREFUSED/i)) {
-    baseMsg += 'Endpoint seems unreachable: ';
-  }
-  return errors.unexpectedError(baseMsg + errorMsg);
+  logger.error('Sending email failed, ' + detail);
+  return errors.unexpectedError(GENERIC_SENDMAIL_ERROR);
 }
 
 type MailCallback = (error?: Error | null, res?: MailResponse | null) => unknown;
