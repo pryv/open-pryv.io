@@ -75,13 +75,11 @@ type AccessLike = {
   isPersonal?: () => boolean;
   type?: string;
   clientData?: { cmc?: { role?: string; kind?: string } } | null;
-  [k: string]: unknown;
 };
 
 type MwContext = {
-  newEvent?: { streamIds?: string[]; type?: string; content?: Record<string, unknown> | null; [k: string]: unknown };
+  newEvent?: { streamIds?: string[]; type?: string; content?: Record<string, unknown> | null };
   access?: AccessLike;
-  [k: string]: unknown;
 };
 type MwNext = (err?: unknown) => void;
 type Middleware = (context: MwContext, params: unknown, result: unknown, next: MwNext) => unknown | Promise<unknown>;
