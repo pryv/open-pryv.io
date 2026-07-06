@@ -307,7 +307,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   const cmcInboxWriteHook = cmc.createInboxWriteHook({ errors });
   // Gate Bucket-1 CMC trigger writes (accept / scope-update / revoke) to
   // require a personal token. Non-personal tokens hand off to
-  // app-web-auth3 via @pryv/cmc helpers. Reuses AccessLogic.isPersonal().
+  // app-web-user-account via @pryv/cmc helpers. Reuses AccessLogic.isPersonal().
   const cmcAcceptAccessGateHook = cmc.createCmcAcceptAccessGateHook({ errors });
   // Phase 4 H8: stamp content.from from access identity when a
   // counterparty-marked access writes a chat/system message into a

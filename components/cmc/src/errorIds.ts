@@ -173,9 +173,9 @@ const CmcErrorIds = {
   // local accesses on the user's account; a personal token is required
   // so the user is provably present + authenticated at the moment of
   // acceptance / revocation / scope change. Apps without a personal
-  // token should hand off to app-web-auth3 via @pryv/cmc.requestAccept
+  // token should hand off to app-web-user-account via @pryv/cmc.requestAccept
   // (or .requestRevoke / .requestScopeUpdate) — the user authenticates
-  // in app-web-auth3, the personal token writes the trigger, and the
+  // in app-web-user-account, the personal token writes the trigger, and the
   // result returns to the app via popup postMessage or returnUrl.
   ACCEPT_REQUIRES_PERSONAL_TOKEN: 'cmc-accept-requires-personal-token',
 

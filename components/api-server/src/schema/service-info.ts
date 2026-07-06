@@ -28,7 +28,7 @@ export default function () {
     eventTypes: string(),
     assets: object({}),
     features: object({}),
-    // Platform version — SDKs (lib-js, app-web-auth3) read this to pick
+    // Platform version — SDKs (lib-js, app-web-user-account) read this to pick
     // the direct-core `/users` registration endpoint (>=1.6.0). Without
     // it they fall back to the legacy `/reg/user` path that round-robins
     // through reg.{domain} and breaks cross-core registration on

@@ -238,7 +238,7 @@ The patient's app renders the consent screen.
 > **Two flows for accept + scope-update:**
 >
 > 1. **Direct (when your app already holds a personal token):** post `events.create` from `patientConnection`, as shown below.
-> 2. **Hand-off (when your app holds only an app/shared token):** call [`pryv.cmc.requestAccept(...)`](https://github.com/pryv/lib-js/tree/master/components/pryv-cmc) — it opens app-web-auth3's `/cmc-accept` page where the user signs in, the trigger is written with the fresh personal token, and the data-grant apiEndpoint is returned to your app via popup `postMessage` or `returnUrl` redirect. The sibling `pryv.cmc.requestScopeUpdate(...)` + `/cmc-scope-update` page handles the scope-update accept the same way.
+> 2. **Hand-off (when your app holds only an app/shared token):** call [`pryv.cmc.requestAccept(...)`](https://github.com/pryv/lib-js/tree/master/components/pryv-cmc) — it opens app-web-user-account's `/cmc-accept` page where the user signs in, the trigger is written with the fresh personal token, and the data-grant apiEndpoint is returned to your app via popup `postMessage` or `returnUrl` redirect. The sibling `pryv.cmc.requestScopeUpdate(...)` + `/cmc-scope-update` page handles the scope-update accept the same way.
 
 ```js
 // Direct flow — patientConnection authenticated with a personal token.
@@ -256,9 +256,9 @@ await patientConnection.api([
   }
 ]);
 
-// Hand-off flow — patient app holds an app/shared token; defer to app-web-auth3.
+// Hand-off flow — patient app holds an app/shared token; defer to app-web-user-account.
 const result = await pryv.cmc.requestAccept({
-  authUrl: 'https://access.pryv.me/access/v3/cmc-accept',
+  authUrl: 'https://pryv.github.io/app-web-user-account/cmc-accept',
   pryvApi: 'https://reg.pryv.me/',
   capabilityUrl: 'https://AbC...Xyz@example.com/',
   scopeStreamId: ':_cmc:apps:patient:incoming'
