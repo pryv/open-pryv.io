@@ -1,5 +1,15 @@
 # Changelog - Internal (no API impact)
 
+## chore(init): default auth UI is now app-web-user-account
+
+The `bin/init.js` config wizard and `bin/check-config.js` now default
+`access.defaultAuthUrl` / `auth.passwordResetPageURL` to the
+`app-web-user-account` React app (routes `/auth`, `/reset-password`) instead
+of the deprecated `app-web-auth3` (`/access/access.html`, …). Fresh installs
+point at the current reference auth+account web app out of the box. No runtime
+API change; existing deployments are unaffected (their configured values are
+untouched).
+
 ## feat(cmc): access-permission gates on all access-mutating lifecycle triggers + chain checks in handlers
 
 CMC orchestration previously treated `consent/{accept,scope-update,revoke}-cmc`
