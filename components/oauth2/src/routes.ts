@@ -28,6 +28,7 @@ const { handleAccept } = require('./routes/accept.ts');
 const { handleRefuse } = require('./routes/refuse.ts');
 const { handleToken } = require('./routes/token.ts');
 const { corsMiddleware } = require('./cors.ts');
+const { issuerFromConfig } = require('./issuer.ts');
 
 export type Deps = {
   config: { get (key: string): unknown };
@@ -92,7 +93,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
     throw new Error('registerRoutes: app must be an Express-like instance');
   }
 
-  const issuer = String(deps.config.get('service:api') ?? '').replace(/\/$/, '');
+  const issuer = issuerFromConfig(deps.config);
   if (!issuer) {
     console.warn('[oauth2] service:api not configured — OAuth routes not mounted');
     return;

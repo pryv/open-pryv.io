@@ -39,6 +39,7 @@ const require = createRequire(import.meta.url);
 
 const cuid = require('cuid');
 const { verifyState } = require('../signedState.ts');
+const { issuerFromConfig } = require('../issuer.ts');
 const { setCode } = require('../storage.ts');
 const { audit } = require('../audit.ts');
 
@@ -76,7 +77,7 @@ export const CODE_TTL_SECONDS = 600;
 /** Express-style handler factory. */
 export function handleAccept (deps: AcceptDeps) {
   return async function accept (req: any, res: any): Promise<void> {
-    const issuer = String(deps.config.get('service:api') ?? '').replace(/\/$/, '');
+    const issuer = issuerFromConfig(deps.config);
     const adminKey = String(deps.config.get('auth:adminAccessKey') ?? '');
     const coreId = String(deps.config.get('core:id') ?? 'single');
     const accessTokenTTL = Number(deps.config.get('oauth:accessTokenTTL') ?? 3600);

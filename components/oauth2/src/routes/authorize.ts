@@ -31,6 +31,7 @@ const { getClient, validateRedirectUri } = require('../clientRegistry.ts');
 const { mapError } = require('../errorMap.ts');
 const { parseScopes, ScopeParseError } = require('../scopeRegistry.ts');
 const { signState } = require('../signedState.ts');
+const { issuerFromConfig } = require('../issuer.ts');
 const { audit } = require('../audit.ts');
 
 /** Shape of the inputs the host app injects. */
@@ -42,7 +43,7 @@ export type AuthorizeDeps = {
 /** Express-style handler factory. */
 export function handleAuthorize (deps: AuthorizeDeps) {
   return async function authorize (req: any, res: any): Promise<void> {
-    const issuer = String(deps.config.get('service:api') ?? '').replace(/\/$/, '');
+    const issuer = issuerFromConfig(deps.config);
     if (!issuer) return sendServerError(res, 'service:api not configured');
     const adminKey = String(deps.config.get('auth:adminAccessKey') ?? '');
     if (!adminKey) return sendServerError(res, 'auth:adminAccessKey not configured');

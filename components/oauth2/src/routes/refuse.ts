@@ -25,6 +25,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const { verifyState } = require('../signedState.ts');
+const { issuerFromConfig } = require('../issuer.ts');
 const { audit } = require('../audit.ts');
 
 export type RefuseDeps = {
@@ -33,7 +34,7 @@ export type RefuseDeps = {
 
 export function handleRefuse (deps: RefuseDeps) {
   return async function refuse (req: any, res: any): Promise<void> {
-    const issuer = String(deps.config.get('service:api') ?? '').replace(/\/$/, '');
+    const issuer = issuerFromConfig(deps.config);
     const adminKey = String(deps.config.get('auth:adminAccessKey') ?? '');
     if (!issuer || !adminKey) {
       return sendJson(res, 500, { error: 'server_error', error_description: 'service:api or auth:adminAccessKey not configured' });
