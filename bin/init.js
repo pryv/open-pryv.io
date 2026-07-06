@@ -63,6 +63,59 @@ process.on('SIGINT', () => {
   process.exit(130);
 });
 
+// Runtime options parsed from argv. Interactive flow is the default (no
+// flags). `dryRun` runs the full wizard but writes nothing — it previews
+// every file it would produce. `force` overwrites an existing config +
+// launcher scripts without prompting.
+const OPTS = { dryRun: false, force: false };
+
+function printUsage () {
+  process.stdout.write(`open-pryv.io init — interactive single-core install wizard
+
+Usage:
+  docker run -it -v /host/pryv:/app/pryv pryvio/open-pryv.io init [options]
+  PRYV_CONFIG_DIR=/tmp/test node bin/init.js [options]
+
+Options:
+  --dry-run    Run the wizard and print every file it would write, without
+               touching disk. Works even over an existing install.
+  --force      Overwrite an existing config + launcher scripts without asking.
+  -h, --help   Show this help and exit.
+`);
+}
+
+function parseArgs (argv) {
+  const opts = { help: false, dryRun: false, force: false };
+  for (const a of argv) {
+    if (a === '-h' || a === '--help') opts.help = true;
+    else if (a === '--dry-run') opts.dryRun = true;
+    else if (a === '--force') opts.force = true;
+    else if (a.startsWith('-')) {
+      process.stderr.write(`init: unknown option "${a}". Try --help.\n`);
+      process.exit(2);
+    }
+    // Non-flag positionals (e.g. a legacy `<config-path>`) are ignored:
+    // the config directory is fixed to /app/pryv (or $PRYV_CONFIG_DIR).
+  }
+  return opts;
+}
+
+/**
+ * Write a file, or — under --dry-run — print a preview line instead of
+ * touching disk. Returns true if a file was actually written. Callers own
+ * their own success/next-step logging so the messaging stays contextual.
+ */
+function emitFile (absPath, content, mode) {
+  if (OPTS.dryRun) {
+    const modeStr = mode !== undefined ? `, mode ${mode.toString(8)}` : '';
+    console.log(`  ○ DRY-RUN would write ${absPath} (${Buffer.byteLength(content)} bytes${modeStr})`);
+    return false;
+  }
+  if (mode !== undefined) fs.writeFileSync(absPath, content, { mode });
+  else fs.writeFileSync(absPath, content);
+  return true;
+}
+
 async function ask (question, defaultValue) {
   const prompt = defaultValue !== undefined && defaultValue !== ''
     ? `${question} [${defaultValue}]: `
@@ -587,6 +640,15 @@ function discoverHostPath (containerPath) {
 }
 
 async function main () {
+  const parsed = parseArgs(process.argv.slice(2));
+  if (parsed.help) {
+    printUsage();
+    rl.close();
+    return;
+  }
+  OPTS.dryRun = parsed.dryRun;
+  OPTS.force = parsed.force;
+
   // Local-dev escape hatch: skip /app/pryv when PRYV_CONFIG_DIR is set so
   // contributors can run the wizard outside docker without juggling mounts.
   // Inside the image the env var is never set; operators get the
@@ -595,10 +657,15 @@ async function main () {
   const absConfigDir = localDevDir ? path.resolve(localDevDir) : CONTAINER_CONFIG_DIR;
   const hostConfigDir = localDevDir ? absConfigDir : discoverHostPath(CONTAINER_CONFIG_DIR);
 
-  // Refuse to run without an interactive TTY. Without `-it` on docker run,
-  // stdin is closed and the very first prompt EOFs — surface that here
-  // with the actual fix (`docker run -it …`) rather than a stack trace.
-  if (!process.stdin.isTTY) {
+  // Refuse to run without an interactive TTY — UNLESS answers are being fed
+  // programmatically (piped/scripted). Without `-it` on docker run, stdin is
+  // closed and the very first prompt EOFs; surface that with the actual fix
+  // (`docker run -it …`) rather than a stack trace. --dry-run (and the
+  // scripted input modes) legitimately run non-TTY (CI, `answers | init`),
+  // so the guard is skipped there; the EOF guard in ask() still fails fast
+  // on under-fed input.
+  const inputIsPiped = OPTS.dryRun;
+  if (!process.stdin.isTTY && !inputIsPiped) {
     console.error('init: no interactive TTY attached to stdin.');
     console.error('  The wizard needs to prompt you — re-run docker with `-it`:');
     console.error('');
@@ -635,10 +702,18 @@ async function main () {
   // the launcher still works — operators just run it from its own dir.
   const absConfigPath = path.join(absConfigDir, CONFIG_FILENAME);
   if (fs.existsSync(absConfigPath)) {
-    console.error(`init: ${absConfigPath} already exists.`);
-    if (hostConfigDir) console.error(`  On the host: ${hostConfigDir}/${CONFIG_FILENAME}`);
-    console.error('  Move it aside or pick a different mount. (init never overwrites.)');
-    process.exit(1);
+    // --dry-run previews over an existing install (writes nothing anyway);
+    // --force overwrites deliberately. Otherwise refuse — init never
+    // clobbers a config silently.
+    if (!OPTS.force && !OPTS.dryRun) {
+      console.error(`init: ${absConfigPath} already exists.`);
+      if (hostConfigDir) console.error(`  On the host: ${hostConfigDir}/${CONFIG_FILENAME}`);
+      console.error('  Move it aside, pick a different mount, or pass --force to overwrite.');
+      process.exit(1);
+    }
+    if (OPTS.force && !OPTS.dryRun) {
+      console.log(`⚠ --force: ${absConfigPath} will be overwritten.`);
+    }
   }
 
   // Data folder lives under the same operator-mounted tree, sibling to
@@ -653,6 +728,10 @@ async function main () {
   console.log();
   console.log('open-pryv.io configuration wizard');
   console.log(bar());
+  if (OPTS.dryRun) {
+    console.log('DRY RUN — no files will be written; every output is previewed.');
+    console.log();
+  }
   console.log('Producing a single-core install:');
   if (hostConfigDir) {
     console.log(`  host:      ${hostConfigDir}/${CONFIG_FILENAME}  ← config`);
@@ -1172,7 +1251,7 @@ async function main () {
     config.services = { email: emailConfig };
   }
 
-  fs.mkdirSync(configDir, { recursive: true });
+  if (!OPTS.dryRun) fs.mkdirSync(configDir, { recursive: true });
   // Emit YAML in logical sections with header dividers + per-section
   // docstrings instead of a flat alphabetised dump. The order below is
   // tuned for a top-down read: identity → topology → network/TLS →
@@ -1269,10 +1348,10 @@ async function main () {
     platformEngine,
     fileEngine
   });
-  fs.writeFileSync(absConfigPath, yamlBody + appendix);
-
   console.log();
-  console.log(`✓ Wrote ${absConfigPath}`);
+  if (emitFile(absConfigPath, yamlBody + appendix)) {
+    console.log(`✓ Wrote ${absConfigPath}`);
+  }
 
   // ── OPTIONAL: run-pryv.sh launcher sibling to the config ──────
   // The launcher self-locates from $0 so operators can run it from
@@ -1300,10 +1379,15 @@ async function main () {
   if (fs.existsSync(runScriptPath)) {
     // run-pryv.sh exists — only ASK in this case; default no so the
     // operator can keep their customised launcher. The fresh-install
-    // path (no existing launcher) is unconditional.
-    shouldWriteRunScript = await askYesNo(`${runScriptPath} already exists — overwrite it?`, false);
-    if (!shouldWriteRunScript) {
-      console.log(`  ✓ Kept existing ${runScriptPath}`);
+    // path (no existing launcher) is unconditional. --force / --dry-run
+    // skip the prompt (overwrite deliberately / preview only).
+    if (OPTS.force || OPTS.dryRun) {
+      shouldWriteRunScript = true;
+    } else {
+      shouldWriteRunScript = await askYesNo(`${runScriptPath} already exists — overwrite it?`, false);
+      if (!shouldWriteRunScript) {
+        console.log(`  ✓ Kept existing ${runScriptPath}`);
+      }
     }
   }
   if (shouldWriteRunScript) {
@@ -1360,9 +1444,8 @@ async function main () {
       `  node bin/master.js --config ${absConfigPath}`,
       ''
     ].join('\n');
-    fs.writeFileSync(runScriptPath, runScript, { mode: 0o755 });
-    wroteRunScript = true;
-    console.log(`✓ Wrote ${runScriptPath}`);
+    wroteRunScript = emitFile(runScriptPath, runScript, 0o755);
+    if (wroteRunScript) console.log(`✓ Wrote ${runScriptPath}`);
   }
 
   // ── check-config.sh launcher ─────────────────────────────────
@@ -1372,9 +1455,13 @@ async function main () {
   let wroteCheckScript = false;
   let shouldWriteCheckScript = true;
   if (fs.existsSync(checkScriptPath)) {
-    shouldWriteCheckScript = await askYesNo(`${checkScriptPath} already exists — overwrite it?`, false);
-    if (!shouldWriteCheckScript) {
-      console.log(`  ✓ Kept existing ${checkScriptPath}`);
+    if (OPTS.force || OPTS.dryRun) {
+      shouldWriteCheckScript = true;
+    } else {
+      shouldWriteCheckScript = await askYesNo(`${checkScriptPath} already exists — overwrite it?`, false);
+      if (!shouldWriteCheckScript) {
+        console.log(`  ✓ Kept existing ${checkScriptPath}`);
+      }
     }
   }
   if (shouldWriteCheckScript) {
@@ -1400,9 +1487,8 @@ async function main () {
       `  check-config ${absConfigPath}`,
       ''
     ].join('\n');
-    fs.writeFileSync(checkScriptPath, checkScript, { mode: 0o755 });
-    wroteCheckScript = true;
-    console.log(`✓ Wrote ${checkScriptPath}`);
+    wroteCheckScript = emitFile(checkScriptPath, checkScript, 0o755);
+    if (wroteCheckScript) console.log(`✓ Wrote ${checkScriptPath}`);
   }
 
   // ── config-to-env.sh launcher ────────────────────────────────
@@ -1412,9 +1498,13 @@ async function main () {
   const envScriptPath = path.join(configDir, 'config-to-env.sh');
   let shouldWriteEnvScript = true;
   if (fs.existsSync(envScriptPath)) {
-    shouldWriteEnvScript = await askYesNo(`${envScriptPath} already exists — overwrite it?`, false);
-    if (!shouldWriteEnvScript) {
-      console.log(`  ✓ Kept existing ${envScriptPath}`);
+    if (OPTS.force || OPTS.dryRun) {
+      shouldWriteEnvScript = true;
+    } else {
+      shouldWriteEnvScript = await askYesNo(`${envScriptPath} already exists — overwrite it?`, false);
+      if (!shouldWriteEnvScript) {
+        console.log(`  ✓ Kept existing ${envScriptPath}`);
+      }
     }
   }
   if (shouldWriteEnvScript) {
@@ -1441,8 +1531,7 @@ async function main () {
       `  config-to-env ${absConfigPath}`,
       ''
     ].join('\n');
-    fs.writeFileSync(envScriptPath, envScript, { mode: 0o755 });
-    console.log(`✓ Wrote ${envScriptPath}`);
+    if (emitFile(envScriptPath, envScript, 0o755)) console.log(`✓ Wrote ${envScriptPath}`);
   }
 
   // ── NEXT STEPS ────────────────────────────────────────────────
@@ -1492,6 +1581,13 @@ async function main () {
   console.log('Smoke test:');
   console.log(`  curl ${publicUrl}/reg/service/info`);
   console.log();
+
+  if (OPTS.dryRun) {
+    console.log(bar());
+    console.log('DRY RUN — nothing was written. Re-run without --dry-run to apply');
+    console.log('(secrets are regenerated on the real run).');
+    console.log();
+  }
 
   rl.close();
 }
