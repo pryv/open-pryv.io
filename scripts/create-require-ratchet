@@ -14,7 +14,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-MAX=332   # pin to the measured count on the day this lands
+MAX=318   # pin to the measured count on the day this lands
 
 COUNT=$(grep -rl --include='*.ts' \
   --exclude-dir=node_modules --exclude-dir=test --exclude-dir=test-helpers \

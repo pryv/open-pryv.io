@@ -10,12 +10,9 @@
 // First process to call init() becomes the broker; others connect as clients.
 // Protocol: newline-delimited JSON over TCP.
 
-import { createRequire } from 'node:module';
 import type { Socket, Server } from 'node:net';
-const require = createRequire(import.meta.url);
-
-const net = require('node:net');
-const { getConfig, getLogger } = require('@pryv/boiler');
+import net from 'node:net';
+import { getConfig, getLogger } from '@pryv/boiler';
 const logger = getLogger('messages:pubsub:tcp');
 
 type ClientId = string;
@@ -238,9 +235,9 @@ class TcpClient {
 // Exported API
 // ──────────────────────────────────────────────────────────────────────
 
-async function getPort () {
+async function getPort (): Promise<number> {
   const config = await getConfig();
-  if (config.has('tcpBroker:port')) return config.get('tcpBroker:port');
+  if (config.has('tcpBroker:port')) return config.get('tcpBroker:port') as number;
   return 4222; // default
 }
 

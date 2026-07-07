@@ -8,12 +8,9 @@
 /**
  * Helper functions for error handling.
  */
-import { createRequire } from 'node:module';
 import type { APIError as APIErrorType } from './APIError.ts';
-const require = createRequire(import.meta.url);
-
-const { APIError } = require('./APIError.ts');
-const { ErrorIds } = require('./ErrorIds.ts');
+import { APIError } from './APIError.ts';
+import { ErrorIds } from './ErrorIds.ts';
 
 type LogFnLike = (msg: string, metadata?: unknown) => void;
 type ReqLike = { url?: string, method?: string, body?: unknown } | null;

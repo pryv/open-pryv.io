@@ -5,13 +5,9 @@
  * Refer to LICENSE file
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const testMessaging = require('./test_messaging.ts');
-const pubsub = require('./pubsub.ts').default;
-
-const constants = require('./constants.ts');
+import * as testMessaging from './test_messaging.ts';
+import pubsub from './pubsub.ts';
+import * as constants from './constants.ts';
 
 export { testMessaging, pubsub };
 export const SERVER_READY = constants.SERVER_READY;
