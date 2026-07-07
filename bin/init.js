@@ -67,30 +67,44 @@ process.on('SIGINT', () => {
 // flags). `dryRun` runs the full wizard but writes nothing — it previews
 // every file it would produce. `force` overwrites an existing config +
 // launcher scripts without prompting.
-const OPTS = { dryRun: false, force: false };
+const OPTS = { dryRun: false, force: false, nonInteractive: false, configFrom: null };
 
 function printUsage () {
-  process.stdout.write(`open-pryv.io init — interactive single-core install wizard
+  process.stdout.write(`open-pryv.io init — single-core install wizard
 
 Usage:
   docker run -it -v /host/pryv:/app/pryv pryvio/open-pryv.io init [options]
   PRYV_CONFIG_DIR=/tmp/test node bin/init.js [options]
 
 Options:
-  --dry-run    Run the wizard and print every file it would write, without
-               touching disk. Works even over an existing install.
-  --force      Overwrite an existing config + launcher scripts without asking.
-  -h, --help   Show this help and exit.
+  --dry-run             Run the wizard and print every file it would write,
+                        without touching disk. Works even over an existing install.
+  --force               Overwrite an existing config + launcher scripts without asking.
+  --config-from=<file>  Read answers from a YAML/JSON file (answer keys → values);
+                        anything not in the file falls back to defaults, then prompts.
+  --non-interactive     Never prompt: every answer comes from --config-from and/or
+                        PRYV_INIT_<KEY> env vars, else its default; a missing required
+                        answer is a hard error. Implies a non-TTY run.
+  -h, --help            Show this help and exit.
+
+Answer keys use the env form PRYV_INIT_<KEY> (dots → underscores), e.g.
+PRYV_INIT_DNSLESS, PRYV_INIT_DB_ENGINE, PRYV_INIT_SERVICE_NAME. Run --dry-run
+once interactively to see the full set.
 `);
 }
 
 function parseArgs (argv) {
-  const opts = { help: false, dryRun: false, force: false };
+  const opts = { help: false, dryRun: false, force: false, nonInteractive: false, configFrom: null };
   for (const a of argv) {
     if (a === '-h' || a === '--help') opts.help = true;
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--force') opts.force = true;
-    else if (a.startsWith('-')) {
+    else if (a === '--non-interactive') opts.nonInteractive = true;
+    else if (a.startsWith('--config-from=')) opts.configFrom = a.slice('--config-from='.length);
+    else if (a === '--config-from') {
+      process.stderr.write('init: --config-from needs a file: --config-from=<file>. Try --help.\n');
+      process.exit(2);
+    } else if (a.startsWith('-')) {
       process.stderr.write(`init: unknown option "${a}". Try --help.\n`);
       process.exit(2);
     }
@@ -98,6 +112,37 @@ function parseArgs (argv) {
     // the config directory is fixed to /app/pryv (or $PRYV_CONFIG_DIR).
   }
   return opts;
+}
+
+/**
+ * Load a --config-from answers file (YAML or JSON) into a flat key→string
+ * map. Values are stringified so the ask*() helpers treat them like typed
+ * input. Exits 2 on unreadable / malformed / non-mapping files.
+ */
+function loadAnswersFile (file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    process.stderr.write(`init: cannot read --config-from file "${file}": ${err.message}\n`);
+    process.exit(2);
+  }
+  let obj;
+  try {
+    obj = yaml.load(raw); // js-yaml parses JSON too
+  } catch (err) {
+    process.stderr.write(`init: --config-from file "${file}" is not valid YAML/JSON: ${err.message}\n`);
+    process.exit(2);
+  }
+  if (obj == null || typeof obj !== 'object' || Array.isArray(obj)) {
+    process.stderr.write(`init: --config-from file "${file}" must be a mapping of answer keys to values.\n`);
+    process.exit(2);
+  }
+  const m = new Map();
+  for (const [k, v] of Object.entries(obj)) {
+    m.set(k, v == null ? '' : String(v));
+  }
+  return m;
 }
 
 /**
@@ -116,7 +161,43 @@ function emitFile (absPath, content, mode) {
   return true;
 }
 
-async function ask (question, defaultValue) {
+// Programmatic answers (--config-from file → env → prompt). Every ask*()
+// takes a stable `key`; the env var form is PRYV_INIT_<KEY> with dots
+// uppercased to underscores (e.g. key 'db.engine' → PRYV_INIT_DB_ENGINE).
+let ANSWERS = null; // Map<key,string> loaded from --config-from, or null
+
+function envVarFor (key) {
+  return 'PRYV_INIT_' + key.toUpperCase().replace(/[.]/g, '_');
+}
+
+/** Resolve a programmatic answer for `key`: config-from file, then env. */
+function autoAnswer (key) {
+  if (key == null) return undefined;
+  if (ANSWERS && ANSWERS.has(key)) return ANSWERS.get(key);
+  const env = process.env[envVarFor(key)];
+  return env; // undefined when unset
+}
+
+/** True when answers come from a file/env rather than interactive prompts. */
+function autoMode () {
+  return OPTS.nonInteractive || ANSWERS != null;
+}
+
+async function ask (question, defaultValue, key) {
+  // Programmatic answer wins: an explicit empty value means "accept the
+  // default" (same as pressing Enter interactively).
+  const supplied = autoAnswer(key);
+  if (supplied !== undefined) {
+    const v = String(supplied).trim();
+    return v === '' && defaultValue !== undefined ? defaultValue : v;
+  }
+  // No programmatic value. In non-interactive mode never prompt: take the
+  // default if there is one, else fail with a pointer to how to supply it.
+  if (OPTS.nonInteractive) {
+    if (defaultValue !== undefined) return defaultValue;
+    throw new Error(`init: --non-interactive but no answer for "${key || question}". Set ${key ? envVarFor(key) : 'the value'} or add "${key || question}" to the --config-from file.`);
+  }
+
   const prompt = defaultValue !== undefined && defaultValue !== ''
     ? `${question} [${defaultValue}]: `
     : `${question}: `;
@@ -137,25 +218,39 @@ async function ask (question, defaultValue) {
   return v === '' && defaultValue !== undefined ? defaultValue : v;
 }
 
-async function askNonEmpty (question, defaultValue) {
+async function askNonEmpty (question, defaultValue, key) {
   while (true) {
-    const v = await ask(question, defaultValue);
+    const v = await ask(question, defaultValue, key);
     if (v !== '' && v != null) return v;
+    // A resolved-but-empty required value can't be re-prompted in auto mode.
+    if (autoMode()) {
+      throw new Error(`init: required value "${key || question}" resolved empty. Set ${key ? envVarFor(key) : 'it'} or add "${key || question}" to the --config-from file.`);
+    }
     console.log('  (required — please enter a value)');
   }
 }
 
-async function askYesNo (question, defaultYes = true) {
+async function askYesNo (question, defaultYes = true, key) {
   const hint = defaultYes ? 'Y/n' : 'y/N';
-  const raw = (await ask(`${question} [${hint}]`)).toLowerCase();
+  // Pass the default as a y/n token so a missing programmatic answer falls
+  // back to it. Accept true/false/1/0/yes/no/y/n from files + env.
+  const raw = (await ask(`${question} [${hint}]`, defaultYes ? 'y' : 'n', key)).toString().trim().toLowerCase();
   if (raw === '') return defaultYes;
+  if (['y', 'yes', 'true', '1', 'on'].includes(raw)) return true;
+  if (['n', 'no', 'false', '0', 'off'].includes(raw)) return false;
   return raw.startsWith('y');
 }
 
-async function askChoice (question, choices, defaultIdx = 0) {
-  console.log(question);
-  choices.forEach((c, i) => console.log(`  ${i + 1}) ${c}`));
-  const raw = await ask(`Choice [1-${choices.length}]`, String(defaultIdx + 1));
+async function askChoice (question, choices, defaultIdx = 0, key) {
+  // Only render the menu when we'll actually prompt.
+  if (autoAnswer(key) === undefined && !OPTS.nonInteractive) {
+    console.log(question);
+    choices.forEach((c, i) => console.log(`  ${i + 1}) ${c}`));
+  }
+  const raw = (await ask(`Choice [1-${choices.length}]`, String(defaultIdx + 1), key)).toString().trim();
+  // Accept either the choice value by name (case-insensitive) or a 1-based index.
+  const byName = choices.findIndex(c => c.toLowerCase() === raw.toLowerCase());
+  if (byName >= 0) return choices[byName];
   const idx = parseInt(raw, 10) - 1;
   return choices[Number.isFinite(idx) && idx >= 0 && idx < choices.length ? idx : defaultIdx];
 }
@@ -648,6 +743,9 @@ async function main () {
   }
   OPTS.dryRun = parsed.dryRun;
   OPTS.force = parsed.force;
+  OPTS.nonInteractive = parsed.nonInteractive;
+  OPTS.configFrom = parsed.configFrom;
+  if (OPTS.configFrom) ANSWERS = loadAnswersFile(OPTS.configFrom);
 
   // Local-dev escape hatch: skip /app/pryv when PRYV_CONFIG_DIR is set so
   // contributors can run the wizard outside docker without juggling mounts.
@@ -664,7 +762,7 @@ async function main () {
   // scripted input modes) legitimately run non-TTY (CI, `answers | init`),
   // so the guard is skipped there; the EOF guard in ask() still fails fast
   // on under-fed input.
-  const inputIsPiped = OPTS.dryRun;
+  const inputIsPiped = OPTS.dryRun || OPTS.nonInteractive || OPTS.configFrom != null;
   if (!process.stdin.isTTY && !inputIsPiped) {
     console.error('init: no interactive TTY attached to stdin.');
     console.error('  The wizard needs to prompt you — re-run docker with `-it`:');
@@ -752,7 +850,7 @@ async function main () {
   console.log('                 port 53/udp on the host + LE wildcard cert via DNS-01)');
   console.log('  dnsLess ON  → users share one FQDN: https://example.com/<username>/events');
   console.log('                (simpler single-host setup; no DNS server, HTTP-01 LE works)');
-  const dnsLess = await askYesNo('Enable dnsLess mode?', false);
+  const dnsLess = await askYesNo('Enable dnsLess mode?', false, 'dnsless');
   console.log();
 
   // 2. Hostname / domain
@@ -760,14 +858,14 @@ async function main () {
   let dnsDomain;
   let dnsPublicIp;
   if (dnsLess) {
-    publicUrl = await askNonEmpty('Public URL (e.g. https://pryv.example.com)');
+    publicUrl = await askNonEmpty('Public URL (e.g. https://pryv.example.com)', undefined, 'publicurl');
     if (!/^https?:\/\//.test(publicUrl)) {
       console.log('  (prepending https://)');
       publicUrl = 'https://' + publicUrl;
     }
     publicUrl = publicUrl.replace(/\/+$/, '');
   } else {
-    dnsDomain = await askNonEmpty('Root domain to serve (e.g. example.com — will serve *.example.com)');
+    dnsDomain = await askNonEmpty('Root domain to serve (e.g. example.com — will serve *.example.com)', undefined, 'dnsdomain');
     publicUrl = `https://core.${dnsDomain}`;
 
     // Public IPv4 address — fed into `dns.publicIp` so master.js can seed
@@ -786,7 +884,8 @@ async function main () {
     }
     dnsPublicIp = await askNonEmpty(
       'Public IPv4 address of this host (NS delegation for ' + dnsDomain + ' should resolve here)',
-      detectedIp || undefined
+      detectedIp || undefined,
+      'publicip'
     );
   }
   console.log();
@@ -798,18 +897,18 @@ async function main () {
   console.log('▸ User-data storage engine');
   console.log('  sqlite     → one file per user; no extra service; cleaner GDPR Art.17 erasure');
   console.log('  postgresql → shared tables keyed by user_id; one DB to back up + administer');
-  const dbEngine = await askChoice('Choose:', ['sqlite', 'postgresql'], 0);
+  const dbEngine = await askChoice('Choose:', ['sqlite', 'postgresql'], 0, 'db.engine');
   console.log();
 
   let pgConfig = null;
   if (dbEngine === 'postgresql') {
     console.log('▸ PostgreSQL connection');
     pgConfig = {
-      host: await ask('  Host', 'localhost'),
-      port: parseInt(await ask('  Port', '5432'), 10),
-      database: await ask('  Database name', 'pryv_db'),
-      user: await ask('  User', 'pryv'),
-      password: await askNonEmpty('  Password'),
+      host: await ask('  Host', 'localhost', 'db.host'),
+      port: parseInt(await ask('  Port', '5432', 'db.port'), 10),
+      database: await ask('  Database name', 'pryv_db', 'db.database'),
+      user: await ask('  User', 'pryv', 'db.user'),
+      password: await askNonEmpty('  Password', undefined, 'db.password'),
       max: 20
     };
     console.log();
@@ -830,18 +929,18 @@ async function main () {
     console.log('  filesystem → attachment files under the data folder (default)');
     console.log('  s3         → attachments on an S3-compatible object store (AWS S3, MinIO, …)');
     console.log('  postgresql → attachments inside the PostgreSQL database (low file volume only)');
-    fileEngine = await askChoice('Choose:', ['filesystem', 's3', 'postgresql'], 0);
+    fileEngine = await askChoice('Choose:', ['filesystem', 's3', 'postgresql'], 0, 'file.engine');
     if (fileEngine === 's3') {
-      const endpoint = await ask('  S3 endpoint URL (empty for AWS — derived from region)', '');
-      const accessKeyId = await ask('  Access key id (empty = AWS credential chain / IAM role)', '');
+      const endpoint = await ask('  S3 endpoint URL (empty for AWS — derived from region)', '', 's3.endpoint');
+      const accessKeyId = await ask('  Access key id (empty = AWS credential chain / IAM role)', '', 's3.accesskeyid');
       s3Config = {
         endpoint: endpoint || null,
-        region: await ask('  Region', 'us-east-1'),
-        bucket: await askNonEmpty('  Bucket'),
+        region: await ask('  Region', 'us-east-1', 's3.region'),
+        bucket: await askNonEmpty('  Bucket', undefined, 's3.bucket'),
         accessKeyId: accessKeyId || null,
-        secretAccessKey: accessKeyId ? await askNonEmpty('  Secret access key') : null,
-        forcePathStyle: await askYesNo('  Path-style addressing (required for MinIO / most self-hosted)?', true),
-        keyPrefix: await ask('  Key prefix inside the bucket', '')
+        secretAccessKey: accessKeyId ? await askNonEmpty('  Secret access key', undefined, 's3.secretaccesskey') : null,
+        forcePathStyle: await askYesNo('  Path-style addressing (required for MinIO / most self-hosted)?', true, 's3.pathstyle'),
+        keyPrefix: await ask('  Key prefix inside the bucket', '', 's3.keyprefix')
       };
     } else if (fileEngine === 'postgresql') {
       console.log('  ⚠ PostgreSQL attachment storage is intended for installations where LOW');
@@ -857,7 +956,7 @@ async function main () {
       console.log('  embedded rqlite — one process and zero durable files on local disk.');
       console.log('  NOTE: moving to multi-core later requires a one-shot platform-data');
       console.log('  migration back to rqlite (node bin/migrate-platform.js).');
-      const diskless = await askYesNo('Store platform data in PostgreSQL (diskless)?', false);
+      const diskless = await askYesNo('Store platform data in PostgreSQL (diskless)?', false, 'platform.diskless');
       if (diskless) platformEngine = 'postgresql';
       console.log();
     }
@@ -871,7 +970,7 @@ async function main () {
 
   // 4. Service name
   console.log('▸ Service identity');
-  const serviceName = await askNonEmpty('  Service display name', 'My Pryv Instance');
+  const serviceName = await askNonEmpty('  Service display name', 'My Pryv Instance', 'service.name');
   console.log();
 
   // (data folder is no longer prompted — derived above as sibling to the
@@ -879,15 +978,15 @@ async function main () {
 
   // 6. Secrets
   console.log('▸ Secrets');
-  const genSecrets = await askYesNo('Generate random secrets automatically?', true);
+  const genSecrets = await askYesNo('Generate random secrets automatically?', true, 'secrets.autogenerate');
   let adminAccessKey;
   let filesReadTokenSecret;
   if (genSecrets) {
     adminAccessKey = genSecret(32);
     filesReadTokenSecret = genSecret(32);
   } else {
-    adminAccessKey = await askNonEmpty('  auth.adminAccessKey (32+ chars)');
-    filesReadTokenSecret = await askNonEmpty('  auth.filesReadTokenSecret (32+ chars)');
+    adminAccessKey = await askNonEmpty('  auth.adminAccessKey (32+ chars)', undefined, 'auth.adminaccesskey');
+    filesReadTokenSecret = await askNonEmpty('  auth.filesReadTokenSecret (32+ chars)', undefined, 'auth.filesreadtokensecret');
   }
   console.log();
 
@@ -908,7 +1007,7 @@ async function main () {
   console.log('  the canonical Pryv-hosted public build; fork app-web-user-account to rebrand.');
   console.log('  Sets `access.defaultAuthUrl` (auth URL emitted by /reg/access) +');
   console.log('  `auth.passwordResetPageURL` + adds the host to `auth.trustedApps`.');
-  const authUiUrl = (await ask('  app-web-user-account base URL', 'https://pryv.github.io/app-web-user-account')).replace(/\/+$/, '');
+  const authUiUrl = (await ask('  app-web-user-account base URL', 'https://pryv.github.io/app-web-user-account', 'authui.url')).replace(/\/+$/, '');
   console.log();
 
   // 8. TLS strategy
@@ -916,7 +1015,7 @@ async function main () {
   console.log('  letsEncrypt → master serves HTTPS via embedded ACME (auto-renew, DNS-01 default)');
   console.log('  custom      → bring your own cert files (mount them into the container)');
   console.log('  none        → plain HTTP on :3000 (auth flows expect HTTPS — testing only)');
-  const tlsStrategy = await askChoice('Choose:', ['letsEncrypt', 'custom', 'none'], 0);
+  const tlsStrategy = await askChoice('Choose:', ['letsEncrypt', 'custom', 'none'], 0, 'tls.strategy');
   console.log();
 
   let leConfig = null;
@@ -925,17 +1024,17 @@ async function main () {
     console.log('▸ Let\'s Encrypt');
     leConfig = {
       enabled: true,
-      email: await askNonEmpty('  Contact email (for ACME registration)'),
-      atRestKey: genSecrets ? genSecret(32) : await askNonEmpty('  letsEncrypt.atRestKey (32 bytes b64 — encrypts cert at rest)'),
+      email: await askNonEmpty('  Contact email (for ACME registration)', undefined, 'le.email'),
+      atRestKey: genSecrets ? genSecret(32) : await askNonEmpty('  letsEncrypt.atRestKey (32 bytes b64 — encrypts cert at rest)', undefined, 'le.atrestkey'),
       certRenewer: true,
-      staging: await askYesNo('  Use STAGING (recommended for first boot — avoids prod rate limits)?', true)
+      staging: await askYesNo('  Use STAGING (recommended for first boot — avoids prod rate limits)?', true, 'le.staging')
     };
     console.log();
   } else if (tlsStrategy === 'custom') {
     console.log('▸ Custom TLS cert');
     customSsl = {
-      keyFile: await ask('  Path to TLS key file (inside container)', `${absConfigDir}/tls/key.pem`),
-      certFile: await ask('  Path to TLS cert file (inside container)', `${absConfigDir}/tls/cert.pem`)
+      keyFile: await ask('  Path to TLS key file (inside container)', `${absConfigDir}/tls/key.pem`, 'tls.keyfile'),
+      certFile: await ask('  Path to TLS cert file (inside container)', `${absConfigDir}/tls/cert.pem`, 'tls.certfile')
     };
     console.log();
   }
@@ -945,7 +1044,7 @@ async function main () {
 
   // passwordResetPageURL: derived from authUiUrl (the auth UI hosts the page).
   const defaultPasswordResetPageURL = `${authUiUrl}/reset-password`;
-  const passwordResetPageURL = await ask('  auth.passwordResetPageURL (derived from auth UI)', defaultPasswordResetPageURL);
+  const passwordResetPageURL = await ask('  auth.passwordResetPageURL (derived from auth UI)', defaultPasswordResetPageURL, 'auth.passwordresetpageurl');
 
   // trustedApps: must whitelist BOTH the operator's own publicUrl AND the
   // auth UI origin (otherwise the /reg/access flow loaded from the auth app
@@ -958,34 +1057,34 @@ async function main () {
   trustedOrigins.add(originOf(publicUrl));
   trustedOrigins.add(originOf(authUiUrl));
   const defaultTrustedApps = [...trustedOrigins].map(o => `*@${o}*`).join(', ');
-  const trustedApps = await ask('  auth.trustedApps (auth UI + publicUrl wildcard)', defaultTrustedApps);
+  const trustedApps = await ask('  auth.trustedApps (auth UI + publicUrl wildcard)', defaultTrustedApps, 'auth.trustedapps');
 
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const serviceSerial = await ask('  service.serial (build tag)', today);
-  const serviceHome = await ask('  service.home URL', publicUrl);
-  const serviceSupport = await ask('  service.support URL', publicUrl);
-  const serviceTerms = await ask('  service.terms URL', publicUrl);
-  const serviceEventTypes = await ask('  service.eventTypes URL', 'https://pryv.github.io/event-types/flat.json');
+  const serviceSerial = await ask('  service.serial (build tag)', today, 'service.serial');
+  const serviceHome = await ask('  service.home URL', publicUrl, 'service.home');
+  const serviceSupport = await ask('  service.support URL', publicUrl, 'service.support');
+  const serviceTerms = await ask('  service.terms URL', publicUrl, 'service.terms');
+  const serviceEventTypes = await ask('  service.eventTypes URL', 'https://pryv.github.io/event-types/flat.json', 'service.eventtypes');
   console.log();
 
   // 13. HFS workers
   console.log('▸ High-frequency series (HFS)');
   console.log('  Disable if you don\'t use series:* event types — saves ~250MB RAM per box.');
-  const hfsEnabled = await askYesNo('Enable HFS (1 worker on :4000)?', true);
+  const hfsEnabled = await askYesNo('Enable HFS (1 worker on :4000)?', true, 'hfs.enabled');
   const hfsWorkers = hfsEnabled ? 1 : 0;
   console.log();
 
   // 14. Email service
   console.log('▸ Email service');
   console.log('  Required for password-reset + welcome emails. Skip now → configure later.');
-  const emailEnabled = await askYesNo('Configure email service now?', false);
+  const emailEnabled = await askYesNo('Configure email service now?', false, 'email.enabled');
   let emailConfig = null;
   if (emailEnabled) {
     emailConfig = {
       enabled: { resetPassword: true, welcome: true },
       method: 'microservice',
-      url: await ask('  service-mail URL', 'http://service-mail:9000/sendmail/'),
-      key: await askNonEmpty('  Shared secret with service-mail')
+      url: await ask('  service-mail URL', 'http://service-mail:9000/sendmail/', 'email.url'),
+      key: await askNonEmpty('  Shared secret with service-mail', undefined, 'email.key')
     };
     console.log();
   }
@@ -1213,7 +1312,7 @@ async function main () {
   // can hand-edit override-config.yml after the wizard.
   config.platform = {
     piiMode: 'hashed',
-    piiHmacKey: genSecrets ? genSecret(32) : await askNonEmpty('  platform.piiHmacKey (base64 of 32 random bytes — pepper for HMAC pseudonymisation of PlatformDB rows; identical on every core)'),
+    piiHmacKey: genSecrets ? genSecret(32) : await askNonEmpty('  platform.piiHmacKey (base64 of 32 random bytes — pepper for HMAC pseudonymisation of PlatformDB rows; identical on every core)', undefined, 'platform.piihmackey'),
     piiAlgorithm: 'hmac-sha256'
   };
 
