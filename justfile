@@ -57,8 +57,8 @@ run component bin:
 # Test & related
 # –––––––––––––----------------------------------------------------------------
 
-# Run code linting on the entire repo (JS style + TS `any` gate + open-type ratchet)
-lint *options: && lint-ts-any lint-open-types
+# Run code linting on the entire repo (JS style + TS `any` gate + open-type ratchet + createRequire ratchet)
+lint *options: && lint-ts-any lint-open-types lint-create-require
     eslint {{options}} .
 
 # TypeScript `any` gate: no-explicit-any on TS sources (see eslint.ts-any.config.js)
@@ -68,6 +68,10 @@ lint-ts-any:
 # Open-index-signature ratchet: `[k: string]: unknown` site count may only go down
 lint-open-types:
     ./scripts/open-type-ratchet
+
+# createRequire ratchet: shim-file count may only go down (new files use real import)
+lint-create-require:
+    ./scripts/create-require-ratchet
 
 # Run code linting only on changed files (excludes deleted files)
 lint-changes *options:

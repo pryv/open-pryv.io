@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#
+# createRequire ratchet — run via `just lint` (lint-create-require).
+#
+# Files here are ESM containers ("type": "module") whose contents still use
+# CJS require() through a createRequire(import.meta.url) shim. New files must
+# use real `import` statements instead (Node's require(esm) lets unconverted
+# neighbors keep require()-ing them). This gate pins the shim-file count so it
+# can only go DOWN:
+#   - Adding one fails the gate. Write the new file with `import`.
+#   - Converted some? Lower MAX to the new count in the same commit.
+# Exception: in-function lazy require() sites may keep a local createRequire;
+# they are part of MAX.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+MAX=332   # pin to the measured count on the day this lands
+
+COUNT=$(grep -rl --include='*.ts' \
+  --exclude-dir=node_modules --exclude-dir=test --exclude-dir=test-helpers \
+  --exclude='*.test.ts' \
+  'createRequire' components storages | wc -l | tr -d ' ')
+
+if [ "$COUNT" -gt "$MAX" ]; then
+  echo "create-require-ratchet FAIL: $COUNT production files use the createRequire shim, max is $MAX."
+  echo "New files must use real import statements (unconverted neighbors can still require() them)."
+  exit 1
+fi
+if [ "$COUNT" -lt "$MAX" ]; then
+  echo "create-require-ratchet: $COUNT/$MAX — count went down, lower MAX to $COUNT to lock it in."
+fi
+echo "create-require-ratchet OK ($COUNT/$MAX)"
