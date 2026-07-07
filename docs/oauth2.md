@@ -104,8 +104,11 @@ as a deployment-wide invariant and roll it out to all cores together.
 
 Client management is a CLI on the core. It is **promotion-only**: the target
 user account must already exist (created through the normal `/reg/users` flow);
-the CLI turns an existing account into an application account and mints its
+the CLI turns an existing account into an application account and writes its
 OAuth client record.
+
+**The `client_id` is the app account's username** — there is no separate opaque
+client identifier. Promoting user `acme-app` yields `client_id = acme-app`.
 
 ```
 node bin/oauth-client.js create <username> --redirect-uri <uri> [--redirect-uri <uri> ...] \
@@ -124,19 +127,22 @@ Notes:
 - **`--scope` is repeatable** — pass it once per scope; do **not** space-join
   several scopes into a single value (that registers one malformed scope and
   `/oauth2/authorize` will reject the request with `invalid_scope`).
-- `create` prints the `clientId` and, for confidential clients, the
-  `client_secret` **once** — store it securely; it is not retrievable later
-  (only rotatable).
+- **`create` registers a PUBLIC client** (PKCE-only, no secret) — the common
+  case for browser apps. It does not mint a `client_secret`.
+- **`rotate-secret <clientId>`** mints a `client_secret`, promoting the client to
+  **confidential** (for server-side apps). The plaintext is printed **once** and
+  only its bcrypt hash is stored — re-run to rotate (which invalidates the old
+  secret).
 - `application-type native` is for installed/mobile apps that use a loopback or
   custom-scheme redirect; `web` is the default for server-hosted apps.
 
 ### Public vs confidential clients
 
-A browser SPA that cannot keep a secret registers as a **public** client and
-authenticates the token endpoint with PKCE only (`token_endpoint_auth_method:
-none`). A server-side app registers as **confidential** and additionally
-presents its `client_secret` (`client_secret_basic`). PKCE is mandatory either
-way.
+A browser SPA that cannot keep a secret stays a **public** client — as created
+by `create` — and authenticates the token endpoint with PKCE only
+(`token_endpoint_auth_method: none`). A server-side app becomes **confidential**
+by running `rotate-secret` to obtain a `client_secret`, which it then presents
+via `client_secret_basic`. PKCE is mandatory either way.
 
 ---
 
