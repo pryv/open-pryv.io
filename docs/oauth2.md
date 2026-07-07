@@ -1,0 +1,209 @@
+# OAuth2 — operator guide
+
+open-pryv.io can act as an **OAuth2 authorization server** (RFC 6749 +
+PKCE / RFC 7636), letting third-party applications obtain access tokens
+through the standard authorization-code redirect flow instead of the
+Pryv-native access-request polling flow.
+
+This document is for **operators** running a deployment: how to enable it,
+register application accounts, front it with a reverse proxy, and audit it.
+Developers extending the layer (new scopes, grants, error mappings) should
+read [`components/oauth2/IMPLEMENTERS-GUIDE.md`](../components/oauth2/IMPLEMENTERS-GUIDE.md).
+
+---
+
+## 1. Endpoints
+
+Once enabled, each core exposes:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /.well-known/oauth-authorization-server` | RFC 8414 discovery document (public, cacheable, CORS `*`) |
+| `GET /oauth2/authorize` | Authorization endpoint — starts the consent flow |
+| `POST /oauth2/token` | Token endpoint — code exchange, refresh, client credentials |
+
+The discovery document advertises:
+
+```json
+{
+  "issuer": "https://<deployment-base>",
+  "authorization_endpoint": "https://<deployment-base>/oauth2/authorize",
+  "token_endpoint": "https://<deployment-base>/oauth2/token",
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code"],
+  "token_endpoint_auth_methods_supported": ["client_secret_basic", "none"],
+  "code_challenge_methods_supported": ["S256"],
+  "scopes_supported": [ ... ]
+}
+```
+
+The token endpoint returns the RFC 6749 §5.1 JSON plus a Pryv extension
+field, `apiEndpoint`, that clients use to build a working connection:
+
+```json
+{
+  "access_token": "...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "...",
+  "scope": "pryv:read pryv:write",
+  "apiEndpoint": "https://<token>@<host>/<path>/"
+}
+```
+
+---
+
+## 2. Configuration
+
+All settings live under the `oauth:` block. Defaults:
+
+```yaml
+oauth:
+  accessTokenTTL: 3600             # access-token lifetime, seconds (1 hour)
+  refreshTokenTTL: 2592000         # refresh-token sliding window, seconds (30 days)
+  refreshTokenAbsoluteTTL: 7776000 # refresh-token absolute cap, seconds (90 days)
+  clientRegistration:
+    mode: curated                  # ONLY supported value (see below)
+  requireAppAccountMfa: true       # app accounts must enrol MFA before /oauth2/* writes
+  audAllowList: []                 # optional accepted `aud` values on /oauth2/authorize
+  grantTypesSupported:             # advertised in the discovery document
+    - authorization_code
+```
+
+### `clientRegistration.mode` is `curated`
+
+Dynamic client registration (RFC 7591) is **not** offered. `mode: open` is
+rejected at boot. Application accounts are created out-of-band by an operator
+with the CLI (§3). This is deliberate: on a self-hosted deployment the operator
+is the trust anchor for which apps may request user consent.
+
+### `requireAppAccountMfa`
+
+When `true` (default), an application account must have MFA enrolled before it
+can drive any `/oauth2/*` write. Keep it on in production — an app account is a
+high-value credential.
+
+### Token lifetimes
+
+`accessTokenTTL` is short by design; clients renew via the refresh token.
+`refreshTokenTTL` is a **sliding** window (each refresh resets it), bounded by
+`refreshTokenAbsoluteTTL` (a hard cap regardless of activity).
+
+### ⚑ Per-deployment config agreement (multi-core)
+
+The discovery document is **per-deployment, not per-core**: its `issuer` and
+endpoints describe the whole deployment. **Every core in a cluster MUST carry
+the same `oauth:` block.** A drifting `oauth:` block on one core (different
+TTLs, different `audAllowList`, MFA on/off) produces inconsistent token
+behaviour depending on which core a request lands on. Treat the `oauth:` block
+as a deployment-wide invariant and roll it out to all cores together.
+
+---
+
+## 3. Registering application accounts — `bin/oauth-client.js`
+
+Client management is a CLI on the core. It is **promotion-only**: the target
+user account must already exist (created through the normal `/reg/users` flow);
+the CLI turns an existing account into an application account and mints its
+OAuth client record.
+
+```
+node bin/oauth-client.js create <username> --redirect-uri <uri> [--redirect-uri <uri> ...] \
+    [--scope <s>] [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--application-type web|native]
+node bin/oauth-client.js list
+node bin/oauth-client.js show   <clientId>
+node bin/oauth-client.js update <clientId> [--redirect-uri <uri> ...] [--scope <s>] ...
+node bin/oauth-client.js rotate-secret <clientId>
+node bin/oauth-client.js revoke <clientId>
+```
+
+Notes:
+
+- **`--redirect-uri` is repeatable and required** — pass the flag once per URI.
+  At least one is mandatory on `create`.
+- **`--scope` is repeatable** — pass it once per scope; do **not** space-join
+  several scopes into a single value (that registers one malformed scope and
+  `/oauth2/authorize` will reject the request with `invalid_scope`).
+- `create` prints the `clientId` and, for confidential clients, the
+  `client_secret` **once** — store it securely; it is not retrievable later
+  (only rotatable).
+- `application-type native` is for installed/mobile apps that use a loopback or
+  custom-scheme redirect; `web` is the default for server-hosted apps.
+
+### Public vs confidential clients
+
+A browser SPA that cannot keep a secret registers as a **public** client and
+authenticates the token endpoint with PKCE only (`token_endpoint_auth_method:
+none`). A server-side app registers as **confidential** and additionally
+presents its `client_secret` (`client_secret_basic`). PKCE is mandatory either
+way.
+
+---
+
+## 4. Reverse proxy & rate limiting
+
+**open-pryv.io does not rate-limit `/oauth2/*` itself.** The authorization and
+token endpoints are unauthenticated attack surfaces (credential stuffing,
+code-guessing, discovery scraping); the operator **must** rate-limit them at the
+reverse proxy.
+
+Recommended thresholds (per client IP):
+
+| Endpoint | Limit |
+|---|---|
+| `POST /oauth2/token` | 60 requests / minute |
+| `GET /oauth2/authorize` | 300 requests / minute |
+
+A ready-to-adapt nginx configuration — including the `limit_req_zone`
+definitions and per-location `limit_req` directives — is in
+[`docs/nginx-ingress-sample.conf`](nginx-ingress-sample.conf).
+
+---
+
+## 5. Audit events
+
+Every consent decision and token operation emits a structured audit event.
+Collect these for security monitoring and incident response.
+
+| Event type | Emitted when |
+|---|---|
+| `oauth.consent.shown` | consent screen presented to the user |
+| `oauth.consent.granted` | user approved the authorization request |
+| `oauth.consent.refused` | user declined the authorization request |
+| `oauth.code.exchanged` | authorization code successfully exchanged for tokens |
+| `oauth.code.reused` | an already-consumed authorization code was presented again (attack signal) |
+| `oauth.token.issued.authorization_code` | access token issued via the authorization-code grant |
+| `oauth.token.issued.client_credentials` | access token issued via the client-credentials grant |
+| `oauth.token.refreshed` | access token renewed via the refresh grant |
+| `oauth.token.revoked` | a token was revoked |
+
+`oauth.code.reused` in particular should page: per RFC 6749 a code is
+single-use, so a reuse means either a broken client or a stolen code.
+
+---
+
+## 6. Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| `/oauth2/authorize` → `invalid_scope` | scopes space-joined into one `--scope` value at registration, or the app requested a scope not in `scopes_supported` |
+| `/oauth2/authorize` → `invalid_request` / `redirect_uri` mismatch | the request's `redirect_uri` is not byte-for-byte one of the registered URIs |
+| `/oauth2/token` → `invalid_grant` (PKCE) | the `code_verifier` does not match the `code_challenge` sent at `/authorize`, or the code expired / was already used |
+| `/oauth2/token` → `invalid_client` | confidential client presented a wrong/rotated `client_secret` |
+| app account cannot complete `/oauth2/*` | `requireAppAccountMfa: true` but the app account has not enrolled MFA |
+| tokens behave differently between requests | `oauth:` block drift across cores (see §2) |
+
+---
+
+## 7. Security guidance
+
+- **Rotate `client_secret`s** periodically and immediately on suspected
+  compromise: `bin/oauth-client.js rotate-secret <clientId>`. The old secret
+  stops working as soon as the new one is minted.
+- **Keep `requireAppAccountMfa: true`.** An app account can request consent from
+  any user on the deployment; protect it like an admin credential.
+- **Rate-limit at the proxy** (§4) — the layer relies on the operator for this.
+- **Monitor the audit stream** (§5), especially `oauth.code.reused` and bursts
+  of `oauth.consent.refused` / `invalid_client`.
+- **Keep the `oauth:` block identical across all cores** (§2) so token semantics
+  are uniform deployment-wide.
