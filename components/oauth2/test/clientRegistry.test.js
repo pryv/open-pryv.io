@@ -88,6 +88,122 @@ describe('[OAUTH-CLIENT] client registry', () => {
     });
   });
 
+  /**
+   * [OAUTH-REDIR] exhaustive redirect-URI matcher matrix — RFC 8252
+   * §7.1 (private-use schemes), §7.2 (claimed https), §7.3 (loopback)
+   * + RFC 9700 §2.1 exact-match rule against canonical attack strings.
+   * Complements the [OAUTH-CLIENT-1] basics above.
+   */
+  describe('[OAUTH-REDIR] redirect-URI matcher — exhaustive matrix', () => {
+    describe('[OAUTH-REDIR-1] exact-match strictness (no normalization)', () => {
+      it('[OAUTH-REDIR-1a] scheme/host case difference rejected (no case folding)', () => {
+        assert.equal(validateRedirectUri(['https://a.example.com/cb'], 'HTTPS://a.example.com/cb'), false);
+        assert.equal(validateRedirectUri(['https://a.example.com/cb'], 'https://A.EXAMPLE.COM/cb'), false);
+      });
+      it('[OAUTH-REDIR-1b] explicit default port vs none rejected (no port normalization)', () => {
+        assert.equal(validateRedirectUri(['https://a.example.com/cb'], 'https://a.example.com:443/cb'), false);
+        assert.equal(validateRedirectUri(['https://a.example.com:443/cb'], 'https://a.example.com/cb'), false);
+      });
+      it('[OAUTH-REDIR-1c] percent-encoding difference rejected (no decode)', () => {
+        assert.equal(validateRedirectUri(['https://a.example.com/cb'], 'https://a.example.com/%63b'), false);
+        assert.equal(validateRedirectUri(['https://a.example.com/cb%2Fx'], 'https://a.example.com/cb/x'), false);
+      });
+      it('[OAUTH-REDIR-1d] path traversal segment rejected (no path normalization)', () => {
+        assert.equal(validateRedirectUri(['https://a.example.com/cb'], 'https://a.example.com/cb/../evil'), false);
+        assert.equal(validateRedirectUri(['https://a.example.com/cb'], 'https://a.example.com/./cb'), false);
+      });
+      it('[OAUTH-REDIR-1e] prefix-matching attempts rejected both ways', () => {
+        assert.equal(validateRedirectUri(['https://a.example.com/cb'], 'https://a.example.com/cb/extra'), false);
+        assert.equal(validateRedirectUri(['https://a.example.com/cb/extra'], 'https://a.example.com/cb'), false);
+        assert.equal(validateRedirectUri(['https://a.example.com/'], 'https://a.example.com/cb'), false);
+      });
+      it('[OAUTH-REDIR-1f] fragment mismatch rejected', () => {
+        assert.equal(validateRedirectUri(['https://a.example.com/cb'], 'https://a.example.com/cb#frag'), false);
+      });
+      it('[OAUTH-REDIR-1g] query param order/extension rejected', () => {
+        assert.equal(validateRedirectUri(['https://a.example.com/cb?a=1&b=2'], 'https://a.example.com/cb?b=2&a=1'), false);
+        assert.equal(validateRedirectUri(['https://a.example.com/cb?a=1'], 'https://a.example.com/cb?a=1&x=1'), false);
+      });
+      it('[OAUTH-REDIR-1h] any one of multiple registered URIs matches', () => {
+        const registered = ['https://a.example.com/cb', 'com.example.app:/cb', 'http://127.0.0.1/cb'];
+        assert.equal(validateRedirectUri(registered, 'com.example.app:/cb'), true);
+        assert.equal(validateRedirectUri(registered, 'https://a.example.com/cb'), true);
+        assert.equal(validateRedirectUri(registered, 'https://b.example.com/cb'), false);
+      });
+    });
+
+    describe('[OAUTH-REDIR-2] canonical attack strings', () => {
+      it('[OAUTH-REDIR-2a] userinfo trick: registered host as userinfo of attacker host', () => {
+        assert.equal(validateRedirectUri(['https://legit.example.com/cb'], 'https://legit.example.com:443@attacker.example/cb'), false);
+        assert.equal(validateRedirectUri(['https://legit.example.com:443/cb'], 'https://legit.example.com:443@attacker.example/cb'), false);
+      });
+      it('[OAUTH-REDIR-2b] registered URI as path/query of attacker URI', () => {
+        assert.equal(validateRedirectUri(['https://legit.example.com/cb'], 'https://attacker.example/https://legit.example.com/cb'), false);
+        assert.equal(validateRedirectUri(['https://legit.example.com/cb'], 'https://attacker.example/?u=https://legit.example.com/cb'), false);
+      });
+      it('[OAUTH-REDIR-2c] lookalike / suffix-domain hosts rejected', () => {
+        assert.equal(validateRedirectUri(['https://legit.example.com/cb'], 'https://legit.example.com.attacker.example/cb'), false);
+        assert.equal(validateRedirectUri(['https://legit.example.com/cb'], 'https://xlegit.example.com/cb'), false);
+      });
+      it('[OAUTH-REDIR-2d] backslash / whitespace / control-char confusion rejected, no throw', () => {
+        assert.equal(validateRedirectUri(['https://legit.example.com/cb'], 'https://legit.example.com\\@attacker.example/cb'), false);
+        assert.equal(validateRedirectUri(['https://legit.example.com/cb'], ' https://legit.example.com/cb'), false);
+        assert.equal(validateRedirectUri(['https://legit.example.com/cb'], 'https://legit.example.com/cb '), false);
+      });
+      it('[OAUTH-REDIR-2e] garbage / non-URI strings rejected, no throw', () => {
+        assert.equal(validateRedirectUri(['https://legit.example.com/cb'], 'not a uri at all'), false);
+        assert.equal(validateRedirectUri(['https://legit.example.com/cb'], '//attacker.example/cb'), false);
+        assert.equal(validateRedirectUri(['https://legit.example.com/cb'], 'javascript:alert(1)'), false);
+      });
+    });
+
+    describe('[OAUTH-REDIR-3] loopback carve-out boundaries (RFC 8252 §7.3)', () => {
+      it('[OAUTH-REDIR-3a] registered port is ignored too (only port relaxed, both sides)', () => {
+        assert.equal(validateRedirectUri(['http://127.0.0.1:8080/cb'], 'http://127.0.0.1:9999/cb'), true);
+        assert.equal(validateRedirectUri(['http://127.0.0.1:8080/cb'], 'http://127.0.0.1/cb'), true);
+      });
+      it('[OAUTH-REDIR-3b] localhost hostname is NOT carved out (resolvable ≠ loopback literal)', () => {
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost:8742/cb'), false);
+        assert.equal(validateRedirectUri(['http://localhost:8742/cb'], 'http://localhost:8742/cb'), true);
+      });
+      it('[OAUTH-REDIR-3c] other 127.0.0.0/8 literals are NOT carved out', () => {
+        assert.equal(validateRedirectUri(['http://127.0.0.2/cb'], 'http://127.0.0.2:8742/cb'), false);
+      });
+      it('[OAUTH-REDIR-3d] https loopback is NOT carved out (carve-out is http-only)', () => {
+        assert.equal(validateRedirectUri(['https://127.0.0.1/cb'], 'https://127.0.0.1:8742/cb'), false);
+        assert.equal(validateRedirectUri(['https://[::1]/cb'], 'https://[::1]:8742/cb'), false);
+      });
+      it('[OAUTH-REDIR-3e] userinfo mismatch on loopback rejected (everything but port is exact)', () => {
+        assert.equal(validateRedirectUri(['http://127.0.0.1/cb'], 'http://user@127.0.0.1:8742/cb'), false);
+        assert.equal(validateRedirectUri(['http://user@127.0.0.1/cb'], 'http://user@127.0.0.1:8742/cb'), true);
+        assert.equal(validateRedirectUri(['http://user:pw@127.0.0.1/cb'], 'http://user:other@127.0.0.1:8742/cb'), false);
+      });
+      it('[OAUTH-REDIR-3f] query/fragment mismatch on loopback rejected', () => {
+        assert.equal(validateRedirectUri(['http://127.0.0.1/cb?a=1'], 'http://127.0.0.1:8742/cb?a=2'), false);
+        assert.equal(validateRedirectUri(['http://127.0.0.1/cb'], 'http://127.0.0.1:8742/cb#f'), false);
+      });
+      it('[OAUTH-REDIR-3g] loopback path normalization applies inside carve-out URL parsing', () => {
+        // new URL() collapses dot-segments — a traversal cannot escape the registered path
+        assert.equal(validateRedirectUri(['http://127.0.0.1/cb'], 'http://127.0.0.1:8742/cb/../evil'), false);
+      });
+      it('[OAUTH-REDIR-3h] IPv6 loopback long form canonicalizes to [::1] — still loopback, accepted', () => {
+        assert.equal(validateRedirectUri(['http://[::1]/cb'], 'http://[0:0:0:0:0:0:0:1]:8742/cb'), true);
+      });
+    });
+
+    describe('[OAUTH-REDIR-4] private-use schemes (RFC 8252 §7.1)', () => {
+      it('[OAUTH-REDIR-4a] exact match required — scheme case difference rejected', () => {
+        assert.equal(validateRedirectUri(['com.example.app:/cb'], 'COM.EXAMPLE.APP:/cb'), false);
+      });
+      it('[OAUTH-REDIR-4b] no port relaxation for private-use schemes', () => {
+        assert.equal(validateRedirectUri(['com.example.app:/cb'], 'com.example.app:8080/cb'), false);
+      });
+      it('[OAUTH-REDIR-4c] path mismatch rejected', () => {
+        assert.equal(validateRedirectUri(['com.example.app:/cb'], 'com.example.app:/other'), false);
+      });
+    });
+  });
+
   describe('[OAUTH-CLIENT-2] getClient', () => {
     it('[OAUTH-CLIENT-2a] returns the registered client', async () => {
       const platform = fakePlatform();

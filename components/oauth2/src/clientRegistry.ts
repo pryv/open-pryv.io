@@ -64,7 +64,8 @@ export function validateRedirectUri (registered: string[], presented: string): b
 /**
  * Loopback carve-out — `http://127.0.0.1/cb` registered matches
  * `http://127.0.0.1:<any-port>/cb` presented. Same for `[::1]`.
- * Exact match on everything else (scheme, host, path, query, fragment).
+ * Exact match on everything else (scheme, host, userinfo, path,
+ * query, fragment) — RFC 8252 §7.3 relaxes ONLY the port.
  */
 function matchLoopback (registered: string, presented: string): boolean {
   let r: URL; let p: URL;
@@ -74,6 +75,8 @@ function matchLoopback (registered: string, presented: string): boolean {
   if (r.hostname !== p.hostname) return false;
   if (r.hostname !== '127.0.0.1' && r.hostname !== '[::1]') return false;
   // port may differ — that's the carve-out.
+  if (r.username !== p.username) return false;
+  if (r.password !== p.password) return false;
   if (r.pathname !== p.pathname) return false;
   if (r.search !== p.search) return false;
   if (r.hash !== p.hash) return false;

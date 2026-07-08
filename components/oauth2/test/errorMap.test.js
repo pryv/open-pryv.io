@@ -55,6 +55,69 @@ describe('[OAUTH-ERR] error map', () => {
     });
   });
 
+  /**
+   * [OAUTH-ERR-MATRIX] one assertion per errorMap row, spelled out
+   * explicitly — changing or removing a row deliberately breaks a
+   * test so the OAuth-facing contract can't drift silently.
+   */
+  describe('[OAUTH-ERR-MATRIX] full row matrix', () => {
+    const EXPECTED_ROWS = {
+      // request shape / param validation
+      'invalid-parameters-format': 'invalid_request',
+      'invalid-method': 'invalid_request',
+      'missing-required-fields': 'invalid_request',
+      // client identification / authentication
+      'unknown-client': 'invalid_client',
+      'unknown-referenced-resource': 'invalid_client',
+      'invalid-client-secret': 'invalid_client',
+      'app-account-not-registered': 'invalid_client',
+      // redirect_uri / response_type
+      'invalid-redirect-uri': 'invalid_request',
+      'unregistered-redirect-uri': 'invalid_request',
+      'unsupported-response-type': 'unsupported_response_type',
+      // scope
+      'unknown-scope': 'invalid_scope',
+      'scope-not-granted': 'invalid_scope',
+      'scope-not-subset': 'invalid_scope',
+      // grant
+      'unsupported-grant-type': 'unsupported_grant_type',
+      'invalid-authorization-code': 'invalid_grant',
+      'expired-authorization-code': 'invalid_grant',
+      'authorization-code-already-used': 'invalid_grant',
+      'invalid-pkce-verifier': 'invalid_grant',
+      'invalid-refresh-token': 'invalid_grant',
+      'expired-refresh-token': 'invalid_grant',
+      'revoked-refresh-token': 'invalid_grant',
+      // consent
+      'user-refused-consent': 'access_denied',
+      // access control
+      'mfa-required': 'unauthorized_client',
+      'app-account-not-mfa-enrolled': 'unauthorized_client',
+      // server-side
+      'temporarily-unavailable': 'temporarily_unavailable',
+      'internal-error': 'server_error',
+      'platform-storage-unavailable': 'temporarily_unavailable',
+      // resource-server (WWW-Authenticate on protected resources)
+      'expired-access-token': 'invalid_token',
+      'revoked-access-token': 'invalid_token',
+      'unknown-access-token': 'invalid_token',
+    };
+
+    for (const [pryvId, oauthError] of Object.entries(EXPECTED_ROWS)) {
+      it(`[OAUTH-ERR-MATRIX] ${pryvId} → ${oauthError}`, () => {
+        assert.equal(mapError(pryvId), oauthError);
+      });
+    }
+
+    it('[OAUTH-ERR-MATRIX-X] matrix covers exactly the errorMap rows (new row ⇒ new assertion)', () => {
+      assert.deepEqual(
+        Object.keys(errorMap).sort(),
+        Object.keys(EXPECTED_ROWS).sort(),
+        'errorMap rows and the explicit test matrix diverge — update EXPECTED_ROWS deliberately'
+      );
+    });
+  });
+
   describe('[OAUTH-ERR-3] map coverage', () => {
     it('[OAUTH-ERR-3a] every entry maps to a valid RFC 6749 enum value', () => {
       const validEnums = new Set([
