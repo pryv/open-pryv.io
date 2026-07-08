@@ -59,6 +59,7 @@ All settings live under the `oauth:` block. Defaults:
 
 ```yaml
 oauth:
+  # issuer: https://auth.example.com  # optional explicit issuer override (see below)
   accessTokenTTL: 3600             # access-token lifetime, seconds (1 hour)
   refreshTokenTTL: 2592000         # refresh-token sliding window, seconds (30 days)
   refreshTokenAbsoluteTTL: 7776000 # refresh-token absolute cap, seconds (90 days)
@@ -69,6 +70,17 @@ oauth:
   grantTypesSupported:             # advertised in the discovery document
     - authorization_code
 ```
+
+### `issuer` (optional)
+
+The RFC 8414 issuer — the concrete base URL clients fetch the discovery
+document from and call `/oauth2/*` on — is derived automatically from your
+deployment's public URL (`dnsLess.publicUrl` for single-URL deployments; the
+core's own URL for multi-core). If the OAuth surface fails to mount with
+`service:api not configured`, or your **public** URL differs from the
+internally configured one (a reverse proxy or TLS terminator in front of the
+core), set `oauth.issuer` explicitly to the public base URL — it overrides the
+automatic derivation. Use the same value on every core in a cluster.
 
 ### `clientRegistration.mode` is `curated`
 

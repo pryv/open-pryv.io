@@ -58,4 +58,49 @@ describe('[OAUTH-ISS] issuerFromConfig', () => {
     assert.equal(issuerFromConfig(fakeConfig({})), '');
     assert.equal(issuerFromConfig(fakeConfig({ 'service:api': '' })), '');
   });
+
+  it('[OAUTH-ISS-6] explicit oauth:issuer overrides everything (reverse-proxy / custom domain)', () => {
+    assert.equal(
+      issuerFromConfig(fakeConfig({
+        'oauth:issuer': 'https://auth.example.com/',
+        'dnsLess:isActive': true,
+        'dnsLess:publicUrl': 'http://127.0.0.1:3000/',
+        'service:api': 'https://{username}.pryv.me/'
+      })),
+      'https://auth.example.com');
+  });
+
+  it('[OAUTH-ISS-7] publicUrl set: derives the issuer from it, ignoring an inconsistent service:api template', () => {
+    // The exact in-process test-matrix shape: a multi-core service-info
+    // template loaded into a dnsLess-configured core, no core:url. The
+    // topology base URL wins, so /oauth2/* mounts instead of soft-degrading.
+    assert.equal(
+      issuerFromConfig(fakeConfig({
+        'dnsLess:publicUrl': 'http://127.0.0.1:3000/',
+        'service:api': 'https://{username}.pryv.me/'
+      })),
+      'http://127.0.0.1:3000');
+  });
+
+  it('[OAUTH-ISS-8] publicUrl wins regardless of the timing-dependent dnsLess:isActive flag', () => {
+    // isActive false at this mount (pre-inject / spawned child) must NOT
+    // gate the derivation — publicUrl presence alone decides.
+    assert.equal(
+      issuerFromConfig(fakeConfig({
+        'dnsLess:isActive': false,
+        'dnsLess:publicUrl': 'http://127.0.0.1:3000/',
+        'service:api': 'https://{username}.pryv.me/'
+      })),
+      'http://127.0.0.1:3000');
+  });
+
+  it('[OAUTH-ISS-9] no publicUrl (real multi-core): falls through to the service:api template + core:url', () => {
+    assert.equal(
+      issuerFromConfig(fakeConfig({
+        'dnsLess:isActive': false,
+        'service:api': 'https://{username}.pryv.me/',
+        'core:url': 'https://co1.pryv.me/'
+      })),
+      'https://co1.pryv.me');
+  });
 });

@@ -8,24 +8,57 @@
 /**
  * OAuth2 — issuer derivation.
  *
- * `service:api` is a per-user endpoint TEMPLATE, not a base URL:
- *   - dnsLess:    `https://host/{username}/`   (placeholder in the path)
- *   - multi-core: `https://{username}.domain/` (placeholder in the host)
- *
  * The OAuth issuer (RFC 8414 `issuer`, the `iss` parameter, and the
  * `pryvApi` value handed to the consent UI) must be a concrete URL the
- * user-agent can call `/oauth2/*` and `/reg/service/info` on. Derive it:
- *   - dnsLess: strip the trailing `/{username}/` path segment.
- *   - multi-core: the template's host is unusable — fall back to the
- *     core's own URL (`core:url`; requests land on a specific core and
- *     `/oauth2/token` forwards cross-core).
+ * user-agent can call `/oauth2/*` and `/reg/service/info` on.
+ *
+ * Derived TOPOLOGY-FIRST, from the deployment's authoritative public
+ * base URL, in precedence order:
+ *
+ *   1. `oauth:issuer` — explicit operator override. The escape hatch for
+ *      deployments where the public issuer URL differs from the internally
+ *      configured service URLs (reverse proxy, custom domain, TLS
+ *      terminator). Authoritative when set.
+ *   2. `dnsLess:publicUrl` — the single concrete base URL of a dnsLess
+ *      deployment (username lives in the path). Read directly, NOT gated on
+ *      the `dnsLess:isActive` flag: only dnsLess-style deployments set
+ *      `publicUrl` (multi-core leaves it unset and resolves via step 3),
+ *      while `isActive`'s resolved value is scope-priority- and timing-
+ *      dependent at route-mount time (default-config sets it true,
+ *      test-config false, initCore re-injects true) — keying on it mounts
+ *      the OAuth surface inconsistently across app instances.
+ *   3. `service:api` per-user TEMPLATE, reverse-engineered — back-compat
+ *      fallback. `service:api` is not a base URL:
+ *        - dnsLess:    `https://host/{username}/`   (placeholder in path)
+ *        - multi-core: `https://{username}.domain/` (placeholder in host)
+ *      dnsLess shape → strip the trailing `/{username}/`; multi-core shape
+ *      → the template host is unusable, fall back to this core's own
+ *      `core:url` (requests land on a specific core; `/oauth2/token`
+ *      forwards cross-core).
+ *
+ * Deriving from the topology base URL (1–2) rather than the per-user
+ * template (3) is robust to a `service:api` that is inconsistent with the
+ * runtime topology (e.g. a multi-core service-info template loaded into a
+ * dnsLess-configured core).
  */
 
 /**
  * Concrete issuer URL (no trailing slash), or '' when not derivable
- * (missing `service:api`, or host-placeholder shape without `core:url`).
+ * (no override, not dnsLess-with-publicUrl, and missing `service:api` or
+ * host-placeholder shape without `core:url`).
  */
 export function issuerFromConfig (config: { get (key: string): unknown }): string {
+  // 1. Explicit operator override.
+  const explicit = String(config.get('oauth:issuer') ?? '');
+  if (explicit) return explicit.replace(/\/$/, '');
+
+  // 2. dnsLess deployment: the public base URL is the issuer. Presence of
+  //    publicUrl is the signal (only dnsLess/dev/test set it); not gated on
+  //    dnsLess:isActive, whose value is timing-dependent at mount.
+  const publicUrl = String(config.get('dnsLess:publicUrl') ?? '');
+  if (publicUrl) return publicUrl.replace(/\/$/, '');
+
+  // 3. Reverse-engineer the `service:api` per-user template.
   let api = String(config.get('service:api') ?? '');
   if (!api) return '';
   if (api.includes('{username}')) {
