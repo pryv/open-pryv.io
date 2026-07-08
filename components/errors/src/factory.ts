@@ -5,14 +5,10 @@
  * Refer to LICENSE file
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const { APIError } = require('./APIError.ts');
-const { ErrorIds } = require('./ErrorIds.ts');
-const { ErrorMessages } = require('./ErrorMessages.ts');
-
 import type { APIError as APIErrorT } from './APIError.ts';
+import { APIError } from './APIError.ts';
+import { ErrorIds } from './ErrorIds.ts';
+import { ErrorMessages } from './ErrorMessages.ts';
 
 /**
  * The full factory contract — one entry per error producer below.

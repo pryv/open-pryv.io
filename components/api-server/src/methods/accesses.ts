@@ -51,6 +51,7 @@ function notifyScopedAccessChange (username: string, access: { id?: string; type
 const cmc = require('cmc');
 const { getLogger } = require('@pryv/boiler');
 const WebhooksRepository = require('business').webhooks.Repository;
+const { getUsersRepository } = require('business/src/users/index.ts');
 
 type AccessLike = {
   id?: string;
@@ -80,7 +81,7 @@ type AccessesGetParams = { includeDeletions?: boolean; includeExpired?: boolean 
 type AccessesGetResult = { accesses?: AccessLike[]; accessDeletions?: AccessLike[] };
 type AccessesGetOneParams = { id: string; includeHistory?: boolean };
 type AccessesGetOneResult = { access?: AccessLike; current?: string; history?: AccessLike[] };
-type AccessesCreateParams = Partial<AccessLike> & { name?: string; permissions?: StreamPermission[]; clientData?: Record<string, unknown>; expireAfter?: number; deviceName?: string | null };
+type AccessesCreateParams = Partial<AccessLike> & { name?: string; permissions?: StreamPermission[]; clientData?: Record<string, unknown>; expireAfter?: number; deviceName?: string | null; randomAlias?: boolean; alias?: string };
 type AccessesCreateResult = { access?: AccessLike };
 type AccessesUpdateParams = { id: string; update: Partial<AccessLike> & { permissions?: StreamPermission[]; expires?: number | null; expireAfter?: number; clientData?: Record<string, unknown> | null }; targetAccess?: AccessLike; targetBase?: string };
 // __updateNotification: internal scratch slot between snapshotAndApplyUpdate
@@ -125,7 +126,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       // attach apiEndpoint.
       result.accesses = accesses.map((a: AccessLike) => {
         const wire = composeWireAccess(a);
-        wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
+        wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
         return wire;
       });
       next();
@@ -199,7 +200,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (!wantsSpecific || specificMatchesHead) {
       // Current head — return as-is.
       const wire = composeWireAccess(head);
-      wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
+      wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
       result.access = wire;
     } else if (currentSerial != null && ref.serial < currentSerial) {
       // Obsolete composite — historical row, with a `current` hint pointing
@@ -213,7 +214,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       const snapshot = (history || []).find((h: AccessLike & { serial?: number }) => (h.serial ?? null) === ref.serial);
       if (snapshot == null) return next(errors.unknownResource('access', params.id));
       const wire = composeWireAccess(snapshot, ref.base);
-      wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
+      wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
       result.access = wire;
       result.current = serializeAccessRef({ base: ref.base, serial: currentSerial });
     } else {
@@ -226,7 +227,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         const history = await accessesRepository.findHistory(context.user, ref.base);
         result.history = (history || []).map((h: AccessLike) => {
           const wire = composeWireAccess(h, ref.base);
-          wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
+          wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
           return wire;
         });
       } catch (err) {
@@ -296,6 +297,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       const accessesRepository = storageLayer.accesses;
       params.token = accessesRepository.generateToken();
     }
+    // Mint a routable, platform-unique alias when requested. Replaces the
+    // username in this access's apiEndpoint so the real username never leaks.
+    if (params.randomAlias === true) {
+      const usersRepository = await getUsersRepository();
+      params.alias = await usersRepository.mintAlias(context.user.username, context.user.id);
+    }
+    delete params.randomAlias;
     const expireAfter = params.expireAfter;
     delete params.expireAfter;
     if (expireAfter != null) {
@@ -454,7 +462,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         return next(errors.unexpectedError(err));
       }
       const wire = composeWireAccess(newAccess);
-      wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
+      wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
       result.access = wire;
       pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
       notifyScopedAccessChange(context.user.username, wire, 'create');
@@ -694,7 +702,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       // 4. Compose wire-form access (composite id + createdBy/modifiedBy
       // refs, internal serial fields stripped).
       const wire = composeWireAccess(newHead);
-      wire.apiEndpoint = ApiEndpoint.build(context.user.username, wire.token);
+      wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
       result.access = wire;
       result.__updateNotification = { baseId: baseId!, serial: newSerial, compositeId: wire.id! };
     } catch (err) {
@@ -814,6 +822,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         cache.unsetAccessLogic(context.user.id, accessToDelete);
       }
     }
+    // Collect any aliases carried by the accesses being deleted, so their
+    // platform reservation + routing entries can be released afterwards.
+    const aliasesToRelease: string[] = [];
+    for (const idToDelete of idsToDelete) {
+      const access = await fromCallback((cb: NodeCallback) => accessesRepository.findOne(context.user, { id: idToDelete.id }, dbFindOptions, cb)) as AccessLike | null;
+      if (access != null && typeof access.alias === 'string') { aliasesToRelease.push(access.alias); }
+    }
     // Cascade webhook deletion BEFORE access deletion. On partial failure,
     // the access still exists so a retry re-runs the cascade.
     try {
@@ -829,6 +844,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       });
     } catch (err) {
       return next(errors.unexpectedError(err));
+    }
+    if (aliasesToRelease.length > 0) {
+      const usersRepository = await getUsersRepository();
+      for (const alias of aliasesToRelease) {
+        await usersRepository.releaseAlias(alias);
+      }
     }
     result.accessDeletion = { id: params.id };
     pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);

@@ -139,6 +139,49 @@ describe('[MAIL] Mailing helper methods', () => {
     });
   });
 
+  describe('[ML06] mail-service failures do not leak internal detail to the client', () => {
+    const baseURL = 'https://mail.internal.example.com';
+    const path = '/' + template + '/' + lang;
+    const emailSettings = {
+      method: 'microservice',
+      url: baseURL + '/',
+      key: 'v3ryStrongK3y'
+    };
+
+    function assertGenericError (err, leakedFragments) {
+      assert.ok(err != null, 'expected an error');
+      const msg = err.message || String(err);
+      assert.match(msg, /Sending email failed\. Please try again later or contact support\./);
+      for (const fragment of ['mail.internal.example.com', ...leakedFragments]) {
+        assert.ok(!msg.includes(fragment), `client-facing message must not contain "${fragment}", got: ${msg}`);
+      }
+    }
+
+    it('[MLE1] upstream error payload is not forwarded', (done) => {
+      nock(baseURL).post(path).reply(401, { error: 'Invalid API key for provider acme-mail' });
+      mailing.sendmail(emailSettings, template, recipient, substitutions, lang, (err) => {
+        assertGenericError(err, ['Invalid API key', 'acme-mail']);
+        done();
+      });
+    });
+
+    it('[MLE2] upstream HTTP status is not forwarded on bodyless failures', (done) => {
+      nock(baseURL).post(path).reply(503);
+      mailing.sendmail(emailSettings, template, recipient, substitutions, lang, (err) => {
+        assertGenericError(err, ['503', 'HTTP']);
+        done();
+      });
+    });
+
+    it('[MLE3] transport-level failure detail is not forwarded', (done) => {
+      nock(baseURL).post(path).replyWithError({ message: 'connect ECONNREFUSED 10.0.0.7:8080', code: 'ECONNREFUSED' });
+      mailing.sendmail(emailSettings, template, recipient, substitutions, lang, (err) => {
+        assertGenericError(err, ['ECONNREFUSED', '10.0.0.7']);
+        done();
+      });
+    });
+  });
+
   describe('[ML05] using in-process', () => {
     const inProcessTemplate = 'welcome-email';
     const mail = require('mail');

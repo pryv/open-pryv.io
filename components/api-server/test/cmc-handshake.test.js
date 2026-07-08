@@ -593,6 +593,20 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     // from a different scope, which (per the current matcher) overwrites
     // an existing data-grant's remote-stream pointers. Earlier describes
     // (CMCHS-EXT / CMCHS-SU) need a clean back-channel, so they go first.
+
+    before(async function () {
+      // Full-matrix runs have intermittently seen `404 !== 201` in [CN14]
+      // — an actor fixture going missing/stale deep in a matrix, not
+      // idempotency logic. Fail legibly here instead of cryptically below.
+      for (const actor of [alice, bob]) {
+        const res = await coreRequest
+          .get('/' + actor.username + '/access-info')
+          .set('Authorization', actor.token);
+        assert.strictEqual(res.status, 200,
+          'fixture user/session "' + actor.username + '" is missing or stale entering [CMCHS-IDEMP]: ' +
+          res.status + ' ' + JSON.stringify(res.body));
+      }
+    });
     it('[CN14] second accept from the same peer for a different scope does not collide on back-channel access name', async function () {
       const triggerStreamId = ':_cmc:apps:my-app:study-2';
       await ensureStream(alice.streamsPath, alice.token, {
@@ -649,6 +663,95 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       }
       assert.ok(accepts.length >= 2,
         're-delivery should land a second consent/accept-cmc; got ' + accepts.length);
+    });
+  });
+
+  describe('[CMCHS-COLL] accept reusing an already-taken accessName', function () {
+    // A client app typically passes its own fixed app name as accessName
+    // on every accept. Accesses are unique on (name, type, deviceName),
+    // so the second accept's data-grant used to fail permanently on the
+    // uniqueness constraint (raw duplicate-key surfaced, retries burned).
+    // The handler now uniquifies with a deterministic per-accept suffix.
+    it('[CN19] second accept with the same accessName mints a suffixed data-grant instead of failing', async function () {
+      const FIXED_NAME = 'my-fixed-app-name';
+      const acceptEventIds = [];
+
+      async function requestAndAccept (studyId) {
+        const triggerStreamId = ':_cmc:apps:my-app:' + studyId;
+        await ensureStream(alice.streamsPath, alice.token, {
+          id: triggerStreamId, parentId: ':_cmc:apps:my-app', name: studyId,
+        });
+        const reqRes = await coreRequest.post(alice.eventsPath)
+          .set('Authorization', alice.token)
+          .send({
+            streamIds: [triggerStreamId],
+            type: 'consent/request-cmc',
+            content: {
+              to: null,
+              capabilityRequested: true,
+              request: {
+                title: { en: studyId },
+                description: { en: 'accessName-collision repro' },
+                consent: { en: 'I consent.' },
+                permissions: [{ streamId: 'fertility', level: 'read' }],
+              },
+              requesterMeta: { username: alice.username, appId: 'my-app' },
+            },
+          });
+        assert.strictEqual(reqRes.status, 201, JSON.stringify(reqRes.body));
+        const capabilityUrl = reqRes.body?.event?.content?.capabilityUrl;
+        const accRes = await coreRequest.post(bob.eventsPath)
+          .set('Authorization', bob.token)
+          .send({
+            streamIds: [':_cmc:apps:my-app'],
+            type: 'consent/accept-cmc',
+            content: { capabilityUrl, accessName: FIXED_NAME },
+          });
+        assert.strictEqual(accRes.status, 201, JSON.stringify(accRes.body));
+        return accRes.body.event.id;
+      }
+
+      async function grantsFor (ids) {
+        const res = await coreRequest.get(bob.accessesPath)
+          .set('Authorization', bob.token);
+        return (res.body?.accesses || [])
+          .filter((a) => ids.includes(a.clientData?.cmc?.acceptEventId));
+      }
+
+      async function pollGrants (ids, count) {
+        const t0 = Date.now();
+        let grants = await grantsFor(ids);
+        while (Date.now() - t0 < POLL_TIMEOUT_MS && grants.length < count) {
+          await sleep(POLL_INTERVAL_MS);
+          grants = await grantsFor(ids);
+        }
+        return grants;
+      }
+
+      // Round 1 — plain name. Await its data-grant so round 2
+      // deterministically hits the collision.
+      acceptEventIds.push(await requestAndAccept('coll-study-1'));
+      let grants = await pollGrants(acceptEventIds, 1);
+      assert.strictEqual(grants.length, 1, 'first accept must mint its data-grant');
+      assert.strictEqual(grants[0].name, FIXED_NAME);
+
+      // Round 2 — same accessName.
+      acceptEventIds.push(await requestAndAccept('coll-study-2'));
+      grants = await pollGrants(acceptEventIds, 2);
+      assert.strictEqual(grants.length, 2,
+        'second accept must mint a data-grant despite the name collision; got ' +
+        JSON.stringify(grants.map((g) => g.name)));
+      const secondGrant = grants.find((g) => g.clientData?.cmc?.acceptEventId === acceptEventIds[1]);
+      assert.strictEqual(secondGrant.name,
+        FIXED_NAME + ' (' + acceptEventIds[1].slice(-8) + ')');
+
+      // Neither trigger event may end up failed.
+      for (const id of acceptEventIds) {
+        const evRes = await coreRequest.get(bob.eventsPath + '/' + id)
+          .set('Authorization', bob.token);
+        assert.notStrictEqual(evRes.body?.event?.content?.status, 'failed',
+          JSON.stringify(evRes.body?.event?.content));
+      }
     });
   });
 

@@ -89,3 +89,29 @@ const __ex_resetPassword = {
     result: helpers.object({}, { additionalProperties: false })
   };
 export { __ex_resetPassword as resetPassword };
+const __ex_changeUsername = {
+    params: helpers.object({
+      newUsername: user.properties.username
+    }, {
+      required: ['newUsername'],
+      additionalProperties: false
+    }),
+    result: helpers.object({
+      account: accountDetails,
+      usernameChangesRemaining: helpers.number()
+    }, {
+      required: ['account', 'usernameChangesRemaining']
+    })
+  };
+export { __ex_changeUsername as changeUsername };
+const __ex_usernameChanges = {
+    params: helpers.object({}),
+    result: helpers.object({
+      usernameChangesRemaining: helpers.number(),
+      usernameChangesLimit: helpers.number(),
+      usernameChangesUsed: helpers.number()
+    }, {
+      required: ['usernameChangesRemaining', 'usernameChangesLimit', 'usernameChangesUsed']
+    })
+  };
+export { __ex_usernameChanges as usernameChanges };

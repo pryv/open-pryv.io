@@ -88,8 +88,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
 
       // Build the popup auth-UI URL as `authUrl`. SDKs open this in a popup
       // for the user to sign in. Base URL comes from `access.defaultAuthUrl`
-      // in config — operators deploy app-web-auth3 (or an equivalent auth UI)
-      // at that address and set the config.
+      // in config — operators deploy app-web-user-account (or an equivalent
+      // auth UI) at that address and set the config.
       //
       // Apps may request their OWN auth page via `authUrl` in the body —
       // honored only when it matches an operator-configured

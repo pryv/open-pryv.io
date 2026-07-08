@@ -10,11 +10,8 @@
  * IPC-based test notification forwarding via process.send().
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const EventEmitter = require('events');
-const { getConfig, getLogger } = require('@pryv/boiler');
+import EventEmitter from 'events';
+import { getConfig, getLogger } from '@pryv/boiler';
 
 // The common contract consumers use — satisfied by both the no-op stub and a
 // real EventEmitter. Event name is string|symbol (Node's type); `on`'s 2nd arg
@@ -33,7 +30,7 @@ async function getTestNotifier () {
   if (notifier != null) return notifier;
   initializing = true;
   const config = await getConfig();
-  const settings = config.get('testNotifications');
+  const settings = config.get('testNotifications') as { enabled?: boolean } | null;
   if (!settings || !settings.enabled) {
     notifier = { emit: () => {}, on: () => {} };
     initializing = false;

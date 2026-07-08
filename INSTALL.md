@@ -28,7 +28,7 @@ YAML config files, loaded in order (last wins):
 
 ### Quickest path: `docker run … init` (interactive wizard)
 
-For a fresh single-core install, the docker image ships an interactive wizard that produces a complete `pryv-config.yml` from prompts (DNS topology, storage engine, secrets, TLS strategy, app-web-auth3 URL, …) and validates the host environment before writing.
+For a fresh single-core install, the docker image ships an interactive wizard that produces a complete `pryv-config.yml` from prompts (DNS topology, storage engine, secrets, TLS strategy, app-web-user-account URL, …) and validates the host environment before writing.
 
 Pick (or create) the host directory where you want your install to live, `cd` into it, and run:
 

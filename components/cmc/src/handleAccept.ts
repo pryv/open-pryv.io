@@ -43,7 +43,7 @@ type OfferShape = {
   [k: string]: unknown;
 };
 
-import type { MallAccessesLike, MallEventsLike, MallStreamsLike } from './_types.ts';
+import type { CmcAccessLike, MallAccessesLike, MallEventsLike, MallStreamsLike } from './_types.ts';
 type MallLike = { accesses: MallAccessesLike; events: MallEventsLike; streams?: MallStreamsLike };
 
 
@@ -219,18 +219,65 @@ async function handleAccept (params: {
     }
   }
 
-  // 4. Create the local data-grant access.
-  let dataGrantAccess: { id?: string; token?: string; apiEndpoint?: string; [k: string]: unknown } | undefined;
-  try {
-    // Invariant: dataGrantPayload is assigned in the build step above; the
-    // earlier catch returns before reaching this call.
-    dataGrantAccess = (await mall.accesses.create(userId, dataGrantPayload!)) as { id?: string; token?: string; apiEndpoint?: string; [k: string]: unknown };
-  } catch (err: unknown) {
-    return {
-      ok: false,
-      reason: 'cmc-handler-data-grant-create-failed',
-      detail: { message: String((err as Error)?.message || err) },
-    };
+  // 4. Create the local data-grant access. Accesses are unique on
+  // (name, type, deviceName), so a fixed client-side accessName (typical
+  // for apps passing their own app name on every accept) collides with
+  // the access minted by a PREVIOUS accept — and a re-dispatch of THIS
+  // accept (retry after a delivery failure) collides with its own prior
+  // data-grant. Neither may surface as a permanent raw-DB failure:
+  //   - own prior data-grant (matched via clientData.cmc.acceptEventId)
+  //     → reuse it, making re-dispatch idempotent;
+  //   - unrelated access → retry once with a deterministic per-accept
+  //     suffix so distinct accepts never fight over one name;
+  //   - still colliding → typed permanent failure (no retry, no raw
+  //     constraint message echoed to the client).
+  let dataGrantAccess: CmcAccessLike | undefined | null;
+  dataGrantAccess = await findDataGrantByAcceptEventId({ mall, userId, acceptEventId: triggerEvent?.id });
+  if (dataGrantAccess == null) {
+    try {
+      // Invariant: dataGrantPayload is assigned in the build step above; the
+      // earlier catch returns before reaching this call.
+      dataGrantAccess = await mall.accesses.create(userId, dataGrantPayload!);
+    } catch (err: unknown) {
+      if (!isDuplicateNameError(err)) {
+        return {
+          ok: false,
+          reason: 'cmc-handler-data-grant-create-failed',
+          detail: { message: String((err as Error)?.message || err) },
+        };
+      }
+      const baseName = String(dataGrantPayload!.name ?? '');
+      const suffixSource = triggerEvent?.id;
+      if (typeof suffixSource !== 'string' || suffixSource.length === 0) {
+        return {
+          ok: false,
+          reason: CmcErrorIds.HANDLER_DATA_GRANT_NAME_CONFLICT,
+          detail: { name: baseName, message: 'data-grant access name is already in use' },
+        };
+      }
+      // Deterministic across re-dispatches of the same accept event, so a
+      // later retry converges on the same name instead of minting another.
+      dataGrantPayload!.name = baseName + ' (' + suffixSource.slice(-8) + ')';
+      try {
+        dataGrantAccess = await mall.accesses.create(userId, dataGrantPayload!);
+      } catch (err2: unknown) {
+        if (isDuplicateNameError(err2)) {
+          return {
+            ok: false,
+            reason: CmcErrorIds.HANDLER_DATA_GRANT_NAME_CONFLICT,
+            detail: {
+              name: baseName,
+              message: 'data-grant access name is already in use (uniquified retry collided too)',
+            },
+          };
+        }
+        return {
+          ok: false,
+          reason: 'cmc-handler-data-grant-create-failed',
+          detail: { message: String((err2 as Error)?.message || err2) },
+        };
+      }
+    }
   }
   if (dataGrantAccess?.apiEndpoint == null) {
     return {
@@ -328,6 +375,44 @@ async function handleAccept (params: {
     // belongs to.
     requesterIdentity: counterparty,
   };
+}
+
+/**
+ * True when an accesses.create rejection is the (name, type, deviceName)
+ * uniqueness violation. Both storage engines decorate the error with
+ * `isDuplicate`; the id / message checks mirror handleIncomingAccept's
+ * back-channel duplicate detection for robustness across layers.
+ */
+function isDuplicateNameError (err: unknown): boolean {
+  const e = err as { isDuplicate?: boolean; id?: string; message?: string };
+  if (e?.isDuplicate === true) return true;
+  if (e?.id === 'item-already-exists' || e?.id === 'duplicate-key') return true;
+  return /duplicate key|already exists|item-already-exists/i.test(String(e?.message || err));
+}
+
+/**
+ * Find the data-grant access a PREVIOUS dispatch of the same accept event
+ * already minted (`clientData.cmc.acceptEventId` is stamped at build time).
+ * Reusing it makes accept re-dispatch idempotent: a retry after a delivery
+ * failure must not fail on its own prior access's name, nor mint a second
+ * data-grant. Returns null when no acceptEventId or no match.
+ */
+async function findDataGrantByAcceptEventId (params: {
+  mall: MallLike;
+  userId: string;
+  acceptEventId?: string;
+}): Promise<CmcAccessLike | null> {
+  const { mall, userId, acceptEventId } = params;
+  if (typeof acceptEventId !== 'string' || acceptEventId.length === 0) return null;
+  if (typeof mall.accesses?.get !== 'function') return null;
+  const list = await mall.accesses.get(userId, {});
+  for (const a of (Array.isArray(list) ? list : [])) {
+    const cmcMeta = a?.clientData?.cmc;
+    if (cmcMeta?.role === 'counterparty' && cmcMeta?.acceptEventId === acceptEventId) {
+      return a;
+    }
+  }
+  return null;
 }
 
 /**

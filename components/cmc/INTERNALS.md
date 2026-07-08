@@ -618,8 +618,8 @@ Revoke needs no equivalent exemption: peer-delivered revokes are short-circuited
 
 ## Hand-off for apps without a personal token
 
-- **Accept** — `@pryv/cmc.requestAccept` / `requestAcceptUrl` open `app-web-auth3`'s `/cmc-accept` page; the user signs in, the page writes the trigger with the fresh personal token, the data-grant apiEndpoint is returned via popup `postMessage` or `returnUrl` redirect. See `app-web-auth3/src/components/views/CmcAccept.vue`.
-- **Scope-update** — `@pryv/cmc.requestScopeUpdate` / `requestScopeUpdateUrl` open `/cmc-scope-update`; same shape, input is `scopeRequestEventId` instead of `capabilityUrl`. See `CmcScopeUpdate.vue`.
+- **Accept** — `@pryv/cmc.requestAccept` / `requestAcceptUrl` open `app-web-user-account`'s `/cmc-accept` page; the user signs in, the page writes the trigger with the fresh personal token, the data-grant apiEndpoint is returned via popup `postMessage` or `returnUrl` redirect. (`app-web-user-account` is the React auth+account web app; it replaces the deprecated `app-web-auth3`.)
+- **Scope-update** — `@pryv/cmc.requestScopeUpdate` / `requestScopeUpdateUrl` open `app-web-user-account`'s `/cmc-scope-update` page; same shape, input is `scopeRequestEventId` instead of `capabilityUrl`.
 - **Revoke** — no hand-off helper exists or is needed. `cmc.revokeAcceptance` / `cmc.revokeRelationship` work from any access that satisfies `canDeleteAccess` on the target (the relationship's own data-grant access by default).
 
 ---

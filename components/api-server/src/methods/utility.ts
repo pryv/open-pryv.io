@@ -53,18 +53,20 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
       'createdBy',
       'modified',
       'modifiedBy',
-      'calls'
+      'calls',
+      'alias'
     ];
-    const userProps = ['username'];
     for (const prop of accessInfoProps) {
       const accessProp = context.access[prop];
       if (accessProp != null) { result[prop] = accessProp; }
     }
     result.user = {};
-    for (const prop of userProps) {
-      const userProp = (context.user as unknown as Record<string, unknown>)[prop];
-      if (userProp != null) { (result.user as Record<string, unknown>)[prop] = userProp; }
-    }
+    // Report the access alias instead of the real username when this access
+    // carries one (de-identification); otherwise the canonical primary
+    // username (which `context.user.username` always holds, even after a
+    // username change). The real username never leaks for an aliased access.
+    const reportedUsername = (context.access.alias as string | undefined) ?? context.user.username;
+    if (reportedUsername != null) { (result.user as Record<string, unknown>).username = reportedUsername; }
     if (context.access.isPersonal()) {
       const expirationAndChangeTimes = await passwordRules.getPasswordExpirationAndChangeTimes(context.user.id);
       Object.assign(result.user, expirationAndChangeTimes);

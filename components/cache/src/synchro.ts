@@ -5,12 +5,9 @@
  * Refer to LICENSE file
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const { getLogger } = require('@pryv/boiler');
+import { getLogger } from '@pryv/boiler';
+import { pubsub } from 'messages';
 const logger = getLogger('cache:synchro');
-const { pubsub } = require('messages');
 
 interface CacheModule {
   unsetAccessLogic: (userId: string, ref: { id: string; token: string }, propagate: boolean) => void;
@@ -38,8 +35,8 @@ const MESSAGES = {
 function registerListenerForUserId (userId: string): void {
   logger.debug('activate listener for user:', userId);
   if (listenerMap.has(userId)) { return; }
-  listenerMap.set(userId, pubsub.cache.onAndGetRemovable(userId, (msg: Message) => {
-    handleMessage(userId, msg);
+  listenerMap.set(userId, pubsub.cache.onAndGetRemovable(userId, (...args: unknown[]) => {
+    handleMessage(userId, args[0] as Message);
   }));
 }
 // unregister listner
@@ -87,7 +84,8 @@ function setCache (c: CacheModule): void {
     return; // cache already set
   }
   cache = c;
-  pubsub.cache.on(MESSAGES.UNSET_USER, function (msg: Message) {
+  pubsub.cache.on(MESSAGES.UNSET_USER, function (...args: unknown[]) {
+    const msg = args[0] as Message;
     cache!.unsetUser(msg.username!, false);
   });
 }

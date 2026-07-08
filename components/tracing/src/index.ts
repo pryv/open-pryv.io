@@ -10,14 +10,11 @@
 // initRootSpan, tracingMiddleware) is preserved so a future tracer can replace
 // the implementations without touching consumers.
 
-import { createRequire } from 'node:module';
 import type { Request, Response, NextFunction } from 'express';
 import type { DummyTracing as DummyTracingT } from './Tracing.ts';
-const require = createRequire(import.meta.url);
-
-const { DummyTracing } = require('./Tracing.ts');
-const { getHookedTracer } = require('./HookedTracer.ts');
-const { databaseTracer: dataBaseTracer } = require('./databaseTracer.ts');
+import { DummyTracing } from './Tracing.ts';
+import { getHookedTracer } from './HookedTracer.ts';
+import { databaseTracer as dataBaseTracer } from './databaseTracer.ts';
 
 const getHookerTracer = getHookedTracer;
 

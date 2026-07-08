@@ -5,20 +5,17 @@
  * Refer to LICENSE file
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const ApiEndpoint = require('./api-endpoint.ts');
-const debug = require('./debug.ts');
-const { deepMerge } = require('./deepMerge.ts');
-const encryption = require('./encryption.ts');
-const eventMatchQuery = require('./eventMatchQuery.ts');
-const extension = require('./extension.ts');
-const { fromCallback } = require('./fromCallback.ts');
-const jsonValidator = require('./jsonValidator.ts').default;
-const { slug: slugify } = require('./slugify.ts');
-const { toString } = require('./toString.ts');
-const treeUtils = require('./treeUtils.ts');
+import * as ApiEndpoint from './api-endpoint.ts';
+import * as debug from './debug.ts';
+import { deepMerge } from './deepMerge.ts';
+import * as encryption from './encryption.ts';
+import * as eventMatchQuery from './eventMatchQuery.ts';
+import * as extension from './extension.ts';
+import { fromCallback } from './fromCallback.ts';
+import jsonValidator from './jsonValidator.ts';
+import { slug as slugify } from './slugify.ts';
+import { toString } from './toString.ts';
+import * as treeUtils from './treeUtils.ts';
 
 export { ApiEndpoint, debug, deepMerge, encryption, eventMatchQuery, extension, fromCallback, jsonValidator, slugify, toString, treeUtils };
 export type { NormalizedCondition, ScalarValue, ConditionOp, StreamCondition, StreamGroup, EventToMatch, EventMatchQuery, AccessToMatch } from './eventMatchQuery.ts';

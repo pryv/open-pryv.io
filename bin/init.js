@@ -812,23 +812,24 @@ async function main () {
   }
   console.log();
 
-  // 7. app-web-auth3 deployment URL.
+  // 7. app-web-user-account deployment URL.
   //
-  // open-pryv.io does NOT embed the auth UI. `app-web-auth3` is a separate
-  // Vue.js bundle (forked/rebranded per platform) that hosts the access /
-  // sign-in / reset-password popup pages. The public Pryv-hosted build at
-  // sw.pryv.me works out of the box; operators can fork + self-host.
+  // open-pryv.io does NOT embed the auth UI. `app-web-user-account` is a
+  // separate React app (forked/rebranded per platform) that hosts the
+  // access-consent / sign-in / register / reset-password pages. The public
+  // Pryv-hosted build works out of the box; operators can fork + self-host.
+  // (`app-web-auth3` is the deprecated predecessor.)
   //
   // The reset-password page URL is derived from this base
-  // (auth.passwordResetPageURL = `${authUiUrl}/reset-password.html`), so
+  // (auth.passwordResetPageURL = `${authUiUrl}/reset-password`), so
   // there is no separate prompt for it.
-  console.log('▸ app-web-auth3 (auth UI) deployment');
-  console.log('  open-pryv.io does not embed the auth UI — it is a separate Vue.js bundle');
-  console.log('  (popup pages for /access flow, password-reset, etc.). The default below is');
-  console.log('  the canonical Pryv-hosted public build; fork app-web-auth3 to rebrand.');
+  console.log('▸ app-web-user-account (auth UI) deployment');
+  console.log('  open-pryv.io does not embed the auth UI — it is a separate React app');
+  console.log('  (consent / sign-in / register / password-reset pages). The default below is');
+  console.log('  the canonical Pryv-hosted public build; fork app-web-user-account to rebrand.');
   console.log('  Sets `access.defaultAuthUrl` (auth URL emitted by /reg/access) +');
   console.log('  `auth.passwordResetPageURL` + adds the host to `auth.trustedApps`.');
-  const authUiUrl = (await ask('  app-web-auth3 base URL', 'https://pryv.github.io/app-web-auth3/access')).replace(/\/+$/, '');
+  const authUiUrl = (await ask('  app-web-user-account base URL', 'https://pryv.github.io/app-web-user-account')).replace(/\/+$/, '');
   console.log();
 
   // 8. TLS strategy
@@ -864,12 +865,12 @@ async function main () {
   console.log('▸ Defaulted fields (press enter to accept)');
 
   // passwordResetPageURL: derived from authUiUrl (the auth UI hosts the page).
-  const defaultPasswordResetPageURL = `${authUiUrl}/reset-password.html`;
+  const defaultPasswordResetPageURL = `${authUiUrl}/reset-password`;
   const passwordResetPageURL = await ask('  auth.passwordResetPageURL (derived from auth UI)', defaultPasswordResetPageURL);
 
   // trustedApps: must whitelist BOTH the operator's own publicUrl AND the
-  // auth UI origin (otherwise the /reg/access flow loaded from sw.pryv.me
-  // — or whichever app-web-auth3 host is configured — returns 403 because
+  // auth UI origin (otherwise the /reg/access flow loaded from the auth app
+  // — whichever app-web-user-account host is configured — returns 403 because
   // its origin isn't trusted). Compose `*@<origin>*` entries deduplicated.
   function originOf (u) {
     try { return new URL(u).origin; } catch (_) { return u; }
@@ -1060,8 +1061,8 @@ async function main () {
     },
     access: {
       // The full auth-UI landing URL (open-pryv.io appends ?key=…&poll=… etc.)
-      // The reset-password page is a sibling file under the same base.
-      defaultAuthUrl: `${authUiUrl}/access.html`
+      // The reset-password page is a sibling route under the same base.
+      defaultAuthUrl: `${authUiUrl}/auth`
     },
     cluster: {
       apiWorkers: 2,
@@ -1235,11 +1236,11 @@ async function main () {
   yamlBody += section(yaml, 'Auth secrets + trusted apps',
     ['adminAccessKey + filesReadTokenSecret MUST be backed up — losing them locks',
       'you out of audit + cert decryption. trustedApps controls which origins',
-      'can use /reg/access (the app-web-auth3 popup-frame flow).'],
+      'can use /reg/access (the auth-UI popup flow).'],
     { auth: config.auth });
 
-  yamlBody += section(yaml, 'app-web-auth3 integration',
-    ['URL of the Vue.js popup-frame that hosts /access + password-reset pages.',
+  yamlBody += section(yaml, 'app-web-user-account integration',
+    ['URL of the React auth app that hosts consent + sign-in + password-reset pages.',
       'Defaults to the canonical Pryv-hosted public build; fork to rebrand.'],
     { access: config.access });
 

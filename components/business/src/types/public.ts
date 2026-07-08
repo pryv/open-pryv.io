@@ -8,7 +8,7 @@
 /**
  * Public TypeScript types for Pryv.io API consumers.
  *
- * SDK consumers (lib-js, app-web-auth3, external integrators) can
+ * SDK consumers (lib-js, app-web-user-account, external integrators) can
  * `import type { Event, Stream, Access } from 'pryv-io'` instead of
  * duplicating shapes.
  */

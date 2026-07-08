@@ -102,6 +102,10 @@ const CmcErrorIds = {
   // --- Access mint (data-grant + back-channel) ---
   // mall.accesses.create rejected the payload.
   HANDLER_DATA_GRANT_CREATE_FAILED: 'cmc-handler-data-grant-create-failed',
+  // The data-grant access name collided with an existing access AND the
+  // deterministic uniquified retry collided too. Permanent — retrying
+  // cannot converge; the accepter should pick a different accessName.
+  HANDLER_DATA_GRANT_NAME_CONFLICT: 'cmc-handler-data-grant-name-conflict',
   // The created access did not return an `apiEndpoint` — wiring bug
   // (mallAccessesAdapter is supposed to stamp it; surface for ops).
   HANDLER_DATA_GRANT_NO_APIENDPOINT: 'cmc-handler-data-grant-no-apiendpoint',
@@ -169,9 +173,9 @@ const CmcErrorIds = {
   // local accesses on the user's account; a personal token is required
   // so the user is provably present + authenticated at the moment of
   // acceptance / revocation / scope change. Apps without a personal
-  // token should hand off to app-web-auth3 via @pryv/cmc.requestAccept
+  // token should hand off to app-web-user-account via @pryv/cmc.requestAccept
   // (or .requestRevoke / .requestScopeUpdate) — the user authenticates
-  // in app-web-auth3, the personal token writes the trigger, and the
+  // in app-web-user-account, the personal token writes the trigger, and the
   // result returns to the app via popup postMessage or returnUrl.
   ACCEPT_REQUIRES_PERSONAL_TOKEN: 'cmc-accept-requires-personal-token',
 

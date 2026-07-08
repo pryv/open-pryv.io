@@ -20,7 +20,7 @@
  * → same token) so equality lookups still work; the inverse is infeasible
  * without the cluster pepper.
  *
- * Wiring (this module is the primitive only; callers thread it through):
+ * Wiring (primitive only; callers thread the hasher through separately):
  *   - Pepper: 32 bytes, base64, distributed via bootstrap bundle to every
  *     core, persisted in each core's override-config.yml as
  *     `platform.piiHmacKey` — operator-sync responsibility, same shape as

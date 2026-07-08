@@ -195,7 +195,7 @@ class NamespaceContext {
         this.socketNs.emit(message, payload);
         if (message === 'accessUpdated') this.revalidateConnections(); // D10
       } else {
-        console.log('XXXXXXX Unknown structured payload', payload);
+        this.logger.debug('Unknown structured payload', payload);
       }
       return;
     }
@@ -204,7 +204,7 @@ class NamespaceContext {
       this.emitCoarse(message);
       if (message === 'accessesChanged') this.revalidateConnections(); // D10
     } else {
-      console.log('XXXXXXX Unknown payload', payload);
+      this.logger.debug('Unknown payload', payload);
     }
   }
 

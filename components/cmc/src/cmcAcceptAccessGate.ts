@@ -23,8 +23,8 @@ const require = createRequire(import.meta.url);
  * one enforces user-presence + user-authentication at the moment the
  * trigger is written.
  *
- * Apps without a personal token should hand off to app-web-auth3 via
- * @pryv/cmc.requestAccept / requestScopeUpdate.
+ * Apps without a personal token should hand off to app-web-user-account
+ * via @pryv/cmc.requestAccept / requestScopeUpdate.
  *
  * **Revoke is NOT in this gate.** Revoke is a contraction, not an
  * escalation — the access being deleted bounds the impact. Revoke is
@@ -33,7 +33,7 @@ const require = createRequire(import.meta.url);
  * `accesses.delete` route enforces), which honours the
  * `selfRevoke` feature permission. This means apps holding the
  * relationship's data-grant access can self-revoke without bouncing
- * through app-web-auth3 — the natural Pryv access-management model.
+ * through app-web-user-account — the natural Pryv access-management model.
  *
  * Out of this gate (un-gated at events.create — orchestrator may
  * apply per-handler permission checks):
@@ -75,13 +75,11 @@ type AccessLike = {
   isPersonal?: () => boolean;
   type?: string;
   clientData?: { cmc?: { role?: string; kind?: string } } | null;
-  [k: string]: unknown;
 };
 
 type MwContext = {
-  newEvent?: { streamIds?: string[]; type?: string; content?: Record<string, unknown> | null; [k: string]: unknown };
+  newEvent?: { streamIds?: string[]; type?: string; content?: Record<string, unknown> | null };
   access?: AccessLike;
-  [k: string]: unknown;
 };
 type MwNext = (err?: unknown) => void;
 type Middleware = (context: MwContext, params: unknown, result: unknown, next: MwNext) => unknown | Promise<unknown>;
@@ -133,7 +131,7 @@ function createCmcAcceptAccessGateHook (deps: Deps): Middleware {
 
     return next(deps.errors.invalidOperation(
       'Writing "' + event.type + '" requires a personal access token. ' +
-      'Apps without a personal token should hand off to app-web-auth3 ' +
+      'Apps without a personal token should hand off to app-web-user-account ' +
       'via @pryv/cmc helpers (requestAccept / requestRevoke / requestScopeUpdate).',
       { id: CmcErrorIds.ACCEPT_REQUIRES_PERSONAL_TOKEN, eventType: event.type }
     ));

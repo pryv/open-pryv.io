@@ -5,17 +5,14 @@
  * Refer to LICENSE file
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const { getConfigSync } = require('@pryv/boiler');
+import { getConfigSync } from '@pryv/boiler';
 
 let defaultApiFormat: string | undefined;
 /**
  * @param [apiFormat] - (default the one of config "service:api") https://{username}.domain/ or https://hostname/{username}/
  */
 function build (username: string, token: string | undefined, apiFormat?: string) {
-  if (!defaultApiFormat) { defaultApiFormat = getConfigSync().get('service:api'); }
+  if (!defaultApiFormat) { defaultApiFormat = getConfigSync().get('service:api') as string; }
   apiFormat = apiFormat || defaultApiFormat;
   let apiEndpoint = apiFormat!.replace('{username}', username);
   if (token) {
@@ -26,4 +23,13 @@ function build (username: string, token: string | undefined, apiFormat?: string)
   return apiEndpoint;
 }
 
-export { build };
+/**
+ * Build the API endpoint a client should use for a given access: prefer the
+ * access alias (de-identifying / changed-username demotion) over the real
+ * username, so the real username never leaks for aliased accesses.
+ */
+function buildForAccess (access: { alias?: string | null; token?: string }, username: string, apiFormat?: string) {
+  return build((access && access.alias) || username, access != null ? access.token : undefined, apiFormat);
+}
+
+export { build, buildForAccess };

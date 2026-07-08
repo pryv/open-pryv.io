@@ -73,7 +73,6 @@ class MethodContext {
 
   get tracing () {
     if (this._tracing == null) {
-      console.log('XXXXXXX >>>>>> Null tracer', new Error());
       this._tracing = new DummyTracing();
     }
     return this._tracing;
@@ -106,11 +105,18 @@ class MethodContext {
   async init () {
     this.mall = await getMall();
     const usersRepository = await getUsersRepository();
+    // Resolve the addressed name (primary username OR a routable alias) to the
+    // userId, then pin `username` to the CANONICAL primary username — never the
+    // alias. Keeps username-keyed concerns (pubsub, cache, apiEndpoint for
+    // non-aliased accesses) correct when a request is addressed by alias.
+    const addressedName = this.user.username;
+    const userId = await usersRepository.getUserIdForUsername(addressedName);
+    if (!userId) { throw errors.unknownResource('user', addressedName); }
+    const canonicalUsername = await usersRepository.getUsernameForUserId(userId);
     this.user = {
-      id: await usersRepository.getUserIdForUsername(this.user.username),
-      username: this.user.username
+      id: userId,
+      username: canonicalUsername ?? addressedName
     };
-    if (!this.user.id) { throw errors.unknownResource('user', this.user.username); }
   }
 
   /**

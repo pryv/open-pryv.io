@@ -2,6 +2,66 @@
 
 ## Unreleased
 
+### OAuth2 authorization-code flow (server-side)
+
+Pryv can now act as an **OAuth2 authorization server** (RFC 6749 + PKCE / RFC 7636).
+Third-party applications obtain access tokens through the standard authorization-code
+redirect flow instead of the Pryv-native access-request polling flow (both flows remain
+supported). New endpoints: `GET /.well-known/oauth-authorization-server` (RFC 8414
+discovery), `GET /oauth2/authorize`, `POST /oauth2/token` (authorization_code,
+refresh_token, client_credentials grants). The token response carries a Pryv
+`apiEndpoint` extension so multi-core clients build a working connection; vanilla RFC
+6749 clients that call the wrong core receive `421` with the correct `coreUrl`.
+`Authorization: Bearer <token>` is accepted alongside the bare-token and Basic forms.
+Application accounts are registered out-of-band by the operator (`bin/oauth-client.js`;
+curated registration only). Short-TTL access tokens plus rotating refresh tokens; nine
+`oauth.*` audit event types. Configured under the `oauth:` block (disabled by default).
+See `docs/oauth2.md`.
+
+### Access aliases (`randomAlias`) — de-identifying endpoints
+
+`accesses.create` accepts an optional `randomAlias: true`. When set, the new
+access is issued a platform-unique, routable alias (`r-` followed by 8
+characters) that replaces the username everywhere the access is addressed: the
+returned `apiEndpoint`, and `access-info` (`user.username` reports the alias).
+The real username never appears for that access, so accesses handed to
+different parties cannot be cross-matched back to one account. The alias routes
+to the user exactly like the username (including across cores) and is released
+when the access is deleted. The resolved value is returned as the access's
+`alias` property.
+
+### Changeable username (`account.changeUsername`)
+
+A new personal-token endpoint `POST /account/change-username` lets a user choose
+a new username. Accesses already issued under the previous username keep
+working — the old name is kept as a routable alias — and `access-info` for those
+accesses reports the new (current) username. The number of changes is capped by
+the operator (default 2); `GET /account/username-changes` returns how many
+changes have been used, the limit, and how many remain.
+
+### CMC: accept no longer fails permanently on data-grant access-name collision (#105)
+
+Accepting a CMC invite with an `accessName` already used by an existing access
+(typical for apps passing a fixed app name on every accept) used to fail
+permanently with the raw database duplicate-key message, and the internal
+retry loop kept re-attempting an accept that could never succeed. The handler
+now retries once with a deterministic per-accept suffix (`<name> (<8 chars of
+the accept event id>)`), so distinct accepts never fight over one name. A
+re-dispatch of the same accept (after a delivery failure) reuses its own prior
+data-grant instead of colliding with it. If the uniquified name still
+collides, the accept fails fast with the new typed, non-retryable error id
+`cmc-handler-data-grant-name-conflict` — no raw database text is echoed.
+
+### Mail-delivery failures no longer leak internal detail in 500 errors (#104)
+
+When a transactional email (password reset, welcome) fails to send, the API
+previously returned a `500` whose message included the configured mail-service
+URL and the raw upstream HTTP status or transport error — visible to
+unauthenticated callers of `account.requestPasswordReset`. The client-facing
+message is now a generic "Sending email failed. Please try again later or
+contact support."; the full diagnostic (URL, upstream status/error, SMTP
+transport failures) is logged server-side instead.
+
 ## 2.0.0-rc.5 — 2026-06-25
 
 ### Optional encryption-at-rest image variant

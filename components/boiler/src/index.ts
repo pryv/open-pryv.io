@@ -11,12 +11,9 @@
  * @module boiler
  */
 
-import { createRequire } from 'node:module';
 import type { ExtraDef } from './config.ts';
-const require = createRequire(import.meta.url);
-
-const { Config } = require('./config.ts');
-const logging = require('./logging.ts');
+import { Config } from './config.ts';
+import * as logging from './logging.ts';
 
 const config = new Config();
 

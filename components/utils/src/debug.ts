@@ -6,10 +6,7 @@
  */
 
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const util = require('util');
+import util from 'util';
 
 function log (...args: unknown[]) {
   for (let i = 0; i < args.length; i++) {

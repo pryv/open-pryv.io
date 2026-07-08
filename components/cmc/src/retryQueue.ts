@@ -307,6 +307,8 @@ async function runRetryLoop (params: {
  *   - cmc-handler-missing-capability-url
  *   - cmc-handler-counterparty-unknown
  *   - cmc-handler-data-grant-no-apiendpoint
+ *   - cmc-handler-data-grant-name-conflict (name collision survives the
+ *     uniquified retry — no attempt can converge)
  *   - cmc-handler-delivery-rejected (4xx)
  *   - cmc-offer-empty-permissions
  *   - cmc-system-counterparty-access-not-found
@@ -325,6 +327,7 @@ const NON_RETRYABLE_REASONS = new Set([
   'cmc-handler-missing-capability-url',
   'cmc-handler-counterparty-unknown',
   'cmc-handler-data-grant-no-apiendpoint',
+  'cmc-handler-data-grant-name-conflict',
   'cmc-handler-delivery-rejected',
   'cmc-offer-empty-permissions',
   'cmc-system-counterparty-access-not-found',

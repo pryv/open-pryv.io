@@ -306,6 +306,19 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
 
     const accessesPath = () => '/' + username + '/accesses';
 
+    before(async function () {
+      // Full-matrix runs have intermittently seen `404 !== 201` on the
+      // accesses.create calls below — the suite-level fixture user going
+      // missing/stale deep in a matrix, not forge-prevention logic. Fail
+      // legibly here instead of cryptically inside the tests.
+      const res = await coreRequest
+        .get('/' + username + '/access-info')
+        .set('Authorization', token);
+      assert.strictEqual(res.status, 200,
+        'fixture user/session "' + username + '" is missing or stale entering [CMCNS-H7]: ' +
+        res.status + ' ' + JSON.stringify(res.body));
+    });
+
     it('[CN12] accesses.create rejects clientData.cmc.role forge', async function () {
       const res = await coreRequest
         .post(accessesPath())
