@@ -43,7 +43,6 @@ class MinimalMethodContext {
 
   get tracing (): unknown {
     if (this._tracing == null) {
-      console.log('Null tracer');
       this._tracing = new DummyTracing();
     }
     return this._tracing;

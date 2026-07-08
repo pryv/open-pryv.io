@@ -73,7 +73,6 @@ class MethodContext {
 
   get tracing () {
     if (this._tracing == null) {
-      console.log('XXXXXXX >>>>>> Null tracer', new Error());
       this._tracing = new DummyTracing();
     }
     return this._tracing;
