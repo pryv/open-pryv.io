@@ -46,10 +46,56 @@ field, `apiEndpoint`, that clients use to build a working connection:
   "token_type": "Bearer",
   "expires_in": 3600,
   "refresh_token": "...",
-  "scope": "pryv:read pryv:write",
+  "scope": "cmc:study-A",
   "apiEndpoint": "https://<token>@<host>/<path>/"
 }
 ```
+
+---
+
+## 1b. Scope model — consent-offer references
+
+There are **no coarse wildcard scopes**. Every authorization-code grant goes
+through an explicit granular permission set — as expressive as a native
+`accesses.create` permissions array, including feature permissions such as
+`{ "feature": "selfRevoke", "setting": "forbidden" }`.
+
+The `scope` parameter carries exactly **one consent-offer reference**,
+`cmc:<offer-name>`, resolved through the client registration:
+
+1. **The app account publishes a consent offer** — an *open-link*
+   `consent/request-cmc` event on its own account (see the cross-account
+   messaging guide, `components/cmc/IMPLEMENTERS-GUIDE.md`) carrying the
+   granular `permissions[]` plus the localized title/description/consent
+   texts. The event's `content.capability.mode` must be `open-link` so many
+   users can accept the same offer. The plugin stamps the capability URL on
+   the event.
+2. **The operator registers the offer on the client**:
+   `--cmc-offer <name>=<capabilityUrl>` together with `--scope cmc:<name>`.
+3. **At `GET /oauth2/authorize`** the core resolves the offer through its
+   capability URL and embeds the permission set + consent texts into the
+   HMAC-signed state — the consent UI displays exactly what the server
+   resolved, and the accept step can only grant a subset of it.
+4. **On accept** the core drives a real cross-account consent
+   (`consent/accept-cmc`) with the user's personal session: a durable
+   **data-grant access** is created on the user's account (the consent
+   record), and the short-TTL OAuth access is minted with **exactly the
+   permissions the user kept ticked**.
+5. **Refresh is bound to the data-grant**: revoking the consent (the user
+   deletes the data-grant, or a `consent/revoke-cmc` lands) makes the next
+   refresh fail with `invalid_grant`; narrowing the data-grant's permissions
+   propagates to the next refreshed access. Widening always requires a fresh
+   authorization.
+
+Re-authorization by the same user reuses the existing data-grant (widening it
+only if the new consent grants entries the current one lacks). The
+`client_credentials` grant never uses offer references — it serves the app's
+OWN account.
+
+Capability URLs expire (default 7 days, max 30 days per the platform bounds)
+— publish offers with an explicit `expiresAt` and rotate the registration
+before expiry; an expired offer surfaces as `invalid_scope` at
+`/oauth2/authorize`.
 
 ---
 
@@ -124,7 +170,8 @@ client identifier. Promoting user `acme-app` yields `client_id = acme-app`.
 
 ```
 node bin/oauth-client.js create <username> --redirect-uri <uri> [--redirect-uri <uri> ...] \
-    [--scope <s>] [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--application-type web|native]
+    [--scope cmc:<name>] [--cmc-offer <name>=<capabilityUrl>] \
+    [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--application-type web|native]
 node bin/oauth-client.js list
 node bin/oauth-client.js show   <clientId>
 node bin/oauth-client.js update <clientId> [--redirect-uri <uri> ...] [--scope <s>] ...
@@ -139,6 +186,10 @@ Notes:
 - **`--scope` is repeatable** — pass it once per scope; do **not** space-join
   several scopes into a single value (that registers one malformed scope and
   `/oauth2/authorize` will reject the request with `invalid_scope`).
+- **`--cmc-offer <name>=<capabilityUrl>` is repeatable** — registers the
+  consent offer behind each `cmc:<name>` scope token (see § 1b). Every
+  `cmc:<name>` in `--scope` must have a matching `--cmc-offer` entry;
+  registration fails fast otherwise.
 - **`create` registers a PUBLIC client** (PKCE-only, no secret) — the common
   case for browser apps. It does not mint a `client_secret`.
 - **`rotate-secret <clientId>`** mints a `client_secret`, promoting the client to
@@ -204,7 +255,7 @@ single-use, so a reuse means either a broken client or a stolen code.
 
 | Symptom | Likely cause |
 |---|---|
-| `/oauth2/authorize` → `invalid_scope` | scopes space-joined into one `--scope` value at registration, or the app requested a scope not in `scopes_supported` |
+| `/oauth2/authorize` → `invalid_scope` | scope is not exactly one registered `cmc:<offer-name>` reference, the offer's capability URL expired/was invalidated, or scopes were space-joined into one `--scope` value at registration |
 | `/oauth2/authorize` → `invalid_request` / `redirect_uri` mismatch | the request's `redirect_uri` is not byte-for-byte one of the registered URIs |
 | `/oauth2/token` → `invalid_grant` (PKCE) | the `code_verifier` does not match the `code_challenge` sent at `/authorize`, or the code expired / was already used |
 | `/oauth2/token` → `invalid_client` | confidential client presented a wrong/rotated `client_secret` |
