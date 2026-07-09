@@ -253,4 +253,54 @@ describe('[OAUTH-CLIENT] client registry', () => {
       assert.deepEqual(list, ['alpha', 'zeta']);
     });
   });
+
+  describe('[OAUTH-CLIENT-4] cmcOffers validation on persistClient', () => {
+    const base = {
+      clientId: 'myapp',
+      redirectUris: ['https://x/cb'],
+      grantTypes: ['authorization_code'],
+    };
+    const CAP_URL = 'https://AbCdToken@myapp.example.com/';
+
+    it('[OAUTH-CLIENT-4a] accepts a valid offer map + matching scope token', async () => {
+      const platform = fakePlatform();
+      await persistClient(platform, {
+        ...base,
+        scope: ['cmc:study-A'],
+        cmcOffers: { 'study-A': { capabilityUrl: CAP_URL } },
+      });
+      const c = await getClient(platform, 'myapp');
+      assert.deepEqual(c.cmcOffers, { 'study-A': { capabilityUrl: CAP_URL } });
+    });
+    it('[OAUTH-CLIENT-4b] rejects invalid offer names', async () => {
+      const platform = fakePlatform();
+      await assert.rejects(persistClient(platform, {
+        ...base, scope: [], cmcOffers: { '-bad': { capabilityUrl: CAP_URL } },
+      }), /invalid offer name/);
+    });
+    it('[OAUTH-CLIENT-4c] rejects non-https or token-less capability URLs', async () => {
+      const platform = fakePlatform();
+      await assert.rejects(persistClient(platform, {
+        ...base, scope: [], cmcOffers: { a: { capabilityUrl: 'http://tok@x.example.com/' } },
+      }), /https/);
+      await assert.rejects(persistClient(platform, {
+        ...base, scope: [], cmcOffers: { a: { capabilityUrl: 'https://x.example.com/' } },
+      }), /userinfo|token/);
+      await assert.rejects(persistClient(platform, {
+        ...base, scope: [], cmcOffers: { a: {} },
+      }), /capabilityUrl required/);
+      await assert.rejects(persistClient(platform, {
+        ...base, scope: [], cmcOffers: { a: { capabilityUrl: 'not a url' } },
+      }), /not a valid URL/);
+    });
+    it('[OAUTH-CLIENT-4d] rejects a cmc: scope token without a matching offer entry', async () => {
+      const platform = fakePlatform();
+      await assert.rejects(persistClient(platform, {
+        ...base, scope: ['cmc:ghost'], cmcOffers: {},
+      }), /no matching cmcOffers/);
+      await assert.rejects(persistClient(platform, {
+        ...base, scope: ['cmc:ghost'],
+      }), /no matching cmcOffers/);
+    });
+  });
 });

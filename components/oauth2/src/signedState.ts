@@ -47,6 +47,24 @@ export type SignedStatePayload = {
   codeChallengeMethod: 'S256';
   scope: string[];
   userIdHint?: string;
+  /**
+   * Present when scope is a `cmc:<offer-name>` reference: the offer
+   * material resolved server-side at authorize time (granular
+   * permissions + consent texts + capability handle). The accept path
+   * mints ONLY from this signed copy — the consent UI displays it and
+   * returns a subset, never a source of truth of its own.
+   */
+  offer?: {
+    offerName: string;
+    capabilityUrl: string;
+    capabilityId: string | null;
+    offerEventId: string | null;
+    permissions: Array<Record<string, unknown>>;
+    title?: Record<string, string>;
+    description?: Record<string, string>;
+    consent?: Record<string, string>;
+    requesterMeta?: Record<string, unknown>;
+  };
   iat: number;
   exp: number;
 };

@@ -99,7 +99,48 @@ export async function persistClient (platform: PlatformDB, client: OAuthClient):
   if (!Array.isArray(client.grantTypes) || client.grantTypes.length === 0) {
     throw new Error('grantTypes required (at least one)');
   }
+  validateCmcOffers(client);
   await storage.setClient(platform, { ...client, updatedAt: Date.now() });
+}
+
+/**
+ * `cmcOffers` consistency rules, enforced at registration so authorize
+ * never hits a dangling reference:
+ *   - each offer name matches the `cmc:<name>` token grammar;
+ *   - each capabilityUrl is an absolute https URL carrying the
+ *     capability token as userinfo (`https://<token>@<host>/`);
+ *   - every `cmc:<name>` token in `scope` has a matching offer entry.
+ */
+function validateCmcOffers (client: OAuthClient): void {
+  const { isValidCmcOfferName } = require('./scopeRegistry.ts');
+  const offers = client.cmcOffers ?? {};
+  if (typeof offers !== 'object' || Array.isArray(offers)) {
+    throw new Error('cmcOffers must be an object map of name → { capabilityUrl }');
+  }
+  for (const [name, entry] of Object.entries(offers)) {
+    if (!isValidCmcOfferName(name)) {
+      throw new Error(`cmcOffers: invalid offer name "${name}"`);
+    }
+    const capabilityUrl = (entry as { capabilityUrl?: unknown })?.capabilityUrl;
+    if (typeof capabilityUrl !== 'string' || capabilityUrl.length === 0) {
+      throw new Error(`cmcOffers["${name}"]: capabilityUrl required`);
+    }
+    let u: URL;
+    try { u = new URL(capabilityUrl); } catch {
+      throw new Error(`cmcOffers["${name}"]: capabilityUrl is not a valid URL`);
+    }
+    if (u.protocol !== 'https:' || u.username.length === 0) {
+      throw new Error(`cmcOffers["${name}"]: capabilityUrl must be https with the capability token as userinfo (https://<token>@<host>/)`);
+    }
+  }
+  for (const token of (client.scope ?? [])) {
+    if (typeof token === 'string' && token.startsWith('cmc:')) {
+      const name = token.slice('cmc:'.length);
+      if (offers[name] == null) {
+        throw new Error(`scope token "${token}" has no matching cmcOffers["${name}"] entry`);
+      }
+    }
+  }
 }
 
 /**

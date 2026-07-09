@@ -52,6 +52,15 @@ export type MintRefreshedAccess = (params: {
   clientId: string;
   scope: string[];
   expiresAt: number;
+  /**
+   * Granular (cmc) grants: the durable data-grant the chain is bound
+   * to. The mint callback re-reads it — gone (consent revoked) → it
+   * throws an error with `code: 'data-grant-revoked'`, which this
+   * grant maps to `invalid_grant` (the whole refresh chain dies);
+   * otherwise the new access is minted from the data-grant's CURRENT
+   * permissions (consent scope-updates propagate on refresh).
+   */
+  dataGrantAccessId?: string;
 }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
 
 export type RefreshTokenDeps = {
@@ -122,8 +131,17 @@ export async function handleRefreshToken (
       clientId: row.clientId,
       scope: row.scope,
       expiresAt: accessExpiresAt,
+      ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
     });
   } catch (err: any) {
+    if (err?.code === 'data-grant-revoked') {
+      await audit('oauth.token.revoked', {
+        clientId: row.clientId,
+        userId: row.userId,
+        reason: 'refresh denied: consent data-grant revoked',
+      });
+      return { ok: false, status: 400, error: 'invalid_grant', description: 'consent has been revoked' };
+    }
     return {
       ok: false,
       status: 500,
@@ -151,6 +169,7 @@ export async function handleRefreshToken (
     lastUsedAt: now,
     expiresAt: newRefreshExpiresAt,
     absoluteExpiresAt: row.absoluteExpiresAt,
+    ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
   });
 
   await audit('oauth.token.refreshed', {

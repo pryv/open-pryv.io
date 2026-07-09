@@ -213,6 +213,78 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       });
       assert.equal(payload.clientData.cmc.acceptEventId, null);
     });
+
+    it('[AO09D] grantedPermissions narrows the data-grant to the accepted subset', () => {
+      const payload = buildDataGrantPayload({
+        offerEvent: VALID_OFFER,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+        grantedPermissions: [{ streamId: 'fertility', level: 'read' }],
+        extraPermissions: [{ streamId: ':_cmc:inbox', level: 'create-only' }],
+      });
+      assert.deepEqual(payload.permissions, [
+        { streamId: 'fertility', level: 'read' },
+        { streamId: ':_cmc:inbox', level: 'create-only' },
+      ]);
+    });
+
+    it('[AO09E] grantedPermissions outside or widening the offer throws cmc-granted-permissions-not-subset', () => {
+      for (const granted of [
+        [{ streamId: 'fertility', level: 'manage' }], // widened level
+        [{ streamId: 'other', level: 'read' }], // foreign stream
+        [], // empty grant — refuse instead
+        [{ feature: 'selfRevoke', setting: 'forbidden' }], // not offered
+      ]) {
+        assert.throws(
+          () => buildDataGrantPayload({
+            offerEvent: VALID_OFFER,
+            counterparty: { username: 'provider-a', host: 'example.com' },
+            grantedPermissions: granted,
+          }),
+          (err) => err.id === 'cmc-granted-permissions-not-subset'
+        );
+      }
+    });
+
+    it('[AO09F] full permission lexicon: a feature permission (selfRevoke) travels offer → grant', () => {
+      const offer = {
+        id: 'evt-offer-fp',
+        type: 'consent/request-cmc',
+        content: {
+          requesterMeta: { appId: 'example-app' },
+          request: {
+            permissions: [
+              { streamId: 'fertility', level: 'read' },
+              { feature: 'selfRevoke', setting: 'forbidden' },
+            ],
+          },
+        },
+      };
+      const full = buildDataGrantPayload({
+        offerEvent: offer,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+      });
+      assert.deepEqual(full.permissions, [
+        { streamId: 'fertility', level: 'read' },
+        { feature: 'selfRevoke', setting: 'forbidden' },
+      ]);
+      const kept = buildDataGrantPayload({
+        offerEvent: offer,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+        grantedPermissions: [{ feature: 'selfRevoke', setting: 'forbidden' }],
+      });
+      assert.deepEqual(kept.permissions, [{ feature: 'selfRevoke', setting: 'forbidden' }]);
+    });
+
+    it('[AO09G] mangled offer permissions throw cmc-offer-invalid-permissions (not silent coercion)', () => {
+      assert.throws(
+        () => permissionsFromOffer({
+          id: 'x',
+          type: 'consent/request-cmc',
+          content: { request: { permissions: [{ feature: 'selfRevoke' }] } }, // missing setting
+        }),
+        (err) => err.id === 'cmc-offer-invalid-permissions'
+      );
+    });
   });
 
   describe('[CMCAO-DA] deliverAcceptViaCapability', () => {

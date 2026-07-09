@@ -34,6 +34,12 @@ const require = createRequire(import.meta.url);
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 
+/** A granular Pryv permission entry, as in `accesses.create`. */
+export interface GrantPermission {
+  streamId: string;
+  level: string;
+}
+
 /** App-account-metadata cache row (cluster-wide, indefinite). */
 export interface OAuthClient {
   clientId: string;
@@ -58,6 +64,16 @@ export interface OAuthClient {
    * user's per-user storage (the app's own data, no end-user involved).
    */
   accountUsername?: string;
+  /**
+   * Named consent-offer references for the `cmc:<name>` scope
+   * namespace. Each entry points at the capability URL of an
+   * open-link `consent/request-cmc` offer published by the app's
+   * account; /oauth2/authorize resolves the name through this map and
+   * reads the offer's granular permissions + consent texts. The
+   * `cmc:<name>` token must ALSO appear in `scope` to be requestable
+   * (the standard registered-scope subset check applies).
+   */
+  cmcOffers?: Record<string, { capabilityUrl: string }>;
   updatedAt: number;
 }
 
@@ -80,6 +96,14 @@ export interface OAuthCode {
   accessId?: string;
   accessToken?: string;
   apiEndpoint?: string;
+  /**
+   * Granular-grant binding (cmc scopes): the durable consent record is
+   * a data-grant access on the user's account; `permissions` is the
+   * granted subset the short-TTL OAuth accesses are minted with.
+   * Absent on coarse-scope rows.
+   */
+  dataGrantAccessId?: string;
+  permissions?: GrantPermission[];
 }
 
 /** Refresh-token row (per-issuing-core, sliding 30d + 90d absolute). */
@@ -92,6 +116,14 @@ export interface OAuthRefresh {
   lastUsedAt: number;
   expiresAt: number;
   absoluteExpiresAt: number;
+  /**
+   * Granular-grant binding (cmc scopes) — see OAuthCode. The refresh
+   * grant re-reads the data-grant before re-minting: if it is gone
+   * (revoked), the refresh chain dies with `invalid_grant`; otherwise
+   * the re-mint uses the data-grant's CURRENT permissions (consent
+   * scope-updates propagate at the next refresh).
+   */
+  dataGrantAccessId?: string;
 }
 
 const PREFIX_CLIENT = 'oauth-client/';

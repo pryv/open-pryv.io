@@ -84,6 +84,12 @@ const CmcErrorIds = {
   HANDLER_OFFER_MISSING_CAPABILITY_ID: 'cmc-handler-offer-missing-capability-id',
   // The offer carries no `request.permissions` array (or it's empty).
   OFFER_EMPTY_PERMISSIONS: 'cmc-offer-empty-permissions',
+  // The offer's `request.permissions` entries don't match the
+  // accesses.create permission lexicon (stream or feature permission).
+  OFFER_INVALID_PERMISSIONS: 'cmc-offer-invalid-permissions',
+  // An accept trigger's `grantedPermissions` (consent downgrade) is
+  // empty, malformed, or not a subset of the offer's permissions.
+  GRANTED_PERMISSIONS_NOT_SUBSET: 'cmc-granted-permissions-not-subset',
 
   // --- Handler routing ---
   // Dispatch invoked a handler with a trigger whose `.type` doesn't match.

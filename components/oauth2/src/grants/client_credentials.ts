@@ -127,6 +127,16 @@ export async function handleClientCredentials (
   } else {
     granted = [...registered];
   }
+  // cmc offer references are user-consent grants — meaningless on the
+  // app's own account. Filter them from the registered-scope default;
+  // reject them when explicitly requested.
+  if (typeof params.scope === 'string' && params.scope.length > 0) {
+    if (granted.some((g) => g.startsWith('cmc:'))) {
+      return { ok: false, status: 400, error: 'invalid_scope', description: 'cmc:<offer-name> scopes are user-consent grants; not available to client_credentials' };
+    }
+  } else {
+    granted = granted.filter((g) => !g.startsWith('cmc:'));
+  }
 
   // Resolve the App-account username → userId. The minted access
   // targets THIS user's per-user storage.

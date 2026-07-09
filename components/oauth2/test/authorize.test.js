@@ -241,4 +241,109 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       assert.equal(res.statusCode, 500);
     });
   });
+
+  describe('[OAUTH-AUTH-CMC] cmc:<offer-name> granular scope resolution', () => {
+    const CAP_URL = 'https://CapTok@myapp.example.com/';
+    const OFFER_PERMISSIONS = [
+      { streamId: 'health', level: 'contribute', defaultName: 'Health' },
+      { streamId: 'diary', level: 'read' },
+      { feature: 'selfRevoke', setting: 'forbidden' },
+    ];
+    const CMC_CLIENT = {
+      redirectUris: ['https://app.example/cb'],
+      scope: ['pryv:read', 'cmc:study-A'],
+      cmcOffers: { 'study-A': { capabilityUrl: CAP_URL } },
+    };
+    const CMC_QUERY = { ...VALID_QUERY, scope: 'cmc:study-A' };
+
+    function offerFetch (overrides = {}) {
+      const offerEvent = {
+        id: 'ev-offer-1',
+        type: 'consent/request-cmc',
+        content: {
+          capabilityId: 'cap-42',
+          request: {
+            title: { en: 'Example study' },
+            description: { en: 'Share health + diary data.' },
+            consent: { en: 'I agree to share with the study.' },
+            permissions: OFFER_PERMISSIONS,
+          },
+          requesterMeta: { displayName: 'Study app', appId: 'myapp' },
+          ...overrides.content,
+        },
+      };
+      const calls = [];
+      const fn = async (url, init) => {
+        calls.push({ url, init });
+        if (overrides.status != null && overrides.status !== 200) {
+          return { status: overrides.status, json: async () => ({ error: { id: 'invalid-access-token' } }) };
+        }
+        return { status: 200, json: async () => ({ events: [offerEvent] }) };
+      };
+      fn.calls = calls;
+      return fn;
+    }
+
+    it('[OA-M1] resolves the offer and embeds the FULL permission lexicon in the signed state', async () => {
+      const platform = fakePlatform({ myapp: CMC_CLIENT });
+      const fetchFn = offerFetch();
+      const handler = handleAuthorize({ config: fakeConfig(), platform, offerFetch: fetchFn });
+      const res = fakeRes();
+      await handler(fakeReq(CMC_QUERY), res);
+      assert.equal(res.statusCode, 302);
+      assert.ok(res.headers.location.startsWith(CONSENT_URL + '?state='));
+      // The read went through the capability URL with the token as auth.
+      assert.equal(fetchFn.calls.length, 1);
+      assert.match(fetchFn.calls[0].url, /^https:\/\/myapp\.example\.com\//);
+      const v = verifyState(ADMIN_KEY, decodeURIComponent(res.headers.location.split('state=')[1].split('&')[0]));
+      assert.equal(v.ok, true);
+      assert.deepEqual(v.payload.scope, ['cmc:study-A']);
+      assert.equal(v.payload.offer.offerName, 'study-A');
+      assert.equal(v.payload.offer.capabilityUrl, CAP_URL);
+      assert.equal(v.payload.offer.capabilityId, 'cap-42');
+      assert.equal(v.payload.offer.offerEventId, 'ev-offer-1');
+      assert.deepEqual(v.payload.offer.permissions, OFFER_PERMISSIONS);
+      assert.deepEqual(v.payload.offer.title, { en: 'Example study' });
+      assert.deepEqual(v.payload.offer.consent, { en: 'I agree to share with the study.' });
+    });
+    it('[OA-M2] cmc scope mixed with another token → invalid_scope redirect', async () => {
+      const platform = fakePlatform({ myapp: CMC_CLIENT });
+      const handler = handleAuthorize({ config: fakeConfig(), platform, offerFetch: offerFetch() });
+      const res = fakeRes();
+      await handler(fakeReq({ ...CMC_QUERY, scope: 'cmc:study-A pryv:read' }), res);
+      assert.equal(res.statusCode, 302);
+      assert.match(res.headers.location, /error=invalid_scope/);
+      assert.match(res.headers.location, /only.*scope|scope.*only/i);
+    });
+    it('[OA-M3] unresolvable offer (expired capability → 401) → invalid_scope redirect', async () => {
+      const platform = fakePlatform({ myapp: CMC_CLIENT });
+      const handler = handleAuthorize({ config: fakeConfig(), platform, offerFetch: offerFetch({ status: 401 }) });
+      const res = fakeRes();
+      await handler(fakeReq(CMC_QUERY), res);
+      assert.equal(res.statusCode, 302);
+      assert.match(res.headers.location, /error=invalid_scope/);
+      assert.match(res.headers.location, /cannot%20be%20resolved/);
+    });
+    it('[OA-M4] offer with a mangled permission entry → invalid_scope redirect', async () => {
+      const platform = fakePlatform({ myapp: CMC_CLIENT });
+      const badFetch = offerFetch({
+        content: { request: { title: { en: 'x' }, permissions: [{ streamId: 'a', level: 'root' }] } },
+      });
+      const handler = handleAuthorize({ config: fakeConfig(), platform, offerFetch: badFetch });
+      const res = fakeRes();
+      await handler(fakeReq(CMC_QUERY), res);
+      assert.equal(res.statusCode, 302);
+      assert.match(res.headers.location, /error=invalid_scope/);
+    });
+    it('[OA-M5] cmc scope not registered on the client → invalid_scope (no offer fetch)', async () => {
+      const platform = fakePlatform({ myapp: VALID_CLIENT }); // no cmc registration
+      const fetchFn = offerFetch();
+      const handler = handleAuthorize({ config: fakeConfig(), platform, offerFetch: fetchFn });
+      const res = fakeRes();
+      await handler(fakeReq(CMC_QUERY), res);
+      assert.equal(res.statusCode, 302);
+      assert.match(res.headers.location, /error=invalid_scope/);
+      assert.equal(fetchFn.calls.length, 0);
+    });
+  });
 });

@@ -126,6 +126,7 @@ async function runCreate (platform, args, persistClient) {
     grantTypes,
     applicationType: args.flagsScalar['application-type'] === 'native' ? 'native' : 'web',
     accountUsername: username,
+    cmcOffers: parseCmcOffers(args.flags['cmc-offer']),
   });
 
   console.log('OK   client created: ' + clientId);
@@ -174,6 +175,9 @@ async function runUpdate (platform, args, getClient, persistClient) {
     applicationType: args.flagsScalar['application-type'] === 'native'
       ? 'native'
       : (args.flagsScalar['application-type'] === 'web' ? 'web' : existing.applicationType),
+    cmcOffers: args.flags['cmc-offer'] != null
+      ? parseCmcOffers(args.flags['cmc-offer'])
+      : existing.cmcOffers,
   };
   await persistClient(platform, merged);
   console.log('OK   client updated: ' + clientId);
@@ -228,6 +232,20 @@ async function initPlatform () {
   return storages.platformDB;
 }
 
+// `--cmc-offer <name>=<capabilityUrl>` values → cmcOffers map.
+// Deep validation (name grammar, URL shape, scope consistency) happens
+// in persistClient; this only splits on the first '='.
+function parseCmcOffers (values) {
+  if (values == null || values.length === 0) return undefined;
+  const offers = {};
+  for (const v of values) {
+    const eq = v.indexOf('=');
+    if (eq < 1) throw new Error('--cmc-offer expects <name>=<capabilityUrl>, got: ' + v);
+    offers[v.slice(0, eq)] = { capabilityUrl: v.slice(eq + 1) };
+  }
+  return offers;
+}
+
 async function usernameExists (username) {
   const { getUsersLocalIndex } = require('storage');
   const usersIndex = await getUsersLocalIndex();
@@ -246,8 +264,8 @@ function parseArgs (argv) {
       if (val === true) {
         result.flagsScalar[key] = true;
       } else {
-        // Multi-valued flags: --redirect-uri, --scope, --grant-type
-        if (key === 'redirect-uri' || key === 'scope' || key === 'grant-type') {
+        // Multi-valued flags: --redirect-uri, --scope, --grant-type, --cmc-offer
+        if (key === 'redirect-uri' || key === 'scope' || key === 'grant-type' || key === 'cmc-offer') {
           if (!result.flags[key]) result.flags[key] = [];
           result.flags[key].push(val);
         } else {
@@ -278,7 +296,13 @@ function printUsage (stream) {
     '  --name <human-name>       client_name shown on the consent screen\n' +
     '  --client-uri <uri>        client_uri shown on the consent screen\n' +
     '  --logo-uri <uri>          logo_uri shown on the consent screen\n' +
-    '  --application-type web|native\n\n' +
+    '  --application-type web|native\n' +
+    '  --cmc-offer <name>=<capabilityUrl>\n' +
+    '                            (multi-valued) register a consent-offer reference for\n' +
+    '                            granular scope: the app account publishes an open-link\n' +
+    '                            consent/request-cmc offer, then registers its capability\n' +
+    '                            URL here; clients request it as scope "cmc:<name>"\n' +
+    '                            (add the token to --scope as well)\n\n' +
     'Notes:\n' +
     '  - create requires the user to ALREADY exist(promotion-only).\n' +
     '  - revoke requires --yes (operator footgun protection;).\n' +

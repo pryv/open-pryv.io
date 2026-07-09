@@ -33,8 +33,28 @@ describe('[OAUTH-SCOPE] scope-parser registry', () => {
     it('[OAUTH-SCOPE-1b] rejects unknown pryv permission', () => {
       assert.throws(() => parseScopes('pryv:delete'), ScopeParseError);
     });
-    it('[OAUTH-SCOPE-1c] ships pryv pre-registered', () => {
-      assert.deepEqual(listNamespaces(), ['pryv']);
+    it('[OAUTH-SCOPE-1c] ships pryv + cmc pre-registered', () => {
+      assert.deepEqual(listNamespaces(), ['cmc', 'pryv']);
+    });
+  });
+
+  describe('[OAUTH-SCOPE-6] default cmc parser', () => {
+    it('[OAUTH-SCOPE-6a] parses cmc:<offer-name> into an offer reference', () => {
+      const parsed = parseScopes('cmc:study-A.v2');
+      assert.equal(parsed.length, 1);
+      assert.deepEqual(parsed[0], {
+        namespace: 'cmc',
+        raw: 'cmc:study-A.v2',
+        permission: 'granular',
+        offerName: 'study-A.v2',
+      });
+    });
+    it('[OAUTH-SCOPE-6b] rejects malformed offer names', () => {
+      assert.throws(() => parseScopes('cmc:'), ScopeParseError);
+      assert.throws(() => parseScopes('cmc:-leading-dash'), ScopeParseError);
+      assert.throws(() => parseScopes('cmc:has space'), ScopeParseError); // splits into 2 tokens; 2nd has no namespace
+      assert.throws(() => parseScopes('cmc:' + 'x'.repeat(65)), ScopeParseError);
+      assert.throws(() => parseScopes('cmc:bad/slash'), ScopeParseError);
     });
   });
 

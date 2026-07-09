@@ -117,8 +117,45 @@ function pryvParser (body: string): ParsedScope {
   };
 }
 
+// --- Default `cmc` parser ---
+
+/**
+ * `cmc:<offer-name>` — reference to a consent offer registered on the
+ * OAuth client (`OAuthClient.cmcOffers[<offer-name>]`). The offer is a
+ * cross-account-messaging-and-consent request published by the app's
+ * account; it carries the granular `permissions[]` + consent texts the
+ * consent UI displays and the grant mints. Resolution (name →
+ * capability URL → offer content) happens at /oauth2/authorize time;
+ * this parser only validates the token shape.
+ */
+const CMC_OFFER_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+
+/**
+ * Shared shape check for cmc offer names — used by this parser AND by
+ * client-registration validation (`clientRegistry.persistClient`) so
+ * the two can never drift.
+ */
+export function isValidCmcOfferName (name: unknown): boolean {
+  return typeof name === 'string' && CMC_OFFER_NAME_RE.test(name);
+}
+
+function cmcParser (body: string): ParsedScope {
+  if (!CMC_OFFER_NAME_RE.test(body)) {
+    throw new ScopeParseError(
+      `invalid cmc offer name "${body}" — expected 1-64 chars of [a-zA-Z0-9._-], starting alphanumeric`,
+    );
+  }
+  return {
+    namespace: 'cmc',
+    raw: `cmc:${body}`,
+    permission: 'granular',
+    offerName: body,
+  };
+}
+
 function _registerDefault (): void {
   registry.set('pryv', pryvParser);
+  registry.set('cmc', cmcParser);
 }
 
 _registerDefault();

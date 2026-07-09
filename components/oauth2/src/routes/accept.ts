@@ -42,6 +42,10 @@ const { verifyState } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { setCode } = require('../storage.ts');
 const { audit } = require('../audit.ts');
+// Permission-lexicon single point — granted ⊆ offered uses the same
+// subset semantics as every other consent surface.
+const { isPermissionSubset, normalizePermissions } =
+  require('business/src/accesses/permissionSet.ts');
 
 /** Authenticated user-session handle, opaque to this module. */
 export type UserSession = {
@@ -61,7 +65,29 @@ export type CreateAccess = (params: {
   clientId: string;
   scope: string[];
   expiresAt: number;
-}) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
+  /**
+   * Granular (cmc-offer) grants only: the signed offer material + the
+   * user's granted subset (already validated ⊆ offer). The mount
+   * ensures the durable CMC data-grant exists (drives
+   * `consent/accept-cmc`, or reuses/widens an existing grant on
+   * re-authorization) and mints the short-TTL access from the
+   * data-grant's current permissions.
+   */
+  offer?: {
+    offerName: string;
+    capabilityUrl: string;
+    capabilityId: string | null;
+    offerEventId: string | null;
+    permissions: Array<Record<string, unknown>>;
+  };
+  grantedPermissions?: Array<Record<string, unknown>>;
+}) => Promise<{
+  accessId: string;
+  accessToken: string;
+  apiEndpoint: string;
+  dataGrantAccessId?: string;
+  permissions?: Array<Record<string, unknown>>;
+}>;
 
 /** Shape of the inputs the host app injects. */
 export type AcceptDeps = {
@@ -95,10 +121,6 @@ export function handleAccept (deps: AcceptDeps) {
     if (!isNonEmptyString(body.userToken)) {
       return sendJson(res, 400, { error: 'invalid_request', error_description: 'userToken is required' });
     }
-    if (!Array.isArray(body.grantedScope)) {
-      return sendJson(res, 400, { error: 'invalid_request', error_description: 'grantedScope must be an array' });
-    }
-
     const verified = verifyState(adminKey, body.state);
     if (!verified.ok) {
       return sendJson(res, 400, {
@@ -108,15 +130,55 @@ export function handleAccept (deps: AcceptDeps) {
     }
     const payload = verified.payload;
 
-    // Scope-downgrade check: granted MUST be a subset of requested.
-    const requested = new Set<string>(payload.scope);
-    const granted = body.grantedScope.filter((s: unknown) => typeof s === 'string') as string[];
-    for (const g of granted) {
-      if (!requested.has(g)) {
+    // Two consent contracts, selected by the signed state (never by the
+    // caller): a granular cmc-offer grant carries `grantedPermissions`
+    // (⊆ the offer's signed permission set, full lexicon); a coarse
+    // scope grant carries `grantedScope` (⊆ requested tokens).
+    let granted: string[] = [];
+    let grantedPermissions: Array<Record<string, unknown>> | undefined;
+    if (payload.offer != null) {
+      if (!Array.isArray(body.grantedPermissions)) {
+        return sendJson(res, 400, { error: 'invalid_request', error_description: 'grantedPermissions must be an array' });
+      }
+      let normalized: Array<Record<string, unknown>>;
+      try {
+        normalized = normalizePermissions(body.grantedPermissions);
+      } catch (e: any) {
         return sendJson(res, 400, {
           error: 'invalid_scope',
-          error_description: `granted scope "${g}" was not in the requested set`,
+          error_description: 'grantedPermissions invalid: ' + (e?.message ?? String(e)),
         });
+      }
+      grantedPermissions = normalized;
+      const subset = isPermissionSubset(grantedPermissions, payload.offer.permissions);
+      if (!subset.ok) {
+        return sendJson(res, 400, {
+          error: 'invalid_scope',
+          error_description: 'grantedPermissions must be a subset of the offered permissions; offending: ' +
+            JSON.stringify(subset.offending),
+        });
+      }
+      if (grantedPermissions.length === 0) {
+        return sendJson(res, 400, {
+          error: 'invalid_scope',
+          error_description: 'grantedPermissions must keep at least one permission (refuse instead)',
+        });
+      }
+      granted = payload.scope; // the cmc:<offer-name> token, echoed as RFC scope
+    } else {
+      if (!Array.isArray(body.grantedScope)) {
+        return sendJson(res, 400, { error: 'invalid_request', error_description: 'grantedScope must be an array' });
+      }
+      // Scope-downgrade check: granted MUST be a subset of requested.
+      const requested = new Set<string>(payload.scope);
+      granted = body.grantedScope.filter((s: unknown) => typeof s === 'string') as string[];
+      for (const g of granted) {
+        if (!requested.has(g)) {
+          return sendJson(res, 400, {
+            error: 'invalid_scope',
+            error_description: `granted scope "${g}" was not in the requested set`,
+          });
+        }
       }
     }
 
@@ -130,7 +192,8 @@ export function handleAccept (deps: AcceptDeps) {
     }
 
     // Mint the app access under the resolved user. The user is the auth
-    // principal — full accesses.create chain runs.
+    // principal — full accesses.create chain runs. Granular grants also
+    // establish (or reuse) the durable CMC data-grant first.
     const accessExpiresAt = Date.now() + accessTokenTTL * 1000;
     let access;
     try {
@@ -139,6 +202,7 @@ export function handleAccept (deps: AcceptDeps) {
         clientId: payload.clientId,
         scope: granted,
         expiresAt: accessExpiresAt,
+        ...(payload.offer != null ? { offer: payload.offer, grantedPermissions } : {}),
       });
     } catch (err: any) {
       return sendJson(res, 500, {
@@ -163,6 +227,8 @@ export function handleAccept (deps: AcceptDeps) {
       accessId: access.accessId,
       accessToken: access.accessToken,
       apiEndpoint: access.apiEndpoint,
+      ...(access.dataGrantAccessId != null ? { dataGrantAccessId: access.dataGrantAccessId } : {}),
+      ...(access.permissions != null ? { permissions: access.permissions } : {}),
     });
 
     await audit('oauth.consent.granted', {
@@ -171,6 +237,8 @@ export function handleAccept (deps: AcceptDeps) {
       requestedScope: payload.scope,
       grantedScope: granted,
       accessId: access.accessId,
+      ...(grantedPermissions != null ? { grantedPermissions } : {}),
+      ...(access.dataGrantAccessId != null ? { dataGrantAccessId: access.dataGrantAccessId } : {}),
     });
 
     const sep = payload.redirectUri.indexOf('?') >= 0 ? '&' : '?';

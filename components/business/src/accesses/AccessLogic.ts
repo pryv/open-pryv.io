@@ -27,18 +27,9 @@ function addAuditStreams () {
   return auditIsActive;
 }
 
-/**
- * Lists permission levels ordered by ascending level to help with permission assessment.
- */
-const PermissionLevels = {
-  none: -1,
-  read: 0,
-  'create-only': 1,
-  contribute: 1,
-  manage: 2
-};
-
-Object.freeze(PermissionLevels);
+// Permission levels ordered by ascending level (for permission
+// assessment) — from the permission-lexicon single point.
+const { PermissionLevels } = require('./permissionSet.ts');
 
 class AccessLogic {
   _access: Record<string, unknown>; // Access right from the DB — wider than public Access shape (internal fields)

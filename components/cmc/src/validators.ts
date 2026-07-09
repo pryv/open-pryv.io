@@ -24,10 +24,12 @@ const require = createRequire(import.meta.url);
  */
 
 const C = require('./constants.ts');
+// Permission-lexicon single point — validators accept the FULL
+// accesses.create grammar (stream AND feature permissions).
+const permissionSet = require('business/src/accesses/permissionSet.ts');
 
 type ValidationResult = { valid: boolean; errors: string[] };
 
-const PERMISSION_LEVELS = new Set(['manage', 'contribute', 'read', 'create-only', 'none']);
 const SYSTEM_ALERT_LEVELS = new Set(['info', 'warning', 'critical']);
 
 function ok (): ValidationResult {
@@ -58,18 +60,10 @@ function isLocalizableText (v: unknown): boolean {
 function isPermissionArray (v: unknown): { ok: boolean; reason?: string } {
   if (!Array.isArray(v)) return { ok: false, reason: 'must be an array' };
   if (v.length === 0) return { ok: false, reason: 'must not be empty' };
-  for (let i = 0; i < v.length; i++) {
-    const p = v[i];
-    if (!isPlainObject(p)) return { ok: false, reason: `entry ${i} must be an object` };
-    if (typeof p.streamId !== 'string' || p.streamId.length === 0) {
-      return { ok: false, reason: `entry ${i}: streamId must be a non-empty string` };
-    }
-    if (typeof p.level !== 'string' || !PERMISSION_LEVELS.has(p.level)) {
-      return {
-        ok: false,
-        reason: `entry ${i}: level must be one of ${[...PERMISSION_LEVELS].join(', ')}`,
-      };
-    }
+  try {
+    permissionSet.normalizePermissions(v);
+  } catch (e: unknown) {
+    return { ok: false, reason: (e as Error).message };
   }
   return { ok: true };
 }
@@ -196,6 +190,14 @@ function validateAccept (content: unknown): ValidationResult {
 
   if (content.accessName != null && typeof content.accessName !== 'string') {
     errors.push('content.accessName: must be a string if present');
+  }
+
+  // Optional consent downgrade: the accepter grants only a subset of
+  // the offer's permissions. Shape-checked here; the ⊆-offer check
+  // happens in handleAccept where the offer is available.
+  if (content.grantedPermissions != null) {
+    const permCheck = isPermissionArray(content.grantedPermissions);
+    if (!permCheck.ok) errors.push(`content.grantedPermissions: ${permCheck.reason}`);
   }
 
   return errors.length === 0 ? ok() : fail(...errors);

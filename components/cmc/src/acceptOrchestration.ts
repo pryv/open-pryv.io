@@ -36,10 +36,13 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const outbound = require('./outbound.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
+// Permission-lexicon single point (pure module — covers the FULL
+// accesses.create grammar: stream AND feature permissions).
+const permissionSet = require('business/src/accesses/permissionSet.ts');
 
-type PermissionLike = { streamId: string; level: string };
+type PermissionLike = { streamId: string; level: string } | { feature: string; setting: string };
 type OfferContent = {
-  request?: { permissions?: Array<{ streamId: unknown; level: unknown }> };
+  request?: { permissions?: unknown[] };
   requesterMeta?: { appId?: string };
 };
 
@@ -148,9 +151,10 @@ async function readOfferViaCapability (params: {
 
 /**
  * Permissions to grant on the recipient's data-grant access, derived from
- * the offer event's content.request.permissions. Validated against a small
- * sanity contract (streamId + level present); deeper CMC chain rules
- * are checked on the requester's side.
+ * the offer event's content.request.permissions. Validated against the
+ * full accesses.create permission lexicon (stream AND feature
+ * permissions, e.g. selfRevoke); deeper CMC chain rules are checked on
+ * the requester's side.
  */
 function permissionsFromOffer (offerEvent: OfferEvent): PermissionLike[] {
   const perms = offerEvent?.content?.request?.permissions;
@@ -159,8 +163,13 @@ function permissionsFromOffer (offerEvent: OfferEvent): PermissionLike[] {
     err.id = CmcErrorIds.OFFER_EMPTY_PERMISSIONS;
     throw err;
   }
-  // Pass-through; the access-creation API validates further.
-  return perms.map((p: { streamId: unknown; level: unknown }) => ({ streamId: String(p.streamId), level: String(p.level) }));
+  try {
+    return permissionSet.normalizePermissions(perms);
+  } catch (e: unknown) {
+    const err: ApiError = new Error('cmc/accept: offer permissions invalid: ' + (e as Error).message);
+    err.id = CmcErrorIds.OFFER_INVALID_PERMISSIONS;
+    throw err;
+  }
 }
 
 /**
@@ -182,6 +191,11 @@ function buildDataGrantPayload (params: {
   accessName?: string;
   features?: { chat?: boolean; systemMessaging?: boolean };
   extraPermissions?: PermissionLike[];
+  // Consent downgrade: grant only this subset of the offer's
+  // permissions (full lexicon, exact-entry identity). Must be a
+  // non-empty ⊆ of the offer's set — throws
+  // `cmc-granted-permissions-not-subset` otherwise.
+  grantedPermissions?: PermissionLike[];
   // The id of the local `consent/accept-cmc` event that triggered this
   // data-grant. Stamped on `clientData.cmc.acceptEventId` so client
   // code can find the resulting access by the event id it just wrote,
@@ -189,11 +203,32 @@ function buildDataGrantPayload (params: {
   // re-runs from the same app/counterparty pair).
   acceptEventId?: string;
 }): Record<string, unknown> {
-  const { offerEvent, counterparty, accessName, features, extraPermissions, acceptEventId } = params;
+  const { offerEvent, counterparty, accessName, features, extraPermissions, grantedPermissions, acceptEventId } = params;
   const meta = offerEvent?.content?.requesterMeta ?? {};
   const computedName = accessName ??
     ('cmc:' + (meta.appId || 'app') + ':' + counterparty.username + '@' + counterparty.host);
-  const basePerms = permissionsFromOffer(offerEvent);
+  const offeredPerms = permissionsFromOffer(offerEvent);
+  let basePerms = offeredPerms;
+  if (grantedPermissions != null) {
+    let normalized: PermissionLike[];
+    try {
+      normalized = permissionSet.normalizePermissions(grantedPermissions);
+    } catch (e: unknown) {
+      const err: ApiError = new Error('cmc/accept: grantedPermissions invalid: ' + (e as Error).message);
+      err.id = CmcErrorIds.GRANTED_PERMISSIONS_NOT_SUBSET;
+      throw err;
+    }
+    const subset = permissionSet.isPermissionSubset(normalized, offeredPerms);
+    if (!subset.ok || normalized.length === 0) {
+      const err: ApiError = new Error(
+        'cmc/accept: grantedPermissions must be a non-empty subset of the offer\'s permissions' +
+        (subset.ok ? '' : '; offending: ' + JSON.stringify(subset.offending))
+      );
+      err.id = CmcErrorIds.GRANTED_PERMISSIONS_NOT_SUBSET;
+      throw err;
+    }
+    basePerms = normalized;
+  }
   const allPerms = Array.isArray(extraPermissions) && extraPermissions.length > 0
     ? basePerms.concat(extraPermissions)
     : basePerms;

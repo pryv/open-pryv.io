@@ -33,11 +33,14 @@ const { parseScopes, ScopeParseError } = require('../scopeRegistry.ts');
 const { signState } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { audit } = require('../audit.ts');
+const { resolveOffer, OfferResolveError } = require('../offerResolver.ts');
 
 /** Shape of the inputs the host app injects. */
 export type AuthorizeDeps = {
   config: { get (key: string): unknown };
   platform: any; // raw PlatformDB
+  /** Test seam for the cmc offer read (defaults to global fetch). */
+  offerFetch?: typeof fetch;
 };
 
 /** Express-style handler factory. */
@@ -115,11 +118,47 @@ export function handleAuthorize (deps: AuthorizeDeps) {
         `client is not registered for scope(s): ${unrecognised.join(' ')}`);
     }
 
+    // cmc offer references carry the whole granular grant — a request
+    // mixing one with other scope tokens (or carrying several) has no
+    // coherent grant semantics.
+    const cmcScopes = parsedScopes.filter((s: any) => s.namespace === 'cmc');
+    if (cmcScopes.length > 1 || (cmcScopes.length === 1 && parsedScopes.length > 1)) {
+      return redirectError('invalid_scope',
+        'a cmc:<offer-name> scope must be the only requested scope token');
+    }
+
+    // Resolve the referenced offer (registration guarantees the map
+    // entry exists) — its granular permissions + consent texts travel
+    // to the consent UI inside the signed state, so accept-time
+    // minting can only use what the server itself resolved here.
+    let offer = null;
+    if (cmcScopes.length === 1) {
+      const offerName = cmcScopes[0].offerName;
+      const offerRef = client.cmcOffers?.[offerName];
+      if (offerRef == null) {
+        return redirectError('invalid_scope',
+          `client has no registered offer named "${offerName}"`);
+      }
+      try {
+        offer = await resolveOffer({
+          offerName,
+          capabilityUrl: offerRef.capabilityUrl,
+          deps: { fetch: deps.offerFetch },
+        });
+      } catch (e: any) {
+        if (e instanceof OfferResolveError) {
+          return redirectError('invalid_scope', e.message);
+        }
+        throw e;
+      }
+    }
+
     // All good — emit consent.shown audit, sign the state, redirect to
     // the consent UI.
     await audit('oauth.consent.shown', {
       clientId: client.clientId,
       requestedScope: requestedScopeTokens,
+      ...(offer != null ? { offerName: offer.offerName, offerCapabilityId: offer.capabilityId } : {}),
     });
 
     const signed = signState(adminKey, {
@@ -130,6 +169,7 @@ export function handleAuthorize (deps: AuthorizeDeps) {
       codeChallengeMethod: 'S256',
       scope: requestedScopeTokens,
       userIdHint: isNonEmptyString(q.login_hint) ? String(q.login_hint) : undefined,
+      ...(offer != null ? { offer } : {}),
     });
 
     // Pass the API endpoint to the consent UI as `pryvApi` so the UI

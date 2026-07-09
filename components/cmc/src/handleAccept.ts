@@ -171,12 +171,14 @@ async function handleAccept (params: {
     ];
     if (chatStream != null) extraPermissions.push({ streamId: chatStream, level: 'contribute' });
     if (collectorStream != null) extraPermissions.push({ streamId: collectorStream, level: 'contribute' });
+    const grantedPermissions = (triggerEvent.content as { grantedPermissions?: Array<Record<string, unknown>> })?.grantedPermissions;
     dataGrantPayload = ao.buildDataGrantPayload({
       offerEvent: offer,
       counterparty,
       accessName,
       features,
       extraPermissions: extraPermissions.length > 0 ? extraPermissions : undefined,
+      grantedPermissions,
       acceptEventId: triggerEvent?.id,
     });
   } catch (err: unknown) {
