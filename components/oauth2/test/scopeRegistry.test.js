@@ -23,18 +23,12 @@ const {
 describe('[OAUTH-SCOPE] scope-parser registry', () => {
   beforeEach(() => { _resetForTests(); });
 
-  describe('[OAUTH-SCOPE-1] default pryv parser', () => {
-    it('[OAUTH-SCOPE-1a] parses pryv:read / pryv:write / pryv:manage', () => {
-      const parsed = parseScopes('pryv:read pryv:write pryv:manage');
-      assert.equal(parsed.length, 3);
-      assert.deepEqual(parsed.map((s) => s.permission), ['read', 'write', 'manage']);
-      for (const s of parsed) assert.equal(s.namespace, 'pryv');
+  describe('[OAUTH-SCOPE-1] default namespaces', () => {
+    it('[OAUTH-SCOPE-1a] coarse pryv:* scopes no longer exist', () => {
+      assert.throws(() => parseScopes('pryv:read'), ScopeParseError);
     });
-    it('[OAUTH-SCOPE-1b] rejects unknown pryv permission', () => {
-      assert.throws(() => parseScopes('pryv:delete'), ScopeParseError);
-    });
-    it('[OAUTH-SCOPE-1c] ships pryv + cmc pre-registered', () => {
-      assert.deepEqual(listNamespaces(), ['cmc', 'pryv']);
+    it('[OAUTH-SCOPE-1c] ships only cmc pre-registered', () => {
+      assert.deepEqual(listNamespaces(), ['cmc']);
     });
   });
 
@@ -67,7 +61,7 @@ describe('[OAUTH-SCOPE] scope-parser registry', () => {
       assert.deepEqual(parseScopes(undefined), []);
     });
     it('[OAUTH-SCOPE-2c] multiple spaces / tabs / newlines collapse', () => {
-      const parsed = parseScopes('pryv:read   pryv:write\tpryv:manage\n');
+      const parsed = parseScopes('cmc:a   cmc:b\tcmc:c\n');
       assert.equal(parsed.length, 3);
     });
   });
@@ -98,13 +92,13 @@ describe('[OAUTH-SCOPE] scope-parser registry', () => {
       assert.equal(parsed[0].smartBody, 'patient/Observation.read');
     });
     it('[OAUTH-SCOPE-4b] duplicate registration throws', () => {
-      assert.throws(() => registerScopeParser('pryv', () => null), /already registered/);
+      assert.throws(() => registerScopeParser('cmc', () => null), /already registered/);
     });
     it('[OAUTH-SCOPE-4c] mixed namespaces parse together', () => {
       registerScopeParser('smart', (body) => ({ namespace: 'smart', raw: `smart:${body}`, permission: 'read' }));
-      const parsed = parseScopes('pryv:read smart:patient/Observation.read');
+      const parsed = parseScopes('cmc:study-A smart:patient/Observation.read');
       assert.equal(parsed.length, 2);
-      assert.equal(parsed[0].namespace, 'pryv');
+      assert.equal(parsed[0].namespace, 'cmc');
       assert.equal(parsed[1].namespace, 'smart');
     });
   });

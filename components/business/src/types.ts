@@ -7,6 +7,10 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const fs = require('fs');
+const path = require('path');
+const { fileURLToPath } = require('node:url');
+// components/business/src → repo root (anchor for repo-root-relative file:// URLs)
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const { deepMerge, fromCallback, jsonValidator } = require('utils');
 let defaultTypes = require('./types/event-types.default.json');
 const errors = require('./types/errors.ts');
@@ -176,7 +180,15 @@ class TypeRepository {
     try {
       if (isFileUrl(sourceURL)) {
         // used for tests
-        const filePath = removeFileProtocol(sourceURL);
+        let filePath = removeFileProtocol(sourceURL);
+        if (!path.isAbsolute(filePath) && !fs.existsSync(filePath)) {
+          // Relative file URLs are repo-root-relative (like the
+          // service-info URL they usually come from); component test
+          // runners set cwd to the component dir, so fall back to the
+          // repo root when the cwd-relative path does not exist.
+          const rootPath = path.join(REPO_ROOT, filePath);
+          if (fs.existsSync(rootPath)) filePath = rootPath;
+        }
         eventTypesDefinition = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
       } else {
         const USER_AGENT_PREFIX = 'Pryv.io/';

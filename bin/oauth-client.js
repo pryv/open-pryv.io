@@ -119,7 +119,7 @@ async function runCreate (platform, args, persistClient) {
   await persistClient(platform, {
     clientId,
     redirectUris: args.flags['redirect-uri'],
-    scope: args.flags['scope'] ?? ['pryv:read'],
+    scope: args.flags['scope'] ?? [],
     clientName: args.flagsScalar['name'] ?? username,
     clientUri: args.flagsScalar['client-uri'],
     logoUri: args.flagsScalar['logo-uri'],
@@ -291,7 +291,7 @@ function printUsage (stream) {
     '  node bin/oauth-client.js rotate-secret <clientId>\n\n' +
     'Flags (create / update):\n' +
     '  --redirect-uri <uri>      (multi-valued; at least one required on create)\n' +
-    '  --scope <scope-token>     (multi-valued; default pryv:read)\n' +
+    '  --scope <scope-token>     (multi-valued; e.g. cmc:<offer-name> — pair with --cmc-offer)\n' +
     '  --grant-type <name>       (multi-valued; default authorization_code,refresh_token)\n' +
     '  --name <human-name>       client_name shown on the consent screen\n' +
     '  --client-uri <uri>        client_uri shown on the consent screen\n' +

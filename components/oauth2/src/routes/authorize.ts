@@ -118,13 +118,14 @@ export function handleAuthorize (deps: AuthorizeDeps) {
         `client is not registered for scope(s): ${unrecognised.join(' ')}`);
     }
 
-    // cmc offer references carry the whole granular grant — a request
-    // mixing one with other scope tokens (or carrying several) has no
-    // coherent grant semantics.
+    // Every authorization-code grant goes through an explicit granular
+    // permission set: scope MUST be exactly one cmc:<offer-name>
+    // reference (no coarse wildcard scopes exist; a request mixing or
+    // multiplying refs has no coherent grant semantics).
     const cmcScopes = parsedScopes.filter((s: any) => s.namespace === 'cmc');
-    if (cmcScopes.length > 1 || (cmcScopes.length === 1 && parsedScopes.length > 1)) {
+    if (cmcScopes.length !== 1 || parsedScopes.length !== 1) {
       return redirectError('invalid_scope',
-        'a cmc:<offer-name> scope must be the only requested scope token');
+        'scope must be exactly one cmc:<offer-name> consent-offer reference');
     }
 
     // Resolve the referenced offer (registration guarantees the map
@@ -132,7 +133,7 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     // to the consent UI inside the signed state, so accept-time
     // minting can only use what the server itself resolved here.
     let offer = null;
-    if (cmcScopes.length === 1) {
+    {
       const offerName = cmcScopes[0].offerName;
       const offerRef = client.cmcOffers?.[offerName];
       if (offerRef == null) {

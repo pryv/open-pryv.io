@@ -17,11 +17,13 @@
  * Per RFC 6749 §4.4.3: no refresh token issued. Repeat client_credentials
  * if the access expires.
  *
- * Scope:
+ * Scope (opaque raw tokens — the minted access always targets the
+ * app's OWN account; permissions are fixed by the mint callback):
  *   - Body MAY include `scope` to request a narrower subset of the
  *     client's registered scopes.
- *   - Empty / missing → granted = client's full registered scope.
- *   - Anything outside the client's registered set → invalid_scope.
+ *   - Empty / missing → granted = registered scope minus cmc:* refs.
+ *   - Anything outside the registered set, or any cmc:<offer-name>
+ *     user-consent reference → invalid_scope.
  */
 
 import { createRequire } from 'node:module';
@@ -29,7 +31,6 @@ const require = createRequire(import.meta.url);
 
 const { verifySecret } = require('../clientSecret.ts');
 const { getClient } = require('../clientRegistry.ts');
-const { parseScopes, ScopeParseError } = require('../scopeRegistry.ts');
 const { audit } = require('../audit.ts');
 
 /** Callback shape — same as refresh's mintRefreshedAccess (storage-direct). */
@@ -104,38 +105,26 @@ export async function handleClientCredentials (
     return { ok: false, status: 401, error: 'invalid_client', description: 'client_secret verification failed' };
   }
 
-  // Scope: parse the requested narrowing (if any), default to the
-  // client's full registered scope.
+  // Scope tokens are OPAQUE for this grant: the minted access always
+  // manages the app's OWN account (permissions are fixed by the mint
+  // callback, not scope-derived), so narrowing is a plain raw-token
+  // subset check against the registered set — no grammar parse.
   const registered = new Set<string>(client.scope ?? []);
   let granted: string[];
   if (typeof params.scope === 'string' && params.scope.length > 0) {
-    let parsed;
-    try {
-      parsed = parseScopes(params.scope);
-    } catch (e: any) {
-      if (e instanceof ScopeParseError) {
-        return { ok: false, status: 400, error: 'invalid_scope', description: e.message };
-      }
-      throw e;
-    }
-    granted = parsed.map((p: any) => p.raw);
+    granted = params.scope.split(/\s+/).filter((s) => s.length > 0);
     for (const g of granted) {
       if (!registered.has(g)) {
         return { ok: false, status: 400, error: 'invalid_scope', description: `requested scope "${g}" is not registered for this client` };
       }
     }
-  } else {
-    granted = [...registered];
-  }
-  // cmc offer references are user-consent grants — meaningless on the
-  // app's own account. Filter them from the registered-scope default;
-  // reject them when explicitly requested.
-  if (typeof params.scope === 'string' && params.scope.length > 0) {
+    // cmc offer references are user-consent grants — meaningless on
+    // the app's own account. Reject them when explicitly requested.
     if (granted.some((g) => g.startsWith('cmc:'))) {
       return { ok: false, status: 400, error: 'invalid_scope', description: 'cmc:<offer-name> scopes are user-consent grants; not available to client_credentials' };
     }
   } else {
-    granted = granted.filter((g) => !g.startsWith('cmc:'));
+    granted = [...registered].filter((g) => !g.startsWith('cmc:'));
   }
 
   // Resolve the App-account username → userId. The minted access

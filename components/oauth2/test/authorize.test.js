@@ -65,9 +65,15 @@ function fakeReq (query = {}) {
   return { method: 'GET', query };
 }
 
+const DEFAULT_CAP_URL = 'https://DefCapTok@myapp.example.com/';
+
 const VALID_CLIENT = {
   redirectUris: ['https://app.example/cb'],
-  scope: ['pryv:read', 'pryv:write'],
+  scope: ['cmc:study-A', 'cmc:study-B'],
+  cmcOffers: {
+    'study-A': { capabilityUrl: DEFAULT_CAP_URL },
+    'study-B': { capabilityUrl: DEFAULT_CAP_URL },
+  },
 };
 
 const VALID_QUERY = {
@@ -77,14 +83,36 @@ const VALID_QUERY = {
   state: 'csrf-abc',
   code_challenge: 'cc-base64url-string',
   code_challenge_method: 'S256',
-  scope: 'pryv:read',
+  scope: 'cmc:study-A',
 };
+
+// Minimal offer served by the fake capability read — happy-path tests
+// inject this as deps.offerFetch.
+function defaultOfferFetch () {
+  return async () => ({
+    status: 200,
+    json: async () => ({
+      events: [{
+        id: 'ev-offer-default',
+        type: 'consent/request-cmc',
+        content: {
+          capabilityId: 'cap-default',
+          request: {
+            title: { en: 'Default offer' },
+            consent: { en: 'I agree.' },
+            permissions: [{ streamId: 'health', level: 'read' }],
+          },
+        },
+      }],
+    }),
+  });
+}
 
 describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
   describe('[OAUTH-AUTH-OK] happy path', () => {
     it('[OA-OK1] valid request 302s to consent URL with signed state', async () => {
       const platform = fakePlatform({ myapp: VALID_CLIENT });
-      const handler = handleAuthorize({ config: fakeConfig(), platform });
+      const handler = handleAuthorize({ config: fakeConfig(), platform, offerFetch: defaultOfferFetch() });
       const res = fakeRes();
       await handler(fakeReq(VALID_QUERY), res);
       assert.equal(res.statusCode, 302);
@@ -97,11 +125,12 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       assert.equal(v.payload.clientId, 'myapp');
       assert.equal(v.payload.redirectUri, 'https://app.example/cb');
       assert.equal(v.payload.state, 'csrf-abc');
-      assert.deepEqual(v.payload.scope, ['pryv:read']);
+      assert.deepEqual(v.payload.scope, ['cmc:study-A']);
+      assert.deepEqual(v.payload.offer.permissions, [{ streamId: 'health', level: 'read' }]);
     });
     it('[OA-OK2] login_hint flows into signed state as userIdHint', async () => {
       const platform = fakePlatform({ myapp: VALID_CLIENT });
-      const handler = handleAuthorize({ config: fakeConfig(), platform });
+      const handler = handleAuthorize({ config: fakeConfig(), platform, offerFetch: defaultOfferFetch() });
       const res = fakeRes();
       await handler(fakeReq({ ...VALID_QUERY, login_hint: 'alice' }), res);
       const v = verifyState(ADMIN_KEY, decodeURIComponent(res.headers.location.split('state=')[1].split('&')[0]));
@@ -109,7 +138,7 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
     });
     it('[OA-OK3] response is cache-control: no-store', async () => {
       const platform = fakePlatform({ myapp: VALID_CLIENT });
-      const handler = handleAuthorize({ config: fakeConfig(), platform });
+      const handler = handleAuthorize({ config: fakeConfig(), platform, offerFetch: defaultOfferFetch() });
       const res = fakeRes();
       await handler(fakeReq(VALID_QUERY), res);
       assert.equal(res.headers['cache-control'], 'no-store');
@@ -203,11 +232,21 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       assert.match(res.headers.location, /error=invalid_scope/);
     });
     it('[OA-E6] scope not registered to client → invalid_scope', async () => {
-      const platform = fakePlatform({ myapp: { redirectUris: ['https://app.example/cb'], scope: ['pryv:read'] } });
+      const platform = fakePlatform({ myapp: VALID_CLIENT });
       const handler = handleAuthorize({ config: fakeConfig(), platform });
       const res = fakeRes();
-      await handler(fakeReq({ ...VALID_QUERY, scope: 'pryv:write' }), res);
+      await handler(fakeReq({ ...VALID_QUERY, scope: 'cmc:ghost' }), res);
       assert.match(res.headers.location, /error=invalid_scope/);
+      assert.match(res.headers.location, /not%20registered/);
+    });
+    it('[OA-E8] empty scope (no offer reference) → invalid_scope', async () => {
+      const platform = fakePlatform({ myapp: VALID_CLIENT });
+      const handler = handleAuthorize({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      const { scope: _, ...q } = VALID_QUERY;
+      await handler(fakeReq(q), res);
+      assert.match(res.headers.location, /error=invalid_scope/);
+      assert.match(res.headers.location, /exactly%20one/);
     });
     it('[OA-E7] unknown scope namespace → invalid_scope', async () => {
       const platform = fakePlatform({ myapp: VALID_CLIENT });
@@ -306,14 +345,20 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       assert.deepEqual(v.payload.offer.title, { en: 'Example study' });
       assert.deepEqual(v.payload.offer.consent, { en: 'I agree to share with the study.' });
     });
-    it('[OA-M2] cmc scope mixed with another token → invalid_scope redirect', async () => {
-      const platform = fakePlatform({ myapp: CMC_CLIENT });
+    it('[OA-M2] more than one offer reference → invalid_scope redirect', async () => {
+      const platform = fakePlatform({
+        myapp: {
+          ...CMC_CLIENT,
+          scope: ['cmc:study-A', 'cmc:other'],
+          cmcOffers: { 'study-A': { capabilityUrl: CAP_URL }, other: { capabilityUrl: CAP_URL } },
+        },
+      });
       const handler = handleAuthorize({ config: fakeConfig(), platform, offerFetch: offerFetch() });
       const res = fakeRes();
-      await handler(fakeReq({ ...CMC_QUERY, scope: 'cmc:study-A pryv:read' }), res);
+      await handler(fakeReq({ ...CMC_QUERY, scope: 'cmc:study-A cmc:other' }), res);
       assert.equal(res.statusCode, 302);
       assert.match(res.headers.location, /error=invalid_scope/);
-      assert.match(res.headers.location, /only.*scope|scope.*only/i);
+      assert.match(res.headers.location, /exactly%20one/);
     });
     it('[OA-M3] unresolvable offer (expired capability → 401) → invalid_scope redirect', async () => {
       const platform = fakePlatform({ myapp: CMC_CLIENT });
@@ -336,7 +381,9 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       assert.match(res.headers.location, /error=invalid_scope/);
     });
     it('[OA-M5] cmc scope not registered on the client → invalid_scope (no offer fetch)', async () => {
-      const platform = fakePlatform({ myapp: VALID_CLIENT }); // no cmc registration
+      const platform = fakePlatform({
+        myapp: { redirectUris: ['https://app.example/cb'], scope: [] }, // no cmc registration
+      });
       const fetchFn = offerFetch();
       const handler = handleAuthorize({ config: fakeConfig(), platform, offerFetch: fetchFn });
       const res = fakeRes();

@@ -8,17 +8,28 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * [OAUTH-E2E] OAuth 2.0 authorization-code flow — full end-to-end.
+ * [OAUTH-E2E] OAuth 2.0 authorization-code flow — full end-to-end,
+ * granular consent-offer scope model.
+ *
+ * The app account publishes an OPEN-LINK `consent/request-cmc` offer
+ * carrying the granular permission set (full accesses.create lexicon,
+ * incl. a feature permission); its capability URL is registered on the
+ * OAuth client as `cmcOffers['e2e']`; clients request `scope=cmc:e2e`.
  *
  * Exercises the wiring landed in components/api-server/src/routes/oauth2.ts:
- *   GET  /oauth2/authorize           → 302 to consent URL w/ signed state
- *   POST /oauth2/authorize/accept    → user-authenticated; mints access; returns code redirect
+ *   GET  /oauth2/authorize           → resolves the offer via its capability,
+ *                                      302 to consent URL w/ signed state
+ *   POST /oauth2/authorize/accept    → user-authenticated; drives a real
+ *                                      consent/accept-cmc (data-grant on the
+ *                                      user's account); mints the session
+ *                                      access from the granted subset
  *   POST /oauth2/token               → PKCE verify; returns Bearer + refresh
  *   GET  /<username>/events          → token works on the resource server
+ *   refresh after consent revocation → invalid_grant (chain dies)
  *
- * Pattern C — initCore + coreRequest + getNewFixture + cuid. Drives
- * the full chain with the real api method registry, so this also acts
- * as the integration test for the resolveUser + createAccess callbacks.
+ * Pattern C — initCore + coreRequest + getNewFixture + cuid. Outbound
+ * HTTP (offer resolution + CMC delivery) is routed through the shared
+ * in-process fetch shim.
  */
 
 /* global initTests, initCore, coreRequest, getNewFixture, cuid */
@@ -27,9 +38,22 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const storage = require('oauth2/src/storage.ts');
 const { getConfig } = require('@pryv/boiler');
+const { buildFetchShim } = require('./cmc-fetch-shim.cjs');
 
 const REDIRECT_URI = 'https://app.example/cb';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
+const OFFER_NAME = 'e2e';
+
+// Full-lexicon offer: two stream permissions + a feature permission.
+const OFFER_PERMISSIONS = [
+  { streamId: 'health', level: 'read' },
+  { streamId: 'diary', level: 'contribute' },
+  { feature: 'selfRevoke', setting: 'forbidden' },
+];
+const DEFAULT_GRANTED = [
+  { streamId: 'health', level: 'read' },
+  { feature: 'selfRevoke', setting: 'forbidden' },
+];
 
 function pkce () {
   const verifier = base64url(crypto.randomBytes(32));
@@ -41,10 +65,19 @@ function base64url (buf) {
   return buf.toString('base64').replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 }
 
-describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
-  this.timeout(30000);
+async function ensureStream (path, token, params) {
+  const res = await coreRequest.post(path).set('Authorization', token).send(params);
+  if (res.status !== 201 && res.body?.error?.id !== 'item-already-exists') {
+    throw new Error('ensureStream(' + params.id + ') failed: ' +
+      res.status + ' ' + JSON.stringify(res.body));
+  }
+}
+
+describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer scope)', function () {
+  this.timeout(60000);
 
   let username, personalToken, clientId, fixtures, savedConsentUrl;
+  let appUsername, appToken, capabilityUrl, originalFetch;
 
   before(async function () {
     await initTests();
@@ -55,12 +88,53 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
     savedConsentUrl = config.get('oauth:consentUrl');
     config.set('oauth:consentUrl', CONSENT_URL);
 
-    // User + personal token via the standard fixture helpers.
+    // Outbound HTTP (offer resolution via capability URL + CMC
+    // delivery) routes through the in-process server.
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = buildFetchShim(originalFetch, global.app.expressApp);
+
+    // End user + personal token; the offer's stream permissions
+    // reference streams on THIS account.
     username = cuid();
     personalToken = cuid();
     const user = await fixtures.user(username);
     await user.access({ token: personalToken, type: 'personal' });
     await user.session(personalToken);
+    await ensureStream('/' + username + '/streams', personalToken, { id: 'health', name: 'Health' });
+    await ensureStream('/' + username + '/streams', personalToken, { id: 'diary', name: 'Diary' });
+
+    // App account (the OAuth client is a promoted user account). It
+    // publishes the OPEN-LINK consent offer the scope references.
+    appUsername = 'app' + cuid().slice(-12);
+    appToken = cuid();
+    const appUser = await fixtures.user(appUsername);
+    await appUser.access({ token: appToken, type: 'personal' });
+    await appUser.session(appToken);
+    await ensureStream('/' + appUsername + '/streams', appToken,
+      { id: ':_cmc:apps:e2e-oauth', parentId: ':_cmc:apps', name: 'OAuth e2e offers' });
+    const offerRes = await coreRequest
+      .post('/' + appUsername + '/events')
+      .set('Authorization', appToken)
+      .send({
+        streamIds: [':_cmc:apps:e2e-oauth'],
+        type: 'consent/request-cmc',
+        content: {
+          to: null,
+          capabilityRequested: true,
+          capability: { mode: 'open-link' },
+          request: {
+            title: { en: 'OAuth e2e offer' },
+            description: { en: 'Share health data with the e2e app.' },
+            consent: { en: 'I agree to share the listed data.' },
+            permissions: OFFER_PERMISSIONS,
+          },
+          requesterMeta: { displayName: 'OAuth E2E Test App', appId: 'oauth-e2e' },
+        },
+      });
+    assert.equal(offerRes.status, 201, JSON.stringify(offerRes.body));
+    capabilityUrl = offerRes.body?.event?.content?.capabilityUrl;
+    assert.ok(typeof capabilityUrl === 'string' && capabilityUrl.length > 0,
+      'capabilityUrl should be stamped synchronously: ' + JSON.stringify(offerRes.body?.event?.content));
 
     // Register the OAuth client directly in PlatformDB — no CLI roundtrip
     // needed for the test, the wire shape is what matters.
@@ -69,7 +143,8 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
     await storage.setClient(platformDB, {
       clientId,
       redirectUris: [REDIRECT_URI],
-      scope: ['pryv:read', 'pryv:write'],
+      scope: ['cmc:' + OFFER_NAME],
+      cmcOffers: { [OFFER_NAME]: { capabilityUrl } },
       grantTypes: ['authorization_code'],
       clientName: 'OAuth E2E Test App',
       updatedAt: Date.now(),
@@ -79,6 +154,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
   after(async function () {
     const config = await getConfig();
     if (savedConsentUrl != null) config.set('oauth:consentUrl', savedConsentUrl);
+    if (originalFetch != null) globalThis.fetch = originalFetch;
     if (clientId != null) {
       const platformDB = require('storages').platformDB;
       try { await storage.deleteClient(platformDB, clientId); } catch (_) { /* best-effort */ }
@@ -91,8 +167,8 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
   async function runFullFlow (overrides = {}) {
     const { verifier, challenge } = pkce();
     const csrf = 'csrf-' + cuid();
-    const requestedScope = overrides.scope ?? 'pryv:read pryv:write';
-    const grantedScope = overrides.grantedScope ?? ['pryv:read'];
+    const requestedScope = overrides.scope ?? ('cmc:' + OFFER_NAME);
+    const grantedPermissions = overrides.grantedPermissions ?? DEFAULT_GRANTED;
 
     // 1. /authorize
     const authRes = await coreRequest
@@ -111,8 +187,9 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
         `expected /authorize ${overrides.expectAuthStatus}, got ${authRes.status}`);
       return { authRes };
     }
-    assert.equal(authRes.status, 302);
+    assert.equal(authRes.status, 302, JSON.stringify(authRes.body ?? authRes.text));
     const loc = authRes.headers.location;
+    assert.ok(loc.startsWith(CONSENT_URL + '?state='), 'unexpected redirect: ' + loc);
     const signedState = decodeURIComponent(loc.split('state=')[1].split('&')[0]);
 
     // 2. /authorize/accept
@@ -122,7 +199,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
         state: signedState,
         username,
         userToken: personalToken,
-        grantedScope,
+        grantedPermissions,
       });
     if (overrides.expectAcceptStatus != null) {
       assert.equal(acceptRes.status, overrides.expectAcceptStatus,
@@ -148,8 +225,19 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
     return { authRes, signedState, acceptRes, code, tokenBody, tokenRes, verifier };
   }
 
+  async function accessInfo (token) {
+    const res = await coreRequest
+      .get('/' + username + '/access-info')
+      .set('Authorization', token);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    // access-info returns the access fields at the top level.
+    const access = res.body.permissions != null ? res.body : res.body.access;
+    assert.ok(access?.permissions != null, 'access-info carries permissions: ' + JSON.stringify(res.body));
+    return access;
+  }
+
   describe('[OAUTH-E2E-OK] happy path', function () {
-    it('[OE01] /authorize 302s to consent URL with signed state', async function () {
+    it('[OE01] /authorize resolves the offer via its capability and 302s to consent URL', async function () {
       const { challenge } = pkce();
       const res = await coreRequest
         .get('/oauth2/authorize')
@@ -160,17 +248,17 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
           state: 'csrf-1',
           code_challenge: challenge,
           code_challenge_method: 'S256',
-          scope: 'pryv:read',
+          scope: 'cmc:' + OFFER_NAME,
         });
       assert.equal(res.status, 302);
       assert.ok(res.headers.location.startsWith(CONSENT_URL + '?state='));
     });
 
-    it('[OE02] full chain mints a Bearer token usable on /<username>/events', async function () {
+    it('[OE02] full chain mints a Bearer whose permissions are EXACTLY the granted subset (incl. the feature permission)', async function () {
       const r = await runFullFlow();
       assert.equal(r.tokenRes.status, 200, JSON.stringify(r.tokenRes.body));
       assert.equal(r.tokenRes.body.token_type, 'Bearer');
-      assert.equal(r.tokenRes.body.scope, 'pryv:read');
+      assert.equal(r.tokenRes.body.scope, 'cmc:' + OFFER_NAME);
       assert.equal(typeof r.tokenRes.body.access_token, 'string');
       assert.equal(typeof r.tokenRes.body.refresh_token, 'string');
       assert.equal(typeof r.tokenRes.body.apiEndpoint, 'string');
@@ -181,12 +269,38 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
         .set('Authorization', r.tokenRes.body.access_token);
       assert.equal(eventsRes.status, 200);
       assert.ok(Array.isArray(eventsRes.body.events));
+
+      // Granular: the session access carries the granted subset only.
+      const access = await accessInfo(r.tokenRes.body.access_token);
+      const streamPerms = access.permissions.filter((p) => p.streamId != null && !p.streamId.startsWith(':'));
+      assert.deepEqual(streamPerms, [{ streamId: 'health', level: 'read' }]);
+      assert.ok(access.permissions.some((p) => p.feature === 'selfRevoke' && p.setting === 'forbidden'),
+        'feature permission must travel offer → grant → session access: ' + JSON.stringify(access.permissions));
+
+      // The durable consent record (CMC data-grant) exists on the user.
+      const accessesRes = await coreRequest
+        .get('/' + username + '/accesses')
+        .set('Authorization', personalToken);
+      const dataGrant = (accessesRes.body.accesses ?? [])
+        .find((a) => a.clientData?.cmc?.role === 'counterparty');
+      assert.ok(dataGrant != null, 'CMC data-grant must exist on the user account');
     });
 
-    it('[OE03] scope downgrade — requested write+read, granted read only', async function () {
-      const r = await runFullFlow({ scope: 'pryv:read pryv:write', grantedScope: ['pryv:read'] });
-      assert.equal(r.tokenRes.status, 200);
-      assert.equal(r.tokenRes.body.scope, 'pryv:read');
+    it('[OE03] consent downgrade — offer has diary+health, user keeps health only', async function () {
+      const r = await runFullFlow({ grantedPermissions: [{ streamId: 'health', level: 'read' }] });
+      assert.equal(r.tokenRes.status, 200, JSON.stringify(r.tokenRes.body));
+      const access = await accessInfo(r.tokenRes.body.access_token);
+      assert.ok(!access.permissions.some((p) => p.streamId === 'diary'),
+        'un-ticked diary permission must NOT be granted: ' + JSON.stringify(access.permissions));
+      assert.ok(access.permissions.some((p) => p.streamId === 'health' && p.level === 'read'));
+    });
+
+    it('[OE04] granted ⊄ offer (widened level) → 400 invalid_scope at /accept', async function () {
+      const r = await runFullFlow({
+        grantedPermissions: [{ streamId: 'health', level: 'manage' }],
+        expectAcceptStatus: 400,
+      });
+      assert.equal(r.acceptRes.body.error, 'invalid_scope');
     });
   });
 
@@ -209,19 +323,17 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
     });
 
     it('[OE12] /accept with wrong userToken → 401', async function () {
-      // Drive /authorize to capture a real signed state.
       const { challenge } = pkce();
-      const csrf = 'csrf-bad-tok';
       const authRes = await coreRequest
         .get('/oauth2/authorize')
         .query({
           client_id: clientId,
           redirect_uri: REDIRECT_URI,
           response_type: 'code',
-          state: csrf,
+          state: 'csrf-bad-tok',
           code_challenge: challenge,
           code_challenge_method: 'S256',
-          scope: 'pryv:read',
+          scope: 'cmc:' + OFFER_NAME,
         });
       const signedState = decodeURIComponent(authRes.headers.location.split('state=')[1].split('&')[0]);
       const acceptRes = await coreRequest
@@ -230,7 +342,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
           state: signedState,
           username,
           userToken: 'not-a-real-token',
-          grantedScope: ['pryv:read'],
+          grantedPermissions: DEFAULT_GRANTED,
         });
       assert.equal(acceptRes.status, 401);
     });
@@ -246,21 +358,37 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
           state: 'x',
           code_challenge: challenge,
           code_challenge_method: 'S256',
-          scope: 'pryv:read',
+          scope: 'cmc:' + OFFER_NAME,
         });
       assert.equal(res.status, 400);
       assert.match(res.headers['content-type'], /text\/html/);
       assert.equal(res.headers.location, undefined);
     });
+
+    it('[OE19] coarse scope tokens no longer exist → invalid_scope redirect', async function () {
+      const { challenge } = pkce();
+      const res = await coreRequest
+        .get('/oauth2/authorize')
+        .query({
+          client_id: clientId,
+          redirect_uri: REDIRECT_URI,
+          response_type: 'code',
+          state: 'csrf-coarse',
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+          scope: 'pryv:read',
+        });
+      assert.equal(res.status, 302);
+      assert.match(res.headers.location, /^https:\/\/app\.example\/cb\?error=invalid_scope/);
+    });
   });
 
-  describe('[OAUTH-E2E-REFRESH] refresh_token grant', function () {
+  describe('[OAUTH-E2E-REFRESH] refresh_token grant — bound to the consent data-grant', function () {
     it('[OE15] refresh round-trip: code-grant → refresh-grant → new Bearer usable on /events', async function () {
       const r = await runFullFlow();
       assert.equal(r.tokenRes.status, 200);
       const firstAccess = r.tokenRes.body.access_token;
       const firstRefresh = r.tokenRes.body.refresh_token;
-      // Refresh
       const refreshRes = await coreRequest
         .post('/oauth2/token')
         .type('form')
@@ -269,12 +397,15 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
       assert.equal(refreshRes.body.token_type, 'Bearer');
       assert.notEqual(refreshRes.body.access_token, firstAccess, 'refresh must mint a new access');
       assert.notEqual(refreshRes.body.refresh_token, firstRefresh, 'refresh must rotate the refresh token');
-      assert.equal(refreshRes.body.scope, 'pryv:read');
-      // New token works on the resource server.
+      assert.equal(refreshRes.body.scope, 'cmc:' + OFFER_NAME);
       const eventsRes = await coreRequest
         .get('/' + username + '/events')
         .set('Authorization', refreshRes.body.access_token);
       assert.equal(eventsRes.status, 200);
+      // Refreshed access keeps the granted subset (no widening to the full offer).
+      const access = await accessInfo(refreshRes.body.access_token);
+      assert.ok(!access.permissions.some((p) => p.streamId === 'diary'),
+        'refresh must not widen beyond the session grant: ' + JSON.stringify(access.permissions));
     });
 
     it('[OE16] reused refresh token → invalid_grant', async function () {
@@ -286,6 +417,29 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
       const r2 = await coreRequest.post('/oauth2/token').type('form').send(params);
       assert.equal(r2.status, 400);
       assert.equal(r2.body.error, 'invalid_grant');
+    });
+
+    it('[OE21] revoking the consent data-grant kills the refresh chain (invalid_grant)', async function () {
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200);
+      // The user revokes the durable consent (data-grant) directly.
+      const accessesRes = await coreRequest
+        .get('/' + username + '/accesses')
+        .set('Authorization', personalToken);
+      const dataGrant = (accessesRes.body.accesses ?? [])
+        .find((a) => a.clientData?.cmc?.role === 'counterparty');
+      assert.ok(dataGrant != null, 'data-grant must exist before revocation');
+      const delRes = await coreRequest
+        .delete('/' + username + '/accesses/' + encodeURIComponent(dataGrant.id))
+        .set('Authorization', personalToken);
+      assert.ok(delRes.status === 200 || delRes.status === 204, JSON.stringify(delRes.body));
+
+      const refreshRes = await coreRequest
+        .post('/oauth2/token')
+        .type('form')
+        .send({ grant_type: 'refresh_token', refresh_token: r.tokenRes.body.refresh_token, client_id: clientId });
+      assert.equal(refreshRes.status, 400, JSON.stringify(refreshRes.body));
+      assert.equal(refreshRes.body.error, 'invalid_grant');
     });
   });
 
@@ -301,7 +455,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
           state: 'csrf-refuse',
           code_challenge: challenge,
           code_challenge_method: 'S256',
-          scope: 'pryv:read',
+          scope: 'cmc:' + OFFER_NAME,
         });
       const signedState = decodeURIComponent(authRes.headers.location.split('state=')[1].split('&')[0]);
       const refuseRes = await coreRequest
@@ -329,7 +483,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
       await storage.setClient(platformDB, {
         clientId: ccClientId,
         redirectUris: ['https://app.example/cb'],
-        scope: ['pryv:read', 'pryv:write'],
+        scope: ['app:own-data'],
         grantTypes: ['client_credentials'],
         clientName: 'OAuth E2E CC App',
         clientSecretHash: mint.hash,
@@ -376,6 +530,24 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
       assert.equal(res.status, 401);
       assert.equal(res.body.error, 'invalid_client');
     });
+
+    it('[OE22] requesting a cmc:<offer-name> scope on client_credentials → invalid_scope', async function () {
+      const platformDB = require('storages').platformDB;
+      const existing = await storage.getClient(platformDB, ccClientId);
+      await storage.setClient(platformDB, {
+        ...existing,
+        scope: ['app:own-data', 'cmc:' + OFFER_NAME],
+        cmcOffers: { [OFFER_NAME]: { capabilityUrl } },
+      });
+      const basic = 'Basic ' + Buffer.from(ccClientId + ':' + ccSecret).toString('base64');
+      const res = await coreRequest
+        .post('/oauth2/token')
+        .type('form')
+        .set('Authorization', basic)
+        .send({ grant_type: 'client_credentials', scope: 'cmc:' + OFFER_NAME });
+      assert.equal(res.status, 400);
+      assert.equal(res.body.error, 'invalid_scope');
+    });
   });
 
   describe('[OAUTH-E2E-WK] discovery doc', function () {
@@ -387,6 +559,8 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow', function () {
       assert.deepEqual(res.body.response_types_supported, ['code']);
       assert.deepEqual(res.body.code_challenge_methods_supported, ['S256']);
       assert.equal(res.body.authorization_response_iss_parameter_supported, true);
+      assert.ok(res.body.scopes_supported.includes('cmc:*'),
+        'discovery must advertise the cmc namespace: ' + JSON.stringify(res.body.scopes_supported));
     });
   });
 });

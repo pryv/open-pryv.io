@@ -59,11 +59,20 @@ const resolveAlice = async ({ username, userToken }) =>
     ? { userId: 'u-alice', username: 'alice', _ctx: 'fake-ctx' }
     : null;
 
-const createAccessFake = async ({ session, clientId }) => ({
+const createAccessFake = async ({ session, clientId, grantedPermissions }) => ({
   accessId: 'acc-' + session.userId + '-' + clientId,
   accessToken: 'tok-' + session.userId + '-' + clientId,
   apiEndpoint: 'https://' + session.username + '.pryv.me/',
+  dataGrantAccessId: 'dg-' + session.userId,
+  permissions: grantedPermissions,
 });
+
+// Full-lexicon offer: stream permissions + a feature permission.
+const OFFER_PERMISSIONS = [
+  { streamId: 'health', level: 'read' },
+  { streamId: 'diary', level: 'contribute' },
+  { feature: 'selfRevoke', setting: 'forbidden' },
+];
 
 const SAMPLE_PAYLOAD = {
   clientId: 'myapp',
@@ -71,7 +80,14 @@ const SAMPLE_PAYLOAD = {
   state: 'csrf-1',
   codeChallenge: 'cc-base64',
   codeChallengeMethod: 'S256',
-  scope: ['pryv:read', 'pryv:write'],
+  scope: ['cmc:study-A'],
+  offer: {
+    offerName: 'study-A',
+    capabilityUrl: 'https://CapTok@myapp.example.com/',
+    capabilityId: 'cap-42',
+    offerEventId: 'ev-offer-1',
+    permissions: OFFER_PERMISSIONS,
+  },
 };
 
 function fakeRes () {
@@ -89,7 +105,10 @@ function validBody (overrides = {}) {
     state: signState(ADMIN_KEY, SAMPLE_PAYLOAD),
     username: 'alice',
     userToken: 'alice-token',
-    grantedScope: ['pryv:read'],
+    grantedPermissions: [
+      { streamId: 'health', level: 'read' },
+      { feature: 'selfRevoke', setting: 'forbidden' },
+    ],
     ...overrides,
   };
 }
@@ -127,25 +146,25 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       assert.equal(row.userId, 'u-alice');
       assert.equal(row.username, 'alice');
       assert.equal(row.clientId, 'myapp');
-      assert.deepEqual(row.scope, ['pryv:read']);
+      assert.deepEqual(row.scope, ['cmc:study-A']);
       assert.equal(row.codeChallenge, 'cc-base64');
       assert.equal(row.accessId, 'acc-u-alice-myapp');
       assert.equal(row.accessToken, 'tok-u-alice-myapp');
       assert.equal(row.apiEndpoint, 'https://alice.pryv.me/');
+      assert.equal(row.dataGrantAccessId, 'dg-u-alice');
+      assert.deepEqual(row.permissions, [
+        { streamId: 'health', level: 'read' },
+        { feature: 'selfRevoke', setting: 'forbidden' },
+      ]);
       assert.ok(row.expiresAt > Date.now());
       assert.ok(row.expiresAt <= Date.now() + CODE_TTL_SECONDS * 1000 + 50);
     });
-    it('[OAC-OK3] empty grantedScope is accepted (user opted out of everything)', async () => {
-      const platform = fakePlatform();
-      const handler = require('../src/routes/accept.ts').handleAccept({
-        config: fakeConfig(), platform, resolveUser: resolveAlice, createAccess: createAccessFake,
-      });
+    it('[OAC-OK3] empty grantedPermissions → 400 invalid_scope (refuse instead of empty grant)', async () => {
+      const handler = mkHandler();
       const res = fakeRes();
-      await handler({ body: validBody({ grantedScope: [] }) }, res);
-      assert.equal(res.statusCode, 200);
-      const code = res.body.redirectTo.match(/code=([^&]+)/)[1];
-      const row = await getCode(platform, CORE_ID, code);
-      assert.deepEqual(row.scope, []);
+      await handler({ body: validBody({ grantedPermissions: [] }) }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_scope');
     });
     it('[OAC-OK4] session handle from resolveUser is passed verbatim to createAccess', async () => {
       let seenSession;
@@ -168,9 +187,18 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
     it('[OAC-S1] missing state → 400 invalid_request', async () => {
       const handler = mkHandler();
       const res = fakeRes();
-      await handler({ body: { username: 'alice', userToken: 'alice-token', grantedScope: [] } }, res);
+      await handler({ body: { username: 'alice', userToken: 'alice-token', grantedPermissions: [] } }, res);
       assert.equal(res.statusCode, 400);
       assert.equal(res.body.error, 'invalid_request');
+    });
+    it('[OAC-S4] state without a consent offer (stale/foreign) → 400 invalid_request', async () => {
+      const handler = mkHandler();
+      const res = fakeRes();
+      const { offer: _, ...payloadNoOffer } = SAMPLE_PAYLOAD;
+      await handler({ body: validBody({ state: signState(ADMIN_KEY, payloadNoOffer) }) }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_request');
+      assert.match(res.body.error_description, /no consent offer/);
     });
     it('[OAC-S2] tampered state → 400 invalid_request', async () => {
       const handler = mkHandler();
@@ -215,19 +243,40 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
     });
   });
 
-  describe('[OAUTH-ACCEPT-SCOPE] scope-downgrade enforcement', () => {
-    it('[OAC-SC1] grantedScope ⊄ requestedScope → 400 invalid_scope', async () => {
+  describe('[OAUTH-ACCEPT-SCOPE] consent-downgrade enforcement (granted ⊆ offered, full lexicon)', () => {
+    it('[OAC-SC1] widened level → 400 invalid_scope with the offending entry', async () => {
       const handler = mkHandler();
       const res = fakeRes();
-      await handler({ body: validBody({ grantedScope: ['pryv:manage'] }) }, res);
+      await handler({ body: validBody({ grantedPermissions: [{ streamId: 'health', level: 'manage' }] }) }, res);
       assert.equal(res.statusCode, 400);
       assert.equal(res.body.error, 'invalid_scope');
+      assert.match(res.body.error_description, /health/);
     });
-    it('[OAC-SC2] grantedScope must be an array', async () => {
+    it('[OAC-SC2] grantedPermissions must be an array', async () => {
       const handler = mkHandler();
       const res = fakeRes();
-      await handler({ body: validBody({ grantedScope: 'pryv:read' }) }, res);
+      await handler({ body: validBody({ grantedPermissions: 'health' }) }, res);
       assert.equal(res.statusCode, 400);
+    });
+    it('[OAC-SC3] foreign stream or un-offered feature permission → 400 invalid_scope', async () => {
+      const handler = mkHandler();
+      for (const granted of [
+        [{ streamId: 'other', level: 'read' }],
+        [{ feature: 'selfAudit', setting: 'forbidden' }],
+      ]) {
+        const res = fakeRes();
+        await handler({ body: validBody({ grantedPermissions: granted }) }, res);
+        assert.equal(res.statusCode, 400);
+        assert.equal(res.body.error, 'invalid_scope');
+      }
+    });
+    it('[OAC-SC4] malformed permission entry → 400 invalid_scope', async () => {
+      const handler = mkHandler();
+      const res = fakeRes();
+      await handler({ body: validBody({ grantedPermissions: [{ streamId: 'health', level: 'root' }] }) }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_scope');
+      assert.match(res.body.error_description, /invalid/);
     });
   });
 

@@ -25,7 +25,7 @@ const require = createRequire(import.meta.url);
 export type DiscoveryConfig = {
   /** The LB-facing service URL — e.g. `https://reg.pryv.me`. */
   issuer: string;
-  /** Supported scope tokens (rendered as `pryv:read pryv:write …`). */
+  /** Supported scope namespaces (rendered as `cmc:*` etc.). */
   scopesSupported: string[];
   /** Grant types currently wired. Defaults conservatively. */
   grantTypesSupported?: string[];

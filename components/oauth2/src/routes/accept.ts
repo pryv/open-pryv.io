@@ -8,13 +8,17 @@
 /**
  * OAuth2 — `POST /oauth2/authorize/accept` handler.
  *
- * Called from app-web-auth3 after the user accepts the consent. Body:
+ * Called from the consent UI after the user accepts. Body:
  *   { state: <signed-state>, username: <user>, userToken: <user's
- *     personal access token>, grantedScope: string[] }
+ *     personal access token>,
+ *     grantedPermissions: Permission[] }   — the kept subset of the
+ *     signed offer's granular permission set (full accesses.create
+ *     lexicon: stream AND feature permissions).
  *
  * Server flow:
  *   1. Verify the signed state (400 on tamper/expired).
- *   2. Validate grantedScope ⊆ requestedScope (scope-downgrade).
+ *   2. Validate grantedPermissions ⊆ the signed offer's permissions
+ *      (consent downgrade; exact-entry identity).
  *   3. Resolve {username, userToken} → an authenticated user-session
  *      handle via the injected `resolveUser` helper. The handle carries
  *      whatever the host app needs to make subsequent API calls on
@@ -130,57 +134,46 @@ export function handleAccept (deps: AcceptDeps) {
     }
     const payload = verified.payload;
 
-    // Two consent contracts, selected by the signed state (never by the
-    // caller): a granular cmc-offer grant carries `grantedPermissions`
-    // (⊆ the offer's signed permission set, full lexicon); a coarse
-    // scope grant carries `grantedScope` (⊆ requested tokens).
-    let granted: string[] = [];
-    let grantedPermissions: Array<Record<string, unknown>> | undefined;
-    if (payload.offer != null) {
-      if (!Array.isArray(body.grantedPermissions)) {
-        return sendJson(res, 400, { error: 'invalid_request', error_description: 'grantedPermissions must be an array' });
-      }
-      let normalized: Array<Record<string, unknown>>;
-      try {
-        normalized = normalizePermissions(body.grantedPermissions);
-      } catch (e: any) {
-        return sendJson(res, 400, {
-          error: 'invalid_scope',
-          error_description: 'grantedPermissions invalid: ' + (e?.message ?? String(e)),
-        });
-      }
-      grantedPermissions = normalized;
-      const subset = isPermissionSubset(grantedPermissions, payload.offer.permissions);
-      if (!subset.ok) {
-        return sendJson(res, 400, {
-          error: 'invalid_scope',
-          error_description: 'grantedPermissions must be a subset of the offered permissions; offending: ' +
-            JSON.stringify(subset.offending),
-        });
-      }
-      if (grantedPermissions.length === 0) {
-        return sendJson(res, 400, {
-          error: 'invalid_scope',
-          error_description: 'grantedPermissions must keep at least one permission (refuse instead)',
-        });
-      }
-      granted = payload.scope; // the cmc:<offer-name> token, echoed as RFC scope
-    } else {
-      if (!Array.isArray(body.grantedScope)) {
-        return sendJson(res, 400, { error: 'invalid_request', error_description: 'grantedScope must be an array' });
-      }
-      // Scope-downgrade check: granted MUST be a subset of requested.
-      const requested = new Set<string>(payload.scope);
-      granted = body.grantedScope.filter((s: unknown) => typeof s === 'string') as string[];
-      for (const g of granted) {
-        if (!requested.has(g)) {
-          return sendJson(res, 400, {
-            error: 'invalid_scope',
-            error_description: `granted scope "${g}" was not in the requested set`,
-          });
-        }
-      }
+    // Consent contract (selected by the signed state, never the
+    // caller): the granular cmc-offer grant carries
+    // `grantedPermissions` — the kept subset of the offer's signed
+    // permission set (full lexicon: stream AND feature permissions).
+    if (payload.offer == null) {
+      // Every authorize-issued state carries the resolved offer; a
+      // state without one is stale or foreign.
+      return sendJson(res, 400, {
+        error: 'invalid_request',
+        error_description: 'signed state carries no consent offer — restart the authorization flow',
+      });
     }
+    if (!Array.isArray(body.grantedPermissions)) {
+      return sendJson(res, 400, { error: 'invalid_request', error_description: 'grantedPermissions must be an array' });
+    }
+    let grantedPermissions: Array<Record<string, unknown>>;
+    try {
+      grantedPermissions = normalizePermissions(body.grantedPermissions);
+    } catch (e: any) {
+      return sendJson(res, 400, {
+        error: 'invalid_scope',
+        error_description: 'grantedPermissions invalid: ' + (e?.message ?? String(e)),
+      });
+    }
+    const subset = isPermissionSubset(grantedPermissions, payload.offer.permissions);
+    if (!subset.ok) {
+      return sendJson(res, 400, {
+        error: 'invalid_scope',
+        error_description: 'grantedPermissions must be a subset of the offered permissions; offending: ' +
+          JSON.stringify(subset.offending),
+      });
+    }
+    if (grantedPermissions.length === 0) {
+      return sendJson(res, 400, {
+        error: 'invalid_scope',
+        error_description: 'grantedPermissions must keep at least one permission (refuse instead)',
+      });
+    }
+    // The cmc:<offer-name> token, echoed as the RFC scope value.
+    const granted: string[] = payload.scope;
 
     // Resolve the user session via {username, userToken}.
     const session = await deps.resolveUser({ username: body.username, userToken: body.userToken });
@@ -202,7 +195,8 @@ export function handleAccept (deps: AcceptDeps) {
         clientId: payload.clientId,
         scope: granted,
         expiresAt: accessExpiresAt,
-        ...(payload.offer != null ? { offer: payload.offer, grantedPermissions } : {}),
+        offer: payload.offer,
+        grantedPermissions,
       });
     } catch (err: any) {
       return sendJson(res, 500, {
@@ -236,8 +230,8 @@ export function handleAccept (deps: AcceptDeps) {
       userId: session.userId,
       requestedScope: payload.scope,
       grantedScope: granted,
+      grantedPermissions,
       accessId: access.accessId,
-      ...(grantedPermissions != null ? { grantedPermissions } : {}),
       ...(access.dataGrantAccessId != null ? { dataGrantAccessId: access.dataGrantAccessId } : {}),
     });
 

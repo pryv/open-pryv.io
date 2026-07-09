@@ -46,27 +46,6 @@ const { parseAccessRef } = require('business/src/accesses/refs.ts');
 /** Trigger-scope parent for OAuth-driven CMC accepts on the user's account. */
 const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
 
-// Map a coarse OAuth scope token to a Pryv permission entry on the
-// `*` wildcard stream id. This matches how /reg/access typically
-// grants top-level scope (read/contribute/manage on all streams);
-// finer-grained scope grammars can layer on later via the scope
-// registry's pluggable parsers.
-function scopeToPermission (scopeToken: string): { streamId: string; level: string } | null {
-  if (scopeToken === 'pryv:read') return { streamId: '*', level: 'read' };
-  if (scopeToken === 'pryv:write') return { streamId: '*', level: 'contribute' };
-  if (scopeToken === 'pryv:manage') return { streamId: '*', level: 'manage' };
-  return null;
-}
-
-function scopesToPermissions (scope: string[]): Array<{ streamId: string; level: string }> {
-  const perms: Array<{ streamId: string; level: string }> = [];
-  for (const s of scope) {
-    const p = scopeToPermission(s);
-    if (p != null) perms.push(p);
-  }
-  return perms;
-}
-
 export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void {
   const config = app.config;
   const storageLayer = app.storageLayer;
@@ -183,17 +162,19 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       throw new Error('oauth2.createAccess: session missing _context (resolveUser did not run?)');
     }
 
-    let permissions: Array<Record<string, unknown>>;
+    if (offer == null || !Array.isArray(grantedPermissions) || grantedPermissions.length === 0) {
+      throw new Error('oauth2.createAccess: a granular consent grant (offer + grantedPermissions) is required');
+    }
     let dataGrant: any = null;
-    if (offer != null) {
-      if (!Array.isArray(grantedPermissions) || grantedPermissions.length === 0) {
-        throw new Error('oauth2.createAccess: granular grant requires grantedPermissions');
-      }
+    {
       if (offer.offerEventId != null) {
         dataGrant = await findDataGrantByOffer(context, offer.offerEventId);
       }
       if (dataGrant == null) {
-        // First authorization: drive the real CMC accept.
+        // First authorization: drive the real CMC accept. The plugin's
+        // dispatch is fire-and-forget w.r.t. the events.create response,
+        // so poll for the data-grant (keyed by the accept event id the
+        // plugin stamps on it) while watching the trigger for failure.
         const scopeStreamId = OAUTH_CMC_PARENT + ':' + clientId;
         await ensureStream(context, OAUTH_CMC_PARENT, ':_cmc:apps', 'OAuth2 grants');
         await ensureStream(context, scopeStreamId, OAUTH_CMC_PARENT, clientId);
@@ -205,19 +186,27 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
             grantedPermissions,
           },
         });
-        const content = created?.event?.content ?? {};
-        if (content.status === 'failed' || typeof content.dataGrantAccessId !== 'string') {
-          throw new Error('oauth2.createAccess: consent accept failed' +
-            (content.failure?.reason != null ? ': ' + content.failure.reason : ''));
+        const acceptEventId = created?.event?.id;
+        if (typeof acceptEventId !== 'string') {
+          throw new Error('oauth2.createAccess: consent accept trigger was not created');
         }
-        dataGrant = await findDataGrantByOffer(context, offer.offerEventId ?? '');
-        if (dataGrant == null) {
-          // Cross-check by the id the plugin reported (offer id absent).
+        const deadline = Date.now() + 10_000;
+        while (dataGrant == null) {
           const all = await apiCall(context, 'accesses.get', {});
-          dataGrant = (all?.accesses ?? []).find((a: any) => a?.id === content.dataGrantAccessId) ?? null;
-        }
-        if (dataGrant == null) {
-          throw new Error('oauth2.createAccess: data-grant not found after consent accept');
+          dataGrant = (all?.accesses ?? []).find((a: any) =>
+            a?.clientData?.cmc?.role === 'counterparty' &&
+            a?.clientData?.cmc?.acceptEventId === acceptEventId) ?? null;
+          if (dataGrant != null) break;
+          const trigger = await apiCall(context, 'events.getOne', { id: acceptEventId });
+          const content = trigger?.event?.content ?? {};
+          if (content.status === 'failed') {
+            throw new Error('oauth2.createAccess: consent accept failed' +
+              (content.failure?.reason != null ? ': ' + content.failure.reason : ''));
+          }
+          if (Date.now() > deadline) {
+            throw new Error('oauth2.createAccess: timed out waiting for the consent data-grant');
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
         }
       } else {
         // Re-authorization: widen the data-grant if this consent grants
@@ -233,10 +222,12 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
           if (updated?.access != null) dataGrant = updated.access;
         }
       }
-      permissions = dataGrant.permissions;
-    } else {
-      permissions = scopesToPermissions(scope);
     }
+    // The short-TTL OAuth access mirrors EXACTLY this session's
+    // granted subset; the durable data-grant (granted + CMC channel
+    // anchors) is the consent ceiling that revocation/scope-update
+    // governs.
+    const permissions: Array<Record<string, unknown>> = grantedPermissions;
 
     const expireAfter = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
     // Pryv enforces (type, name, deviceName) uniqueness on access rows.
@@ -259,7 +250,8 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       accessId: a.id,
       accessToken: a.token,
       apiEndpoint: typeof a.apiEndpoint === 'string' ? a.apiEndpoint : '',
-      ...(dataGrant != null ? { dataGrantAccessId: dataGrant.id, permissions } : {}),
+      dataGrantAccessId: dataGrant.id,
+      permissions,
     };
   }
 
@@ -293,9 +285,9 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     return head;
   }
 
-  async function mintAccessDirect ({ userId, username, clientId, scope, expiresAt, dataGrantAccessId }: {
-    userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
-    dataGrantAccessId?: string;
+  async function mintAccessDirect ({ userId, username, clientId, permissions, expiresAt }: {
+    userId: string; username: string; clientId: string;
+    permissions: Array<Record<string, unknown>>; expiresAt: number;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
     if (typeof username !== 'string' || username.length === 0) {
       throw new Error('mintAccessDirect: username required');
@@ -303,16 +295,6 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     const accessesRepository = (storageLayer as any).accesses;
     if (accessesRepository == null) {
       throw new Error('mintAccessDirect: storageLayer.accesses unavailable');
-    }
-    // Granular grants re-read the durable data-grant: revoked → the
-    // refresh chain dies; alive → mint from its CURRENT permissions
-    // (consent scope-updates propagate on refresh).
-    let permissions;
-    if (dataGrantAccessId != null) {
-      const dataGrant = await readDataGrantHead(userId, username, dataGrantAccessId);
-      permissions = dataGrant.permissions;
-    } else {
-      permissions = scopesToPermissions(scope);
     }
     const now = Math.floor(Date.now() / 1000);
     const newToken = accessesRepository.generateToken();
@@ -357,11 +339,55 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     return typeof id === 'string' && id.length > 0 ? id : null;
   }
 
+  // ---------------------------------------------------------------------
+  // Grant-specific mint callbacks over mintAccessDirect:
+  //   - refresh: the chain is bound to the durable data-grant — re-read
+  //     it (revoked → typed throw the grant maps to invalid_grant) and
+  //     mint from its CURRENT permissions (scope-updates propagate).
+  //   - client_credentials: the app account IS the principal; the
+  //     minted access manages the app's OWN per-user storage (cmc
+  //     scopes are rejected upstream by the grant).
+  // ---------------------------------------------------------------------
+  async function mintRefreshedAccess ({ userId, username, clientId, expiresAt, dataGrantAccessId, permissions }: {
+    userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
+    dataGrantAccessId?: string;
+    permissions?: Array<Record<string, unknown>>;
+  }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
+    if (dataGrantAccessId == null || !Array.isArray(permissions) || permissions.length === 0) {
+      const revoked: any = new Error('refresh chain carries no consent data-grant binding');
+      revoked.code = 'data-grant-revoked';
+      throw revoked;
+    }
+    const dataGrant = await readDataGrantHead(userId, username, dataGrantAccessId);
+    // Session grant ∩ data-grant's CURRENT permissions: consent
+    // narrowing propagates on refresh; widening needs a fresh consent.
+    const currentKeys = new Set((dataGrant.permissions ?? []).map(permissionKey));
+    const effective = permissions.filter((p) => currentKeys.has(permissionKey(p as any)));
+    if (effective.length === 0) {
+      const revoked: any = new Error('consent no longer covers any of this grant\'s permissions');
+      revoked.code = 'data-grant-revoked';
+      throw revoked;
+    }
+    return mintAccessDirect({ userId, username, clientId, permissions: effective, expiresAt });
+  }
+
+  async function mintClientAccess ({ userId, username, clientId, expiresAt }: {
+    userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
+  }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
+    return mintAccessDirect({
+      userId,
+      username,
+      clientId,
+      permissions: [{ streamId: '*', level: 'manage' }],
+      expiresAt,
+    });
+  }
+
   oauth2.registerRoutes(expressApp, {
     config,
     platform: storages.platformDB,
-    mintRefreshedAccess: mintAccessDirect,
-    mintClientAccess: mintAccessDirect,
+    mintRefreshedAccess,
+    mintClientAccess,
     resolveAccountUserId,
     resolveUser,
     createAccess,

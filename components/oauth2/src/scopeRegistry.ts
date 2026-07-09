@@ -10,13 +10,15 @@
  *
  * The OAuth `scope` parameter is a space-separated list of tokens.
  * Each token has the shape `<namespace>:<token-body>` (e.g.
- * `pryv:read`, `pryv:write`, `pryv:manage`). The namespace selects a
- * parser registered in this module.
+ * `cmc:study-A`). The namespace selects a parser registered in this
+ * module.
  *
- * Ships with the `pryv` namespace registered (three coarse named
- * scopes). Other grammars — SMART on FHIR `patient/Observation.read`
- * for instance — layer on by registering a parser; no migration of
- * persisted scope data is needed. See IMPLEMENTERS-GUIDE.md.
+ * Ships with the `cmc` namespace registered (granular consent-offer
+ * references — every authorization-code grant goes through an explicit
+ * granular permission set; there are no coarse wildcard scopes). Other
+ * grammars — SMART on FHIR `patient/Observation.read` for instance —
+ * layer on by registering a parser; no migration of persisted scope
+ * data is needed. See IMPLEMENTERS-GUIDE.md.
  */
 
 import { createRequire } from 'node:module';
@@ -31,7 +33,7 @@ const assert = require('node:assert/strict');
 export type ParsedScope = {
   namespace: string;
   raw: string;
-  permission: 'read' | 'write' | 'manage' | string; // pryv parser uses the union; SMART will widen
+  permission: string; // 'granular' for cmc; other namespaces define their own
   // Parsers may add additional fields (e.g. resource type for SMART).
   [key: string]: unknown;
 };
@@ -100,23 +102,6 @@ export class ScopeParseError extends Error {
   }
 }
 
-// --- Default `pryv` parser ---
-
-const PRYV_PERMISSIONS = new Set(['read', 'write', 'manage']);
-
-function pryvParser (body: string): ParsedScope {
-  if (!PRYV_PERMISSIONS.has(body)) {
-    throw new ScopeParseError(
-      `unknown pryv scope permission "${body}" — expected one of: ${Array.from(PRYV_PERMISSIONS).join(', ')}`,
-    );
-  }
-  return {
-    namespace: 'pryv',
-    raw: `pryv:${body}`,
-    permission: body as 'read' | 'write' | 'manage',
-  };
-}
-
 // --- Default `cmc` parser ---
 
 /**
@@ -154,7 +139,6 @@ function cmcParser (body: string): ParsedScope {
 }
 
 function _registerDefault (): void {
-  registry.set('pryv', pryvParser);
   registry.set('cmc', cmcParser);
 }
 

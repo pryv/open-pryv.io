@@ -120,10 +120,13 @@ export interface OAuthRefresh {
    * Granular-grant binding (cmc scopes) — see OAuthCode. The refresh
    * grant re-reads the data-grant before re-minting: if it is gone
    * (revoked), the refresh chain dies with `invalid_grant`; otherwise
-   * the re-mint uses the data-grant's CURRENT permissions (consent
-   * scope-updates propagate at the next refresh).
+   * the re-mint uses `permissions` (this session's granted subset)
+   * INTERSECTED with the data-grant's CURRENT permissions — consent
+   * narrowing propagates at the next refresh, widening never happens
+   * without a fresh consent.
    */
   dataGrantAccessId?: string;
+  permissions?: GrantPermission[];
 }
 
 const PREFIX_CLIENT = 'oauth-client/';

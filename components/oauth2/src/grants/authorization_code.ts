@@ -127,8 +127,10 @@ export async function handleAuthorizationCode (
     expiresAt: now + refreshTokenTTL * 1000,
     absoluteExpiresAt: now + refreshTokenAbsoluteTTL * 1000,
     // Granular (cmc) grants: the refresh chain stays bound to the
-    // durable data-grant — refresh dies when the consent is revoked.
+    // durable data-grant — refresh dies when the consent is revoked —
+    // and carries this session's granted subset for the re-mints.
     ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
+    ...(row.permissions != null ? { permissions: row.permissions } : {}),
   });
 
   await audit('oauth.code.exchanged', {

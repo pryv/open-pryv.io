@@ -7,7 +7,7 @@
   "home": "https://sw.pryv.me",
   "support": "https://github.com/orgs/pryv/discussions",
   "terms": "https://pryv.com/terms-of-use/",
-  "eventTypes": "https://pryv.github.io/event-types/flat.json",
+  "eventTypes": "file://test/event-types-flat.json",
   "assets": {
     "definitions": "https://pryv.github.io/assets-pryv.me/index.json"
   }

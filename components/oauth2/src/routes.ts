@@ -147,19 +147,11 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
 
 /**
  * Convert the live scope-parser registry into a `scopes_supported`
- * advertisement. Only the `pryv:` namespace ships a closed enum
- * (`read`/`write`/`manage`); other namespaces (SMART, etc.) advertise
- * their namespace + a wildcard hint per RFC 8414 conventions.
+ * advertisement. No namespace ships a closed enum — scope tokens
+ * reference per-client consent offers (`cmc:<offer-name>`) or other
+ * parser-owned grammars — so each namespace advertises a wildcard
+ * hint per RFC 8414 conventions.
  */
 function buildScopesSupported (): string[] {
-  const namespaces = listNamespaces();
-  const result: string[] = [];
-  if (namespaces.includes('pryv')) {
-    result.push('pryv:read', 'pryv:write', 'pryv:manage');
-  }
-  for (const ns of namespaces) {
-    if (ns === 'pryv') continue;
-    result.push(`${ns}:*`); // open-ended; the parser owns the actual grammar
-  }
-  return result;
+  return listNamespaces().map((ns: string) => `${ns}:*`);
 }
