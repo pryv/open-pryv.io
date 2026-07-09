@@ -30,7 +30,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const crypto = require('node:crypto');
-const cuid = require('cuid');
+const { generateToken } = require('../secureToken.ts');
 const storage = require('../storage.ts');
 const { audit } = require('../audit.ts');
 
@@ -116,7 +116,7 @@ export async function handleAuthorizationCode (
   // Mint refresh token. Sliding TTL with absolute cap.
   const { accessTokenTTL, refreshTokenTTL, refreshTokenAbsoluteTTL } = lifetimes(deps.config);
   const now = Date.now();
-  const refreshToken = cuid();
+  const refreshToken = generateToken();
   await storage.setRefresh(deps.platform, coreId, refreshToken, {
     clientId: row.clientId,
     userId: row.userId,

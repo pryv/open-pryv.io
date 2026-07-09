@@ -37,7 +37,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const cuid = require('cuid');
+const { generateToken } = require('../secureToken.ts');
 const { verifyState } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { setCode } = require('../storage.ts');
@@ -149,7 +149,7 @@ export function handleAccept (deps: AcceptDeps) {
 
     // Mint code + persist with the access details so the grant can
     // return them after PKCE verification (user is gone by then).
-    const code = cuid();
+    const code = generateToken();
     const codeExpiresAt = Date.now() + CODE_TTL_SECONDS * 1000;
     await setCode(deps.platform, coreId, code, {
       clientId: payload.clientId,

@@ -37,7 +37,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const cuid = require('cuid');
+const { generateToken } = require('../secureToken.ts');
 const storage = require('../storage.ts');
 const { audit } = require('../audit.ts');
 
@@ -134,7 +134,7 @@ export async function handleRefreshToken (
 
   // Mint a new refresh token. Sliding TTL, but never past the original
   // absolute cap (RFC 6749 §6 — refresh chain ≤ original consent ceiling).
-  const newRefresh = cuid();
+  const newRefresh = generateToken();
   const newRefreshExpiresAt = Math.min(now + refreshTokenTTL * 1000, row.absoluteExpiresAt);
   if (newRefreshExpiresAt <= now) {
     // Absolute cap already past — refuse to mint a new one. The fresh
