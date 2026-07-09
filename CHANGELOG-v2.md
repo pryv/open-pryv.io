@@ -18,6 +18,20 @@ curated registration only). Short-TTL access tokens plus rotating refresh tokens
 `oauth.*` audit event types. Configured under the `oauth:` block (disabled by default).
 See `docs/oauth2.md`.
 
+**Granular consent-offer scopes.** There are no coarse wildcard scopes: the `scope`
+parameter carries exactly one consent-offer reference (`cmc:<offer-name>`), resolved
+through the client registration to an open-link `consent/request-cmc` offer published
+by the app's account. The offer's permission set covers the full `accesses.create`
+grammar (per-stream levels AND feature permissions such as `selfRevoke`); the consent
+screen lets the user untick individual permissions and the minted session access
+carries exactly the kept subset. The durable consent record is a cross-account
+data-grant access on the user's account: revoking it invalidates the refresh chain
+(`invalid_grant`), and narrowing it propagates to the next refreshed access — widening
+always requires a fresh authorization. `client_credentials` treats scope tokens as
+opaque and always serves the app's own account. Consent event-type schemas
+(`consent/*-cmc`) accept the full permission grammar accordingly, and accept triggers
+support an optional `grantedPermissions` consent-downgrade subset.
+
 ### Access aliases (`randomAlias`) — de-identifying endpoints
 
 `accesses.create` accepts an optional `randomAlias: true`. When set, the new
