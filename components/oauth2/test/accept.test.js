@@ -67,9 +67,11 @@ const createAccessFake = async ({ session, clientId, grantedPermissions }) => ({
   permissions: grantedPermissions,
 });
 
-// Full-lexicon offer: stream permissions + a feature permission.
+// Full-lexicon offer: stream permissions + a feature permission, with a
+// mandatory entry. Cherry-picking enabled (the DEFAULT is all-or-nothing
+// — covered by dedicated cases below).
 const OFFER_PERMISSIONS = [
-  { streamId: 'health', level: 'read' },
+  { streamId: 'health', level: 'read', mandatory: true },
   { streamId: 'diary', level: 'contribute' },
   { feature: 'selfRevoke', setting: 'forbidden' },
 ];
@@ -87,6 +89,7 @@ const SAMPLE_PAYLOAD = {
     capabilityId: 'cap-42',
     offerEventId: 'ev-offer-1',
     permissions: OFFER_PERMISSIONS,
+    allowUserChoice: true,
   },
 };
 
@@ -277,6 +280,38 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       assert.equal(res.statusCode, 400);
       assert.equal(res.body.error, 'invalid_scope');
       assert.match(res.body.error_description, /invalid/);
+    });
+    it('[OAC-SC5] DEFAULT is all-or-nothing: partial grant without offer.allowUserChoice → 400; full grant → 200', async () => {
+      const { allowUserChoice: _drop, ...offerNoChoice } = SAMPLE_PAYLOAD.offer;
+      const payload = { ...SAMPLE_PAYLOAD, offer: offerNoChoice };
+      const handler = mkHandler();
+      const res = fakeRes();
+      await handler({ body: validBody({ state: signState(ADMIN_KEY, payload) }) }, res); // partial grant
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_scope');
+      assert.match(res.body.error_description, /all-or-nothing/);
+      const res2 = fakeRes();
+      await handler({
+        body: validBody({
+          state: signState(ADMIN_KEY, payload),
+          grantedPermissions: [
+            { streamId: 'health', level: 'read' },
+            { streamId: 'diary', level: 'contribute' },
+            { feature: 'selfRevoke', setting: 'forbidden' },
+          ],
+        }),
+      }, res2);
+      assert.equal(res2.statusCode, 200, JSON.stringify(res2.body));
+    });
+    it('[OAC-SC6] a mandatory entry cannot be unticked even with allowUserChoice → 400 invalid_scope', async () => {
+      const handler = mkHandler();
+      const res = fakeRes();
+      await handler({
+        body: validBody({ grantedPermissions: [{ streamId: 'diary', level: 'contribute' }] }), // drops mandatory health
+      }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_scope');
+      assert.match(res.body.error_description, /mandatory/);
     });
   });
 

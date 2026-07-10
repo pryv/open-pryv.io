@@ -46,9 +46,10 @@ const { verifyState } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { setCode } = require('../storage.ts');
 const { audit } = require('../audit.ts');
-// Permission-lexicon single point — granted ⊆ offered uses the same
-// subset semantics as every other consent surface.
-const { isPermissionSubset, normalizePermissions } =
+// Permission-lexicon single point — the consent-grant rule (subset +
+// all-or-nothing default + mandatory locks) is shared with the cmc
+// accept path.
+const { checkConsentGrant, normalizePermissions } =
   require('business/src/accesses/permissionSet.ts');
 
 /** Authenticated user-session handle, opaque to this module. */
@@ -158,19 +159,26 @@ export function handleAccept (deps: AcceptDeps) {
         error_description: 'grantedPermissions invalid: ' + (e?.message ?? String(e)),
       });
     }
-    const subset = isPermissionSubset(grantedPermissions, payload.offer.permissions);
-    if (!subset.ok) {
-      return sendJson(res, 400, {
-        error: 'invalid_scope',
-        error_description: 'grantedPermissions must be a subset of the offered permissions; offending: ' +
-          JSON.stringify(subset.offending),
-      });
-    }
     if (grantedPermissions.length === 0) {
       return sendJson(res, 400, {
         error: 'invalid_scope',
         error_description: 'grantedPermissions must keep at least one permission (refuse instead)',
       });
+    }
+    // THE consent-grant rule (single point, shared with the cmc accept
+    // path): granted ⊆ offered; without the offer's allowUserChoice the
+    // grant is ALL OR NOTHING; with it, entries annotated mandatory
+    // must still be granted.
+    const offeredConsent = normalizePermissions(payload.offer.permissions, { consent: true });
+    const check = checkConsentGrant(grantedPermissions, offeredConsent, payload.offer.allowUserChoice === true);
+    if (!check.ok) {
+      const description =
+        check.reason === 'choice-not-allowed'
+          ? 'this consent is all-or-nothing (the offer does not allow user choice); missing: ' + JSON.stringify(check.offending)
+          : check.reason === 'mandatory-refused'
+            ? 'mandatory permissions cannot be unticked; missing: ' + JSON.stringify(check.offending)
+            : 'grantedPermissions must be a subset of the offered permissions; offending: ' + JSON.stringify(check.offending);
+      return sendJson(res, 400, { error: 'invalid_scope', error_description: description });
     }
     // The cmc:<offer-name> token, echoed as the RFC scope value.
     const granted: string[] = payload.scope;

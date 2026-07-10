@@ -122,6 +122,10 @@ function validateRequest (content: unknown): ValidationResult {
     if (r.expiresAt != null && typeof r.expiresAt !== 'number') {
       errors.push('content.request.expiresAt: must be a number (unix timestamp) if present');
     }
+
+    if (r.allowUserChoice != null && typeof r.allowUserChoice !== 'boolean') {
+      errors.push('content.request.allowUserChoice: must be a boolean if present');
+    }
   }
 
   // requesterMeta: optional, object

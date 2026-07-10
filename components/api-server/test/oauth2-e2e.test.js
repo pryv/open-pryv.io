@@ -45,8 +45,11 @@ const CONSENT_URL = 'https://auth.test/oauth2-authorize';
 const OFFER_NAME = 'e2e';
 
 // Full-lexicon offer: two stream permissions + a feature permission.
+// Cherry-picking is enabled on this offer (`allowUserChoice: true` —
+// the DEFAULT all-or-nothing behavior has its own offer + cases below);
+// `health` is mandatory (can never be unticked).
 const OFFER_PERMISSIONS = [
-  { streamId: 'health', level: 'read' },
+  { streamId: 'health', level: 'read', mandatory: true },
   { streamId: 'diary', level: 'contribute' },
   { feature: 'selfRevoke', setting: 'forbidden' },
 ];
@@ -54,6 +57,7 @@ const DEFAULT_GRANTED = [
   { streamId: 'health', level: 'read' },
   { feature: 'selfRevoke', setting: 'forbidden' },
 ];
+const AON_OFFER_NAME = 'e2e-aon'; // all-or-nothing sibling offer (no allowUserChoice)
 
 function pkce () {
   const verifier = base64url(crypto.randomBytes(32));
@@ -112,29 +116,45 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
     await appUser.session(appToken);
     await ensureStream('/' + appUsername + '/streams', appToken,
       { id: ':_cmc:apps:e2e-oauth', parentId: ':_cmc:apps', name: 'OAuth e2e offers' });
-    const offerRes = await coreRequest
-      .post('/' + appUsername + '/events')
-      .set('Authorization', appToken)
-      .send({
-        streamIds: [':_cmc:apps:e2e-oauth'],
-        type: 'consent/request-cmc',
-        content: {
-          to: null,
-          capabilityRequested: true,
-          capability: { mode: 'open-link' },
-          request: {
-            title: { en: 'OAuth e2e offer' },
-            description: { en: 'Share health data with the e2e app.' },
-            consent: { en: 'I agree to share the listed data.' },
-            permissions: OFFER_PERMISSIONS,
+    async function publishOffer (request) {
+      const res = await coreRequest
+        .post('/' + appUsername + '/events')
+        .set('Authorization', appToken)
+        .send({
+          streamIds: [':_cmc:apps:e2e-oauth'],
+          type: 'consent/request-cmc',
+          content: {
+            to: null,
+            capabilityRequested: true,
+            capability: { mode: 'open-link' },
+            request,
+            requesterMeta: { displayName: 'OAuth E2E Test App', appId: 'oauth-e2e' },
           },
-          requesterMeta: { displayName: 'OAuth E2E Test App', appId: 'oauth-e2e' },
-        },
-      });
-    assert.equal(offerRes.status, 201, JSON.stringify(offerRes.body));
-    capabilityUrl = offerRes.body?.event?.content?.capabilityUrl;
-    assert.ok(typeof capabilityUrl === 'string' && capabilityUrl.length > 0,
-      'capabilityUrl should be stamped synchronously: ' + JSON.stringify(offerRes.body?.event?.content));
+        });
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      const url = res.body?.event?.content?.capabilityUrl;
+      assert.ok(typeof url === 'string' && url.length > 0,
+        'capabilityUrl should be stamped synchronously: ' + JSON.stringify(res.body?.event?.content));
+      return url;
+    }
+
+    capabilityUrl = await publishOffer({
+      title: { en: 'OAuth e2e offer' },
+      description: { en: 'Share health data with the e2e app.' },
+      consent: { en: 'I agree to share the listed data.' },
+      permissions: OFFER_PERMISSIONS,
+      allowUserChoice: true,
+    });
+    // Sibling offer WITHOUT allowUserChoice — the all-or-nothing default.
+    const aonCapabilityUrl = await publishOffer({
+      title: { en: 'OAuth e2e all-or-nothing offer' },
+      description: { en: 'Take it or leave it.' },
+      consent: { en: 'I agree to share ALL the listed data.' },
+      permissions: [
+        { streamId: 'health', level: 'read' },
+        { streamId: 'diary', level: 'contribute' },
+      ],
+    });
 
     // Register the OAuth client directly in PlatformDB — no CLI roundtrip
     // needed for the test, the wire shape is what matters.
@@ -143,8 +163,11 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
     await storage.setClient(platformDB, {
       clientId,
       redirectUris: [REDIRECT_URI],
-      scope: ['cmc:' + OFFER_NAME],
-      cmcOffers: { [OFFER_NAME]: { capabilityUrl } },
+      scope: ['cmc:' + OFFER_NAME, 'cmc:' + AON_OFFER_NAME],
+      cmcOffers: {
+        [OFFER_NAME]: { capabilityUrl },
+        [AON_OFFER_NAME]: { capabilityUrl: aonCapabilityUrl },
+      },
       grantTypes: ['authorization_code'],
       clientName: 'OAuth E2E Test App',
       updatedAt: Date.now(),
@@ -301,6 +324,33 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         expectAcceptStatus: 400,
       });
       assert.equal(r.acceptRes.body.error, 'invalid_scope');
+    });
+
+    it('[OE05] DEFAULT all-or-nothing: partial grant on an offer without allowUserChoice → 400; full grant → 200', async function () {
+      const partial = await runFullFlow({
+        scope: 'cmc:' + AON_OFFER_NAME,
+        grantedPermissions: [{ streamId: 'health', level: 'read' }],
+        expectAcceptStatus: 400,
+      });
+      assert.equal(partial.acceptRes.body.error, 'invalid_scope');
+      assert.match(partial.acceptRes.body.error_description, /all-or-nothing/);
+      const full = await runFullFlow({
+        scope: 'cmc:' + AON_OFFER_NAME,
+        grantedPermissions: [
+          { streamId: 'health', level: 'read' },
+          { streamId: 'diary', level: 'contribute' },
+        ],
+      });
+      assert.equal(full.tokenRes.status, 200, JSON.stringify(full.tokenRes.body));
+    });
+
+    it('[OE06] a mandatory entry cannot be unticked even with allowUserChoice → 400 invalid_scope', async function () {
+      const r = await runFullFlow({
+        grantedPermissions: [{ streamId: 'diary', level: 'contribute' }], // drops mandatory health
+        expectAcceptStatus: 400,
+      });
+      assert.equal(r.acceptRes.body.error, 'invalid_scope');
+      assert.match(r.acceptRes.body.error_description, /mandatory/);
     });
   });
 

@@ -91,4 +91,58 @@ describe('[PSET] accesses permissionSet', () => {
       assert.equal(r3.ok, false);
     });
   });
+
+  describe('[PSET-C] consent annotations + checkConsentGrant', () => {
+    const offered = [
+      { streamId: 'health', level: 'read', mandatory: true },
+      { streamId: 'diary', level: 'contribute' },
+      { feature: 'selfRevoke', setting: 'forbidden', mandatory: true },
+    ];
+    const consentOffered = ps.normalizePermissions(offered, { consent: true });
+
+    it('[PS07] consent form preserves mandatory; plain form and strip drop it', () => {
+      assert.deepEqual(consentOffered, offered);
+      assert.deepEqual(ps.normalizePermissions(offered), [
+        { streamId: 'health', level: 'read' },
+        { streamId: 'diary', level: 'contribute' },
+        { feature: 'selfRevoke', setting: 'forbidden' },
+      ]);
+      assert.deepEqual(ps.stripConsentAnnotations(consentOffered),
+        ps.normalizePermissions(offered));
+    });
+
+    it('[PS08] default (no user choice) is ALL OR NOTHING', () => {
+      const full = ps.normalizePermissions(offered);
+      assert.deepEqual(ps.checkConsentGrant(full, consentOffered, false), { ok: true });
+      const partial = [{ streamId: 'health', level: 'read' }, { feature: 'selfRevoke', setting: 'forbidden' }];
+      const r = ps.checkConsentGrant(partial, consentOffered, false);
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'choice-not-allowed');
+      assert.deepEqual(r.offending, [{ streamId: 'diary', level: 'contribute' }]);
+    });
+
+    it('[PS09] with user choice, optional entries may be dropped but mandatory ones may not', () => {
+      const keptMandatoryOnly = [
+        { streamId: 'health', level: 'read' },
+        { feature: 'selfRevoke', setting: 'forbidden' },
+      ];
+      assert.deepEqual(ps.checkConsentGrant(keptMandatoryOnly, consentOffered, true), { ok: true });
+      const droppedMandatory = [{ streamId: 'diary', level: 'contribute' }];
+      const r = ps.checkConsentGrant(droppedMandatory, consentOffered, true);
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'mandatory-refused');
+      assert.deepEqual(r.offending, [
+        { streamId: 'health', level: 'read' },
+        { feature: 'selfRevoke', setting: 'forbidden' },
+      ]);
+    });
+
+    it('[PS10] granted outside the offer is not-subset regardless of the choice flag', () => {
+      for (const allow of [false, true]) {
+        const r = ps.checkConsentGrant([{ streamId: 'other', level: 'read' }], consentOffered, allow);
+        assert.equal(r.ok, false);
+        assert.equal(r.reason, 'not-subset');
+      }
+    });
+  });
 });

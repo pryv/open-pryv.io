@@ -150,11 +150,12 @@ async function readOfferViaCapability (params: {
 }
 
 /**
- * Permissions to grant on the recipient's data-grant access, derived from
- * the offer event's content.request.permissions. Validated against the
- * full accesses.create permission lexicon (stream AND feature
- * permissions, e.g. selfRevoke); deeper CMC chain rules are checked on
- * the requester's side.
+ * Permissions offered by the request, derived from the offer event's
+ * content.request.permissions. Validated against the full
+ * accesses.create permission lexicon (stream AND feature permissions,
+ * e.g. selfRevoke). Returned in CONSENT form — the `mandatory`
+ * annotation is preserved for grant validation and consent display;
+ * strip it (permissionSet.stripConsentAnnotations) before minting.
  */
 function permissionsFromOffer (offerEvent: OfferEvent): PermissionLike[] {
   const perms = offerEvent?.content?.request?.permissions;
@@ -164,12 +165,17 @@ function permissionsFromOffer (offerEvent: OfferEvent): PermissionLike[] {
     throw err;
   }
   try {
-    return permissionSet.normalizePermissions(perms);
+    return permissionSet.normalizePermissions(perms, { consent: true });
   } catch (e: unknown) {
     const err: ApiError = new Error('cmc/accept: offer permissions invalid: ' + (e as Error).message);
     err.id = CmcErrorIds.OFFER_INVALID_PERMISSIONS;
     throw err;
   }
+}
+
+/** The offer's user-choice flag — default FALSE (all-or-nothing). */
+function allowsUserChoice (offerEvent: OfferEvent): boolean {
+  return (offerEvent?.content?.request as { allowUserChoice?: unknown } | undefined)?.allowUserChoice === true;
 }
 
 /**
@@ -207,8 +213,8 @@ function buildDataGrantPayload (params: {
   const meta = offerEvent?.content?.requesterMeta ?? {};
   const computedName = accessName ??
     ('cmc:' + (meta.appId || 'app') + ':' + counterparty.username + '@' + counterparty.host);
-  const offeredPerms = permissionsFromOffer(offerEvent);
-  let basePerms = offeredPerms;
+  const offeredPerms = permissionsFromOffer(offerEvent); // consent form (mandatory preserved)
+  let basePerms: PermissionLike[];
   if (grantedPermissions != null) {
     let normalized: PermissionLike[];
     try {
@@ -218,16 +224,31 @@ function buildDataGrantPayload (params: {
       err.id = CmcErrorIds.GRANTED_PERMISSIONS_NOT_SUBSET;
       throw err;
     }
-    const subset = permissionSet.isPermissionSubset(normalized, offeredPerms);
-    if (!subset.ok || normalized.length === 0) {
-      const err: ApiError = new Error(
-        'cmc/accept: grantedPermissions must be a non-empty subset of the offer\'s permissions' +
-        (subset.ok ? '' : '; offending: ' + JSON.stringify(subset.offending))
-      );
+    if (normalized.length === 0) {
+      const err: ApiError = new Error('cmc/accept: grantedPermissions must not be empty (refuse instead)');
       err.id = CmcErrorIds.GRANTED_PERMISSIONS_NOT_SUBSET;
       throw err;
     }
+    // THE consent-grant rule (single point): granted ⊆ offered; without
+    // request.allowUserChoice the grant is ALL OR NOTHING; with it,
+    // mandatory entries must still be granted.
+    const check = permissionSet.checkConsentGrant(normalized, offeredPerms, allowsUserChoice(offerEvent));
+    if (!check.ok) {
+      const err: ApiError = new Error(
+        'cmc/accept: grantedPermissions rejected (' + check.reason + '); offending: ' +
+        JSON.stringify(check.offending)
+      );
+      err.id = check.reason === 'choice-not-allowed'
+        ? CmcErrorIds.USER_CHOICE_NOT_ALLOWED
+        : (check.reason === 'mandatory-refused'
+            ? CmcErrorIds.MANDATORY_PERMISSION_REFUSED
+            : CmcErrorIds.GRANTED_PERMISSIONS_NOT_SUBSET);
+      throw err;
+    }
     basePerms = normalized;
+  } else {
+    // No explicit grant → the whole offer, sans consent annotations.
+    basePerms = permissionSet.stripConsentAnnotations(offeredPerms);
   }
   const allPerms = Array.isArray(extraPermissions) && extraPermissions.length > 0
     ? basePerms.concat(extraPermissions)
@@ -346,6 +367,7 @@ async function safeJson (res: FetchResponse): Promise<unknown> {
 export {
   readOfferViaCapability,
   permissionsFromOffer,
+  allowsUserChoice,
   buildDataGrantPayload,
   deliverAcceptViaCapability,
   deliverRefuseViaCapability,

@@ -70,6 +70,18 @@ The `scope` parameter carries exactly **one consent-offer reference**,
    texts. The event's `content.capability.mode` must be `open-link` so many
    users can accept the same offer. The plugin stamps the capability URL on
    the event.
+
+   **All-or-nothing vs. user choice.** By **default** (`request.allowUserChoice`
+   absent or `false`) the consent is **all-or-nothing**: the consent screen
+   shows the permissions locked and the user may only accept the whole set or
+   deny. Set `request.allowUserChoice: true` to let the user untick individual
+   entries — except entries flagged `"mandatory": true`, which stay locked
+   (the app cannot run without them, so the user's only alternative is to
+   deny). `mandatory` and `allowUserChoice` are consent-layer only — they
+   never appear on the minted access. The server enforces the rule on
+   `/oauth2/authorize/accept` (all-or-nothing → `granted == offered`; with
+   choice → `granted ⊆ offered` AND all `mandatory` entries present),
+   returning `invalid_scope` otherwise.
 2. **The operator registers the offer on the client**:
    `--cmc-offer <name>=<capabilityUrl>` together with `--scope cmc:<name>`.
 3. **At `GET /oauth2/authorize`** the core resolves the offer through its

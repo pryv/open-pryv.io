@@ -29,7 +29,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-const { readOfferViaCapability, permissionsFromOffer } =
+const { readOfferViaCapability, permissionsFromOffer, allowsUserChoice } =
   require('cmc/src/acceptOrchestration.ts');
 
 export type LocalizableText = Record<string, string>;
@@ -43,7 +43,13 @@ export type ResolvedOffer = {
    * to this offer (`clientData.cmc.offerEventId`), used to detect a
    * re-authorization by the same user. */
   offerEventId: string | null;
-  permissions: Array<Record<string, unknown>>; // full lexicon (stream + feature entries)
+  /** Consent form: full lexicon (stream + feature entries), with the
+   * per-entry `mandatory` annotation preserved for display + grant
+   * validation. */
+  permissions: Array<Record<string, unknown>>;
+  /** Default FALSE — the consent is ALL OR NOTHING; true lets the user
+   * cherry-pick entries (mandatory ones stay locked). */
+  allowUserChoice: boolean;
   title?: LocalizableText;
   description?: LocalizableText;
   consent?: LocalizableText;
@@ -106,6 +112,7 @@ export async function resolveOffer (params: {
     capabilityId: typeof content.capabilityId === 'string' ? content.capabilityId : null,
     offerEventId: typeof offerEvent?.id === 'string' ? offerEvent.id : null,
     permissions,
+    allowUserChoice: allowsUserChoice(offerEvent),
   };
   if (isTextMap(request.title)) resolved.title = request.title;
   if (isTextMap(request.description)) resolved.description = request.description;
