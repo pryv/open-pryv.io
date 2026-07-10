@@ -66,6 +66,11 @@ const CmcErrorIds = {
   // Capability resolved but the offer stream held more than one event —
   // protocol invariant violation; ops investigation needed.
   CAPABILITY_MULTIPLE_OFFERS: 'cmc-capability-multiple-offers',
+  // The capability read returned a response body larger than the hard
+  // ceiling (a capability endpoint is trusted to return a single small
+  // offer event; an oversize body is a resource-exhaustion / misdirected
+  // fetch signal). The read is aborted and rejected rather than buffered.
+  CAPABILITY_OFFER_TOO_LARGE: 'cmc-capability-offer-too-large',
   // Caller's `request.expiresAt` resolves to a TTL outside the
   // platform-allowed bounds [60s, 30d]. Either the timestamp is in the
   // past / too close to now, or it's farther than 30 days out. Plugin

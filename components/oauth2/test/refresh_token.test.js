@@ -34,8 +34,12 @@ function fakeConfig (overrides = {}) {
   return { get: (k) => m[k] };
 }
 
-function fakePlatform () {
+function fakePlatform (clients = {}) {
   const state = new Map();
+  const kv = new Map();
+  for (const [id, meta] of Object.entries(clients)) {
+    kv.set('oauth-client/' + id, JSON.stringify({ clientId: id, ...meta }));
+  }
   return {
     async setAccessState (k, v, exp) { state.set(k, { value: v, expiresAt: exp }); },
     async getAccessState (k) {
@@ -45,6 +49,10 @@ function fakePlatform () {
       return e;
     },
     async deleteAccessState (k) { state.delete(k); },
+    async setPlatformKv (k, v) { kv.set(k, v); },
+    async getPlatformKv (k) { return kv.has(k) ? kv.get(k) : null; },
+    async deletePlatformKv (k) { kv.delete(k); },
+    async listPlatformKvKeys (p) { return Array.from(kv.keys()).filter((k) => k.startsWith(p)); },
     _state: state,
   };
 }
@@ -224,6 +232,84 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
       await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-MA1', client_id: 'myapp' } }, res);
       assert.equal(res.statusCode, 500);
       assert.equal(res.body.error, 'server_error');
+    });
+    it('[OTR-MA2] internal error message is NOT echoed to the client (generic description)', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-MA2');
+      const failingMint = async () => { throw new Error('secret-internal-detail-xyz'); };
+      const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: failingMint });
+      const res = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-MA2', client_id: 'myapp' } }, res);
+      assert.equal(res.statusCode, 500);
+      assert.ok(!String(res.body.error_description || '').includes('secret-internal-detail-xyz'),
+        'internal error text must not leak into error_description');
+    });
+  });
+
+  describe('[OAUTH-TKN-RT-CAP-NOMINT] cap enforced before minting', () => {
+    it('[OTR-C2] absolute cap already past → mint is NOT called (no orphan access)', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-C2', {
+        expiresAt: Date.now() + 3600 * 1000,
+        absoluteExpiresAt: Date.now() - 1000,
+      });
+      let minted = 0;
+      const spyMint = async (...args) => { minted++; return MINT_REFRESHED_FAKE(...args); };
+      const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: spyMint });
+      const res = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-C2', client_id: 'myapp' } }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_grant');
+      assert.equal(minted, 0, 'no access must be minted when the absolute cap is exceeded');
+    });
+  });
+
+  describe('[OAUTH-TKN-RT-CONF] confidential-client authentication', () => {
+    const { mintSecret } = require('../src/clientSecret.ts');
+    function basicAuth (id, secret) {
+      return 'Basic ' + Buffer.from(id + ':' + secret).toString('base64');
+    }
+    it('[OTR-CF1] confidential client refresh without secret → 401 invalid_client', async () => {
+      const { hash } = await mintSecret();
+      const platform = fakePlatform({ myapp: { clientSecretHash: hash } });
+      await seedRefresh(platform, 'RT-CF1');
+      const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE });
+      const res = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-CF1', client_id: 'myapp' } }, res);
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.body.error, 'invalid_client');
+    });
+    it('[OTR-CF2] confidential client refresh with correct secret → 200', async () => {
+      const { plaintext, hash } = await mintSecret();
+      const platform = fakePlatform({ myapp: { clientSecretHash: hash } });
+      await seedRefresh(platform, 'RT-CF2');
+      const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE });
+      const res = fakeRes();
+      await handler({
+        body: { grant_type: 'refresh_token', refresh_token: 'RT-CF2', client_id: 'myapp' },
+        headers: { authorization: basicAuth('myapp', plaintext) },
+      }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    });
+    it('[OTR-CF3] confidential client refresh with wrong secret → 401 invalid_client', async () => {
+      const { hash } = await mintSecret();
+      const platform = fakePlatform({ myapp: { clientSecretHash: hash } });
+      await seedRefresh(platform, 'RT-CF3');
+      const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE });
+      const res = fakeRes();
+      await handler({
+        body: { grant_type: 'refresh_token', refresh_token: 'RT-CF3', client_id: 'myapp', client_secret: 'wrong' },
+      }, res);
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.body.error, 'invalid_client');
+    });
+    it('[OTR-CF4] public client (no secret on file) refresh needs no secret → 200', async () => {
+      const platform = fakePlatform({ myapp: {} }); // registered, but no clientSecretHash
+      await seedRefresh(platform, 'RT-CF4');
+      const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE });
+      const res = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-CF4', client_id: 'myapp' } }, res);
+      assert.equal(res.statusCode, 200);
     });
   });
 });

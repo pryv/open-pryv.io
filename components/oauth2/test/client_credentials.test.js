@@ -365,6 +365,29 @@ describe('[OAUTH-TKN-CC] /oauth2/token — client_credentials grant', () => {
     });
   });
 
+  describe('[OAUTH-TKN-CC-MINT] mint failure', () => {
+    it('[OTC-MF1] mintClientAccess throws → 500 with generic description (no internal leak)', async () => {
+      const c = await makeClient();
+      const platform = fakePlatform({ myapp: c.meta });
+      const failingMint = async () => { throw new Error('secret-internal-detail-xyz'); };
+      const handler = handleToken({
+        config: fakeConfig(),
+        platform,
+        mintClientAccess: failingMint,
+        resolveAccountUserId: RESOLVE_ACCOUNT_FAKE,
+      });
+      const res = fakeRes();
+      await handler({
+        body: { grant_type: 'client_credentials' },
+        headers: { authorization: basicAuth('myapp', c.secret) },
+      }, res);
+      assert.equal(res.statusCode, 500);
+      assert.equal(res.body.error, 'server_error');
+      assert.ok(!String(res.body.error_description || '').includes('secret-internal-detail-xyz'),
+        'internal error text must not leak into error_description');
+    });
+  });
+
   describe('[OAUTH-TKN-CC-DISPATCH] dispatcher', () => {
     it('[OTC-D1] client_credentials without callbacks wired → 501 unsupported_grant_type', async () => {
       const handler = handleToken({ config: fakeConfig(), platform: fakePlatform() });

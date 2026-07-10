@@ -77,7 +77,7 @@ export function handleToken (deps: TokenDeps) {
     if (grantType === 'authorization_code') {
       outcome = await handleAuthorizationCode(
         { config: deps.config, platform: deps.platform },
-        body,
+        { ...body, basic },
       );
     } else if (grantType === 'refresh_token') {
       if (typeof deps.mintRefreshedAccess !== 'function') {
@@ -85,7 +85,7 @@ export function handleToken (deps: TokenDeps) {
       } else {
         outcome = await handleRefreshToken(
           { config: deps.config, platform: deps.platform, mintRefreshedAccess: deps.mintRefreshedAccess },
-          body,
+          { ...body, basic },
         );
       }
     } else if (grantType === 'client_credentials') {

@@ -40,6 +40,9 @@ const require = createRequire(import.meta.url);
 const { generateToken } = require('../secureToken.ts');
 const storage = require('../storage.ts');
 const { audit } = require('../audit.ts');
+const { logServerError } = require('../serverLog.ts');
+const { getClient } = require('../clientRegistry.ts');
+const { authenticateClient } = require('../clientSecret.ts');
 
 /**
  * Mint a new app access for the resolved (userId, clientId, scope)
@@ -76,6 +79,10 @@ export type RefreshGrantParams = {
   refresh_token?: string;
   client_id?: string;
   scope?: string; // RFC 6749 §6 permits narrowing on refresh; ignored for now
+  /** Confidential-client auth (client_secret_post). */
+  client_secret?: string;
+  /** Decoded Authorization: Basic credentials, when present (client_secret_basic). */
+  basic?: { client_id: string; client_secret: string } | null;
 };
 
 function lifetimes (config: { get (key: string): unknown }) {
@@ -122,9 +129,34 @@ export async function handleRefreshToken (
     return { ok: false, status: 400, error: 'invalid_grant', description: 'client_id mismatch' };
   }
 
-  // Mint a fresh access via the injected callback.
+  // Confidential-client authentication (RFC 6749 §6 refers to §3.2.1):
+  // a client that has a secret on file must authenticate on refresh too,
+  // consistent with the authorization_code + client_credentials paths.
+  // Public clients (no secret on file) rely on refresh-token rotation +
+  // reuse detection.
+  if (params.basic != null && params.basic.client_id !== params.client_id) {
+    return { ok: false, status: 401, error: 'invalid_client', description: 'client_id mismatch between request and Basic authorization' };
+  }
+  const client = await getClient(deps.platform, params.client_id);
+  const presentedSecret = params.basic?.client_secret ?? params.client_secret;
+  const auth = await authenticateClient({ client, presentedSecret });
+  if (!auth.ok) {
+    return { ok: false, status: auth.status, error: auth.error, description: auth.description };
+  }
+
+  // Enforce the absolute-lifetime cap BEFORE minting anything. Checking
+  // after the mint would leave an orphan access row behind on a
+  // cap-exceeded refresh (the access is minted, then the chain is
+  // refused). The row is already consumed above (single-use); a client
+  // past the ceiling must re-consent for a new chain.
   const { accessTokenTTL, refreshTokenTTL } = lifetimes(deps.config);
   const now = Date.now();
+  const newRefreshExpiresAt = Math.min(now + refreshTokenTTL * 1000, row.absoluteExpiresAt);
+  if (newRefreshExpiresAt <= now) {
+    return { ok: false, status: 400, error: 'invalid_grant', description: 'refresh-token absolute lifetime exceeded' };
+  }
+
+  // Mint a fresh access via the injected callback.
   const accessExpiresAt = now + accessTokenTTL * 1000;
   let access;
   try {
@@ -146,24 +178,18 @@ export async function handleRefreshToken (
       });
       return { ok: false, status: 400, error: 'invalid_grant', description: 'consent has been revoked' };
     }
+    logServerError('refresh_token: mintRefreshedAccess failed', err);
     return {
       ok: false,
       status: 500,
       error: 'server_error',
-      description: 'failed to mint refreshed access: ' + (err && err.message ? err.message : String(err)),
+      description: 'failed to mint refreshed access',
     };
   }
 
   // Mint a new refresh token. Sliding TTL, but never past the original
   // absolute cap (RFC 6749 §6 — refresh chain ≤ original consent ceiling).
   const newRefresh = generateToken();
-  const newRefreshExpiresAt = Math.min(now + refreshTokenTTL * 1000, row.absoluteExpiresAt);
-  if (newRefreshExpiresAt <= now) {
-    // Absolute cap already past — refuse to mint a new one. The fresh
-    // access we just created is still returned; the client will need to
-    // re-consent for the next chain.
-    return { ok: false, status: 400, error: 'invalid_grant', description: 'refresh-token absolute lifetime exceeded' };
-  }
   await storage.setRefresh(deps.platform, coreId, newRefresh, {
     clientId: row.clientId,
     userId: row.userId,

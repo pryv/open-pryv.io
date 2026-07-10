@@ -55,13 +55,33 @@ type OfferEvent = {
 type FetchResponse = {
   status: number;
   json: () => Promise<unknown>;
+  text?: () => Promise<string>;
+  headers?: { get?: (name: string) => string | null };
+  body?: {
+    getReader?: () => {
+      read: () => Promise<{ done: boolean; value?: Uint8Array }>;
+      cancel: (reason?: unknown) => Promise<void> | void;
+    };
+  } | null;
 };
 type FetchInit = {
   method?: string;
   headers?: Record<string, string>;
   body?: unknown;
   signal?: AbortSignal | null;
+  /** A capability URL must resolve directly — never follow redirects
+   * (a 3xx to an attacker-chosen host would turn the trusted outbound
+   * fetch into an SSRF/open-redirect primitive). */
+  redirect?: 'error' | 'follow' | 'manual';
 };
+
+/**
+ * Hard ceiling on a capability read's response body. A legitimate offer
+ * is a single small event (a few KB at most); anything larger is a
+ * resource-exhaustion or misdirected-fetch signal and is rejected
+ * instead of buffered into memory.
+ */
+const MAX_OFFER_BODY_BYTES = 256 * 1024;
 type CapabilityDeps = {
   fetch: (url: string, init?: FetchInit) => Promise<FetchResponse>;
   timeoutMs?: number;
@@ -105,6 +125,7 @@ async function readOfferViaCapability (params: {
       method: 'GET',
       headers: { authorization: token, accept: 'application/json' },
       signal: controller?.signal,
+      redirect: 'error',
     });
     if (timer != null) clearTimeout(timer);
     if (res.status < 200 || res.status >= 300) {
@@ -123,7 +144,7 @@ async function readOfferViaCapability (params: {
       }
       throw err;
     }
-    const body = await safeJson(res) as { events?: OfferEvent[] } | null;
+    const body = await readOfferBody(res) as { events?: OfferEvent[] } | null;
     const events = body?.events ?? [];
     if (events.length === 0) {
       const err: ApiError = new Error('cmc/accept: capability returned no offer events');
@@ -360,8 +381,78 @@ async function deliverRefuseViaCapability (params: {
   return { ok: r.ok, response: r };
 }
 
+/**
+ * Read a response body as text with a hard byte ceiling. Prefers a
+ * streaming reader (real fetch) so an oversize body is aborted mid-read
+ * and never fully buffered; falls back to a `content-length` short-
+ * circuit and finally to `text()`/`json()` for fakes without a stream.
+ *
+ * Returns the body text, or `null` when the response exposes no readable
+ * text interface (the caller then falls back to `res.json()`). Throws an
+ * `ApiError` (`CAPABILITY_OFFER_TOO_LARGE`) when the body exceeds
+ * `maxBytes`.
+ */
+async function readCappedText (res: FetchResponse, maxBytes: number): Promise<string | null> {
+  const cl = res.headers?.get?.('content-length');
+  if (cl != null && cl !== '') {
+    const declared = Number(cl);
+    if (Number.isFinite(declared) && declared > maxBytes) throw offerTooLarge();
+  }
+  const reader = res.body?.getReader?.();
+  if (reader != null) {
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value != null) {
+        received += value.byteLength;
+        if (received > maxBytes) {
+          try { await reader.cancel('cmc/accept: offer body exceeds cap'); } catch (_e) { /* ignore */ }
+          throw offerTooLarge();
+        }
+        chunks.push(value);
+      }
+    }
+    return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf8');
+  }
+  if (typeof res.text === 'function') {
+    const text = await res.text();
+    if (Buffer.byteLength(text, 'utf8') > maxBytes) throw offerTooLarge();
+    return text;
+  }
+  return null;
+}
+
+function offerTooLarge (): ApiError {
+  const err: ApiError = new Error(
+    'cmc/accept: capability response body exceeds ' + MAX_OFFER_BODY_BYTES + ' bytes');
+  err.id = CmcErrorIds.CAPABILITY_OFFER_TOO_LARGE;
+  return err;
+}
+
+/**
+ * Capped read of the success-path offer body. Propagates the oversize
+ * rejection; a parse failure degrades to `null` (→ empty-offer path,
+ * matching the prior `safeJson` behaviour).
+ */
+async function readOfferBody (res: FetchResponse): Promise<unknown> {
+  const text = await readCappedText(res, MAX_OFFER_BODY_BYTES);
+  if (text == null) {
+    try { return await res.json(); } catch (_e) { return null; }
+  }
+  if (text.length === 0) return null;
+  try { return JSON.parse(text); } catch (_e) { return null; }
+}
+
+/** Capped read that swallows every failure (used on the error path,
+ * where the body is diagnostic only and must never mask the status). */
 async function safeJson (res: FetchResponse): Promise<unknown> {
-  try { return await res.json(); } catch (_e) { return null; }
+  try {
+    const text = await readCappedText(res, MAX_OFFER_BODY_BYTES);
+    if (text == null) return await res.json();
+    return text.length ? JSON.parse(text) : null;
+  } catch (_e) { return null; }
 }
 
 export {

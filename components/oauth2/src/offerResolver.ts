@@ -71,6 +71,33 @@ type ResolveDeps = {
 };
 
 /**
+ * Upper bounds on what an offer may embed into the HMAC-signed state
+ * that travels as a redirect URL parameter. The signed state is a
+ * mandatory hop of every authorization; an over-large offer would blow
+ * the URL length budget (availability) and inflate every downstream
+ * verify. Enforced at resolve time — an offer past either bound is
+ * rejected as an invalid scope rather than propagated.
+ */
+const MAX_PERMISSION_ENTRIES = 100;
+const MAX_EMBEDDED_TEXT_BYTES = 8 * 1024;
+
+/**
+ * Short-lived, per-offer resolution cache. The offer read is an
+ * unauthenticated outbound fetch triggered by `GET /oauth2/authorize`
+ * with any valid client_id; caching the resolved result for a few
+ * seconds blunts amplification (a burst of authorize calls for the same
+ * client collapses to one outbound read) without meaningfully staling
+ * the offer. Keyed by offer name + capability URL.
+ */
+const OFFER_CACHE_TTL_MS = 10 * 1000;
+const offerCache = new Map<string, { expiresAt: number; offer: ResolvedOffer }>();
+
+/** Clear the offer-resolution cache (test seam / operator reset). */
+export function clearOfferCache (): void {
+  offerCache.clear();
+}
+
+/**
  * Resolve one registered offer reference. Throws `OfferResolveError`
  * (mapped to RFC `invalid_scope` at the route edge) when the offer is
  * unreachable, expired, or malformed.
@@ -82,6 +109,13 @@ export async function resolveOffer (params: {
 }): Promise<ResolvedOffer> {
   const { offerName, capabilityUrl } = params;
   const fetchFn = params.deps?.fetch ?? fetch;
+
+  const cacheKey = offerName + '\n' + capabilityUrl;
+  const cached = offerCache.get(cacheKey);
+  if (cached != null) {
+    if (cached.expiresAt > Date.now()) return cached.offer;
+    offerCache.delete(cacheKey);
+  }
 
   let offerEvent;
   try {
@@ -120,7 +154,39 @@ export async function resolveOffer (params: {
   if (content.requesterMeta != null && typeof content.requesterMeta === 'object') {
     resolved.requesterMeta = content.requesterMeta as Record<string, unknown>;
   }
+
+  enforceEmbedBounds(offerName, resolved);
+
+  offerCache.set(cacheKey, { expiresAt: Date.now() + OFFER_CACHE_TTL_MS, offer: resolved });
   return resolved;
+}
+
+/**
+ * Reject an offer that would embed more than the allowed number of
+ * permission entries or more than the allowed volume of consent /
+ * requester text into the signed state. Belt-and-suspenders with the
+ * capability-read body cap: that bounds the wire response; this bounds
+ * what actually travels onward in the signed URL parameter.
+ */
+function enforceEmbedBounds (offerName: string, resolved: ResolvedOffer): void {
+  if (resolved.permissions.length > MAX_PERMISSION_ENTRIES) {
+    throw new OfferResolveError(
+      `offer "${offerName}" carries too many permission entries ` +
+      `(${resolved.permissions.length} > ${MAX_PERMISSION_ENTRIES})`,
+      'cmc-offer-too-large');
+  }
+  const textBytes = Buffer.byteLength(JSON.stringify({
+    title: resolved.title ?? null,
+    description: resolved.description ?? null,
+    consent: resolved.consent ?? null,
+    requesterMeta: resolved.requesterMeta ?? null,
+  }), 'utf8');
+  if (textBytes > MAX_EMBEDDED_TEXT_BYTES) {
+    throw new OfferResolveError(
+      `offer "${offerName}" embeds too much text ` +
+      `(${textBytes} > ${MAX_EMBEDDED_TEXT_BYTES} bytes)`,
+      'cmc-offer-too-large');
+  }
 }
 
 function isTextMap (v: unknown): v is LocalizableText {

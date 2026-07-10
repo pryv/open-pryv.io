@@ -58,6 +58,46 @@ export async function verifySecret (presented: string, hash: string): Promise<bo
   }
 }
 
+/**
+ * Outcome of a client-authentication check at the token endpoint.
+ * `ok: false` carries the RFC 6749 fields the grant returns verbatim.
+ */
+export type ClientAuthResult =
+  | { ok: true }
+  | { ok: false; status: number; error: string; description: string };
+
+/**
+ * Authenticate a client at the token endpoint per its confidentiality.
+ *
+ * A client that has a `clientSecretHash` on file is CONFIDENTIAL: it
+ * must present a matching `client_secret` (advertised as
+ * `client_secret_basic`). A client with no secret on file is PUBLIC:
+ * PKCE is its sole protection and no secret is required (advertised as
+ * `none`). This makes every grant's behaviour match the discovery
+ * document's `token_endpoint_auth_methods_supported`.
+ *
+ * `client` may be null (no cached registration) — treated as public, so
+ * callers that don't (yet) have a registration on the exchange path keep
+ * working while confidential clients are still verified once registered.
+ */
+export async function authenticateClient (params: {
+  client: { clientSecretHash?: unknown } | null | undefined;
+  presentedSecret: string | undefined;
+}): Promise<ClientAuthResult> {
+  const hash = params.client?.clientSecretHash;
+  if (typeof hash !== 'string' || hash.length === 0) {
+    return { ok: true }; // public client — PKCE only
+  }
+  if (typeof params.presentedSecret !== 'string' || params.presentedSecret.length === 0) {
+    return { ok: false, status: 401, error: 'invalid_client', description: 'client authentication required' };
+  }
+  const good = await verifySecret(params.presentedSecret, hash);
+  if (!good) {
+    return { ok: false, status: 401, error: 'invalid_client', description: 'client authentication failed' };
+  }
+  return { ok: true };
+}
+
 function base64url (buf: Buffer): string {
   return buf.toString('base64')
     .replace(/=+$/g, '')

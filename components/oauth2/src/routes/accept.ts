@@ -46,6 +46,7 @@ const { verifyState } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { setCode } = require('../storage.ts');
 const { audit } = require('../audit.ts');
+const { logServerError } = require('../serverLog.ts');
 // Permission-lexicon single point — the consent-grant rule (subset +
 // all-or-nothing default + mandatory locks) is shared with the cmc
 // accept path.
@@ -172,12 +173,13 @@ export function handleAccept (deps: AcceptDeps) {
     const offeredConsent = normalizePermissions(payload.offer.permissions, { consent: true });
     const check = checkConsentGrant(grantedPermissions, offeredConsent, payload.offer.allowUserChoice === true);
     if (!check.ok) {
+      const offending = summariseOffending(check.offending);
       const description =
         check.reason === 'choice-not-allowed'
-          ? 'this consent is all-or-nothing (the offer does not allow user choice); missing: ' + JSON.stringify(check.offending)
+          ? 'this consent is all-or-nothing (the offer does not allow user choice); missing: ' + offending
           : check.reason === 'mandatory-refused'
-            ? 'mandatory permissions cannot be unticked; missing: ' + JSON.stringify(check.offending)
-            : 'grantedPermissions must be a subset of the offered permissions; offending: ' + JSON.stringify(check.offending);
+            ? 'mandatory permissions cannot be unticked; missing: ' + offending
+            : 'grantedPermissions must be a subset of the offered permissions; offending: ' + offending;
       return sendJson(res, 400, { error: 'invalid_scope', error_description: description });
     }
     // The cmc:<offer-name> token, echoed as the RFC scope value.
@@ -207,9 +209,10 @@ export function handleAccept (deps: AcceptDeps) {
         grantedPermissions,
       });
     } catch (err: any) {
+      logServerError('accept: createAccess failed', err);
       return sendJson(res, 500, {
         error: 'server_error',
-        error_description: 'failed to create access: ' + (err?.message ?? String(err)),
+        error_description: 'failed to create access',
       });
     }
 
@@ -255,6 +258,21 @@ export function handleAccept (deps: AcceptDeps) {
 
 function isNonEmptyString (v: unknown): boolean {
   return typeof v === 'string' && v.length > 0;
+}
+
+/**
+ * Bound the offending-permissions list that gets serialised into the
+ * client-facing `error_description`, so a client can't force an
+ * arbitrarily large error body by submitting a huge grantedPermissions
+ * array. Keeps the first few entries for diagnostics and summarises the
+ * rest as a count.
+ */
+const MAX_OFFENDING_IN_ERROR = 20;
+function summariseOffending (offending: unknown): string {
+  if (!Array.isArray(offending)) return JSON.stringify(offending);
+  if (offending.length <= MAX_OFFENDING_IN_ERROR) return JSON.stringify(offending);
+  const head = offending.slice(0, MAX_OFFENDING_IN_ERROR);
+  return JSON.stringify(head) + ` (+${offending.length - MAX_OFFENDING_IN_ERROR} more)`;
 }
 
 function sendJson (res: any, status: number, body: any): void {

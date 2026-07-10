@@ -142,6 +142,23 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
         (err) => err.id === 'cmc-capability-invalid' && err.status === 401
       );
     });
+
+    it('[AO04C] the capability read forbids redirects (redirect: error)', async () => {
+      const { fetch, calls } = fakeFetch({ status: 200, body: { events: [VALID_OFFER] } });
+      await readOfferViaCapability({ capabilityUrl: 'https://Tok@example.com/', deps: { fetch } });
+      assert.equal(calls[0].init.redirect, 'error');
+    });
+
+    it('[AO04D] rejects an over-large response body with cmc-capability-offer-too-large', async () => {
+      // Build a body whose serialized text exceeds the 256 KB cap; the
+      // fake exposes it via text(), which the capped reader measures.
+      const big = { events: [{ ...VALID_OFFER, content: { ...VALID_OFFER.content, blob: 'x'.repeat(300 * 1024) } }] };
+      const { fetch } = fakeFetch({ status: 200, body: big });
+      await assert.rejects(
+        readOfferViaCapability({ capabilityUrl: 'https://Tok@example.com/', deps: { fetch } }),
+        (err) => err.id === 'cmc-capability-offer-too-large'
+      );
+    });
   });
 
   describe('[CMCAO-PF] permissionsFromOffer', () => {

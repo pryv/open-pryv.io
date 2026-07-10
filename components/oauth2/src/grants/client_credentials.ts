@@ -32,6 +32,7 @@ const require = createRequire(import.meta.url);
 const { verifySecret } = require('../clientSecret.ts');
 const { getClient } = require('../clientRegistry.ts');
 const { audit } = require('../audit.ts');
+const { logServerError } = require('../serverLog.ts');
 
 /** Callback shape — same as refresh's mintRefreshedAccess (storage-direct). */
 export type MintClientAccess = (params: {
@@ -146,11 +147,12 @@ export async function handleClientCredentials (
       expiresAt,
     });
   } catch (err: any) {
+    logServerError('client_credentials: mintClientAccess failed', err);
     return {
       ok: false,
       status: 500,
       error: 'server_error',
-      description: 'failed to mint access: ' + (err && err.message ? err.message : String(err)),
+      description: 'failed to mint access',
     };
   }
 

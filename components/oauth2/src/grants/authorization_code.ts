@@ -33,6 +33,8 @@ const crypto = require('node:crypto');
 const { generateToken } = require('../secureToken.ts');
 const storage = require('../storage.ts');
 const { audit } = require('../audit.ts');
+const { getClient } = require('../clientRegistry.ts');
+const { authenticateClient } = require('../clientSecret.ts');
 
 export type AuthCodeDeps = {
   config: { get (key: string): unknown };
@@ -44,6 +46,10 @@ export type GrantParams = {
   code_verifier?: string;
   client_id?: string;
   redirect_uri?: string;
+  /** Confidential-client auth (client_secret_post). */
+  client_secret?: string;
+  /** Decoded Authorization: Basic credentials, when present (client_secret_basic). */
+  basic?: { client_id: string; client_secret: string } | null;
 };
 
 /** Lifetimes (seconds). Operator can override via oauth.* config. */
@@ -105,6 +111,21 @@ export async function handleAuthorizationCode (
   }
   if (params.redirect_uri !== row.redirectUri) {
     return { ok: false, status: 400, error: 'invalid_grant', description: 'redirect_uri mismatch' };
+  }
+
+  // Confidential-client authentication (RFC 6749 §4.1.3): a client that
+  // has a client_secret on file MUST present it. Discovery advertises
+  // `client_secret_basic` + `none`; PKCE is mandatory for every client,
+  // so a public client (no secret on file) needs no secret here. When
+  // Basic credentials are presented their client_id must match.
+  if (params.basic != null && params.basic.client_id !== params.client_id) {
+    return { ok: false, status: 401, error: 'invalid_client', description: 'client_id mismatch between request and Basic authorization' };
+  }
+  const client = await getClient(deps.platform, params.client_id);
+  const presentedSecret = params.basic?.client_secret ?? params.client_secret;
+  const auth = await authenticateClient({ client, presentedSecret });
+  if (!auth.ok) {
+    return { ok: false, status: auth.status, error: auth.error, description: auth.description };
   }
 
   if (!row.accessToken || !row.accessId || !row.apiEndpoint) {

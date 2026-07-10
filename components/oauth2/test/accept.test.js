@@ -327,7 +327,11 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       await handler({ body: validBody() }, res);
       assert.equal(res.statusCode, 500);
       assert.equal(res.body.error, 'server_error');
-      assert.match(res.body.error_description, /forbidden/);
+      // The internal error text must NOT leak to the client — only a
+      // generic description is returned.
+      assert.ok(!String(res.body.error_description || '').includes('forbidden'),
+        'internal error text must not leak into error_description');
+      assert.match(res.body.error_description, /failed to create access/);
     });
   });
 });

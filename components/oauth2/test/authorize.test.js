@@ -18,6 +18,7 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
 const { handleAuthorize } = require('../src/routes/authorize.ts');
 const { verifyState } = require('../src/signedState.ts');
+const { clearOfferCache } = require('../src/offerResolver.ts');
 
 const ADMIN_KEY = 'admin-key-for-tests';
 const ISSUER = 'https://reg.pryv.me';
@@ -109,6 +110,11 @@ function defaultOfferFetch () {
 }
 
 describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
+  // The offer resolver caches successful reads briefly to blunt outbound
+  // amplification; clear it between cases so each starts from a known
+  // (uncached) state and outbound-call counts stay deterministic.
+  beforeEach(() => clearOfferCache());
+
   describe('[OAUTH-AUTH-OK] happy path', () => {
     it('[OA-OK1] valid request 302s to consent URL with signed state', async () => {
       const platform = fakePlatform({ myapp: VALID_CLIENT });

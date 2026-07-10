@@ -256,6 +256,88 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
     });
   });
 
+  describe('[OAUTH-TKN-AC-CONF] confidential-client authentication', () => {
+    const { mintSecret } = require('../src/clientSecret.ts');
+    async function registerClient (platform, clientId, meta) {
+      await platform.setPlatformKv('oauth-client/' + clientId, JSON.stringify({ clientId, ...meta }));
+    }
+    function basicAuth (id, secret) {
+      return 'Basic ' + Buffer.from(id + ':' + secret).toString('base64');
+    }
+    function exchange (verifier, extra = {}) {
+      return {
+        grant_type: 'authorization_code',
+        code: extra.code,
+        code_verifier: verifier,
+        client_id: 'myapp',
+        redirect_uri: 'https://app.example/cb',
+        ...(extra.client_secret != null ? { client_secret: extra.client_secret } : {}),
+      };
+    }
+    it('[OTA-CF1] confidential client without secret → 401 invalid_client', async () => {
+      const platform = fakePlatform();
+      const { hash } = await mintSecret();
+      await registerClient(platform, 'myapp', { clientSecretHash: hash });
+      const verifier = await seedCode(platform, 'CODE-CF1');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      await handler({ body: exchange(verifier, { code: 'CODE-CF1' }) }, res);
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.body.error, 'invalid_client');
+    });
+    it('[OTA-CF2] confidential client with correct secret (body) → 200', async () => {
+      const platform = fakePlatform();
+      const { plaintext, hash } = await mintSecret();
+      await registerClient(platform, 'myapp', { clientSecretHash: hash });
+      const verifier = await seedCode(platform, 'CODE-CF2');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      await handler({ body: exchange(verifier, { code: 'CODE-CF2', client_secret: plaintext }) }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    });
+    it('[OTA-CF3] confidential client with correct secret (Basic) → 200', async () => {
+      const platform = fakePlatform();
+      const { plaintext, hash } = await mintSecret();
+      await registerClient(platform, 'myapp', { clientSecretHash: hash });
+      const verifier = await seedCode(platform, 'CODE-CF3');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      await handler({
+        body: exchange(verifier, { code: 'CODE-CF3' }),
+        headers: { authorization: basicAuth('myapp', plaintext) },
+      }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    });
+    it('[OTA-CF4] confidential client with wrong secret → 401 invalid_client', async () => {
+      const platform = fakePlatform();
+      const { hash } = await mintSecret();
+      await registerClient(platform, 'myapp', { clientSecretHash: hash });
+      const verifier = await seedCode(platform, 'CODE-CF4');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      await handler({ body: exchange(verifier, { code: 'CODE-CF4', client_secret: 'wrong-secret' }) }, res);
+      assert.equal(res.statusCode, 401);
+      assert.equal(res.body.error, 'invalid_client');
+    });
+    it('[OTA-CF5] public client (no secret on file) needs no secret → 200', async () => {
+      const platform = fakePlatform();
+      await registerClient(platform, 'myapp', {}); // registered, no clientSecretHash
+      const verifier = await seedCode(platform, 'CODE-CF5');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      await handler({ body: exchange(verifier, { code: 'CODE-CF5' }) }, res);
+      assert.equal(res.statusCode, 200);
+    });
+    it('[OTA-CF6] unregistered client (no cache row) treated as public → 200', async () => {
+      const platform = fakePlatform();
+      const verifier = await seedCode(platform, 'CODE-CF6');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      await handler({ body: exchange(verifier, { code: 'CODE-CF6' }) }, res);
+      assert.equal(res.statusCode, 200);
+    });
+  });
+
   describe('[OAUTH-TKN-AC-PARAM] grant-input validation', () => {
     it('[OTA-PV1] missing code → invalid_request', async () => {
       const platform = fakePlatform();
