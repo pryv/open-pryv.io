@@ -1,5 +1,20 @@
 # Changelog - Internal (no API impact)
 
+## fix(storage): guard against persisting an access without its integrity hash
+
+When integrity is active for accesses, `AccessesPG` / `AccessesSQLite` now
+assert, at write time in `applyDefaults`, that the access being persisted
+carries a computed `integrity` value. If the integrity step is silently
+skipped (for example because the storage layer was constructed without a
+real integrity reference and fell back to the inert stub), the write now
+fails immediately with a diagnostic error naming the access, the process id
+and whether a real integrity reference was injected — instead of the gap
+surfacing one operation later as an "access has no integrity property"
+whole-store scan failure that is hard to trace back to its origin. No API
+or behavioural change on the healthy path; this only makes an otherwise
+silent inconsistency loud at its source. Covered by unit tests on both
+engines.
+
 ## chore(init): default auth UI is now app-web-user-account
 
 The `bin/init.js` config wizard and `bin/check-config.js` now default

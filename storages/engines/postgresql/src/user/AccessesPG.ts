@@ -27,10 +27,32 @@ type Update = UpdateData;
 type Options = FindOptions;
 
 /**
+ * Fail loudly, at the write site, if integrity is active but the access
+ * about to be persisted carries no `integrity` value. Without this the
+ * gap only surfaces one operation later, when a full-store integrity scan
+ * reports "access has no integrity property" — far from the write that
+ * produced it. The diagnostic captures the process id and whether a real
+ * integrity ref was injected (vs the inert constructor fallback), the two
+ * root causes of a silently-skipped hash.
+ */
+function assertIntegritySet (access: AccessItem, integrityInjected: boolean): void {
+  if (access.integrity != null) return;
+  throw new Error(
+    'access persisted without an integrity property while integrity is active' +
+    ' (name=' + JSON.stringify(access.name) + ', id=' + JSON.stringify(access.id) +
+    ', pid=' + process.pid + ', integrityRefInjected=' + integrityInjected + ')'
+  );
+}
+
+/**
  * PostgreSQL persistence for accesses.
  */
 class AccessesPG extends BaseStoragePG<AccessItem> {
   integrityAccesses: IntegrityAccesses;
+  /** True when a real integrity ref was threaded in; false when the
+   *  constructor fell back to the inert `{ isActive: false }` stub. Kept
+   *  for the write-time integrity guard's diagnostics. */
+  integrityInjected: boolean;
 
   constructor (db: PgDbLike, integrityAccesses?: IntegrityAccesses) {
     super(db);
@@ -38,6 +60,7 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
     this.hasDeletedCol = true;
     this.hasHeadIdCol = true;
     this.defaultSort = 'name ASC';
+    this.integrityInjected = integrityAccesses != null;
     this.integrityAccesses = integrityAccesses || { isActive: false, set: () => {} };
   }
 
@@ -62,6 +85,7 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
     delete copy.apiEndpoint;
     if (this.integrityAccesses.isActive) {
       this.integrityAccesses.set(copy);
+      assertIntegritySet(copy, this.integrityInjected);
     }
     return copy;
   }
