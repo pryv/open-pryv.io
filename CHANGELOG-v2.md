@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.6 — 2026-07-11
 
 ### Access aliases (`randomAlias`) — de-identifying endpoints
 
