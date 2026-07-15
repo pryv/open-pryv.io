@@ -44,6 +44,24 @@ const REDIRECT_URI = 'https://app.example/cb';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
 const OFFER_NAME = 'e2e';
 
+/**
+ * Render a response for an assertion message. An empty JSON body
+ * stringifies to a useless `{}`, which hides whether the failure was an
+ * OAuth error payload, an api-server fallback, or an unrouted request —
+ * so include the status, the content-type and the raw text too.
+ */
+function describeRes (res) {
+  if (res == null) return '<no response>';
+  const body = res.body != null && Object.keys(res.body).length > 0
+    ? JSON.stringify(res.body)
+    : '<empty body>';
+  const text = typeof res.text === 'string' && res.text.length > 0
+    ? res.text.slice(0, 300)
+    : '<empty text>';
+  return `status=${res.status} content-type=${res.headers?.['content-type'] ?? '<none>'} ` +
+    `body=${body} text=${text}`;
+}
+
 // Full-lexicon offer: two stream permissions + a feature permission.
 // Cherry-picking is enabled on this offer (`allowUserChoice: true` —
 // the DEFAULT all-or-nothing behavior has its own offer + cases below);
@@ -210,7 +228,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         `expected /authorize ${overrides.expectAuthStatus}, got ${authRes.status}`);
       return { authRes };
     }
-    assert.equal(authRes.status, 302, JSON.stringify(authRes.body ?? authRes.text));
+    assert.equal(authRes.status, 302, 'GET /oauth2/authorize: ' + describeRes(authRes));
     const loc = authRes.headers.location;
     assert.ok(loc.startsWith(CONSENT_URL + '?state='), 'unexpected redirect: ' + loc);
     const signedState = decodeURIComponent(loc.split('state=')[1].split('&')[0]);
@@ -226,10 +244,10 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       });
     if (overrides.expectAcceptStatus != null) {
       assert.equal(acceptRes.status, overrides.expectAcceptStatus,
-        `expected /accept ${overrides.expectAcceptStatus}, got ${acceptRes.status} ${JSON.stringify(acceptRes.body)}`);
+        `expected /accept ${overrides.expectAcceptStatus}, got ` + describeRes(acceptRes));
       return { authRes, acceptRes };
     }
-    assert.equal(acceptRes.status, 200, JSON.stringify(acceptRes.body));
+    assert.equal(acceptRes.status, 200, 'POST /oauth2/authorize/accept: ' + describeRes(acceptRes));
     const code = decodeURIComponent(acceptRes.body.redirectTo.match(/code=([^&]+)/)[1]);
 
     // 3. /token
@@ -279,7 +297,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
 
     it('[OE02] full chain mints a Bearer whose permissions are EXACTLY the granted subset (incl. the feature permission)', async function () {
       const r = await runFullFlow();
-      assert.equal(r.tokenRes.status, 200, JSON.stringify(r.tokenRes.body));
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
       assert.equal(r.tokenRes.body.token_type, 'Bearer');
       assert.equal(r.tokenRes.body.scope, 'cmc:' + OFFER_NAME);
       assert.equal(typeof r.tokenRes.body.access_token, 'string');
@@ -311,7 +329,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
 
     it('[OE03] consent downgrade — offer has diary+health, user keeps health only', async function () {
       const r = await runFullFlow({ grantedPermissions: [{ streamId: 'health', level: 'read' }] });
-      assert.equal(r.tokenRes.status, 200, JSON.stringify(r.tokenRes.body));
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
       const access = await accessInfo(r.tokenRes.body.access_token);
       assert.ok(!access.permissions.some((p) => p.streamId === 'diary'),
         'un-ticked diary permission must NOT be granted: ' + JSON.stringify(access.permissions));
@@ -341,7 +359,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
           { streamId: 'diary', level: 'contribute' },
         ],
       });
-      assert.equal(full.tokenRes.status, 200, JSON.stringify(full.tokenRes.body));
+      assert.equal(full.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(full.tokenRes));
     });
 
     it('[OE06] a mandatory entry cannot be unticked even with allowUserChoice → 400 invalid_scope', async function () {
@@ -443,7 +461,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         .post('/oauth2/token')
         .type('form')
         .send({ grant_type: 'refresh_token', refresh_token: firstRefresh, client_id: clientId });
-      assert.equal(refreshRes.status, 200, JSON.stringify(refreshRes.body));
+      assert.equal(refreshRes.status, 200, 'POST /oauth2/token (refresh): ' + describeRes(refreshRes));
       assert.equal(refreshRes.body.token_type, 'Bearer');
       assert.notEqual(refreshRes.body.access_token, firstAccess, 'refresh must mint a new access');
       assert.notEqual(refreshRes.body.refresh_token, firstRefresh, 'refresh must rotate the refresh token');
@@ -488,7 +506,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         .post('/oauth2/token')
         .type('form')
         .send({ grant_type: 'refresh_token', refresh_token: r.tokenRes.body.refresh_token, client_id: clientId });
-      assert.equal(refreshRes.status, 400, JSON.stringify(refreshRes.body));
+      assert.equal(refreshRes.status, 400, 'POST /oauth2/token (refresh): ' + describeRes(refreshRes));
       assert.equal(refreshRes.body.error, 'invalid_grant');
     });
   });
@@ -556,7 +574,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         .type('form')
         .set('Authorization', basic)
         .send({ grant_type: 'client_credentials' });
-      assert.equal(tokenRes.status, 200, JSON.stringify(tokenRes.body));
+      assert.equal(tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(tokenRes));
       assert.equal(tokenRes.body.token_type, 'Bearer');
       assert.equal(tokenRes.body.refresh_token, undefined, 'RFC 6749 §4.4.3 — no refresh_token');
       assert.equal(typeof tokenRes.body.access_token, 'string');

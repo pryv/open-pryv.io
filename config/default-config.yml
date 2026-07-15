@@ -267,6 +267,14 @@ logs:
     rotation:
       isActive: true
       days: 14
+  # Loss-proof trail. `file` above buffers through an async stream, so
+  # entries pending at process.exit() are lost — this one appends
+  # synchronously and always lands. Costs an fs call per entry: keep it
+  # at a low-volume level (warn/error), never info.
+  fileSync:
+    active: false
+    path: "var-pryv/logs/core-sync.log"
+    level: warn
 
 # === PLATFORM-WIDE policy (YAML-only in v2, post-v2 move targeted) ===
 uploads:

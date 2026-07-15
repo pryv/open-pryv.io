@@ -11,7 +11,15 @@ const require = createRequire(import.meta.url);
 
 require('test-helpers/src/api-server-tests-config.ts');
 const assert = require('node:assert');
+const path = require('node:path');
 const { TypeRepository } = require('../../src/types.ts');
+
+// The published list, fetched over the internet. Only exercised when
+// explicitly asked for (see [WMDW] below).
+const LIVE_SOURCE_URL = 'https://pryv.github.io/event-types/flat.json';
+// The vendored snapshot of that same document — same shape, no network.
+const VENDORED_SOURCE_URL = 'file://' +
+  path.resolve(import.meta.dirname, '../../../../test/event-types-flat.json');
 
 describe('[TYPR] business.types.TypeRepository', function () {
   let repository;
@@ -19,11 +27,23 @@ describe('[TYPR] business.types.TypeRepository', function () {
     repository = new TypeRepository();
   });
   describe('[TY01] type list update', function () {
-    const sourceURL = 'https://pryv.github.io/event-types/flat.json';
-    it('[WMDW] should work (must be called manually)', async function () {
-      // NOTE This test uses an internet URL. If internet is down, it will
-      // not work. Much like Pryv in general, also because of this function.
-      await repository.tryUpdate(sourceURL);
+    it('[WMDW] updates from the vendored event-types snapshot', async function () {
+      // Reads the snapshot from disk rather than fetching the published
+      // list: a unit suite must not depend on the network. This used to
+      // hit the live URL and timed out whenever it was slow or down,
+      // failing a run for reasons unrelated to the code under test.
+      // The live document is covered by [WMDL] below.
+      await repository.tryUpdate(VENDORED_SOURCE_URL);
+      assert.strictEqual(repository.isKnown('mass/kg'), true);
+    });
+    it('[WMDL] updates from the live published list (opt-in: TEST_LIVE_EVENT_TYPES=1)', async function () {
+      // Opt-in on purpose — it reaches the internet, so it can fail for
+      // reasons that have nothing to do with this repository. Run it when
+      // you want to check the published document itself.
+      if (process.env.TEST_LIVE_EVENT_TYPES !== '1') return this.skip();
+      this.timeout(30000);
+      await repository.tryUpdate(LIVE_SOURCE_URL);
+      assert.strictEqual(repository.isKnown('mass/kg'), true);
     });
     it('[6VL6] should fail gracefully', async function () {
       try {

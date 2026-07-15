@@ -36,6 +36,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const oauth2 = require('oauth2');
+const { getLogger } = require('@pryv/boiler');
 const { MethodContext } = require('business');
 const storages = require('storages');
 const cuid = require('cuid');
@@ -50,6 +51,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   const config = app.config;
   const storageLayer = app.storageLayer;
   const api = app.api;
+  const logger = getLogger('routes:oauth2');
 
   // ---------------------------------------------------------------------
   // resolveUser — validates {username, userToken} via MethodContext.
@@ -73,9 +75,16 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       await context.init();
       await context.retrieveExpandedAccess(storageLayer);
     } catch (err) {
+      // Swallowed on purpose — the endpoint renders a clean 401 rather
+      // than leaking why. Record it on the server trail: without this,
+      // every context/auth failure is an indistinguishable null.
+      logger.warn('resolveUser: context init/access lookup failed', err);
       return null;
     }
-    if (context.access == null) return null;
+    if (context.access == null) {
+      logger.warn('resolveUser: no access on context after retrieveExpandedAccess');
+      return null;
+    }
     return {
       userId: context.user.id,
       username: context.user.username,
@@ -190,8 +199,11 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
         if (typeof acceptEventId !== 'string') {
           throw new Error('oauth2.createAccess: consent accept trigger was not created');
         }
-        const deadline = Date.now() + 10_000;
+        const pollStartedAt = Date.now();
+        const deadline = pollStartedAt + 10_000;
+        let polls = 0;
         while (dataGrant == null) {
+          polls++;
           const all = await apiCall(context, 'accesses.get', {});
           dataGrant = (all?.accesses ?? []).find((a: any) =>
             a?.clientData?.cmc?.role === 'counterparty' &&
@@ -204,7 +216,13 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
               (content.failure?.reason != null ? ': ' + content.failure.reason : ''));
           }
           if (Date.now() > deadline) {
-            throw new Error('oauth2.createAccess: timed out waiting for the consent data-grant');
+            // Name what we actually saw: how long we waited, how many
+            // polls, and the trigger's last known status. A bare "timed
+            // out" cannot distinguish a slow dispatch from a lost one.
+            throw new Error(
+              'oauth2.createAccess: timed out waiting for the consent data-grant after ' +
+              (Date.now() - pollStartedAt) + 'ms (' + polls + ' polls, acceptEventId=' +
+              acceptEventId + ', last trigger status=' + JSON.stringify(content.status) + ')');
           }
           await new Promise((resolve) => setTimeout(resolve, 100));
         }

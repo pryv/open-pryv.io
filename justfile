@@ -228,13 +228,30 @@ clean-test-data:
     RQLITE_HOST="${storages__engines__rqlite__host:-${RQLITE_HOST_CFG:-localhost}}"
     RQLITE_PORT="${storages__engines__rqlite__port:-${RQLITE_PORT_CFG:-4001}}"
     RQLITE_RAFT_PORT="${storages__engines__rqlite__raftPort:-${RQLITE_RAFT_CFG:-$((RQLITE_PORT + 1))}}"
+    # A clean that silently skips an engine is worse than no clean at all:
+    # the suite then runs against unreset state and its failures get blamed
+    # on whatever code is under test. So an UNREACHABLE engine is a hard
+    # error — only a deliberately non-PG setup may skip, via SKIP_PG=1.
     if [ -n "$DROPDB" ] && [ -n "$CREATEDB" ]; then
-      ($TIMEOUT "$DROPDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv --if-exists --force pryv-node-test 2>/dev/null && \
-          $TIMEOUT "$CREATEDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv pryv-node-test 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg test reset)"
-      ($TIMEOUT "$DROPDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv --if-exists --force pryv-node 2>/dev/null && \
-          $TIMEOUT "$CREATEDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv pryv-node 2>/dev/null) || echo "PostgreSQL not reachable (skipping pg dev reset)"
+      if [ "${SKIP_PG:-}" = "1" ]; then
+        echo "SKIP_PG=1 — skipping pg test + dev reset on request"
+      else
+        ($TIMEOUT "$DROPDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv --if-exists --force pryv-node-test 2>/dev/null && \
+            $TIMEOUT "$CREATEDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv pryv-node-test 2>/dev/null) || \
+          { echo "ERROR: PostgreSQL unreachable at $PG_HOST:$PG_PORT — pryv-node-test NOT reset."; \
+            echo "       Test data is STALE; a suite run now would report misleading failures."; \
+            echo "       Start it (storages/engines/postgresql/scripts/start), or pass SKIP_PG=1 if this setup has no PostgreSQL."; \
+            exit 1; }
+        ($TIMEOUT "$DROPDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv --if-exists --force pryv-node 2>/dev/null && \
+            $TIMEOUT "$CREATEDB" -h "$PG_HOST" -p "$PG_PORT" -U pryv pryv-node 2>/dev/null) || \
+          { echo "ERROR: PostgreSQL unreachable at $PG_HOST:$PG_PORT — pryv-node (dev DB) NOT reset."; \
+            echo "       The platform DB and the user index can diverge across cleans."; \
+            exit 1; }
+      fi
     else
-      echo "dropdb/createdb not found (skipping pg test reset + pg dev reset)"
+      echo "ERROR: dropdb/createdb not found in PATH — cannot reset PostgreSQL."
+      echo "       Test data is STALE. Install the client tools or pass SKIP_PG=1."
+      exit 1
     fi
     # rqlite PlatformDB — full state reset (rqlite is the only platform
     # engine). Paired with the PG dev-DB drop above so the platform DB
