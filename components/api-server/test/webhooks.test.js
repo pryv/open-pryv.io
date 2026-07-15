@@ -169,6 +169,8 @@ describe('[WH01] webhooks', () => {
       personalAccessToken = cuid();
       appAccessId1 = cuid();
       appAccessToken1 = cuid();
+      appAccessId2 = cuid();
+      appAccessToken2 = cuid();
       sharedAccessToken = cuid();
       sharedAccessId = cuid();
       webhookId1 = cuid();
@@ -186,6 +188,16 @@ describe('[WH01] webhooks', () => {
           id: appAccessId1,
           type: 'app',
           token: appAccessToken1
+        });
+        // The second app access is what makes [WH13] meaningful: without it,
+        // webhook2 below hangs off an id left over from an earlier block —
+        // an access this user never had — so [WH13]'s 403 proved only that
+        // the access did not exist, not that the scope check rejects a
+        // sibling app access.
+        user.access({
+          id: appAccessId2,
+          type: 'app',
+          token: appAccessToken2
         });
         user.access({
           id: sharedAccessId,
@@ -241,6 +253,20 @@ describe('[WH01] webhooks', () => {
 
         it('[BDC2] should return a status 403 with a forbidden error', () => {
           validation.checkErrorForbidden(response);
+        });
+
+        // Positive control for [BDC2]: the access that owns webhook2 must be
+        // able to read it. Without this, a 403 above could equally mean the
+        // webhook is unreachable by anyone, and the scope check would look
+        // correct even if it rejected every app access.
+        it('[W2SC] the owning app access can read the same webhook', async () => {
+          const res = await coreRequest
+            .get(`/${username}/webhooks/${webhookId2}`)
+            .set('Authorization', appAccessToken2);
+          validation.check(res, {
+            schema: methodsSchema.getOne.result,
+            status: 200
+          });
         });
       });
 
