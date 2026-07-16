@@ -180,6 +180,24 @@ if (cluster.isPrimary) {
     // Keep master alive while workers run (tcp_pubsub sockets are unref'd)
     const keepAlive = setInterval(() => {}, 60000);
 
+    // Periodic sweep of expired access-state rows. OAuth authorization
+    // codes, refresh tokens, and /reg/access request states all live under
+    // the PlatformDB `access-state/` keyspace with a TTL. Expiry is
+    // otherwise LAZY (delete-on-read), so a code or token that is minted and
+    // then never presented again would linger as a permanent cluster
+    // keyValue row — unbounded growth over the life of the cluster. This
+    // runs in the master only (once per cluster), is idempotent, and is
+    // best-effort (a failed sweep just retries next interval).
+    const sweepIntervalMs = config.get('accessState:sweepIntervalMs') || 15 * 60 * 1000;
+    const accessStateSweep = setInterval(() => {
+      require('../storages/index.ts').platformDB.sweepExpiredAccessStates()
+        .then(({ removed }) => {
+          if (removed > 0) log(`[access-state-sweep] removed ${removed} expired row(s)`);
+        })
+        .catch((err) => log(`[access-state-sweep] failed: ${err.message}`));
+    }, sweepIntervalMs);
+    accessStateSweep.unref(); // keepAlive holds the master; the sweep must not
+
     // Start TCP pub/sub broker in master (workers connect as clients)
     const tcpPubsub = require('../components/messages/src/tcp_pubsub.ts');
     await tcpPubsub.init();
@@ -582,6 +600,7 @@ if (cluster.isPrimary) {
       shuttingDown = true;
       log(`Received ${sig}, shutting down workers...`);
       clearInterval(keepAlive);
+      clearInterval(accessStateSweep);
       for (const id in cluster.workers) {
         cluster.workers[id].process.kill('SIGTERM');
       }
