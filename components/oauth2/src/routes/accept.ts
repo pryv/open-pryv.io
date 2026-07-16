@@ -220,6 +220,15 @@ export function handleAccept (deps: AcceptDeps) {
         grantedPermissions,
       });
     } catch (err: any) {
+      // The effective-permission guard (hierarchical consent masking) runs
+      // inside createAccess, where the user's stream tree is available. It
+      // is a consent-downgrade violation, not a server fault → 400.
+      if (err?.code === 'consent-widens-offer') {
+        return sendJson(res, 400, {
+          error: 'invalid_scope',
+          error_description: 'grantedPermissions widen the offer under the stream hierarchy — the kept subset must not grant more access than the offer',
+        });
+      }
       logServerError('accept: createAccess failed', err);
       return sendJson(res, 500, {
         error: 'server_error',

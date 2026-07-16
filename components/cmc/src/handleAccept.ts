@@ -27,6 +27,9 @@ const ao = require('./acceptOrchestration.ts');
 const slugMod = require('./slug.ts');
 const anchors = require('./anchorStreams.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
+// Tree-aware consent guard (hierarchical-masking class) — see
+// business/src/accesses/consentEffectiveGuard.ts.
+const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffectiveGuard.ts');
 
 type OfferShape = {
   id?: string;
@@ -217,6 +220,36 @@ async function handleAccept (params: {
         ok: false,
         reason: CmcErrorIds.INSUFFICIENT_PERMISSIONS,
         detail: { message: 'trigger-writing access lacks permissions to mint the data-grant access' },
+      };
+    }
+  }
+
+  // 3b. Effective-permission guard (hierarchical-masking class). The pure
+  // entry-subset check in buildDataGrantPayload cannot see that dropping a
+  // restrictive descendant re-inherits a broader ancestor and WIDENS the
+  // grant. Runs only when an explicit downgrade was sent (else granted ==
+  // whole offer, no mask) AND a real trigger context exists (triggerAccess
+  // present ⇒ live mall for the tree walk; skipped in unit dispatch, like
+  // the chain-check above). extraPermissions (anchor streams) are the
+  // accepter's own messaging channels, outside the offer — not compared.
+  const grantedForGuard = (triggerEvent.content as { grantedPermissions?: Array<Record<string, unknown>> })?.grantedPermissions;
+  if (triggerAccess != null && grantedForGuard != null) {
+    let eff;
+    try {
+      const offeredPerms = ao.permissionsFromOffer(offer);
+      eff = await assertGrantedWithinOffer({ userId, granted: grantedForGuard, offered: offeredPerms });
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        reason: CmcErrorIds.GRANTED_PERMISSIONS_NOT_SUBSET,
+        detail: { message: 'effective-permission guard failed: ' + String((err as Error)?.message || err) },
+      };
+    }
+    if (!eff.ok) {
+      return {
+        ok: false,
+        reason: CmcErrorIds.GRANTED_PERMISSIONS_NOT_SUBSET,
+        detail: { message: 'granted permissions widen the offer under the stream hierarchy', violations: eff.violations },
       };
     }
   }

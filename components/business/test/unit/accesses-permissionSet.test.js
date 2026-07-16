@@ -207,4 +207,51 @@ describe('[PSET] accesses permissionSet', () => {
       assert.deepEqual(out, [{ streamId: 'x', level: 'none' }]);
     });
   });
+
+  describe('[PSET-CAP] level → capability mapping (matches AccessLogic)', () => {
+    it('[PS-CAP1] capabilitiesForLevel matches AccessLogic predicates exactly', () => {
+      assert.deepEqual(ps.capabilitiesForLevel('read'),
+        { read: true, create: false, update: false, manage: false, list: true });
+      // create-only: creatable + listable, but NOT readable and NOT updatable
+      // — the asymmetry a numeric-rank test misses.
+      assert.deepEqual(ps.capabilitiesForLevel('create-only'),
+        { read: false, create: true, update: false, manage: false, list: true });
+      assert.deepEqual(ps.capabilitiesForLevel('contribute'),
+        { read: true, create: true, update: true, manage: false, list: true });
+      assert.deepEqual(ps.capabilitiesForLevel('manage'),
+        { read: true, create: true, update: true, manage: true, list: true });
+    });
+
+    it('[PS-CAP2] none / null / undefined / unknown confer nothing', () => {
+      const nothing = { read: false, create: false, update: false, manage: false, list: false };
+      assert.deepEqual(ps.capabilitiesForLevel('none'), nothing);
+      assert.deepEqual(ps.capabilitiesForLevel(null), nothing);
+      assert.deepEqual(ps.capabilitiesForLevel(undefined), nothing);
+      assert.deepEqual(ps.capabilitiesForLevel('bogus'), nothing);
+    });
+
+    it('[PS-CAP3] levelCapabilityExcess flags where granted exceeds offered', () => {
+      // manage vs read (the {*,manage}+{secret,read} → drop-secret case):
+      // granted gains create/update/manage that offered (read) never had.
+      assert.deepEqual(ps.levelCapabilityExcess('manage', 'read').sort(),
+        ['create', 'manage', 'update']);
+      // read vs create-only (the {*,read}+{X,create-only} → drop-X case):
+      // granted gains READ that create-only masked.
+      assert.deepEqual(ps.levelCapabilityExcess('read', 'create-only'), ['read']);
+    });
+
+    it('[PS-CAP4] levelCapabilityExcess is empty when granted ⊆ offered effectively', () => {
+      assert.deepEqual(ps.levelCapabilityExcess('read', 'read'), []);
+      assert.deepEqual(ps.levelCapabilityExcess('read', 'manage'), []); // narrower
+      assert.deepEqual(ps.levelCapabilityExcess('create-only', 'contribute'), []); // contribute ⊇ create-only
+      assert.deepEqual(ps.levelCapabilityExcess('none', 'read'), []); // grants nothing
+      assert.deepEqual(ps.levelCapabilityExcess(undefined, 'read'), []); // no grant at all
+    });
+
+    it('[PS-CAP5] create-only vs read is a MUTUAL mask (each grants what the other forbids)', () => {
+      // create-only adds create; read adds read. Neither ⊆ the other.
+      assert.deepEqual(ps.levelCapabilityExcess('create-only', 'read'), ['create']);
+      assert.deepEqual(ps.levelCapabilityExcess('read', 'create-only'), ['read']);
+    });
+  });
 });

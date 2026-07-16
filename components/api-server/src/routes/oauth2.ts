@@ -43,6 +43,9 @@ const cuid = require('cuid');
 // Permission-lexicon single point + composite access refs.
 const { permissionKey } = require('business/src/accesses/permissionSet.ts');
 const { parseAccessRef } = require('business/src/accesses/refs.ts');
+// Tree-aware consent guard: closes the hierarchical-masking gap that the
+// pure entry-subset check (checkConsentGrant, run at /accept) cannot see.
+const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffectiveGuard.ts');
 
 /** Trigger-scope parent for OAuth-driven CMC accepts on the user's account. */
 const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
@@ -174,6 +177,25 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     if (offer == null || !Array.isArray(grantedPermissions) || grantedPermissions.length === 0) {
       throw new Error('oauth2.createAccess: a granular consent grant (offer + grantedPermissions) is required');
     }
+
+    // Effective-permission guard (hierarchical-masking class). /accept
+    // already ran the pure entry-subset check; here — with the user's
+    // stream tree available — verify the granted subset does not WIDEN the
+    // offer at any stream (a dropped restrictive descendant re-inheriting a
+    // broader ancestor). Reject as a consent error the endpoint maps to 400.
+    const eff = await assertGrantedWithinOffer({
+      userId: context.user.id,
+      granted: grantedPermissions,
+      offered: offer.permissions,
+    });
+    if (!eff.ok) {
+      const e = new Error(
+        'granted permissions widen the offer under the stream hierarchy: ' +
+        JSON.stringify(eff.violations)) as Error & { code: string };
+      e.code = 'consent-widens-offer';
+      throw e;
+    }
+
     let dataGrant: any = null;
     {
       if (offer.offerEventId != null) {

@@ -114,6 +114,57 @@ function normalizePermissions (perms: unknown, opts?: { consent?: boolean }): Co
   });
 }
 
+/**
+ * The five capabilities a stream permission level confers, derived to
+ * match `AccessLogic` EXACTLY (single source of truth for the level →
+ * capability mapping, so the consent effective-comparison can never
+ * drift from what the access actually grants at request time):
+ *   - read   ← canGetEventsOnStream    (create-only is NOT readable)
+ *   - create ← canCreateEventsOnStream (create-only IS creatable)
+ *   - update ← canUpdateEventsOnStream (create-only cannot update)
+ *   - manage ← _canManageStream        (only `manage`; create-only excluded)
+ *   - list   ← canListStream           (create-only IS listable — rank ≥ read)
+ *
+ * `null`/`undefined` (no matching permission) and `none` (exclusion
+ * mask) confer nothing. Note the create-only asymmetry: it can create +
+ * list but not read — a plain numeric level comparison misses it, which
+ * is exactly why the consent-mask class needs this table, not a rank test.
+ */
+export type StreamCapabilities = {
+  read: boolean; create: boolean; update: boolean; manage: boolean; list: boolean;
+};
+const NO_CAPABILITIES: StreamCapabilities = Object.freeze({
+  read: false, create: false, update: false, manage: false, list: false
+}) as StreamCapabilities;
+function capabilitiesForLevel (level: PermissionLevel | null | undefined): StreamCapabilities {
+  switch (level) {
+    case 'read': return { read: true, create: false, update: false, manage: false, list: true };
+    case 'create-only': return { read: false, create: true, update: false, manage: false, list: true };
+    case 'contribute': return { read: true, create: true, update: true, manage: false, list: true };
+    case 'manage': return { read: true, create: true, update: true, manage: true, list: true };
+    // 'none', null, undefined, or any unexpected value → nothing.
+    default: return NO_CAPABILITIES;
+  }
+}
+
+/**
+ * The capabilities present under `grantedLevel` that are ABSENT under
+ * `offeredLevel` — i.e. where a granted access would exceed the offer at
+ * a given stream. Empty ⇒ granted ⊆ offered at that stream. This is the
+ * per-stream primitive the tree-aware consent guard applies to every
+ * offered streamId (resolving each level through the stream hierarchy so
+ * a dropped restrictive descendant that re-inherits a broader ancestor is
+ * caught).
+ */
+function levelCapabilityExcess (
+  grantedLevel: PermissionLevel | null | undefined,
+  offeredLevel: PermissionLevel | null | undefined
+): Array<keyof StreamCapabilities> {
+  const g = capabilitiesForLevel(grantedLevel);
+  const o = capabilitiesForLevel(offeredLevel);
+  return (Object.keys(g) as Array<keyof StreamCapabilities>).filter((c) => g[c] && !o[c]);
+}
+
 /** Drop consent-layer annotations — call before anything that mints or
  * updates a real access row. */
 function stripConsentAnnotations (perms: ConsentPermission[]): Permission[] {
@@ -203,5 +254,7 @@ export {
   stripConsentAnnotations,
   permissionKey,
   isPermissionSubset,
-  checkConsentGrant
+  checkConsentGrant,
+  capabilitiesForLevel,
+  levelCapabilityExcess
 };
