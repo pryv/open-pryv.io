@@ -170,7 +170,18 @@ export function handleAccept (deps: AcceptDeps) {
     // path): granted ⊆ offered; without the offer's allowUserChoice the
     // grant is ALL OR NOTHING; with it, entries annotated mandatory
     // must still be granted.
-    const offeredConsent = normalizePermissions(payload.offer.permissions, { consent: true });
+    let offeredConsent;
+    try {
+      offeredConsent = normalizePermissions(payload.offer.permissions, { consent: true });
+    } catch (e: any) {
+      // The offer in the signed state was validated at /authorize
+      // (resolveOffer rejects e.g. exclusion masks), so reaching here means
+      // a stale/forged state. Fail closed with a clean 400, never a 500.
+      return sendJson(res, 400, {
+        error: 'invalid_scope',
+        error_description: 'consent offer is invalid: ' + (e?.message ?? String(e)),
+      });
+    }
     const check = checkConsentGrant(grantedPermissions, offeredConsent, payload.offer.allowUserChoice === true);
     if (!check.ok) {
       const offending = summariseOffending(check.offending);

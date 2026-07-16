@@ -83,6 +83,19 @@ function normalizePermissions (perms: unknown, opts?: { consent?: boolean }): Co
   const keepMandatory = opts?.consent === true;
   return perms.map((p, i) => {
     if (isStreamPermission(p)) {
+      // Consent context: a permission set is validated by the "granted ⊆
+      // offered, dropping an entry = narrowing" rule (checkConsentGrant).
+      // That rule is only sound for POSITIVE grants. `none` is an
+      // EXCLUSION MASK (AccessLogic adds streamIds with level 'none' to the
+      // cannot-list / forbidden-get sets), so an offered `none` entry that
+      // masks a broader grant INVERTS the rule — dropping it WIDENS access.
+      // Consent offers therefore must not carry masks.
+      if (keepMandatory && p.level === 'none') {
+        throw new Error(
+          `invalid consent permission at index ${i}: level 'none' (an exclusion mask) ` +
+          `is not allowed in a consent offer — offers must grant positive access only`
+        );
+      }
       const out: ConsentPermission = { streamId: p.streamId, level: p.level };
       if (typeof p.defaultName === 'string') out.defaultName = p.defaultName;
       if (typeof p.name === 'string') out.name = p.name;

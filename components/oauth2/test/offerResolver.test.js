@@ -104,4 +104,26 @@ describe('[OAUTH-OFR] offer resolution', () => {
       );
     });
   });
+
+  describe('[OAUTH-OFR-MASK] exclusion masks (level:none) are rejected at the edge', () => {
+    // An offered `level:none` entry is an exclusion mask: dropping it at the
+    // consent screen WIDENS access past the offer (it inverts the "granted ⊆
+    // offered, dropping = narrowing" rule). Reject such offers at resolution,
+    // before a signed state is ever minted.
+    it('[OFR-M1] an offer masking a stream (broad read + medical:none) → OfferResolveError', async () => {
+      const perms = [{ streamId: '*', level: 'read' }, { streamId: 'medical-private', level: 'none' }];
+      const fetchFn = offerFetch(baseOffer({ request: { title: { en: 'x' }, permissions: perms } }));
+      await assert.rejects(
+        resolveOffer({ offerName: 'study-A', capabilityUrl: CAP_URL, deps: { fetch: fetchFn } }),
+        (err) => err instanceof OfferResolveError && /not allowed in a consent offer/.test(err.message)
+      );
+    });
+
+    it('[OFR-M2] a positive-only offer still resolves', async () => {
+      const perms = [{ streamId: 'health', level: 'read' }, { streamId: 'diary', level: 'contribute' }];
+      const fetchFn = offerFetch(baseOffer({ request: { title: { en: 'x' }, permissions: perms } }));
+      const r = await resolveOffer({ offerName: 'study-A', capabilityUrl: CAP_URL, deps: { fetch: fetchFn } });
+      assert.equal(r.permissions.length, 2);
+    });
+  });
 });

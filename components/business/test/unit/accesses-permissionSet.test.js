@@ -145,4 +145,66 @@ describe('[PSET] accesses permissionSet', () => {
       }
     });
   });
+
+  describe('[PSET-MASK] consent offers reject exclusion masks (level:none)', () => {
+    // `none` is an EXCLUSION MASK in AccessLogic (cannot-list / forbidden-get),
+    // so an offered `none` masking a broader grant inverts the consent subset
+    // rule: dropping it WIDENS access. Offers must therefore not carry masks.
+    it('[PS-MASK1] a consent offer containing a level:none entry is rejected', () => {
+      assert.throws(
+        () => ps.normalizePermissions(
+          [{ streamId: 'health', level: 'read' }, { streamId: 'medical-private', level: 'none' }],
+          { consent: true }
+        ),
+        /level 'none'.*not allowed in a consent offer/
+      );
+    });
+
+    it('[PS-MASK2] the exact review exploit (broad read + masked-out stream) cannot be offered', () => {
+      // Offer: read everything EXCEPT medical-private; drop the mask → read it.
+      // Rejected at offer normalization, so the accept flow never builds it.
+      assert.throws(
+        () => ps.normalizePermissions(
+          [{ streamId: '*', level: 'read', mandatory: true }, { streamId: 'medical-private', level: 'none' }],
+          { consent: true }
+        ),
+        /not allowed in a consent offer/
+      );
+    });
+
+    it('[PS-MASK3] a granted level:none can never pass — offered can no longer carry it, so subset fails', () => {
+      // Even if a caller forges a granted `none`, there is no offered twin
+      // (offers reject none), so the subset check rejects it.
+      const offered = ps.normalizePermissions(
+        [{ streamId: 'health', level: 'read' }, { streamId: 'diary', level: 'contribute' }],
+        { consent: true }
+      );
+      for (const allow of [false, true]) {
+        const r = ps.checkConsentGrant([{ streamId: 'health', level: 'none' }], offered, allow);
+        assert.equal(r.ok, false);
+        assert.equal(r.reason, 'not-subset');
+      }
+    });
+
+    it('[PS-MASK4] positive-only offers (read/contribute/create-only/manage/feature) still normalize fine', () => {
+      const ok = ps.normalizePermissions(
+        [
+          { streamId: 'a', level: 'read' },
+          { streamId: 'b', level: 'contribute' },
+          { streamId: 'c', level: 'create-only' },
+          { streamId: 'd', level: 'manage' },
+          { feature: 'selfRevoke', setting: 'forbidden' },
+        ],
+        { consent: true }
+      );
+      assert.equal(ok.length, 5);
+    });
+
+    it('[PS-MASK5] level:none is still valid OUTSIDE consent (normal accesses.create masks)', () => {
+      // The mask semantics are legitimate for a directly-created access;
+      // the restriction is consent-offer-scoped only.
+      const out = ps.normalizePermissions([{ streamId: 'x', level: 'none' }]);
+      assert.deepEqual(out, [{ streamId: 'x', level: 'none' }]);
+    });
+  });
 });
