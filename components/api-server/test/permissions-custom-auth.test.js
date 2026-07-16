@@ -148,9 +148,11 @@ describe('[ACCP] Access permissions (sequential)', function () {
 
       it('[P4OM] must validate the custom function at startup time', async () => {
         const invalidSrc = path.join(__dirname, 'permissions.fixtures', 'customAuthStepFn.invalid.js');
-        // Restore the valid fixture before returning so a worker still mid-fork
-        // from the failed restart can't read the invalid file and emit a fatal
-        // load error that leaks into a later suite.
+        // The intentional failed restart below leaves the shared test server
+        // DOWN (child exited on the invalid fn). Restoring the valid fixture is
+        // not enough — the NEXT test file inherits a dead server and its first
+        // request 404s. So in `finally` we also restart the server back to a
+        // known-good RUNNING state before yielding.
         const validBody = fs.readFileSync(srcPath);
         fs.writeFileSync(destPath, fs.readFileSync(invalidSrc));
         try {
@@ -161,6 +163,7 @@ describe('[ACCP] Access permissions (sequential)', function () {
           assert.ok(/Server failed/.test(error.message));
         } finally {
           fs.writeFileSync(destPath, validBody);
+          await server.restartAsync();
         }
       });
     });
