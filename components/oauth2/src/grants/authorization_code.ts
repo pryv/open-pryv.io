@@ -87,7 +87,11 @@ export async function handleAuthorizationCode (
     return { ok: false, status: 400, error: 'invalid_request', description: 'redirect_uri is required' };
   }
 
-  const row = await storage.getCode(deps.platform, coreId, params.code);
+  // ATOMIC single-use: consume deletes-and-returns in one linearized op, so
+  // two concurrent `/token` submissions of the same code cannot both win —
+  // exactly one gets the row, the other gets null. (getCode + deleteCode
+  // raced: both reads saw the row before either deleted.)
+  const row = await storage.consumeCode(deps.platform, coreId, params.code);
   if (row == null) {
     // Either expired/never-issued OR already-exchanged. We can't tell
     // them apart cheaply; the reuse-detection signal arrives by storing
@@ -95,9 +99,6 @@ export async function handleAuthorizationCode (
     await audit('oauth.code.reused', { clientId: params.client_id, codeId: params.code });
     return { ok: false, status: 400, error: 'invalid_grant', description: 'code is invalid or already used' };
   }
-
-  // Delete BEFORE issuing anything — first exchange wins, reuse fails.
-  await storage.deleteCode(deps.platform, coreId, params.code);
 
   // PKCE: SHA256(code_verifier) base64url == row.codeChallenge.
   const computed = crypto.createHash('sha256').update(params.code_verifier).digest('base64')

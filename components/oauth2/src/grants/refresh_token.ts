@@ -113,7 +113,10 @@ export async function handleRefreshToken (
     return { ok: false, status: 400, error: 'invalid_request', description: 'client_id is required' };
   }
 
-  const row = await storage.getRefresh(deps.platform, coreId, params.refresh_token);
+  // ATOMIC single-use: consume deletes-and-returns in one linearized op, so
+  // two concurrent refreshes of the same token cannot both mint a new chain
+  // (which also defeated reuse-detection, since both reads saw the row).
+  const row = await storage.consumeRefresh(deps.platform, coreId, params.refresh_token);
   if (row == null) {
     // Either expired/never-issued OR already-rotated. Audit as reuse
     // since the legitimate path always deletes-then-reissues; we can't
@@ -121,9 +124,6 @@ export async function handleRefreshToken (
     await audit('oauth.code.reused', { clientId: params.client_id, codeId: 'refresh:' + params.refresh_token.slice(0, 6) + '…' });
     return { ok: false, status: 400, error: 'invalid_grant', description: 'refresh_token is invalid or already used' };
   }
-
-  // Delete BEFORE issuing anything — first exchange wins, reuse fails.
-  await storage.deleteRefresh(deps.platform, coreId, params.refresh_token);
 
   if (params.client_id !== row.clientId) {
     return { ok: false, status: 400, error: 'invalid_grant', description: 'client_id mismatch' };

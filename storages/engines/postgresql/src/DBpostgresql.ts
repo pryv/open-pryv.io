@@ -367,6 +367,21 @@ class DBpostgresql {
     await this.#delete(getAccessStateKey(key));
   }
 
+  /**
+   * Atomic get-and-delete. A single `DELETE … RETURNING value` locks and
+   * removes the row, so of N concurrent consumers of the same key exactly
+   * ONE gets the value and the rest get an empty result — the single-use
+   * guarantee. Honours the same lazy-expiry as getAccessState.
+   */
+  async consumeAccessState (key: string): Promise<{ value: unknown, expiresAt: number } | null> {
+    const storeKey = getAccessStateKey(key);
+    const res = await this.db.query('DELETE FROM platform_kv WHERE key = $1 RETURNING value', [storeKey]);
+    if (res.rows.length === 0) return null;
+    const parsed = JSON.parse(res.rows[0].value as string);
+    if (typeof parsed.expiresAt === 'number' && Date.now() > parsed.expiresAt) return null;
+    return parsed;
+  }
+
   async sweepExpiredAccessStates (now = Date.now()): Promise<{ removed: number }> {
     const rows = await this.#getWithPrefix('access-state/');
     let removed = 0;

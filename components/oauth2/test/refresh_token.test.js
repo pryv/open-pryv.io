@@ -49,6 +49,12 @@ function fakePlatform (clients = {}) {
       return e;
     },
     async deleteAccessState (k) { state.delete(k); },
+    async consumeAccessState (k) {
+      const e = state.get(k); state.delete(k);
+      if (e == null) return null;
+      if (Date.now() > e.expiresAt) return null;
+      return e;
+    },
     async setPlatformKv (k, v) { kv.set(k, v); },
     async getPlatformKv (k) { return kv.has(k) ? kv.get(k) : null; },
     async deletePlatformKv (k) { kv.delete(k); },

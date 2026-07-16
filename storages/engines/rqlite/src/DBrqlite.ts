@@ -475,6 +475,26 @@ class DBrqlite {
     await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
   }
 
+  /**
+   * Atomic get-and-delete. `DELETE … RETURNING value` is a single write,
+   * and rqlite linearizes writes through Raft, so of N concurrent
+   * consumers of the same key exactly ONE gets the row's value and the
+   * rest get an empty result — the single-use guarantee. Honours the same
+   * lazy-expiry as getAccessState (an expired row consumes to null).
+   */
+  async consumeAccessState (key: string) {
+    const storeKey = getAccessStateKey(key);
+    const result = await this.execute(
+      'DELETE FROM keyValue WHERE key = ? RETURNING value',
+      [storeKey]
+    );
+    const values = result?.values;
+    if (values == null || values.length === 0) return null;
+    const parsed = JSON.parse(values[0][0] as string);
+    if (typeof parsed.expiresAt === 'number' && Date.now() > parsed.expiresAt) return null;
+    return parsed;
+  }
+
   async sweepExpiredAccessStates (now = Date.now()) {
     const rows = await this.query(
       "SELECT key, value FROM keyValue WHERE key LIKE 'access-state/%'"

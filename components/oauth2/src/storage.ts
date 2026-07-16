@@ -179,6 +179,17 @@ export async function deleteCode (platform: PlatformDB, coreId: string, code: st
   await platform.deleteAccessState(codeKey(coreId, code));
 }
 
+/**
+ * Atomic single-use consume of an authorization code: returns the row AND
+ * deletes it in one linearized op, or null if absent/expired/already used.
+ * Use this instead of getCode + deleteCode — those race, letting two
+ * concurrent `/token` submissions of one code both mint a chain.
+ */
+export async function consumeCode (platform: PlatformDB, coreId: string, code: string): Promise<OAuthCode | null> {
+  const entry = await platform.consumeAccessState(codeKey(coreId, code));
+  return entry == null ? null : (entry.value as OAuthCode);
+}
+
 // --- Refresh tokens (per-core, sliding TTL with absolute cap) --- //
 
 export async function setRefresh (
@@ -200,6 +211,17 @@ export async function getRefresh (platform: PlatformDB, coreId: string, token: s
 
 export async function deleteRefresh (platform: PlatformDB, coreId: string, token: string): Promise<void> {
   await platform.deleteAccessState(refreshKey(coreId, token));
+}
+
+/**
+ * Atomic single-use consume of a refresh token: returns the row AND deletes
+ * it in one linearized op, or null if absent/expired/already rotated. Use
+ * this instead of getRefresh + deleteRefresh — those race, letting two
+ * concurrent refreshes both mint a new chain and defeating reuse-detection.
+ */
+export async function consumeRefresh (platform: PlatformDB, coreId: string, token: string): Promise<OAuthRefresh | null> {
+  const entry = await platform.consumeAccessState(refreshKey(coreId, token));
+  return entry == null ? null : (entry.value as OAuthRefresh);
 }
 
 // --- Key helpers (owned here, NOT in the engine) --- //

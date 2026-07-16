@@ -621,6 +621,43 @@ export default function conformanceTests (getDB) {
         assert.strictEqual(await db.getAccessState(key), null);
       });
 
+      it('[AS09] consume returns the value AND deletes it (single-use)', async () => {
+        const key = 'k-' + cuid();
+        const value = { status: 'NEED_SIGNIN' };
+        const expiresAt = future();
+        await db.setAccessState(key, value, expiresAt);
+        const got = await db.consumeAccessState(key);
+        assert.deepStrictEqual(got.value, value);
+        assert.strictEqual(got.expiresAt, expiresAt);
+        // Consumed — the row is gone.
+        assert.strictEqual(await db.getAccessState(key), null);
+        assert.strictEqual(await db.consumeAccessState(key), null);
+      });
+
+      it('[AS10] consume returns null for an unknown or expired key', async () => {
+        assert.strictEqual(await db.consumeAccessState('missing-' + cuid()), null);
+        const key = 'k-' + cuid();
+        await db.setAccessState(key, { v: 1 }, past());
+        assert.strictEqual(await db.consumeAccessState(key), null);
+      });
+
+      it('[AS11] concurrent consume of one key: EXACTLY ONE winner (atomic single-use)', async () => {
+        // The security-critical guarantee: OAuth codes / refresh tokens are
+        // single-use. Two concurrent /token submissions of one code must not
+        // both mint a chain. Fire N consumes at once; exactly one gets the row.
+        const key = 'k-' + cuid();
+        const value = { code: 'the-one' };
+        await db.setAccessState(key, value, future());
+        const N = 8;
+        const results = await Promise.all(
+          Array.from({ length: N }, () => db.consumeAccessState(key))
+        );
+        const winners = results.filter((r) => r != null);
+        assert.strictEqual(winners.length, 1, 'exactly one concurrent consumer wins');
+        assert.deepStrictEqual(winners[0].value, value);
+        assert.strictEqual(await db.getAccessState(key), null);
+      });
+
       it('[AS07] sweepExpiredAccessStates removes only expired rows and reports count', async () => {
         const live1 = 'live1-' + cuid();
         const live2 = 'live2-' + cuid();

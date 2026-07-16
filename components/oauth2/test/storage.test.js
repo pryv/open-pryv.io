@@ -43,6 +43,12 @@ function fakePlatform () {
       return e;
     },
     async deleteAccessState (key) { stateStore.delete(key); },
+    async consumeAccessState (key) {
+      const e = stateStore.get(key); stateStore.delete(key);
+      if (e == null) return null;
+      if (typeof e.expiresAt === 'number' && Date.now() > e.expiresAt) return null;
+      return e;
+    },
     async setPlatformKv (key, value) { kvStore.set(key, value); },
     async getPlatformKv (key) { return kvStore.has(key) ? kvStore.get(key) : null; },
     async deletePlatformKv (key) { kvStore.delete(key); },

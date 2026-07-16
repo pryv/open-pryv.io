@@ -50,6 +50,12 @@ function fakePlatform () {
       return e;
     },
     async deleteAccessState (k) { state.delete(k); },
+    async consumeAccessState (k) {
+      const e = state.get(k); state.delete(k);
+      if (e == null) return null;
+      if (Date.now() > e.expiresAt) return null;
+      return e;
+    },
   };
 }
 

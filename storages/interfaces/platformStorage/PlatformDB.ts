@@ -145,6 +145,14 @@ export interface PlatformDB {
   setAccessState (key: string, value: unknown, expiresAt: number): Promise<void>;
   getAccessState (key: string): Promise<AccessStateEntry | null>;
   deleteAccessState (key: string): Promise<void>;
+  /**
+   * ATOMIC get-and-delete: return the entry AND delete it in one
+   * linearized operation, or null if absent/expired. The single-use
+   * primitive — concurrent consumers of the same key: exactly ONE gets
+   * the entry, all others get null. Use this (not getAccessState +
+   * deleteAccessState, which races) for single-use tokens.
+   */
+  consumeAccessState (key: string): Promise<AccessStateEntry | null>;
   sweepExpiredAccessStates (now?: number): Promise<{ removed: number }>;
 
   // --- Generic cluster-wide key-value (indefinite, no TTL) --------
@@ -272,6 +280,8 @@ const PlatformDB: PlatformDB = {
   async getAccessState (key: string): Promise<AccessStateEntry | null> { throw new Error('Not implemented'); },
 
   async deleteAccessState (key: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async consumeAccessState (key: string): Promise<AccessStateEntry | null> { throw new Error('Not implemented'); },
 
   async sweepExpiredAccessStates (now?: number): Promise<{ removed: number }> { throw new Error('Not implemented'); },
 

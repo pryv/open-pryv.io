@@ -52,6 +52,7 @@ function fakePlatform (clients = {}) {
     async setAccessState (k, v, exp) {},
     async getAccessState (k) { return null; },
     async deleteAccessState (k) {},
+    async consumeAccessState (k) { return null; },
   };
 }
 
