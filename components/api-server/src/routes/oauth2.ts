@@ -392,6 +392,17 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   async function mintClientAccess ({ userId, username, clientId, expiresAt }: {
     userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
+    // SECURITY POSTURE (by design — not a scope leak): client_credentials
+    // acts as the app ITSELF on the app's OWN account (`accountUsername`),
+    // which the app already fully controls by owning it. The minted access is
+    // therefore `*/manage` on that one account — NOT an end-user's data and
+    // NOT cross-account. The `scope` argument is DELIBERATELY ignored here:
+    // for this grant the registered scope tokens are opaque advertisement
+    // labels (subset-checked in the grant handler), they do NOT restrict the
+    // minted authority. Operators who need a sandboxed server-to-server token
+    // (least privilege below the account owner) should provision a separate,
+    // narrowly-scoped account rather than expect `scope` to constrain this
+    // grant.
     return mintAccessDirect({
       userId,
       username,
