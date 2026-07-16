@@ -80,9 +80,11 @@ class UserContext {
 
 class DependentsList {
   dependentItems: any[];
+  pendingCreations: Array<Promise<any>>;
 
   constructor () {
     this.dependentItems = [];
+    this.pendingCreations = [];
   }
 
   /**
@@ -90,11 +92,38 @@ class DependentsList {
    * @template {FixtureItem} T
    * @param [cb]
    */
-  async addAndCreate (fixtureItem: any, cb?: any) {
+  addAndCreate (fixtureItem: any, cb?: any) {
+    const creation = this.createItem(fixtureItem, cb);
+    // Callers routinely drop this promise: the usual fixture shape is
+    // `user.access({...})` inside a callback, with nothing awaiting it.
+    // Track it so `settle()` can wait for work nobody else is holding.
+    this.pendingCreations.push(creation);
+    return creation;
+  }
+
+  async createItem (fixtureItem: any, cb?: any) {
     await fixtureItem.create();
     this.dependentItems.push(fixtureItem);
-    if (cb) { cb(fixtureItem); }
+    // `await`: the callback is typically `async (user) => { ... }`. Calling
+    // it without awaiting returned control while its body was still running.
+    if (cb) { await cb(fixtureItem); }
+    // The callback registers children (accesses, webhooks, sessions) and
+    // hardly ever awaits them, so its own promise resolving does not mean
+    // they exist yet. Wait for them here — otherwise the caller's `await`
+    // resolves on a half-written fixture and the first request of the test
+    // races the inserts (a missing access reads as 403 "Cannot find access
+    // from token"; a missing webhook/stream/event as 404).
+    if (fixtureItem.dependents != null) { await fixtureItem.dependents.settle(); }
     return fixtureItem;
+  }
+
+  /** Resolves once every creation started through this list has finished. */
+  async settle () {
+    // Loop: settling one wave can queue another (children creating children).
+    while (this.pendingCreations.length > 0) {
+      const inFlight = this.pendingCreations.splice(0);
+      await Promise.all(inFlight);
+    }
   }
 
   hasItems () {
