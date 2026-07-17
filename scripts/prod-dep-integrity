@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+#
+# Production-dependency integrity ratchet — run via `just lint` (lint-prod-deps).
+#
+# Fails if any RUNTIME source file (`require`/`import`) pulls a package that is
+# in devDependencies but NOT in dependencies. Such a package is pruned by
+# `npm install --omit=dev` (the stock Dockerfile), so the require throws at
+# module load and crash-loops the production build — while dev/test CI, which
+# installs devDependencies, never sees it.
+#
+# This is exactly how rc.7 shipped dead-on-arrival: oauth2.ts did a top-level
+# `require('cuid')`, a devDependency (#106). CI was green because dev installs
+# have cuid. This gate closes that blind spot statically — no prod build needed.
+#
+# Runtime scope = components/<c>/src, storages, bin — excluding test dirs,
+# *.test.*, and the test-helpers component (all dev/test-only).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+node <<'NODE'
+const fs = require('fs');
+const cp = require('child_process');
+
+const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+const deps = new Set(Object.keys(pkg.dependencies || {}));
+const devOnly = new Set(Object.keys(pkg.devDependencies || {}).filter((d) => !deps.has(d)));
+
+const files = cp.execSync('git ls-files', { encoding: 'utf8' })
+  .split('\n').filter(Boolean)
+  .filter((f) => /\.(ts|js)$/.test(f))
+  .filter((f) =>
+    (/^components\/[^/]+\/src\//.test(f) || /^storages\//.test(f) || /^bin\//.test(f)) &&
+    !f.includes('/test/') && !/\.test\.[jt]s$/.test(f) &&
+    !f.startsWith('components/test-helpers/') && !f.includes('/node_modules/'));
+
+// require('x') OR import ... from 'x' — capture the module specifier.
+const RE = /(?:require\(\s*|from\s+)['"]([^'"]+)['"]/g;
+const violations = [];
+for (const f of files) {
+  const lines = fs.readFileSync(f, 'utf8').split('\n');
+  lines.forEach((line, i) => {
+    // Only TOP-LEVEL (module-load) requires crash the process on --omit=dev.
+    // Indented requires are lazy/in-function (e.g. guarded by a dev-only
+    // config, like server.ts's `require('backloop.dev')`) — only loaded if
+    // that code path runs, so production never hits them. Skip indented lines.
+    if (/^[ \t]/.test(line)) return;
+    const t = line.trimStart();
+    if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return; // skip comments
+    let m;
+    while ((m = RE.exec(line))) {
+      const spec = m[1];
+      if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('node:')) continue;
+      const top = spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
+      if (devOnly.has(top)) violations.push({ f, line: i + 1, top });
+    }
+  });
+}
+
+if (violations.length) {
+  console.error('prod-dep-integrity: FAILED — runtime code requires dev-only package(s):');
+  for (const v of violations) {
+    console.error(`  ${v.f}:${v.line}  requires '${v.top}' — a devDependency, pruned by --omit=dev`);
+  }
+  console.error("\nFix: move the package to \"dependencies\", or use a production dependency");
+  console.error('(e.g. @paralleldrive/cuid2 instead of cuid). See open-pryv.io#106.');
+  process.exit(1);
+}
+console.log(`prod-dep-integrity: OK — ${files.length} runtime files scanned, no dev-only requires.`);
+NODE

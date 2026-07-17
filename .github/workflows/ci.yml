@@ -113,6 +113,13 @@ jobs:
         run: npm install --ignore-scripts
       - name: Lint
         run: npx eslint .
+      - name: Production-dependency integrity
+        # No runtime TOP-LEVEL require of a dev-only package (pruned by
+        # `--omit=dev`, which crash-loops the production image). CI installs
+        # devDependencies, so eslint/tests never see this class — rc.7 shipped
+        # a top-level require('cuid') (a devDependency) and was dead on arrival
+        # (#106). This static gate catches it without a prod build.
+        run: ./scripts/prod-dep-integrity
 
   typecheck:
     runs-on: ubuntu-22.04

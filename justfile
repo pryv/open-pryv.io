@@ -58,7 +58,7 @@ run component bin:
 # –––––––––––––----------------------------------------------------------------
 
 # Run code linting on the entire repo (JS style + TS `any` gate + open-type ratchet + createRequire ratchet)
-lint *options: && lint-ts-any lint-open-types lint-create-require
+lint *options: && lint-ts-any lint-open-types lint-create-require lint-prod-deps
     eslint {{options}} .
 
 # TypeScript `any` gate: no-explicit-any on TS sources (see eslint.ts-any.config.js)
@@ -72,6 +72,11 @@ lint-open-types:
 # createRequire ratchet: shim-file count may only go down (new files use real import)
 lint-create-require:
     ./scripts/create-require-ratchet
+
+# Production-dependency integrity: no runtime TOP-LEVEL require of a dev-only
+# package (pruned by `--omit=dev` → crash-loops the production build). #106.
+lint-prod-deps:
+    ./scripts/prod-dep-integrity
 
 # Run code linting only on changed files (excludes deleted files)
 lint-changes *options:
