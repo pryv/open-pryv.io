@@ -218,13 +218,16 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
   });
 
   describe('[OAUTH-TKN-RT-DISPATCH] dispatcher', () => {
-    it('[OTR-D1] refresh_token grant without mintRefreshedAccess wired → 501 unsupported_grant_type', async () => {
+    it('[OTR-D1] refresh_token grant advertised-but-not-wired → 500 server_error', async () => {
+      // Missing mint dep = operator misconfiguration (server fault), not a
+      // client error. 501 + the 400-class unsupported_grant_type enum was
+      // self-contradictory; report a consistent 5xx server_error instead.
       const platform = fakePlatform();
       const handler = handleToken({ config: fakeConfig(), platform });
       const res = fakeRes();
       await handler({ body: { grant_type: 'refresh_token', refresh_token: 'x', client_id: 'y' } }, res);
-      assert.equal(res.statusCode, 501);
-      assert.equal(res.body.error, 'unsupported_grant_type');
+      assert.equal(res.statusCode, 500);
+      assert.equal(res.body.error, 'server_error');
     });
   });
 

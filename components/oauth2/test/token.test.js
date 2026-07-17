@@ -260,6 +260,23 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
       assert.equal(res.statusCode, 400);
       assert.equal(res.body.error, 'unsupported_grant_type');
     });
+    it('[OTA-G3] refresh_token grant advertised-but-not-wired → 500 server_error (not 501/unsupported_grant_type)', async () => {
+      // deps omit mintRefreshedAccess. That is an operator misconfiguration, not
+      // a client error — must be a 5xx server fault, internally consistent with
+      // its enum (unsupported_grant_type is a 400-class RFC 6749 §5.2 error).
+      const handler = handleToken({ config: fakeConfig(), platform: fakePlatform() });
+      const res = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'x' } }, res);
+      assert.equal(res.statusCode, 500);
+      assert.equal(res.body.error, 'server_error');
+    });
+    it('[OTA-G4] client_credentials grant advertised-but-not-wired → 500 server_error', async () => {
+      const handler = handleToken({ config: fakeConfig(), platform: fakePlatform() });
+      const res = fakeRes();
+      await handler({ body: { grant_type: 'client_credentials' } }, res);
+      assert.equal(res.statusCode, 500);
+      assert.equal(res.body.error, 'server_error');
+    });
   });
 
   describe('[OAUTH-TKN-AC-CONF] confidential-client authentication', () => {

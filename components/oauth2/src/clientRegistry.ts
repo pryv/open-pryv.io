@@ -53,6 +53,10 @@ export async function getClient (platform: PlatformDB, clientId: string): Promis
 export function validateRedirectUri (registered: string[], presented: string): boolean {
   if (!Array.isArray(registered) || registered.length === 0) return false;
   if (typeof presented !== 'string' || presented.length === 0) return false;
+  // RFC 6749 §3.1.2: a redirect_uri MUST NOT carry a fragment. Reject at the
+  // authorize gate too (registration already rejects it) — defense-in-depth so
+  // a fragment URI can never be accepted even if one slipped into storage.
+  if (presented.includes('#')) return false;
 
   for (const r of registered) {
     if (r === presented) return true;
@@ -95,6 +99,19 @@ export async function persistClient (platform: PlatformDB, client: OAuthClient):
   }
   if (!Array.isArray(client.redirectUris) || client.redirectUris.length === 0) {
     throw new Error('redirectUris required (at least one)');
+  }
+  for (const uri of client.redirectUris) {
+    if (typeof uri !== 'string' || uri.length === 0) {
+      throw new Error('redirectUris: each entry must be a non-empty string');
+    }
+    // RFC 6749 §3.1.2: the redirection endpoint URI MUST NOT include a
+    // fragment. authorize appends `?code=…&state=…`; on a fragment URI that
+    // query lands INSIDE the fragment (`…#frag?code=…`) and the browser never
+    // sends `code` to the server — the flow silently breaks. Reject at
+    // registration so a mis-registered client fails loud, not at redeem time.
+    if (uri.includes('#')) {
+      throw new Error(`redirectUris: "${uri}" must not contain a fragment (#) — RFC 6749 §3.1.2`);
+    }
   }
   if (!Array.isArray(client.grantTypes) || client.grantTypes.length === 0) {
     throw new Error('grantTypes required (at least one)');

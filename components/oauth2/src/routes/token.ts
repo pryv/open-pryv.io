@@ -81,7 +81,12 @@ export function handleToken (deps: TokenDeps) {
       );
     } else if (grantType === 'refresh_token') {
       if (typeof deps.mintRefreshedAccess !== 'function') {
-        outcome = { ok: false, status: 501, error: 'unsupported_grant_type', description: 'refresh_token grant is not wired on this deployment' };
+        // Operator misconfiguration, not a client error: the grant handler
+        // exists but its mint dep was not wired. `unsupported_grant_type` is a
+        // 400-class RFC 6749 §5.2 enum, so pairing it with 501 was
+        // self-contradictory (and would mislead a client whose discovery doc
+        // advertises the grant). Report a 5xx server fault instead.
+        outcome = { ok: false, status: 500, error: 'server_error', description: 'refresh_token grant is advertised but not wired on this deployment' };
       } else {
         outcome = await handleRefreshToken(
           { config: deps.config, platform: deps.platform, mintRefreshedAccess: deps.mintRefreshedAccess },
@@ -90,7 +95,9 @@ export function handleToken (deps: TokenDeps) {
       }
     } else if (grantType === 'client_credentials') {
       if (typeof deps.mintClientAccess !== 'function' || typeof deps.resolveAccountUserId !== 'function') {
-        outcome = { ok: false, status: 501, error: 'unsupported_grant_type', description: 'client_credentials grant is not wired on this deployment' };
+        // Server misconfiguration (advertised-but-not-wired), not a client
+        // error — see the refresh_token branch above. 5xx, not 501+400-enum.
+        outcome = { ok: false, status: 500, error: 'server_error', description: 'client_credentials grant is advertised but not wired on this deployment' };
       } else {
         outcome = await handleClientCredentials(
           {

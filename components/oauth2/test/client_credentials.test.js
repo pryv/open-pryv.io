@@ -390,15 +390,17 @@ describe('[OAUTH-TKN-CC] /oauth2/token — client_credentials grant', () => {
   });
 
   describe('[OAUTH-TKN-CC-DISPATCH] dispatcher', () => {
-    it('[OTC-D1] client_credentials without callbacks wired → 501 unsupported_grant_type', async () => {
+    it('[OTC-D1] client_credentials advertised-but-not-wired → 500 server_error', async () => {
+      // Operator misconfiguration (server fault), not a client error — see the
+      // refresh_token [OTR-D1] twin. Consistent 5xx, not 501 + a 400-class enum.
       const handler = handleToken({ config: fakeConfig(), platform: fakePlatform() });
       const res = fakeRes();
       await handler({
         body: { grant_type: 'client_credentials', client_id: 'x', client_secret: 'y' },
         headers: {},
       }, res);
-      assert.equal(res.statusCode, 501);
-      assert.equal(res.body.error, 'unsupported_grant_type');
+      assert.equal(res.statusCode, 500);
+      assert.equal(res.body.error, 'server_error');
     });
   });
 });

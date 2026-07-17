@@ -86,6 +86,12 @@ describe('[OAUTH-CLIENT] client registry', () => {
       assert.equal(validateRedirectUri(['https://x/cb'], ''), false);
       assert.equal(validateRedirectUri(null, 'https://x/cb'), false);
     });
+    it('[OAUTH-CLIENT-1m] presented URI carrying a fragment rejected (RFC 6749 §3.1.2)', () => {
+      // Even against an identical registered entry — a fragment URI can never
+      // receive the appended ?code= (it lands inside the fragment).
+      assert.equal(validateRedirectUri(['https://a.example.com/cb#f'], 'https://a.example.com/cb#f'), false);
+      assert.equal(validateRedirectUri(['https://a.example.com/cb'], 'https://a.example.com/cb#f'), false);
+    });
   });
 
   /**
@@ -240,6 +246,15 @@ describe('[OAUTH-CLIENT] client registry', () => {
       await assert.rejects(persistClient(platform, { redirectUris: ['x'], grantTypes: ['authorization_code'] }), /clientId/);
       await assert.rejects(persistClient(platform, { clientId: 'a', grantTypes: ['authorization_code'] }), /redirectUris/);
       await assert.rejects(persistClient(platform, { clientId: 'a', redirectUris: ['x'] }), /grantTypes/);
+    });
+    it('[OAUTH-CLIENT-3e] rejects a redirectUri carrying a fragment (RFC 6749 §3.1.2)', async () => {
+      const platform = fakePlatform();
+      await assert.rejects(persistClient(platform, {
+        clientId: 'a', redirectUris: ['https://app.example/cb#frag'], grantTypes: ['authorization_code'],
+      }), /fragment/);
+      await assert.rejects(persistClient(platform, {
+        clientId: 'a', redirectUris: ['https://ok/cb', 'https://app.example/cb#'], grantTypes: ['authorization_code'],
+      }), /fragment/);
     });
     it('[OAUTH-CLIENT-3c] removeClient is idempotent', async () => {
       const platform = fakePlatform();
