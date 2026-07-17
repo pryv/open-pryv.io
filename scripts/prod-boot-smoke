@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+# Production boot smoke — run in CI AFTER `npm install --omit=dev`.
+#
+# The static `prod-dep-integrity` gate catches a top-level require of a package
+# that is *declared* as a devDependency. This is the ground-truth complement:
+# in a REAL production (devDependency-pruned) install, it actually `require()`s
+# every EXTERNAL package that runtime code top-level-imports. That catches the
+# #106 class (a pruned dep like `cuid` fails to load) PLUS classes the static
+# scan can't see — a transitive dep that only reached node_modules via a
+# devDependency, or a native binding that resolves but fails to load.
+#
+# Internal workspace imports (`business/...`, `storages/...`, deep `.ts`
+# specifiers resolved by the boiler loader at runtime) are skipped — only
+# external npm packages are loaded, so there is no app-config side effect.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+node <<'NODE'
+const fs = require('fs');
+const cp = require('child_process');
+const path = require('path');
+
+// --- workspace package names (internal aliases → skip) ---
+const rootPkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+const wsGlobs = Array.isArray(rootPkg.workspaces)
+  ? rootPkg.workspaces
+  : (rootPkg.workspaces && rootPkg.workspaces.packages) || [];
+const wsNames = new Set();
+for (const g of wsGlobs) {
+  const base = g.replace(/\/\*$/, '');
+  let dirs = [];
+  if (g.endsWith('/*')) { try { dirs = fs.readdirSync(base).map((d) => path.join(base, d)); } catch {} }
+  else dirs = [g];
+  for (const d of dirs) {
+    try { wsNames.add(JSON.parse(fs.readFileSync(path.join(d, 'package.json'), 'utf8')).name); } catch {}
+  }
+}
+
+// --- runtime source files (same scope as prod-dep-integrity) ---
+const files = cp.execSync('git ls-files', { encoding: 'utf8' })
+  .split('\n').filter(Boolean)
+  .filter((f) => /\.(ts|js)$/.test(f))
+  .filter((f) =>
+    (/^components\/[^/]+\/src\//.test(f) || /^storages\//.test(f) || /^bin\//.test(f)) &&
+    !f.includes('/test/') && !/\.test\.[jt]s$/.test(f) &&
+    !f.startsWith('components/test-helpers/') && !f.includes('/node_modules/'));
+
+// --- collect distinct top-level EXTERNAL package specifiers ---
+const RE = /(?:require\(\s*|from\s+)['"]([^'"]+)['"]/g;
+const externals = new Map(); // topName -> first "file:line"
+for (const f of files) {
+  fs.readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
+    if (/^[ \t]/.test(line)) return;                 // top-level only
+    const t = line.trimStart();
+    if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return;
+    let m;
+    while ((m = RE.exec(line))) {
+      const spec = m[1];
+      if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('node:')) continue;
+      const top = spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
+      if (wsNames.has(top)) continue;                // internal workspace — skip
+      if (!externals.has(top)) externals.set(top, `${f}:${i + 1}`);
+    }
+  });
+}
+
+// --- verify each external RESOLVES under the (production) install ---
+// require.resolve (not require) so nothing self-executes; a package pruned by
+// --omit=dev — directly OR transitively — throws MODULE_NOT_FOUND here.
+const failures = [];
+for (const [top, where] of externals) {
+  try { require.resolve(top); }
+  catch (e) {
+    if (e && e.code === 'MODULE_NOT_FOUND') failures.push({ top, where, msg: e.message.split('\n')[0] });
+  }
+}
+
+if (failures.length) {
+  console.error('prod-boot-smoke: FAILED — runtime code requires package(s) absent from the --omit=dev install:');
+  for (const v of failures) console.error(`  ${v.where}  require('${v.top}') → not resolvable`);
+  console.error('\nDeclare the package in "dependencies" (not devDependencies), or use a production dependency. See open-pryv.io#106.');
+  process.exit(1);
+}
+console.log(`prod-boot-smoke: OK — ${externals.size} external runtime packages resolve under the production install.`);
+NODE

@@ -137,6 +137,27 @@ jobs:
       - name: Type coverage floor
         run: just type-coverage
 
+  # Ground-truth guard against the #106 class: a REAL production install
+  # (`--omit=dev`, which prunes devDependencies) + verify every external
+  # package that runtime code top-level-requires still resolves. rc.7 shipped
+  # a top-level require('cuid') (a devDependency) and crash-looped on prod
+  # because CI only ever installed WITH devDependencies. The `docker` release
+  # job below `needs` this, so a prod-broken build can never publish an image.
+  prod-boot-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Production install (--omit=dev — devDependencies pruned)
+        run: npm install --omit=dev --ignore-scripts
+      - name: Production boot smoke
+        run: ./scripts/prod-boot-smoke
+
   # OFFICIAL release path: tag-push → CI runs tests → builds + pushes
   # `pryvio/open-pryv.io:<tag>` + rolling `:2.0.0-pre` to Docker Hub.
   # This is the channel implementers + downstream consumers pull from.
@@ -149,7 +170,7 @@ jobs:
   # The side channel doesn't replace the tag-push release; it's just
   # the dev-loop tool while iterating on RC fixes.
   docker:
-    needs: [test-postgres, lint, typecheck]
+    needs: [test-postgres, lint, typecheck, prod-boot-smoke]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-22.04
     steps:
