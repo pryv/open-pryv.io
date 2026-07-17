@@ -66,6 +66,11 @@ const CmcErrorIds = {
   // Capability resolved but the offer stream held more than one event —
   // protocol invariant violation; ops investigation needed.
   CAPABILITY_MULTIPLE_OFFERS: 'cmc-capability-multiple-offers',
+  // The capability read returned a response body larger than the hard
+  // ceiling (a capability endpoint is trusted to return a single small
+  // offer event; an oversize body is a resource-exhaustion / misdirected
+  // fetch signal). The read is aborted and rejected rather than buffered.
+  CAPABILITY_OFFER_TOO_LARGE: 'cmc-capability-offer-too-large',
   // Caller's `request.expiresAt` resolves to a TTL outside the
   // platform-allowed bounds [60s, 30d]. Either the timestamp is in the
   // past / too close to now, or it's farther than 30 days out. Plugin
@@ -84,6 +89,19 @@ const CmcErrorIds = {
   HANDLER_OFFER_MISSING_CAPABILITY_ID: 'cmc-handler-offer-missing-capability-id',
   // The offer carries no `request.permissions` array (or it's empty).
   OFFER_EMPTY_PERMISSIONS: 'cmc-offer-empty-permissions',
+  // The offer's `request.permissions` entries don't match the
+  // accesses.create permission lexicon (stream or feature permission).
+  OFFER_INVALID_PERMISSIONS: 'cmc-offer-invalid-permissions',
+  // An accept trigger's `grantedPermissions` (consent downgrade) is
+  // empty, malformed, or not a subset of the offer's permissions.
+  GRANTED_PERMISSIONS_NOT_SUBSET: 'cmc-granted-permissions-not-subset',
+  // The offer does not allow user choice (`request.allowUserChoice`
+  // false/absent — the DEFAULT): an accept must grant the WHOLE
+  // offered set or the request must be refused.
+  USER_CHOICE_NOT_ALLOWED: 'cmc-consent-user-choice-not-allowed',
+  // A `mandatory: true` offered entry is missing from the granted
+  // subset (cherry-picking never extends to mandatory entries).
+  MANDATORY_PERMISSION_REFUSED: 'cmc-mandatory-permission-refused',
 
   // --- Handler routing ---
   // Dispatch invoked a handler with a trigger whose `.type` doesn't match.

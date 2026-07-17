@@ -8,6 +8,8 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const __ex_AccessLogic = require('./AccessLogic.ts').default;
 export { __ex_AccessLogic as AccessLogic };
+const __ex_permissionSet = require('./permissionSet.ts');
+export { __ex_permissionSet as permissionSet };
 
 type AccessLike = {
   id: string;

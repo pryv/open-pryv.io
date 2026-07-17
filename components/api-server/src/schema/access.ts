@@ -129,8 +129,12 @@ function accessSchema (action: string): AccessSchemaShape {
   return res;
 }
 
-const permissionLevel = string({ enum: ['read', 'contribute', 'manage', 'create-only', 'none'] });
-const featureSetting = string({ enum: ['forbidden'] });
+// Enum values come from the permission-lexicon single point so schema
+// validation can never drift from the business-layer semantics.
+const { PERMISSION_LEVEL_VALUES, FEATURE_SETTING_VALUES } =
+  require('business/src/accesses/permissionSet.ts');
+const permissionLevel = string({ enum: [...PERMISSION_LEVEL_VALUES] });
+const featureSetting = string({ enum: [...FEATURE_SETTING_VALUES] });
 
 function permissions (action: string): unknown {
   const streamPermission = object({

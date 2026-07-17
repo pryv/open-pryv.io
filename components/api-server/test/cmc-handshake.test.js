@@ -30,76 +30,14 @@ const require = createRequire(import.meta.url);
 
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
-const supertest = require('supertest');
 const C = require('cmc');
+// Shared in-process fetch shim (also used by the OAuth2 e2e suite).
+const { buildFetchShim } = require('./cmc-fetch-shim.cjs');
 
-// The fetch shim recognises URLs that target the in-process api-server.
-// `service.api` may be either path-based (`http://127.0.0.1:3000/{username}/`,
-// when override-config.yml is in effect) or subdomain-style
-// (`https://{username}.pryv.me/`, from test/service-info.json when the
-// boiler test path skips override-config). Match both: exact-host for the
-// path-based form, *.pryv.me for the subdomain-style form. The matcher
-// returns either null (passthrough) or the supertest `/{username}/<rest>`
-// path to use.
 const POLL_INTERVAL_MS = 100;
 const POLL_TIMEOUT_MS = 10_000;
 
 function sleep (ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
-
-function resolveSupertestPath (u) {
-  // Path-based test override-config: host is 127.0.0.1:3000, username
-  // already in pathname.
-  if (u.host === '127.0.0.1:3000' || u.host === 'localhost:3000') {
-    return u.pathname + (u.search || '');
-  }
-  // Subdomain-style canonical test service-info: host is <user>.pryv.me;
-  // synthesize `/<user>` prefix.
-  if (u.host.endsWith('.pryv.me')) {
-    const subdomain = u.host.slice(0, -('.pryv.me'.length));
-    if (subdomain.length > 0 && !subdomain.includes('.')) {
-      return '/' + subdomain + u.pathname + (u.search || '');
-    }
-  }
-  return null;
-}
-
-/**
- * Build a fetch shim that routes URLs targeting the in-process api-server
- * through the supertest agent. Other URLs (rqlite at :4001,
- * pryv.github.io for data-types) pass through to the original fetch.
- */
-function buildFetchShim (originalFetch, app) {
-  return async function shim (url, init) {
-    let u;
-    try { u = new URL(url); } catch (_e) { return originalFetch(url, init); }
-    const path = resolveSupertestPath(u);
-    if (path == null) return originalFetch(url, init);
-    const method = (init && init.method ? init.method : 'GET').toLowerCase();
-    const headers = (init && init.headers) || {};
-
-    let req = supertest(app)[method](path);
-    for (const [k, v] of Object.entries(headers)) {
-      req = req.set(k, v);
-    }
-    if (u.username && !(headers.authorization || headers.Authorization)) {
-      req = req.set('Authorization', decodeURIComponent(u.username));
-    }
-    if (init && init.body != null) {
-      try {
-        req = req.send(JSON.parse(init.body));
-      } catch (_e) {
-        req = req.send(init.body);
-      }
-    }
-    const res = await req;
-    return {
-      status: res.status,
-      ok: res.status >= 200 && res.status < 300,
-      async json () { return res.body; },
-      async text () { return typeof res.text === 'string' ? res.text : JSON.stringify(res.body); },
-    };
-  };
-}
 
 async function ensureStream (path, token, params) {
   const res = await coreRequest.post(path).set('Authorization', token).send(params);

@@ -64,6 +64,12 @@ class Platform {
   // use the explicit pre-hashed variants (`*ByPreHashedUsername`) to
   // avoid double-hashing — see B.4 follow-up.
   #piiHasher: InstanceType<typeof PiiHasher> | null = null;
+  // When `platform.piiMode === 'hashed'` was requested but `piiHmacKey`
+  // is missing/blank, the throw is DEFERRED to the first PII operation
+  // (hashFor / piiModeIsHashed-true call site). Init must stay successful
+  // so CLI tools and tests that never touch PII paths can boot — same
+  // failure surface for actual hashed operations, no surprise behaviour.
+  #piiInitError: Error | null = null;
 
   // Lazy HMAC(username) → cleartext-username map for THIS core's local
   // users (built from usersLocalIndex). Powers reverse resolution in the
@@ -109,8 +115,16 @@ class Platform {
 
   /**
    * Initialise the PII hashing layer from config. Called once from init().
-   * Fails loudly when piiMode=hashed but piiHmacKey is missing/placeholder —
-   * a silent fallback to cleartext would defeat the operator's intent.
+   *
+   * `piiMode: hashed` without `piiHmacKey` is captured as a deferred error
+   * (#piiInitError) rather than thrown at init time, so CLI tools and
+   * tests that never touch PII paths can boot. The same descriptive error
+   * surfaces at first `hashFor()` or `piiModeIsHashed`-true call site —
+   * silent cleartext fallback would defeat the operator's intent and is
+   * never allowed.
+   *
+   * An unrecognised piiMode value IS thrown eagerly (typo in config,
+   * always wrong).
    */
   #initPiiHasher () {
     const piiMode = this.#config.get('platform:piiMode') || 'cleartext';
@@ -123,10 +137,14 @@ class Platform {
     }
     const pepper = this.#config.get('platform:piiHmacKey');
     if (typeof pepper !== 'string' || pepper === '' || pepper === 'REPLACE ME') {
-      throw new Error('Platform.init: platform.piiMode="hashed" requires platform.piiHmacKey to be set ' +
+      this.#piiInitError = new Error('Platform: platform.piiMode="hashed" requires platform.piiHmacKey to be set ' +
         '(base64 of exactly 32 random bytes). Generate with ' +
         '`node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"` ' +
-        'and place the SAME value in every core\'s override-config.yml.');
+        'and place the SAME value in every core\'s override-config.yml — or pass it ' +
+        'via env var `platform__piiHmacKey=<base64>`.');
+      this.#piiHasher = null;
+      logger.warn('[platform] piiMode=hashed requested but piiHmacKey is missing — deferring throw until first PII operation');
+      return;
     }
     // Cluster-wide algorithm (NOT per-token). Defaults to hmac-sha256; the
     // PiiHasher constructor rejects an unknown value. A future swap is a
@@ -145,14 +163,24 @@ class Platform {
    * input verbatim (post-normalisation in hashed mode; raw in cleartext
    * mode — normalisation is part of the hashing contract, not of cleartext
    * storage).
+   *
+   * Throws if init recorded a deferred config error (piiMode=hashed but no
+   * pepper) — same error message as the historical eager throw.
    */
   hashFor (field: string, value: string): string {
+    if (this.#piiInitError != null) throw this.#piiInitError;
     if (this.#piiHasher == null) return value;
     return this.#piiHasher.hashFor(field, value);
   }
 
-  /** True when this core stores PlatformDB rows as HMAC tokens. */
+  /**
+   * True when this core stores PlatformDB rows as HMAC tokens.
+   *
+   * Throws if init recorded a deferred config error — callers branching on
+   * this getter MUST get the same loud failure they would have at boot.
+   */
   get piiModeIsHashed (): boolean {
+    if (this.#piiInitError != null) throw this.#piiInitError;
     return this.#piiHasher != null;
   }
 

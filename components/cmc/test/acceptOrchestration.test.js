@@ -63,6 +63,17 @@ const VALID_OFFER = {
   },
 };
 
+// Same offer but with cherry-picking enabled (the DEFAULT is all-or-nothing).
+function offerWithChoice (base = VALID_OFFER, extraRequest = {}) {
+  return {
+    ...base,
+    content: {
+      ...base.content,
+      request: { ...base.content.request, allowUserChoice: true, ...extraRequest },
+    },
+  };
+}
+
 describe('[CMCAO] cmc/acceptOrchestration', () => {
   describe('[CMCAO-RO] readOfferViaCapability', () => {
     it('[AO01] reads the single offer event via the capability URL', async () => {
@@ -129,6 +140,23 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
           deps: { fetch },
         }),
         (err) => err.id === 'cmc-capability-invalid' && err.status === 401
+      );
+    });
+
+    it('[AO04C] the capability read forbids redirects (redirect: error)', async () => {
+      const { fetch, calls } = fakeFetch({ status: 200, body: { events: [VALID_OFFER] } });
+      await readOfferViaCapability({ capabilityUrl: 'https://Tok@example.com/', deps: { fetch } });
+      assert.equal(calls[0].init.redirect, 'error');
+    });
+
+    it('[AO04D] rejects an over-large response body with cmc-capability-offer-too-large', async () => {
+      // Build a body whose serialized text exceeds the 256 KB cap; the
+      // fake exposes it via text(), which the capped reader measures.
+      const big = { events: [{ ...VALID_OFFER, content: { ...VALID_OFFER.content, blob: 'x'.repeat(300 * 1024) } }] };
+      const { fetch } = fakeFetch({ status: 200, body: big });
+      await assert.rejects(
+        readOfferViaCapability({ capabilityUrl: 'https://Tok@example.com/', deps: { fetch } }),
+        (err) => err.id === 'cmc-capability-offer-too-large'
       );
     });
   });
@@ -212,6 +240,131 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
         counterparty: { username: 'provider-a', host: 'example.com' },
       });
       assert.equal(payload.clientData.cmc.acceptEventId, null);
+    });
+
+    it('[AO09D] with allowUserChoice, grantedPermissions narrows the data-grant to the accepted subset', () => {
+      const payload = buildDataGrantPayload({
+        offerEvent: offerWithChoice(),
+        counterparty: { username: 'provider-a', host: 'example.com' },
+        grantedPermissions: [{ streamId: 'fertility', level: 'read' }],
+        extraPermissions: [{ streamId: ':_cmc:inbox', level: 'create-only' }],
+      });
+      assert.deepEqual(payload.permissions, [
+        { streamId: 'fertility', level: 'read' },
+        { streamId: ':_cmc:inbox', level: 'create-only' },
+      ]);
+    });
+
+    it('[AO09E] grantedPermissions outside or widening the offer throws cmc-granted-permissions-not-subset', () => {
+      for (const granted of [
+        [{ streamId: 'fertility', level: 'manage' }], // widened level
+        [{ streamId: 'other', level: 'read' }], // foreign stream
+        [], // empty grant — refuse instead
+        [{ feature: 'selfRevoke', setting: 'forbidden' }], // not offered
+      ]) {
+        assert.throws(
+          () => buildDataGrantPayload({
+            offerEvent: offerWithChoice(),
+            counterparty: { username: 'provider-a', host: 'example.com' },
+            grantedPermissions: granted,
+          }),
+          (err) => err.id === 'cmc-granted-permissions-not-subset'
+        );
+      }
+    });
+
+    it('[AO09F] full permission lexicon: a feature permission (selfRevoke) travels offer → grant', () => {
+      const offer = {
+        id: 'evt-offer-fp',
+        type: 'consent/request-cmc',
+        content: {
+          requesterMeta: { appId: 'example-app' },
+          request: {
+            permissions: [
+              { streamId: 'fertility', level: 'read' },
+              { feature: 'selfRevoke', setting: 'forbidden' },
+            ],
+          },
+        },
+      };
+      const full = buildDataGrantPayload({
+        offerEvent: offer,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+      });
+      assert.deepEqual(full.permissions, [
+        { streamId: 'fertility', level: 'read' },
+        { feature: 'selfRevoke', setting: 'forbidden' },
+      ]);
+      const kept = buildDataGrantPayload({
+        offerEvent: offerWithChoice(offer),
+        counterparty: { username: 'provider-a', host: 'example.com' },
+        grantedPermissions: [{ feature: 'selfRevoke', setting: 'forbidden' }],
+      });
+      assert.deepEqual(kept.permissions, [{ feature: 'selfRevoke', setting: 'forbidden' }]);
+    });
+
+    it('[AO09H] DEFAULT is all-or-nothing: a partial grant without allowUserChoice throws cmc-consent-user-choice-not-allowed', () => {
+      assert.throws(
+        () => buildDataGrantPayload({
+          offerEvent: VALID_OFFER, // no allowUserChoice
+          counterparty: { username: 'provider-a', host: 'example.com' },
+          grantedPermissions: [{ streamId: 'fertility', level: 'read' }],
+        }),
+        (err) => err.id === 'cmc-consent-user-choice-not-allowed'
+      );
+      // granting the WHOLE set explicitly is fine without the flag
+      const payload = buildDataGrantPayload({
+        offerEvent: VALID_OFFER,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+        grantedPermissions: [
+          { streamId: 'fertility', level: 'read' },
+          { streamId: 'symptom', level: 'read' },
+        ],
+      });
+      assert.equal(payload.permissions.length, 2);
+    });
+
+    it('[AO09I] mandatory entries cannot be dropped even with allowUserChoice; annotation never reaches the payload', () => {
+      const offer = offerWithChoice(VALID_OFFER, {
+        permissions: [
+          { streamId: 'fertility', level: 'read', mandatory: true },
+          { streamId: 'symptom', level: 'read' },
+        ],
+      });
+      assert.throws(
+        () => buildDataGrantPayload({
+          offerEvent: offer,
+          counterparty: { username: 'provider-a', host: 'example.com' },
+          grantedPermissions: [{ streamId: 'symptom', level: 'read' }], // drops the mandatory one
+        }),
+        (err) => err.id === 'cmc-mandatory-permission-refused'
+      );
+      const ok = buildDataGrantPayload({
+        offerEvent: offer,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+        grantedPermissions: [{ streamId: 'fertility', level: 'read' }], // keeps mandatory, drops optional
+      });
+      assert.deepEqual(ok.permissions, [{ streamId: 'fertility', level: 'read' }]);
+      // no grantedPermissions → whole offer, with the annotation STRIPPED
+      const full = buildDataGrantPayload({
+        offerEvent: offer,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+      });
+      assert.deepEqual(full.permissions, [
+        { streamId: 'fertility', level: 'read' },
+        { streamId: 'symptom', level: 'read' },
+      ]);
+    });
+
+    it('[AO09G] mangled offer permissions throw cmc-offer-invalid-permissions (not silent coercion)', () => {
+      assert.throws(
+        () => permissionsFromOffer({
+          id: 'x',
+          type: 'consent/request-cmc',
+          content: { request: { permissions: [{ feature: 'selfRevoke' }] } }, // missing setting
+        }),
+        (err) => err.id === 'cmc-offer-invalid-permissions'
+      );
     });
   });
 

@@ -475,6 +475,26 @@ class DBrqlite {
     await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
   }
 
+  /**
+   * Atomic get-and-delete. `DELETE … RETURNING value` is a single write,
+   * and rqlite linearizes writes through Raft, so of N concurrent
+   * consumers of the same key exactly ONE gets the row's value and the
+   * rest get an empty result — the single-use guarantee. Honours the same
+   * lazy-expiry as getAccessState (an expired row consumes to null).
+   */
+  async consumeAccessState (key: string) {
+    const storeKey = getAccessStateKey(key);
+    const result = await this.execute(
+      'DELETE FROM keyValue WHERE key = ? RETURNING value',
+      [storeKey]
+    );
+    const values = result?.values;
+    if (values == null || values.length === 0) return null;
+    const parsed = JSON.parse(values[0][0] as string);
+    if (typeof parsed.expiresAt === 'number' && Date.now() > parsed.expiresAt) return null;
+    return parsed;
+  }
+
   async sweepExpiredAccessStates (now = Date.now()) {
     const rows = await this.query(
       "SELECT key, value FROM keyValue WHERE key LIKE 'access-state/%'"
@@ -495,7 +515,43 @@ class DBrqlite {
     }
     return { removed };
   }
+
+  // --- Generic cluster-wide key-value (indefinite) --- //
+
+  async setPlatformKv (key: string, value: string): Promise<void> {
+    await this.execute(
+      'INSERT OR REPLACE INTO keyValue (key, value) VALUES (?, ?)',
+      [key, value]
+    );
+  }
+
+  async getPlatformKv (key: string): Promise<string | null> {
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key]);
+    return rows.length === 0 ? null : rows[0].value;
+  }
+
+  async deletePlatformKv (key: string): Promise<void> {
+    await this.execute('DELETE FROM keyValue WHERE key = ?', [key]);
+  }
+
+  async listPlatformKvKeys (prefix: string): Promise<string[]> {
+    if (typeof prefix !== 'string' || prefix.length === 0) {
+      throw new Error('listPlatformKvKeys: prefix must be a non-empty string');
+    }
+    // SQL LIKE pattern escape — ` `_` and `%` are wildcards; defend at the
+    // boundary by rejecting them in the caller's prefix (callers own their
+    // namespace convention, e.g. 'oauth-client/').
+    if (prefix.includes('%') || prefix.includes('_')) {
+      throw new Error('listPlatformKvKeys: prefix must not contain SQL LIKE wildcards');
+    }
+    const rows = await this.query(
+      "SELECT key FROM keyValue WHERE key LIKE ?",
+      [prefix + '%']
+    );
+    return rows.map((r) => r.key);
+  }
 }
+
 
 // --- Key helpers (same as SQLite engine) --- //
 
@@ -543,5 +599,6 @@ function getMailTemplateKey (type: string, lang: string, part: string) {
 function getAccessStateKey (key: string) {
   return 'access-state/' + key;
 }
+
 
 export { DBrqlite };

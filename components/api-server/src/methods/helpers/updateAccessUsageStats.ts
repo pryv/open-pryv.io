@@ -13,7 +13,10 @@ const timestamp = require('unix-timestamp');
 const { getLogger, ready } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 type MwContext = {
-  user: { id: string; username?: string };
+  // `id` is absent on public / pre-authentication methods, which run
+  // before any user is resolved — the storage layer needs it, so it is
+  // optional here and checked at the call site.
+  user?: { id?: string; username?: string };
   access?: { id: string };
   methodId?: string;
   disableAccessUsageStats?: boolean;
@@ -40,7 +43,14 @@ export default async function getUpdateAccessUsageStats (): Promise<Middleware> 
     // handle own errors not to mess with "concurrent" code (because of next() above)
     try {
       const access = context?.access;
-      if (access) {
+      // A context can carry an access with NO resolved user: public /
+      // pre-authentication methods (auth.cores, password-reset, …) get a
+      // synthetic `access.id` from setAuditAccessId purely to label the
+      // audit trail. There is no persisted access row to update for them,
+      // and no user id to key it by — updating anyway made the storage
+      // layer dereference an undefined user.
+      const user = context?.user;
+      if (access && user?.id != null) {
         const update: StatsUpdate = { lastUsed: timestamp.now(), $inc: {} };
         if (context.accessUsageStats == null) {
           // standard call
@@ -54,10 +64,10 @@ export default async function getUpdateAccessUsageStats (): Promise<Middleware> 
                             context.accessUsageStats[methodId];
           }
         }
-        userAccessesStorage.updateOne(context.user, { id: access.id }, update, function (err: unknown) {
+        userAccessesStorage.updateOne(user, { id: access.id }, update, function (err: unknown) {
           if (err) {
             errorHandling.logError(errors.unexpectedError(err), {
-              url: context.user.username,
+              url: user.username,
               method: 'updateAccessLastUsed',
               body: params
             }, logger);

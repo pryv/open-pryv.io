@@ -216,6 +216,12 @@ class Application {
     require('./routes/reg/apps.ts').default(this.expressApp, this);
     require('./routes/reg/legacy.ts').default(this.expressApp, this);
 
+    // OAuth2 component — discovery doc + /oauth2/{authorize,authorize/accept,token}.
+    // Mount path delegates to the dedicated wiring module which builds
+    // the resolveUser + createAccess callbacks from this app's
+    // MethodContext + api method registry.
+    require('./routes/oauth2.ts').default(this.expressApp, this);
+
     // system, root, register and delete MUST come first
     require('./routes/auth/delete.ts').default(this.expressApp, this);
     require('./routes/auth/register.ts').default(this.expressApp, this);

@@ -20,6 +20,10 @@ function getAuth (req: Request): string | null {
       authorizationHeader = Buffer.from(basic[1], 'base64')
         .toString('ascii')
         .split(':')[0];
+    } else if (basic[0].toLowerCase() === 'bearer' && basic[1]) {
+      // RFC 6750 Bearer token — strip the scheme so the bare token reaches
+      // parseAuth. Keep any trailing " CALLERID" for its TOKEN/CALLERID split.
+      authorizationHeader = authorizationHeader.substring(basic[0].length + 1);
     }
     if (Array.isArray(authorizationHeader)) { return authorizationHeader[0]; }
     return authorizationHeader;

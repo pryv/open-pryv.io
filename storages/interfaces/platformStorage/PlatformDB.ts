@@ -145,7 +145,25 @@ export interface PlatformDB {
   setAccessState (key: string, value: unknown, expiresAt: number): Promise<void>;
   getAccessState (key: string): Promise<AccessStateEntry | null>;
   deleteAccessState (key: string): Promise<void>;
+  /**
+   * ATOMIC get-and-delete: return the entry AND delete it in one
+   * linearized operation, or null if absent/expired. The single-use
+   * primitive — concurrent consumers of the same key: exactly ONE gets
+   * the entry, all others get null. Use this (not getAccessState +
+   * deleteAccessState, which races) for single-use tokens.
+   */
+  consumeAccessState (key: string): Promise<AccessStateEntry | null>;
   sweepExpiredAccessStates (now?: number): Promise<{ removed: number }>;
+
+  // --- Generic cluster-wide key-value (indefinite, no TTL) --------
+  // For features that need string-keyed indefinite storage (no expiry,
+  // no lazy-expire). For TTL'd ephemeral state, use setAccessState
+  // above. Callers own their key-prefix conventions (e.g.
+  // `oauth-client/<id>`); the engine treats keys as opaque strings.
+  setPlatformKv (key: string, value: string): Promise<void>;
+  getPlatformKv (key: string): Promise<string | null>;
+  deletePlatformKv (key: string): Promise<void>;
+  listPlatformKvKeys (prefix: string): Promise<string[]>;
 
   // --- Invitation tokens ------------------------------------------
   createInvitationToken (token: string, info: InvitationTokenInfo): Promise<void>;
@@ -263,7 +281,19 @@ const PlatformDB: PlatformDB = {
 
   async deleteAccessState (key: string): Promise<void> { throw new Error('Not implemented'); },
 
+  async consumeAccessState (key: string): Promise<AccessStateEntry | null> { throw new Error('Not implemented'); },
+
   async sweepExpiredAccessStates (now?: number): Promise<{ removed: number }> { throw new Error('Not implemented'); },
+
+  // --- Generic cluster-wide key-value --- //
+
+  async setPlatformKv (key: string, value: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async getPlatformKv (key: string): Promise<string | null> { throw new Error('Not implemented'); },
+
+  async deletePlatformKv (key: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async listPlatformKvKeys (prefix: string): Promise<string[]> { throw new Error('Not implemented'); },
 
   // --- Invitation tokens --- //
 

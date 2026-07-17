@@ -14,7 +14,16 @@ logs:
     timestamp: false
   file:
     active: true
-    filename: test-application.log
+  # The console is silent here and mocha ends runs with process.exit(),
+  # which drops whatever the async file stream had not yet flushed — so
+  # without this, a server-side error raised during a test leaves NO
+  # trail anywhere and the failure looks causeless. This transport writes
+  # synchronously, so warn/error always survive. Read it at
+  # var-pryv/logs/test-sync.log when a test fails for no visible reason.
+  fileSync:
+    active: true
+    path: var-pryv/logs/test-sync.log
+    level: warn
 serviceInfoUrl: file://test/service-info.json
 services:
   email:

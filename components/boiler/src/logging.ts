@@ -9,9 +9,51 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const util = require('util');
+const fs = require('node:fs');
+const nodePath = require('node:path');
 const winston = require('winston');
+const Transport = require('winston-transport');
 require('winston-daily-rotate-file');
 const debugModule = require('debug');
+
+/**
+ * A file transport that writes each entry with `fs.appendFileSync`.
+ *
+ * Winston's stock File / DailyRotateFile transports buffer through an
+ * async stream: entries still in that buffer are LOST when the process
+ * ends via `process.exit()` — which is exactly what a mocha run does
+ * (`exit: true`). The consequence is a silent one: a server-side error
+ * is logged, the process exits, and the line never reaches the disk, so
+ * the failure looks causeless.
+ *
+ * A synchronous write cannot be lost that way. It costs an fs call per
+ * entry, so this transport is meant for LOW-VOLUME levels (warn/error) —
+ * keep the chatty levels on the async transport above. Enable via
+ * `logs:fileSync:active`.
+ */
+class SyncFileTransport extends Transport {
+  filePath: string;
+  constructor (opts: { filePath: string; level?: string }) {
+    super(opts as never);
+    this.filePath = opts.filePath;
+    fs.mkdirSync(nodePath.dirname(this.filePath), { recursive: true });
+  }
+
+  log (info: Record<string, unknown>, callback: () => void): void {
+    try {
+      const entry = {
+        timestamp: new Date().toISOString(),
+        level: info.level,
+        pid: process.pid,
+        message: info.message,
+      };
+      fs.appendFileSync(this.filePath, JSON.stringify(entry) + '\n');
+    } catch (_e) {
+      // Logging must never throw back into the caller's path.
+    }
+    callback();
+  }
+}
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 type WinstonLogger = {
@@ -195,6 +237,19 @@ async function initLoggerWithConfig (config: BoilerConfig) {
       });
       winstonInstance!.add(files);
     }
+  }
+
+  // sync file — a loss-proof trail for the levels you cannot afford to
+  // miss. Separate from `logs:file` above on purpose: that one keeps the
+  // high-volume async stream, this one guarantees delivery even when the
+  // process is killed with process.exit() before the stream drains.
+  const fileSync = config.get('logs:fileSync');
+  if (fileSync?.active) {
+    winstonInstance!.add(new SyncFileTransport({
+      filePath: fileSync.path,
+      level: fileSync.level || 'warn',
+    }));
+    rootLogger!.debug('Sync file active: ' + fileSync.path);
   }
 
   // custom

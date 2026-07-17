@@ -267,6 +267,14 @@ logs:
     rotation:
       isActive: true
       days: 14
+  # Loss-proof trail. `file` above buffers through an async stream, so
+  # entries pending at process.exit() are lost — this one appends
+  # synchronously and always lands. Costs an fs call per entry: keep it
+  # at a low-volume level (warn/error), never info.
+  fileSync:
+    active: false
+    path: "var-pryv/logs/core-sync.log"
+    level: warn
 
 # === PLATFORM-WIDE policy (YAML-only in v2, post-v2 move targeted) ===
 uploads:
@@ -505,3 +513,21 @@ audit:
         include: ['all']
         exclude: []
 
+
+# --- OAuth 2.0 authorization server ---
+# Configures the /oauth2/authorize + /oauth2/token endpoints and
+# /.well-known/oauth-authorization-server discovery doc.
+# clientRegistration.mode = "curated" is the only supported value;
+# operator-only app-account promotion via bin/oauth-client.js. The
+# RFC 7591 dynamic-registration HTTP endpoint is intentionally not
+# shipped; config validation rejects mode: open.
+oauth:
+  accessTokenTTL: 3600             # seconds (1 hour default)
+  refreshTokenTTL: 2592000         # seconds (30 days sliding)
+  refreshTokenAbsoluteTTL: 7776000 # seconds (90 days absolute cap)
+  clientRegistration:
+    mode: curated                  # ONLY supported value; "open" is rejected
+  requireAppAccountMfa: true       # app accounts must enrol MFA before /oauth2/* writes
+  audAllowList: []                 # optional list of accepted aud values on /oauth2/authorize
+  grantTypesSupported:             # advertised in the discovery doc
+    - authorization_code

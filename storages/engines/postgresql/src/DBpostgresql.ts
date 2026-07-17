@@ -367,6 +367,21 @@ class DBpostgresql {
     await this.#delete(getAccessStateKey(key));
   }
 
+  /**
+   * Atomic get-and-delete. A single `DELETE … RETURNING value` locks and
+   * removes the row, so of N concurrent consumers of the same key exactly
+   * ONE gets the value and the rest get an empty result — the single-use
+   * guarantee. Honours the same lazy-expiry as getAccessState.
+   */
+  async consumeAccessState (key: string): Promise<{ value: unknown, expiresAt: number } | null> {
+    const storeKey = getAccessStateKey(key);
+    const res = await this.db.query('DELETE FROM platform_kv WHERE key = $1 RETURNING value', [storeKey]);
+    if (res.rows.length === 0) return null;
+    const parsed = JSON.parse(res.rows[0].value as string);
+    if (typeof parsed.expiresAt === 'number' && Date.now() > parsed.expiresAt) return null;
+    return parsed;
+  }
+
   async sweepExpiredAccessStates (now = Date.now()): Promise<{ removed: number }> {
     const rows = await this.#getWithPrefix('access-state/');
     let removed = 0;
@@ -384,6 +399,31 @@ class DBpostgresql {
       }
     }
     return { removed };
+  }
+
+  // --- Generic cluster-wide key-value (indefinite) --- //
+
+  async setPlatformKv (key: string, value: string): Promise<void> {
+    await this.#set(key, value);
+  }
+
+  async getPlatformKv (key: string): Promise<string | null> {
+    return await this.#get(key);
+  }
+
+  async deletePlatformKv (key: string): Promise<void> {
+    await this.#delete(key);
+  }
+
+  async listPlatformKvKeys (prefix: string): Promise<string[]> {
+    if (typeof prefix !== 'string' || prefix.length === 0) {
+      throw new Error('listPlatformKvKeys: prefix must be a non-empty string');
+    }
+    if (prefix.includes('%') || prefix.includes('_')) {
+      throw new Error('listPlatformKvKeys: prefix must not contain SQL LIKE wildcards');
+    }
+    const rows = await this.#getWithPrefix(prefix);
+    return rows.map((r) => r.key);
   }
 }
 
@@ -433,5 +473,6 @@ function getMailTemplateKey (type: string, lang: string, part: string) {
 function getAccessStateKey (key: string) {
   return 'access-state/' + key;
 }
+
 
 export { DBpostgresql };
