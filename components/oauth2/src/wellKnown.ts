@@ -8,10 +8,21 @@
 /**
  * OAuth2 — RFC 8414 `.well-known/oauth-authorization-server` handler.
  *
- * The discovery document is per-deployment, NOT per-core. All cores
- * in a deployment advertise the same `issuer` + endpoints (LB-facing
- * URL), so the operator MUST keep `oauth.*` config in sync across
- * cores. See INTERNALS.md — "Why iss is per-deployment".
+ * `issuer` + endpoints derive from the operator's `oauth.issuer` /
+ * topology config; operators MUST keep `oauth.*` in sync across cores.
+ *
+ * Multi-core routing contract: `/oauth2/authorize`, `/accept`, and the
+ * code-grant `/token` all derive from this `issuer`. `/accept` (mints the
+ * access) and the refresh grant (re-mints) both touch the user's HOME-CORE
+ * per-user storage and cannot run cross-core, and there is no username-based
+ * routing on `/oauth2/*`. So for a given user's flow the `issuer` MUST
+ * resolve to that user's home core — a bare load balancer spraying across
+ * cores cannot serve the login/accept step. The code-grant `/token` is the
+ * one core-agnostic step (it returns the already-minted access from the
+ * cluster-wide code row), so its storage key is deliberately NOT
+ * core-namespaced (see storage.ts) — a stray LB-routed code exchange still
+ * resolves. A true shared-LB issuer would require username-aware routing at
+ * the LB, which is a deployment concern, not a server change.
  */
 
 import { createRequire } from 'node:module';

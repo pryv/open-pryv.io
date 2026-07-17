@@ -91,7 +91,7 @@ export async function handleAuthorizationCode (
   // two concurrent `/token` submissions of the same code cannot both win —
   // exactly one gets the row, the other gets null. (getCode + deleteCode
   // raced: both reads saw the row before either deleted.)
-  const row = await storage.consumeCode(deps.platform, coreId, params.code);
+  const row = await storage.consumeCode(deps.platform, params.code);
   if (row == null) {
     // Either expired/never-issued OR already-exchanged. We can't tell
     // them apart cheaply; the reuse-detection signal arrives by storing

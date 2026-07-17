@@ -111,7 +111,6 @@ export function handleAccept (deps: AcceptDeps) {
   return async function accept (req: any, res: any): Promise<void> {
     const issuer = issuerFromConfig(deps.config);
     const adminKey = String(deps.config.get('auth:adminAccessKey') ?? '');
-    const coreId = String(deps.config.get('core:id') ?? 'single');
     const accessTokenTTL = Number(deps.config.get('oauth:accessTokenTTL') ?? 3600);
     if (!issuer || !adminKey) {
       return sendJson(res, 500, { error: 'server_error', error_description: 'service:api or auth:adminAccessKey not configured' });
@@ -240,7 +239,7 @@ export function handleAccept (deps: AcceptDeps) {
     // return them after PKCE verification (user is gone by then).
     const code = generateToken();
     const codeExpiresAt = Date.now() + CODE_TTL_SECONDS * 1000;
-    await setCode(deps.platform, coreId, code, {
+    await setCode(deps.platform, code, {
       clientId: payload.clientId,
       redirectUri: payload.redirectUri,
       codeChallenge: payload.codeChallenge,

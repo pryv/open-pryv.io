@@ -67,7 +67,7 @@ function pkceChallenge (verifier) {
 
 async function seedCode (platform, code, overrides = {}) {
   const verifier = pkceVerifier();
-  await setCode(platform, CORE_ID, code, {
+  await setCode(platform, code, {
     clientId: 'myapp',
     redirectUri: 'https://app.example/cb',
     codeChallenge: pkceChallenge(verifier),

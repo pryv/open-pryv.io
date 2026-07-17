@@ -21,8 +21,10 @@
  *
  * Key prefixes are owned here, not the engine:
  *   - oauth-client/<clientId>          — indefinite
- *   - oauth-code/<coreId>/<code>       — 600s TTL
- *   - oauth-refresh/<coreId>/<token>   — sliding 30d, cap 90d absolute
+ *   - oauth-code/<code>                — 600s TTL (cluster-wide: code /token is
+ *                                        core-agnostic, so any core resolves it)
+ *   - oauth-refresh/<coreId>/<token>   — sliding 30d, cap 90d absolute (per-core:
+ *                                        refresh re-mints via home-core storage)
  *
  * Per the no-credentials-in-PlatformDB invariant, the client row may
  * carry `clientSecretHash` (Argon2id, one-way) but never plaintext
@@ -158,25 +160,37 @@ export async function listClientIds (platform: PlatformDB): Promise<string[]> {
   return keys.map((k) => k.slice(PREFIX_CLIENT.length)).sort();
 }
 
-// --- Authorization codes (per-core, ≤10-min TTL) --- //
+// --- Authorization codes (CLUSTER-WIDE, ≤10-min TTL) --- //
+//
+// The code key is intentionally NOT namespaced by core:id. `/oauth2/token`
+// (code grant) touches no per-user storage — it returns the access already
+// minted at `/accept` (accessToken + home-core apiEndpoint live in this row).
+// So the exchange is a pure lookup in the cluster-wide PlatformDB and any core
+// can serve it. Keying by the minting core's id would strand a `/token` that a
+// load balancer routes to a different core than `/accept` (both derive from the
+// same issuer, but the LB need not pin them together). The code value is a
+// cryptographically-random token, so a cross-core collision is negligible, and
+// single-use stays atomic cluster-wide via consumeAccessState. (Refresh KEEPS
+// the per-core key — its exchange re-mints via the user's home-core storage, so
+// it is inherently home-core-pinned; see below.)
 
 export async function setCode (
-  platform: PlatformDB, coreId: string, code: string, payload: OAuthCode,
+  platform: PlatformDB, code: string, payload: OAuthCode,
 ): Promise<void> {
   await platform.setAccessState(
-    codeKey(coreId, code),
+    codeKey(code),
     payload,
     payload.expiresAt,
   );
 }
 
-export async function getCode (platform: PlatformDB, coreId: string, code: string): Promise<OAuthCode | null> {
-  const entry = await platform.getAccessState(codeKey(coreId, code));
+export async function getCode (platform: PlatformDB, code: string): Promise<OAuthCode | null> {
+  const entry = await platform.getAccessState(codeKey(code));
   return entry == null ? null : (entry.value as OAuthCode);
 }
 
-export async function deleteCode (platform: PlatformDB, coreId: string, code: string): Promise<void> {
-  await platform.deleteAccessState(codeKey(coreId, code));
+export async function deleteCode (platform: PlatformDB, code: string): Promise<void> {
+  await platform.deleteAccessState(codeKey(code));
 }
 
 /**
@@ -185,8 +199,8 @@ export async function deleteCode (platform: PlatformDB, coreId: string, code: st
  * Use this instead of getCode + deleteCode — those race, letting two
  * concurrent `/token` submissions of one code both mint a chain.
  */
-export async function consumeCode (platform: PlatformDB, coreId: string, code: string): Promise<OAuthCode | null> {
-  const entry = await platform.consumeAccessState(codeKey(coreId, code));
+export async function consumeCode (platform: PlatformDB, code: string): Promise<OAuthCode | null> {
+  const entry = await platform.consumeAccessState(codeKey(code));
   return entry == null ? null : (entry.value as OAuthCode);
 }
 
@@ -226,8 +240,8 @@ export async function consumeRefresh (platform: PlatformDB, coreId: string, toke
 
 // --- Key helpers (owned here, NOT in the engine) --- //
 
-function codeKey (coreId: string, code: string): string {
-  return PREFIX_CODE + coreId + '/' + code;
+function codeKey (code: string): string {
+  return PREFIX_CODE + code;
 }
 
 function refreshKey (coreId: string, token: string): string {

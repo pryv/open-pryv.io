@@ -151,7 +151,7 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       const res = fakeRes();
       await handler({ body: validBody() }, res);
       const code = res.body.redirectTo.match(/code=([^&]+)/)[1];
-      const row = await getCode(platform, CORE_ID, code);
+      const row = await getCode(platform, code);
       assert.equal(row.userId, 'u-alice');
       assert.equal(row.username, 'alice');
       assert.equal(row.clientId, 'myapp');

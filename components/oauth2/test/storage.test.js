@@ -101,7 +101,7 @@ describe('[OAUTH-STORE] storage layer', () => {
     const future = () => Date.now() + 60_000;
     const past = () => Date.now() - 1_000;
 
-    it('[OS-CD1] setCode + getCode round-trip; key includes coreId', async () => {
+    it('[OS-CD1] setCode + getCode round-trip; key is cluster-wide (no coreId)', async () => {
       const platform = fakePlatform();
       const payload = {
         clientId: 'app',
@@ -112,14 +112,15 @@ describe('[OAUTH-STORE] storage layer', () => {
         scope: ['pryv:read'],
         expiresAt: future(),
       };
-      await storage.setCode(platform, 'core-a', 'CODE1', payload);
-      assert.ok(platform._internalStateStore.has('oauth-code/core-a/CODE1'));
-      const got = await storage.getCode(platform, 'core-a', 'CODE1');
+      await storage.setCode(platform, 'CODE1', payload);
+      // Deliberately NOT core-namespaced: code /token is core-agnostic.
+      assert.ok(platform._internalStateStore.has('oauth-code/CODE1'));
+      const got = await storage.getCode(platform, 'CODE1');
       assert.equal(got.codeChallenge, 'cc');
     });
     it('[OS-CD2] getCode returns null when expired (lazy-expire via setAccessState)', async () => {
       const platform = fakePlatform();
-      await storage.setCode(platform, 'core-a', 'CODE2', {
+      await storage.setCode(platform, 'CODE2', {
         clientId: 'app',
         redirectUri: 'https://x/cb',
         codeChallenge: 'cc',
@@ -128,11 +129,11 @@ describe('[OAUTH-STORE] storage layer', () => {
         scope: [],
         expiresAt: past(),
       });
-      assert.equal(await storage.getCode(platform, 'core-a', 'CODE2'), null);
+      assert.equal(await storage.getCode(platform, 'CODE2'), null);
     });
     it('[OS-CD3] deleteCode removes the row', async () => {
       const platform = fakePlatform();
-      await storage.setCode(platform, 'core-a', 'CODE3', {
+      await storage.setCode(platform, 'CODE3', {
         clientId: 'app',
         redirectUri: 'https://x/cb',
         codeChallenge: 'cc',
@@ -141,23 +142,26 @@ describe('[OAUTH-STORE] storage layer', () => {
         scope: [],
         expiresAt: future(),
       });
-      await storage.deleteCode(platform, 'core-a', 'CODE3');
-      assert.equal(await storage.getCode(platform, 'core-a', 'CODE3'), null);
+      await storage.deleteCode(platform, 'CODE3');
+      assert.equal(await storage.getCode(platform, 'CODE3'), null);
     });
-    it('[OS-CD4] codes on different coreIds are independent', async () => {
+    it('[OS-CD4] the code key is cluster-wide — the same code resolves from any core', async () => {
+      // Codes are NOT core-namespaced: `/accept` may mint on one core and an
+      // LB may route `/token` to another; the exchange is core-agnostic (the
+      // access is already minted; the row carries the home-core apiEndpoint).
       const platform = fakePlatform();
-      const base = {
+      await storage.setCode(platform, 'SAME', {
+        clientId: 'A',
         redirectUri: 'https://x/cb',
         codeChallenge: 'cc',
         codeChallengeMethod: 'S256',
         userId: 'u',
         scope: [],
         expiresAt: future(),
-      };
-      await storage.setCode(platform, 'core-a', 'SAME', { ...base, clientId: 'A' });
-      await storage.setCode(platform, 'core-b', 'SAME', { ...base, clientId: 'B' });
-      assert.equal((await storage.getCode(platform, 'core-a', 'SAME')).clientId, 'A');
-      assert.equal((await storage.getCode(platform, 'core-b', 'SAME')).clientId, 'B');
+      });
+      // A code minted anywhere resolves via one cluster-wide key.
+      assert.equal((await storage.getCode(platform, 'SAME')).clientId, 'A');
+      assert.ok(platform._internalStateStore.has('oauth-code/SAME'));
     });
   });
 
@@ -211,7 +215,7 @@ describe('[OAUTH-STORE] storage layer', () => {
       await storage.setClient(platform, {
         clientId: same, redirectUris: ['x'], scope: [], grantTypes: ['authorization_code'],
       });
-      await storage.setCode(platform, 'core-a', same, {
+      await storage.setCode(platform, same, {
         clientId: 'app',
         redirectUri: 'x',
         codeChallenge: 'cc',
@@ -230,7 +234,7 @@ describe('[OAUTH-STORE] storage layer', () => {
         absoluteExpiresAt: Date.now() + 86_400_000,
       });
       assert.ok(await storage.getClient(platform, same));
-      assert.ok(await storage.getCode(platform, 'core-a', same));
+      assert.ok(await storage.getCode(platform, same));
       assert.ok(await storage.getRefresh(platform, 'core-a', same));
     });
   });
