@@ -1,5 +1,16 @@
 # Changelog - API Changes
 
+## 2.0.0-rc.8 — 2026-07-17
+
+### Fixed — api-server no longer crash-loops on production (`--omit=dev`) builds
+
+`components/api-server/src/routes/oauth2.ts` did a top-level `require('cuid')`,
+but `cuid` is a `devDependency` (the codebase uses `@paralleldrive/cuid2`). A
+production image built with `npm install --omit=dev` prunes `cuid`, so the
+`require` threw at module load and crash-looped every api worker (the core never
+served). Switched to the production `@paralleldrive/cuid2`. **rc.7 is dead on
+arrival — operators must use rc.8.** (#106)
+
 ## 2.0.0-rc.7 — 2026-07-17
 
 ### OAuth2 authorization-code flow (server-side)
