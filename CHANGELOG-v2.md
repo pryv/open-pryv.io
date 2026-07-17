@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## 2.0.0-rc.6 — 2026-07-11
+## 2.0.0-rc.7 — 2026-07-17
 
 ### OAuth2 authorization-code flow (server-side)
 
@@ -31,6 +31,8 @@ always requires a fresh authorization. `client_credentials` treats scope tokens 
 opaque and always serves the app's own account. Consent event-type schemas
 (`consent/*-cmc`) accept the full permission grammar accordingly, and accept triggers
 support an optional `grantedPermissions` consent-downgrade subset.
+
+## 2.0.0-rc.6 — 2026-07-11
 
 ### Access aliases (`randomAlias`) — de-identifying endpoints
 
