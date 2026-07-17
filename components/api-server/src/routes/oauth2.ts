@@ -39,7 +39,9 @@ const oauth2 = require('oauth2');
 const { getLogger } = require('@pryv/boiler');
 const { MethodContext } = require('business');
 const storages = require('storages');
-const cuid = require('cuid');
+// Use @paralleldrive/cuid2 (a production dependency) — the codebase migrated off
+// the old `cuid`, which is a devDependency and is pruned by `--omit=dev` builds.
+const { createId: cuid } = require('@paralleldrive/cuid2');
 // Permission-lexicon single point + composite access refs.
 const { permissionKey } = require('business/src/accesses/permissionSet.ts');
 const { parseAccessRef } = require('business/src/accesses/refs.ts');
