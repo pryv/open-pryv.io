@@ -1,5 +1,18 @@
 # Changelog - API Changes
 
+## 2.0.0-rc.9 — 2026-07-18
+
+### CMC: request a delegable (`app`) data-grant
+
+A `consent/request-cmc` offer may now carry `request.accessType: "app"`
+(default `"shared"`). When set, the accepted **data-grant** is minted as a Pryv
+`app` access instead of `shared`, so the approved requester can
+`accesses.create` scoped, individually-named **sub-accesses** (permissions ⊆ the
+grant) — the least-privilege re-delegation pattern with per-actor audit
+attribution. `shared` grants (the default) cannot call `accesses.*`; nothing
+changes for existing offers or for the OAuth2 flow (whose data-grants stay
+`shared`). Any other `accessType` is rejected (`cmc-offer-invalid-access-type`).
+
 ## 2.0.0-rc.8 — 2026-07-17
 
 ### Fixed — api-server no longer crash-loops on production (`--omit=dev`) builds
