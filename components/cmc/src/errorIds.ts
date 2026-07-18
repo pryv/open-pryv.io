@@ -92,6 +92,8 @@ const CmcErrorIds = {
   // The offer's `request.permissions` entries don't match the
   // accesses.create permission lexicon (stream or feature permission).
   OFFER_INVALID_PERMISSIONS: 'cmc-offer-invalid-permissions',
+  // The offer's `request.accessType` is neither "shared" (default) nor "app".
+  OFFER_INVALID_ACCESS_TYPE: 'cmc-offer-invalid-access-type',
   // An accept trigger's `grantedPermissions` (consent downgrade) is
   // empty, malformed, or not a subset of the offer's permissions.
   GRANTED_PERMISSIONS_NOT_SUBSET: 'cmc-granted-permissions-not-subset',

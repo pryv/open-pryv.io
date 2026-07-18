@@ -207,6 +207,38 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       assert.equal(payload.clientData.cmc.backChannelApiEndpoint, null);
     });
 
+    it('[AO-AT1] defaults to a shared data-grant when request.accessType is absent', () => {
+      const payload = buildDataGrantPayload({
+        offerEvent: VALID_OFFER,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+      });
+      assert.equal(payload.type, 'shared');
+    });
+    it('[AO-AT2] mints an app (delegable) data-grant when request.accessType is "app"', () => {
+      const offer = { ...VALID_OFFER, content: { ...VALID_OFFER.content, request: { ...VALID_OFFER.content.request, accessType: 'app' } } };
+      const payload = buildDataGrantPayload({
+        offerEvent: offer,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+      });
+      assert.equal(payload.type, 'app');
+      // permissions + counterparty marker unchanged by the type.
+      assert.equal(payload.clientData.cmc.role, 'counterparty');
+    });
+    it('[AO-AT3] honors an explicit request.accessType of "shared"', () => {
+      const offer = { ...VALID_OFFER, content: { ...VALID_OFFER.content, request: { ...VALID_OFFER.content.request, accessType: 'shared' } } };
+      const payload = buildDataGrantPayload({
+        offerEvent: offer,
+        counterparty: { username: 'provider-a', host: 'example.com' },
+      });
+      assert.equal(payload.type, 'shared');
+    });
+    it('[AO-AT4] rejects any other request.accessType (not "shared"/"app")', () => {
+      const offer = { ...VALID_OFFER, content: { ...VALID_OFFER.content, request: { ...VALID_OFFER.content.request, accessType: 'personal' } } };
+      assert.throws(
+        () => buildDataGrantPayload({ offerEvent: offer, counterparty: { username: 'x', host: 'y' } }),
+        (err) => err.id === 'cmc-offer-invalid-access-type');
+    });
+
     it('[AO08] honors a custom accessName override', () => {
       const payload = buildDataGrantPayload({
         offerEvent: VALID_OFFER,

@@ -42,7 +42,7 @@ const permissionSet = require('business/src/accesses/permissionSet.ts');
 
 type PermissionLike = { streamId: string; level: string } | { feature: string; setting: string };
 type OfferContent = {
-  request?: { permissions?: unknown[] };
+  request?: { permissions?: unknown[]; accessType?: 'shared' | 'app' };
   requesterMeta?: { appId?: string };
 };
 
@@ -200,6 +200,27 @@ function allowsUserChoice (offerEvent: OfferEvent): boolean {
 }
 
 /**
+ * The Pryv access `type` the requester asked the data-grant to be minted as.
+ * Default `shared` (a plain, non-delegable grant). `app` opts the grant into
+ * account-management capability so the approved requester can `accesses.create`
+ * subset-scoped, individually-named sub-accesses from it (least-privilege
+ * re-delegation with per-actor audit attribution — open-pryv.io#107). Any other
+ * value is rejected. A `shared` grant cannot call `accesses.*`; an `app` grant
+ * can create/manage `shared` sub-accesses within its own permissions.
+ */
+function accessTypeFromOffer (offerEvent: OfferEvent): 'shared' | 'app' {
+  const t = (offerEvent?.content?.request as { accessType?: unknown } | undefined)?.accessType;
+  if (t == null) return 'shared';
+  if (t !== 'shared' && t !== 'app') {
+    const err: ApiError = new Error(
+      'cmc/accept: request.accessType must be "shared" (default) or "app"; got ' + JSON.stringify(t));
+    err.id = CmcErrorIds.OFFER_INVALID_ACCESS_TYPE;
+    throw err;
+  }
+  return t;
+}
+
+/**
  * Build the access-create payload for the recipient's local data-grant.
  * The access has read/contribute/etc. on the offer's permissions PLUS
  * contribute on the anchor chat + collector streams (so the requester
@@ -275,7 +296,7 @@ function buildDataGrantPayload (params: {
     ? basePerms.concat(extraPermissions)
     : basePerms;
   return {
-    type: 'shared',
+    type: accessTypeFromOffer(offerEvent),
     name: computedName,
     permissions: allPerms,
     clientData: {
@@ -459,6 +480,7 @@ export {
   readOfferViaCapability,
   permissionsFromOffer,
   allowsUserChoice,
+  accessTypeFromOffer,
   buildDataGrantPayload,
   deliverAcceptViaCapability,
   deliverRefuseViaCapability,
