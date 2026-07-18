@@ -331,6 +331,21 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
       }, res);
       assert.equal(res.statusCode, 200, JSON.stringify(res.body));
     });
+    it('[OTA-CF3b] Basic scheme name is case-insensitive (RFC 7617) → 200', async () => {
+      const platform = fakePlatform();
+      const { plaintext, hash } = await mintSecret();
+      await registerClient(platform, 'myapp', { clientSecretHash: hash });
+      const verifier = await seedCode(platform, 'CODE-CF3b');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      // lower-case "basic" must be accepted just like "Basic".
+      const lower = 'basic ' + Buffer.from('myapp:' + plaintext).toString('base64');
+      await handler({
+        body: exchange(verifier, { code: 'CODE-CF3b' }),
+        headers: { authorization: lower },
+      }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    });
     it('[OTA-CF4] confidential client with wrong secret → 401 invalid_client', async () => {
       const platform = fakePlatform();
       const { hash } = await mintSecret();

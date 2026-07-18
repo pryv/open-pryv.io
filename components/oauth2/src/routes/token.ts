@@ -47,7 +47,9 @@ export type TokenDeps = {
  */
 function decodeBasicAuth (headerValue: unknown): { client_id: string; client_secret: string } | null {
   if (typeof headerValue !== 'string') return null;
-  const m = headerValue.match(/^Basic\s+([A-Za-z0-9+/=]+)\s*$/);
+  // RFC 7617 §2: the `Basic` auth-scheme name is case-INSENSITIVE (`basic`,
+  // `BASIC`, … are all valid). The base64 credentials stay strict.
+  const m = headerValue.match(/^Basic\s+([A-Za-z0-9+/=]+)\s*$/i);
   if (m == null) return null;
   let decoded: string;
   try {
