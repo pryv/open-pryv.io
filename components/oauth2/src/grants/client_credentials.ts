@@ -156,6 +156,7 @@ export async function handleClientCredentials (
 
   await audit('oauth.token.issued.client_credentials', {
     clientId,
+    userId, // app-account principal — this grant is user-scoped (its own trail)
     grantedScope: granted,
     accessId: access.accessId,
   });

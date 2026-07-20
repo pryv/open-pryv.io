@@ -34,11 +34,10 @@ const { createId: cuid } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
 const { logServerError } = require('./serverLog.ts');
 
-// Mirror components/audit/ Constants — kept local to avoid a hard require of
-// the audit component just for two string prefixes + the event type.
+// OAuth-specific audit event type (not part of components/audit/ Constants).
+// The access-/action- streamId prefixes are sourced from the audit singleton's
+// CONSTANTS at emit time (below), so they can never drift from components/audit/.
 const EVENT_TYPE = 'audit-log/oauth';
-const ACCESS_STREAM_ID_PREFIX = 'access-';
-const ACTION_STREAM_ID_PREFIX = 'action-';
 
 /** The set of OAuth audit event types this component emits. */
 export type OAuthAuditEvent =
@@ -53,15 +52,19 @@ export type OAuthAuditEvent =
   | 'oauth.token.revoked';
 
 /**
- * OAuth events for which no user is resolvable at emit time. MUST stay in
- * lock-step with components/audit/src/ApiMethods.ts#WITHOUT_USER_METHODS —
- * those go to syslog only, never per-user storage.
+ * OAuth events for which no user is resolvable at emit time (pre-consent
+ * /authorize + /refuse, and reuse of an already-consumed code/refresh where the
+ * user is unknown). These route to syslog only, never per-user storage.
+ * Exported and kept in lock-step with
+ * components/audit/src/ApiMethods.ts#WITHOUT_USER_METHODS (asserted in tests).
+ *
+ * NB: oauth.token.issued.client_credentials is NOT here — that grant resolves
+ * the app-account userId, so it is user-scoped (persisted to the app's trail).
  */
-const USERLESS_EVENTS: ReadonlySet<OAuthAuditEvent> = new Set([
+export const USERLESS_EVENTS: ReadonlySet<OAuthAuditEvent> = new Set([
   'oauth.consent.shown',
   'oauth.consent.refused',
-  'oauth.code.reused',
-  'oauth.token.issued.client_credentials'
+  'oauth.code.reused'
 ]);
 
 /**
@@ -103,13 +106,14 @@ type OAuthAuditEventRow = {
 };
 
 /**
- * Emit an audit row. MUST be awaited — silent fire-and-forget is a
- * deliberate anti-pattern (audit failures must surface per the existing
- * components/audit/ contract).
+ * Emit an audit row. MUST be awaited so a failure is observed here rather
+ * than lost to an unhandled rejection.
  *
- * Failures are surfaced via the error log but never propagated: an audit
- * backend hiccup must not deny an OAuth grant (availability > audit
- * completeness for the token path). No-op when `audit:active` is false.
+ * Failure policy (deliberate — differs from the core API path, where an audit
+ * failure fails the call): emission failures are SURFACED via logServerError
+ * but NOT propagated — an audit-backend hiccup must not deny an OAuth token
+ * grant (availability is prioritised over audit completeness on this path).
+ * No-op when `audit:active` is false or boiler is not yet initialised.
  */
 export async function audit (event: OAuthAuditEvent, payload: OAuthAuditPayload): Promise<void> {
   if (process.env.OAUTH_AUDIT_DEBUG === '1') {
@@ -129,11 +133,12 @@ export async function audit (event: OAuthAuditEvent, payload: OAuthAuditPayload)
   if (config.get('audit:active') !== true) return;
 
   const userId = payload.userId ?? undefined;
-  // Guard the audit-component gap: eventForUser() calls storage.forUser(userId)
-  // for any non-WITHOUT_USER method, which throws on an undefined userId. Our
-  // classification guarantees this never happens, but a future miswiring
-  // (a user-resolved event emitted without a userId) would otherwise crash;
-  // drop the row with a warning instead.
+  // Defensive: a user-scoped event (one NOT in USERLESS_EVENTS) reaching here
+  // without a userId would hit storage.forUser(undefined), which the storage
+  // engine rejects (PG user_id NOT NULL / SQLite bad user dir) — swallowed
+  // below as a lost row + error log. Correct classification + the matching
+  // WITHOUT_USER_METHODS entries keep this from happening; if a future
+  // miswiring breaks that, drop the row with a clear log instead.
   if (userId == null && !USERLESS_EVENTS.has(event)) {
     logServerError('audit: user-resolved event "' + event + '" emitted without a userId — dropping the audit row', null);
     return;
@@ -141,10 +146,11 @@ export async function audit (event: OAuthAuditEvent, payload: OAuthAuditPayload)
 
   try {
     const auditSingleton = require('audit').default;
+    const C = auditSingleton.CONSTANTS;
     const time = timestamp.now();
     const streamIds: string[] = [];
-    if (payload.accessId != null) streamIds.push(ACCESS_STREAM_ID_PREFIX + payload.accessId);
-    streamIds.push(ACTION_STREAM_ID_PREFIX + event);
+    if (payload.accessId != null) streamIds.push(C.ACCESS_STREAM_ID_PREFIX + payload.accessId);
+    streamIds.push(C.ACTION_STREAM_ID_PREFIX + event);
 
     const row: OAuthAuditEventRow = {
       id: cuid(),
