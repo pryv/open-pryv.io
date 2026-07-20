@@ -64,7 +64,21 @@ const ALL_METHODS = [
   'system.getUserInfo',
   'system.listUsers',
   'system.listCores',
-  'auth.hostings'
+  'auth.hostings',
+  // OAuth 2.0 authorization-server events. Emitted directly via
+  // audit.eventForUser() from the oauth2 component's grant/consent paths
+  // (they are NOT api.register API methods, so they never pass through
+  // throwIfMethodIsNotDeclared — but they must be declared here so the
+  // AuditFilter recognises them, otherwise isAudited() returns undefined).
+  'oauth.consent.shown',
+  'oauth.consent.granted',
+  'oauth.consent.refused',
+  'oauth.code.exchanged',
+  'oauth.code.reused',
+  'oauth.token.issued.authorization_code',
+  'oauth.token.issued.client_credentials',
+  'oauth.token.refreshed',
+  'oauth.token.revoked'
 ];
 
 const NOT_AUDITED_METHODS = [
