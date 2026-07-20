@@ -126,15 +126,19 @@ class Audit {
             ' ' +
             util.inspect(event, { breakLength: Infinity, colors: true }));
     const methodId = event.content.action!;
-    // replace this with api-server's validation or remove completely as we are prpoducing it in house.
-    let isValid = false;
+    // Validate the event shape. WITHOUT_USER methods carry no userId, so they
+    // use the user-agnostic check; the rest require a userId. Both return `true`
+    // on success or a diagnostic string on failure — anything other than `true`
+    // is invalid (a returned string is truthy, which is why the historical
+    // `if (!isValid)` never fired).
+    let isValid: string | boolean = false;
     if (WITHOUT_USER_METHODS_MAP[methodId]) {
-      isValid = validation.eventWithoutUser(userId, event);
+      isValid = validation.eventWithoutUser(event);
     } else {
       isValid = validation.eventForUser(userId, event);
     }
-    if (!isValid) {
-      throw new Error('Invalid audit eventForUser call : ' + isValid, {
+    if (isValid !== true) {
+      throw new Error('Invalid audit event (' + methodId + '): ' + isValid, {
         cause: { userId, event }
       });
     }

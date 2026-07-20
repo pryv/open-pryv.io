@@ -60,8 +60,10 @@ function eventWithoutUser (event: AuditEventLike | null | undefined): string | t
     return 'event.streamIds is invalid';
   }
   const typeSplit = event.type.split('/');
-  if (typeSplit[0] !== 'log') {
-    return ('event.type is not in the format of "log/*"');
+  // Real events use the `audit-log/*` family (CONSTANTS.EVENT_TYPE_VALID/ERROR,
+  // plus `audit-log/oauth`); test fixtures use `log/*`. Accept both.
+  if (typeSplit[0] !== 'log' && typeSplit[0] !== 'audit-log') {
+    return ('event.type must be in the format "log/*" or "audit-log/*"');
   }
   return true;
 }
