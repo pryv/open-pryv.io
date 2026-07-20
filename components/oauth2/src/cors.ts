@@ -17,6 +17,8 @@
  *   - `GET /.well-known/oauth-authorization-server` (handled inline in wellKnown.ts)
  */
 
+import type { Request, Response } from 'express';
+
 const ALLOW_HEADERS = 'Content-Type, Authorization, DPoP';
 const ALLOW_METHODS = 'POST, GET, OPTIONS';
 const MAX_AGE = '3600';
@@ -25,7 +27,7 @@ const MAX_AGE = '3600';
  * Apply the CORS response headers. Idempotent; safe to call before any
  * response.
  */
-export function applyCors (req: any, res: any): void {
+export function applyCors (req: Request, res: Response): void {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', ALLOW_METHODS);
   res.setHeader('Access-Control-Allow-Headers', ALLOW_HEADERS);
@@ -37,7 +39,7 @@ export function applyCors (req: any, res: any): void {
  * Express-style middleware: apply CORS headers on every response and
  * short-circuit OPTIONS preflight with 204.
  */
-export function corsMiddleware (req: any, res: any, next: () => void): void {
+export function corsMiddleware (req: Request, res: Response, next: () => void): void {
   applyCors(req, res);
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;

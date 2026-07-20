@@ -53,6 +53,9 @@ const { logServerError } = require('../serverLog.ts');
 const { checkConsentGrant, normalizePermissions } =
   require('business/src/accesses/permissionSet.ts');
 
+import type { Request, Response } from 'express';
+import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
+
 /** Authenticated user-session handle, opaque to this module. */
 export type UserSession = {
   userId: string;
@@ -98,7 +101,7 @@ export type CreateAccess = (params: {
 /** Shape of the inputs the host app injects. */
 export type AcceptDeps = {
   config: { get (key: string): unknown };
-  platform: any;
+  platform: PlatformDB;
   resolveUser: ResolveUser;
   createAccess: CreateAccess;
 };
@@ -108,7 +111,7 @@ export const CODE_TTL_SECONDS = 600;
 
 /** Express-style handler factory. */
 export function handleAccept (deps: AcceptDeps) {
-  return async function accept (req: any, res: any): Promise<void> {
+  return async function accept (req: Request, res: Response): Promise<void> {
     const issuer = issuerFromConfig(deps.config);
     const adminKey = String(deps.config.get('auth:adminAccessKey') ?? '');
     const accessTokenTTL = Number(deps.config.get('oauth:accessTokenTTL') ?? 3600);
@@ -153,10 +156,10 @@ export function handleAccept (deps: AcceptDeps) {
     let grantedPermissions: Array<Record<string, unknown>>;
     try {
       grantedPermissions = normalizePermissions(body.grantedPermissions);
-    } catch (e: any) {
+    } catch (e: unknown) {
       return sendJson(res, 400, {
         error: 'invalid_scope',
-        error_description: 'grantedPermissions invalid: ' + (e?.message ?? String(e)),
+        error_description: 'grantedPermissions invalid: ' + ((e as Error)?.message ?? String(e)),
       });
     }
     if (grantedPermissions.length === 0) {
@@ -172,13 +175,13 @@ export function handleAccept (deps: AcceptDeps) {
     let offeredConsent;
     try {
       offeredConsent = normalizePermissions(payload.offer.permissions, { consent: true });
-    } catch (e: any) {
+    } catch (e: unknown) {
       // The offer in the signed state was validated at /authorize
       // (resolveOffer rejects e.g. exclusion masks), so reaching here means
       // a stale/forged state. Fail closed with a clean 400, never a 500.
       return sendJson(res, 400, {
         error: 'invalid_scope',
-        error_description: 'consent offer is invalid: ' + (e?.message ?? String(e)),
+        error_description: 'consent offer is invalid: ' + ((e as Error)?.message ?? String(e)),
       });
     }
     const check = checkConsentGrant(grantedPermissions, offeredConsent, payload.offer.allowUserChoice === true);
@@ -218,11 +221,11 @@ export function handleAccept (deps: AcceptDeps) {
         offer: payload.offer,
         grantedPermissions,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       // The effective-permission guard (hierarchical consent masking) runs
       // inside createAccess, where the user's stream tree is available. It
       // is a consent-downgrade violation, not a server fault → 400.
-      if (err?.code === 'consent-widens-offer') {
+      if ((err as { code?: string } | null)?.code === 'consent-widens-offer') {
         return sendJson(res, 400, {
           error: 'invalid_scope',
           error_description: 'grantedPermissions widen the offer under the stream hierarchy — the kept subset must not grant more access than the offer',
@@ -294,7 +297,7 @@ function summariseOffending (offending: unknown): string {
   return JSON.stringify(head) + ` (+${offending.length - MAX_OFFENDING_IN_ERROR} more)`;
 }
 
-function sendJson (res: any, status: number, body: any): void {
+function sendJson (res: Response, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');

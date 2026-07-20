@@ -27,6 +27,9 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
+// Kept on the require shim: converting these to typed ESM imports surfaces
+// pre-existing cross-module type gaps (the cmc ParsedScope extension, nullable
+// offer.capabilityId) that belong to the TS-migration track, not here.
 const { getClient, validateRedirectUri } = require('../clientRegistry.ts');
 const { mapError } = require('../errorMap.ts');
 const { parseScopes, ScopeParseError } = require('../scopeRegistry.ts');
@@ -35,17 +38,21 @@ const { issuerFromConfig } = require('../issuer.ts');
 const { audit } = require('../audit.ts');
 const { resolveOffer, OfferResolveError } = require('../offerResolver.ts');
 
+import type { Request, Response } from 'express';
+import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
+import type { ParsedScope } from '../scopeRegistry.ts';
+
 /** Shape of the inputs the host app injects. */
 export type AuthorizeDeps = {
   config: { get (key: string): unknown };
-  platform: any; // raw PlatformDB
+  platform: PlatformDB; // raw PlatformDB
   /** Test seam for the cmc offer read (defaults to global fetch). */
   offerFetch?: typeof fetch;
 };
 
 /** Express-style handler factory. */
 export function handleAuthorize (deps: AuthorizeDeps) {
-  return async function authorize (req: any, res: any): Promise<void> {
+  return async function authorize (req: Request, res: Response): Promise<void> {
     const issuer = issuerFromConfig(deps.config);
     if (!issuer) return sendServerError(res, 'service:api not configured');
     const adminKey = String(deps.config.get('auth:adminAccessKey') ?? '');
@@ -53,7 +60,7 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     const consentUrl = String(deps.config.get('oauth:consentUrl') ?? '').replace(/\/$/, '');
     if (!consentUrl) return sendServerError(res, 'oauth:consentUrl not configured');
 
-    const q = req.query ?? {};
+    const q = (req.query ?? {}) as Record<string, string | undefined>;
 
     // 1. Parameter shape — these MUST be present before we can do anything
     //    useful, including building an error redirect.
@@ -81,7 +88,7 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     // VALIDATED redirect_uri with an RFC 6749 error enum + state + iss.
     const state = isNonEmptyString(q.state) ? String(q.state) : '';
     const redirectError = (errorEnum: string, description?: string): void => {
-      sendErrorRedirect(res, q.redirect_uri, errorEnum, state, issuer, description);
+      sendErrorRedirect(res, String(q.redirect_uri), errorEnum, state, issuer, description);
     };
 
     if (q.response_type !== 'code') {
@@ -104,13 +111,13 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     let parsedScopes;
     try {
       parsedScopes = parseScopes(scopeStr);
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (e instanceof ScopeParseError) {
-        return redirectError('invalid_scope', e.message);
+        return redirectError('invalid_scope', (e as Error).message);
       }
       throw e;
     }
-    const requestedScopeTokens = parsedScopes.map((s: any) => s.raw);
+    const requestedScopeTokens = parsedScopes.map((s: ParsedScope) => s.raw);
     const registered = new Set<string>(client.scope ?? []);
     const unrecognised = requestedScopeTokens.filter((t: string) => !registered.has(t));
     if (unrecognised.length > 0) {
@@ -122,7 +129,7 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     // permission set: scope MUST be exactly one cmc:<offer-name>
     // reference (no coarse wildcard scopes exist; a request mixing or
     // multiplying refs has no coherent grant semantics).
-    const cmcScopes = parsedScopes.filter((s: any) => s.namespace === 'cmc');
+    const cmcScopes = parsedScopes.filter((s: ParsedScope) => s.namespace === 'cmc');
     if (cmcScopes.length !== 1 || parsedScopes.length !== 1) {
       return redirectError('invalid_scope',
         'scope must be exactly one cmc:<offer-name> consent-offer reference');
@@ -146,9 +153,9 @@ export function handleAuthorize (deps: AuthorizeDeps) {
           capabilityUrl: offerRef.capabilityUrl,
           deps: { fetch: deps.offerFetch },
         });
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (e instanceof OfferResolveError) {
-          return redirectError('invalid_scope', e.message);
+          return redirectError('invalid_scope', (e as Error).message);
         }
         throw e;
       }
@@ -197,7 +204,7 @@ function escapeHtml (s: unknown): string {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function sendHtmlError (res: any, status: number, message: string): void {
+function sendHtmlError (res: Response, status: number, message: string): void {
   res.statusCode = status;
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
@@ -205,7 +212,7 @@ function sendHtmlError (res: any, status: number, message: string): void {
     `<body><h1>Authorization failed</h1><p>${escapeHtml(message)}</p></body></html>`);
 }
 
-function sendServerError (res: any, reason: string): void {
+function sendServerError (res: Response, reason: string): void {
   res.statusCode = 500;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
@@ -213,7 +220,7 @@ function sendServerError (res: any, reason: string): void {
 }
 
 function sendErrorRedirect (
-  res: any,
+  res: Response,
   redirectUri: string,
   errorEnum: string,
   state: string,

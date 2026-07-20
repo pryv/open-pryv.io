@@ -37,6 +37,11 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
+import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
+
+// Kept on the require shim: a typed `storage` import surfaces a pre-existing
+// GrantPermission vs Record<string,unknown> mismatch at the mint boundary that
+// belongs to the TS-migration track, not here.
 const { generateToken } = require('../secureToken.ts');
 const storage = require('../storage.ts');
 const { audit } = require('../audit.ts');
@@ -71,7 +76,7 @@ export type MintRefreshedAccess = (params: {
 
 export type RefreshTokenDeps = {
   config: { get (key: string): unknown };
-  platform: any;
+  platform: PlatformDB;
   mintRefreshedAccess: MintRefreshedAccess;
 };
 
@@ -169,8 +174,8 @@ export async function handleRefreshToken (
       ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
       ...(row.permissions != null ? { permissions: row.permissions } : {}),
     });
-  } catch (err: any) {
-    if (err?.code === 'data-grant-revoked') {
+  } catch (err: unknown) {
+    if ((err as { code?: string } | null)?.code === 'data-grant-revoked') {
       await audit('oauth.token.revoked', {
         clientId: row.clientId,
         userId: row.userId,

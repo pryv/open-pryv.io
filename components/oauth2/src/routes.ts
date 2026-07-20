@@ -21,6 +21,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
+import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
+
 const { handleWellKnown } = require('./wellKnown.ts');
 const { listNamespaces } = require('./scopeRegistry.ts');
 const { handleAuthorize } = require('./routes/authorize.ts');
@@ -37,7 +39,7 @@ export type Deps = {
    * for the public auth flow (/oauth2/authorize, /accept, /token);
    * `.well-known` works without it.
    */
-  platform?: any;
+  platform?: PlatformDB;
   /**
    * Resolve a user's personal access token to a session handle, or
    * null on failure. Wired by the host app from the existing

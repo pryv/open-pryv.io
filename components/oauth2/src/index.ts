@@ -4,8 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
 
 /**
  * OAuth2 component — public entry point.
@@ -15,14 +13,14 @@ const require = createRequire(import.meta.url);
  * routes barrel consumed by api-server's boot pipeline.
  */
 
-const scopeRegistry = require('./scopeRegistry.ts');
-const errorMap = require('./errorMap.ts');
-const clientRegistry = require('./clientRegistry.ts');
-const wellKnown = require('./wellKnown.ts');
-const audit = require('./audit.ts');
-const routes = require('./routes.ts');
-const wwwAuthenticate = require('./wwwAuthenticate.ts');
-const storage = require('./storage.ts');
+import * as scopeRegistry from './scopeRegistry.ts';
+import * as errorMap from './errorMap.ts';
+import * as clientRegistry from './clientRegistry.ts';
+import * as wellKnown from './wellKnown.ts';
+import * as audit from './audit.ts';
+import * as routes from './routes.ts';
+import * as wwwAuthenticate from './wwwAuthenticate.ts';
+import * as storage from './storage.ts';
 
 export {
   scopeRegistry,

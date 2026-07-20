@@ -13,9 +13,6 @@
  * stays clean.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
 import type { OAuth2Error } from './errorMap.ts';
 
 /**

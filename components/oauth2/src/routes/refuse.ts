@@ -21,19 +21,18 @@
  * `oauth.consent.refused` audit event.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
+import { verifyState } from '../signedState.ts';
+import { issuerFromConfig } from '../issuer.ts';
+import { audit } from '../audit.ts';
 
-const { verifyState } = require('../signedState.ts');
-const { issuerFromConfig } = require('../issuer.ts');
-const { audit } = require('../audit.ts');
+import type { Request, Response } from 'express';
 
 export type RefuseDeps = {
   config: { get (key: string): unknown };
 };
 
 export function handleRefuse (deps: RefuseDeps) {
-  return async function refuse (req: any, res: any): Promise<void> {
+  return async function refuse (req: Request, res: Response): Promise<void> {
     const issuer = issuerFromConfig(deps.config);
     const adminKey = String(deps.config.get('auth:adminAccessKey') ?? '');
     if (!issuer || !adminKey) {
@@ -70,7 +69,7 @@ export function handleRefuse (deps: RefuseDeps) {
   };
 }
 
-function sendJson (res: any, status: number, body: any): void {
+function sendJson (res: Response, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');

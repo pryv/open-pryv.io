@@ -30,10 +30,7 @@
  * rotates the admin key. No additional config key needed.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const crypto = require('node:crypto');
+import crypto from 'node:crypto';
 
 /** Maximum lifetime of a signed state, in seconds. */
 export const SIGNED_STATE_TTL_SECONDS = 300;
