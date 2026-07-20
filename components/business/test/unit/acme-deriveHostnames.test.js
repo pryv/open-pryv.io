@@ -53,6 +53,29 @@ describe('[DERIVEHOSTS] deriveHostnames', () => {
     assert.equal(r.challenge, 'http-01');
   });
 
+  it('certRenewer: false + dns.domain → wildcard even when core.url is set (materialize-only cluster member)', () => {
+    const r = deriveHostnames(cfg({
+      'dnsLess:isActive': false,
+      'dns:active': false,
+      'letsEncrypt:certRenewer': false,
+      'core:url': 'https://core-use1.mc.example.com',    // auto-derived
+      'dns:domain': 'mc.example.com'
+    }));
+    assert.equal(r.commonName, '*.mc.example.com');
+    assert.deepEqual(r.altNames, ['mc.example.com']);
+    assert.equal(r.challenge, 'dns-01');
+  });
+
+  it('certRenewer UNSET keeps core.url priority (per-core DNSless multi-core unchanged)', () => {
+    const r = deriveHostnames(cfg({
+      'dnsLess:isActive': false,
+      'core:url': 'https://core1.example.com/',
+      'dns:domain': 'mc.example.com'
+    }));
+    assert.equal(r.commonName, 'core1.example.com');
+    assert.equal(r.challenge, 'http-01');
+  });
+
   it('dns.active: true + dns.domain → wildcard DNS-01 even when core.url is set (auto-derived from core-identity)', () => {
     const r = deriveHostnames(cfg({
       'dnsLess:isActive': false,

@@ -165,8 +165,15 @@ function writeOverrideConfig (configDir: string, bundle: BundleShape, tlsPaths: 
   // Bundle v2: propagate letsEncrypt.atRestKey when issuer shipped one. Joiner
   // ends up with the same AES-GCM key as the rest of the cluster, so cert +
   // ACME account rows in rqlite can be decrypted on either side.
+  // `certRenewer: false` is stamped explicitly: the issuing core is the
+  // cluster's ACME renewer, so a joiner is a materialize-only follower —
+  // deriveHostnames uses the explicit false to keep it watching the
+  // cluster wildcard instead of its auto-derived per-core hostname.
   if (bundle.platformSecrets?.letsEncrypt?.atRestKey) {
-    override.letsEncrypt = { atRestKey: bundle.platformSecrets.letsEncrypt.atRestKey };
+    override.letsEncrypt = {
+      atRestKey: bundle.platformSecrets.letsEncrypt.atRestKey,
+      certRenewer: false
+    };
   }
 
   // Bundle v3: propagate platform.piiHmacKey when issuer shipped one. Joiner
