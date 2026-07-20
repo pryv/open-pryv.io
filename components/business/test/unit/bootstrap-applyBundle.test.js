@@ -206,7 +206,10 @@ describe('[APPLYBUNDLE] applyBundle', function () {
     });
 
     const parsed = yaml.load(fs.readFileSync(result.overridePath, 'utf8'));
-    assert.deepEqual(parsed.letsEncrypt, { atRestKey: ATKEY });
+    // certRenewer: false stamped explicitly — the joiner is a materialize-only
+    // follower; deriveHostnames uses the explicit false to watch the cluster
+    // wildcard instead of the auto-derived per-core hostname.
+    assert.deepEqual(parsed.letsEncrypt, { atRestKey: ATKEY, certRenewer: false });
   });
 
   it('writes platform.piiHmacKey when bundle ships one (v3 bundle)', async () => {

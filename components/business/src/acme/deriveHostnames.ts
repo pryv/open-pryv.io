@@ -18,6 +18,7 @@ import type {} from 'node:fs';
  *   | ------------------------------------------------------ | -------- | --------- |
  *   | dnsLess.isActive: true + dnsLess.publicUrl: https://X/ | X        | http-01   |
  *   | dns.active: true + dns.domain: Z (embedded DNS)        | *.Z + Z  | dns-01    |
+ *   | letsEncrypt.certRenewer: false + dns.domain: Z         | *.Z + Z  | dns-01    |
  *   | core.url: https://Y/  (DNSless multi-core per-core)    | Y        | http-01   |
  *   | dns.domain: Z (set but not authoritative here)         | *.Z + Z  | dns-01    |
  *
@@ -25,6 +26,15 @@ import type {} from 'node:fs';
  * core-identity plugin auto-populates `core.url` from
  * `{core.id}.{dns.domain}` when not explicitly set, which would
  * otherwise short-circuit the wildcard path.
+ *
+ * The same short-circuit hazard exists for materialize-only cluster
+ * members: a core that explicitly declares `letsEncrypt.certRenewer:
+ * false` never runs ACME itself — it polls PlatformDB for the cert the
+ * renewer core stores, which in a `dns.domain` cluster is the wildcard
+ * `*.Z`. Without this rule the auto-populated `core.url` would point
+ * the materializer at a per-core hostname no renewer ever issues, so
+ * the follower would never pick up rotations. Only an EXPLICIT `false`
+ * triggers this (unset keeps the historical core.url behavior).
  *
  * When none of the four apply, throws — the operator must fix their
  * topology config, not invent a hostname list.
@@ -47,6 +57,14 @@ function deriveHostnames (config: { get: (key: string) => unknown }) {
   // Multi-core with embedded DNS: the core itself is authoritative for
   // the domain, so DNS-01 wildcard is the natural path.
   if (dnsActive && hasDomain) {
+    return { commonName: '*.' + domain, altNames: [domain], challenge: 'dns-01' };
+  }
+
+  // Materialize-only cluster member: explicitly declared non-renewer in a
+  // domain-based cluster follows the shared wildcard cert stored by the
+  // renewer core — before the auto-populated core.url can short-circuit
+  // it to a per-core hostname that never gets issued.
+  if (hasDomain && config.get('letsEncrypt:certRenewer') === false) {
     return { commonName: '*.' + domain, altNames: [domain], challenge: 'dns-01' };
   }
 

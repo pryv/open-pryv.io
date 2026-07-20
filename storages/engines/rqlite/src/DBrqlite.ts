@@ -19,6 +19,10 @@ type Row = Record<string, string>;
 // rqlite speaks JSON — cell values are JSON scalars.
 type RqliteCell = string | number | boolean | null;
 type RqliteResult = { columns?: string[]; values?: RqliteCell[][]; rows_affected?: number; error?: string };
+// rqlite read-consistency levels (see rqlite docs). Omitted → `weak`
+// (node-local, can be stale during an election); `strong` is confirmed
+// through Raft and used for routing-/uniqueness-critical reads.
+type ReadLevel = 'none' | 'weak' | 'linearizable' | 'strong';
 
 /**
  * PlatformDB implementation backed by rqlite (distributed SQLite via Raft).
@@ -66,10 +70,17 @@ class DBrqlite {
   /**
    * Execute a read query (SELECT).
    * @param [params]
+   * @param [level] rqlite read-consistency level. Omitted → rqlite's
+   *   default (`weak`), which reads node-local applied state and can
+   *   serve stale/empty rows during a leader election. Routing- and
+   *   uniqueness-critical reads pass `'strong'` so the read is confirmed
+   *   through Raft and waits for a committed leader instead of
+   *   mis-resolving (or reporting "unknown") during an election window.
    */
-  async query (sql: string, params?: unknown[]): Promise<Row[]> {
+  async query (sql: string, params?: unknown[], level?: ReadLevel): Promise<Row[]> {
     const body = params ? [[sql, ...params]] : [[sql]];
-    const res = await fetch(this.url + '/db/query?timings', {
+    const url = this.url + '/db/query?timings' + (level ? `&level=${level}` : '');
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -143,13 +154,13 @@ class DBrqlite {
 
   async getUserIndexedField (username: string, field: string) {
     const key = getUserIndexedKey(username, field);
-    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key]);
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key], 'strong');
     return rows.length === 0 ? null : rows[0].value;
   }
 
   async getUsersUniqueField (field: string, value: string) {
     const key = getUserUniqueKey(field, value);
-    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key]);
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key], 'strong');
     return rows.length === 0 ? null : rows[0].value;
   }
 
@@ -211,7 +222,7 @@ class DBrqlite {
 
   async getUserCore (username: string) {
     const key = getUserCoreKey(username);
-    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key]);
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key], 'strong');
     return rows.length === 0 ? null : rows[0].value;
   }
 

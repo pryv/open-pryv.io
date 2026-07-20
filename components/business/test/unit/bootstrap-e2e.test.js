@@ -358,7 +358,10 @@ describe('[BOOTSTRAPE2E] bootstrap full flow', function () {
       const yaml = require('js-yaml');
       const overridePath = path.join(configDir, 'override-config.yml');
       const parsed = yaml.load(fs.readFileSync(overridePath, 'utf8'));
-      assert.deepEqual(parsed.letsEncrypt, { atRestKey: ATKEY });
+      // certRenewer: false stamped explicitly — the joiner is a materialize-only
+      // follower; deriveHostnames uses the explicit false to watch the cluster
+      // wildcard instead of the auto-derived per-core hostname.
+      assert.deepEqual(parsed.letsEncrypt, { atRestKey: ATKEY, certRenewer: false });
     } finally {
       await new Promise(resolve => server.close(resolve));
     }
