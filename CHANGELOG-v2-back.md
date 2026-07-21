@@ -1,6 +1,17 @@
 # Changelog - Internal (no API impact)
 
-## fix(storage): guard against persisting an access without its integrity hash
+## fix(api): an API method that fails asynchronously no longer hangs the request
+
+The method-chain runner ran each function inside a synchronous `try`/`catch`
+without observing the promise it returned. A function that threw *after* an
+`await` therefore rejected without anyone noticing: `next` was never called,
+the callback never fired, and the HTTP request hung forever with no response
+and a leaked socket — reproducible with a single request from any valid token
+via `GET /streams?parentId=:<unknown-store>:foo`, where the store lookup
+throws past an await. Such failures now propagate normally and return an
+error response. A late rejection arriving *after* the chain has already
+advanced is logged instead of advancing it a second time. No change on the
+healthy path; failures that previously hung now behave like any other error.
 
 When integrity is active for accesses, `AccessesPG` / `AccessesSQLite` now
 assert, at write time in `applyDefaults`, that the access being persisted

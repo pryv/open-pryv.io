@@ -9,7 +9,9 @@ const require = createRequire(import.meta.url);
 const APIError = require('errors').APIError;
 const errors = require('errors').factory;
 const Result = require('./Result.ts').default;
-const { getConfigSync } = require('@pryv/boiler');
+const { getConfigSync, getLogger } = require('@pryv/boiler');
+
+const logger = getLogger('api');
 
 type AuditModule = { default?: { validApiCall (ctx: unknown, result: unknown): Promise<void> }; validApiCall? (ctx: unknown, result: unknown): Promise<void> } & { validApiCall (ctx: unknown, result: unknown): Promise<void> };
 type MethodContext = { methodId: string; tracing: { startSpan (n: string, tags?: Record<string, unknown>, parent?: string): void; finishSpan (n: string): void; setError (n: string, err: unknown): void }; username?: string; [k: string]: unknown };
@@ -201,14 +203,35 @@ class API {
       // -- Tracing by Function
       const fnName = 'fn:' + (currentFn.name || methodId + '.unamed' + unanmedCount++);
       tracing.startSpan(fnName, {}, apiSpanName);
+      // The chain advances exactly once per function. A rejected promise is a
+      // second way to fail, so both routes funnel through this guard: without
+      // it, a function that calls next() and then rejects would advance twice.
+      let advanced = false;
       const nextCloseSpan = function (err?: unknown) {
+        if (advanced) return;
+        advanced = true;
         if (err != null) tracing.setError(fnName, err);
         tracing.finishSpan(fnName);
         if (err != null) result.closeTracing(); // close open span for result that was left open
         runNextMethod(err);
       };
       try {
-        currentFn(context, params, result, nextCloseSpan);
+        const returned = currentFn(context, params, result, nextCloseSpan);
+        // An async function that throws AFTER an await rejects rather than
+        // throwing synchronously, so the catch below never sees it. Unobserved,
+        // next() is never called and the request hangs forever with no response.
+        if (returned != null && typeof (returned as PromiseLike<unknown>).then === 'function') {
+          Promise.resolve(returned).then(null, function (err: unknown) {
+            if (advanced) {
+              // The chain already moved on; surface the late failure rather than
+              // dropping it, but do not advance a second time.
+              logger.warn('API method ' + methodId + ' / ' + fnName +
+                ' rejected after the chain advanced', err);
+              return;
+            }
+            nextCloseSpan(err);
+          });
+        }
       } catch (err) {
         nextCloseSpan(err);
       }
