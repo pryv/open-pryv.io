@@ -84,6 +84,7 @@ export type OAuthAuditPayload = {
   oldTokenId?: string;
   newTokenId?: string;
   attemptedBy?: string; // for oauth.code.reused — IP / fingerprint of the second attempt
+  dpopJkt?: string; // DPoP-bound issuances: RFC 7638 thumbprint of the bound key
   offerName?: string;
   offerCapabilityId?: string;
   reason?: string;

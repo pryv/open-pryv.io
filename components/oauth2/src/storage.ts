@@ -127,6 +127,14 @@ export interface OAuthRefresh {
    */
   dataGrantAccessId?: string;
   permissions?: GrantPermission[];
+  /**
+   * DPoP binding (RFC 9449): the RFC 7638 thumbprint of the client key
+   * this chain is bound to. Set at issuance when the token request
+   * carried a valid DPoP proof; every rotation must present a proof by
+   * the SAME key, and the re-minted access inherits the binding. Absent
+   * on Bearer chains — a chain never changes kind after issuance.
+   */
+  jkt?: string;
 }
 
 /**
@@ -149,6 +157,7 @@ const PREFIX_CLIENT = 'oauth-client/';
 const PREFIX_CODE = 'oauth-code/';
 const PREFIX_REFRESH = 'oauth-refresh/';
 const PREFIX_REFRESH_USED = 'oauth-refresh-used/';
+const PREFIX_DPOP_JTI = 'dpop-jti/';
 
 // --- Client metadata (indefinite, cluster-wide) --- //
 
@@ -271,6 +280,20 @@ export async function markRefreshConsumed (
 export async function getRefreshConsumed (platform: PlatformDB, coreId: string, token: string): Promise<OAuthRefreshUsed | null> {
   const entry = await platform.getAccessState(refreshUsedKey(coreId, token));
   return entry == null ? null : (entry.value as OAuthRefreshUsed);
+}
+
+/**
+ * DPoP jti single-use marker (RFC 9449 §11.1 replay prevention). Atomic
+ * first-writer-wins: returns true when THIS call recorded the jti,
+ * false when it was already seen — two concurrent identical proofs
+ * yield exactly one true. TTL covers the proof's iat acceptance window;
+ * past it the iat check rejects the replay anyway. Swept with the rest
+ * of the access-state keyspace.
+ */
+export async function markDPoPJtiUsed (
+  platform: PlatformDB, jkt: string, jti: string, expiresAt: number,
+): Promise<boolean> {
+  return platform.setAccessStateIfAbsent(PREFIX_DPOP_JTI + jkt + '/' + jti, 1, expiresAt);
 }
 
 // --- Key helpers (owned here, NOT in the engine) --- //

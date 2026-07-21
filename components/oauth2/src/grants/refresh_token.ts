@@ -75,6 +75,12 @@ export type MintRefreshedAccess = (params: {
    */
   dataGrantAccessId?: string;
   permissions?: Array<Record<string, unknown>>;
+  /**
+   * DPoP-bound chains: the RFC 7638 thumbprint the chain is bound to.
+   * The mint callback stamps it onto the new access so the resource
+   * server can enforce proof-of-possession on every request.
+   */
+  jkt?: string;
 }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
 
 /**
@@ -124,6 +130,8 @@ function lifetimes (config: { get (key: string): unknown }) {
 export async function handleRefreshToken (
   deps: RefreshTokenDeps,
   params: RefreshGrantParams,
+  /** RFC 7638 thumbprint of a proof VERIFIED by the dispatcher, or null. */
+  dpopJkt: string | null = null,
 ): Promise<
   | { ok: true; body: Record<string, unknown> }
   | { ok: false; status: number; error: string; description?: string }
@@ -213,6 +221,18 @@ export async function handleRefreshToken (
     return { ok: false, status: auth.status, error: auth.error, description: auth.description };
   }
 
+  // DPoP binding continuity (RFC 9449 §5): a bound chain must rotate
+  // with a proof by the SAME key; an unbound chain can never acquire a
+  // binding mid-life (the kind is fixed at issuance). Uniform failure
+  // body either way. NOTE the row is already consumed above — a failed
+  // check burns the rotation, which is the safe direction: a thief
+  // holding the refresh token but not the key can at worst force a
+  // re-authorization, never take over the chain.
+  const boundJkt = typeof row.jkt === 'string' ? row.jkt : null;
+  if ((boundJkt != null && dpopJkt !== boundJkt) || (boundJkt == null && dpopJkt != null)) {
+    return { ok: false, status: 400, error: 'invalid_dpop_proof', description: 'DPoP proof verification failed' };
+  }
+
   // Enforce the absolute-lifetime cap BEFORE minting anything. Checking
   // after the mint would leave an orphan access row behind on a
   // cap-exceeded refresh (the access is minted, then the chain is
@@ -237,6 +257,7 @@ export async function handleRefreshToken (
       expiresAt: accessExpiresAt,
       ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
       ...(row.permissions != null ? { permissions: row.permissions } : {}),
+      ...(boundJkt != null ? { jkt: boundJkt } : {}),
     });
   } catch (err: unknown) {
     if ((err as { code?: string } | null)?.code === 'data-grant-revoked') {
@@ -270,6 +291,7 @@ export async function handleRefreshToken (
     absoluteExpiresAt: row.absoluteExpiresAt,
     ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
     ...(row.permissions != null ? { permissions: row.permissions } : {}),
+    ...(boundJkt != null ? { jkt: boundJkt } : {}),
   });
 
   await audit('oauth.token.refreshed', {
@@ -283,13 +305,14 @@ export async function handleRefreshToken (
     userId: row.userId,
     grantedScope: row.scope,
     accessId: access.accessId,
+    ...(boundJkt != null ? { dpopJkt: boundJkt } : {}),
   });
 
   return {
     ok: true,
     body: {
       access_token: access.accessToken,
-      token_type: 'Bearer',
+      token_type: boundJkt != null ? 'DPoP' : 'Bearer',
       expires_in: accessTokenTTL,
       refresh_token: newRefresh,
       scope: row.scope.join(' '),

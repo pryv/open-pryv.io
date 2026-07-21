@@ -530,6 +530,11 @@ oauth:
   # a replay past it revokes the whole chain. Keep small — real client retries are
   # sub-second. 0 = strict (any replay revokes).
   refreshReuseGraceSeconds: 10     # seconds
+  # DPoP (RFC 9449) sender-constrained tokens: acceptance window for a
+  # proof's iat around server time. The feature itself needs no enable
+  # flag — it is inert unless a client sends a DPoP header.
+  dpop:
+    clockSkewSeconds: 120          # seconds (± around now)
   clientRegistration:
     mode: curated                  # ONLY supported value; "open" is rejected
   requireAppAccountMfa: true       # app accounts must enrol MFA before /oauth2/* writes

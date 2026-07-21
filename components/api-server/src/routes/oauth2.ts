@@ -103,6 +103,7 @@ type AccessesRepo = {
   find: (user: { id: string; username: string }, query: Record<string, unknown>, opts: unknown, cb: (err: unknown, found: DataGrant[] | null) => void) => void;
   delete: (user: { id: string; username: string }, query: Record<string, unknown>, cb: (err: unknown) => void) => void;
   insertOne: (user: { id: string; username: string }, row: Record<string, unknown>, cb: (err: unknown, created: { id?: unknown; token?: unknown } | null) => void) => void;
+  updateOne: (user: { id: string; username: string }, query: Record<string, unknown>, update: Record<string, unknown>, cb: (err: unknown) => void) => void;
   generateToken: () => string;
 };
 
@@ -383,9 +384,10 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     return head;
   }
 
-  async function mintAccessDirect ({ userId, username, clientId, permissions, expiresAt }: {
+  async function mintAccessDirect ({ userId, username, clientId, permissions, expiresAt, dpopJkt }: {
     userId: string; username: string; clientId: string;
     permissions: Array<Record<string, unknown>>; expiresAt: number;
+    dpopJkt?: string;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
     if (typeof username !== 'string' || username.length === 0) {
       throw new Error('mintAccessDirect: username required');
@@ -407,6 +409,9 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       modified: now,
       modifiedBy: 'system',
       expires: Math.floor(expiresAt / 1000),
+      // Sender-constrained sessions carry the key thumbprint the
+      // resource layer checks the per-request proof against.
+      ...(dpopJkt != null ? { clientData: { dpop: { jkt: dpopJkt } } } : {}),
     };
     const ApiEndpoint = require('utils').ApiEndpoint;
     return await new Promise((resolve, reject) => {
@@ -446,10 +451,11 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   //     minted access manages the app's OWN per-user storage (cmc
   //     scopes are rejected upstream by the grant).
   // ---------------------------------------------------------------------
-  async function mintRefreshedAccess ({ userId, username, clientId, expiresAt, dataGrantAccessId, permissions }: {
+  async function mintRefreshedAccess ({ userId, username, clientId, expiresAt, dataGrantAccessId, permissions, jkt }: {
     userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
     dataGrantAccessId?: string;
     permissions?: Array<Record<string, unknown>>;
+    jkt?: string;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
     if (dataGrantAccessId == null || !Array.isArray(permissions) || permissions.length === 0) {
       const revoked = new Error('refresh chain carries no consent data-grant binding') as Error & { code: string };
@@ -466,7 +472,33 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       revoked.code = 'data-grant-revoked';
       throw revoked;
     }
-    return mintAccessDirect({ userId, username, clientId, permissions: effective, expiresAt });
+    return mintAccessDirect({ userId, username, clientId, permissions: effective, expiresAt, ...(jkt != null ? { dpopJkt: jkt } : {}) });
+  }
+
+  // ---------------------------------------------------------------------
+  // bindAccessDpop — stamp the DPoP key thumbprint onto the access that
+  // was pre-minted at /authorize/accept (the proof only appears at
+  // /token). Storage-direct read-merge-update so other clientData
+  // survives, then cluster-wide cache invalidation: the resource layer
+  // must see the binding on the very next request.
+  // ---------------------------------------------------------------------
+  async function bindAccessDpop ({ userId, username, accessId, jkt }: {
+    userId: string; username: string; accessId: string; jkt: string;
+  }): Promise<void> {
+    const accessesRepository = (storageLayer as { accesses?: AccessesRepo }).accesses;
+    if (accessesRepository == null) throw new Error('oauth2.bindAccessDpop: storageLayer.accesses unavailable');
+    const user = { id: userId, username };
+    const access = await fromCallback((cb: (e: unknown, r: DataGrant | null) => void) =>
+      accessesRepository.findOne(user, { id: accessId }, null, cb));
+    if (access == null) throw new Error('oauth2.bindAccessDpop: access not found: ' + accessId);
+    const existingClientData: Record<string, unknown> = (access.clientData != null && typeof access.clientData === 'object')
+      ? { ...access.clientData }
+      : {};
+    await fromCallback((cb: (e: unknown) => void) =>
+      accessesRepository.updateOne(user, { id: accessId },
+        { clientData: { ...existingClientData, dpop: { jkt } } }, cb));
+    cache.unsetUserData(userId);
+    pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
   }
 
   async function mintClientAccess ({ userId, username, clientId, expiresAt }: {
@@ -606,6 +638,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     mintClientAccess,
     resolveAccountUserId,
     revokeChain,
+    bindAccessDpop,
     resolveUser,
     createAccess,
   });
