@@ -101,6 +101,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       includeTrashed: params.includeTrashed || params.state === 'all',
       excludedIds: context.access.getCannotListStreamsStreamIds(storeId)
     });
+    // excludedIds comes from stored permissions, which cannot express "your own
+    // shared-secret substream only" — so that rule is applied here.
+    streams = sharedSecrets.filterVisibleStreams(streams, context.access);
     if (streamId !== '*') {
       const fullStreamId = storeDataUtils.getFullItemId(storeId, streamId);
       const inResult = treeUtils.findById(streams, fullStreamId);

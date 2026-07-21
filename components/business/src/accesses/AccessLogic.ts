@@ -379,6 +379,13 @@ class AccessLogic {
 
   async canListStream (streamId: string) {
     if (this.isPersonal()) return true;
+
+    // Same rule as reading the events: an access sees only its own shared-secret
+    // substream, so listing cannot be used to enumerate which other accesses
+    // have secrets outstanding.
+    const secretsOwner = sharedSecretsOwnerOf(streamId);
+    if (secretsOwner != null) return secretsOwner === this.id;
+
     const level = await this._getStreamPermissionLevel(streamId);
     return !!(((level != null) && isHigherOrEqualLevel(level, 'read')));
   }

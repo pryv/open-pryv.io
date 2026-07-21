@@ -346,6 +346,17 @@ function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params
       // TODO(B-2026-05-27-8, 2026-05-27): de-duplicate before push — caller-supplied ids may overlap forced ids
       streamQuery.all.push(...forcedStreamIds);
     }
+    // One-time shared secrets never answer a wildcard query — they surface only
+    // when their stream is named explicitly. A broad "give me everything" should
+    // not sweep up credentials that exist to be redeemed once and forgotten.
+    // Excluded here, BEFORE stream expansion, so the whole subtree goes with the
+    // root; the account-stream exclusions below can sit after expansion only
+    // because those ids are flat.
+    if (streamQuery.any != null && streamQuery.any.includes('*')) {
+      if (streamQuery.not == null) { streamQuery.not = []; }
+      streamQuery.not.push(SHARED_SECRETS_NS_ROOT);
+    }
+
     // ------------- NOT ------------- //
     const forbiddenStreamIds = context.access.getForbiddenGetEventsStreamIds(streamQuery.storeId);
     if (forbiddenStreamIds?.length > 0) {
@@ -417,14 +428,6 @@ async function streamQueryAddHiddenStreams (context: MethodContext, params: GetE
     if (streamQuery.storeId !== 'local' && streamQuery.storeId !== storeDataUtils.AccountStoreId) { continue; }
     if (streamQuery.and == null) { streamQuery.and = []; }
     streamQuery.and.push({ not: forbiddenStreamIds });
-
-    // One-time shared secrets never answer a wildcard query — they surface only
-    // when their stream is named explicitly. A broad "give me everything" from
-    // an app (or a personal token building an export) should not sweep up
-    // credentials that exist to be redeemed once and forgotten.
-    if (streamQuery.any != null && streamQuery.any.includes('*')) {
-      streamQuery.and.push({ not: [SHARED_SECRETS_NS_ROOT] });
-    }
   }
   // trashed stream (it's enough to add only root streams, as they will expanded later on)
   if (params.state !== 'all' && params.state !== 'trashed') {

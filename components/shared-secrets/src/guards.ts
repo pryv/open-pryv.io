@@ -127,7 +127,29 @@ function createStreamDeleteGuard (deps: { errors: ErrorsFactory }) {
   };
 }
 
+type StreamNode = { id?: string; children?: StreamNode[] };
+type AccessLike = { id: string; isPersonal (): boolean };
+
+/**
+ * Drop shared-secret substreams the access does not own, at any depth.
+ *
+ * The streams listing filters by a static excluded-ids list built from stored
+ * permissions, which cannot express "your own substream only" — so without this
+ * an app could enumerate the namespace root and learn which other accesses have
+ * secrets outstanding. Personal tokens see everything, as everywhere else.
+ */
+function filterVisibleStreams<T extends StreamNode> (streams: T[], access: AccessLike): T[] {
+  if (access == null || access.isPersonal()) return streams;
+  const ownStream = C.streamIdForAccess(access.id);
+  return streams
+    .filter((s) => !C.isSharedSecretStreamId(s.id) || s.id === ownStream || s.id === C.NS)
+    .map((s) => (Array.isArray(s.children)
+      ? Object.assign({}, s, { children: filterVisibleStreams(s.children, access) })
+      : s));
+}
+
 export {
+  filterVisibleStreams,
   createEventUpdateGuard,
   createEventDeleteGuard,
   createStreamCreateGuard,
