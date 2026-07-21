@@ -25,8 +25,7 @@
  * the LB, which is a deployment concern, not a server change.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
+import type { Request, Response } from 'express';
 
 /**
  * Inputs the discovery doc needs from the surrounding config. The
@@ -75,7 +74,7 @@ export function buildDiscoveryDocument (cfg: DiscoveryConfig): Record<string, un
 export function handleWellKnown (cfg: DiscoveryConfig) {
   const doc = buildDiscoveryDocument(cfg);
   const body = JSON.stringify(doc);
-  return function (req: unknown, res: any): void {
+  return function (req: Request, res: Response): void {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=300');
     // CORS — allow all origins (PKCE

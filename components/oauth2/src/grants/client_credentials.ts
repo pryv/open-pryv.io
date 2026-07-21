@@ -26,13 +26,11 @@
  *     user-consent reference → invalid_scope.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const { verifySecret } = require('../clientSecret.ts');
-const { getClient } = require('../clientRegistry.ts');
-const { audit } = require('../audit.ts');
-const { logServerError } = require('../serverLog.ts');
+import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
+import { verifySecret } from '../clientSecret.ts';
+import { getClient } from '../clientRegistry.ts';
+import { audit } from '../audit.ts';
+import { logServerError } from '../serverLog.ts';
 
 /** Callback shape — same as refresh's mintRefreshedAccess (storage-direct). */
 export type MintClientAccess = (params: {
@@ -48,7 +46,7 @@ export type ResolveAccountUserId = (username: string) => Promise<string | null>;
 
 export type ClientCredentialsDeps = {
   config: { get (key: string): unknown };
-  platform: any;
+  platform: PlatformDB;
   mintClientAccess: MintClientAccess;
   resolveAccountUserId: ResolveAccountUserId;
 };
@@ -146,7 +144,7 @@ export async function handleClientCredentials (
       scope: granted,
       expiresAt,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     logServerError('client_credentials: mintClientAccess failed', err);
     return {
       ok: false,
@@ -158,6 +156,7 @@ export async function handleClientCredentials (
 
   await audit('oauth.token.issued.client_credentials', {
     clientId,
+    userId, // app-account principal — this grant is user-scoped (its own trail)
     grantedScope: granted,
     accessId: access.accessId,
   });

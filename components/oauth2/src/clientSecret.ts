@@ -21,11 +21,12 @@
  * stored.
  */
 
+import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
+// bcrypt ships no type declarations — keep it on the require shim so the
+// import does not trip noImplicitAny (real ESM import needs @types/bcrypt).
 const require = createRequire(import.meta.url);
-
 const bcrypt = require('bcrypt');
-const crypto = require('node:crypto');
 
 /** Cost factor — 10 ≈ 100ms/verify on commodity hardware. */
 const BCRYPT_COST = 10;

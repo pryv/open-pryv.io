@@ -52,6 +52,43 @@ const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffec
 /** Trigger-scope parent for OAuth-driven CMC accepts on the user's account. */
 const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
 
+/**
+ * Structural view of the members this module touches on a business
+ * MethodContext (the runtime value comes from `require('business')`, which
+ * is untyped through the createRequire shim). Modelling the used surface
+ * keeps the wiring off `any` without importing the full class type.
+ */
+type Ctx = {
+  methodId: string | null;
+  user: { id: string; username: string };
+  access: unknown;
+  init: () => Promise<void>;
+  retrieveExpandedAccess: (storage: unknown) => Promise<void>;
+};
+
+/** The API-method result shape this module reads (method-dependent, partial). */
+type OAuthMethodResult = {
+  access?: DataGrant & { token?: unknown; apiEndpoint?: unknown };
+  accesses?: DataGrant[];
+  event?: { id?: unknown; content?: Record<string, unknown> };
+};
+
+/** A CMC data-grant access row, as read back from accesses.get / findOne. */
+type DataGrant = {
+  id: string;
+  permissions?: Array<Record<string, unknown>>;
+  deleted?: unknown;
+  expires?: number | null;
+  clientData?: { cmc?: { role?: string; offerEventId?: string; acceptEventId?: string } };
+};
+
+/** The storage-layer accesses repository surface this module calls directly. */
+type AccessesRepo = {
+  findOne: (user: { id: string; username: string }, query: Record<string, unknown>, opts: unknown, cb: (err: unknown, found: DataGrant | null) => void) => void;
+  insertOne: (user: { id: string; username: string }, row: Record<string, unknown>, cb: (err: unknown, created: { id?: unknown; token?: unknown } | null) => void) => void;
+  generateToken: () => string;
+};
+
 export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void {
   const config = app.config;
   const storageLayer = app.storageLayer;
@@ -67,7 +104,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     const customAuthStepFn = app.getCustomAuthFunction != null
       ? app.getCustomAuthFunction('oauth2.resolveUser')
       : null;
-    const context: any = new MethodContext(
+    const context: Ctx = new MethodContext(
       { name: 'oauth2', ip: null },
       username,
       userToken,
@@ -103,22 +140,23 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   // The api dispatcher reads methodId off the context (set by the
   // setMethodId middleware on the normal route path; we set it here).
   // ---------------------------------------------------------------------
-  async function apiCall (context: any, methodId: string, params: Record<string, unknown>): Promise<any> {
+  async function apiCall (context: Ctx, methodId: string, params: Record<string, unknown>): Promise<OAuthMethodResult> {
     context.methodId = methodId;
     return await new Promise((resolve, reject) => {
-      api.call(context, params, (err: unknown, result: any) => {
+      api.call(context, params, (err: unknown, result: unknown) => {
         if (err != null) return reject(err);
-        resolve(result);
+        resolve(result as OAuthMethodResult);
       });
     });
   }
 
   // Idempotent streams.create — swallows "already exists" only.
-  async function ensureStream (context: any, id: string, parentId: string, name: string): Promise<void> {
+  async function ensureStream (context: Ctx, id: string, parentId: string, name: string): Promise<void> {
     try {
       await apiCall(context, 'streams.create', { id, parentId, name });
-    } catch (err: any) {
-      const errId = err?.id ?? err?.data?.id;
+    } catch (err: unknown) {
+      const e = err as { id?: string; data?: { id?: string } } | null;
+      const errId = e?.id ?? e?.data?.id;
       if (errId === 'item-already-exists') return;
       throw err;
     }
@@ -126,7 +164,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
 
   // The durable consent record for a granular OAuth grant is the CMC
   // data-grant on the user's account, keyed by the offer event id.
-  async function findDataGrantByOffer (context: any, offerEventId: string): Promise<any | null> {
+  async function findDataGrantByOffer (context: Ctx, offerEventId: string): Promise<DataGrant | null> {
     const result = await apiCall(context, 'accesses.get', {});
     for (const a of (result?.accesses ?? [])) {
       const cmcCd = a?.clientData?.cmc;
@@ -152,7 +190,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   // authority, and CMC revocation/scope-update governs the chain.
   // ---------------------------------------------------------------------
   async function createAccess ({ session, clientId, scope, expiresAt, offer, grantedPermissions }: {
-    session: { userId: string; username: string; [k: string]: unknown };
+    session: { userId: string; username: string; _context?: Ctx };
     clientId: string;
     scope: string[];
     expiresAt: number;
@@ -171,7 +209,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     dataGrantAccessId?: string;
     permissions?: Array<Record<string, unknown>>;
   }> {
-    const context: any = session._context;
+    const context = session._context;
     if (context == null) {
       throw new Error('oauth2.createAccess: session missing _context (resolveUser did not run?)');
     }
@@ -198,7 +236,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       throw e;
     }
 
-    let dataGrant: any = null;
+    let dataGrant: DataGrant | null = null;
     {
       if (offer.offerEventId != null) {
         dataGrant = await findDataGrantByOffer(context, offer.offerEventId);
@@ -229,15 +267,16 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
         while (dataGrant == null) {
           polls++;
           const all = await apiCall(context, 'accesses.get', {});
-          dataGrant = (all?.accesses ?? []).find((a: any) =>
+          dataGrant = (all?.accesses ?? []).find((a: DataGrant) =>
             a?.clientData?.cmc?.role === 'counterparty' &&
             a?.clientData?.cmc?.acceptEventId === acceptEventId) ?? null;
           if (dataGrant != null) break;
           const trigger = await apiCall(context, 'events.getOne', { id: acceptEventId });
           const content = trigger?.event?.content ?? {};
           if (content.status === 'failed') {
+            const failure = content.failure as { reason?: unknown } | undefined;
             throw new Error('oauth2.createAccess: consent accept failed' +
-              (content.failure?.reason != null ? ': ' + content.failure.reason : ''));
+              (failure?.reason != null ? ': ' + failure.reason : ''));
           }
           if (Date.now() > deadline) {
             // Name what we actually saw: how long we waited, how many
@@ -255,7 +294,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
         // entries the current grant lacks (never narrows — the user
         // manages narrowing via consent scope-update / access update).
         const currentKeys = new Set((dataGrant.permissions ?? []).map(permissionKey));
-        const missing = grantedPermissions.filter((g) => !currentKeys.has(permissionKey(g as any)));
+        const missing = grantedPermissions.filter((g) => !currentKeys.has(permissionKey(g)));
         if (missing.length > 0) {
           const updated = await apiCall(context, 'accesses.update', {
             id: dataGrant.id,
@@ -290,7 +329,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     }
     return {
       accessId: a.id,
-      accessToken: a.token,
+      accessToken: a.token as string,
       apiEndpoint: typeof a.apiEndpoint === 'string' ? a.apiEndpoint : '',
       dataGrantAccessId: dataGrant.id,
       permissions,
@@ -310,17 +349,17 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   // Live head row of the durable data-grant, or a typed throw when the
   // consent has been revoked. Storage keeps the head row queryable by
   // the composite ref's base id (serial bumps rotate the wire id only).
-  async function readDataGrantHead (userId: string, username: string, dataGrantAccessId: string): Promise<any> {
-    const accessesRepository = (storageLayer as any).accesses;
+  async function readDataGrantHead (userId: string, username: string, dataGrantAccessId: string): Promise<DataGrant> {
+    const accessesRepository = (storageLayer as { accesses: AccessesRepo }).accesses;
     const base = parseAccessRef(dataGrantAccessId).base;
-    const head: any = await new Promise((resolve, reject) => {
+    const head: DataGrant | null = await new Promise((resolve, reject) => {
       accessesRepository.findOne({ id: userId, username }, { id: base }, null,
-        (err: unknown, found: unknown) => (err != null ? reject(err) : resolve(found)));
+        (err: unknown, found: DataGrant | null) => (err != null ? reject(err) : resolve(found)));
     });
     const nowSeconds = Math.floor(Date.now() / 1000);
     if (head == null || head.deleted != null ||
         (typeof head.expires === 'number' && head.expires <= nowSeconds)) {
-      const revoked: any = new Error('consent data-grant revoked or expired');
+      const revoked = new Error('consent data-grant revoked or expired') as Error & { code: string };
       revoked.code = 'data-grant-revoked';
       throw revoked;
     }
@@ -334,13 +373,13 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     if (typeof username !== 'string' || username.length === 0) {
       throw new Error('mintAccessDirect: username required');
     }
-    const accessesRepository = (storageLayer as any).accesses;
+    const accessesRepository = (storageLayer as { accesses?: AccessesRepo }).accesses;
     if (accessesRepository == null) {
       throw new Error('mintAccessDirect: storageLayer.accesses unavailable');
     }
     const now = Math.floor(Date.now() / 1000);
     const newToken = accessesRepository.generateToken();
-    const newAccessRow: any = {
+    const newAccessRow: Record<string, unknown> = {
       type: 'app',
       name: 'oauth:' + clientId,
       deviceName: 'oauth-session-' + cuid(),
@@ -355,7 +394,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     const ApiEndpoint = require('utils').ApiEndpoint;
     return await new Promise((resolve, reject) => {
       accessesRepository.insertOne({ id: userId, username }, newAccessRow,
-        (err: any, newAccess: any) => {
+        (err: unknown, newAccess: { id?: unknown; token?: unknown } | null) => {
           if (err != null) return reject(err);
           if (newAccess == null || typeof newAccess.id !== 'string' || typeof newAccess.token !== 'string') {
             return reject(new Error('mintAccessDirect: accesses.insertOne returned no usable access'));
@@ -396,7 +435,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     permissions?: Array<Record<string, unknown>>;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
     if (dataGrantAccessId == null || !Array.isArray(permissions) || permissions.length === 0) {
-      const revoked: any = new Error('refresh chain carries no consent data-grant binding');
+      const revoked = new Error('refresh chain carries no consent data-grant binding') as Error & { code: string };
       revoked.code = 'data-grant-revoked';
       throw revoked;
     }
@@ -404,9 +443,9 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     // Session grant ∩ data-grant's CURRENT permissions: consent
     // narrowing propagates on refresh; widening needs a fresh consent.
     const currentKeys = new Set((dataGrant.permissions ?? []).map(permissionKey));
-    const effective = permissions.filter((p) => currentKeys.has(permissionKey(p as any)));
+    const effective = permissions.filter((p) => currentKeys.has(permissionKey(p)));
     if (effective.length === 0) {
-      const revoked: any = new Error('consent no longer covers any of this grant\'s permissions');
+      const revoked = new Error('consent no longer covers any of this grant\'s permissions') as Error & { code: string };
       revoked.code = 'data-grant-revoked';
       throw revoked;
     }

@@ -26,19 +26,17 @@
  * (`oauth.code.reused`) but does not yet revoke.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const crypto = require('node:crypto');
-const { generateToken } = require('../secureToken.ts');
-const storage = require('../storage.ts');
-const { audit } = require('../audit.ts');
-const { getClient } = require('../clientRegistry.ts');
-const { authenticateClient } = require('../clientSecret.ts');
+import crypto from 'node:crypto';
+import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
+import { generateToken } from '../secureToken.ts';
+import * as storage from '../storage.ts';
+import { audit } from '../audit.ts';
+import { getClient } from '../clientRegistry.ts';
+import { authenticateClient } from '../clientSecret.ts';
 
 export type AuthCodeDeps = {
   config: { get (key: string): unknown };
-  platform: any;
+  platform: PlatformDB;
 };
 
 export type GrantParams = {

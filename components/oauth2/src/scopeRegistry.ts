@@ -21,10 +21,7 @@
  * data is needed. See IMPLEMENTERS-GUIDE.md.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const assert = require('node:assert/strict');
+import assert from 'node:assert/strict';
 
 /**
  * A parsed scope token. Free-form per parser; the consuming code
