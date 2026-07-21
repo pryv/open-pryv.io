@@ -48,9 +48,9 @@ async function ensureStream (path, token, params) {
   }
 }
 
-async function pollInboxFor (path, token, type, predicate) {
+async function pollInboxFor (path, token, type, predicate, timeoutMs = POLL_TIMEOUT_MS) {
   const t0 = Date.now();
-  while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+  while (Date.now() - t0 < timeoutMs) {
     const res = await coreRequest.get(path)
       .set('Authorization', token)
       .query({ streams: [':_cmc:inbox'], types: [type], limit: 20 });
@@ -323,12 +323,17 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
 
     // Wait until the back-channel-cmc landed on bob's inbox — that's
     // the marker that bob's data-grant has been updated with alice's
-    // remote streams for THIS study.
+    // remote streams for THIS study. Double deadline: this marker is
+    // three chained async hops behind the accept (accept dispatch →
+    // incoming-accept on alice → back-channel POST to bob), and on
+    // loaded full-matrix runs the default 10 s has been seen to lapse
+    // while the chain was still healthy.
     await pollInboxFor(
       bob.eventsPath, bob.token, 'consent/back-channel-cmc',
       (e) => e.content?.from?.username === alice.username &&
              e.content?.remoteChatStreamId === triggerStreamId + ':chats:' +
-               C.slug.counterpartySlug({ username: bob.username, host: 'x.pryv.me' })
+               C.slug.counterpartySlug({ username: bob.username, host: 'x.pryv.me' }),
+      POLL_TIMEOUT_MS * 2
     );
 
     const TEST_HOST = 'x.pryv.me';
