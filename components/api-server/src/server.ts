@@ -139,6 +139,7 @@ class Server {
     await require('./methods/accesses.ts').default(app.api);
     require('./methods/service.ts').default(app.api);
     await require('./methods/webhooks.ts').default(app.api);
+    await require('./methods/shared-secrets.ts').default(app.api);
     await require('./methods/trackingFunctions.ts').default(app.api);
     await require('./methods/account.ts').default(app.api);
     await require('./methods/profile.ts').default(app.api);

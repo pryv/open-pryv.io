@@ -28,6 +28,7 @@ const Events = makePath(username, 'events');
 const Profile = makePath(username, 'profile');
 const Service = makePath(username, 'service');
 const Webhooks = makePath(username, 'webhooks');
+const SharedSecrets = makePath(username, 'shared-secrets');
 const MFA = makePath(username, 'mfa');
 const SocketIO = makePath('socket.io');
 const SocketIO2 = makePath('socket.io2');
@@ -47,6 +48,7 @@ export {
   Profile,
   Service,
   Webhooks,
+  SharedSecrets,
   MFA,
   SocketIO,
   SocketIO2,

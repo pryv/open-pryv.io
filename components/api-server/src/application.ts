@@ -239,6 +239,7 @@ class Application {
     require('./routes/streams.ts').default(this.expressApp, this);
 
     require('./routes/webhooks.ts').default(this.expressApp, this);
+    require('./routes/shared-secrets.ts').default(this.expressApp, this);
   }
 
   produceLogSubsystem () {

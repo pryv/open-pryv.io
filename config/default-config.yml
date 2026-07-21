@@ -536,3 +536,12 @@ oauth:
   audAllowList: []                 # optional list of accepted aud values on /oauth2/authorize
   grantTypesSupported:             # advertised in the discovery doc
     - authorization_code
+
+# Shared secrets — hand a secret to a third party by one-time key instead of
+# by URL query parameter. Inert unless a client calls it: no listener, no
+# background work, so it is on by default and existing deployments see no
+# change until something uses it.
+sharedSecrets:
+  enabled: true
+  maxSizeBytes: 4096               # cap on the serialized `secret` payload
+  maxTtl: 2592000                  # seconds (30 days); `ttl` is mandatory, no default
