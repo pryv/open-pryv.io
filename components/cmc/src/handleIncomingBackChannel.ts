@@ -142,6 +142,28 @@ async function handleIncomingBackChannel (params: {
     return { ok: false, reason: 'cmc-back-channel-wrong-type', detail: { type: event.type } };
   }
 
+  // Only honour a back-channel delivered on :_cmc:inbox.
+  //
+  // Dispatch routes this event type by type alone, regardless of the stream it
+  // landed on, and `content.from` is server-stamped (by inboxWriteHook) ONLY
+  // for inbox writes. On other CMC-writable streams the sender controls `from`
+  // outright — so without this gate a peer holding any CMC access can deliver
+  // a back-channel claiming to be someone else and have it applied to a
+  // relationship that is not theirs, redirecting that relationship's traffic
+  // to an endpoint of their choosing.
+  //
+  // Absent streamIds is tolerated for direct unit-test invocation; every
+  // persisted event carries at least one stream, and the retry queue preserves
+  // them, so the gate is effective on every live path.
+  const streamIds = event.streamIds;
+  if (Array.isArray(streamIds) && !streamIds.includes(C.NS_INBOX)) {
+    return {
+      ok: false,
+      reason: 'cmc-back-channel-wrong-stream',
+      detail: { streamIds },
+    };
+  }
+
   const c: BackChannelEventContent = event.content || {};
   const from = c.from;
   if (from == null || typeof from.username !== 'string' || typeof from.host !== 'string') {

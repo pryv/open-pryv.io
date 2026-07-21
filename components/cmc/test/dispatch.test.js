@@ -332,6 +332,27 @@ describe('[CMCDISP] cmc/dispatch', () => {
       });
     }
 
+    it('[CDL01-callerid] skips when createdBy carries a callerId suffix', async () => {
+      // MethodContext stamps `<accessId> <callerId>` whenever the caller
+      // supplied a callerId. Comparing the whole string against the access id
+      // never matches, so the loop-avoidance guard would wave the event
+      // through and the two accounts would ping-pong it.
+      const mall = mallWithCounterpartyAccess('acc-peer');
+      const r = await dispatch({
+        userId: 'u1',
+        event: {
+          id: 'e-callerid',
+          type: 'message/chat-cmc',
+          content: { from: { username: 'peer', host: 'peer.example.com' } },
+          streamIds: [':_cmc:apps:my-app:chats:peer--peer-example-com'],
+          createdBy: 'acc-peer some-caller-id',
+        },
+        deps: makeDeps({ mall }),
+      });
+      assert.equal(r.status, 'skipped');
+      assert.equal(r.reason, 'cmc-incoming-from-peer');
+    });
+
     it('[CDL02] does NOT skip when createdBy resolves to a non-counterparty (user-originated) access', async () => {
       const mall = mallWithUserAccess('acc-app');
       // We're not really exercising the handler here — just verifying the

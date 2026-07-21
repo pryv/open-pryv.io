@@ -486,10 +486,19 @@ async function isPeerDeliveredEvent (
   if (typeof createdBy !== 'string' || createdBy.length === 0) return false;
   const mallAccesses = deps.mall.accesses;
   if (mallAccesses?.get == null) return false;
+  // `createdBy` is the access id, but becomes `<accessId> <callerId>` when the
+  // caller supplied a callerId (MethodContext joins them with a space).
+  // Comparing the whole string silently misses every suffixed value, which
+  // makes a peer-delivered event look user-originated — and this guard is what
+  // stops chat/system ping-pong between the two accounts.
+  const separatorIndex = createdBy.indexOf(' ');
+  const createdByAccessId = separatorIndex === -1
+    ? createdBy
+    : createdBy.slice(0, separatorIndex);
   try {
     const list = await mallAccesses.get(userId, {});
     const acc = Array.isArray(list)
-      ? list.find((a) => a?.id === createdBy)
+      ? list.find((a) => a?.id === createdByAccessId)
       : null;
     return acc?.clientData?.cmc?.role === 'counterparty';
   } catch (_e) {

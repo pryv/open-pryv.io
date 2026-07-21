@@ -299,6 +299,36 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     assert.equal(r.dataGrantAccessId, 'unscoped-grant');
   });
 
+  // content.from is server-stamped only for :_cmc:inbox writes; on any other
+  // CMC-writable stream the sender controls it. Dispatch routes this event
+  // type by type alone, so the handler is the place that has to care which
+  // stream it arrived on.
+  it('[BC13] ignores a back-channel delivered outside :_cmc:inbox', async () => {
+    const capture = {};
+    const r = await handleIncomingBackChannel({
+      userId: 'u1',
+      event: {
+        ...deliveryWith('my-app'),
+        streamIds: [':_cmc:_internal:responses:abc'],
+      },
+      deps: { mall: fakeMall([grantFor('a-grant', { appCode: 'my-app' })], capture) },
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, 'cmc-back-channel-wrong-stream');
+    assert.equal(capture.updates.length, 0, 'nothing may be stamped from a non-inbox delivery');
+  });
+
+  it('[BC14] accepts a back-channel delivered on :_cmc:inbox', async () => {
+    const capture = {};
+    const r = await handleIncomingBackChannel({
+      userId: 'u1',
+      event: { ...deliveryWith('my-app'), streamIds: [':_cmc:inbox'] },
+      deps: { mall: fakeMall([grantFor('a-grant', { appCode: 'my-app' })], capture) },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.dataGrantAccessId, 'a-grant');
+  });
+
   it('[BC07] rejects non-back-channel event types', async () => {
     const r = await handleIncomingBackChannel({
       userId: 'u1',

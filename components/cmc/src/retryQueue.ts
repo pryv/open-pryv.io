@@ -340,6 +340,11 @@ const NON_RETRYABLE_REASONS = new Set([
   'cmc-chat-stream-not-chat',
   'cmc-revoke-counterparty-missing',
   'cmc-revoke-counterparty-access-not-found',
+  // Wrong delivery stream is a property of the event, not of the moment —
+  // re-running it can only reach the same verdict. Retrying would also hand a
+  // peer probing this path six attempts instead of one.
+  'cmc-back-channel-wrong-stream',
+  'cmc-back-channel-wrong-type',
 ]);
 
 function isRetryableReason (reason: string, detail?: { peerReason?: string } | null): boolean {
