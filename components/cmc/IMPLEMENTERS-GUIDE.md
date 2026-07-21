@@ -235,6 +235,8 @@ The patient's app renders the consent screen.
 >
 > **Revoke (`consent/revoke-cmc`) uses the standard access-permission gate, not the personal-token gate.** `handleRevoke` runs `triggerAccess.canDeleteAccess(target)` (the same primitive `accesses.delete` uses), which honours the `selfRevoke` feature permission on the target access. Apps holding a relationship's data-grant access can self-revoke directly via [`pryv.cmc.revokeAcceptance(...)`](https://github.com/pryv/lib-js/tree/master/components/pryv-cmc) — no hand-off needed. Unauthorised revokes fail with `error.data.id === 'cmc-revoke-forbidden'`.
 >
+> **Any revocation path is forwarded — including plain `accesses.delete`.** When a CMC relationship access is removed by a generic `accesses.delete` (e.g. an account's "connected apps" screen) rather than a `consent/revoke-cmc` trigger, the server still delivers the `consent/revoke-cmc` to the counterparty's `:_cmc:inbox` — carrying `content.accessId` (the revoked access) plus `appCode` / `offerEventId` / `acceptEventId` when resolvable. From the counterparty's point of view the two paths are indistinguishable, so your inbox observation logic needs no special-casing. The `content.accessId` on a revoke trigger is the authoritative selector of WHICH relationship to revoke — always send it (the `@pryv/cmc` helpers do); a revoke whose `accessId` no longer resolves fails with `cmc-revoke-counterparty-access-not-found` rather than guessing another relationship with the same counterparty.
+>
 > **Two flows for accept + scope-update:**
 >
 > 1. **Direct (when your app already holds a personal token):** post `events.create` from `patientConnection`, as shown below.

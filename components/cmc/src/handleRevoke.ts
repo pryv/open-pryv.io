@@ -10,15 +10,18 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — handleRevoke entry point.
  *
- * Triggered by `consent/revoke-cmc` written to:
+ * Triggered by `consent/revoke-cmc` written to a user-managed
+ * `:_cmc:apps:*` scope stream (the client helpers' default) or to a
+ * plugin-managed chats / collectors stream:
  *
- *   :_cmc:inbox                              (one-shot, before acceptance)
- *   :_cmc:apps:<app-code>:[<path>:]chats:<slug>      (after acceptance)
- *   :_cmc:apps:<app-code>:[<path>:]collectors:<slug> (after acceptance)
+ *   :_cmc:apps:<app-code>:[<path>:]chats:<slug>
+ *   :_cmc:apps:<app-code>:[<path>:]collectors:<slug>
  *
  * Effect (acceptance-time chain):
- *   1. Find the local counterparty-access (by appCode + counterparty
- *      from the trigger or from content.counterparty).
+ *   1. Resolve the local counterparty-access — by the trigger's
+ *      `content.accessId` (authoritative), falling back to the
+ *      (appCode + counterparty) tuple from the trigger stream or
+ *      content.counterparty for legacy triggers without an id.
  *   2. Find the paired data-grant access we issued to the peer (the
  *      `role: 'data-grant'` access whose clientData.cmc.peerAccessId
  *      points at the counterparty-access; or by reverse-lookup on
@@ -30,10 +33,14 @@ const require = createRequire(import.meta.url);
  *   5. Delete our counterparty-access (we no longer trust the peer's
  *      back-channel either).
  *
- * Pre-acceptance revocation (written to :_cmc:inbox): only step 4 runs
- * with the capability URL standing in for the missing back-channel. The
- * counterparty-access pair doesn't exist yet; nothing to tear down
- * locally.
+ * There is NO pre-acceptance revoke flow through this handler: a
+ * requester cancels an open invite via `consent/invalidate-link-cmc`,
+ * and an invited party declines via `consent/refuse-cmc`. (An earlier
+ * `content.capabilityUrl` branch tried to deliver pre-acceptance
+ * revokes through the capability access; it was unreachable — no
+ * client emits such triggers — and undeliverable — the capability
+ * access has neither inbox permission nor counterparty role — so it
+ * was removed.)
  *
  * Delivery failures DO NOT roll back the local deletes — local revocation
  * is the authoritative signal; peer eventual-consistency is the retry
@@ -73,13 +80,15 @@ type RevokeHandlerResult =
  * Handle a `consent/revoke-cmc` trigger event.
  *
  * Inputs (on triggerEvent.content):
- *   - counterparty: { username, host }   — required for inbox revokes
- *   - appCode: string                    — optional; narrows access matching
- *   - capabilityUrl: string              — optional; pre-acceptance path
+ *   - accessId: string                   — the relationship access to revoke
+ *                                          (authoritative; the client helpers
+ *                                          always send it)
+ *   - counterparty: { username, host }   — legacy fallback selector
+ *   - appCode: string                    — optional; narrows tuple matching
  *
  * The handler reads counterparty + appCode from triggerEvent.streamIds
  * when the trigger sits on a chats/collectors stream-id. Falls back to
- * content fields when triggered from :_cmc:inbox.
+ * content fields for triggers that carry them instead.
  */
 async function handleRevoke (params: {
   userId: string;
@@ -116,53 +125,71 @@ async function handleRevoke (params: {
       break;
     }
   }
-  // Inbox / pre-acceptance: take counterparty from content.
+  // Legacy triggers may carry the counterparty in content instead of a
+  // parseable stream id.
   if (counterparty == null && triggerEvent.content?.counterparty != null) {
     const cp = triggerEvent.content.counterparty as { username?: string; host?: string };
     if (typeof cp?.username === 'string' && typeof cp?.host === 'string') {
       counterparty = { username: cp.username, host: cp.host };
     }
   }
-  if (counterparty == null) {
+  // Explicit target: the client helpers always send `content.accessId`
+  // (it is required by the revoke content schema). With several
+  // relationships to the same counterparty the tuple match below is
+  // ambiguous, so the explicit id is the authoritative selector.
+  const explicitAccessId =
+    (typeof triggerEvent.content?.accessId === 'string' && triggerEvent.content.accessId.length > 0)
+      ? triggerEvent.content.accessId
+      : null;
+  if (counterparty == null && explicitAccessId == null) {
     return { ok: false, reason: 'cmc-revoke-counterparty-missing', detail: { streamIds } };
   }
   if (appCode == null && typeof triggerEvent.content?.appCode === 'string') {
     appCode = triggerEvent.content.appCode;
   }
 
-  // Pre-acceptance path: just deliver to peer via capabilityUrl. No local
-  // teardown — the access pair doesn't exist yet.
-  if (typeof triggerEvent.content?.capabilityUrl === 'string' && triggerEvent.content.capabilityUrl.length > 0) {
-    const delivery = await deliverRevokeViaCapability({
-      capabilityUrl: triggerEvent.content.capabilityUrl,
-      counterparty: selfIdentity,
-      reason: triggerEvent.content?.reason,
-      deps,
-    });
-    if (!delivery.ok) {
-      return {
-        ok: false,
-        reason: 'cmc-handler-delivery-failed',
-        detail: { status: delivery.status, peerReason: delivery.reason },
-      };
-    }
-    return {
-      ok: true,
-      deletedAccessIds: [],
-      peerNotified: true,
-      peerDeliveryStatus: delivery.status,
-    };
-  }
-
   // Acceptance-time path: find the counterparty-access and its paired
   // data-grant access, then tear both down.
+  //
+  // Selection order:
+  //   1. `content.accessId` (when present) — resolved by id and required
+  //      to be a CMC relationship access. NO tuple fallback when the id
+  //      doesn't resolve: on a duplicate revoke (access already gone,
+  //      e.g. after a raw accesses.delete) a fallback would select a
+  //      DIFFERENT relationship to the same counterparty and tear that
+  //      one down instead.
+  //   2. (username, host, appCode) tuple match — legacy triggers without
+  //      an explicit id.
   const accesses = await mall.accesses.get(userId, {});
-  const counterpartyAccess = findCounterpartyAccess(accesses, counterparty, appCode);
-  if (counterpartyAccess == null) {
-    return { ok: false, reason: 'cmc-revoke-counterparty-access-not-found', detail: {
-      counterparty,
-      appCode,
-    } };
+  let counterpartyAccess: AccessLike | null = null;
+  if (explicitAccessId != null) {
+    const byId = accesses.find((a) => a.id === explicitAccessId) ?? null;
+    if (byId != null && byId.clientData?.cmc?.role === 'counterparty') {
+      counterpartyAccess = byId;
+    }
+    if (counterpartyAccess == null) {
+      return { ok: false, reason: 'cmc-revoke-counterparty-access-not-found', detail: {
+        accessId: explicitAccessId,
+        counterparty,
+        appCode,
+      } };
+    }
+    // The trigger may sit on a plain app-scope stream (the client
+    // helpers default to the invite's own stream, which is neither
+    // chats nor collectors) — derive the counterparty identity from
+    // the resolved access when the trigger didn't provide one.
+    const cp = counterpartyAccess.clientData?.cmc?.counterparty;
+    if (counterparty == null && typeof cp?.username === 'string' && typeof cp?.host === 'string') {
+      counterparty = { username: cp.username, host: cp.host };
+    }
+  } else {
+    counterpartyAccess = findCounterpartyAccess(accesses, counterparty!, appCode);
+    if (counterpartyAccess == null) {
+      return { ok: false, reason: 'cmc-revoke-counterparty-access-not-found', detail: {
+        counterparty,
+        appCode,
+      } };
+    }
   }
 
   // Find the paired data-grant (issued by us; readable to peer). Look-up
@@ -236,11 +263,33 @@ async function handleRevoke (params: {
 
   // Step 4: deliver to peer via stored back-channel apiEndpoint. Best
   // effort — local revocation is authoritative even on delivery failure.
+  // Requester side stores the peer path on `counterparty.apiEndpoint`;
+  // the accepter side mirrors it there once the back-channel lands, but
+  // fall back to the original `backChannelApiEndpoint` field for
+  // accesses minted before the mirror existed.
   const remoteApiEndpoint: string | undefined =
-    counterpartyAccess.clientData?.cmc?.counterparty?.apiEndpoint;
+    counterpartyAccess.clientData?.cmc?.counterparty?.apiEndpoint ??
+    counterpartyAccess.clientData?.cmc?.backChannelApiEndpoint;
   let peerNotified = false;
   let peerDeliveryStatus: number | undefined;
   if (typeof remoteApiEndpoint === 'string' && remoteApiEndpoint.length > 0) {
+    // `accessId` is REQUIRED by the peer's revoke content schema
+    // (validators.validateRevoke) — without it the peer's content
+    // validation hook rejects the inbox write with 400 and the
+    // revocation is never observable on the other side. Use the id of
+    // the relationship access being torn down here; stamp the
+    // correlation ids (appCode / offer / accept event ids) when the
+    // access carries them so the peer can match the revocation to the
+    // originating invite.
+    const revokeContent: Record<string, unknown> = {
+      accessId: counterpartyAccess.id,
+      from: selfIdentity,
+      reason: triggerEvent.content?.reason,
+    };
+    const cpCmc = counterpartyAccess.clientData?.cmc;
+    if (typeof cpCmc?.appCode === 'string') revokeContent.appCode = cpCmc.appCode;
+    if (typeof cpCmc?.offerEventId === 'string') revokeContent.offerEventId = cpCmc.offerEventId;
+    if (typeof cpCmc?.acceptEventId === 'string') revokeContent.acceptEventId = cpCmc.acceptEventId;
     try {
       const delivery = await outbound.postToPeer({
         apiEndpoint: remoteApiEndpoint,
@@ -248,10 +297,7 @@ async function handleRevoke (params: {
         body: {
           streamIds: [C.NS_INBOX],
           type: C.ET_REVOKE,
-          content: {
-            from: selfIdentity,
-            reason: triggerEvent.content?.reason,
-          },
+          content: revokeContent,
         },
         deps,
       });
@@ -327,7 +373,7 @@ function findCounterpartyAccess (
 function findPairedDataGrant (
   accesses: AccessLike[],
   counterpartyAccess: AccessLike,
-  counterparty: Counterparty,
+  counterparty: Counterparty | null,
   appCode: string | null
 ): AccessLike | null {
   // Prefer explicit pointer.
@@ -337,6 +383,8 @@ function findPairedDataGrant (
       if (acc.id === peerAccessId) return acc;
     }
   }
+  // Tuple fallback needs a counterparty identity to match against.
+  if (counterparty == null) return null;
   // Fallback: every access whose clientData.cmc.role='data-grant' AND
   // clientData.cmc.counterparty matches.
   for (const acc of accesses) {
@@ -352,35 +400,9 @@ function findPairedDataGrant (
   return null;
 }
 
-/**
- * Pre-acceptance revoke: post via the original capability URL (same
- * shape as deliverRefuseViaCapability in acceptOrchestration).
- */
-async function deliverRevokeViaCapability (params: {
-  capabilityUrl: string;
-  counterparty: Counterparty;
-  reason: unknown;
-  deps: OutboundDeps;
-}): Promise<{ ok: boolean; status?: number; reason?: string }> {
-  return outbound.postToPeer({
-    apiEndpoint: params.capabilityUrl,
-    path: 'events',
-    body: {
-      streamIds: [C.NS_INBOX],
-      type: C.ET_REVOKE,
-      content: {
-        from: params.counterparty,
-        reason: params.reason,
-      },
-    },
-    deps: params.deps,
-  });
-}
-
 export {
   handleRevoke,
   parseChatsOrCollectorsStreamId,
   findCounterpartyAccess,
   findPairedDataGrant,
-  deliverRevokeViaCapability,
 };

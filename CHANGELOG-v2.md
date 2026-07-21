@@ -1,5 +1,39 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### CMC: revocation reaches the counterparty whatever path performs it
+
+Deleting a CMC relationship access with a plain `accesses.delete` (e.g. from a
+generic "connected apps" screen) now delivers the same `consent/revoke-cmc` to
+the counterparty's `:_cmc:inbox` as the CMC revoke helpers do — consent
+withdrawal is observable on the other side regardless of how it was performed
+(#109). The forwarded event always carries `content.accessId` (previously
+missing, which made the receiving side reject the delivery as schema-invalid),
+plus `appCode` / `offerEventId` / `acceptEventId` when resolvable, so the
+counterparty can correlate the revocation with the originating invite.
+
+`consent/revoke-cmc` triggers now honour `content.accessId` as the
+authoritative selector of the relationship to revoke (the client helpers
+already send it): with several relationships to the same counterparty, the
+previous (username, host) matching could tear down the wrong one, and triggers
+written to a plain app-scope stream (the helpers' default placement) could not
+resolve the counterparty at all. A revoke whose `accessId` no longer resolves
+fails cleanly (`cmc-revoke-counterparty-access-not-found`) instead of falling
+back to a different relationship — so a duplicate revoke after a raw delete
+never produces a second inbox event on the peer side.
+
+Data-grant accesses minted at acceptance now carry `clientData.cmc.appCode`
+(the requester's app-code), matching what the requester-side back-channel
+access has always stored.
+
+The never-functional pre-acceptance revoke branch (`content.capabilityUrl` on
+a `consent/revoke-cmc` trigger) was removed: no client emits it — cancelling
+an open invite is `consent/invalidate-link-cmc`, declining one is
+`consent/refuse-cmc` — and the capability access could not have delivered the
+notification anyway. Such a trigger now simply fails with
+`cmc-revoke-counterparty-access-not-found`.
+
 ## 2.0.0-rc.9 — 2026-07-18
 
 ### CMC: request a delegable (`app`) data-grant

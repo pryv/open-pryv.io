@@ -10,8 +10,9 @@ const require = createRequire(import.meta.url);
 /**
  * CMC plugin — handleRevoke tests.
  *
- * [CMCHR] covers consent/revoke-cmc handling: pre-acceptance (via capability URL)
- * and acceptance-time (dual accesses.delete + peer notify).
+ * [CMCHR] covers consent/revoke-cmc handling: acceptance-time teardown
+ * (dual accesses.delete + peer notify), explicit accessId targeting, and
+ * failure paths.
  */
 
 const assert = require('node:assert/strict');
@@ -149,7 +150,9 @@ describe('[CMCHR] cmc/handleRevoke', () => {
           id: 'evt-revoke',
           type: 'consent/revoke-cmc',
           streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
-          content: { reason: 'study ended' },
+          // reason mirrors a REAL trigger: localizable map (a plain
+          // string would have been rejected by validateRevoke upstream).
+          content: { reason: { en: 'study ended' } },
         },
         selfIdentity: SELF,
         deps: { mall, fetch },
@@ -163,7 +166,14 @@ describe('[CMCHR] cmc/handleRevoke', () => {
       assert.equal(sent.type, 'consent/revoke-cmc');
       assert.deepEqual(sent.streamIds, [':_cmc:inbox']);
       assert.deepEqual(sent.content.from, SELF);
-      assert.equal(sent.content.reason, 'study ended');
+      assert.deepEqual(sent.content.reason, { en: 'study ended' });
+      // The peer's validateRevoke REQUIRES content.accessId — without it
+      // the receiving side 400s the inbox write and the revocation is
+      // never observable there. Pin the id + schema-validity.
+      assert.equal(sent.content.accessId, 'acc-counterparty');
+      assert.equal(sent.content.appCode, 'my-app');
+      const v = require('../src/validators.ts').validateRevoke(sent.content);
+      assert.equal(v.valid, true, 'peer-side validateRevoke must accept the payload: ' + JSON.stringify(v.errors));
     });
 
     it('[HR10] runs even if data-grant is missing (only counterparty access deleted)', async () => {
@@ -317,9 +327,103 @@ describe('[CMCHR] cmc/handleRevoke', () => {
     });
   });
 
-  describe('[CMCHR-PRE] handleRevoke pre-acceptance path (capability URL)', () => {
-    it('[HR13] delivers via capabilityUrl, no local deletes', async () => {
-      const mall = fakeMall([]); // no local accesses yet
+  describe('[CMCHR-ID] explicit content.accessId targeting', () => {
+    // A second relationship to the SAME counterparty (another study
+    // under the same app) — the tuple match alone cannot tell them
+    // apart, the explicit id must.
+    const SECOND_COUNTERPARTY_ACCESS = {
+      id: 'acc-counterparty-2',
+      type: 'shared',
+      clientData: {
+        cmc: {
+          role: 'counterparty',
+          appCode: 'my-app',
+          counterparty: {
+            username: 'provider-a',
+            host: 'provider.example.org',
+            apiEndpoint: 'https://peer-tok-2@provider.example.org/',
+          },
+        },
+      },
+    };
+
+    it('[HR18] content.accessId selects the exact relationship among several to the same counterparty', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS, SECOND_COUNTERPARTY_ACCESS]);
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: { accessId: 'acc-counterparty-2' },
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      // The SECOND access (the explicit target) is torn down — not the
+      // first tuple match.
+      assert.ok(r.deletedAccessIds.includes('acc-counterparty-2'));
+      assert.ok(!r.deletedAccessIds.includes('acc-counterparty'));
+      const sent = JSON.parse(calls[0].init.body);
+      assert.equal(sent.content.accessId, 'acc-counterparty-2');
+    });
+
+    it('[HR19] unresolvable content.accessId fails without falling back to the tuple match', async () => {
+      // Duplicate-revoke safety: after a raw accesses.delete removed the
+      // target, a fallback would tear down a DIFFERENT relationship to
+      // the same counterparty.
+      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: { accessId: 'acc-already-deleted' },
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-revoke-counterparty-access-not-found');
+      assert.equal(mall.calls.deleted.length, 0);
+      assert.equal(calls.length, 0);
+    });
+
+    it('[HR20] trigger on a plain app-scope stream works via accessId (counterparty derived from the access)', async () => {
+      // The client helpers default the trigger stream to the invite's
+      // own app-scope stream — neither chats nor collectors, so no
+      // counterparty can be parsed from the stream id.
+      const mall = fakeMall([COUNTERPARTY_ACCESS]);
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:study-1'],
+          content: { accessId: 'acc-counterparty' },
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(r.peerNotified, true);
+      assert.ok(r.deletedAccessIds.includes('acc-counterparty'));
+      const sent = JSON.parse(calls[0].init.body);
+      assert.equal(sent.content.accessId, 'acc-counterparty');
+    });
+  });
+
+  describe('[CMCHR-FAIL] handleRevoke failure paths', () => {
+    it('[HR13] content.capabilityUrl is inert — no pre-acceptance delivery branch', async () => {
+      // The former pre-acceptance branch (deliver via the capability
+      // URL) was removed: no client ever emitted such triggers (invite
+      // cancellation is consent/invalidate-link-cmc) and the capability
+      // access could not have delivered to the peer inbox anyway. A
+      // trigger still carrying capabilityUrl now takes the normal
+      // acceptance-time path and fails cleanly when nothing matches —
+      // with NO outbound call to the capability URL.
       const { fetch, calls } = fakeFetch({ status: 201, body: {} });
       const r = await handleRevoke({
         userId: 'u1',
@@ -329,41 +433,17 @@ describe('[CMCHR] cmc/handleRevoke', () => {
           content: {
             capabilityUrl: 'https://cap-tok@provider.example.org/',
             counterparty: PEER,
-            reason: 'withdrew',
+            reason: { en: 'withdrew' },
           },
         },
         selfIdentity: SELF,
-        deps: { mall, fetch },
-      });
-      assert.equal(r.ok, true);
-      assert.equal(r.peerNotified, true);
-      assert.equal(r.deletedAccessIds.length, 0);
-      assert.equal(calls.length, 1);
-      assert.equal(calls[0].url, 'https://provider.example.org/events');
-    });
-
-    it('[HR14] surfaces delivery-failed when capability-URL delivery 5xxs', async () => {
-      const mall = fakeMall([]);
-      const { fetch } = fakeFetch({ status: 502, body: {} });
-      const r = await handleRevoke({
-        userId: 'u1',
-        triggerEvent: {
-          type: 'consent/revoke-cmc',
-          streamIds: [':_cmc:inbox'],
-          content: {
-            capabilityUrl: 'https://cap-tok@provider.example.org/',
-            counterparty: PEER,
-          },
-        },
-        selfIdentity: SELF,
-        deps: { mall, fetch },
+        deps: { mall: fakeMall([]), fetch },
       });
       assert.equal(r.ok, false);
-      assert.equal(r.reason, 'cmc-handler-delivery-failed');
+      assert.equal(r.reason, 'cmc-revoke-counterparty-access-not-found');
+      assert.equal(calls.length, 0);
     });
-  });
 
-  describe('[CMCHR-FAIL] handleRevoke failure paths', () => {
     it('[HR15] rejects wrong trigger type', async () => {
       const r = await handleRevoke({
         userId: 'u1',

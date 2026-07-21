@@ -87,7 +87,14 @@ type AccessesUpdateParams = { id: string; update: Partial<AccessLike> & { permis
 // __updateNotification: internal scratch slot between snapshotAndApplyUpdate
 // (producer) and emitUpdateNotifications (consumer); deleted before response.
 type AccessesUpdateResult = { access?: AccessLike; __updateNotification?: { baseId: string; serial: number; compositeId: string } };
-type AccessesDeleteParams = { id: string; accessToDelete?: AccessLike };
+type AccessesDeleteParams = {
+  id: string;
+  accessToDelete?: AccessLike;
+  // Full objects behind result.relatedDeletions, captured pre-delete by
+  // findRelatedAccesses so the CMC post-delete hook can inspect their
+  // clientData after the rows are gone. Internal; never serialized.
+  relatedAccessesToDelete?: AccessLike[];
+};
 type AccessesDeleteResult = { accessDeletion?: ItemDeletion; relatedDeletions?: ItemDeletion[] };
 type AccessesCheckAppParams = { requestingAppId: string; deviceName?: string; requestedPermissions: StreamPermission[]; clientData?: Record<string, unknown> };
 type AccessesCheckAppResult = { matchingAccess?: AccessLike; mismatchingAccess?: AccessLike; checkedPermissions?: StreamPermission[]; error?: unknown };
@@ -477,7 +484,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // only uses mall.events.create).
   const cmcAccessesUpdateHook = cmc.createAccessesUpdatePostHook({
     mall,
-    fetch: globalThis.fetch,
+    // Lazy fetch resolution — see the delete hook below.
+    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
     timeoutMs: 15_000,
     logger: getLogger('cmc:accesses-update-hook'),
   });
@@ -738,13 +746,50 @@ export default async function produceAccessesApiMethods (api: { register (...arg
 
   // DELETION
 
+  // CMC post-delete hook: forwards a `consent/revoke-cmc` to the
+  // counterparty when a CMC relationship access is removed by a plain
+  // accesses.delete (e.g. a generic "connected apps" UI), so consent
+  // withdrawal is observable by the peer regardless of the revocation
+  // path. CMC's own teardown deletes via mall (not this route), so the
+  // hook never double-fires for helper-driven revokes.
+  const cmcAccessesDeleteHook = cmc.createAccessesDeletePostHook({
+    // Resolve globalThis.fetch lazily (per call) so in-process test
+    // shims installed after registration are honoured — same pattern
+    // as the events.ts cmc deps.
+    fetch: (url: string, init?: RequestInit) => globalThis.fetch(url, init),
+    timeoutMs: 15_000,
+    logger: getLogger('cmc:accesses-delete-hook'),
+  });
+
   api.register(
     'accesses.delete',
     commonFns.getParamsValidation(methodsSchema.del.params),
     checkAccessForDeletion,
     findRelatedAccesses,
-    deleteAccesses
+    deleteAccesses,
+    cmcAccessesDeletePostHookMiddleware
   );
+
+  /**
+   * Fire-and-forget invocation of the CMC accesses.delete post-hook
+   * (same pattern as the accesses.update one). The hook filters
+   * non-CMC accesses itself and never throws; failures are logged.
+   */
+  function cmcAccessesDeletePostHookMiddleware (context: MethodContext, params: AccessesDeleteParams, result: AccessesDeleteResult, next: MethodNext) {
+    const deleted: AccessLike[] = [];
+    if (params.accessToDelete != null) deleted.push(params.accessToDelete);
+    if (Array.isArray(params.relatedAccessesToDelete)) deleted.push(...params.relatedAccessesToDelete);
+    if (deleted.length > 0 && context?.user?.id != null) {
+      Promise.resolve()
+        .then(() => cmcAccessesDeleteHook(context.user.id, deleted))
+        .catch((err: unknown) => {
+          getLogger('cmc:accesses-delete-hook').warn('cmc/accessesDeleteHook: uncaught error', {
+            error: String((err as Error)?.message ?? err),
+          });
+        });
+    }
+    next();
+  }
 
   async function checkAccessForDeletion (context: MethodContext, params: AccessesDeleteParams, result: AccessesDeleteResult, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
@@ -806,6 +851,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     accesses = accesses.filter((a) => a.id !== params.id);
     accesses = accesses.filter((a) => !isAccessExpired(a));
     result.relatedDeletions = accesses.map((a) => ({ id: a.id! }));
+    params.relatedAccessesToDelete = accesses;
     next();
   }
 

@@ -271,11 +271,22 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
    *
    * This mirrors what CN12 does, factored out so the extended /
    * scope-update describes can each get their own clean access pair.
+   *
+   * `appId` (default 'my-app') selects the app scope. The revocation
+   * describes pass a dedicated app-code per test: the back-channel
+   * matcher keys on (peer.username, peer.host, appCode) and picks the
+   * FIRST matching access, so only a unique app-code guarantees the
+   * fresh data-grant (not an earlier study's) receives the back-channel
+   * pointers the revoke delivery relies on.
    */
-  async function runFreshHandshake (studyId) {
-    const triggerStreamId = ':_cmc:apps:my-app:' + studyId;
+  async function runFreshHandshake (studyId, appId = 'my-app') {
+    const appRootStreamId = ':_cmc:apps:' + appId;
+    const triggerStreamId = appRootStreamId + ':' + studyId;
     await ensureStream(alice.streamsPath, alice.token, {
-      id: triggerStreamId, parentId: ':_cmc:apps:my-app', name: studyId,
+      id: appRootStreamId, parentId: ':_cmc:apps', name: appId,
+    });
+    await ensureStream(alice.streamsPath, alice.token, {
+      id: triggerStreamId, parentId: appRootStreamId, name: studyId,
     });
     const reqRes = await coreRequest.post(alice.eventsPath)
       .set('Authorization', alice.token)
@@ -291,7 +302,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
             consent: { en: 'I consent.' },
             permissions: [{ streamId: 'fertility', level: 'read' }],
           },
-          requesterMeta: { username: alice.username, appId: 'my-app' },
+          requesterMeta: { username: alice.username, appId },
         },
       });
     assert.strictEqual(reqRes.status, 201, JSON.stringify(reqRes.body));
@@ -299,12 +310,12 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     assert.ok(typeof capabilityUrl === 'string' && capabilityUrl.length > 0);
 
     await ensureStream(bob.streamsPath, bob.token, {
-      id: ':_cmc:apps:my-app', parentId: ':_cmc:apps', name: 'My App',
+      id: appRootStreamId, parentId: ':_cmc:apps', name: appId,
     });
     const accRes = await coreRequest.post(bob.eventsPath)
       .set('Authorization', bob.token)
       .send({
-        streamIds: [':_cmc:apps:my-app'],
+        streamIds: [appRootStreamId],
         type: 'consent/accept-cmc',
         content: { capabilityUrl, accessName: 'cmc-grant-' + studyId + '-' + Date.now() },
       });
@@ -330,6 +341,38 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       aliceCollectorStreamId: C.collectorStreamUnder(triggerStreamId, bobSlug),
       bobCollectorStreamId: C.collectorStreamUnder(triggerStreamId, aliceSlug),
     };
+  }
+
+  /**
+   * Poll `actor`'s accesses until one matches: clientData.cmc identifies
+   * `peerUsername` as the counterparty AND its stored remoteChat
+   * stream-id sits under `expectedScope`. Disambiguates between
+   * multiple counterparty accesses to the same peer.
+   *
+   * `runFreshHandshake` returns when the back-channel-cmc EVENT lands
+   * on bob's inbox, but bob's counterparty access is updated via a
+   * separate async path (cmc post-hook + pubsub). On heavily loaded
+   * runs (`just test all` matrix) that update can land a few hundred
+   * ms after the inbox event. Polling here aligns the two paths.
+   * (Shared by the scope-update + revocation describes.)
+   */
+  async function pollCounterpartyAccessForScope (actor, peerUsername, expectedScope) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+      const res = await coreRequest.get(actor.accessesPath)
+        .set('Authorization', actor.token);
+      const accesses = res.body?.accesses || [];
+      const match = accesses.find((a) => {
+        const cmc = a?.clientData?.cmc;
+        if (cmc?.role !== 'counterparty') return false;
+        if (cmc?.counterparty?.username !== peerUsername) return false;
+        const rcs = cmc?.counterparty?.remoteChatStreamId;
+        return typeof rcs === 'string' && rcs.startsWith(expectedScope + ':chats:');
+      });
+      if (match != null) return match;
+      await sleep(POLL_INTERVAL_MS);
+    }
+    throw new Error('poll timeout: counterparty access with back-channel under ' + expectedScope + ' for peer ' + peerUsername);
   }
 
   describe('[CMCHS-EXT] bidirectional messaging post-handshake', function () {
@@ -420,37 +463,6 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
 
     let h;
     let bobDataGrantId; // bob's counterparty access pointing to alice
-
-    /**
-     * Poll `actor`'s accesses until one matches: clientData.cmc identifies
-     * `peerUsername` as the counterparty AND its stored remoteChat
-     * stream-id sits under `expectedScope`. Disambiguates between
-     * multiple counterparty accesses to the same peer.
-     *
-     * `runFreshHandshake` returns when the back-channel-cmc EVENT lands
-     * on bob's inbox, but bob's counterparty access is updated via a
-     * separate async path (cmc post-hook + pubsub). On heavily loaded
-     * runs (`just test all` matrix) that update can land a few hundred
-     * ms after the inbox event. Polling here aligns the two paths.
-     */
-    async function pollCounterpartyAccessForScope (actor, peerUsername, expectedScope) {
-      const t0 = Date.now();
-      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
-        const res = await coreRequest.get(actor.accessesPath)
-          .set('Authorization', actor.token);
-        const accesses = res.body?.accesses || [];
-        const match = accesses.find((a) => {
-          const cmc = a?.clientData?.cmc;
-          if (cmc?.role !== 'counterparty') return false;
-          if (cmc?.counterparty?.username !== peerUsername) return false;
-          const rcs = cmc?.counterparty?.remoteChatStreamId;
-          return typeof rcs === 'string' && rcs.startsWith(expectedScope + ':chats:');
-        });
-        if (match != null) return match;
-        await sleep(POLL_INTERVAL_MS);
-      }
-      throw new Error('poll timeout: counterparty access with back-channel under ' + expectedScope + ' for peer ' + peerUsername);
-    }
 
     before(async function () {
       h = await runFreshHandshake('study-su');
@@ -892,6 +904,112 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         .send({ id: leafStreamId, parentId: ':_cmc:apps', name: appCode });
       assert.strictEqual(verify.body?.error?.id, 'item-already-exists',
         'leaf should exist even for deep-path perm; got ' + JSON.stringify(verify.body));
+    });
+  });
+
+  describe('[CMCHS-RV] revocation forwarded to the counterparty', function () {
+    // Defined at the very end: these tests DESTROY relationship accesses.
+    // Each test runs its own handshake under a DEDICATED app-code (see
+    // runFreshHandshake docstring: the back-channel matcher needs a
+    // unique (peer, appCode) tuple to deterministically wire the fresh
+    // data-grant), so they are hermetic w.r.t. the earlier describes.
+
+    async function pollInboxRevokeFor (actor, fromUsername, accessId) {
+      return await pollInboxFor(
+        actor.eventsPath, actor.token, 'consent/revoke-cmc',
+        (e) => e.content?.from?.username === fromUsername &&
+               e.content?.accessId === accessId
+      );
+    }
+
+    async function countInboxRevokesFor (actor, accessId) {
+      const res = await coreRequest.get(actor.eventsPath)
+        .set('Authorization', actor.token)
+        .query({ streams: [':_cmc:inbox'], types: ['consent/revoke-cmc'], limit: 50 });
+      return (res.body?.events || [])
+        .filter((e) => e.content?.accessId === accessId).length;
+    }
+
+    it('[CN20] helper-driven revoke (consent/revoke-cmc trigger) lands in the requester\'s inbox', async function () {
+      const h = await runFreshHandshake('study-rva', 'rev-app-a');
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+
+      // Bob (accepter) revokes via the CMC lifecycle event — the helper
+      // flow (pryv.cmc.revokeAcceptance writes exactly this trigger).
+      const revRes = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [h.bobCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: dataGrant.id, reason: { en: 'CN20 helper revoke' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+
+      // Alice (requester) must observe the revocation in her inbox,
+      // carrying the revoked access id.
+      const inboxRevoke = await pollInboxRevokeFor(alice, bob.username, dataGrant.id);
+      assert.equal(inboxRevoke.content.appCode, 'rev-app-a');
+
+      // And bob's local data-grant must be gone (handleRevoke teardown).
+      const t0 = Date.now();
+      let stillThere = true;
+      while (Date.now() - t0 < POLL_TIMEOUT_MS && stillThere) {
+        const r = await coreRequest.get(bob.accessesPath).set('Authorization', bob.token);
+        stillThere = (r.body?.accesses || []).some((a) => a.id === dataGrant.id);
+        if (stillThere) await sleep(POLL_INTERVAL_MS);
+      }
+      assert.equal(stillThere, false, 'bob\'s data-grant access must be deleted by the revoke');
+    });
+
+    it('[CN21] raw accesses.delete of the data-grant forwards consent/revoke-cmc to the requester', async function () {
+      const h = await runFreshHandshake('study-rvb', 'rev-app-b');
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+
+      // Bob removes the relationship access from a generic
+      // "connected apps"-style path: plain accesses.delete, personal token.
+      const delRes = await coreRequest.delete(bob.accessesPath + '/' + dataGrant.id)
+        .set('Authorization', bob.token);
+      assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
+      assert.equal(delRes.body?.accessDeletion?.id, dataGrant.id);
+
+      // The requester must observe the revocation exactly as if it had
+      // been issued through the CMC helpers.
+      const inboxRevoke = await pollInboxRevokeFor(alice, bob.username, dataGrant.id);
+      assert.equal(inboxRevoke.content.appCode, 'rev-app-b');
+    });
+
+    it('[CN22] revoke after raw delete is idempotent: no duplicate inbox revoke, delete 404s', async function () {
+      const h = await runFreshHandshake('study-rvc', 'rev-app-c');
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+
+      // Raw delete first (fires the post-delete forwarding).
+      const delRes = await coreRequest.delete(bob.accessesPath + '/' + dataGrant.id)
+        .set('Authorization', bob.token);
+      assert.strictEqual(delRes.status, 200, JSON.stringify(delRes.body));
+      await pollInboxRevokeFor(alice, bob.username, dataGrant.id);
+
+      // A helper revoke for the same (already-deleted) relationship must
+      // not produce a second inbox revoke on alice's side — handleRevoke
+      // finds no counterparty access and fails the trigger locally.
+      const revRes = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [h.bobCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: dataGrant.id, reason: { en: 'CN22 duplicate revoke' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+
+      // A second raw delete of the same access must 404.
+      const delAgain = await coreRequest.delete(bob.accessesPath + '/' + dataGrant.id)
+        .set('Authorization', bob.token);
+      assert.strictEqual(delAgain.status, 404, JSON.stringify(delAgain.body));
+
+      // Give the (fire-and-forget) pipelines time to run, then assert
+      // alice still has exactly ONE revoke for this access id.
+      await sleep(1500);
+      const count = await countInboxRevokesFor(alice, dataGrant.id);
+      assert.equal(count, 1, 'alice must see exactly one consent/revoke-cmc for ' + dataGrant.id);
     });
   });
 });

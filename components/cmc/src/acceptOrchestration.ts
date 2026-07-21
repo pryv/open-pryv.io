@@ -302,6 +302,11 @@ function buildDataGrantPayload (params: {
     clientData: {
       cmc: {
         role: 'counterparty',
+        // The requester's app-code — disambiguates between several
+        // relationships with the same counterparty (matching, revoke
+        // correlation). The back-channel access on the requester side
+        // has carried it from the start; stamp it here too.
+        appCode: typeof meta.appId === 'string' ? meta.appId : null,
         counterparty,
         offerEventId: offerEvent.id,
         acceptEventId: acceptEventId ?? null,
