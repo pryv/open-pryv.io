@@ -20,6 +20,12 @@ class APIError extends Error {
   httpStatus: number;
   data: unknown;
   innerError: Error | null;
+  /**
+   * Optional response headers the http error layer must emit with this
+   * error (e.g. a WWW-Authenticate challenge). Never part of the JSON
+   * body.
+   */
+  httpHeaders?: Record<string, string>;
 
   constructor (id: string, message: string, options?: APIErrorOptions) {
     super(message);

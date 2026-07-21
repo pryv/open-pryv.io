@@ -44,6 +44,12 @@ function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => u
       // req.context.tracing.finishSpan('express1');
     }
     errorHandling.logError(error, req, logger);
+    // Error-scoped response headers (e.g. WWW-Authenticate challenges
+    // for auth-scheme failures) ride on the error object itself.
+    const errorHeaders = (error as { httpHeaders?: Record<string, string> }).httpHeaders;
+    if (errorHeaders != null) {
+      for (const [name, value] of Object.entries(errorHeaders)) res.setHeader(name, value);
+    }
     res
       .status(error.httpStatus || 500)
       .json(commonMeta.setCommonMeta({
