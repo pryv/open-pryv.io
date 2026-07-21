@@ -553,6 +553,12 @@ oauth:
     # tokens within this window (read locally, no cross-core bus). Lower = faster
     # revoke, more PlatformDB reads.
     keyRevokeCheckSeconds: 30      # seconds
+  # Operator client-revoke propagation: `bin/oauth-client.js revoke <id>` writes
+  # a cluster-wide (PlatformDB) tombstone; each core caches the revoked-client
+  # set for this many seconds, so a revoke reaches LIVE access tokens
+  # cluster-wide within this window (vs waiting out the access-token TTL). Lower
+  # = faster revoke, more PlatformDB reads.
+  clientRevokeCheckSeconds: 30     # seconds
   clientRegistration:
     mode: curated                  # ONLY supported value; "open" is rejected
   requireAppAccountMfa: true       # app accounts must enrol MFA before /oauth2/* writes

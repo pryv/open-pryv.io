@@ -211,9 +211,11 @@ async function runRevoke (platform, args, removeClient) {
   await removeClient(platform, clientId);
   console.log('OK   client revoked: ' + clientId);
   console.log();
-  console.log('NOTE: PlatformDB cache row removed. Cluster-wide access-cache');
-  console.log('      invalidation via the OAUTH_CLIENT_REVOKE pubsub channel');
-  console.log('      lands with the grant handlers.');
+  console.log('NOTE: the client row is removed (no new grants, refresh dies) AND a');
+  console.log('      cluster-wide revoke tombstone is written. Every core stops the');
+  console.log('      app\'s LIVE access tokens within oauth.clientRevokeCheckSeconds');
+  console.log('      (default 30s) — read locally from PlatformDB, no cross-core bus.');
+  console.log('      Re-registering the same client id clears the tombstone.');
 }
 
 // --- Operator revoke-by-DPoP-key (RFC 9449 sender-constrained tokens) --- //

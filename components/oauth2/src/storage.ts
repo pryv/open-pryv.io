@@ -154,6 +154,7 @@ export interface OAuthRefreshUsed {
 }
 
 const PREFIX_CLIENT = 'oauth-client/';
+const PREFIX_CLIENT_REVOKED = 'oauth-client-revoked/';
 const PREFIX_CODE = 'oauth-code/';
 const PREFIX_REFRESH = 'oauth-refresh/';
 const PREFIX_REFRESH_USED = 'oauth-refresh-used/';
@@ -171,6 +172,9 @@ const JKT_RE = /^[A-Za-z0-9_-]{43}$/;
 export async function setClient (platform: PlatformDB, client: OAuthClient): Promise<void> {
   const payload = { ...client, clientId: client.clientId, updatedAt: client.updatedAt || Date.now() };
   await platform.setPlatformKv(PREFIX_CLIENT + client.clientId, JSON.stringify(payload));
+  // Registering (or re-registering) a client id clears any revoke tombstone —
+  // an operator who re-creates the id starts from a clean, usable state.
+  await platform.deletePlatformKv(PREFIX_CLIENT_REVOKED + client.clientId);
 }
 
 export async function getClient (platform: PlatformDB, clientId: string): Promise<OAuthClient | null> {
@@ -183,12 +187,55 @@ export async function deleteClient (platform: PlatformDB, clientId: string): Pro
   if (typeof clientId !== 'string' || clientId.length === 0) {
     throw new Error('deleteClient: clientId required');
   }
+  // Deleting the client row stops NEW grants + kills refresh; the tombstone
+  // (below) is what makes the operator revoke reach LIVE access tokens
+  // cluster-wide — the resource server rejects any oauth-session access whose
+  // client is tombstoned (checked lazily, per-core cached). Cross-core-safe:
+  // it is a PlatformDB write each core reads locally (cores are independent,
+  // no cross-core bus).
+  await platform.setPlatformKv(PREFIX_CLIENT_REVOKED + clientId, JSON.stringify({ revokedAt: Date.now() }));
   await platform.deletePlatformKv(PREFIX_CLIENT + clientId);
 }
 
 export async function listClientIds (platform: PlatformDB): Promise<string[]> {
   const keys = await platform.listPlatformKvKeys(PREFIX_CLIENT);
   return keys.map((k) => k.slice(PREFIX_CLIENT.length)).sort();
+}
+
+// --- Client revoke tombstones (indefinite, cluster-wide) --- //
+//
+// A tombstone marks a clientId whose LIVE access tokens must stop working, even
+// before they expire. `deleteClient` writes it; `setClient` (re-register)
+// clears it. The resource-server validation path consults these (per-core
+// cached) to reject a revoked client's oauth-session accesses.
+
+/** True when the clientId carries a revoke tombstone. */
+export async function isClientRevoked (platform: PlatformDB, clientId: string): Promise<boolean> {
+  if (typeof clientId !== 'string' || clientId.length === 0) return false;
+  return (await platform.getPlatformKv(PREFIX_CLIENT_REVOKED + clientId)) != null;
+}
+
+/** All currently-tombstoned client ids (the per-core cache loads this set). */
+export async function listRevokedClientIds (platform: PlatformDB): Promise<string[]> {
+  const keys = await platform.listPlatformKvKeys(PREFIX_CLIENT_REVOKED);
+  return keys.map((k) => k.slice(PREFIX_CLIENT_REVOKED.length));
+}
+
+/**
+ * Drop tombstones older than `maxAgeMs` — a revoked client's tokens are all
+ * expired by then, so the marker's job is done. Optional housekeeping; the
+ * set is tiny, so this is not required for correctness. Returns the count pruned.
+ */
+export async function pruneRevokedClients (platform: PlatformDB, maxAgeMs: number, now: number = Date.now()): Promise<number> {
+  const keys = await platform.listPlatformKvKeys(PREFIX_CLIENT_REVOKED);
+  let pruned = 0;
+  for (const key of keys) {
+    const raw = await platform.getPlatformKv(key);
+    let revokedAt = 0;
+    try { revokedAt = Number(JSON.parse(raw ?? '{}').revokedAt) || 0; } catch { revokedAt = 0; }
+    if (now - revokedAt > maxAgeMs) { await platform.deletePlatformKv(key); pruned++; }
+  }
+  return pruned;
 }
 
 // --- Authorization codes (CLUSTER-WIDE, ≤10-min TTL) --- //

@@ -197,6 +197,10 @@ class MethodContext {
       // shared choke point — moving it to an http-only path would let a
       // bound token be replayed over socket.io/hfs.
       await this.checkDpopBinding();
+      // Operator-revoked OAuth clients: reject a live oauth-session access
+      // whose client was revoked, even before the token expires. Same choke
+      // point as DPoP so it covers every transport.
+      await this.checkClientNotRevoked();
       // Check if the session is valid; touch it.
       await this.checkSessionValid(storage);
       // Perform the custom auth step.
@@ -348,6 +352,34 @@ class MethodContext {
       const err = errors.invalidAccessToken('DPoP proof verification failed.', 403);
       err.httpHeaders = { 'WWW-Authenticate': 'DPoP algs="ES256", error="invalid_token"' };
       throw err;
+    }
+  }
+
+  /**
+   * Reject an OAuth-session access (`name = 'oauth:<clientId>'`) whose client
+   * an operator has revoked — so a `revoke` reaches live tokens cluster-wide
+   * within the cache TTL, instead of waiting out the ~1 h access-token TTL.
+   * Non-oauth accesses and non-revoked clients pass untouched.
+   *
+   * Fail-open when the platform store is unavailable (e.g. unit contexts): the
+   * revoke is a bounded-SLA control, not an availability gate — blocking every
+   * oauth session during a platform hiccup would be worse than the ≤TTL window.
+   */
+  async checkClientNotRevoked () {
+    const name = (this.access as { name?: unknown } | null)?.name;
+    if (typeof name !== 'string' || !name.startsWith('oauth:')) return;
+    const clientId = name.slice('oauth:'.length);
+    if (clientId.length === 0) return;
+    const platform = require('storages').platformDB;
+    if (platform == null) return;
+    let ttlSeconds = 30;
+    try {
+      const configured = require('@pryv/boiler').getConfigSync().get('oauth:clientRevokeCheckSeconds');
+      if (configured != null) ttlSeconds = Number(configured);
+    } catch { /* config not booted (unit contexts) — keep the default */ }
+    const { isClientRevoked } = require('oauth2/src/revokedClientsCache.ts');
+    if (await isClientRevoked(platform, clientId, ttlSeconds)) {
+      throw errors.invalidAccessToken('The application access has been revoked.', 403);
     }
   }
 
