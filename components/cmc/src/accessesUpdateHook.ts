@@ -95,7 +95,13 @@ function createAccessesUpdatePostHook (deps: PostHookDeps) {
       return { ran: false, reason: 'not-a-cmc-managed-access' };
     }
 
-    const apiEndpoint: string | undefined = cmc?.counterparty?.apiEndpoint;
+    // Requester side stores the peer path on `counterparty.apiEndpoint`;
+    // the accepter side mirrors it there once the back-channel lands —
+    // fall back to the original `backChannelApiEndpoint` field for
+    // accesses minted before the mirror existed (same resolution as the
+    // revoke forwarding paths).
+    const apiEndpoint: string | undefined =
+      cmc?.counterparty?.apiEndpoint ?? cmc?.backChannelApiEndpoint;
     if (typeof apiEndpoint !== 'string' || apiEndpoint.length === 0) {
       deps.logger?.debug?.('cmc/accessesUpdateHook: no peer apiEndpoint on access', { accessId: after.id });
       return { ran: false, reason: 'no-peer-apiendpoint' };
@@ -142,8 +148,21 @@ function createAccessesUpdatePostHook (deps: PostHookDeps) {
       }
     }
 
-    // Step 2: deliver to peer via the stored apiEndpoint. We POST to their
-    // :_cmc:inbox (peer's inboxWriteHook will validate + stamp content.from).
+    // Step 2: deliver to peer via the stored apiEndpoint. Target the
+    // peer's COLLECTORS stream (stored on the access at handshake time),
+    // exactly like handleSystemScopeUpdate does — NOT their :_cmc:inbox:
+    // `consent/scope-update-cmc` is a SYSTEM-family type and the peer's
+    // inboxWriteHook only admits the lifecycle family there, so an inbox
+    // delivery is rejected with `cmc-event-type-not-allowed`. On the
+    // collectors stream the peer's counterparty-from-stamping hook stamps
+    // `content.from` from the delivering access's stored identity.
+    const remoteCollectorStreamId: string | undefined = cmc?.counterparty?.remoteCollectorStreamId;
+    if (typeof remoteCollectorStreamId !== 'string' || remoteCollectorStreamId.length === 0) {
+      deps.logger?.warn?.('cmc/accessesUpdateHook: no remoteCollectorStreamId on access — peer not notified', {
+        accessId: after.id,
+      });
+      return { ran: true, peerNotified: false, localAuditEventId };
+    }
     let peerNotified = false;
     let peerDeliveryStatus: number | undefined;
     try {
@@ -151,7 +170,7 @@ function createAccessesUpdatePostHook (deps: PostHookDeps) {
         apiEndpoint,
         path: 'events',
         body: {
-          streamIds: [C.NS_INBOX],
+          streamIds: [remoteCollectorStreamId],
           type: C.ET_SYSTEM_SCOPE_UPDATE,
           content: payload,
         },

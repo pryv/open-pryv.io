@@ -34,6 +34,17 @@ an open invite is `consent/invalidate-link-cmc`, declining one is
 notification anyway. Such a trigger now simply fails with
 `cmc-revoke-counterparty-access-not-found`.
 
+### CMC: scope edits made with plain `accesses.update` now reach the counterparty
+
+The same any-path principle applies to scope changes: editing a CMC
+relationship access directly with `accesses.update` (no CMC trigger event)
+now delivers the `consent/scope-update-cmc` notification to the
+counterparty's collectors stream, like the helper flow does. The post-hook
+previously targeted the counterparty's `:_cmc:inbox`, which only admits
+lifecycle events — the delivery was silently rejected there, so peers never
+learned of raw scope edits. The peer endpoint resolution also gained the
+same `backChannelApiEndpoint` fallback as the revocation paths.
+
 ## 2.0.0-rc.9 — 2026-07-18
 
 ### CMC: request a delegable (`app`) data-grant

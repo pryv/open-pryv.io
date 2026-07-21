@@ -912,6 +912,42 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
     });
   });
 
+  describe('[CMCHS-UP] raw accesses.update forwarded to the counterparty', function () {
+    // A scope edit performed with plain accesses.update (no CMC trigger
+    // event) must reach the peer's COLLECTORS stream via the route-level
+    // post-hook — system-family types are rejected on the peer's inbox,
+    // which is exactly the regression this test pins.
+
+    it('[CN23] bob edits his data-grant via accesses.update → alice receives consent/scope-update-cmc on her collectors stream', async function () {
+      const h = await runFreshHandshake('study-upd', 'upd-app');
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+
+      // A fresh stream to widen the grant onto.
+      await ensureStream(bob.streamsPath, bob.token, { id: 'updextra', name: 'Upd Extra' });
+      const newPermissions = (dataGrant.permissions || []).concat([{ streamId: 'updextra', level: 'read' }]);
+
+      const updRes = await coreRequest.put(bob.accessesPath + '/' + dataGrant.id)
+        .set('Authorization', bob.token)
+        .send({ permissions: newPermissions });
+      assert.strictEqual(updRes.status, 200, JSON.stringify(updRes.body));
+
+      const peerNotif = await pollStreamFor(
+        alice.eventsPath, alice.token, h.aliceCollectorStreamId,
+        'consent/scope-update-cmc',
+        (e) => e.content?.source === 'post-hook' &&
+               Array.isArray(e.content?.newPermissions) &&
+               e.content.newPermissions.some((p) => p.streamId === 'updextra')
+      );
+      assert.equal(peerNotif.content.from?.username, bob.username,
+        'delivered scope-update must carry bob as server-stamped origin');
+      // Post-update the access id is the composite <base>:<serial> form
+      // (access versioning bumps the serial on every update).
+      assert.ok(String(peerNotif.content.newAccessId).startsWith(dataGrant.id + ':') ||
+                peerNotif.content.newAccessId === dataGrant.id,
+        'newAccessId must reference the updated data-grant: ' + peerNotif.content.newAccessId);
+    });
+  });
+
   describe('[CMCHS-RV] revocation forwarded to the counterparty', function () {
     // Defined at the very end: these tests DESTROY relationship accesses.
     // Each test runs its own handshake under a DEDICATED app-code (see

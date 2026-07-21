@@ -67,6 +67,10 @@ const CMC_COUNTERPARTY_ACCESS = {
         username: 'alice',
         host: 'pryv.me',
         apiEndpoint: 'https://peer-tok@pryv.me/',
+        // The peer-side collectors stream (stored at handshake time) —
+        // scope-update deliveries target THIS stream, never the peer's
+        // inbox (system-family types are rejected there).
+        remoteCollectorStreamId: ':_cmc:apps:my-app:collectors:bob--pryv-me',
       },
     },
   },
@@ -98,14 +102,68 @@ describe('[CMCAU] cmc/accessesUpdateHook', () => {
       assert.equal(typeof mall.calls.eventsCreated[0].time, 'number');
       assert.ok(mall.calls.eventsCreated[0].time > 0,
         'audit event time must be a positive unix-seconds value');
-      // Outbound POST to peer's :_cmc:inbox
+      // Outbound POST to the PEER'S collectors stream (system-family
+      // types are rejected on their inbox by inboxWriteHook).
       assert.equal(calls.length, 1);
       assert.equal(calls[0].url, 'https://pryv.me/events');
       const sent = JSON.parse(calls[0].init.body);
       assert.equal(sent.type, 'consent/scope-update-cmc');
-      assert.deepEqual(sent.streamIds, [':_cmc:inbox']);
+      assert.deepEqual(sent.streamIds, [':_cmc:apps:my-app:collectors:bob--pryv-me']);
       assert.equal(sent.content.source, 'post-hook');
       assert.deepEqual(sent.content.newPermissions, [{ streamId: 'x', level: 'read' }]);
+      // The delivered content must pass the RECEIVING side's schema —
+      // the exact blind spot that silently broke inbox deliveries.
+      const v = require('../src/validators.ts').validateSystemScopeUpdate(sent.content);
+      assert.equal(v.valid, true, 'peer-side validateSystemScopeUpdate must accept the payload: ' + JSON.stringify(v.errors));
+    });
+
+    it('[AU11] falls back to backChannelApiEndpoint when counterparty.apiEndpoint is absent', async () => {
+      const mall = fakeMall();
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const hook = createAccessesUpdatePostHook({ mall, fetch });
+      const acc = {
+        ...CMC_COUNTERPARTY_ACCESS,
+        clientData: {
+          cmc: {
+            ...CMC_COUNTERPARTY_ACCESS.clientData.cmc,
+            counterparty: {
+              ...CMC_COUNTERPARTY_ACCESS.clientData.cmc.counterparty,
+              apiEndpoint: undefined,
+            },
+            backChannelApiEndpoint: 'https://bc-tok@pryv.me/',
+          },
+        },
+      };
+      const r = await hook('u1', undefined, acc);
+      assert.equal(r.ran, true);
+      assert.equal(r.peerNotified, true);
+      assert.equal(calls[0].url, 'https://pryv.me/events');
+    });
+
+    it('[AU12] ran but peer not notified when no remoteCollectorStreamId is stored', async () => {
+      const warned = [];
+      const mall = fakeMall();
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const hook = createAccessesUpdatePostHook({ mall, fetch, logger: { warn: (m) => warned.push(m) } });
+      const acc = {
+        ...CMC_COUNTERPARTY_ACCESS,
+        clientData: {
+          cmc: {
+            ...CMC_COUNTERPARTY_ACCESS.clientData.cmc,
+            counterparty: {
+              ...CMC_COUNTERPARTY_ACCESS.clientData.cmc.counterparty,
+              remoteCollectorStreamId: undefined,
+            },
+          },
+        },
+      };
+      const r = await hook('u1', undefined, acc);
+      assert.equal(r.ran, true);
+      assert.equal(r.peerNotified, false);
+      // Local audit still written; no outbound attempted.
+      assert.ok(r.localAuditEventId);
+      assert.equal(calls.length, 0);
+      assert.equal(warned.length, 1);
     });
 
     it('[AU02] also fires for data-grant access role', async () => {
