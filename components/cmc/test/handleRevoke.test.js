@@ -11,8 +11,9 @@ const require = createRequire(import.meta.url);
  * CMC plugin — handleRevoke tests.
  *
  * [CMCHR] covers consent/revoke-cmc handling: acceptance-time teardown
- * (dual accesses.delete + peer notify), explicit accessId targeting, and
- * failure paths.
+ * (LOCAL accesses.delete + peer notify — the peer's own half is not
+ * deleted by us; the receiving side skips peer-delivered revokes),
+ * explicit accessId targeting, and failure paths.
  */
 
 const assert = require('node:assert/strict');

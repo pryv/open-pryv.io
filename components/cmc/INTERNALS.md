@@ -487,9 +487,26 @@ sequenceDiagram
 
 ---
 
-# 13. Revoke teardown — dual `accesses.delete`
+# 13. Revoke teardown — local delete + peer notification
 
-Either party writes `consent/revoke-cmc`. Their plugin deletes their local access and instructs the peer to delete its half. The anchor streams (`:_cmc:apps:<app-code>:[<path>:]chats:*`, `:_cmc:apps:<app-code>:[<path>:]collectors:*`) are **left in place** so history is preserved; future re-engagement starts a fresh request → accept cycle and the existing streams get reused.
+> ⚠️ **Current behaviour is NOT a dual delete.** This section previously
+> described the peer deleting its half of the pair. That has never been
+> implemented: a revoke tears down only the accesses on the account where the
+> trigger was written, and the forwarded `consent/revoke-cmc` is classified as
+> a peer-delivered event, so the dispatch loop **skips it and runs no handler**
+> on the receiving side (`dispatch.ts` `OUTBOUND_LOOPABLE_TYPES` +
+> `isPeerDeliveredEvent`). The peer's access therefore survives the revoke and
+> its token keeps working until that side's app deletes it.
+>
+> Consequence, stated plainly: **revocation is advisory in the
+> trigger-writer → peer direction.** The direction that does enforce is the
+> local one — an accepter revoking destroys the data-grant on their own
+> account, which is what actually cuts the requester's read. Server-side
+> teardown of the peer's access is planned; until it lands, an app that
+> observes a `consent/revoke-cmc` arrival is responsible for deleting its own
+> half.
+
+Either party writes `consent/revoke-cmc`. Their plugin deletes their local access(es) and notifies the peer. The anchor streams (`:_cmc:apps:<app-code>:[<path>:]chats:*`, `:_cmc:apps:<app-code>:[<path>:]collectors:*`) are **left in place** so history is preserved; future re-engagement starts a fresh request → accept cycle and the existing streams get reused.
 
 ```mermaid
 sequenceDiagram
@@ -504,15 +521,16 @@ sequenceDiagram
     APIServer-->>Plugin: access record
     Plugin->>APIServer: accesses.delete <accessId>
     Plugin->>Peer: POST /events :_cmc:inbox<br/>type: consent/revoke-cmc
-    Peer->>Peer: find local half of pair<br/>(via my-side accessId in payload<br/>or counterparty identity)
-    Peer->>Peer: accesses.delete <local-half>
-    Peer-->>Plugin: ok
+    Note over Peer: dispatch SKIPS peer-delivered revokes —<br/>no handler runs, peer's half is NOT deleted
+    Peer-->>Plugin: 201 (event stored in inbox)
     Plugin->>APIServer: events.update trigger status='completed'
 ```
 
+Note that `status: 'completed'` on the trigger means "local teardown done and the notification was accepted by the peer" — **not** that the peer tore anything down.
+
 **Anchor stream history preservation:** chat + collector streams are NOT deleted on revoke. They become orphan-but-readable; the user can still scroll history. If the two parties later re-accept, the plugin re-creates the access pair pointing at the existing streams. (Re-acceptance edge case is tested in `[CMCREVOKE]`.)
 
-**Failure asymmetry:** if step 5 fails terminally (peer down for >32h), the local access is already deleted. The peer's half lingers until the retry queue gives up; at that point, the peer's plugin logs an audit entry but doesn't `accesses.delete` autonomously (because it has no signed instruction from us). Recovery: peer's operator runs the same cleanup script as flow 3's atomicity case (backlog tooling).
+**Delivery is best-effort and requires a peer endpoint.** Each side can only notify the other once the back-channel handshake has stored the peer's `apiEndpoint` on the relationship access. If that never completed, or if delivery fails, the revoke currently no-ops with a log warning — no error surfaced to the caller and no retry. Retry-queue integration is planned.
 
 ---
 

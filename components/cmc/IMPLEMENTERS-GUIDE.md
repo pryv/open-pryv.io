@@ -361,9 +361,12 @@ Patient's plugin:
 1. Reads `clientData.cmc.counterparty.backChannelApiEndpoint` from the data-grant access.
 2. `accesses.delete` on the local data-grant.
 3. Delivers `consent/revoke-cmc` to doctor's `:_cmc:inbox` via the back-channel apiEndpoint.
-4. Doctor's plugin (on receipt) `accesses.delete`s the back-channel access on doctor's side.
 
-One write, server-orchestrated dual delete.
+One write; the local access is destroyed server-side, which is what actually cuts the doctor's read.
+
+> ⚠️ **The peer's own access is NOT deleted for them.** The revoke arrives in the doctor's `:_cmc:inbox` as a notification; the receiving server runs no teardown handler, so the doctor's back-channel access survives until the doctor's app deletes it. **If you observe a `consent/revoke-cmc` arrival, delete your half yourself** (`accesses.delete` on the access you hold for that relationship). Server-side teardown on the receiving side is planned; earlier revisions of these docs described it as already implemented, which was incorrect.
+>
+> Note also that delivery is best-effort: it requires the back-channel handshake to have completed (that is what stores the peer's endpoint), and a failed delivery is currently only logged, not retried. Treat a missing revoke notification as possible, and reconcile on your own schedule if the relationship matters.
 
 ## Watching state
 

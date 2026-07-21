@@ -22,16 +22,22 @@ const require = createRequire(import.meta.url);
  *      `content.accessId` (authoritative), falling back to the
  *      (appCode + counterparty) tuple from the trigger stream or
  *      content.counterparty for legacy triggers without an id.
- *   2. Find the paired data-grant access we issued to the peer (the
- *      `role: 'data-grant'` access whose clientData.cmc.peerAccessId
- *      points at the counterparty-access; or by reverse-lookup on
- *      counterparty identity).
- *   3. Delete the data-grant access locally (revokes peer's read into
- *      our data immediately).
+ *   2. Look for a paired `role: 'data-grant'` access (legacy pairing
+ *      model). NOTE: nothing in the current codebase stamps that role or
+ *      `peerAccessId`, so this lookup never matches in practice and
+ *      step 3 is effectively dead — retained only for accounts that may
+ *      still hold accesses minted under the old model.
+ *   3. Delete that data-grant access locally, if one was found.
  *   4. Deliver `consent/revoke-cmc` to the peer via the counterparty-access's
- *      stored apiEndpoint so they delete their half too.
- *   5. Delete our counterparty-access (we no longer trust the peer's
- *      back-channel either).
+ *      stored apiEndpoint. This is a NOTIFICATION ONLY: the receiving
+ *      side classifies it as peer-delivered and skips dispatch entirely,
+ *      so the peer's own access is NOT deleted by us and its token keeps
+ *      working until that side's app removes it. Server-side teardown on
+ *      the receiving side is planned; do not read this step as a dual
+ *      delete (the docs used to claim one — they were wrong).
+ *   5. Delete our counterparty-access — this is the step that actually
+ *      enforces the revocation on our side (it destroys the token the
+ *      peer was using against this account).
  *
  * There is NO pre-acceptance revoke flow through this handler: a
  * requester cancels an open invite via `consent/invalidate-link-cmc`,
