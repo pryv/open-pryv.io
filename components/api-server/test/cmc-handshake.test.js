@@ -1061,4 +1061,106 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       assert.equal(count, 1, 'alice must see exactly one consent/revoke-cmc for ' + dataGrant.id);
     });
   });
+
+  // Two concurrent relationships between the SAME pair under the SAME app.
+  //
+  // Every other describe here keeps its scenario hermetic by handshaking
+  // once (or by using a per-test app-code), which is precisely why this gap
+  // has never been exercised: the back-channel matcher and the outbound
+  // chat/system/revoke selectors BOTH resolve a counterparty access by
+  // (peer username, peer host, appCode) first-match, and appCode is derived
+  // from the app scope — not from the per-request scope. So two
+  // relationships with one peer under one app are indistinguishable to both
+  // halves, and they agree with each other only because they are wrong in
+  // the same direction.
+  //
+  // Concretely: the second handshake's back-channel overwrites the FIRST
+  // grant's remote stream pointers with the second relationship's scope.
+  // A send on the first relationship then resolves that same first grant
+  // and delivers to the SECOND relationship's streams.
+  //
+  // Deliveries on the older relationship are therefore misrouted, and a
+  // consent-revocation on it cannot reach the counterparty at all.
+  //
+  // SKIPPED because it fails today — it documents a known defect rather than
+  // a regression. [CN23] passes (the newest relationship is the one both
+  // halves agree on); [CN24] and [CN25] fail, deterministically. Fixing this
+  // means giving both halves a per-relationship key — the per-request scope
+  // stream, since appCode cannot distinguish these — in the back-channel
+  // matcher AND in every outbound selector (handleChat, handleSystem,
+  // chatOrchestration, handleRevoke). Un-skip as the definition of done.
+  describe.skip('[CMCHS-DUP] two relationships with one peer under one app', function () {
+    let first, second;
+
+    before(async function () {
+      // Same appId (the default 'my-app') — only the per-request scope differs.
+      first = await runFreshHandshake('study-dup-a');
+      second = await runFreshHandshake('study-dup-b');
+    });
+
+    it('[CN23] the newer relationship delivers to its own streams', async function () {
+      const text = 'newer relationship ' + Date.now();
+      const res = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [second.bobChatStreamId],
+          type: 'message/chat-cmc',
+          content: { content: text },
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+
+      await pollStreamFor(
+        alice.eventsPath, alice.token, second.aliceChatStreamId, 'message/chat-cmc',
+        (e) => e.content?.content === text
+      );
+    });
+
+    it('[CN24] the older relationship delivers to its own streams, not the newer one\'s', async function () {
+      const text = 'older relationship ' + Date.now();
+      const res = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [first.bobChatStreamId],
+          type: 'message/chat-cmc',
+          content: { content: text },
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+
+      // The message must land on the FIRST relationship's stream.
+      await pollStreamFor(
+        alice.eventsPath, alice.token, first.aliceChatStreamId, 'message/chat-cmc',
+        (e) => e.content?.content === text
+      );
+
+      // ...and must NOT have been misrouted onto the second's.
+      const onSecond = await coreRequest.get(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .query({ streams: [second.aliceChatStreamId], types: ['message/chat-cmc'], limit: 100 });
+      const leaked = (onSecond.body?.events || [])
+        .some((e) => e.content?.content === text);
+      assert.equal(leaked, false,
+        'message sent on the older relationship must not surface on the newer one\'s stream');
+    });
+
+    it('[CN25] each relationship keeps its own back-channel pointers', async function () {
+      const res = await coreRequest.get(bob.accessesPath)
+        .set('Authorization', bob.token);
+      const grants = (res.body?.accesses || []).filter((a) => {
+        const cmc = a?.clientData?.cmc;
+        return cmc?.role === 'counterparty' &&
+               cmc?.counterparty?.username === alice.username;
+      });
+      const scopeOf = (g) => g?.clientData?.cmc?.counterparty?.remoteChatStreamId;
+      const scopes = grants.map(scopeOf).filter((s) => typeof s === 'string');
+
+      // Both scopes must be represented across the grants — if the second
+      // handshake overwrote the first grant, one of them is simply absent.
+      const hasFirst = scopes.some((s) => s.startsWith(first.triggerStreamId + ':'));
+      const hasSecond = scopes.some((s) => s.startsWith(second.triggerStreamId + ':'));
+      assert.ok(hasFirst,
+        'a grant must still point at ' + first.triggerStreamId + '; scopes seen: ' + JSON.stringify(scopes));
+      assert.ok(hasSecond,
+        'a grant must point at ' + second.triggerStreamId + '; scopes seen: ' + JSON.stringify(scopes));
+    });
+  });
 });
