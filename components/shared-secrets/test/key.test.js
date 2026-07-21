@@ -18,10 +18,9 @@
  * rather than crashing the component's mocha load.
  */
 
-/* global assert */
-
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
+const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 
 describe('[SHSK] shared-secret key & signature primitives', function () {
