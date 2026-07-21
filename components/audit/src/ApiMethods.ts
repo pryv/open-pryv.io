@@ -78,6 +78,7 @@ const ALL_METHODS = [
   'oauth.token.issued.authorization_code',
   'oauth.token.issued.client_credentials',
   'oauth.token.refreshed',
+  'oauth.token.reuse_detected',
   'oauth.token.revoked'
 ];
 

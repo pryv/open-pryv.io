@@ -525,6 +525,11 @@ oauth:
   accessTokenTTL: 3600             # seconds (1 hour default)
   refreshTokenTTL: 2592000         # seconds (30 days sliding)
   refreshTokenAbsoluteTTL: 7776000 # seconds (90 days absolute cap)
+  # Refresh-token reuse detection: replaying an already-rotated token within this
+  # window of its rotation is treated as a benign double-submit (no chain revoke);
+  # a replay past it revokes the whole chain. Keep small — real client retries are
+  # sub-second. 0 = strict (any replay revokes).
+  refreshReuseGraceSeconds: 10     # seconds
   clientRegistration:
     mode: curated                  # ONLY supported value; "open" is rejected
   requireAppAccountMfa: true       # app accounts must enrol MFA before /oauth2/* writes

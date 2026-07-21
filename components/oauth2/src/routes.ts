@@ -81,6 +81,15 @@ export type Deps = {
   }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
   /** Resolve the App account's username to its userId. Required for client_credentials. */
   resolveAccountUserId?: (username: string) => Promise<string | null>;
+  /**
+   * Collapse a refresh chain on detected reuse (refresh_token grant). Storage-
+   * layer-direct: soft-deletes the durable data-grant + all live session accesses
+   * for (user, client) and notifies the counterparty. If absent, reuse is still
+   * detected + audited but the chain is not revoked.
+   */
+  revokeChain?: (params: {
+    userId: string; username: string; clientId: string; dataGrantAccessId?: string;
+  }) => Promise<void>;
 };
 
 /**
@@ -144,6 +153,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
       mintRefreshedAccess: deps.mintRefreshedAccess,
       mintClientAccess: deps.mintClientAccess,
       resolveAccountUserId: deps.resolveAccountUserId,
+      revokeChain: deps.revokeChain,
     }));
 }
 

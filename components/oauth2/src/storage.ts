@@ -129,9 +129,26 @@ export interface OAuthRefresh {
   permissions?: GrantPermission[];
 }
 
+/**
+ * "Consumed marker" — a short-lived shadow of a refresh row written the moment
+ * it is rotated. Its presence when a token no longer resolves distinguishes
+ * genuine REUSE (a rotated token replayed) from expired/never-issued. Carries
+ * only what reuse-detection needs to revoke the chain — NO live credentials.
+ * TTL matches the consumed row's remaining validity (bounded growth, swept by
+ * sweepExpiredAccessStates). Cluster-wide storage, per-issuing-core key.
+ */
+export interface OAuthRefreshUsed {
+  clientId: string;
+  userId: string;
+  username: string;
+  dataGrantAccessId?: string;
+  consumedAt: number; // Date.now() at rotation — drives the grace window
+}
+
 const PREFIX_CLIENT = 'oauth-client/';
 const PREFIX_CODE = 'oauth-code/';
 const PREFIX_REFRESH = 'oauth-refresh/';
+const PREFIX_REFRESH_USED = 'oauth-refresh-used/';
 
 // --- Client metadata (indefinite, cluster-wide) --- //
 
@@ -236,6 +253,26 @@ export async function consumeRefresh (platform: PlatformDB, coreId: string, toke
   return entry == null ? null : (entry.value as OAuthRefresh);
 }
 
+// --- Reuse-detection consumed marker (short-lived shadow of a rotated refresh) --- //
+
+/**
+ * Record that a refresh token was just consumed (rotated). `expiresAt` should be
+ * the SOONER of the consumed row's sliding + absolute expiry, so the marker lives
+ * exactly as long as the token would have remained valid — past that, a replay is
+ * indistinguishable from expired and correctly classified as such.
+ */
+export async function markRefreshConsumed (
+  platform: PlatformDB, coreId: string, token: string, payload: OAuthRefreshUsed, expiresAt: number,
+): Promise<void> {
+  await platform.setAccessState(refreshUsedKey(coreId, token), payload, expiresAt);
+}
+
+/** Non-consuming read of the consumed marker (repeat replays must each re-detect). */
+export async function getRefreshConsumed (platform: PlatformDB, coreId: string, token: string): Promise<OAuthRefreshUsed | null> {
+  const entry = await platform.getAccessState(refreshUsedKey(coreId, token));
+  return entry == null ? null : (entry.value as OAuthRefreshUsed);
+}
+
 // --- Key helpers (owned here, NOT in the engine) --- //
 
 function codeKey (code: string): string {
@@ -244,4 +281,8 @@ function codeKey (code: string): string {
 
 function refreshKey (coreId: string, token: string): string {
   return PREFIX_REFRESH + coreId + '/' + token;
+}
+
+function refreshUsedKey (coreId: string, token: string): string {
+  return PREFIX_REFRESH_USED + coreId + '/' + token;
 }

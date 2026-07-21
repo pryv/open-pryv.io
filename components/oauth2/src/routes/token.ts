@@ -37,6 +37,10 @@ export type TokenDeps = {
   }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
   /** Required when grant_type=client_credentials is dispatched. */
   resolveAccountUserId?: (username: string) => Promise<string | null>;
+  /** Optional: collapse a refresh chain on detected reuse (refresh_token grant). */
+  revokeChain?: (params: {
+    userId: string; username: string; clientId: string; dataGrantAccessId?: string;
+  }) => Promise<void>;
 };
 
 /**
@@ -90,7 +94,12 @@ export function handleToken (deps: TokenDeps) {
         outcome = { ok: false, status: 500, error: 'server_error', description: 'refresh_token grant is advertised but not wired on this deployment' };
       } else {
         outcome = await handleRefreshToken(
-          { config: deps.config, platform: deps.platform, mintRefreshedAccess: deps.mintRefreshedAccess },
+          {
+            config: deps.config,
+            platform: deps.platform,
+            mintRefreshedAccess: deps.mintRefreshedAccess,
+            ...(deps.revokeChain != null ? { revokeChain: deps.revokeChain } : {}),
+          },
           { ...body, basic },
         );
       }
