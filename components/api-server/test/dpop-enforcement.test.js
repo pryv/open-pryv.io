@@ -198,4 +198,65 @@ describe('[DPOP-RS] DPoP sender-constraint enforcement on the resource server', 
       .send({ clientData: { note: 'plain' } });
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
   });
+
+  it('[DPN11] accesses.create rejects a client-supplied clientData.dpop binding', async function () {
+    const res = await coreRequest
+      .post(`/${username}/accesses`)
+      .set('Authorization', personalToken)
+      .send({
+        type: 'app',
+        name: 'self-bound-attempt',
+        permissions: [{ streamId: 'health', level: 'read' }],
+        clientData: { dpop: { jkt: 'self-chosen-thumbprint' } },
+      });
+    assert.equal(res.status, 403, JSON.stringify(res.body));
+    // The same create WITHOUT the reserved key succeeds.
+    const ok = await coreRequest
+      .post(`/${username}/accesses`)
+      .set('Authorization', personalToken)
+      .send({
+        type: 'app',
+        name: 'plain-create',
+        permissions: [{ streamId: 'health', level: 'read' }],
+        clientData: { note: 'fine' },
+      });
+    assert.equal(ok.status, 201, JSON.stringify(ok.body));
+  });
+
+  it('[DPN12] a bound access reaches its attachments via readToken WITHOUT a DPoP proof (download/img path), but general API calls still need one', async function () {
+    // personalToken owns the data; create an event with an attachment in
+    // the stream the bound access can read.
+    const created = await coreRequest
+      .post(`/${username}/events`)
+      .set('Authorization', personalToken)
+      .field('event', JSON.stringify({ streamIds: ['health'], type: 'note/txt', content: 'x' }))
+      .attach('file', Buffer.from('hello-attachment'), 'a.txt');
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+
+    // The bound access lists the event WITH a proof — the response carries
+    // a readToken computed for the bound access.
+    const list = await fwd(coreRequest.get(`/${username}/events`).query({ streams: ['health'] }))
+      .set('Authorization', 'DPoP ' + boundToken)
+      .set('DPoP', await makeProof(key, { htm: 'GET', path: `/${username}/events`, accessToken: boundToken }));
+    assert.equal(list.status, 200, dbg(list));
+    const evt = list.body.events.find((e) => (e.attachments ?? []).length > 0);
+    assert.ok(evt != null, 'an event with an attachment is listed: ' + JSON.stringify(list.body.events));
+    const att = evt.attachments[0];
+    assert.ok(typeof att.readToken === 'string', 'attachment carries a readToken: ' + JSON.stringify(att));
+    const attPath = `/${username}/events/${evt.id}/${att.id}`;
+
+    // Download via readToken alone — no Authorization, no DPoP header — works.
+    const dl = await coreRequest.get(attPath).query({ readToken: att.readToken });
+    assert.equal(dl.status, 200, dbg(dl));
+    assert.equal(dl.text, 'hello-attachment');
+
+    // But the same attachment path with the bound token as Bearer and no
+    // proof is still refused — the exemption is readToken-only.
+    const noProof = await coreRequest.get(attPath).set('Authorization', boundToken);
+    assert.equal(noProof.status, 403, dbg(noProof));
+  });
 });
+
+function dbg (res) {
+  return `status=${res.status} body=${JSON.stringify(res.body)} text=${(res.text || '').slice(0, 120)}`;
+}

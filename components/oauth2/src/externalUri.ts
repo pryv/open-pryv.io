@@ -12,6 +12,14 @@
  * the standard reverse-proxy forwarding headers, falling back to the
  * transport's own view. Query and fragment are dropped — htu is
  * compared without them (RFC 9449 §4.3).
+ *
+ * TRUST ASSUMPTION: X-Forwarded-Host / X-Forwarded-Proto are taken as
+ * authoritative for the client-facing host/scheme. A deployment
+ * accepting DPoP MUST therefore run behind a proxy that overwrites these
+ * headers with the real values (see the `oauth.dpop` config comment) —
+ * the same trusted-proxy posture required for client-IP attribution.
+ * The path segment comes from `originalUrl`, not headers, so
+ * cross-endpoint replay stays blocked by the path compare regardless.
  */
 
 export interface UriSource {

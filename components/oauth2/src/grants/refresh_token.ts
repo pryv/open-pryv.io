@@ -230,6 +230,16 @@ export async function handleRefreshToken (
   // re-authorization, never take over the chain.
   const boundJkt = typeof row.jkt === 'string' ? row.jkt : null;
   if ((boundJkt != null && dpopJkt !== boundJkt) || (boundJkt == null && dpopJkt != null)) {
+    // The row is already consumed (single-use), so this rotation is burned —
+    // the safe direction: a thief holding only the refresh token cannot take
+    // over the chain. Audit it distinctly so the next legitimate refresh's
+    // reuse_detected is not misread as the root cause.
+    await audit('oauth.token.dpop_mismatch', {
+      clientId: row.clientId,
+      userId: row.userId,
+      ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
+      reason: boundJkt == null ? 'proof-on-unbound-chain' : 'wrong-key',
+    });
     return { ok: false, status: 400, error: 'invalid_dpop_proof', description: 'DPoP proof verification failed' };
   }
 

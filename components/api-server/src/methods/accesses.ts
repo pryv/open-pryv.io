@@ -262,6 +262,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     applyDefaultsForCreation,
     commonFns.getParamsValidation(methodsSchema.create.params),
     cmcAccessCreateForgePreventionHook,
+    dpopBindingCreateGuard,
     applyPrerequisitesForCreation, applyAccountStreamsValidation,
     createDataStructureFromPermissions,
     cleanupPermissions,
@@ -272,6 +273,21 @@ export default async function produceAccessesApiMethods (api: { register (...arg
 
   function applyDefaultsForCreation (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     params.type ??= 'shared';
+    next();
+  }
+
+  /**
+   * The DPoP key binding (`clientData.dpop`) is written ONLY by the OAuth
+   * token-issuance path (storage-direct, not this method). Rejecting it
+   * here keeps the resource-server's sender-constraint check authoritative
+   * — a caller cannot mint a self-bound access out of band — and mirrors
+   * the update-path anti-downgrade guard.
+   */
+  function dpopBindingCreateGuard (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
+    const cd = params.clientData as Record<string, unknown> | null | undefined;
+    if (cd != null && cd.dpop !== undefined) {
+      return next(errors.forbidden('clientData.dpop is reserved for the OAuth token-issuance path and cannot be set through accesses.create.'));
+    }
     next();
   }
 

@@ -533,6 +533,18 @@ oauth:
   # DPoP (RFC 9449) sender-constrained tokens: acceptance window for a
   # proof's iat around server time. The feature itself needs no enable
   # flag — it is inert unless a client sends a DPoP header.
+  #
+  # ⚠️ DEPLOYMENT REQUIREMENT: a DPoP proof binds to the CLIENT-FACING
+  # request URI (method + scheme + host + path). The server reconstructs
+  # that URI from the X-Forwarded-Host / X-Forwarded-Proto headers,
+  # falling back to the connection's own host/proto. So any deployment
+  # that accepts DPoP MUST sit behind a reverse proxy that OVERWRITES
+  # (not appends to) these headers with the true client-facing values —
+  # otherwise a client could spoof X-Forwarded-Host to satisfy a proof
+  # minted for another host, and a proxy that omits X-Forwarded-Proto on
+  # a TLS-terminated connection makes every proof's https scheme mismatch
+  # (legitimate clients get 403). This is the same trusted-proxy posture
+  # already required for correct client-IP and rate-limit attribution.
   dpop:
     clockSkewSeconds: 120          # seconds (± around now)
   clientRegistration:

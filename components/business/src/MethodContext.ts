@@ -69,6 +69,15 @@ class MethodContext {
    * access FAILS CLOSED there by construction.
    */
   requestSignatureTarget: { htm: string; htu: string } | null;
+  /**
+   * Set true once the request authenticated via a valid file
+   * `readToken` (HMAC over fileId + access.token). That HMAC is itself a
+   * server-issued possession proof for a single-file attachment read, so
+   * it substitutes for a DPoP proof on the attachment-download path —
+   * a `<img src>` / drag-drop / download GET cannot carry a DPoP header.
+   * Scoped to that capability only; never set for a general API call.
+   */
+  readTokenAuthenticated: boolean;
 
   constructor (source: ContextSource, username: string, auth: string | null, customAuthStepFn: CustomAuthFunction | null, headers: HttpHeaders, query: Record<string, unknown>, tracing: unknown) {
     this.source = source;
@@ -82,6 +91,7 @@ class MethodContext {
     this.methodId = null;
     this.authScheme = null;
     this.requestSignatureTarget = null;
+    this.readTokenAuthenticated = false;
     if (auth != null) { this.parseAuth(auth); }
     this.originalQuery = structuredClone(query);
     if (this.originalQuery?.auth) { delete this.originalQuery.auth; }
@@ -249,6 +259,10 @@ class MethodContext {
    * oracle); reasons never leave the server.
    */
   async checkDpopBinding () {
+    // A validated file readToken is itself the possession proof for the
+    // attachment-download capability (see readTokenAuthenticated) — that
+    // GET cannot carry a DPoP header, so the HMAC substitutes.
+    if (this.readTokenAuthenticated) return;
     const boundJkt = (this.access as { clientData?: { dpop?: { jkt?: unknown } } } | null)?.clientData?.dpop?.jkt;
     const refused = () => {
       const err = errors.invalidAccessToken('DPoP proof verification failed.', 403);
