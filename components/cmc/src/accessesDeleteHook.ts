@@ -86,12 +86,21 @@ function createAccessesDeletePostHook (deps: OutboundDeps) {
       // original `backChannelApiEndpoint` field — accept either.
       const apiEndpoint = cmc.counterparty?.apiEndpoint ?? cmc.backChannelApiEndpoint;
       if (typeof apiEndpoint !== 'string' || apiEndpoint.length === 0) {
-        // Handshake never completed on this side — the peer is
-        // unreachable by construction; nothing to deliver.
-        deps.logger?.warn?.('cmc/accessesDeleteHook: no peer apiEndpoint on deleted access', {
+        // The back-channel handshake never completed for this
+        // relationship, so this side has no endpoint for the peer and
+        // the revocation cannot be forwarded — not now, and not by
+        // retrying: the missing precondition is the handshake, not the
+        // network. Unlike the helper flow there is no trigger event to
+        // report on here (this hook is fire-and-forget off the delete
+        // route), so the log IS the only signal — hence `error`, not a
+        // debug-level shrug: a consent withdrawal silently failing to
+        // reach the counterparty is exactly what an operator needs to
+        // see.
+        deps.logger?.error?.('cmc/accessesDeleteHook: counterparty NOT notified of revocation — no peer endpoint on the deleted relationship access (back-channel handshake never completed)', {
           accessId: access.id,
+          reason: 'cmc-revoke-no-peer-endpoint',
         });
-        results.push({ accessId: access.id, attempted: false, reason: 'no-peer-apiendpoint' });
+        results.push({ accessId: access.id, attempted: false, reason: 'cmc-revoke-no-peer-endpoint' });
         continue;
       }
 
@@ -103,37 +112,53 @@ function createAccessesDeletePostHook (deps: OutboundDeps) {
       if (typeof cmc.offerEventId === 'string') content.offerEventId = cmc.offerEventId;
       if (typeof cmc.acceptEventId === 'string') content.acceptEventId = cmc.acceptEventId;
 
-      try {
-        const delivery = await outbound.postToPeer({
-          apiEndpoint,
-          path: 'events',
-          body: {
-            streamIds: [C.NS_INBOX],
-            type: C.ET_REVOKE,
-            content,
-          },
-          deps,
-        });
-        if (!delivery.ok) {
-          deps.logger?.warn?.('cmc/accessesDeleteHook: peer delivery failed', {
+      // Bounded in-request retry, same rationale as handleRevoke: the
+      // access is already deleted, so a queued retry could not re-derive
+      // the endpoint without persisting a peer token in user data.
+      let delivered = false;
+      let lastStatus: number | undefined;
+      let lastReason = 'cmc-revoke-delivery-failed';
+      for (let attempt = 1; attempt <= 3 && !delivered; attempt++) {
+        try {
+          const delivery = await outbound.postToPeer({
+            apiEndpoint,
+            path: 'events',
+            body: { streamIds: [C.NS_INBOX], type: C.ET_REVOKE, content },
+            deps,
+          });
+          lastStatus = delivery.status;
+          if (delivery.ok) { delivered = true; break; }
+          lastReason = (delivery as { reason?: string }).reason ?? lastReason;
+          if (!outbound.isRetryableFailure(delivery)) break;
+        } catch (err: unknown) {
+          lastReason = 'cmc-revoke-delivery-threw';
+          deps.logger?.warn?.('cmc/accessesDeleteHook: peer delivery threw', {
             accessId: access.id,
-            status: delivery.status,
-            reason: (delivery as { reason?: string }).reason,
+            attempt,
+            error: String((err as Error)?.message ?? err),
           });
         }
-        results.push({
-          accessId: access.id,
-          attempted: true,
-          peerNotified: !!delivery.ok,
-          peerDeliveryStatus: delivery.status,
-        });
-      } catch (err: unknown) {
-        deps.logger?.warn?.('cmc/accessesDeleteHook: peer delivery threw', {
-          accessId: access.id,
-          error: String((err as Error)?.message ?? err),
-        });
-        results.push({ accessId: access.id, attempted: true, peerNotified: false });
+        if (attempt < 3 && !delivered) {
+          await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+        }
       }
+      if (!delivered) {
+        // Same reasoning as the no-endpoint branch: no trigger event
+        // exists to carry this, so the log is the only place a lost
+        // consent-withdrawal notification can surface.
+        deps.logger?.error?.('cmc/accessesDeleteHook: counterparty NOT notified of revocation after retries', {
+          accessId: access.id,
+          status: lastStatus,
+          reason: lastReason,
+        });
+      }
+      results.push({
+        accessId: access.id,
+        attempted: true,
+        peerNotified: delivered,
+        peerDeliveryStatus: lastStatus,
+        ...(delivered ? {} : { reason: lastReason }),
+      });
     }
 
     return results;

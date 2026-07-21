@@ -106,6 +106,11 @@ type HandlerResult = {
   requesterIdentity?: { username: string; host: string };
   backChannelAccessId?: string;
   anchorStreamIds?: string[];
+  // Peer-delivery outcome, reported alongside a successful local action
+  // (see markCompleted): `ok` covers the local work, these cover whether
+  // the counterparty was actually reached.
+  peerNotified?: boolean;
+  deliveryFailure?: { reason: string; status?: number };
 };
 
 // Middleware-fire-time context shape. The api-server passes its
@@ -298,6 +303,15 @@ async function dispatch (params: {
       // handleIncomingAccept fields:
       backChannelAccessId: result?.backChannelAccessId,
       anchorStreamIds: result?.anchorStreamIds,
+      // Delivery outcome (revoke, and any handler that reports it).
+      // `status: 'completed'` means the LOCAL action succeeded — for a
+      // revoke that is the authoritative part (the accesses are gone).
+      // It does NOT mean the counterparty was told, so surface that
+      // separately: a caller polling the trigger can now distinguish
+      // "peer knows" from "peer was never reachable", instead of reading
+      // an unqualified success. `deliveryFailure.reason` names which.
+      peerNotified: result?.peerNotified,
+      deliveryFailure: result?.deliveryFailure,
     });
     return { handled: true, eventType: event.type, status: 'completed' };
   }

@@ -328,6 +328,105 @@ describe('[CMCHR] cmc/handleRevoke', () => {
     });
   });
 
+  describe('[CMCHR-DL] delivery outcome is reported, never assumed', () => {
+    // The bug this pins: an undeliverable revoke used to be reported as a
+    // plain success (`ok: true`, trigger status 'completed'), so a caller
+    // polling the trigger believed the counterparty had been told when it
+    // never was. `ok` covers the LOCAL teardown — which is authoritative
+    // and must stay ok:true — while peerNotified/deliveryFailure carry
+    // whether the other side actually learned of it.
+
+    const NO_ENDPOINT_ACCESS = {
+      id: 'acc-counterparty',
+      type: 'shared',
+      clientData: {
+        cmc: {
+          role: 'counterparty',
+          appCode: 'my-app',
+          // Handshake never completed → no endpoint was ever stored.
+          counterparty: { username: 'provider-a', host: 'provider.example.org' },
+        },
+      },
+    };
+
+    it('[HR21] no peer endpoint: local teardown still succeeds, but peerNotified=false with a distinct reason', async () => {
+      const mall = fakeMall([NO_ENDPOINT_ACCESS]);
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: { accessId: 'acc-counterparty' },
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true, 'local revocation happened and is authoritative');
+      assert.ok(r.deletedAccessIds.includes('acc-counterparty'));
+      assert.equal(r.peerNotified, false);
+      assert.equal(r.deliveryFailure?.reason, 'cmc-revoke-no-peer-endpoint');
+      assert.equal(calls.length, 0, 'no endpoint means no outbound attempt at all');
+    });
+
+    it('[HR22] transient 5xx is retried and reported delivered when a later attempt lands', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const { fetch, calls } = fakeFetch([
+        { status: 503, body: {} },
+        { status: 201, body: {} },
+      ]);
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: {},
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(calls.length, 2);
+      assert.equal(r.peerNotified, true);
+      assert.equal(r.deliveryFailure, undefined);
+    });
+
+    it('[HR23] persistent failure reports peerNotified=false + a reason (not a silent success)', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const { fetch } = fakeFetch({ status: 503, body: {} });
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: {},
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(r.peerNotified, false);
+      assert.ok(r.deliveryFailure?.reason, 'the caller must be able to see WHY the peer was not told');
+      assert.equal(r.deliveryFailure?.status, 503);
+    });
+
+    it('[HR24] a 4xx is not retried — resending a rejected payload cannot help', async () => {
+      const mall = fakeMall([COUNTERPARTY_ACCESS, DATA_GRANT_ACCESS]);
+      const { fetch, calls } = fakeFetch({ status: 400, body: {} });
+      const r = await handleRevoke({
+        userId: 'u1',
+        triggerEvent: {
+          type: 'consent/revoke-cmc',
+          streamIds: [':_cmc:apps:my-app:chats:provider-a--provider-example-org'],
+          content: {},
+        },
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(calls.length, 1);
+      assert.equal(r.peerNotified, false);
+    });
+  });
+
   describe('[CMCHR-ID] explicit content.accessId targeting', () => {
     // A second relationship to the SAME counterparty (another study
     // under the same app) — the tuple match alone cannot tell them

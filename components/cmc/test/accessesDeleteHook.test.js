@@ -130,12 +130,17 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
     assert.equal(calls.length, 0);
   });
 
-  it('[DH05] skips (with warn) when no peer apiEndpoint is stored', async () => {
+  it('[DH05] reports at ERROR level when no peer apiEndpoint is stored', async () => {
+    // This hook is fire-and-forget off the delete route — there is no
+    // trigger event to carry the outcome, so the log is the ONLY signal
+    // that a consent withdrawal never reached the counterparty. It must
+    // therefore be loud (error), and name a reason an operator can act on.
     const warned = [];
+    const errored = [];
     const { fetch, calls } = fakeFetch({ status: 201, body: {} });
     const hook = createAccessesDeletePostHook({
       fetch,
-      logger: { warn: (msg) => warned.push(msg) },
+      logger: { warn: (msg) => warned.push(msg), error: (msg) => errored.push(msg) },
     });
     const noEndpoint = {
       id: 'acc-incomplete',
@@ -144,9 +149,9 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
     const results = await hook('u1', [noEndpoint]);
 
     assert.equal(results[0].attempted, false);
-    assert.equal(results[0].reason, 'no-peer-apiendpoint');
-    assert.equal(calls.length, 0);
-    assert.equal(warned.length, 1);
+    assert.equal(results[0].reason, 'cmc-revoke-no-peer-endpoint');
+    assert.equal(calls.length, 0, 'nothing to deliver to — no outbound attempt');
+    assert.equal(errored.length, 1, 'a lost revocation notification must surface at error level');
   });
 
   it('[DH06] processes a mixed batch (cascade): notifies for each relationship access only', async () => {
@@ -168,6 +173,44 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
     assert.equal(results[0].attempted, true);
     assert.equal(results[0].peerNotified, false);
     assert.equal(results[0].peerDeliveryStatus, 503);
+  });
+
+  it('[DH09] retries a transient 5xx and reports success when a later attempt lands', async () => {
+    const { fetch, calls } = fakeFetch([
+      { status: 503, body: { error: 'down' } },
+      { status: 201, body: {} },
+    ]);
+    const hook = createAccessesDeletePostHook({ fetch });
+    const results = await hook('u1', [REQUESTER_SIDE_ACCESS]);
+
+    assert.equal(calls.length, 2, 'a transient failure must be retried');
+    assert.equal(results[0].peerNotified, true);
+  });
+
+  it('[DH10] does NOT retry a 4xx — the peer gave a considered answer', async () => {
+    const errored = [];
+    const { fetch, calls } = fakeFetch({ status: 400, body: { error: 'nope' } });
+    const hook = createAccessesDeletePostHook({ fetch, logger: { error: (m) => errored.push(m) } });
+    const results = await hook('u1', [REQUESTER_SIDE_ACCESS]);
+
+    assert.equal(calls.length, 1, 'resending a rejected payload cannot help');
+    assert.equal(results[0].peerNotified, false);
+    assert.equal(errored.length, 1, 'an undelivered revocation must surface at error level');
+  });
+
+  it('[DH11] gives up after the bounded attempts on persistent failure', async () => {
+    const { fetch, calls } = fakeFetch([
+      { status: 503, body: {} },
+      { status: 503, body: {} },
+      { status: 503, body: {} },
+      { status: 201, body: {} },
+    ]);
+    const hook = createAccessesDeletePostHook({ fetch });
+    const results = await hook('u1', [REQUESTER_SIDE_ACCESS]);
+
+    assert.equal(calls.length, 3, 'retries are bounded — a delete route must not hang on a dead peer');
+    assert.equal(results[0].peerNotified, false);
+    assert.equal(results[0].reason, 'http-5xx');
   });
 
   it('[DH08] survives a network error (fetch rejects) without throwing', async () => {

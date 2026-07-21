@@ -216,6 +216,19 @@ const CmcErrorIds = {
   // target trying to revoke; an app token that didn't create the
   // target; an access with selfRevoke=forbidden trying to self-revoke.
   REVOKE_FORBIDDEN: 'cmc-revoke-forbidden',
+  // --- Revoke delivery outcomes (reported on the trigger, not thrown) ---
+  // The local revocation succeeded but the counterparty could NOT be told,
+  // because this side holds no endpoint for them: the relationship access
+  // carries neither `counterparty.apiEndpoint` nor `backChannelApiEndpoint`.
+  // That endpoint is only stored once the back-channel handshake completes,
+  // so a relationship whose handshake never finished can never deliver a
+  // revoke — retrying does not help, the missing precondition does.
+  // Surfaced so a caller stops reading `status: 'completed'` as "the peer
+  // knows".
+  REVOKE_NO_PEER_ENDPOINT: 'cmc-revoke-no-peer-endpoint',
+  // Delivery was attempted (endpoint present) and failed after the bounded
+  // in-request retries — peer down, network, or a 4xx rejection.
+  REVOKE_DELIVERY_FAILED: 'cmc-revoke-delivery-failed',
 } as const;
 
 type CmcErrorId = (typeof CmcErrorIds)[keyof typeof CmcErrorIds];

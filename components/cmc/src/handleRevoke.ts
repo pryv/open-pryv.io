@@ -73,8 +73,16 @@ type RevokeHandlerResult =
   | {
       ok: true;
       deletedAccessIds: string[];   // local accesses we deleted (counterparty + data-grant)
+      // Whether the counterparty was actually told. `ok: true` means the
+      // LOCAL revocation succeeded (which is the authoritative part); it
+      // says nothing about the peer. Callers that care whether the other
+      // side knows must read this, not `ok`.
       peerNotified: boolean;
       peerDeliveryStatus?: number;
+      // Present only when peerNotified is false — why the peer was not
+      // told, so the trigger event can report it instead of looking like
+      // an unqualified success.
+      deliveryFailure?: { reason: string; status?: number };
     }
   | {
       ok: false;
@@ -278,6 +286,7 @@ async function handleRevoke (params: {
     counterpartyAccess.clientData?.cmc?.backChannelApiEndpoint;
   let peerNotified = false;
   let peerDeliveryStatus: number | undefined;
+  let deliveryFailure: { reason: string; status?: number } | undefined;
   if (typeof remoteApiEndpoint === 'string' && remoteApiEndpoint.length > 0) {
     // `accessId` is REQUIRED by the peer's revoke content schema
     // (validators.validateRevoke) — without it the peer's content
@@ -296,24 +305,26 @@ async function handleRevoke (params: {
     if (typeof cpCmc?.appCode === 'string') revokeContent.appCode = cpCmc.appCode;
     if (typeof cpCmc?.offerEventId === 'string') revokeContent.offerEventId = cpCmc.offerEventId;
     if (typeof cpCmc?.acceptEventId === 'string') revokeContent.acceptEventId = cpCmc.acceptEventId;
-    try {
-      const delivery = await outbound.postToPeer({
-        apiEndpoint: remoteApiEndpoint,
-        path: 'events',
-        body: {
-          streamIds: [C.NS_INBOX],
-          type: C.ET_REVOKE,
-          content: revokeContent,
-        },
-        deps,
-      });
-      peerNotified = !!delivery.ok;
-      peerDeliveryStatus = delivery.status;
-    } catch (err: unknown) {
-      deps.logger?.warn?.('cmc/handleRevoke: peer notify failed', {
-        error: String((err as Error)?.message || err),
-      });
-    }
+    const delivery = await deliverRevokeWithRetry({
+      apiEndpoint: remoteApiEndpoint,
+      content: revokeContent,
+      deps,
+    });
+    peerNotified = delivery.ok;
+    peerDeliveryStatus = delivery.status;
+    if (!delivery.ok) deliveryFailure = { reason: delivery.reason, status: delivery.status };
+  } else {
+    // No endpoint stored on the relationship access — this side has never
+    // been told where the peer lives, so the revocation CANNOT be
+    // delivered, now or ever, for this relationship. Distinct from a
+    // transient delivery failure: retrying changes nothing, the
+    // precondition (a completed back-channel handshake) is what's
+    // missing. Reported so the caller can see it instead of reading
+    // `status: 'completed'` and assuming the peer was told.
+    deliveryFailure = { reason: CmcErrorIds.REVOKE_NO_PEER_ENDPOINT };
+    deps.logger?.warn?.('cmc/handleRevoke: no peer endpoint on the relationship access — peer NOT notified', {
+      accessId: counterpartyAccess.id,
+    });
   }
 
   // Step 5: delete the counterparty-access.
@@ -334,7 +345,68 @@ async function handleRevoke (params: {
     deletedAccessIds: deletedIds,
     peerNotified,
     peerDeliveryStatus,
+    deliveryFailure,
   };
+}
+
+/**
+ * POST the revoke to the peer, retrying transient failures a bounded
+ * number of times in-request.
+ *
+ * Why in-request rather than the durable retry queue: by the time we get
+ * here the local accesses are already deleted (revocation must cut access
+ * immediately — it cannot wait on a peer). A queued retry re-runs the
+ * original trigger, which would then find no relationship access and fail
+ * with `cmc-revoke-counterparty-access-not-found` — it can never converge.
+ * Queueing the endpoint instead would mean persisting a peer TOKEN inside
+ * a user event, i.e. a credential at rest, which is not acceptable.
+ * Durable cross-restart retry therefore needs its own design; until then a
+ * short bounded retry absorbs the common transient blip, and anything
+ * longer is reported rather than silently dropped.
+ */
+async function deliverRevokeWithRetry (params: {
+  apiEndpoint: string;
+  content: Record<string, unknown>;
+  deps: OutboundDeps;
+  attempts?: number;
+}): Promise<{ ok: boolean; status?: number; reason: string }> {
+  const { apiEndpoint, content, deps } = params;
+  const maxAttempts = params.attempts ?? 3;
+  let last: { ok: boolean; status?: number; reason: string } = { ok: false, reason: 'cmc-revoke-delivery-failed' };
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const delivery = await outbound.postToPeer({
+        apiEndpoint,
+        path: 'events',
+        body: { streamIds: [C.NS_INBOX], type: C.ET_REVOKE, content },
+        deps,
+      });
+      if (delivery.ok) return { ok: true, status: delivery.status, reason: 'delivered' };
+      last = {
+        ok: false,
+        status: delivery.status,
+        reason: (delivery as { reason?: string }).reason ?? 'cmc-revoke-delivery-failed',
+      };
+      // A 4xx is the peer's considered answer — retrying re-sends the same
+      // rejected payload. Stop.
+      if (!outbound.isRetryableFailure(delivery)) break;
+    } catch (err: unknown) {
+      last = { ok: false, reason: 'cmc-revoke-delivery-threw' };
+      deps.logger?.warn?.('cmc/handleRevoke: peer notify threw', {
+        attempt,
+        error: String((err as Error)?.message || err),
+      });
+    }
+    if (attempt < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+    }
+  }
+  deps.logger?.warn?.('cmc/handleRevoke: peer NOT notified after retries', {
+    attempts: maxAttempts,
+    reason: last.reason,
+    status: last.status,
+  });
+  return last;
 }
 
 /**
