@@ -1,5 +1,63 @@
 # Changelog - API Changes
 
+## 2.0.0-rc.11 — 2026-07-21
+
+### OAuth2: refresh-token reuse detection (chain revoke)
+
+Replaying an already-rotated refresh token — the signature of a stolen token
+chain — now revokes the whole chain rather than merely rejecting the call. Each
+rotation is shadowed by a short-lived consumed-marker (no credentials stored),
+which distinguishes genuine reuse from a token that simply expired or never
+existed. A benign double-submit inside a grace window
+(`oauth:refreshReuseGraceSeconds`, default 10s) is tolerated without revoking.
+Beyond it, the chain is revoked: the durable data-grant and all live OAuth
+session accesses for that (user, client) pair — plus their descendants — are
+soft-deleted, dependent webhooks are cascaded, the access cache is invalidated
+cluster-wide, and a `consent/revoke-cmc` is delivered to the counterparty on a
+best-effort basis. The error response is byte-identical whether reuse was
+detected or not, so the endpoint cannot be used as an oracle.
+
+### OAuth2: `oauth.*` events reach the audit trail
+
+The nine `oauth.*` audit events are now emitted into the audit subsystem instead
+of a no-op stub, gated on `audit:active`. Five user-scoped events
+(including the new `oauth.token.reuse_detected`) persist to the user's audit
+storage and are readable through the usual `:_audit:*` streams; four user-less
+events (`consent.shown`, `consent.refused`, `code.reused`,
+`token.issued.client_credentials`) go to syslog only, since they have no user to
+attribute. Audit emission never fails a token grant — a backend hiccup is logged,
+not propagated.
+
+### Fixed — audit input validation was silently dead
+
+`eventForUser`'s validation could never reject anything: the validators return a
+diagnostic *string* on failure, which the guard treated as success. The guard now
+trips on any non-`true` result, user-less events are validated against the event
+(not the user id), and the real `audit-log/*` type family is accepted — the
+previous rule would have rejected every framework event the moment the guard
+started working.
+
+### Docs corrected — CMC revoke was never a "dual delete"
+
+`INTERNALS.md` and the CMC implementers guide described revocation as a
+server-orchestrated dual delete in which the peer's plugin deletes its half. That
+has never been implemented: a revoke tears down only the accesses on the account
+where the trigger was written, and the forwarded `consent/revoke-cmc` is
+classified as peer-delivered, so the receiving side runs no teardown handler and
+its access survives. The docs now state this plainly and instruct integrators to
+delete their own half when they observe a revoke arrival. **Revocation is
+therefore advisory in the trigger-writer → peer direction**; the enforcing
+direction is the local one (an accepter revoking destroys the data-grant on their
+own account, which is what cuts the requester's read). Server-side teardown on
+the receiving side is planned.
+
+**Correction to the 2.0.0-rc.10 notes below:** they state that the forwarded
+revoke's `offerEventId` lets the counterparty "correlate the revocation with the
+originating invite". That is wrong — `offerEventId` is the id of the plugin's
+internal offer *copy*, not the `inviteEventId` a client holds, and the forwarded
+`accessId` is the sender's own id, which the receiver never sees. Carrying a
+genuinely matchable identifier is still outstanding (#109).
+
 ## 2.0.0-rc.10 — 2026-07-21
 
 ### CMC: revocation reaches the counterparty whatever path performs it
