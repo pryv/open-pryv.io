@@ -219,27 +219,122 @@ function createStreamDeleteReservedRootHook (deps: Deps): Middleware {
 }
 
 /**
- * events.create / streams.create lazy auto-provision hook.
+ * Lazy auto-provision hook for the reserved `:_cmc:*` parents.
  *
- * Existing user accounts that pre-date the CMC deploy don't have the
+ * Accounts that pre-date the CMC deploy — and every account on a
+ * platform where creation-time provisioning is off — don't have the
  * five reserved parents (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`,
- * `:_cmc:_internal`, `:_cmc:_internal:retries`). User-creation-time
- * provisioning is currently disabled per the AC04 workaround, so we
- * provision lazily — on the first :_cmc:* operation for that user.
+ * `:_cmc:_internal`, `:_cmc:_internal:retries`). Creation-time
+ * provisioning stays disabled (account-suite constraint), so they are
+ * provisioned lazily, on the account's first `:_cmc:*` operation.
+ *
+ * "First operation" includes READS. Wiring this only into the write
+ * paths left every read-first consumer permanently broken: an app whose
+ * first CMC act is an inbox watcher
+ * (`events.get {streams: [':_cmc:inbox']}`) got
+ * `unknown-referenced-resource` on every poll, because the stream-query
+ * validation resolves ids that were never created (open-pryv.io#111).
  *
  * This middleware MUST fire BEFORE any code path that depends on the
- * parents existing (verifyCanCreateEventsOnStream, parent-id resolution
- * in streams.create, etc.). Idempotent: subsequent CMC operations on
- * the same user catch `item-already-exists` and no-op.
+ * parents existing (verifyCanCreateEventsOnStream on writes,
+ * streamQueryCheckPermissionsAndReplaceStars on reads, parent-id
+ * resolution in streams.create).
  *
  * Gating:
- *   - events.create: trigger if streamIds contain a `:_cmc:*` id OR
- *     event.type starts with 'cmc/'.
- *   - streams.create: trigger if the new stream's id starts with `:_cmc:`.
+ *   - events.create: `context.newEvent.streamIds` holds a `:_cmc:*` id,
+ *     or the event type is a CMC type.
+ *   - streams.create: the new stream's id is `:_cmc:*`.
+ *   - events.get (read path): `params.streams` references a `:_cmc:*`
+ *     id — string form or `{streamId}` object form.
+ *   - accesses.create/update: called directly by the app-scope
+ *     provisioning hook before it creates a `:_cmc:apps:<app>` leaf.
  *
- * Failure is non-fatal (logged) — the downstream call will surface a
- * clearer "parent not found" error if provisioning truly didn't take.
+ * Cost guard (this now sits on a polling path): a per-process memo of
+ * already-ensured user-ids short-circuits repeat calls, and on a memo
+ * miss a single cheap stream read decides whether provisioning is
+ * needed at all — so the steady state of an inbox watcher is one Set
+ * lookup, not five create attempts.
+ *
+ * Failure is non-fatal (logged): the downstream call surfaces its own
+ * clearer error if provisioning truly didn't take.
  */
+
+// Per-process memo of users whose reserved tree is known to exist.
+// Bounded: cleared wholesale when it grows past the cap (a cleared memo
+// costs one existence probe per user, never correctness).
+const ensuredUsers = new Set<string>();
+const ENSURED_USERS_MAX = 10_000;
+
+function markEnsured (userId: string): void {
+  if (ensuredUsers.size >= ENSURED_USERS_MAX) ensuredUsers.clear();
+  ensuredUsers.add(userId);
+}
+
+/** Test seam — the memo is process-wide state. */
+function _resetEnsuredUsersMemo (): void {
+  ensuredUsers.clear();
+}
+
+/**
+ * True when `params.streams` (events.get) references any `:_cmc:*`
+ * stream. Accepts both accepted wire forms: bare id strings and
+ * `{streamId, …}` query objects (mirrors createEventsGetInternalGuardHook).
+ */
+function streamsParamReferencesCmc (streams: unknown): boolean {
+  if (!Array.isArray(streams)) return false;
+  return streams.some((s) => {
+    if (typeof s === 'string') return C.isCmcStreamId(s);
+    if (s != null && typeof s === 'object') {
+      const sid = (s as { streamId?: unknown }).streamId;
+      if (typeof sid === 'string' && C.isCmcStreamId(sid)) return true;
+      // Logical-query form: {any|all|not: [ids]}
+      for (const key of ['any', 'all', 'not']) {
+        const list = (s as Record<string, unknown>)[key];
+        if (Array.isArray(list) && list.some((id) => typeof id === 'string' && C.isCmcStreamId(id))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  });
+}
+
+/**
+ * Ensure the reserved tree exists for `userId`, cheaply.
+ *
+ * Order: memo hit → done. Memo miss → one existence probe on `:_cmc:`
+ * (when the mall view exposes one) → provision only if absent. Marks
+ * the memo in every non-throwing outcome.
+ */
+async function ensureReservedParentsOnce (deps: ProvisionDeps, userId: string): Promise<void> {
+  if (ensuredUsers.has(userId)) return;
+
+  const probe = deps.mall.streams.getOneWithNoChildren;
+  if (typeof probe === 'function') {
+    try {
+      const existing = await probe.call(deps.mall.streams, userId, C.NS, 'local');
+      if (existing != null) {
+        markEnsured(userId);
+        return;
+      }
+    } catch (err: unknown) {
+      // Probe failure is not fatal — fall through to the idempotent
+      // provisioning path rather than skipping it.
+      deps.logger?.debug?.('cmc/ensureReservedParents: existence probe failed, provisioning anyway', {
+        userId,
+        error: String((err as Error)?.message || err),
+      });
+    }
+  }
+
+  await provisioning.provisionUserStreams({
+    mall: deps.mall,
+    userId,
+    logger: deps.logger,
+  });
+  markEnsured(userId);
+}
+
 function createEnsureReservedParentsHook (deps: ProvisionDeps): Middleware {
   return async function cmcEnsureReservedParents (context, _params, _result, next) {
     const userId: string | undefined = context?.user?.id;
@@ -262,16 +357,16 @@ function createEnsureReservedParentsHook (deps: ProvisionDeps): Middleware {
       if (typeof targetId === 'string' && C.isCmcStreamId(targetId)) {
         shouldEnsure = true;
       }
+      // events.get read path (#111).
+      if (!shouldEnsure && streamsParamReferencesCmc(_params.streams)) {
+        shouldEnsure = true;
+      }
     }
 
     if (!shouldEnsure) return next();
 
     try {
-      await provisioning.provisionUserStreams({
-        mall: deps.mall,
-        userId,
-        logger: deps.logger,
-      });
+      await ensureReservedParentsOnce(deps, userId);
     } catch (err: unknown) {
       deps.logger?.warn?.('cmc/ensureReservedParents: failed (continuing)', {
         userId,
@@ -570,6 +665,22 @@ function createAccessProvisionAppScopeHook (deps: ProvisionDeps): Middleware {
     const targets = extractAppScopeLeavesToProvision(Array.isArray(access.permissions) ? access.permissions : []);
     if (targets.size === 0) return next();
 
+    // The leaf is created as a child of `:_cmc:apps`, which only exists
+    // once the reserved tree has been provisioned. On a grant-first
+    // account (an access minted before any other CMC operation) that
+    // parent is absent and every leaf create below fails with
+    // `unknown-referenced-resource` — the same read-first class of gap
+    // as open-pryv.io#111, reached through the access path. Ensure the
+    // tree first (memoised + probe-guarded, so this is nearly free).
+    try {
+      await ensureReservedParentsOnce(deps, userId);
+    } catch (err: unknown) {
+      deps.logger?.warn?.('cmc: failed to ensure reserved parents before app-scope provisioning', {
+        userId,
+        error: String((err as Error)?.message || err),
+      });
+    }
+
     for (const streamId of targets) {
       const appCode = C.getAppCode(streamId);
       const payload: Record<string, unknown> = {
@@ -611,6 +722,8 @@ export {
   createStreamCreateReservedRootHook,
   createStreamDeleteReservedRootHook,
   createEnsureReservedParentsHook,
+  streamsParamReferencesCmc,
+  _resetEnsuredUsersMemo,
   createCounterpartyFromStampingHook,
   createAccessCreateForgePreventionHook,
   createAccessUpdateForgePreventionHook,

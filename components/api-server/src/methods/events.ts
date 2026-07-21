@@ -194,6 +194,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // permission-system bugs) leaking plugin internals via read paths.
   const cmcEventsGetInternalGuard = cmc.createEventsGetInternalGuardHook();
   const cmcEventGetOneInternalGuard = cmc.createEventGetOneInternalGuardHook({ errors });
+  // Shared by the read (events.get) and write (events.create)
+  // registrations below — declared here because `events.get` registers
+  // first and `api.register` captures the value eagerly.
+  const cmcEnsureReservedParentsHook = cmc.createEnsureReservedParentsHook({
+    mall,
+    logger: getLogger('cmc:ensure-reserved-parents'),
+  });
 
   api.register(
     'events.get',
@@ -202,6 +209,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     eventsGetUtils.coerceAndValidateContentQueryParams,
     commonFns.getParamsValidation(methodsSchema.get.params),
     eventsGetUtils.applyDefaultsForRetrieval,
+    // Lazy-provision the reserved :_cmc:* parents when the query
+    // references them. Must sit BEFORE the stream-query validation
+    // below, which 404s ids that don't resolve — without it, an
+    // account whose first CMC operation is a read (an inbox watcher)
+    // never gets the tree and every poll fails (#111). Runs after
+    // coerceStreamsParam so params.streams is in its array form.
+    cmcEnsureReservedParentsHook,
     eventsGetUtils.transformArrayOfStringsToStreamsQuery,
     eventsGetUtils.validateStreamsQueriesAndSetStore,
     eventsGetUtils.validateContentQueryStores,
@@ -300,10 +314,6 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // -------------------------------------------------------------------- CREATE
 
   const cmcContentValidationHook = cmc.createCmcContentValidationHook({ errors });
-  const cmcEnsureReservedParentsHook = cmc.createEnsureReservedParentsHook({
-    mall,
-    logger: getLogger('cmc:ensure-reserved-parents'),
-  });
   const cmcInboxWriteHook = cmc.createInboxWriteHook({ errors });
   // Gate Bucket-1 CMC trigger writes (accept / scope-update / revoke) to
   // require a personal token. Non-personal tokens hand off to

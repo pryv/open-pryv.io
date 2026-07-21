@@ -30,6 +30,8 @@ const {
   createEventsGetInternalGuardHook,
   createEventGetOneInternalGuardHook,
   createStreamsGetInternalGuardHook,
+  streamsParamReferencesCmc,
+  _resetEnsuredUsersMemo,
 } = require('../src/hooks.ts');
 
 function fakeErrors () {
@@ -330,25 +332,39 @@ describe('[CMCHOOK] cmc/hooks', () => {
   });
 
   describe('[CMCHOOK-PR] createEnsureReservedParentsHook', () => {
+    // The hook memoises already-provisioned user-ids process-wide (it
+    // sits on a polling read path, so repeat work must be cheap). Reset
+    // between tests, otherwise the first test to provision "u1" makes
+    // every later one a no-op.
+    beforeEach(() => { _resetEnsuredUsersMemo(); });
+
     function fakeMall (opts = {}) {
-      const calls = { streamsCreated: [] };
-      return {
-        calls,
-        streams: {
-          async create (_userId, params) {
-            calls.streamsCreated.push(params);
-            if (opts.alreadyExistAll) {
-              const e = new Error('item-already-exists');
-              e.id = 'item-already-exists';
-              throw e;
-            }
-            if (opts.throwOn === params.id) {
-              throw new Error('boom-' + params.id);
-            }
-            return { id: params.id };
-          },
+      const calls = { streamsCreated: [], probes: [] };
+      const streams = {
+        async create (_userId, params) {
+          calls.streamsCreated.push(params);
+          if (opts.alreadyExistAll) {
+            const e = new Error('item-already-exists');
+            e.id = 'item-already-exists';
+            throw e;
+          }
+          if (opts.throwOn === params.id) {
+            throw new Error('boom-' + params.id);
+          }
+          return { id: params.id };
         },
       };
+      // Opt-in existence probe: `opts.probe` is 'exists' | 'absent' |
+      // 'throws'. Omitted → no probe on the fake at all (the hook then
+      // falls back to the idempotent create path).
+      if (opts.probe != null) {
+        streams.getOneWithNoChildren = async (_userId, streamId) => {
+          calls.probes.push(streamId);
+          if (opts.probe === 'throws') throw new Error('probe-boom');
+          return opts.probe === 'exists' ? { id: streamId } : null;
+        };
+      }
+      return { calls, streams };
     }
 
     it('[CH-PR01] passes through when no user.id in context', async () => {
@@ -439,6 +455,111 @@ describe('[CMCHOOK] cmc/hooks', () => {
       assert.equal(err, undefined);
       // At least one warning was logged (provisionUserStreams + our catch)
       assert.ok(warns.length >= 1, 'expected at least one warn; got ' + warns.length);
+    });
+
+    // --- Read paths (open-pryv.io#111) ------------------------------
+    //
+    // Provisioning used to fire only on writes, so an account whose
+    // FIRST cmc operation was a read (an inbox watcher) never got the
+    // reserved tree and every poll 404'd forever.
+
+    it('[CH-PR08] provisions on an events.get query naming a :_cmc: stream (string form)', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureReservedParentsHook({ mall });
+      const ctx = { user: { id: 'u1' } };
+      const err = await runMiddleware(mw, ctx, { streams: [':_cmc:inbox'] }, {});
+      assert.equal(err, undefined);
+      assert.equal(mall.calls.streamsCreated.length, 5);
+    });
+
+    it('[CH-PR09] provisions on the {streamId} object form', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureReservedParentsHook({ mall });
+      const err = await runMiddleware(mw, { user: { id: 'u1' } },
+        { streams: [{ streamId: ':_cmc:apps:my-app' }] }, {});
+      assert.equal(err, undefined);
+      assert.equal(mall.calls.streamsCreated.length, 5);
+    });
+
+    it('[CH-PR10] provisions on the logical-query form ({any: [...]})', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureReservedParentsHook({ mall });
+      const err = await runMiddleware(mw, { user: { id: 'u1' } },
+        { streams: [{ any: ['fertility', ':_cmc:inbox'] }] }, {});
+      assert.equal(err, undefined);
+      assert.equal(mall.calls.streamsCreated.length, 5);
+    });
+
+    it('[CH-PR11] does NOT provision on a read that names no :_cmc: stream', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureReservedParentsHook({ mall });
+      const err = await runMiddleware(mw, { user: { id: 'u1' } },
+        { streams: ['fertility', { streamId: 'steps' }, { any: ['weight'] }] }, {});
+      assert.equal(err, undefined);
+      assert.equal(mall.calls.streamsCreated.length, 0);
+    });
+
+    // --- Cost guard: this now sits on a polling path ----------------
+
+    it('[CH-PR12] memoises: repeated reads for the same user provision once', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureReservedParentsHook({ mall });
+      for (let i = 0; i < 5; i++) {
+        await runMiddleware(mw, { user: { id: 'u1' } }, { streams: [':_cmc:inbox'] }, {});
+      }
+      assert.equal(mall.calls.streamsCreated.length, 5, 'exactly ONE provisioning run (5 streams), not one per poll');
+    });
+
+    it('[CH-PR13] memo is per-user — a second user still gets provisioned', async () => {
+      const mall = fakeMall();
+      const mw = createEnsureReservedParentsHook({ mall });
+      await runMiddleware(mw, { user: { id: 'u1' } }, { streams: [':_cmc:inbox'] }, {});
+      await runMiddleware(mw, { user: { id: 'u2' } }, { streams: [':_cmc:inbox'] }, {});
+      assert.equal(mall.calls.streamsCreated.length, 10);
+    });
+
+    it('[CH-PR14] existence probe short-circuits creates when the tree is already there', async () => {
+      const mall = fakeMall({ probe: 'exists' });
+      const mw = createEnsureReservedParentsHook({ mall });
+      const err = await runMiddleware(mw, { user: { id: 'u1' } }, { streams: [':_cmc:inbox'] }, {});
+      assert.equal(err, undefined);
+      assert.deepEqual(mall.calls.probes, [':_cmc:']);
+      assert.equal(mall.calls.streamsCreated.length, 0, 'an existing tree must cost one read, zero creates');
+    });
+
+    it('[CH-PR15] probe saying "absent" still provisions', async () => {
+      const mall = fakeMall({ probe: 'absent' });
+      const mw = createEnsureReservedParentsHook({ mall });
+      await runMiddleware(mw, { user: { id: 'u1' } }, { streams: [':_cmc:inbox'] }, {});
+      assert.equal(mall.calls.probes.length, 1);
+      assert.equal(mall.calls.streamsCreated.length, 5);
+    });
+
+    it('[CH-PR16] a throwing probe falls back to provisioning (never skips silently)', async () => {
+      const mall = fakeMall({ probe: 'throws' });
+      const mw = createEnsureReservedParentsHook({ mall });
+      const err = await runMiddleware(mw, { user: { id: 'u1' } }, { streams: [':_cmc:inbox'] }, {});
+      assert.equal(err, undefined);
+      assert.equal(mall.calls.streamsCreated.length, 5);
+    });
+  });
+
+  describe('[CMCHOOK-SP] streamsParamReferencesCmc', () => {
+    it('[CH-SP01] detects cmc ids across all accepted query forms', () => {
+      assert.equal(streamsParamReferencesCmc([':_cmc:inbox']), true);
+      assert.equal(streamsParamReferencesCmc([{ streamId: ':_cmc:apps:a' }]), true);
+      assert.equal(streamsParamReferencesCmc([{ any: ['x', ':_cmc:inbox'] }]), true);
+      assert.equal(streamsParamReferencesCmc([{ all: [':_cmc:apps:a'] }]), true);
+      assert.equal(streamsParamReferencesCmc([{ not: [':_cmc:apps:a'] }]), true);
+    });
+
+    it('[CH-SP02] false for non-cmc queries and malformed input', () => {
+      assert.equal(streamsParamReferencesCmc(['fertility']), false);
+      assert.equal(streamsParamReferencesCmc([{ streamId: 'steps' }]), false);
+      assert.equal(streamsParamReferencesCmc([{ any: ['a', 'b'] }]), false);
+      assert.equal(streamsParamReferencesCmc(undefined), false);
+      assert.equal(streamsParamReferencesCmc('not-an-array'), false);
+      assert.equal(streamsParamReferencesCmc([null, 42]), false);
     });
   });
 

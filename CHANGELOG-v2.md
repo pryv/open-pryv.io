@@ -34,6 +34,24 @@ an open invite is `consent/invalidate-link-cmc`, declining one is
 notification anyway. Such a trigger now simply fails with
 `cmc-revoke-counterparty-access-not-found`.
 
+### CMC: the `:_cmc:*` namespace now materialises on reads too
+
+An account's reserved CMC streams (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`, …)
+are created lazily, on the account's first CMC operation. That trigger covered
+writes only, so a consumer whose **first** CMC action was a read — typically an
+inbox watcher calling `events.get {streams: [':_cmc:inbox']}` — got
+`unknown-referenced-resource` on every poll and could never bootstrap:
+the read that needed the streams was also the thing that refused to create
+them (#111). Reads that reference a `:_cmc:*` stream (plain ids, `{streamId}`
+objects, or `{any|all|not}` logical queries) now provision the namespace like
+writes do, and so does minting an access carrying an `:_cmc:apps:<app>`
+permission (grant-first flows). No configuration is required — the namespace is
+never something a deployment has to register.
+
+Because this puts provisioning on a polling path, repeat calls are guarded: a
+per-process memo of already-provisioned accounts short-circuits, and on a memo
+miss a single stream read decides whether anything needs creating.
+
 ### CMC: scope edits made with plain `accesses.update` now reach the counterparty
 
 The same any-path principle applies to scope changes: editing a CMC

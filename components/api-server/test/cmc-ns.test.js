@@ -47,6 +47,13 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
     // cmc.provisionUserStreams() — see the TODO there. The regression
     // is state-dependent (only triggers when AC0* run sequentially);
     // currently being investigated.
+    //
+    // NOTE: while this stays disabled, the user-visible contract ("the
+    // reserved parents exist whenever you touch the namespace") is
+    // upheld by LAZY provisioning instead, which now covers read,
+    // write AND access-grant entry points — see [CMCNS-LAZY] below.
+    // Until read paths were covered, an account whose first CMC
+    // operation was a read stayed permanently broken (#111).
     it('[CN01] the five reserved parents exist on a fresh user', async function () {
       const res = await coreRequest
         .get(basePath)
@@ -353,5 +360,124 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
     // ordering and surfaces an unrelated flake in webhooks-test.js
     // (WH12 → 404). The unit test gives the same coverage without the
     // test-isolation cost.
+  });
+
+  describe('[CMCNS-LAZY] lazy provisioning covers every entry point', function () {
+    // Regression cover for open-pryv.io#111: with creation-time
+    // provisioning disabled (see [CMCNS-AUTO] above), the reserved tree
+    // is created on first touch. It used to be created on WRITES only,
+    // so a consumer whose first CMC act was a read — an inbox watcher —
+    // got `unknown-referenced-resource` on every poll, forever.
+    //
+    // Every test here needs its own VIRGIN user: once any CMC operation
+    // has run for a user, the tree exists and the bug is unobservable.
+
+    async function makeVirginUser () {
+      const uname = cuid();
+      const utoken = cuid();
+      const u = await fixtures.user(uname);
+      await u.access({ token: utoken, type: 'personal' });
+      await u.session(utoken);
+      return { username: uname, token: utoken };
+    }
+
+    it('[PRV01] read-first: events.get on :_cmc:inbox succeeds on a virgin account', async function () {
+      const v = await makeVirginUser();
+      const res = await coreRequest
+        .get('/' + v.username + '/events')
+        .set('Authorization', v.token)
+        .query({ streams: [C.NS_INBOX], limit: 1 });
+      assert.strictEqual(res.status, 200,
+        'read-first query must not 404 the namespace: ' + JSON.stringify(res.body));
+      assert.ok(Array.isArray(res.body.events));
+    });
+
+    it('[PRV02] read-first on an app scope succeeds and materialises the reserved parents', async function () {
+      const v = await makeVirginUser();
+      const res = await coreRequest
+        .get('/' + v.username + '/events')
+        .set('Authorization', v.token)
+        .query({ streams: [C.NS_APPS], limit: 1 });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+
+      // The tree is now real, not merely tolerated by the query.
+      const streamsRes = await coreRequest
+        .get('/' + v.username + '/streams')
+        .set('Authorization', v.token);
+      const allIds = [];
+      (function walk (list) {
+        for (const s of list || []) {
+          allIds.push(s.id);
+          if (Array.isArray(s.children)) walk(s.children);
+        }
+      })(streamsRes.body.streams);
+      // Only the app-visible parents are assertable here: the
+      // `:_cmc:_internal*` subtree is deliberately pruned from
+      // streams.get responses by the internal-guard hook, so its
+      // absence from this list says nothing about whether it exists.
+      for (const id of [C.NS, C.NS_INBOX, C.NS_APPS]) {
+        assert.ok(allIds.includes(id),
+          'expected reserved parent ' + id + ' after a read; got ' + JSON.stringify(allIds));
+      }
+      assert.ok(!allIds.includes(C.NS_INTERNAL),
+        'the plugin-internal subtree must stay hidden from streams.get');
+    });
+
+    it('[PRV03] a non-CMC read on a virgin account does NOT provision the namespace', async function () {
+      const v = await makeVirginUser();
+      const res = await coreRequest
+        .get('/' + v.username + '/events')
+        .set('Authorization', v.token)
+        .query({ limit: 1 });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+
+      const streamsRes = await coreRequest
+        .get('/' + v.username + '/streams')
+        .set('Authorization', v.token);
+      const rootIds = (streamsRes.body.streams || []).map((s) => s.id);
+      assert.ok(!rootIds.includes(C.NS),
+        'a plain read must not create the CMC tree; root ids: ' + JSON.stringify(rootIds));
+    });
+
+    it('[PRV04] grant-first: accesses.create with an :_cmc:apps:<app> permission provisions parents + leaf', async function () {
+      const v = await makeVirginUser();
+      const appCode = 'grantfirst-' + cuid().slice(-6);
+      const leafStreamId = C.NS_APPS + ':' + appCode;
+
+      const res = await coreRequest
+        .post('/' + v.username + '/accesses')
+        .set('Authorization', v.token)
+        .send({
+          name: 'grant-first-' + cuid(),
+          type: 'app',
+          permissions: [{ streamId: leafStreamId, level: 'manage' }],
+        });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+
+      // The leaf must exist — before the fix its create failed because
+      // its parent :_cmc:apps had never been provisioned.
+      const verify = await coreRequest
+        .post('/' + v.username + '/streams')
+        .set('Authorization', v.token)
+        .send({ id: leafStreamId, parentId: C.NS_APPS, name: appCode });
+      assert.strictEqual(verify.body?.error?.id, 'item-already-exists',
+        'app-scope leaf should already exist after the grant; got ' + JSON.stringify(verify.body));
+    });
+
+    it('[PRV05] read-first account can then run a normal CMC write', async function () {
+      const v = await makeVirginUser();
+      const readRes = await coreRequest
+        .get('/' + v.username + '/events')
+        .set('Authorization', v.token)
+        .query({ streams: [C.NS_INBOX], limit: 1 });
+      assert.strictEqual(readRes.status, 200, JSON.stringify(readRes.body));
+
+      const appScope = C.NS_APPS + ':after-read-' + cuid().slice(-6);
+      const createRes = await coreRequest
+        .post('/' + v.username + '/streams')
+        .set('Authorization', v.token)
+        .send({ id: appScope, parentId: C.NS_APPS, name: 'After read' });
+      assert.strictEqual(createRes.status, 201, JSON.stringify(createRes.body));
+    });
   });
 });
