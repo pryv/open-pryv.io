@@ -48,9 +48,12 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       api.call(req.context, req.body, methodCallback(res, next, 201));
     });
 
-  expressApp.get(Paths.SharedSecrets + '/:key', loadAccessMiddleware, setMethodId('sharedSecrets.getOne'),
+  // The key is carried in the BODY, never the path or query: the access log
+  // records the full request line, so a key in the URL would be written to disk
+  // on every call — the exact exposure this feature exists to remove.
+  expressApp.post(Paths.SharedSecrets + '/status', loadAccessMiddleware, setMethodId('sharedSecrets.getOne'),
     function (req: PryvRequest, res: Response, next: NextFunction) {
-      api.call(req.context, { key: req.params.key }, methodCallback(res, next, 200));
+      api.call(req.context, { key: req.body?.key }, methodCallback(res, next, 200));
     });
 
   // A context may or may not already be attached depending on what ran before
@@ -61,8 +64,9 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     next();
   }
 
-  // Unauthenticated on purpose — see the module comment.
-  expressApp.post(Paths.SharedSecrets + '/:key', ensureContext, setMethodId('sharedSecrets.retrieve'),
+  // Unauthenticated on purpose — see the module comment. Key in the body, for
+  // the same log-exposure reason as the status route above.
+  expressApp.post(Paths.SharedSecrets + '/retrieve', ensureContext, setMethodId('sharedSecrets.retrieve'),
     async function (req: PryvRequest, res: Response, next: NextFunction) {
       try {
         const username = req.params.username;
@@ -74,7 +78,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           return next(errors.unknownResource('shared secret', ''));
         }
         req.context.user = { id: userId, username };
-        const params = Object.assign({ key: req.params.key }, req.body);
+        const params = Object.assign({}, req.body, { key: req.body?.key });
         api.call(req.context, params, methodCallback(res, next, 200));
       } catch (err) {
         next(err);

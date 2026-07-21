@@ -255,7 +255,7 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
       content: next,
       trashed: true,
       modified: now
-    }), undefined, { onlyIfNotTrashed: true });
+    }), undefined, { onlyIfNotTrashed: true, skipVersioning: true });
     return written != null;
   }
 }

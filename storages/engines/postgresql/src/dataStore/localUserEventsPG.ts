@@ -9,6 +9,16 @@ import { createRequire } from 'node:module';
 import type { Readable as ReadableType } from 'node:stream';
 const require = createRequire(import.meta.url);
 
+/**
+ * Options for a single event update.
+ * - onlyIfNotTrashed: compare-and-set — apply only while the event is still
+ *   untrashed, so exactly one of N concurrent callers can flip it.
+ * - skipVersioning: do not snapshot the pre-update row into history. For an
+ *   update whose purpose is to REMOVE something from the row, a version row
+ *   would preserve exactly what is being scrubbed.
+ */
+type UpdateOpts = { onlyIfNotTrashed?: boolean; skipVersioning?: boolean };
+
 const { Readable } = require('stream');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const ds = require('@pryv/datastore');
@@ -245,9 +255,10 @@ const userEvents = ds.createUserEvents({
    *   still untrashed, so exactly one of N concurrent callers can flip it.
    *   Returns false for the losers instead of overwriting each other.
    */
-  async update (this: Store, userId: string, eventData: EventLike, transaction: Transaction, onlyIfNotTrashed?: boolean): Promise<boolean> {
+  async update (this: Store, userId: string, eventData: EventLike, transaction: Transaction, opts?: UpdateOpts): Promise<boolean> {
+    const onlyIfNotTrashed = opts?.onlyIfNotTrashed;
     const queryFn: QueryFn = transaction ? transaction.query.bind(transaction) : this.db.query.bind(this.db);
-    await this._generateVersionIfNeeded(userId, eventData.id, null, queryFn);
+    if (!opts?.skipVersioning) await this._generateVersionIfNeeded(userId, eventData.id, null, queryFn);
 
     try {
       const setClauses: string[] = [];

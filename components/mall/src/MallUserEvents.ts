@@ -296,7 +296,7 @@ class MallUserEvents implements MallEvents {
    *   the losers get `null` back instead of the usual "could not update" error,
    *   because losing the race is an expected outcome, not a failure.
    */
-  async update (userId: string, newEventData: Partial<EventLike>, mallTransaction?: Transaction, opts?: { onlyIfNotTrashed?: boolean }): Promise<EventLike | null> {
+  async update (userId: string, newEventData: Partial<EventLike>, mallTransaction?: Transaction, opts?: { onlyIfNotTrashed?: boolean; skipVersioning?: boolean }): Promise<EventLike | null> {
     // update integrity field and recalculate if needed
     // integrity caclulation is done on event.id and streamIds that includes the store prefix
     if (integrity.events.isActive) {
@@ -329,7 +329,7 @@ class MallUserEvents implements MallEvents {
       ? await mallTransaction.getStoreTransaction(storeId)
       : null;
     try {
-      const success = await eventsStore.update(userId, storeEvent, storeTransaction, opts?.onlyIfNotTrashed);
+      const success = await eventsStore.update(userId, storeEvent, storeTransaction, opts);
       if (!success) {
         if (opts?.onlyIfNotTrashed) return null; // lost the race — expected
         throw errorFactory.invalidItemId('Could not update event with id ' + newEventData.id);

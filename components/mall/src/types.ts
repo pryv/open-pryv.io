@@ -86,7 +86,7 @@ export interface MallEvents {
   deleteAttachment (userId: string, eventId: string, fileId: string, mallTransaction?: MallTransactionLike | null): Promise<StoredEvent>;
   createWithAttachments (userId: string, eventDataWithoutAttachments: Partial<StoredEvent>, attachmentsItems: AttachmentItem[], mallTransaction?: MallTransactionLike | null): Promise<StoredEvent>;
   /** Returns null only when `opts.onlyIfNotTrashed` is set and the CAS lost. */
-  update (userId: string, newEventData: Partial<StoredEvent>, mallTransaction?: MallTransactionLike | null, opts?: { onlyIfNotTrashed?: boolean }): Promise<StoredEvent | null>;
+  update (userId: string, newEventData: Partial<StoredEvent>, mallTransaction?: MallTransactionLike | null, opts?: { onlyIfNotTrashed?: boolean; skipVersioning?: boolean }): Promise<StoredEvent | null>;
   updateMany (userId: string, query: EventQuery, update: UpdateManySpec, forEachEvent: ((e: StoredEvent | null) => unknown) | null, mallTransaction?: MallTransactionLike | null): Promise<StoredEvent[] | null>;
   updateStreamedMany (userId: string, query: EventQuery, update?: UpdateManySpec, mallTransaction?: MallTransactionLike | null): Promise<Readable>;
   delete (userId: string, originalEvent: StoredEvent, mallTransaction?: MallTransactionLike | null): Promise<void>;

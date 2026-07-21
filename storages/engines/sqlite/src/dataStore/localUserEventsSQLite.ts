@@ -9,6 +9,12 @@ import { createRequire } from 'node:module';
 import type { Readable as ReadableType } from 'node:stream';
 const require = createRequire(import.meta.url);
 
+/**
+ * Options for a single event update — see the PostgreSQL engine for the
+ * rationale; both engines accept the same shape.
+ */
+type UpdateOpts = { onlyIfNotTrashed?: boolean; skipVersioning?: boolean };
+
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const ds = require('@pryv/datastore');
 const errors = ds.errors;
@@ -136,11 +142,11 @@ const userEvents = ds.createUserEvents({
   /**
    * @param onlyIfNotTrashed compare-and-set — see UserDatabase.updateEvent.
    */
-  async update (this: Store, userId: string, eventData: EventLike, transaction: unknown, onlyIfNotTrashed?: boolean): Promise<EventLike | null> {
+  async update (this: Store, userId: string, eventData: EventLike, transaction: unknown, opts?: UpdateOpts): Promise<EventLike | null> {
     const db = await this.storage.forUser(userId);
-    await this._generateVersionIfNeeded(db, eventData.id, null, transaction);
+    if (!opts?.skipVersioning) await this._generateVersionIfNeeded(db, eventData.id, null, transaction);
     try {
-      return db.updateEvent(eventData.id, eventData, onlyIfNotTrashed);
+      return db.updateEvent(eventData.id, eventData, opts?.onlyIfNotTrashed);
     } catch (err: unknown) {
       if ((err as Error).message === 'UNIQUE constraint failed: events.eventid') {
         throw errors.itemAlreadyExists('event', { id: eventData.id }, err);

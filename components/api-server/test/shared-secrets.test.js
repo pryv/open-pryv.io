@@ -81,9 +81,13 @@ describe('[SHS] shared secrets', function () {
     return res.body.sharedSecret;
   }
 
-  /** POST /shared-secrets/{key} — deliberately unauthenticated. */
+  /**
+   * POST /shared-secrets/retrieve — deliberately unauthenticated.
+   * The key rides in the body: a key in the path would be written to the access
+   * log on every redemption, which is the exposure this feature exists to remove.
+   */
   function retrieve (key, body = {}) {
-    return coreRequest.post(secretsPath + '/' + key).send(body);
+    return coreRequest.post(secretsPath + '/retrieve').send(Object.assign({ key }, body));
   }
 
   /** A valid creation body; override anything per test. */
@@ -406,6 +410,18 @@ describe('[SHS] shared secrets', function () {
       assert.strictEqual(afterConsume.body.event.content.status, 'consumed');
       assert.strictEqual(afterConsume.body.event.content.title, 'Share my token with the clinic');
 
+      // Versioning must not preserve what the scrub removed: with
+      // versioning.forceKeepHistory enabled, a snapshot taken before the
+      // transition would keep the clear secret readable via includeHistory,
+      // making "one-shot" observably false on such a platform.
+      const withHistory = await coreRequest
+        .get(eventsPath + '/' + consumed.id)
+        .set('Authorization', personalToken)
+        .query({ includeHistory: true });
+      assert.strictEqual(withHistory.status, 200, JSON.stringify(withHistory.body));
+      assert.ok(!JSON.stringify(withHistory.body).includes('user.pryv.me'),
+        'no history version may retain the clear secret');
+
       const discarded = await createOk(personalToken, validBody());
       await coreRequest.delete(eventsPath + '/' + discarded.id).set('Authorization', personalToken);
       const afterDiscard = await coreRequest
@@ -564,8 +580,8 @@ describe('[SHS] shared secrets', function () {
       const created = await createOk(personalToken, validBody());
 
       const cross = await coreRequest
-        .post('/' + otherUsername + '/shared-secrets/' + created.key)
-        .send({});
+        .post('/' + otherUsername + '/shared-secrets/retrieve')
+        .send({ key: created.key });
       assert.notStrictEqual(cross.status, 200, 'a key must not resolve under a foreign account');
       assert.strictEqual(cross.body?.secret, undefined);
 
@@ -579,9 +595,9 @@ describe('[SHS] shared secrets', function () {
       // The key is the sole credential: holding a token but not the key gets nothing.
       const created = await createOk(personalToken, validBody());
       const res = await coreRequest
-        .post(secretsPath + '/' + created.id + '.wrongrandomhalfwrongrandom')
+        .post(secretsPath + '/retrieve')
         .set('Authorization', personalToken)
-        .send({});
+        .send({ key: created.id + '.wrongrandomhalfwrongrandom' });
       assert.notStrictEqual(res.status, 200);
       assert.strictEqual(res.body?.secret, undefined);
     });
@@ -769,8 +785,9 @@ describe('[SHS] shared secrets', function () {
       const { key, id } = created;
 
       const res = await coreRequest
-        .get(secretsPath + '/' + key)
-        .set('Authorization', app.token);
+        .post(secretsPath + '/status')
+        .set('Authorization', app.token)
+        .send({ key });
       assert.strictEqual(res.status, 200, JSON.stringify(res.body));
       assert.strictEqual(res.body.sharedSecret.id, id);
       assert.strictEqual(res.body.sharedSecret.status, 'pending');
@@ -786,7 +803,7 @@ describe('[SHS] shared secrets', function () {
       // Otherwise it becomes a non-consuming probe: an attacker could validate a
       // candidate key without burning it, defeating the burn-on-use tell.
       const created = await createOk(personalToken, validBody());
-      const res = await coreRequest.get(secretsPath + '/' + created.key);
+      const res = await coreRequest.post(secretsPath + '/status').send({ key: created.key });
       assert.strictEqual(res.status, 401, JSON.stringify(res.body));
       assert.strictEqual(res.body?.sharedSecret, undefined);
     });

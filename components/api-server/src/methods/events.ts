@@ -1005,7 +1005,11 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     const newEvent = structuredClone(context.oldEvent!);
     newEvent.trashed = true;
     context.updateTrackingProperties(newEvent);
-    const updatedEvent = await mall.events.update(context.user.id, newEvent);
+    // Discarding a shared secret scrubs its payload; a version row would
+    // preserve the very thing being removed, so history is skipped for it.
+    const skipVersioning = sharedSecrets.touchesNamespace(context.oldEvent);
+    const updatedEvent = await mall.events.update(context.user.id, newEvent,
+      undefined, { skipVersioning });
     result.event = updatedEvent as WireEvent;
     result.event!.attachments = setFileReadToken(context.access, result.event!.attachments as Array<{ id: string; readToken?: string }> | undefined);
     next();
