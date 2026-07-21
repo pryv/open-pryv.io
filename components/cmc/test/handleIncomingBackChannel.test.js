@@ -111,7 +111,7 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     assert.equal(capture.updates.length, 1);
   });
 
-  it('[BC03] when appCode is supplied, only matches accesses with same appCode', async () => {
+  it('[BC03] when several grants share a counterparty, appCode picks the right one', async () => {
     const accesses = [
       {
         id: 'wrong-app',
@@ -188,6 +188,115 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     });
     assert.equal(r.ok, false);
     assert.equal(r.reason, 'cmc-back-channel-no-apiendpoint');
+  });
+
+  // The two sides derive appCode independently and the sender falls back to
+  // the literal 'unknown' when it cannot resolve its own request scope, so
+  // divergent values are normal on a healthy handshake. A mismatch must never
+  // drop the delivery: doing so leaves backChannelApiEndpoint null forever,
+  // and every later revoke on that relationship is silently undeliverable.
+  // Every other test here uses the same app-code on both sides, which is why
+  // that failure mode shipped twice unnoticed.
+  function grantFor (id, cmcExtra) {
+    return {
+      id,
+      clientData: {
+        cmc: {
+          role: 'counterparty',
+          counterparty: { username: 'alice', host: 'pryv.me' },
+          ...cmcExtra,
+        },
+      },
+    };
+  }
+
+  function deliveryWith (appCode) {
+    return {
+      type: 'consent/back-channel-cmc',
+      content: {
+        from: { username: 'alice', host: 'pryv.me' },
+        apiEndpoint: 'https://tok@pryv.me/alice/',
+        ...(appCode === undefined ? {} : { appCode }),
+      },
+    };
+  }
+
+  it('[BC08] stores the back-channel when the only grant has a different appCode', async () => {
+    const capture = {};
+    const r = await handleIncomingBackChannel({
+      userId: 'u1',
+      event: deliveryWith('other-app'),
+      deps: { mall: fakeMall([grantFor('only-grant', { appCode: 'my-app' })], capture) },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.dataGrantAccessId, 'only-grant');
+    assert.equal(capture.updates.length, 1);
+    assert.equal(capture.updates[0].update.clientData.cmc.backChannelApiEndpoint,
+      'https://tok@pryv.me/alice/');
+  });
+
+  it("[BC09] stores the back-channel when the sender fell back to 'unknown'", async () => {
+    const capture = {};
+    const r = await handleIncomingBackChannel({
+      userId: 'u1',
+      event: deliveryWith('unknown'),
+      deps: { mall: fakeMall([grantFor('only-grant', { appCode: 'my-app' })], capture) },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.dataGrantAccessId, 'only-grant');
+    assert.equal(capture.updates.length, 1);
+  });
+
+  it('[BC10] stores the back-channel when the delivery carries no appCode at all', async () => {
+    const capture = {};
+    const r = await handleIncomingBackChannel({
+      userId: 'u1',
+      event: deliveryWith(undefined),
+      deps: { mall: fakeMall([grantFor('only-grant', { appCode: 'my-app' })], capture) },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.dataGrantAccessId, 'only-grant');
+  });
+
+  it('[BC11] with several grants and no appCode match, still stores on a pending one', async () => {
+    const capture = {};
+    const warnings = [];
+    const accesses = [
+      grantFor('done-grant', {
+        appCode: 'app-a',
+        backChannelApiEndpoint: 'https://old@pryv.me/alice/',
+      }),
+      grantFor('pending-grant', { appCode: 'app-b' }),
+    ];
+    const r = await handleIncomingBackChannel({
+      userId: 'u1',
+      event: deliveryWith('app-c'),
+      deps: {
+        mall: fakeMall(accesses, capture),
+        logger: { warn: (msg, ctx) => warnings.push({ msg, ctx }) },
+      },
+    });
+    assert.equal(r.ok, true);
+    // The grant still awaiting its back-channel is the better guess, and the
+    // ambiguity is surfaced to operators rather than swallowed.
+    assert.equal(r.dataGrantAccessId, 'pending-grant');
+    assert.equal(warnings.length, 1);
+    assert.deepEqual(warnings[0].ctx.candidateIds, ['done-grant', 'pending-grant']);
+  });
+
+  it('[BC12] prefers a grant with no appCode over one scoped to another app', async () => {
+    const capture = {};
+    const accesses = [
+      grantFor('other-app-grant', { appCode: 'app-a' }),
+      grantFor('unscoped-grant', {}),
+    ];
+    const r = await handleIncomingBackChannel({
+      userId: 'u1',
+      event: deliveryWith('app-c'),
+      deps: { mall: fakeMall(accesses, capture) },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.dataGrantAccessId, 'unscoped-grant');
   });
 
   it('[BC07] rejects non-back-channel event types', async () => {

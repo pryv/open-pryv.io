@@ -36,6 +36,36 @@ the account and hands over a random key that can be redeemed exactly once.
 - Config: `sharedSecrets.enabled` (default `true`), `maxSizeBytes` (4096),
   `maxTtl` (30 days). Read per request, so an operator toggle takes effect
   without a restart.
+### Fixed — a CMC back-channel handshake could be dropped, silently and permanently
+
+`2.0.0-rc.10` began stamping the requester's app-code on the data-grant minted at
+acceptance. That activated a guard in the accepter-side back-channel handler
+which rejected the delivery whenever the app-code on the grant differed from the
+one on the delivery — and the two sides derive that value independently, the
+sender falling back to the literal `unknown` when it cannot resolve its own
+request scope. A mismatch discarded the only candidate, so the handshake never
+completed, `backChannelApiEndpoint` stayed null, and **every subsequent
+consent-revocation on that relationship was undeliverable, with nothing logged
+and no way to recover short of a fresh request/accept cycle.**
+
+The app-code is now a disambiguator and never a rejector: it selects between
+several candidate grants but can no longer eliminate the only one. Relationships
+established before this release are unaffected in their selection — the ordering
+for every previously-succeeding case is unchanged.
+
+Affects `2.0.0-rc.10` and `2.0.0-rc.11`. Relationships whose handshake was
+already dropped do **not** heal on upgrade: nothing re-drives the delivery, so
+each affected relationship needs a fresh request → accept.
+
+### Known limitation — one peer, one app, several relationships
+
+Two or more concurrent relationships with the same counterparty under the same
+app-code are still not distinguished from one another: the app-code derives from
+the app scope, not the per-request scope, and both the back-channel matcher and
+the outbound chat / system / revoke selectors resolve on it. The newest
+relationship is the one they agree on; deliveries on older ones are misrouted to
+the newest one's streams. Until this is addressed, use a distinct app-code per
+concurrent relationship with a given counterparty.
 
 ## 2.0.0-rc.11 — 2026-07-21
 
