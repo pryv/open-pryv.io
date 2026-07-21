@@ -220,11 +220,15 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
     });
 
   /**
-   * Persist a status change, returning false if someone else got there first.
+   * Move an item out of `pending`, returning false if someone else got there first.
    *
-   * The guard is a re-read inside the update path: `mall.events.update` is used
-   * (never a raw engine write) so the event's integrity hash is recomputed
-   * along with the content.
+   * The decision is made by the database, not by this process: the update is a
+   * compare-and-set on "still untrashed", so of N concurrent redemptions exactly
+   * one writes and the rest are told they lost. A read-then-write here would let
+   * every racer through, which for a one-shot secret is the whole ballgame.
+   *
+   * It goes through `mall.events.update` rather than a raw engine write so the
+   * event's integrity hash is recomputed with the new content.
    */
   async function transition (
     userId: string,
@@ -237,11 +241,11 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
     const fresh = await mall.events.getOne(userId, event.id);
     if (fresh == null || !S.isPending(fresh.content as ItemContent)) return false;
     const next = S.applyTransition(fresh.content as ItemContent, { status, info, now });
-    await mall.events.update(userId, Object.assign({}, fresh, {
+    const written = await mall.events.update(userId, Object.assign({}, fresh, {
       content: next,
       trashed: true,
       modified: now
-    }));
-    return true;
+    }), undefined, { onlyIfNotTrashed: true });
+    return written != null;
   }
 }

@@ -217,12 +217,18 @@ UserDatabase.prototype.createEventSync = function (this: UserDatabaseInstance, e
   this.eventQueries.create.run(dbEvent);
 };
 
-UserDatabase.prototype.updateEvent = async function (this: UserDatabaseInstance, eventId: string, eventData: DomainEvent): Promise<DomainEvent | null> {
+/**
+ * @param onlyIfNotTrashed compare-and-set: apply only while the event is still
+ *   untrashed, so exactly one of N concurrent callers can flip it. Returns null
+ *   for the losers.
+ */
+UserDatabase.prototype.updateEvent = async function (this: UserDatabaseInstance, eventId: string, eventData: DomainEvent, onlyIfNotTrashed?: boolean): Promise<DomainEvent | null> {
   const dbEvent = eventsSchema.toDB(eventData);
   if (dbEvent.streamIds == null) { dbEvent.streamIds = eventsSchema.ALL_EVENTS_TAG; }
 
   delete dbEvent.eventid;
-  const queryString = `UPDATE events SET ${Object.keys(dbEvent).map(field => `${field} = @${field}`).join(', ')} WHERE eventid = @eventid`;
+  const casClause = onlyIfNotTrashed ? ' AND (trashed IS NULL OR trashed = 0)' : '';
+  const queryString = `UPDATE events SET ${Object.keys(dbEvent).map(field => `${field} = @${field}`).join(', ')} WHERE eventid = @eventid${casClause}`;
   dbEvent.eventid = eventId;
   const update = this.db.prepare(queryString);
 

@@ -240,7 +240,12 @@ const userEvents = ds.createUserEvents({
     }
   },
 
-  async update (this: Store, userId: string, eventData: EventLike, transaction: Transaction): Promise<boolean> {
+  /**
+   * @param onlyIfNotTrashed compare-and-set: apply only while the event is
+   *   still untrashed, so exactly one of N concurrent callers can flip it.
+   *   Returns false for the losers instead of overwriting each other.
+   */
+  async update (this: Store, userId: string, eventData: EventLike, transaction: Transaction, onlyIfNotTrashed?: boolean): Promise<boolean> {
     const queryFn: QueryFn = transaction ? transaction.query.bind(transaction) : this.db.query.bind(this.db);
     await this._generateVersionIfNeeded(userId, eventData.id, null, queryFn);
 
@@ -259,8 +264,12 @@ const userEvents = ds.createUserEvents({
 
       if (setClauses.length === 0) return false;
 
-      const sql = `UPDATE events SET ${setClauses.join(', ')} WHERE user_id = $1 AND id = $2`;
+      const casClause = onlyIfNotTrashed ? ' AND (trashed IS NULL OR trashed = FALSE)' : '';
+      const sql = `UPDATE events SET ${setClauses.join(', ')} WHERE user_id = $1 AND id = $2${casClause}`;
       const res = await queryFn(sql, params);
+      // A CAS miss is a normal outcome (someone else got there first), not a
+      // reason to touch event_streams.
+      if (onlyIfNotTrashed && res.rowCount !== 1) return false;
 
       // Sync event_streams if streamIds changed
       if (eventData.streamIds) {

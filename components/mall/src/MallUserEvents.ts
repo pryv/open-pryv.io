@@ -290,7 +290,13 @@ class MallUserEvents implements MallEvents {
 
   // ----------------- UPDATE ----------------- //
 
-  async update (userId: string, newEventData: Partial<EventLike>, mallTransaction?: Transaction): Promise<EventLike> {
+  /**
+   * @param opts.onlyIfNotTrashed compare-and-set: apply the update only while
+   *   the event is still untrashed. Exactly one of N concurrent callers wins;
+   *   the losers get `null` back instead of the usual "could not update" error,
+   *   because losing the race is an expected outcome, not a failure.
+   */
+  async update (userId: string, newEventData: Partial<EventLike>, mallTransaction?: Transaction, opts?: { onlyIfNotTrashed?: boolean }): Promise<EventLike | null> {
     // update integrity field and recalculate if needed
     // integrity caclulation is done on event.id and streamIds that includes the store prefix
     if (integrity.events.isActive) {
@@ -323,8 +329,9 @@ class MallUserEvents implements MallEvents {
       ? await mallTransaction.getStoreTransaction(storeId)
       : null;
     try {
-      const success = await eventsStore.update(userId, storeEvent, storeTransaction);
+      const success = await eventsStore.update(userId, storeEvent, storeTransaction, opts?.onlyIfNotTrashed);
       if (!success) {
+        if (opts?.onlyIfNotTrashed) return null; // lost the race — expected
         throw errorFactory.invalidItemId('Could not update event with id ' + newEventData.id);
       }
       return eventsUtils.convertEventFromStore(storeId, storeEvent);

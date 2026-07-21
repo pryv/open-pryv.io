@@ -39,7 +39,7 @@ type UserDbLike = {
   getEventDeletionsStreamed: (deletedSince: number) => ReadableType;
   getEventHistory: (eventId: string) => EventLike[];
   createEvent: (event: EventLike) => Promise<void>;
-  updateEvent: (eventId: string, eventData: EventLike) => Promise<EventLike | null>;
+  updateEvent: (eventId: string, eventData: EventLike, onlyIfNotTrashed?: boolean) => Promise<EventLike | null>;
   minimizeEventHistory: (eventId: string, fieldsToRemove: string[]) => Promise<void>;
   deleteEventHistory: (eventId: string) => Promise<void>;
   deleteEvents: (params: { query: unknown[]; options?: unknown }) => Promise<{ changes: number } | null>;
@@ -133,11 +133,14 @@ const userEvents = ds.createUserEvents({
   },
 
   // `null` when no row matched — mirrors the PG peer's update semantics.
-  async update (this: Store, userId: string, eventData: EventLike, transaction: unknown): Promise<EventLike | null> {
+  /**
+   * @param onlyIfNotTrashed compare-and-set — see UserDatabase.updateEvent.
+   */
+  async update (this: Store, userId: string, eventData: EventLike, transaction: unknown, onlyIfNotTrashed?: boolean): Promise<EventLike | null> {
     const db = await this.storage.forUser(userId);
     await this._generateVersionIfNeeded(db, eventData.id, null, transaction);
     try {
-      return db.updateEvent(eventData.id, eventData);
+      return db.updateEvent(eventData.id, eventData, onlyIfNotTrashed);
     } catch (err: unknown) {
       if ((err as Error).message === 'UNIQUE constraint failed: events.eventid') {
         throw errors.itemAlreadyExists('event', { id: eventData.id }, err);
