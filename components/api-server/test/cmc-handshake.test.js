@@ -323,17 +323,25 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
 
     // Wait until the back-channel-cmc landed on bob's inbox — that's
     // the marker that bob's data-grant has been updated with alice's
-    // remote streams for THIS study. Double deadline: this marker is
-    // three chained async hops behind the accept (accept dispatch →
-    // incoming-accept on alice → back-channel POST to bob), and on
-    // loaded full-matrix runs the default 10 s has been seen to lapse
-    // while the chain was still healthy.
+    // remote streams for THIS study.
+    //
+    // Generous deadline (4x): this marker sits THREE chained
+    // fire-and-forget hops behind the accept (accept dispatch on bob →
+    // incoming-accept on alice → back-channel POST back to bob), each
+    // doing real PG + HTTP work through the in-process shim. On an
+    // unloaded box the whole chain lands in well under a second, but
+    // under matrix load it has been seen to exceed both 10 s and 20 s
+    // while remaining perfectly healthy — a lapse here fails a whole
+    // describe's before-all, so the deadline is deliberately far above
+    // the observed worst case rather than close to it. It costs nothing
+    // when the chain is fast (the poll returns as soon as the marker
+    // appears); it only spends time when the box is genuinely slow.
     await pollInboxFor(
       bob.eventsPath, bob.token, 'consent/back-channel-cmc',
       (e) => e.content?.from?.username === alice.username &&
              e.content?.remoteChatStreamId === triggerStreamId + ':chats:' +
                C.slug.counterpartySlug({ username: bob.username, host: 'x.pryv.me' }),
-      POLL_TIMEOUT_MS * 2
+      POLL_TIMEOUT_MS * 4
     );
 
     const TEST_HOST = 'x.pryv.me';
@@ -942,9 +950,9 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         'delivered scope-update must carry bob as server-stamped origin');
       // Post-update the access id is the composite <base>:<serial> form
       // (access versioning bumps the serial on every update).
-      assert.ok(String(peerNotif.content.newAccessId).startsWith(dataGrant.id + ':') ||
-                peerNotif.content.newAccessId === dataGrant.id,
-        'newAccessId must reference the updated data-grant: ' + peerNotif.content.newAccessId);
+      const newAccessId = String(peerNotif.content.newAccessId);
+      assert.ok(newAccessId === dataGrant.id || newAccessId.startsWith(dataGrant.id + ':'),
+        'newAccessId must reference the updated data-grant: ' + newAccessId);
     });
   });
 
