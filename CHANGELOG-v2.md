@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.10 — 2026-07-21
 
 ### CMC: revocation reaches the counterparty whatever path performs it
 
