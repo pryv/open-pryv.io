@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.1.1",
   "types": {
     "absorbed-dose/gy": {
       "description": "Gray",
@@ -532,6 +532,14 @@
             "allowUserChoice": {
               "type": "boolean",
               "description": "Default false: the consent is ALL OR NOTHING (the user may only accept the whole permission set or deny). Set true to let the user cherry-pick entries on the consent screen (entries flagged `mandatory` stay locked)."
+            },
+            "accessType": {
+              "type": "string",
+              "enum": [
+                "shared",
+                "app"
+              ],
+              "description": "Pryv access type the accepted data-grant is minted as. Default `shared` (a non-delegable grant that cannot call `accesses.*`). Set `app` to make the grant delegable: the approved requester can `accesses.create` scoped, individually-named sub-accesses (permissions ⊆ the grant) for least-privilege re-delegation with per-actor audit attribution."
             }
           },
           "required": [
@@ -2312,6 +2320,110 @@
         "indeterminate",
         "estrogenSurge"
       ]
+    },
+    "shared-secret/item": {
+      "description": "One shared secret. Lives under the reserved `:_shared-secrets:<accessId>` stream of the access that created it. The event's own `time` + `duration` carry the lifetime — expiry is exactly `now > time + duration` — and `trashed` marks an item that has left the `pending` state.",
+      "type": "object",
+      "required": [
+        "keyHash",
+        "title",
+        "status",
+        "statusHistory",
+        "onConsumed"
+      ],
+      "properties": {
+        "keyHash": {
+          "description": "SHA-256 (hex) of the key's random half. The key itself is returned once, at creation, and is never stored — so it cannot be recovered from a database dump or a backup.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "title": {
+          "description": "Human-readable label for the account owner, describing what is being shared and with whom.",
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "description": "`pending` is the only state from which the secret can be retrieved; the other two are terminal.",
+          "type": "string",
+          "enum": [
+            "pending",
+            "consumed",
+            "discarded"
+          ]
+        },
+        "statusHistory": {
+          "description": "Append-only trail of state transitions, oldest first.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "status",
+              "time"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "consumed",
+                  "discarded"
+                ]
+              },
+              "time": {
+                "description": "Pryv timestamp of the transition.",
+                "type": "number"
+              },
+              "info": {
+                "description": "Why the item was discarded — e.g. `expired`, `deleted`, or a signature mismatch.",
+                "type": "string"
+              }
+            }
+          }
+        },
+        "onConsumed": {
+          "description": "Shown to whoever presents the key once the secret is no longer available.",
+          "type": "object",
+          "required": [
+            "message"
+          ],
+          "properties": {
+            "message": {
+              "type": "string",
+              "minLength": 1
+            },
+            "returnUrl": {
+              "description": "Where to send the visitor afterwards. Restricted to http(s) — it is followed by an unauthenticated third party.",
+              "type": "string",
+              "pattern": "^https?://"
+            }
+          }
+        },
+        "signature": {
+          "description": "Optional proof required to redeem. `secret` compares a passphrase supplied out-of-band; `hmac-sha256` verifies HMAC(verifier-secret, key material) computed by the client, so the verifier secret itself never reaches the server. A wrong proof discards the secret.",
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "secret",
+                "hmac-sha256"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "secret": {
+          "description": "The payload handed over on redemption — any JSON value. Present only while `status` is `pending`: it is removed as soon as the item is consumed or discarded, so a spent secret stops living in backups and exports."
+        }
+      }
     },
     "sleep/analysis": {
       "type": "object",
@@ -4615,6 +4727,9 @@
     },
     "reproductive-health": {
       "description": "To record reproductive health data, such as menstrual flow or ovulation test results."
+    },
+    "shared-secret": {
+      "description": "A secret held on an account for one-time hand-off to a third party, addressed by a random key rather than embedded in a URL. Written and consumed exclusively by the server through the shared-secrets endpoints (open-pryv.io `components/shared-secrets`); the events API refuses to create, modify or move events of this class, so a client never authors one directly. Retained after use as a record of the hand-off, with the payload removed."
     },
     "sleep": {
       "description": "To record sleep information."
