@@ -60,6 +60,10 @@ export function buildDiscoveryDocument (cfg: DiscoveryConfig): Record<string, un
     // PKCE is mandatory for all clients.
     // RFC 9207 — iss parameter in authorization response.
     authorization_response_iss_parameter_supported: true,
+    // RFC 9449 §5.1 — DPoP proof signing algorithms the server accepts.
+    // A client that presents a DPoP proof on /oauth2/token receives a
+    // sender-constrained (DPoP) token; omitting it yields a Bearer token.
+    dpop_signing_alg_values_supported: ['ES256'],
     // Cache headers + non-standard `apiEndpoint` extension are
     // implementation details, not advertised in the discovery doc.
   };

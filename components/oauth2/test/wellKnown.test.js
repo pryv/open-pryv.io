@@ -29,6 +29,7 @@ describe('[OAUTH-WK] discovery document', () => {
       assert.deepEqual(doc.grant_types_supported, ['authorization_code']);
       assert.deepEqual(doc.code_challenge_methods_supported, ['S256']);
       assert.equal(doc.authorization_response_iss_parameter_supported, true);
+      assert.deepEqual(doc.dpop_signing_alg_values_supported, ['ES256']);
     });
     it('[OAUTH-WK-1b] trims trailing slash on issuer', () => {
       const doc = buildDiscoveryDocument({

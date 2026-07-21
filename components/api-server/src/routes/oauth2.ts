@@ -494,9 +494,13 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     const existingClientData: Record<string, unknown> = (access.clientData != null && typeof access.clientData === 'object')
       ? { ...access.clientData }
       : {};
+    // Pass `modified` so the integrity-aware updateOne recomputes the
+    // tamper-evidence hash over the post-update row itself (it skips the
+    // recompute when `modified` is absent) — hand-computing the hash here
+    // would have to replicate the storage layer's canonicalization.
     await fromCallback((cb: (e: unknown) => void) =>
       accessesRepository.updateOne(user, { id: accessId },
-        { clientData: { ...existingClientData, dpop: { jkt } } }, cb));
+        { clientData: { ...existingClientData, dpop: { jkt } }, modified: Math.floor(Date.now() / 1000) }, cb));
     cache.unsetUserData(userId);
     pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
   }
