@@ -19,15 +19,13 @@
  * user learns what happened.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
+import { factory as errors } from 'errors';
+import { getMall } from 'mall';
+import { getConfig, getLogger } from '@pryv/boiler';
+import timestamp from 'unix-timestamp';
+import { createId as cuid } from '@paralleldrive/cuid2';
 
-const errors = require('errors').factory;
-const { getMall } = require('mall');
-const { getConfig, getLogger } = require('@pryv/boiler');
-const timestamp = require('unix-timestamp');
-
-const S = require('shared-secrets');
+import * as S from 'shared-secrets';
 
 import type {
   CreateParams, OnConsumed, ItemSignature, ItemContent
@@ -67,8 +65,8 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
   // that injects config) would never reach the callsites. Same reason events.ts
   // uses getters for its auth/updates config.
   const getLimits = () => ({
-    maxSizeBytes: config.get('sharedSecrets:maxSizeBytes') ?? 4096,
-    maxTtl: config.get('sharedSecrets:maxTtl') ?? 2592000
+    maxSizeBytes: (config.get('sharedSecrets:maxSizeBytes') as number) ?? 4096,
+    maxTtl: (config.get('sharedSecrets:maxTtl') as number) ?? 2592000
   });
   const isEnabled = () => config.get('sharedSecrets:enabled') !== false;
 
@@ -108,7 +106,9 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
       await S.ensureStreams({ mall, userId, accessId, logger });
 
       const now = timestamp.now();
-      const eventId = mall.newEventId != null ? mall.newEventId() : require('cuid')();
+      // The id is minted here rather than by the store, because the key embeds
+      // it and must be composable before the event exists.
+      const eventId = cuid();
 
       // Two modes: the caller supplies the hash of a random half it generated
       // itself (so it can bind an hmac-sha256 signature to key material before
@@ -172,7 +172,7 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
       if (!S.isPending(content)) return next(unavailable(content));
 
       const now = timestamp.now();
-      if (S.key.isExpired({ time: event.time, duration: event.duration }, now)) {
+      if (S.key.isExpired({ time: event.time ?? 0, duration: event.duration }, now)) {
         await transition(userId, event, content, S.STATUS_DISCARDED, S.INFO_EXPIRED, now);
         return next(unavailable(content));
       }
@@ -228,7 +228,7 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
       if (!isOwner && !access.isPersonal()) return next(unknownKey());
 
       result.sharedSecret = S.toPublicView({
-        id: event.id, time: event.time, duration: event.duration, content
+        id: event.id, time: event.time ?? 0, duration: event.duration, content
       });
       next();
     });

@@ -372,7 +372,7 @@ class AccessLogic {
    * because a restriction a child can shed by simply not asking for it is not a
    * restriction: the parent would just mint an unrestricted child and use that.
    */
-  inheritRestrictions (candidate: { permissions?: Permission[]; [k: string]: unknown }) {
+  inheritRestrictions (candidate: { permissions?: Permission[] }) {
     if (this.canCreateSharedSecrets()) return candidate;
     if (!Array.isArray(candidate.permissions)) candidate.permissions = [];
     const already = candidate.permissions.some(

@@ -15,17 +15,14 @@
  * runs with no access, exactly like the registration routes.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
 import type { Response, NextFunction } from 'express';
 
-const middleware = require('middleware');
-const { setMinimalMethodContext, setMethodId } = require('middleware');
-const Paths = require('./Paths.ts');
-const methodCallback = require('./methodCallback.ts').default;
-const errors = require('errors').factory;
-const { getUsersRepository } = require('business/src/users/index.ts');
+import * as middleware from 'middleware';
+import { setMinimalMethodContext, setMethodId } from 'middleware';
+import * as Paths from './Paths.ts';
+import methodCallback from './methodCallback.ts';
+import { factory as errors } from 'errors';
+import { getUsersRepository } from 'business/src/users/index.ts';
 
 type ExpressApp = {
   get (path: string, ...handlers: unknown[]): void;
