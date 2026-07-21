@@ -1,5 +1,42 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Shared secrets: hand a secret to a third party by one-time key
+
+Passing a secret to a third party — typically an apiEndpoint carrying an access
+token — has meant putting it in a URL, where it survives in browser history,
+referrer headers and server access logs. A shared secret stores the payload on
+the account and hands over a random key that can be redeemed exactly once.
+
+- `POST /:username/shared-secrets` — create. Requires `ttl` (seconds) and a
+  `title`, an `onConsumed.message` (shown once the secret is spent) with an
+  optional http(s) `returnUrl`, and the `secret` itself (any JSON, capped by
+  `sharedSecrets.maxSizeBytes`). Returns the key exactly once; the server keeps
+  only its SHA-256, so the key cannot be recovered later, by anyone.
+- `POST /:username/shared-secrets/retrieve` — redeem. Takes no token: the key
+  is the credential, since the third party has nothing else yet. Succeeds once;
+  every later attempt returns the creator's message and `returnUrl`. The key
+  travels in the request body, never the URL.
+- `POST /:username/shared-secrets/status` — inspect without consuming
+  (creating access or personal token).
+- Optional `signature` binds redemption to a proof: `secret` compares a
+  passphrase, `hmac-sha256` verifies HMAC(verifier, key material) computed by
+  the client, so the verifier secret never reaches the server. A wrong proof
+  burns the secret; a missing one does not, so a client can prompt and retry.
+- Items live as events under `:_shared-secrets:<accessId>`, readable only by
+  the access that created them (personal tokens see everything, as usual) and
+  excluded from wildcard `events.get` — they answer only when their stream is
+  named explicitly. They cannot be created, modified or moved through the
+  events API; deleting a pending one discards it, and the payload is scrubbed
+  as soon as it stops being pending.
+- An access can be barred from minting them with the `secretSharing` feature
+  permission (`{ feature: 'secretSharing', setting: 'forbidden' }`, default
+  allowed), which is inherited by any access it creates.
+- Config: `sharedSecrets.enabled` (default `true`), `maxSizeBytes` (4096),
+  `maxTtl` (30 days). Read per request, so an operator toggle takes effect
+  without a restart.
+
 ## 2.0.0-rc.11 — 2026-07-21
 
 ### OAuth2: refresh-token reuse detection (chain revoke)

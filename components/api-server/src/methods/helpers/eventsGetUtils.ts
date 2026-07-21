@@ -352,7 +352,11 @@ function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params
     // Excluded here, BEFORE stream expansion, so the whole subtree goes with the
     // root; the account-stream exclusions below can sit after expansion only
     // because those ids are flat.
-    if (streamQuery.any != null && streamQuery.any.includes('*')) {
+    // Local store only: the namespace exists nowhere else, so adding it to an
+    // external store's query would expand a stream that store has never heard
+    // of. Same gating as the account-stream exclusion below.
+    if (streamQuery.storeId === storeDataUtils.LocalStoreId &&
+        streamQuery.any != null && streamQuery.any.includes('*')) {
       if (streamQuery.not == null) { streamQuery.not = []; }
       streamQuery.not.push(SHARED_SECRETS_NS_ROOT);
     }
