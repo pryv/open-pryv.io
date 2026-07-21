@@ -295,18 +295,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       return next(errors.forbidden('Your access token has insufficient permissions ' +
                 'to create this new access.'));
     }
-    // A restriction that a child could shed by simply not asking for it is not a
-    // restriction: an access barred from minting shared secrets passes that bar
-    // down, otherwise it just creates an unrestricted child and uses that.
-    if (typeof access.canCreateSharedSecrets === 'function' && !access.canCreateSharedSecrets()) {
-      if (!Array.isArray(params.permissions)) params.permissions = [];
-      // permissions is typed as stream permissions here; feature permissions are
-      // the other arm of the same union.
-      const perms = params.permissions as unknown as Array<{ feature?: string; setting?: string }>;
-      if (!perms.some((p) => p?.feature === 'secretSharing')) {
-        perms.push({ feature: 'secretSharing', setting: 'forbidden' });
-      }
-    }
+    // (Restrictions such as `secretSharing: forbidden` are inherited inside
+    // canCreateAccess, so they apply to accesses.update as well as create.)
     if (params.token != null) {
       params.token = slugify(params.token);
       if (string.isReservedId(params.token)) {

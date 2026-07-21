@@ -38,12 +38,31 @@ const { PermissionLevels } = require('./permissionSet.ts');
  */
 const SHARED_SECRETS_NS = ':_shared-secrets:';
 
-/** The access owning a shared-secrets substream, or null for any other stream. */
+/** True for the namespace root and anything below it. */
+function isSharedSecretsStream (streamId: unknown): boolean {
+  if (typeof streamId !== 'string') return false;
+  return streamId === ':_shared-secrets' || streamId.startsWith(SHARED_SECRETS_NS);
+}
+
+/** The access owning a shared-secrets substream, or null for the root / any deeper id. */
 function sharedSecretsOwnerOf (streamId: unknown): string | null {
   if (typeof streamId !== 'string' || !streamId.startsWith(SHARED_SECRETS_NS)) return null;
   const rest = streamId.slice(SHARED_SECRETS_NS.length);
   if (rest.length === 0 || rest.includes(':')) return null;
   return rest;
+}
+
+/**
+ * Whether `accessId` may touch `streamId` in the shared-secrets namespace.
+ *
+ * Deny-by-default across the whole namespace: naming the ROOT (or any id under
+ * the prefix that is not exactly one substream) must not fall through to the
+ * ordinary permission walk, where a plain `*` grant would resolve to `read` and
+ * hand over every access's pending secrets in the clear.
+ */
+function sharedSecretsAllows (streamId: unknown, accessId: string): boolean {
+  const owner = sharedSecretsOwnerOf(streamId);
+  return owner != null && owner === accessId;
 }
 
 class AccessLogic {
@@ -346,9 +365,30 @@ class AccessLogic {
 
   // Whether the current access can create the given access.
   //
+  /**
+   * Push restrictions this access carries onto a candidate child.
+   *
+   * Applied wherever a child's permission set is decided — creation AND update —
+   * because a restriction a child can shed by simply not asking for it is not a
+   * restriction: the parent would just mint an unrestricted child and use that.
+   */
+  inheritRestrictions (candidate: { permissions?: Permission[]; [k: string]: unknown }) {
+    if (this.canCreateSharedSecrets()) return candidate;
+    if (!Array.isArray(candidate.permissions)) candidate.permissions = [];
+    const already = candidate.permissions.some(
+      (p) => 'feature' in p && p.feature === 'secretSharing');
+    if (!already) {
+      candidate.permissions.push({ feature: 'secretSharing', setting: 'forbidden' } as Permission);
+    }
+    return candidate;
+  }
+
   async canCreateAccess (candidate: { permissions?: Permission[]; [k: string]: unknown }) {
     // The account owner can do everything.
     if (this.isPersonal()) return true;
+    // Restrictions ride along before the permission set is judged, so they
+    // survive both accesses.create and accesses.update.
+    this.inheritRestrictions(candidate);
     // Shared accesses don't manage anything.
     if (this.isShared()) return false;
 
@@ -383,8 +423,7 @@ class AccessLogic {
     // Same rule as reading the events: an access sees only its own shared-secret
     // substream, so listing cannot be used to enumerate which other accesses
     // have secrets outstanding.
-    const secretsOwner = sharedSecretsOwnerOf(streamId);
-    if (secretsOwner != null) return secretsOwner === this.id;
+    if (isSharedSecretsStream(streamId)) return sharedSecretsAllows(streamId, this.id);
 
     const level = await this._getStreamPermissionLevel(streamId);
     return !!(((level != null) && isHigherOrEqualLevel(level, 'read')));
@@ -419,8 +458,7 @@ class AccessLogic {
     // else that access was granted: a broad `*` permission must not become a way
     // to read another app's one-time secrets. (A personal token, handled above,
     // still sees the whole account.)
-    const secretsOwner = sharedSecretsOwnerOf(streamId);
-    if (secretsOwner != null) return secretsOwner === this.id;
+    if (isSharedSecretsStream(streamId)) return sharedSecretsAllows(streamId, this.id);
 
     const fullStreamId = storeDataUtils.getFullItemId(storeId, streamId);
 
@@ -431,6 +469,10 @@ class AccessLogic {
 
   async canCreateEventsOnStream (streamId: string) {
     if (this.isPersonal()) return true;
+    // Same deny-by-default as reading: without this, a `*` contribute grant
+    // lets an access write into (and, via the delete-as-discard path, burn)
+    // another access's shared secrets.
+    if (isSharedSecretsStream(streamId)) return sharedSecretsAllows(streamId, this.id);
     const level = await this._getStreamPermissionLevel(streamId);
     return (level != null) && isHigherOrEqualLevel(level, 'contribute');
   }
@@ -491,6 +533,14 @@ class AccessLogic {
     if (featurePermission.feature === 'selfRevoke') {
       // true if this acces canSelfRevoke or if requested setting is identical to this access
       return this._canSelfRevoke() || featurePermission.setting === this.featurePermissionsMap.selfRevoke.setting;
+    }
+    if (featurePermission.feature === 'secretSharing') {
+      // Same rule as selfRevoke: hand it down if we hold it ourselves, or if the
+      // child is asking for exactly the setting we already carry. Without this
+      // branch the function returns undefined and canCreateAccess refuses an
+      // access that merely wants to restrict its child.
+      return this.canCreateSharedSecrets() ||
+        featurePermission.setting === this.featurePermissionsMap.secretSharing?.setting;
     }
     if (featurePermission.feature === 'selfAudit') {
       // true if this acces has no setting for selfAudit or if requested setting is identical to this access

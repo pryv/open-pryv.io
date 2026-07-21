@@ -289,13 +289,45 @@ describe('[SHS] shared secrets', function () {
           type: 'shared',
           permissions: [{ streamId: '*', level: 'read' }]
         });
-      if (res.status === 201) {
-        const child = await create(res.body.access.token, validBody());
-        assert.strictEqual(child.status, 403,
-          'a child of a secretSharing-forbidden access must not regain the capability');
-      } else {
-        assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+      // Pin the outcome rather than accepting either: the child is created and
+      // inherits the restriction.
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      assert.ok(res.body.access.permissions.some(
+        (p) => p.feature === 'secretSharing' && p.setting === 'forbidden'),
+      'the child must carry the inherited restriction: ' +
+        JSON.stringify(res.body.access.permissions));
+      const child = await create(res.body.access.token, validBody());
+      assert.strictEqual(child.status, 403,
+        'a child of a secretSharing-forbidden access must not regain the capability');
+    });
+
+    it('[SHS60] the inherited restriction cannot be stripped by accesses.update', async function () {
+      const restricted = await createAppAccess({
+        permissions: [
+          { streamId: '*', level: 'manage' },
+          { feature: 'secretSharing', setting: 'forbidden' }
+        ]
+      });
+      const created = await coreRequest
+        .post(accessesPath)
+        .set('Authorization', restricted.token)
+        .send({ name: 'child-' + cuid(), type: 'shared', permissions: [{ streamId: '*', level: 'read' }] });
+      assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+
+      // Re-issuing the child WITHOUT the feature permission must not clear it.
+      const updated = await coreRequest
+        .put(accessesPath + '/' + created.body.access.id)
+        .set('Authorization', restricted.token)
+        .send({ update: { permissions: [{ streamId: '*', level: 'read' }] } });
+
+      if (updated.status === 200) {
+        assert.ok(updated.body.access.permissions.some(
+          (p) => p.feature === 'secretSharing' && p.setting === 'forbidden'),
+        'update must not strip the inherited restriction');
       }
+      const child = await create(created.body.access.token, validBody());
+      assert.strictEqual(child.status, 403,
+        'the child must still be barred after an update attempt');
     });
 
     it('[SHS09] refuses creation from an access with secretSharing forbidden', async function () {
@@ -656,6 +688,81 @@ describe('[SHS] shared secrets', function () {
         'a foreign access must not read the item directly');
     });
 
+    it('[SHS57] naming the namespace ROOT does not hand over everyone\'s secrets', async function () {
+      // The substream check ([SHS28]) is not enough: the root is not a substream,
+      // so a `*` grant used to resolve to `read` on it and expansion then walked
+      // every child. One request, no key, every secret in the clear.
+      const owner = await createAppAccess();
+      const created = await createOk(owner.token, validBody());
+      const attacker = await createAppAccess({
+        permissions: [{ streamId: '*', level: 'read' }]
+      });
+
+      for (const streams of [[NS_ROOT], [':_shared-secrets'], [{ any: [NS_ROOT] }]]) {
+        const res = await coreRequest
+          .get(eventsPath)
+          .set('Authorization', attacker.token)
+          .query({ streams, state: 'all' });
+        const ids = (res.body.events || []).map((e) => e.id);
+        assert.ok(!ids.includes(created.id),
+          'root query ' + JSON.stringify(streams) + ' leaked a foreign secret');
+        const serialized = JSON.stringify(res.body);
+        assert.ok(!serialized.includes('user.pryv.me'),
+          'no secret payload may appear in a namespace-root query');
+      }
+    });
+
+    it('[SHS58] a forged shared-secret event is neither creatable nor redeemable', async function () {
+      // Without this, the secretSharing opt-out is decorative: forge the item
+      // type in an ordinary stream and the public endpoint serves it.
+      const app = await createAppAccess({
+        permissions: [
+          { streamId: '*', level: 'manage' },
+          { feature: 'secretSharing', setting: 'forbidden' }
+        ]
+      });
+      const randomPart = crypto.randomBytes(24).toString('base64url');
+      const forged = {
+        streamIds: ['diary'],
+        type: 'shared-secret/item',
+        duration: 3600,
+        content: {
+          keyHash: crypto.createHash('sha256').update(randomPart).digest('hex'),
+          title: 'forged',
+          status: 'pending',
+          statusHistory: [{ status: 'pending', time: 1 }],
+          onConsumed: { message: 'x' },
+          secret: { stolen: true }
+        }
+      };
+      await coreRequest.post(streamsPath).set('Authorization', personalToken)
+        .send({ id: 'diary', name: 'Diary' });
+
+      const res = await coreRequest.post(eventsPath)
+        .set('Authorization', app.token).send(forged);
+      assert.strictEqual(res.status, 403,
+        'the shared-secret event type must be reserved: ' + JSON.stringify(res.body));
+
+      // Belt and braces: even if such an event existed, redeeming it must fail
+      // because it does not live in the namespace.
+      const planted = await coreRequest.post(eventsPath)
+        .set('Authorization', personalToken)
+        .send(Object.assign({}, forged, { type: 'note/txt', content: 'x' }));
+      if (planted.status === 201) {
+        const out = await retrieve(planted.body.event.id + '.' + randomPart);
+        assert.notStrictEqual(out.status, 200);
+        assert.strictEqual(out.body?.secret, undefined);
+      }
+    });
+
+    it('[SHS59] events.create into the namespace is refused', async function () {
+      const app = await createAppAccess({ permissions: [{ streamId: '*', level: 'manage' }] });
+      const res = await coreRequest.post(eventsPath)
+        .set('Authorization', app.token)
+        .send({ streamIds: [nsFor(app.id)], type: 'note/txt', content: 'hand-made' });
+      assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+    });
+
     it('[SHS29] the creator inspects status by key without consuming', async function () {
       const app = await createAppAccess();
       const created = await createOk(app.token, validBody());
@@ -810,7 +917,12 @@ describe('[SHS] shared secrets', function () {
 
     it('[SHS53] a foreign access cannot discard someone else\'s pending secret', async function () {
       const owner = await createAppAccess();
-      const attacker = await createAppAccess();
+      // The attacker needs write rights for this to prove anything — with only
+      // `read` it fails the ordinary permission check and never reaches the
+      // namespace rule, so the test would pass while the hole stayed open.
+      const attacker = await createAppAccess({
+        permissions: [{ streamId: '*', level: 'manage' }]
+      });
       const created = await createOk(owner.token, validBody());
 
       const del = await coreRequest

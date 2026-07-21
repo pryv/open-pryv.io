@@ -151,7 +151,12 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
 
       const userId = context.user.id;
       const event = await mall.events.getOne(userId, parsed.eventId);
-      if (event == null || event.type !== S.EVENT_TYPE) return next(unknownKey());
+      // Type alone is not identity: an event of this type sitting in an ordinary
+      // stream is a forgery, not a shared secret, and must not be redeemable.
+      if (event == null || event.type !== S.EVENT_TYPE ||
+          !(event.streamIds ?? []).some((id: string) => S.isSharedSecretStreamId(id))) {
+        return next(unknownKey());
+      }
 
       const content = event.content as ItemContent;
       // A wrong random half is indistinguishable from an unknown id, and never
@@ -201,7 +206,12 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
       if (parsed == null) return next(unknownKey());
 
       const event = await mall.events.getOne(context.user.id, parsed.eventId);
-      if (event == null || event.type !== S.EVENT_TYPE) return next(unknownKey());
+      // Type alone is not identity: an event of this type sitting in an ordinary
+      // stream is a forgery, not a shared secret, and must not be redeemable.
+      if (event == null || event.type !== S.EVENT_TYPE ||
+          !(event.streamIds ?? []).some((id: string) => S.isSharedSecretStreamId(id))) {
+        return next(unknownKey());
+      }
 
       const content = event.content as ItemContent;
       if (!S.key.constantTimeEquals(S.key.hashRandomPart(parsed.randomPart), content.keyHash ?? '')) {

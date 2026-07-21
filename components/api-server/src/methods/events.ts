@@ -205,6 +205,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
 
   // Shared-secret items are ordinary events, so the ordinary events API can
   // reach them — these keep it from being a way around their lifecycle.
+  const sharedSecretsCreateGuard = sharedSecrets.createEventCreateGuard({ errors });
   const sharedSecretsUpdateGuard = sharedSecrets.createEventUpdateGuard({ errors });
   const sharedSecretsDeleteGuard = sharedSecrets.createEventDeleteGuard({
     errors,
@@ -415,6 +416,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   api.register(
     'events.create',
     commonFns.getParamsValidation(methodsSchema.create.params),
+    sharedSecretsCreateGuard,
     normalizeStreamIdAndStreamIds,
     applyPrerequisitesForCreation,
     validateEventContentAndCoerce,

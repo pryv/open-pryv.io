@@ -93,6 +93,42 @@ function createEventDeleteGuard (deps: { errors: ErrorsFactory; now: () => numbe
   };
 }
 
+/**
+ * Refuse hand-made events in the namespace, and shared-secret items outside it.
+ *
+ * Both halves matter. Writing INTO the namespace by hand would plant an item the
+ * lifecycle guards never sanctioned; writing the item TYPE outside it would
+ * forge a redeemable secret in an ordinary stream — which sidesteps the
+ * `secretSharing` opt-out entirely and, living outside the guards, could be
+ * updated back to pending and redeemed again and again. The plugin's own writes
+ * go through the mall directly and never reach this chain.
+ */
+function createEventCreateGuard (deps: { errors: ErrorsFactory }) {
+  return function sharedSecretsEventCreateGuard (
+    context: unknown,
+    params: { streamIds?: unknown; streamId?: unknown; type?: unknown },
+    result: unknown,
+    next: (err?: unknown) => void
+  ) {
+    const streamIds: unknown[] = Array.isArray(params?.streamIds)
+      ? params.streamIds
+      : (params?.streamId != null ? [params.streamId] : []);
+    const inNamespace = streamIds.some((id) => C.isSharedSecretStreamId(id));
+
+    if (inNamespace) {
+      return next(withId(
+        deps.errors.forbidden('Shared secrets can only be created through their own endpoint.'),
+        'shared-secret-reserved-stream'));
+    }
+    if (params?.type === C.EVENT_TYPE) {
+      return next(withId(
+        deps.errors.forbidden('The shared-secret event type is reserved.'),
+        'shared-secret-reserved-type'));
+    }
+    next();
+  };
+}
+
 /** Refuse hand-made stream creation anywhere in the namespace. */
 function createStreamCreateGuard (deps: { errors: ErrorsFactory }) {
   return function sharedSecretsStreamCreateGuard (
@@ -150,6 +186,7 @@ function filterVisibleStreams<T extends StreamNode> (streams: T[], access: Acces
 
 export {
   filterVisibleStreams,
+  createEventCreateGuard,
   createEventUpdateGuard,
   createEventDeleteGuard,
   createStreamCreateGuard,
