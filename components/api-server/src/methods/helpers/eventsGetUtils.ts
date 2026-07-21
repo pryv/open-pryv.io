@@ -19,6 +19,8 @@ const utils = require('utils');
 const { Readable } = require('stream');
 const SetFileReadTokenStream = require('../streams/SetFileReadTokenStream.ts').default;
 const accountStreams = require('business/src/system-streams/index.ts');
+/** Root of the one-time shared-secret namespace — excluded from wildcard queries. */
+const SHARED_SECRETS_NS_ROOT = ':_shared-secrets:';
 const integrity = require('business/src/integrity/index.ts').default;
 import type { MethodNext } from '../_types.ts';
 import type { Readable as ReadableStream } from 'node:stream';
@@ -415,6 +417,14 @@ async function streamQueryAddHiddenStreams (context: MethodContext, params: GetE
     if (streamQuery.storeId !== 'local' && streamQuery.storeId !== storeDataUtils.AccountStoreId) { continue; }
     if (streamQuery.and == null) { streamQuery.and = []; }
     streamQuery.and.push({ not: forbiddenStreamIds });
+
+    // One-time shared secrets never answer a wildcard query — they surface only
+    // when their stream is named explicitly. A broad "give me everything" from
+    // an app (or a personal token building an export) should not sweep up
+    // credentials that exist to be redeemed once and forgotten.
+    if (streamQuery.any != null && streamQuery.any.includes('*')) {
+      streamQuery.and.push({ not: [SHARED_SECRETS_NS_ROOT] });
+    }
   }
   // trashed stream (it's enough to add only root streams, as they will expanded later on)
   if (params.state !== 'all' && params.state !== 'trashed') {

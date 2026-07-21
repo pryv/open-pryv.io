@@ -31,6 +31,21 @@ function addAuditStreams () {
 // assessment) — from the permission-lexicon single point.
 const { PermissionLevels } = require('./permissionSet.ts');
 
+/**
+ * Reserved namespace holding one-time shared secrets, one substream per creating
+ * access. Matched here as a literal rather than imported so the access layer
+ * keeps no dependency on the plugin that owns it.
+ */
+const SHARED_SECRETS_NS = ':_shared-secrets:';
+
+/** The access owning a shared-secrets substream, or null for any other stream. */
+function sharedSecretsOwnerOf (streamId: unknown): string | null {
+  if (typeof streamId !== 'string' || !streamId.startsWith(SHARED_SECRETS_NS)) return null;
+  const rest = streamId.slice(SHARED_SECRETS_NS.length);
+  if (rest.length === 0 || rest.includes(':')) return null;
+  return rest;
+}
+
 class AccessLogic {
   _access: Record<string, unknown>; // Access right from the DB — wider than public Access shape (internal fields)
   _userId: string;
@@ -392,6 +407,13 @@ class AccessLogic {
 
   async canGetEventsOnStream (streamId: string, storeId: string) {
     if (this.isPersonal()) return true;
+
+    // Shared secrets are readable only by the access that created them, whatever
+    // else that access was granted: a broad `*` permission must not become a way
+    // to read another app's one-time secrets. (A personal token, handled above,
+    // still sees the whole account.)
+    const secretsOwner = sharedSecretsOwnerOf(streamId);
+    if (secretsOwner != null) return secretsOwner === this.id;
 
     const fullStreamId = storeDataUtils.getFullItemId(storeId, streamId);
 
