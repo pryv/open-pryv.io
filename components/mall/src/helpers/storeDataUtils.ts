@@ -53,6 +53,11 @@ function parseStoreIdAndStoreItemId (fullItemId: string): [string, string] {
   // also covers :_cmc: without forcing CMC to register its own storage backend.
   if (storeId === '_cmc') return [LOCAL_STORE_ID, fullItemId];
 
+  // Shared-secret streams route to the local store on the same terms as CMC:
+  // another namespace-owning plugin, not a storage engine, whose items are
+  // ordinary events living beside the user's other data.
+  if (storeId === '_shared-secrets') return [LOCAL_STORE_ID, fullItemId];
+
   let storeItemId: string;
   if (endMarkerIndex === (fullItemId.length - 1)) { // ':storeId:', i.e. pseudo-stream representing store root
     storeItemId = '*';
