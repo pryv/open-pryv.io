@@ -575,7 +575,7 @@ export default function conformanceTests (getDB) {
       });
     });
 
-    describe('[ACCESSSTATE] setAccessState / getAccessState / deleteAccessState / sweepExpiredAccessStates', () => {
+    describe('[ACCESSSTATE] setAccessState / setAccessStateIfAbsent / getAccessState / deleteAccessState / sweepExpiredAccessStates', () => {
       const future = () => Date.now() + 60_000;
       const past = () => Date.now() - 1_000;
 
@@ -656,6 +656,44 @@ export default function conformanceTests (getDB) {
         assert.strictEqual(winners.length, 1, 'exactly one concurrent consumer wins');
         assert.deepStrictEqual(winners[0].value, value);
         assert.strictEqual(await db.getAccessState(key), null);
+      });
+
+      it('[AS12] setIfAbsent installs on a missing key and returns true', async () => {
+        const key = 'k-' + cuid();
+        const value = { jti: 'first' };
+        const expiresAt = future();
+        assert.strictEqual(await db.setAccessStateIfAbsent(key, value, expiresAt), true);
+        const got = await db.getAccessState(key);
+        assert.deepStrictEqual(got.value, value);
+        assert.strictEqual(got.expiresAt, expiresAt);
+      });
+
+      it('[AS13] setIfAbsent returns false on a live key and leaves the value untouched', async () => {
+        const key = 'k-' + cuid();
+        await db.setAccessState(key, { v: 1 }, future());
+        assert.strictEqual(await db.setAccessStateIfAbsent(key, { v: 2 }, future()), false);
+        assert.deepStrictEqual((await db.getAccessState(key)).value, { v: 1 });
+      });
+
+      it('[AS14] setIfAbsent reclaims an expired row and returns true', async () => {
+        const key = 'k-' + cuid();
+        await db.setAccessState(key, { v: 1 }, past());
+        assert.strictEqual(await db.setAccessStateIfAbsent(key, { v: 2 }, future()), true);
+        assert.deepStrictEqual((await db.getAccessState(key)).value, { v: 2 });
+      });
+
+      it('[AS15] concurrent setIfAbsent of one key: EXACTLY ONE winner (atomic first-writer-wins)', async () => {
+        // The security-critical guarantee for replay markers: two identical
+        // single-use proofs submitted at once must not both pass. Fire N
+        // set-if-absent calls at once; exactly one reports true.
+        const key = 'k-' + cuid();
+        const N = 8;
+        const results = await Promise.all(
+          Array.from({ length: N }, (_, i) => db.setAccessStateIfAbsent(key, { i }, future()))
+        );
+        const winners = results.filter((r) => r === true);
+        assert.strictEqual(winners.length, 1, 'exactly one concurrent caller wins');
+        assert.ok((await db.getAccessState(key)) != null);
       });
 
       it('[AS07] sweepExpiredAccessStates removes only expired rows and reports count', async () => {

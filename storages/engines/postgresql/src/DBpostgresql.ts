@@ -350,6 +350,24 @@ class DBpostgresql {
     await this.#set(getAccessStateKey(key), JSON.stringify({ value, expiresAt }));
   }
 
+  /**
+   * Atomic set-if-absent. A single upsert whose DO-UPDATE clause only
+   * fires on rows already past their expiresAt: the INSERT wins on a
+   * missing key, the conditional UPDATE reclaims an expired row, and a
+   * live row leaves rowCount at 0 — so of N concurrent callers exactly
+   * ONE reports true. Access-state payloads are always JSON written by
+   * this class, so the ::jsonb cast on the conflicting row is safe.
+   */
+  async setAccessStateIfAbsent (key: string, value: unknown, expiresAt: number): Promise<boolean> {
+    const res = await this.db.query(
+      `INSERT INTO platform_kv (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+       WHERE ((platform_kv.value)::jsonb ->> 'expiresAt')::numeric < $3`,
+      [getAccessStateKey(key), JSON.stringify({ value, expiresAt }), Date.now()]
+    );
+    return (res.rowCount ?? 0) > 0;
+  }
+
   async getAccessState (key: string): Promise<{ value: unknown, expiresAt: number } | null> {
     const storeKey = getAccessStateKey(key);
     const raw = await this.#get(storeKey);

@@ -468,6 +468,26 @@ class DBrqlite {
     );
   }
 
+  /**
+   * Atomic set-if-absent. A single upsert whose DO-UPDATE clause only
+   * fires on rows already past their expiresAt: the INSERT wins on a
+   * missing key, the conditional UPDATE reclaims an expired row, and a
+   * live row leaves changes at 0. rqlite linearizes writes through
+   * Raft, so of N concurrent callers exactly ONE reports true.
+   * A conflicting row whose payload lacks a numeric expiresAt is
+   * treated as live (the WHERE is NULL) — the sweep cleans those up.
+   */
+  async setAccessStateIfAbsent (key: string, value: unknown, expiresAt: number): Promise<boolean> {
+    const storeKey = getAccessStateKey(key);
+    const result = await this.execute(
+      `INSERT INTO keyValue (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value
+       WHERE CAST(json_extract(keyValue.value, '$.expiresAt') AS INTEGER) < ?`,
+      [storeKey, JSON.stringify({ value, expiresAt }), Date.now()]
+    );
+    return (result?.rows_affected ?? 0) > 0;
+  }
+
   async getAccessState (key: string) {
     const storeKey = getAccessStateKey(key);
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [storeKey]);
