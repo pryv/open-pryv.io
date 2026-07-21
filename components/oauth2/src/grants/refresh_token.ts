@@ -11,8 +11,11 @@
  * Exchange flow:
  *   1. Load the refresh row (key: `oauth-refresh/<coreId>/<token>`).
  *      `getAccessState` lazy-expires past `min(expiresAt, absoluteExpiresAt)`.
- *   2. Delete the row atomically (single-use; rotation always on; reuse
- *      → `invalid_grant` + `oauth.refresh.reused` audit signal).
+ *   2. Consume the row atomically (single-use; rotation always on). If the
+ *      token no longer resolves, a consumed-marker lookup distinguishes genuine
+ *      reuse (→ `oauth.token.reuse_detected` + chain revoke past the grace
+ *      window) from expired/never-issued (→ `oauth.code.reused`). Both return
+ *      an identical `invalid_grant` so the two are not distinguishable on the wire.
  *   3. Verify `client_id` matches the row's clientId.
  *   4. Mint a NEW app access under the same user/scope/client via the
  *      injected `mintRefreshedAccess` callback. The grant runs without
@@ -74,10 +77,26 @@ export type MintRefreshedAccess = (params: {
   permissions?: Array<Record<string, unknown>>;
 }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
 
+/**
+ * Collapse a refresh chain on detected reuse: soft-delete the durable data-grant
+ * (kills future refreshes) + all live session accesses for (user, client), and
+ * best-effort notify the counterparty app. Storage-direct — wired in the
+ * api-server layer where the accesses repository + cache live. Errors are the
+ * caller's to swallow (a revoke failure must not turn the reuse response into a 500).
+ */
+export type RevokeChain = (params: {
+  userId: string;
+  username: string;
+  clientId: string;
+  dataGrantAccessId?: string;
+}) => Promise<void>;
+
 export type RefreshTokenDeps = {
   config: { get (key: string): unknown };
   platform: PlatformDB;
   mintRefreshedAccess: MintRefreshedAccess;
+  /** Optional: absent → reuse is detected + audited but the chain is not revoked. */
+  revokeChain?: RevokeChain;
 };
 
 export type RefreshGrantParams = {
@@ -122,12 +141,57 @@ export async function handleRefreshToken (
   // two concurrent refreshes of the same token cannot both mint a new chain
   // (which also defeated reuse-detection, since both reads saw the row).
   const row = await storage.consumeRefresh(deps.platform, coreId, params.refresh_token);
+  // Uniform failure description for BOTH the never-existed and the reuse branch —
+  // a distinct message would let an unauthenticated caller probe whether a token
+  // was real + recently consumed (and tell an attacker their theft was detected).
+  const INVALID = { ok: false as const, status: 400, error: 'invalid_grant', description: 'refresh_token is invalid or already used' };
   if (row == null) {
-    // Either expired/never-issued OR already-rotated. Audit as reuse
-    // since the legitimate path always deletes-then-reissues; we can't
-    // distinguish locally, but the security-relevant case is reuse.
-    await audit('oauth.code.reused', { clientId: params.client_id, codeId: 'refresh:' + params.refresh_token.slice(0, 6) + '…' });
-    return { ok: false, status: 400, error: 'invalid_grant', description: 'refresh_token is invalid or already used' };
+    // Token no longer resolves. Consult the consumed marker to tell genuine REUSE
+    // (a rotated token replayed) from expired/never-issued.
+    const marker = await storage.getRefreshConsumed(deps.platform, coreId, params.refresh_token);
+    if (marker == null) {
+      // Expired or never issued — not reuse. Keep the user-less probe signal.
+      await audit('oauth.code.reused', { clientId: params.client_id, codeId: 'refresh:' + params.refresh_token.slice(0, 6) + '…' });
+      return INVALID;
+    }
+    const graceMs = 1000 * Number(deps.config.get('oauth:refreshReuseGraceSeconds') ?? 10);
+    const withinGrace = (Date.now() - marker.consumedAt) < graceMs;
+    await audit('oauth.token.reuse_detected', {
+      clientId: marker.clientId,
+      userId: marker.userId,
+      ...(marker.dataGrantAccessId != null ? { dataGrantAccessId: marker.dataGrantAccessId } : {}),
+      codeId: 'refresh:' + params.refresh_token.slice(0, 6) + '…',
+      reason: withinGrace ? 'within-grace' : 'chain-revoked',
+    });
+    if (!withinGrace && typeof deps.revokeChain === 'function') {
+      try {
+        await deps.revokeChain({
+          userId: marker.userId,
+          username: marker.username,
+          clientId: marker.clientId,
+          ...(marker.dataGrantAccessId != null ? { dataGrantAccessId: marker.dataGrantAccessId } : {}),
+        });
+      } catch (err: unknown) {
+        logServerError('refresh_token: revokeChain failed after reuse detection', err);
+      }
+    }
+    return INVALID; // never 500 on the reuse path — the audit row carries the signal
+  }
+
+  // Mark the just-consumed token so a later replay is detectable as reuse. TTL =
+  // the sooner of the row's sliding + absolute expiry (past that, a replay is
+  // genuinely expired). Best-effort: a lost marker costs one detection, not the
+  // rotation (which already happened atomically above).
+  try {
+    await storage.markRefreshConsumed(deps.platform, coreId, params.refresh_token, {
+      clientId: row.clientId,
+      userId: row.userId,
+      username: row.username,
+      ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
+      consumedAt: Date.now(),
+    }, Math.min(row.expiresAt, row.absoluteExpiresAt));
+  } catch (err: unknown) {
+    logServerError('refresh_token: markRefreshConsumed failed (reuse detection degraded for this token)', err);
   }
 
   if (params.client_id !== row.clientId) {

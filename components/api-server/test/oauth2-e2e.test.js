@@ -401,6 +401,22 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
   });
 
   describe('[OAUTH-E2E-FAIL] negative cases', function () {
+    // A bare 404 out of /oauth2/authorize is ambiguous: route not mounted,
+    // client row missing from PlatformDB, or the consent-offer capability
+    // not resolving. Discriminate them up front so an intermittent failure
+    // in the cases below reports which prerequisite actually broke.
+    beforeEach(async function () {
+      const noParams = await coreRequest.get('/oauth2/authorize');
+      assert.notEqual(noParams.status, 404,
+        '/oauth2/authorize route not mounted: ' + describeRes(noParams));
+      const platformDB = require('storages').platformDB;
+      const clientRow = await storage.getClient(platformDB, clientId);
+      assert.ok(clientRow != null, 'OAuth client fixture missing from PlatformDB: ' + clientId);
+      const capRes = await globalThis.fetch(capabilityUrl);
+      assert.equal(capRes.status, 200,
+        'consent-offer capability URL does not resolve: ' + capabilityUrl + ' -> ' + capRes.status);
+    });
+
     it('[OE10] code reuse → invalid_grant on the second exchange', async function () {
       const r = await runFullFlow();
       assert.equal(r.tokenRes.status, 200);

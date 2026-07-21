@@ -17,7 +17,7 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert/strict');
 const { handleToken } = require('../src/routes/token.ts');
-const { setRefresh, getRefresh } = require('../src/storage.ts');
+const { setRefresh, getRefresh, getRefreshConsumed } = require('../src/storage.ts');
 
 const ISSUER = 'https://reg.pryv.me';
 const CORE_ID = 'core-a';
@@ -319,6 +319,151 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
       const res = fakeRes();
       await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-CF4', client_id: 'myapp' } }, res);
       assert.equal(res.statusCode, 200);
+    });
+  });
+
+  describe('[OAUTH-TKN-RT-REUSEDET] reuse-detection enforcement (chain revoke)', () => {
+    // grace override; 0 = strict (any post-rotation replay revokes)
+    function withRevoke (platform, grace, calls) {
+      return handleToken({
+        config: fakeConfig({ 'oauth:refreshReuseGraceSeconds': grace }),
+        platform,
+        mintRefreshedAccess: MINT_REFRESHED_FAKE,
+        revokeChain: async (p) => { calls.push(p); },
+      });
+    }
+
+    it('[OTR-RD1] reuse past grace → revokeChain fires with the chain identity from the marker', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-RD1', { dataGrantAccessId: 'dg-rd1' });
+      const calls = [];
+      const handler = withRevoke(platform, 0, calls);
+      const params = { grant_type: 'refresh_token', refresh_token: 'RT-RD1', client_id: 'myapp' };
+      const r1 = fakeRes(); await handler({ body: params }, r1);
+      assert.equal(r1.statusCode, 200);
+      const r2 = fakeRes(); await handler({ body: params }, r2);
+      assert.equal(r2.statusCode, 400);
+      assert.equal(r2.body.error, 'invalid_grant');
+      assert.equal(calls.length, 1, 'revokeChain must fire on reuse past grace');
+      assert.deepEqual(calls[0], { userId: 'u-alice', username: 'alice', clientId: 'myapp', dataGrantAccessId: 'dg-rd1' });
+    });
+
+    it('[OTR-RD2] double-submit within grace → NO revoke (benign)', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-RD2', { dataGrantAccessId: 'dg-rd2' });
+      const calls = [];
+      const handler = withRevoke(platform, 60, calls);
+      const params = { grant_type: 'refresh_token', refresh_token: 'RT-RD2', client_id: 'myapp' };
+      const r1 = fakeRes(); await handler({ body: params }, r1);
+      assert.equal(r1.statusCode, 200);
+      const r2 = fakeRes(); await handler({ body: params }, r2);
+      assert.equal(r2.statusCode, 400);
+      assert.equal(calls.length, 0, 'within grace = benign double-submit, chain preserved');
+    });
+
+    it('[OTR-RD3] never-issued token → NOT reuse, no revoke', async () => {
+      const platform = fakePlatform();
+      const calls = [];
+      const handler = withRevoke(platform, 0, calls);
+      const res = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'NEVER', client_id: 'myapp' } }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(calls.length, 0);
+    });
+
+    it('[OTR-RD4] marker gone (TTL expired) → classified expired, no revoke', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-RD4', { dataGrantAccessId: 'dg-rd4' });
+      const calls = [];
+      const handler = withRevoke(platform, 0, calls);
+      const params = { grant_type: 'refresh_token', refresh_token: 'RT-RD4', client_id: 'myapp' };
+      await handler({ body: params }, fakeRes());
+      platform._state.delete('oauth-refresh-used/' + CORE_ID + '/RT-RD4'); // simulate marker TTL expiry
+      const r2 = fakeRes(); await handler({ body: params }, r2);
+      assert.equal(r2.statusCode, 400);
+      assert.equal(calls.length, 0, 'no marker → treated as expired, not reuse');
+    });
+
+    it('[OTR-RD5] consumed marker carries chain identity + consumedAt, NO live token, TTL = min(exp, absExp)', async () => {
+      const platform = fakePlatform();
+      const exp = Date.now() + 5 * 24 * 3600 * 1000;      // sooner
+      const absExp = Date.now() + 90 * 24 * 3600 * 1000;  // later
+      await seedRefresh(platform, 'RT-RD5', { dataGrantAccessId: 'dg-rd5', expiresAt: exp, absoluteExpiresAt: absExp });
+      const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE });
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-RD5', client_id: 'myapp' } }, fakeRes());
+      const marker = await getRefreshConsumed(platform, CORE_ID, 'RT-RD5');
+      assert.ok(marker != null);
+      assert.equal(marker.userId, 'u-alice');
+      assert.equal(marker.clientId, 'myapp');
+      assert.equal(marker.dataGrantAccessId, 'dg-rd5');
+      assert.equal(typeof marker.consumedAt, 'number');
+      assert.ok(!JSON.stringify(marker).includes('RT-RD5'), 'marker must not carry the token string');
+      // Marker TTL = min(expiresAt, absoluteExpiresAt) of the consumed row.
+      const entry = platform._state.get('oauth-refresh-used/' + CORE_ID + '/RT-RD5');
+      assert.equal(entry.expiresAt, exp, 'marker TTL must be the sooner of the row expiry / absolute cap');
+    });
+
+    it('[OTR-RD6] marker write failure is non-fatal (rotation still succeeds)', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-RD6');
+      const origSet = platform.setAccessState.bind(platform);
+      platform.setAccessState = async (k, v, e) => {
+        if (k.startsWith('oauth-refresh-used/')) throw new Error('marker write boom');
+        return origSet(k, v, e);
+      };
+      const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE });
+      const res = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-RD6', client_id: 'myapp' } }, res);
+      assert.equal(res.statusCode, 200, 'a marker write failure must not fail the rotation');
+    });
+
+    it('[OTR-RD7] revokeChain throwing → still invalid_grant, never 500', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-RD7', { dataGrantAccessId: 'dg-rd7' });
+      const handler = handleToken({
+        config: fakeConfig({ 'oauth:refreshReuseGraceSeconds': 0 }),
+        platform,
+        mintRefreshedAccess: MINT_REFRESHED_FAKE,
+        revokeChain: async () => { throw new Error('revoke boom'); },
+      });
+      const params = { grant_type: 'refresh_token', refresh_token: 'RT-RD7', client_id: 'myapp' };
+      await handler({ body: params }, fakeRes());
+      const r2 = fakeRes(); await handler({ body: params }, r2);
+      assert.equal(r2.statusCode, 400);
+      assert.equal(r2.body.error, 'invalid_grant');
+    });
+
+    it('[OTR-RD8] repeat replay → revokeChain fires each time (marker persists, non-consuming)', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-RD8', { dataGrantAccessId: 'dg-rd8' });
+      const calls = [];
+      const handler = withRevoke(platform, 0, calls);
+      const params = { grant_type: 'refresh_token', refresh_token: 'RT-RD8', client_id: 'myapp' };
+      await handler({ body: params }, fakeRes()); // rotate
+      await handler({ body: params }, fakeRes()); // replay 1
+      await handler({ body: params }, fakeRes()); // replay 2
+      assert.equal(calls.length, 2, 'each post-grace replay must re-detect + revoke');
+    });
+
+    it('[OTR-RD9] revokeChain absent → detect + audit only, no throw (400)', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-RD9', { dataGrantAccessId: 'dg-rd9' });
+      const handler = handleToken({ config: fakeConfig({ 'oauth:refreshReuseGraceSeconds': 0 }), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE });
+      const params = { grant_type: 'refresh_token', refresh_token: 'RT-RD9', client_id: 'myapp' };
+      await handler({ body: params }, fakeRes());
+      const r2 = fakeRes(); await handler({ body: params }, r2);
+      assert.equal(r2.statusCode, 400);
+      assert.equal(r2.body.error, 'invalid_grant');
+    });
+
+    it('[OTR-RD10] reuse and never-issued return the SAME error_description (no oracle)', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-RD10', { dataGrantAccessId: 'dg-rd10' });
+      const handler = handleToken({ config: fakeConfig({ 'oauth:refreshReuseGraceSeconds': 0 }), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE, revokeChain: async () => {} });
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-RD10', client_id: 'myapp' } }, fakeRes());
+      const reuse = fakeRes(); await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-RD10', client_id: 'myapp' } }, reuse);
+      const miss = fakeRes(); await handler({ body: { grant_type: 'refresh_token', refresh_token: 'NEVER-X', client_id: 'myapp' } }, miss);
+      assert.equal(reuse.body.error_description, miss.body.error_description, 'reuse must not be distinguishable from never-issued');
     });
   });
 });
