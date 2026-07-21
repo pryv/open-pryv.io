@@ -209,6 +209,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
           .send({ phone: '+41000' });
+        assert.strictEqual(res.status, 302, `hook mfa.activate failed: ${JSON.stringify(res.body)}`);
         mfaToken = res.body.mfaToken;
       });
 
@@ -260,10 +261,12 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
           .send({ phone: '+41000' });
-        await coreRequest
+        assert.strictEqual(activateRes.status, 302, `hook mfa.activate failed: ${JSON.stringify(activateRes.body)}`);
+        const confirmRes = await coreRequest
           .post(`/${username}/mfa/confirm`)
           .set('Authorization', activateRes.body.mfaToken)
           .send({ code: '1234' });
+        assert.strictEqual(confirmRes.status, 200, `hook mfa.confirm failed: ${JSON.stringify(confirmRes.body)}`);
 
         // Now log in — should trigger a new MFA challenge and return mfaToken.
         nock(SMS_HOST).post('/challenge').reply(200, {});
@@ -321,10 +324,12 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
           .send({ phone: '+41000' });
-        await coreRequest
+        assert.strictEqual(activateRes.status, 302, `hook mfa.activate failed: ${JSON.stringify(activateRes.body)}`);
+        const confirmRes = await coreRequest
           .post(`/${username}/mfa/confirm`)
           .set('Authorization', activateRes.body.mfaToken)
           .send({ code: '1234' });
+        assert.strictEqual(confirmRes.status, 200, `hook mfa.confirm failed: ${JSON.stringify(confirmRes.body)}`);
       });
 
       it('[MA6A] clears the MFA profile; subsequent login returns a real token', async function () {
@@ -332,7 +337,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/deactivate`)
           .set('Authorization', personalToken)
           .send({});
-        assert.strictEqual(deactivateRes.status, 200);
+        assert.strictEqual(deactivateRes.status, 200, `mfa.deactivate failed: ${JSON.stringify(deactivateRes.body)}`);
 
         const loginRes = await coreRequest
           .post(`/${username}/auth/login`)
@@ -356,10 +361,12 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
           .send({ phone: '+41000' });
+        assert.strictEqual(activateRes.status, 302, `hook mfa.activate failed: ${JSON.stringify(activateRes.body)}`);
         const confirmRes = await coreRequest
           .post(`/${username}/mfa/confirm`)
           .set('Authorization', activateRes.body.mfaToken)
           .send({ code: '1234' });
+        assert.strictEqual(confirmRes.status, 200, `hook mfa.confirm failed: ${JSON.stringify(confirmRes.body)}`);
         recoveryCodes = confirmRes.body.recoveryCodes;
       });
 
