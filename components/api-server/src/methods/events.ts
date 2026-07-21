@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const utils = require('utils');
 const errors = require('errors').factory;
 const cmc = require('cmc');
+const sharedSecrets = require('shared-secrets');
 const fs = require('fs');
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/eventsMethods.ts');
@@ -200,6 +201,14 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   const cmcEnsureReservedParentsHook = cmc.createEnsureReservedParentsHook({
     mall,
     logger: getLogger('cmc:ensure-reserved-parents'),
+  });
+
+  // Shared-secret items are ordinary events, so the ordinary events API can
+  // reach them — these keep it from being a way around their lifecycle.
+  const sharedSecretsUpdateGuard = sharedSecrets.createEventUpdateGuard({ errors });
+  const sharedSecretsDeleteGuard = sharedSecrets.createEventDeleteGuard({
+    errors,
+    now: () => timestamp.now()
   });
 
   api.register(
@@ -722,6 +731,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       () => getUpdates().ignoreProtectedFields, logger),
     normalizeStreamIdAndStreamIds,
     applyPrerequisitesForUpdate,
+    // after the prerequisites, which is what loads the event being updated
+    sharedSecretsUpdateGuard,
     validateEventContentAndCoerce,
     detectAccountStream,
     validateAccountStreamForUpdate,
@@ -958,6 +969,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     'events.delete',
     commonFns.getParamsValidation(methodsSchema.del.params),
     checkEventForDelete,
+    sharedSecretsDeleteGuard,
     blockAccountEventDeletion,
     function (context: MethodContext, params: EventsDeleteParams, result: EventsDeleteResult, next: MethodNext) {
       // Invariant: checkEventForDelete landed context.oldEvent.

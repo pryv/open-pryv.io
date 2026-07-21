@@ -22,3 +22,4 @@ export * from './constants.ts';
 export * as key from './key.ts';
 export * from './item.ts';
 export * from './provisioning.ts';
+export * from './guards.ts';

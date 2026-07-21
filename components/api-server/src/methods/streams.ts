@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const cmc = require('cmc');
+const sharedSecrets = require('shared-secrets');
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/streamsMethods.ts');
 const streamSchema = require('../schema/stream.ts').default;
@@ -173,6 +174,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   }
   // CREATION
   const cmcStreamCreateHook = cmc.createStreamCreateReservedRootHook({ errors });
+  const sharedSecretsStreamCreateGuard = sharedSecrets.createStreamCreateGuard({ errors });
   const cmcEnsureReservedParentsHook = cmc.createEnsureReservedParentsHook({
     mall,
     logger: getLogger('cmc:ensure-reserved-parents'),
@@ -182,6 +184,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     commonFns.getParamsValidation(methodsSchema.create.params),
     cmcEnsureReservedParentsHook,
     cmcStreamCreateHook,
+    sharedSecretsStreamCreateGuard,
     applyDefaultsForCreation,
     applyPrerequisitesForCreation,
     createStream);
@@ -317,7 +320,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // BEFORE the existing permission check so the rejection is plugin-
   // owned (not permission-shaped) and surfaces a stable error id.
   const cmcStreamDeleteHook = cmc.createStreamDeleteReservedRootHook({ errors });
-  api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), cmcStreamDeleteHook, verifyStreamExistenceAndPermissions, deleteStream);
+  const sharedSecretsStreamDeleteGuard = sharedSecrets.createStreamDeleteGuard({ errors });
+  api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), cmcStreamDeleteHook, sharedSecretsStreamDeleteGuard, verifyStreamExistenceAndPermissions, deleteStream);
   async function verifyStreamExistenceAndPermissions (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     params.mergeEventsWithParent ??= null;
     context.stream = await context.streamForStreamId(params.id!, null);

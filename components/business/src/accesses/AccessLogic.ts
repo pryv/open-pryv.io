@@ -498,6 +498,20 @@ class AccessLogic {
     if (this.featurePermissionsMap.selfRevoke == null) return true; // default allow
     return this.featurePermissionsMap.selfRevoke.setting !== 'forbidden';
   }
+
+  /**
+   * Whether this access may hand secrets over through a one-time shared secret.
+   *
+   * Default allow, like selfRevoke: a token is only barred when it carries an
+   * explicit `secretSharing: forbidden`. Publicly exposed tokens are the case
+   * this exists for — they should not be able to mint redeemable credentials.
+   */
+  canCreateSharedSecrets () {
+    // The map is absent on accesses built without a permission set (personal
+    // tokens in some paths), which means nothing was forbidden.
+    if (this.featurePermissionsMap?.secretSharing == null) return true; // default allow
+    return this.featurePermissionsMap.secretSharing.setting !== 'forbidden';
+  }
 }
 
 export default AccessLogic;
