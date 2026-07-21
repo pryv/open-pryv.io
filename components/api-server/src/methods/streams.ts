@@ -177,6 +177,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   }
   // CREATION
   const cmcStreamCreateHook = cmc.createStreamCreateReservedRootHook({ errors });
+  const sharedSecretsStreamUpdateGuard = sharedSecrets.createStreamUpdateGuard({ errors });
   const sharedSecretsStreamCreateGuard = sharedSecrets.createStreamCreateGuard({ errors });
   const cmcEnsureReservedParentsHook = cmc.createEnsureReservedParentsHook({
     mall,
@@ -253,7 +254,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     }
   }
   // UPDATE
-  api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), commonFns.catchForbiddenUpdate(streamSchema('update'), () => getUpdates().ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
+  api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), sharedSecretsStreamUpdateGuard, commonFns.catchForbiddenUpdate(streamSchema('update'), () => getUpdates().ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
   async function applyPrerequisitesForUpdate (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     if (params?.update?.parentId === params.id) {
       return next(errors.invalidOperation('The provided "parentId" is the same as the stream\'s "id".', params.update));

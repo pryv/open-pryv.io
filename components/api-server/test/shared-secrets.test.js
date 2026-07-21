@@ -771,6 +771,64 @@ describe('[SHS] shared secrets', function () {
       }
     });
 
+    it('[SHS65] an event cannot be turned into a shared secret by events.update', async function () {
+      // Moving an ordinary event into the namespace (or stamping it with the
+      // reserved type) would mint a redeemable secret that skipped creation
+      // validation entirely — no TTL ceiling, no size cap, and no returnUrl
+      // scheme check, which is the one that keeps a javascript: URL away from
+      // an unauthenticated third party.
+      const app = await createAppAccess({ permissions: [{ streamId: '*', level: 'manage' }] });
+      await createOk(app.token, validBody()); // provisions the app's substream
+      await coreRequest.post(streamsPath).set('Authorization', personalToken)
+        .send({ id: 'notes', name: 'Notes' });
+
+      const plain = await coreRequest.post(eventsPath).set('Authorization', app.token)
+        .send({ streamIds: ['notes'], type: 'note/txt', content: 'ordinary' });
+      assert.strictEqual(plain.status, 201, JSON.stringify(plain.body));
+
+      const moved = await coreRequest.put(eventsPath + '/' + plain.body.event.id)
+        .set('Authorization', app.token)
+        .send({ streamIds: [nsFor(app.id)] });
+      assert.strictEqual(moved.status, 403, 'must not move an event into the namespace: ' +
+        JSON.stringify(moved.body));
+
+      const retyped = await coreRequest.put(eventsPath + '/' + plain.body.event.id)
+        .set('Authorization', app.token)
+        .send({ type: 'shared-secret/item' });
+      assert.strictEqual(retyped.status, 403, 'must not stamp the reserved type: ' +
+        JSON.stringify(retyped.body));
+    });
+
+    it('[SHS66] namespace streams cannot be renamed or re-parented', async function () {
+      const owner = await createAppAccess();
+      await createOk(owner.token, validBody());
+      const attacker = await createAppAccess({
+        permissions: [{ streamId: '*', level: 'manage' }]
+      });
+      await coreRequest.post(streamsPath).set('Authorization', personalToken)
+        .send({ id: 'loot', name: 'Loot' });
+
+      // Re-parenting a victim's substream out of the namespace would strip every
+      // namespace rule from it and expose the secrets as ordinary events.
+      const reparent = await coreRequest
+        .put(streamsPath + '/' + encodeURIComponent(nsFor(owner.id)))
+        .set('Authorization', attacker.token)
+        .send({ parentId: 'loot' });
+      assert.notStrictEqual(reparent.status, 200, JSON.stringify(reparent.body));
+
+      // The root is protected too — moving it would expose everyone at once.
+      const moveRoot = await coreRequest
+        .put(streamsPath + '/' + encodeURIComponent(NS_ROOT))
+        .set('Authorization', personalToken)
+        .send({ parentId: 'loot' });
+      assert.notStrictEqual(moveRoot.status, 200, JSON.stringify(moveRoot.body));
+
+      // …and the owner's secret is still exactly where it was.
+      const listed = await coreRequest.get(eventsPath).set('Authorization', owner.token)
+        .query({ streams: [nsFor(owner.id)] });
+      assert.strictEqual(listed.status, 200, JSON.stringify(listed.body));
+    });
+
     it('[SHS59] events.create into the namespace is refused', async function () {
       const app = await createAppAccess({ permissions: [{ streamId: '*', level: 'manage' }] });
       const res = await coreRequest.post(eventsPath)

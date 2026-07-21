@@ -15,6 +15,9 @@ const ArraySerializationStream = require('./methods/streams/ArraySerializationSt
 const SingleObjectSerializationStream = require('./methods/streams/SingleObjectSerializationStream.ts').default;
 
 const { Transform } = require('stream');
+const { getLogger } = require('@pryv/boiler');
+
+const logger = getLogger('result');
 
 const { DummyTracing } = require('tracing');
 
@@ -138,7 +141,26 @@ class Result {
   // Sends the content of Result to the HttpResponse stream passed in parameters.
   //
   writeToHttpResponse (res: Response, successCode: number) {
-    const onEndCallBack = this._private.onEndCallback;
+    const rawOnEnd = this._private.onEndCallback;
+    // The end-callback is async (it writes the audit record) and its result was
+    // dropped on the floor, so a rejection inside it became an unhandled
+    // rejection — which on current Node defaults takes the process down, after
+    // the response has already been sent. Failures here must be logged, never
+    // fatal: this runs on the success path of every audited request.
+    const onEndCallBack = rawOnEnd == null
+      ? null
+      : () => {
+          try {
+            const returned = rawOnEnd() as unknown;
+            if (returned != null && typeof (returned as PromiseLike<unknown>).then === 'function') {
+              Promise.resolve(returned).then(null, (err: unknown) => {
+                logger.error('result onEnd callback failed', err);
+              });
+            }
+          } catch (err) {
+            logger.error('result onEnd callback threw', err);
+          }
+        };
     if (this.isStreamResult()) {
       const writeTracingId = this._private.tracing.startSpan('writeToHttpResponse', {}, this._private.tracingId!);
       const stream = this.writeStreams(res, successCode);

@@ -90,6 +90,14 @@ class Audit {
     if (!this.filter.isAudited(methodId)) { return; }
     context.tracing.startSpan('audit.validApiCall');
     const userId = context?.user?.id;
+    // Some audited methods legitimately run without an access — a credential
+    // handed over by one-time key authenticates the request without one. Same
+    // substitution errorApiCall already makes; without it buildDefaultEvent
+    // dereferences null and the SUCCESS path throws while the failure path
+    // audits fine.
+    if (context.access?.id == null) {
+      context.access = { id: AuditAccessIds.INVALID };
+    }
     const event: AuditEventLike = buildDefaultEvent(context);
     if (context.auditIntegrityPayload != null) {
       event.content.record = context.auditIntegrityPayload;

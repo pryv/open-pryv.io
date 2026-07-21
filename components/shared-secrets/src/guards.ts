@@ -26,7 +26,7 @@ type ErrorsFactory = {
   forbidden (msg?: string): Error & { data?: Record<string, unknown> };
   invalidOperation (msg?: string, data?: unknown): Error & { data?: Record<string, unknown> };
 };
-type EventLike = { id?: string; streamIds?: string[]; content?: unknown };
+type EventLike = { id?: string; streamIds?: string[]; type?: string; content?: unknown };
 
 function withId (err: Error & { data?: Record<string, unknown> }, id: string) {
   err.data = Object.assign({}, err.data, { id });
@@ -44,7 +44,7 @@ function touchesNamespace (event: EventLike | null | undefined): boolean {
  */
 function createEventUpdateGuard (deps: { errors: ErrorsFactory }) {
   return function sharedSecretsUpdateGuard (
-    context: { oldEvent?: EventLike; event?: EventLike },
+    context: { oldEvent?: EventLike; event?: EventLike; newEvent?: EventLike },
     params: unknown,
     result: unknown,
     next: (err?: unknown) => void
@@ -54,6 +54,17 @@ function createEventUpdateGuard (deps: { errors: ErrorsFactory }) {
       return next(withId(
         deps.errors.forbidden('A shared secret cannot be modified.'),
         'shared-secret-immutable'));
+    }
+    // The RESULT of the update matters as much as its subject: moving an
+    // ordinary event into the namespace, or stamping it with the reserved type,
+    // would mint a redeemable secret that never passed creation validation —
+    // no TTL ceiling, no size cap, and no returnUrl scheme check, which is the
+    // one that hands a javascript: URL to an unauthenticated third party.
+    const after = context.newEvent;
+    if (touchesNamespace(after) || after?.type === C.EVENT_TYPE) {
+      return next(withId(
+        deps.errors.forbidden('An event cannot be turned into a shared secret.'),
+        'shared-secret-reserved-type'));
     }
     next();
   };
@@ -146,6 +157,32 @@ function createStreamCreateGuard (deps: { errors: ErrorsFactory }) {
   };
 }
 
+/**
+ * Refuse renaming or re-parenting the namespace's streams.
+ *
+ * Without this, an access holding a broad `manage` grant could move a victim's
+ * substream OUT of the namespace — after which none of the namespace rules
+ * apply to it any more, and its pending secrets read like ordinary events. The
+ * root is protected for the same reason, personal tokens included: reparenting
+ * it would expose every access's secrets at once.
+ */
+function createStreamUpdateGuard (deps: { errors: ErrorsFactory }) {
+  return function sharedSecretsStreamUpdateGuard (
+    context: unknown,
+    params: { id?: unknown; update?: { parentId?: unknown } },
+    result: unknown,
+    next: (err?: unknown) => void
+  ) {
+    if (C.isSharedSecretStreamId(params?.id) ||
+        C.isSharedSecretStreamId(params?.update?.parentId)) {
+      return next(withId(
+        deps.errors.invalidOperation('The shared-secrets namespace is managed by the server.'),
+        'shared-secret-reserved-stream'));
+    }
+    next();
+  };
+}
+
 /** Refuse deletion of the namespace's streams, including by a personal token. */
 function createStreamDeleteGuard (deps: { errors: ErrorsFactory }) {
   return function sharedSecretsStreamDeleteGuard (
@@ -190,6 +227,7 @@ export {
   createEventUpdateGuard,
   createEventDeleteGuard,
   createStreamCreateGuard,
+  createStreamUpdateGuard,
   createStreamDeleteGuard,
   touchesNamespace
 };
