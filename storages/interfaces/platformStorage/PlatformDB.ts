@@ -143,6 +143,17 @@ export interface PlatformDB {
 
   // --- Access-request state (cluster-wide ephemeral) --------------
   setAccessState (key: string, value: unknown, expiresAt: number): Promise<void>;
+  /**
+   * ATOMIC set-if-absent: install the value ONLY when no live entry
+   * holds the key, in one linearized operation. Returns true when this
+   * call installed the value (key absent, or held only an expired
+   * entry — expired rows count as absent and are replaced), false when
+   * a live entry exists (left untouched). Concurrent callers of the
+   * same key: exactly ONE gets true. Use this (not getAccessState +
+   * setAccessState, which races) for first-writer-wins state such as
+   * single-use nonce/replay markers.
+   */
+  setAccessStateIfAbsent (key: string, value: unknown, expiresAt: number): Promise<boolean>;
   getAccessState (key: string): Promise<AccessStateEntry | null>;
   deleteAccessState (key: string): Promise<void>;
   /**
@@ -276,6 +287,8 @@ const PlatformDB: PlatformDB = {
   // --- Access-request state --- //
 
   async setAccessState (key: string, value: unknown, expiresAt: number): Promise<void> { throw new Error('Not implemented'); },
+
+  async setAccessStateIfAbsent (key: string, value: unknown, expiresAt: number): Promise<boolean> { throw new Error('Not implemented'); },
 
   async getAccessState (key: string): Promise<AccessStateEntry | null> { throw new Error('Not implemented'); },
 

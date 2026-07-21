@@ -262,6 +262,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     applyDefaultsForCreation,
     commonFns.getParamsValidation(methodsSchema.create.params),
     cmcAccessCreateForgePreventionHook,
+    dpopBindingCreateGuard,
     applyPrerequisitesForCreation, applyAccountStreamsValidation,
     createDataStructureFromPermissions,
     cleanupPermissions,
@@ -272,6 +273,21 @@ export default async function produceAccessesApiMethods (api: { register (...arg
 
   function applyDefaultsForCreation (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     params.type ??= 'shared';
+    next();
+  }
+
+  /**
+   * The DPoP key binding (`clientData.dpop`) is written ONLY by the OAuth
+   * token-issuance path (storage-direct, not this method). Rejecting it
+   * here keeps the resource-server's sender-constraint check authoritative
+   * — a caller cannot mint a self-bound access out of band — and mirrors
+   * the update-path anti-downgrade guard.
+   */
+  function dpopBindingCreateGuard (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
+    const cd = params.clientData as Record<string, unknown> | null | undefined;
+    if (cd != null && cd.dpop !== undefined) {
+      return next(errors.forbidden('clientData.dpop is reserved for the OAuth token-issuance path and cannot be set through accesses.create.'));
+    }
     next();
   }
 
@@ -498,6 +514,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     commonFns.getParamsValidation(methodsSchema.update.params),
     cmcAccessUpdateForgePreventionHook,
     loadAccessForUpdate,
+    dpopBindingUpdateGuard,
     enforceUpdateChainRules,
     cleanupUpdatePermissions,
     snapshotAndApplyUpdate,
@@ -580,6 +597,27 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     }
     params.targetAccess = access as AccessLike;
     params.targetBase = ref.base;
+    next();
+  }
+
+  /**
+   * A DPoP key binding (`clientData.dpop`) is written only by the token
+   * issuance path and must survive every accesses.update — the update
+   * replaces `clientData` WHOLESALE, so without this guard any caller
+   * able to update the access could send a dpop-free clientData and
+   * silently downgrade a sender-constrained token to Bearer. Rule: when
+   * the update touches clientData, the binding (present or absent) must
+   * come through unchanged. Defense-in-depth: with uniform enforcement
+   * a stolen bound token cannot reach this method in the first place.
+   */
+  function dpopBindingUpdateGuard (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
+    const updatedClientData = params.update?.clientData as Record<string, unknown> | null | undefined;
+    if (updatedClientData === undefined) return next(); // clientData untouched
+    const currentDpop = (params.targetAccess as { clientData?: { dpop?: unknown } })?.clientData?.dpop;
+    const updatedDpop = updatedClientData == null ? undefined : updatedClientData.dpop;
+    if (JSON.stringify(currentDpop ?? null) !== JSON.stringify(updatedDpop ?? null)) {
+      return next(errors.forbidden('The clientData.dpop key binding cannot be created, changed or removed through accesses.update.'));
+    }
     next();
   }
 

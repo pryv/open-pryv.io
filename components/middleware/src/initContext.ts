@@ -28,6 +28,18 @@ export default function initContext (storageLayer: unknown, customAuthStepFn: Cu
     };
     // We should not do this, but we're doing it.
     req.context = new MethodContext(contextSource, req.params.username, authorizationHeader, customAuthStepFn, req.headers, req.query, req.tracing);
+    // Sender-constrained (DPoP) accesses verify their per-request proof
+    // against the CLIENT-FACING request line. `originalUrl` is captured
+    // by express at app entry, before the subdomain/path rewrites
+    // mutate `req.url`. If no target can be built, it stays null and a
+    // DPoP-bound access fails closed.
+    try {
+      const { externalRequestUri } = require('oauth2/src/externalUri.ts');
+      (req.context as unknown as { requestSignatureTarget: unknown }).requestSignatureTarget = {
+        htm: req.method,
+        htu: externalRequestUri(req),
+      };
+    } catch { /* no Host header — leave null */ }
     // Convert the above promise into a callback.
     return req.context!
       .init()

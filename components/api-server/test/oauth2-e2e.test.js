@@ -662,6 +662,161 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
     });
   });
 
+  describe('[OAUTH-E2E-DPOP] DPoP sender-constrained round-trip (RFC 9449)', function () {
+    const { webcrypto } = require('node:crypto');
+    const { subtle } = webcrypto;
+    const DPOP_HOST = 'api.example.test';
+
+    async function dpopKey () {
+      const pair = await subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+      const jwk = await subtle.exportKey('jwk', pair.publicKey);
+      return { pair, publicJwk: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y } };
+    }
+    async function proof (key, { htm, path, accessToken }) {
+      const b = (buf) => Buffer.from(buf).toString('base64url');
+      const header = { typ: 'dpop+jwt', alg: 'ES256', jwk: key.publicJwk };
+      const payload = {
+        jti: 'e2e-' + crypto.randomBytes(12).toString('hex'),
+        htm,
+        htu: `http://${DPOP_HOST}${path}`,
+        iat: Math.floor(Date.now() / 1000),
+        ...(accessToken != null ? { ath: crypto.createHash('sha256').update(accessToken).digest('base64url') } : {}),
+      };
+      const h = b(JSON.stringify(header)); const p = b(JSON.stringify(payload));
+      const sig = await subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key.pair.privateKey, Buffer.from(`${h}.${p}`, 'utf8'));
+      return `${h}.${p}.${b(sig)}`;
+    }
+    // Reverse-proxy headers so the server reconstructs DPOP_HOST for htu
+    // while subdomain routing keeps seeing supertest's own Host.
+    const fwd = (req) => req.set('X-Forwarded-Host', DPOP_HOST).set('X-Forwarded-Proto', 'http');
+
+    // Each DPoP test needs its OWN open-link offer + client: re-accepting
+    // the SAME open-link offer as the same user currently fails
+    // (requester-side accepted-by bookkeeping is never cleared — tracked
+    // separately), so a shared offer would break the second test. Publish
+    // a fresh offer and register a fresh client per call.
+    async function freshClientAndOffer () {
+      const offerName = 'dpop-' + cuid().slice(-8);
+      const capUrl = await coreRequest
+        .post('/' + appUsername + '/events')
+        .set('Authorization', appToken)
+        .send({
+          streamIds: [':_cmc:apps:e2e-oauth'],
+          type: 'consent/request-cmc',
+          content: {
+            to: null,
+            capabilityRequested: true,
+            capability: { mode: 'open-link' },
+            request: {
+              title: { en: 'DPoP offer' },
+              description: { en: 'x' },
+              consent: { en: 'ok' },
+              permissions: [{ streamId: 'health', level: 'read' }],
+              allowUserChoice: true,
+            },
+            requesterMeta: { displayName: 'DPoP E2E', appId: 'oauth-e2e' },
+          },
+        })
+        .then((r) => { assert.equal(r.status, 201, JSON.stringify(r.body)); return r.body.event.content.capabilityUrl; });
+      const cid = 'app-dpop-' + cuid();
+      await storage.setClient(require('storages').platformDB, {
+        clientId: cid,
+        redirectUris: [REDIRECT_URI],
+        scope: ['cmc:' + offerName],
+        cmcOffers: { [offerName]: { capabilityUrl: capUrl } },
+        grantTypes: ['authorization_code'],
+        clientName: 'DPoP E2E App',
+        updatedAt: Date.now(),
+      });
+      return { cid, offerName };
+    }
+
+    // Drive authorize + accept to a fresh code on a dedicated offer.
+    async function toCode () {
+      const { cid, offerName } = await freshClientAndOffer();
+      const { verifier, challenge } = pkce();
+      const authRes = await coreRequest.get('/oauth2/authorize').query({
+        client_id: cid,
+        redirect_uri: REDIRECT_URI,
+        response_type: 'code',
+        state: 'csrf-dpop-' + cuid(),
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        scope: 'cmc:' + offerName,
+      });
+      const signedState = decodeURIComponent(authRes.headers.location.split('state=')[1].split('&')[0]);
+      const acceptRes = await coreRequest.post('/oauth2/authorize/accept').send({
+        state: signedState,
+        username,
+        userToken: personalToken,
+        grantedPermissions: [{ streamId: 'health', level: 'read' }],
+      });
+      assert.equal(acceptRes.status, 200, describeRes(acceptRes));
+      return { code: decodeURIComponent(acceptRes.body.redirectTo.match(/code=([^&]+)/)[1]), verifier, clientId: cid };
+    }
+
+    it('[OE21DP] proof at /token binds the access; the token works only WITH a proof; refresh keeps the key; replay is refused', async function () {
+      const key = await dpopKey();
+      const { code, verifier, clientId: dpopClientId } = await toCode();
+
+      // Token exchange carrying a DPoP proof → DPoP-bound token.
+      const tokenRes = await fwd(coreRequest.post('/oauth2/token'))
+        .type('form')
+        .set('DPoP', await proof(key, { htm: 'POST', path: '/oauth2/token' }))
+        .send({ grant_type: 'authorization_code', code, code_verifier: verifier, client_id: dpopClientId, redirect_uri: REDIRECT_URI });
+      assert.equal(tokenRes.status, 200, describeRes(tokenRes));
+      assert.equal(tokenRes.body.token_type, 'DPoP');
+      const accessToken = tokenRes.body.access_token;
+
+      // The bound token is unusable as plain Bearer.
+      const bearer = await coreRequest.get('/' + username + '/events').set('Authorization', accessToken);
+      assert.equal(bearer.status, 403, describeRes(bearer));
+
+      // With a valid proof it works.
+      const ok = await fwd(coreRequest.get('/' + username + '/events'))
+        .set('Authorization', 'DPoP ' + accessToken)
+        .set('DPoP', await proof(key, { htm: 'GET', path: '/' + username + '/events', accessToken }));
+      assert.equal(ok.status, 200, describeRes(ok));
+      assert.ok(Array.isArray(ok.body.events));
+
+      // Replaying that exact proof is refused (jti single-use).
+      const replayProof = await proof(key, { htm: 'GET', path: '/' + username + '/events', accessToken });
+      const first = await fwd(coreRequest.get('/' + username + '/events')).set('Authorization', 'DPoP ' + accessToken).set('DPoP', replayProof);
+      assert.equal(first.status, 200);
+      const replay = await fwd(coreRequest.get('/' + username + '/events')).set('Authorization', 'DPoP ' + accessToken).set('DPoP', replayProof);
+      assert.equal(replay.status, 403, describeRes(replay));
+
+      // Refresh with a proof by the SAME key keeps the binding.
+      const refreshRes = await fwd(coreRequest.post('/oauth2/token'))
+        .type('form')
+        .set('DPoP', await proof(key, { htm: 'POST', path: '/oauth2/token' }))
+        .send({ grant_type: 'refresh_token', refresh_token: tokenRes.body.refresh_token, client_id: dpopClientId });
+      assert.equal(refreshRes.status, 200, describeRes(refreshRes));
+      assert.equal(refreshRes.body.token_type, 'DPoP');
+      const rotated = refreshRes.body.access_token;
+      const rotatedOk = await fwd(coreRequest.get('/' + username + '/events'))
+        .set('Authorization', 'DPoP ' + rotated)
+        .set('DPoP', await proof(key, { htm: 'GET', path: '/' + username + '/events', accessToken: rotated }));
+      assert.equal(rotatedOk.status, 200, describeRes(rotatedOk));
+    });
+
+    it('[OE22DP] a stolen bound token + a DIFFERENT key cannot be used', async function () {
+      const key = await dpopKey();
+      const { code, verifier, clientId: dpopClientId } = await toCode();
+      const tokenRes = await fwd(coreRequest.post('/oauth2/token'))
+        .type('form')
+        .set('DPoP', await proof(key, { htm: 'POST', path: '/oauth2/token' }))
+        .send({ grant_type: 'authorization_code', code, code_verifier: verifier, client_id: dpopClientId, redirect_uri: REDIRECT_URI });
+      assert.equal(tokenRes.status, 200, describeRes(tokenRes));
+      const accessToken = tokenRes.body.access_token;
+      const thiefKey = await dpopKey();
+      const stolen = await fwd(coreRequest.get('/' + username + '/events'))
+        .set('Authorization', 'DPoP ' + accessToken)
+        .set('DPoP', await proof(thiefKey, { htm: 'GET', path: '/' + username + '/events', accessToken }));
+      assert.equal(stolen.status, 403, describeRes(stolen));
+    });
+  });
+
   describe('[OAUTH-E2E-WK] discovery doc', function () {
     it('[OE20] GET /.well-known/oauth-authorization-server returns RFC 8414 doc', async function () {
       const res = await coreRequest.get('/.well-known/oauth-authorization-server');
@@ -671,6 +826,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.deepEqual(res.body.response_types_supported, ['code']);
       assert.deepEqual(res.body.code_challenge_methods_supported, ['S256']);
       assert.equal(res.body.authorization_response_iss_parameter_supported, true);
+      assert.deepEqual(res.body.dpop_signing_alg_values_supported, ['ES256']);
       assert.ok(res.body.scopes_supported.includes('cmc:*'),
         'discovery must advertise the cmc namespace: ' + JSON.stringify(res.body.scopes_supported));
     });

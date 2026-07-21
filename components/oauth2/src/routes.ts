@@ -90,6 +90,15 @@ export type Deps = {
   revokeChain?: (params: {
     userId: string; username: string; clientId: string; dataGrantAccessId?: string;
   }) => Promise<void>;
+  /**
+   * Write the DPoP key-thumbprint binding onto the access pre-minted at
+   * /accept (authorization_code + DPoP proof at /token). Storage-layer-
+   * direct. If absent, DPoP token requests fail with server_error —
+   * wire it wherever the auth flow deps are wired.
+   */
+  bindAccessDpop?: (params: {
+    userId: string; username: string; accessId: string; jkt: string;
+  }) => Promise<void>;
 };
 
 /**
@@ -154,6 +163,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
       mintClientAccess: deps.mintClientAccess,
       resolveAccountUserId: deps.resolveAccountUserId,
       revokeChain: deps.revokeChain,
+      bindAccessDpop: deps.bindAccessDpop,
     }));
 }
 

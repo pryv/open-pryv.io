@@ -37,6 +37,14 @@ import { authenticateClient } from '../clientSecret.ts';
 export type AuthCodeDeps = {
   config: { get (key: string): unknown };
   platform: PlatformDB;
+  /**
+   * Required when the exchange carries a verified DPoP proof: writes
+   * the key-thumbprint binding onto the access pre-minted at /accept.
+   * The dispatcher guarantees it is present whenever dpopJkt is.
+   */
+  bindAccessDpop?: (params: {
+    userId: string; username: string; accessId: string; jkt: string;
+  }) => Promise<void>;
 };
 
 export type GrantParams = {
@@ -67,6 +75,8 @@ function lifetimes (config: { get (key: string): unknown }) {
 export async function handleAuthorizationCode (
   deps: AuthCodeDeps,
   params: GrantParams,
+  /** RFC 7638 thumbprint of a proof VERIFIED by the dispatcher, or null. */
+  dpopJkt: string | null = null,
 ): Promise<
   | { ok: true; body: Record<string, unknown> }
   | { ok: false; status: number; error: string; description?: string }
@@ -133,6 +143,22 @@ export async function handleAuthorizationCode (
     return { ok: false, status: 500, error: 'server_error', description: 'code row missing access details (accept-time provisioning skipped?)' };
   }
 
+  // DPoP binding (RFC 9449 §5): stamp the pre-minted access with the
+  // proof key's thumbprint BEFORE issuing any credential — a binding
+  // failure must not leave a bound-looking chain with an unbound
+  // access. On failure the code is already consumed (single-use); the
+  // client re-authorizes, which is the safe direction.
+  if (dpopJkt != null) {
+    if (typeof deps.bindAccessDpop !== 'function') {
+      return { ok: false, status: 500, error: 'server_error', description: 'DPoP binding is not wired on this deployment' };
+    }
+    try {
+      await deps.bindAccessDpop({ userId: row.userId, username: row.username, accessId: row.accessId, jkt: dpopJkt });
+    } catch {
+      return { ok: false, status: 500, error: 'server_error', description: 'failed to bind the access to the DPoP key' };
+    }
+  }
+
   // Mint refresh token. Sliding TTL with absolute cap.
   const { accessTokenTTL, refreshTokenTTL, refreshTokenAbsoluteTTL } = lifetimes(deps.config);
   const now = Date.now();
@@ -151,6 +177,7 @@ export async function handleAuthorizationCode (
     // and carries this session's granted subset for the re-mints.
     ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
     ...(row.permissions != null ? { permissions: row.permissions } : {}),
+    ...(dpopJkt != null ? { jkt: dpopJkt } : {}),
   });
 
   await audit('oauth.code.exchanged', {
@@ -164,13 +191,14 @@ export async function handleAuthorizationCode (
     userId: row.userId,
     grantedScope: row.scope,
     accessId: row.accessId,
+    ...(dpopJkt != null ? { dpopJkt } : {}),
   });
 
   return {
     ok: true,
     body: {
       access_token: row.accessToken,
-      token_type: 'Bearer',
+      token_type: dpopJkt != null ? 'DPoP' : 'Bearer',
       expires_in: accessTokenTTL,
       refresh_token: refreshToken,
       scope: row.scope.join(' '),

@@ -85,6 +85,10 @@ export default async function (expressApp: ExpressApp, app: AppLike) {
       .then((access: { token: string }) => {
         const hmacValid = encryption.isFileReadTokenHMACValid(tokenParts.hmac, req.params.fileId, access.token, filesReadTokenSecret);
         if (!hmacValid) { return next(errors.invalidAccessToken('Invalid read token.')); }
+        // The HMAC is the possession proof for this single-file read, so
+        // a DPoP-bound access reaches its attachments here without a DPoP
+        // header (a download / <img src> GET cannot carry one).
+        context.readTokenAuthenticated = true;
         next();
       })
       .catch((err: Error) => next(errors.unexpectedError(err)));

@@ -23,10 +23,22 @@ import type { PlatformDB } from '../../../../storages/interfaces/platformStorage
 import { handleAuthorizationCode } from '../grants/authorization_code.ts';
 import { handleRefreshToken } from '../grants/refresh_token.ts';
 import { handleClientCredentials } from '../grants/client_credentials.ts';
+import { verifyDPoPProof, DPoPProofError } from '../dpop.ts';
+import { externalRequestUri } from '../externalUri.ts';
+import { markDPoPJtiUsed } from '../storage.ts';
 
 export type TokenDeps = {
   config: { get (key: string): unknown };
   platform: PlatformDB;
+  /**
+   * Required for DPoP-bound authorization_code exchanges: write the
+   * key-thumbprint binding onto the access that was pre-minted at
+   * /authorize/accept (the proof only appears here, at /token).
+   * Storage-direct — wired in the api-server layer.
+   */
+  bindAccessDpop?: (params: {
+    userId: string; username: string; accessId: string; jkt: string;
+  }) => Promise<void>;
   /** Required when grant_type=refresh_token is dispatched. */
   mintRefreshedAccess?: (params: {
     userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
@@ -79,11 +91,55 @@ export function handleToken (deps: TokenDeps) {
     const basic = decodeBasicAuth(req.headers?.authorization);
 
     let outcome;
-    if (grantType === 'authorization_code') {
-      outcome = await handleAuthorizationCode(
-        { config: deps.config, platform: deps.platform },
-        { ...body, basic },
-      );
+    // DPoP (RFC 9449 §5): a proof on the token request opts this
+    // issuance into key binding. Verified BEFORE any grant runs, so a
+    // bad proof burns nothing (no code/refresh consumed). The proof
+    // covers this endpoint (no ath — no access token exists yet) and
+    // its jti is burned atomically: of two concurrent identical proofs
+    // exactly one proceeds.
+    let dpopJkt: string | null = null;
+    const dpopHeader = req.headers?.dpop;
+    if (dpopHeader != null) {
+      const clockSkewSeconds = Number(deps.config.get('oauth:dpop:clockSkewSeconds') ?? 120);
+      try {
+        const verified = await verifyDPoPProof(
+          Array.isArray(dpopHeader) ? null : dpopHeader,
+          { htm: 'POST', htu: externalRequestUri(req), clockSkewSeconds },
+        );
+        const fresh = await markDPoPJtiUsed(
+          deps.platform, verified.jkt, verified.jti, Date.now() + 2 * clockSkewSeconds * 1000,
+        );
+        if (!fresh) throw new DPoPProofError('jti replayed');
+        dpopJkt = verified.jkt;
+      } catch (err: unknown) {
+        // Uniform response for every proof defect — reasons stay server-side.
+        if (err instanceof DPoPProofError) {
+          outcome = { ok: false as const, status: 400, error: 'invalid_dpop_proof', description: 'DPoP proof verification failed' };
+        } else {
+          outcome = { ok: false as const, status: 500, error: 'server_error', description: 'DPoP proof processing failed' };
+        }
+      }
+    }
+
+    if (outcome != null) {
+      // fall through to the response section with the DPoP failure
+    } else if (grantType === 'authorization_code') {
+      if (dpopJkt != null && typeof deps.bindAccessDpop !== 'function') {
+        // Advertised-but-not-wired server misconfiguration (see the
+        // mint-dep guards below) — refuse BEFORE the grant consumes the
+        // code, so the client can retry without re-authorizing.
+        outcome = { ok: false, status: 500, error: 'server_error', description: 'DPoP binding is not wired on this deployment' };
+      } else {
+        outcome = await handleAuthorizationCode(
+          {
+            config: deps.config,
+            platform: deps.platform,
+            ...(deps.bindAccessDpop != null ? { bindAccessDpop: deps.bindAccessDpop } : {}),
+          },
+          { ...body, basic },
+          dpopJkt,
+        );
+      }
     } else if (grantType === 'refresh_token') {
       if (typeof deps.mintRefreshedAccess !== 'function') {
         // Operator misconfiguration, not a client error: the grant handler
@@ -101,8 +157,14 @@ export function handleToken (deps: TokenDeps) {
             ...(deps.revokeChain != null ? { revokeChain: deps.revokeChain } : {}),
           },
           { ...body, basic },
+          dpopJkt,
         );
       }
+    } else if (dpopJkt != null && grantType === 'client_credentials') {
+      // Not supported for this grant in v1 — refuse loudly rather than
+      // silently issuing an unbound token to a client that asked for
+      // binding.
+      outcome = { ok: false, status: 400, error: 'invalid_request', description: 'DPoP is not supported for the client_credentials grant' };
     } else if (grantType === 'client_credentials') {
       if (typeof deps.mintClientAccess !== 'function' || typeof deps.resolveAccountUserId !== 'function') {
         // Server misconfiguration (advertised-but-not-wired), not a client

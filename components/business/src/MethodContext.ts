@@ -55,6 +55,30 @@ class MethodContext {
    */
   acceptStreamsQueryNonStringified: boolean | undefined;
 
+  /**
+   * Authorization scheme the caller used, when one was recognized.
+   * 'dpop' ⇒ the token came as `Authorization: DPoP <token>`; null for
+   * Bearer/bare/query auth (getAuth strips Bearer upstream on the http
+   * path). Drives the sender-constrained-token checks.
+   */
+  authScheme: 'dpop' | null;
+  /**
+   * The client-facing request line a DPoP proof must cover — set by the
+   * http transports (initContext). Transports that cannot carry a
+   * per-request proof (socket.io, hfs) leave it null, so a DPoP-bound
+   * access FAILS CLOSED there by construction.
+   */
+  requestSignatureTarget: { htm: string; htu: string } | null;
+  /**
+   * Set true once the request authenticated via a valid file
+   * `readToken` (HMAC over fileId + access.token). That HMAC is itself a
+   * server-issued possession proof for a single-file attachment read, so
+   * it substitutes for a DPoP proof on the attachment-download path —
+   * a `<img src>` / drag-drop / download GET cannot carry a DPoP header.
+   * Scoped to that capability only; never set for a general API call.
+   */
+  readTokenAuthenticated: boolean;
+
   constructor (source: ContextSource, username: string, auth: string | null, customAuthStepFn: CustomAuthFunction | null, headers: HttpHeaders, query: Record<string, unknown>, tracing: unknown) {
     this.source = source;
     this.user = { id: null, username };
@@ -65,6 +89,9 @@ class MethodContext {
     this.callerId = null;
     this.headers = headers;
     this.methodId = null;
+    this.authScheme = null;
+    this.requestSignatureTarget = null;
+    this.readTokenAuthenticated = false;
     if (auth != null) { this.parseAuth(auth); }
     this.originalQuery = structuredClone(query);
     if (this.originalQuery?.auth) { delete this.originalQuery.auth; }
@@ -87,6 +114,14 @@ class MethodContext {
    * assigning to `this.accessToken` and `this.callerId`.
    */
   parseAuth (auth: string) {
+    // RFC 9449 scheme: `DPoP <token>`. Recognized here (not in getAuth)
+    // so every transport that hands the raw header to a MethodContext —
+    // including the batch route, which skips getAuth — sees the scheme.
+    // Auth-scheme names compare case-insensitively (RFC 9110 §11.1).
+    if (/^dpop /i.test(auth)) {
+      this.authScheme = 'dpop';
+      auth = auth.substring(5).trim();
+    }
     this.accessToken = auth;
     // Sometimes, the auth string will look like this:
     //    'TOKEN CALLERID'
@@ -151,6 +186,11 @@ class MethodContext {
       if (this.access == null) { await this.retrieveAccessFromToken(storage); }
       const access = this.access;
       if (access == null) { throw new Error('AF: this.access != null'); }
+      // Sender-constrained (DPoP) accesses: enforce proof-of-possession
+      // for EVERY expansion, whatever the transport. Must run at this
+      // shared choke point — moving it to an http-only path would let a
+      // bound token be replayed over socket.io/hfs.
+      await this.checkDpopBinding();
       // Check if the session is valid; touch it.
       await this.checkSessionValid(storage);
       // Perform the custom auth step.
@@ -207,6 +247,62 @@ class MethodContext {
     if (access == null) return;
     const now = timestamp.now();
     if (access.expires != null && now > access.expires) { throw errors.forbidden('Access has expired.'); }
+  }
+
+  /**
+   * Enforce DPoP (RFC 9449) sender constraint. An access carrying a
+   * `clientData.dpop.jkt` binding is only usable with a valid DPoP
+   * proof signed by the bound key, covering THIS request (htm/htu) and
+   * THIS token (ath), with a single-use jti. An unbound access
+   * presented under the `DPoP` scheme is refused too — the token kind
+   * is fixed at issuance. Every refusal is the same uniform 403 (no
+   * oracle); reasons never leave the server.
+   */
+  async checkDpopBinding () {
+    // A validated file readToken is itself the possession proof for the
+    // attachment-download capability (see readTokenAuthenticated) — that
+    // GET cannot carry a DPoP header, so the HMAC substitutes.
+    if (this.readTokenAuthenticated) return;
+    const boundJkt = (this.access as { clientData?: { dpop?: { jkt?: unknown } } } | null)?.clientData?.dpop?.jkt;
+    const refused = () => {
+      const err = errors.invalidAccessToken('DPoP proof verification failed.', 403);
+      // Emitted as a WWW-Authenticate challenge by the http error layer.
+      err.httpHeaders = { 'WWW-Authenticate': 'DPoP algs="ES256", error="invalid_token"' };
+      return err;
+    };
+    if (typeof boundJkt !== 'string') {
+      if (this.authScheme === 'dpop') throw refused();
+      return;
+    }
+    const proofHeader = (this.headers as Record<string, unknown> | null)?.dpop;
+    const target = this.requestSignatureTarget;
+    if (proofHeader == null || target == null || this.accessToken == null) throw refused();
+    // Lazy requires: only sender-constrained requests pay for these, and
+    // business stays load-order-independent from the oauth2 component.
+    const { verifyDPoPProof, DPoPProofError } = require('oauth2/src/dpop.ts');
+    const { markDPoPJtiUsed } = require('oauth2/src/storage.ts');
+    const platform = require('storages').platformDB;
+    if (platform == null) throw errors.unexpectedError(new Error('platform storage unavailable for DPoP validation'));
+    let clockSkewSeconds = 120;
+    try {
+      const configured = require('@pryv/boiler').getConfigSync().get('oauth:dpop:clockSkewSeconds');
+      if (configured != null) clockSkewSeconds = Number(configured);
+    } catch { /* config not booted (unit contexts) — keep the default */ }
+    let verified;
+    try {
+      verified = await verifyDPoPProof(Array.isArray(proofHeader) ? null : proofHeader, {
+        htm: target.htm,
+        htu: target.htu,
+        accessToken: this.accessToken,
+        clockSkewSeconds,
+      });
+    } catch (err) {
+      if (err instanceof DPoPProofError) throw refused();
+      throw err;
+    }
+    if (verified.jkt !== boundJkt) throw refused();
+    const fresh = await markDPoPJtiUsed(platform, verified.jkt, verified.jti, Date.now() + 2 * clockSkewSeconds * 1000);
+    if (!fresh) throw refused();
   }
 
   /**
