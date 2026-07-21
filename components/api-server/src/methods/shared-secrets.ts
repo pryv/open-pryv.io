@@ -62,14 +62,18 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
   const mall = await getMall();
   const config = await getConfig();
 
-  const limits = {
+  // Read per-request, not captured at registration: a slice taken here would
+  // freeze the platform's settings at boot, so an operator toggle (and any test
+  // that injects config) would never reach the callsites. Same reason events.ts
+  // uses getters for its auth/updates config.
+  const getLimits = () => ({
     maxSizeBytes: config.get('sharedSecrets:maxSizeBytes') ?? 4096,
     maxTtl: config.get('sharedSecrets:maxTtl') ?? 2592000
-  };
-  const enabled = config.get('sharedSecrets:enabled') !== false;
+  });
+  const isEnabled = () => config.get('sharedSecrets:enabled') !== false;
 
   function checkEnabled (context: Context, params: unknown, result: Result, next: MethodNext) {
-    if (!enabled) {
+    if (!isEnabled()) {
       return next(errors.unavailableMethod('Shared secrets are disabled on this platform.'));
     }
     next();
@@ -90,7 +94,7 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
       next();
     },
     function validate (context: Context, params: CreateParams, result: Result, next: MethodNext) {
-      const invalid = S.validateCreate(params, limits);
+      const invalid = S.validateCreate(params, getLimits());
       if (invalid != null) {
         const err = errors.invalidParametersFormat(invalid.message);
         err.data = Object.assign({}, err.data, { id: invalid.id });
