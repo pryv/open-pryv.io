@@ -28,8 +28,11 @@ the account and hands over a random key that can be redeemed exactly once.
   the access that created them (personal tokens see everything, as usual) and
   excluded from wildcard `events.get` — they answer only when their stream is
   named explicitly. They cannot be created, modified or moved through the
-  events API; deleting a pending one discards it, and the payload is scrubbed
-  as soon as it stops being pending.
+  events API; deleting a pending one discards it, deleting a consumed or
+  discarded one purges the record outright (the erasure path — the payload is
+  long gone), and the payload plus any signature passphrase are scrubbed as soon
+  as the item stops being pending. `POST /shared-secrets/status` reports an item
+  whose TTL has passed as expired, not pending.
 - An access can be barred from minting them with the `secretSharing` feature
   permission (`{ feature: 'secretSharing', setting: 'forbidden' }`, default
   allowed), which is inherited by any access it creates.
