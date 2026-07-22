@@ -186,6 +186,12 @@ class MethodContext {
       if (this.access == null) { await this.retrieveAccessFromToken(storage); }
       const access = this.access;
       if (access == null) { throw new Error('AF: this.access != null'); }
+      // Operator-revoked DPoP keys: reject any access bound to a revoked key
+      // thumbprint (jkt), cluster-wide within the cache TTL. Runs BEFORE the
+      // proof check so a revoked key pays no ES256 verify and writes no jti
+      // replay rows. Same shared choke point as the binding check, so it
+      // covers every transport.
+      await this.checkDpopKeyNotRevoked();
       // Sender-constrained (DPoP) accesses: enforce proof-of-possession
       // for EVERY expansion, whatever the transport. Must run at this
       // shared choke point — moving it to an http-only path would let a
@@ -303,6 +309,40 @@ class MethodContext {
     if (verified.jkt !== boundJkt) throw refused();
     const fresh = await markDPoPJtiUsed(platform, verified.jkt, verified.jti, Date.now() + 2 * clockSkewSeconds * 1000);
     if (!fresh) throw refused();
+  }
+
+  /**
+   * Reject an access bound to an operator-revoked DPoP key thumbprint — so a
+   * `revoke-key <jkt>` reaches live tokens within the cache TTL, instead of
+   * waiting out their ~1 h TTL. Presence (blocklist) semantics: any token bound
+   * to a tombstoned jkt is dead regardless of when it was minted (a jkt is the
+   * key itself, not a re-assignable name — see storage.ts revokeDpopKey).
+   *
+   * Unlike checkDpopBinding, this does NOT skip `readTokenAuthenticated`: the
+   * revoke needs no proof, so an attachment-download GET minted under a
+   * revoked-key session is refused too (only the key's OWN downloads — a
+   * non-revoked key's readToken still short-circuits in checkDpopBinding).
+   *
+   * Fail-open when the platform store is unavailable (e.g. unit contexts): the
+   * revoke is a bounded-SLA control, not an availability gate.
+   */
+  async checkDpopKeyNotRevoked () {
+    const boundJkt = (this.access as { clientData?: { dpop?: { jkt?: unknown } } } | null)?.clientData?.dpop?.jkt;
+    if (typeof boundJkt !== 'string') return;
+    const platform = require('storages').platformDB;
+    if (platform == null) return;
+    // Clamp the configured TTL: a non-numeric value would make the cache's
+    // `now - loadedAt > NaN` always false (never refresh → revoke never takes
+    // effect); a non-positive value would refresh on every request.
+    let ttlSeconds = 30;
+    try {
+      const configured = Number(require('@pryv/boiler').getConfigSync().get('oauth:dpop:keyRevokeCheckSeconds'));
+      if (Number.isFinite(configured) && configured > 0) ttlSeconds = configured;
+    } catch { /* config not booted (unit contexts) — keep the default */ }
+    const { isKeyRevoked } = require('oauth2/src/revokedKeysCache.ts');
+    if (await isKeyRevoked(platform, boundJkt, ttlSeconds)) {
+      throw errors.invalidAccessToken('The application access has been revoked.', 403);
+    }
   }
 
   /**

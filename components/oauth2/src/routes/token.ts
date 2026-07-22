@@ -25,7 +25,8 @@ import { handleRefreshToken } from '../grants/refresh_token.ts';
 import { handleClientCredentials } from '../grants/client_credentials.ts';
 import { verifyDPoPProof, DPoPProofError } from '../dpop.ts';
 import { externalRequestUri } from '../externalUri.ts';
-import { markDPoPJtiUsed } from '../storage.ts';
+import { markDPoPJtiUsed, getDpopKeyRevokedAt, recordDpopKeySeen } from '../storage.ts';
+import { logServerError } from '../serverLog.ts';
 
 export type TokenDeps = {
   config: { get (key: string): unknown };
@@ -106,6 +107,15 @@ export function handleToken (deps: TokenDeps) {
           Array.isArray(dpopHeader) ? null : dpopHeader,
           { htm: 'POST', htu: externalRequestUri(req), clockSkewSeconds },
         );
+        // Refuse issuance for an operator-revoked key BEFORE burning the jti or
+        // running any grant: a revoked key must neither mint (authorization_code)
+        // nor rotate (refresh_token) tokens. Enforcement at the resource server
+        // (MethodContext.checkDpopKeyNotRevoked) kills born-dead tokens anyway —
+        // this just prevents minting them and dying the chain promptly. Direct
+        // (uncached) read: the token path is low-frequency, so no TTL lag.
+        if (await getDpopKeyRevokedAt(deps.platform, verified.jkt) != null) {
+          throw new DPoPProofError('key revoked');
+        }
         const fresh = await markDPoPJtiUsed(
           deps.platform, verified.jkt, verified.jti, Date.now() + 2 * clockSkewSeconds * 1000,
         );
@@ -190,6 +200,21 @@ export function handleToken (deps: TokenDeps) {
         error: 'unsupported_grant_type',
         description: `grant_type "${grantType}" is not supported`,
       };
+    }
+
+    // Advisory key inventory (operator `list-keys` discoverability): record the
+    // (clientId, jkt) pair on a successful bound issuance. The grant already
+    // validated body/basic client_id against the code/refresh row, so it is the
+    // authenticated client here. Fire-and-forget — it must NEVER fail or delay
+    // issuance; revoke-by-jkt works without it.
+    if (outcome.ok && dpopJkt != null) {
+      const clientId = typeof body.client_id === 'string' && body.client_id.length > 0
+        ? body.client_id
+        : basic?.client_id;
+      if (typeof clientId === 'string' && clientId.length > 0) {
+        recordDpopKeySeen(deps.platform, clientId, dpopJkt)
+          .catch((err) => logServerError('recordDpopKeySeen failed', err));
+      }
     }
 
     res.setHeader('Cache-Control', 'no-store');

@@ -547,6 +547,12 @@ oauth:
   # already required for correct client-IP and rate-limit attribution.
   dpop:
     clockSkewSeconds: 120          # seconds (± around now)
+    # Operator revoke-by-key propagation: `bin/oauth-client.js revoke-key <jkt>`
+    # writes a cluster-wide (PlatformDB) tombstone; each core caches the revoked
+    # thumbprint set for this many seconds, so a revoke reaches LIVE DPoP-bound
+    # tokens within this window (read locally, no cross-core bus). Lower = faster
+    # revoke, more PlatformDB reads.
+    keyRevokeCheckSeconds: 30      # seconds
   clientRegistration:
     mode: curated                  # ONLY supported value; "open" is rejected
   requireAppAccountMfa: true       # app accounts must enrol MFA before /oauth2/* writes

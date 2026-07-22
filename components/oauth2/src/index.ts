@@ -59,6 +59,16 @@ export const {
   handleWellKnown,
 } = wellKnown;
 
+// Operator DPoP-key revoke tombstones — direct storage fns (no wrapping logic,
+// unlike client persist/remove which the clientRegistry decorates). Consumed by
+// bin/oauth-client.js (revoke-key / unrevoke-key / list-revoked-keys).
+export const {
+  revokeDpopKey,
+  unrevokeDpopKey,
+  listRevokedDpopKeys,
+  listDpopKeysSeen,
+} = storage;
+
 export const { audit: emitAudit } = audit;
 
 export const { registerRoutes } = routes;

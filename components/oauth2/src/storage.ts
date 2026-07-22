@@ -158,6 +158,13 @@ const PREFIX_CODE = 'oauth-code/';
 const PREFIX_REFRESH = 'oauth-refresh/';
 const PREFIX_REFRESH_USED = 'oauth-refresh-used/';
 const PREFIX_DPOP_JTI = 'dpop-jti/';
+const PREFIX_DPOP_JKT_REVOKED = 'dpop-jkt-revoked/';
+const PREFIX_DPOP_JKT_SEEN = 'dpop-jkt-seen/';
+
+// An RFC 7638 thumbprint is base64url(SHA-256(jwk)) — 32 bytes → exactly 43
+// unpadded base64url chars. Guarding writes on this shape means a typo'd jkt
+// fails loud at the operator CLI instead of silently tombstoning nothing.
+const JKT_RE = /^[A-Za-z0-9_-]{43}$/;
 
 // --- Client metadata (indefinite, cluster-wide) --- //
 
@@ -294,6 +301,153 @@ export async function markDPoPJtiUsed (
   platform: PlatformDB, jkt: string, jti: string, expiresAt: number,
 ): Promise<boolean> {
   return platform.setAccessStateIfAbsent(PREFIX_DPOP_JTI + jkt + '/' + jti, 1, expiresAt);
+}
+
+// --- DPoP key revoke tombstones (indefinite, cluster-wide) --- //
+//
+// An operator can revoke a specific DPoP key thumbprint (jkt) — e.g. a leaked
+// device key — so every access bound to that key stops working cluster-wide,
+// even before its token expires. The tombstone is written to PlatformDB (the
+// only cross-core mechanism the independent-cores design allows) and read
+// locally by each core (per-core cached, see revokedKeysCache.ts).
+//
+// Semantics are PRESENCE (blocklist), NOT the token-EPOCH used for client
+// revoke: a clientId is a re-assignable name (re-registration is a fresh trust
+// decision whose new tokens must live), but a jkt IS the key itself. There is
+// no legitimate "re-register the same key" — legitimate rotation means a NEW
+// key. So any token bound to a tombstoned jkt is dead regardless of when it was
+// minted; a refresh-rotation after the revoke that re-mints on the same key is
+// still refused (an epoch check would have honoured it — a fail-open we avoid).
+// The stored `revokedAt` is used only for CLI display and the age-based prune.
+
+/**
+ * Tombstone a DPoP key thumbprint. Throws on a malformed jkt so an operator
+ * typo can't silently write a tombstone that protects nothing.
+ */
+export async function revokeDpopKey (platform: PlatformDB, jkt: string): Promise<void> {
+  if (typeof jkt !== 'string' || !JKT_RE.test(jkt)) {
+    throw new Error('revokeDpopKey: jkt must be a 43-char base64url RFC 7638 thumbprint');
+  }
+  await platform.setPlatformKv(PREFIX_DPOP_JKT_REVOKED + jkt, JSON.stringify({ revokedAt: Date.now() }));
+}
+
+/** Remove a DPoP key tombstone — operator recovery from a mistaken revoke. */
+export async function unrevokeDpopKey (platform: PlatformDB, jkt: string): Promise<void> {
+  if (typeof jkt !== 'string' || !JKT_RE.test(jkt)) {
+    throw new Error('unrevokeDpopKey: jkt must be a 43-char base64url RFC 7638 thumbprint');
+  }
+  await platform.deletePlatformKv(PREFIX_DPOP_JKT_REVOKED + jkt);
+}
+
+/** The revoke epoch (ms) for a jkt, or null if it carries no tombstone. */
+export async function getDpopKeyRevokedAt (platform: PlatformDB, jkt: string): Promise<number | null> {
+  if (typeof jkt !== 'string' || jkt.length === 0) return null;
+  const raw = await platform.getPlatformKv(PREFIX_DPOP_JKT_REVOKED + jkt);
+  if (raw == null) return null;
+  try { const at = Number(JSON.parse(raw).revokedAt); return Number.isFinite(at) ? at : 0; } catch { return 0; }
+}
+
+/** True when the jkt carries a revoke tombstone (presence — the enforcement test). */
+export async function isDpopKeyRevoked (platform: PlatformDB, jkt: string): Promise<boolean> {
+  return (await getDpopKeyRevokedAt(platform, jkt)) != null;
+}
+
+/** All tombstoned key thumbprints with their revoke epochs (the per-core cache loads this). */
+export async function listRevokedDpopKeys (platform: PlatformDB): Promise<Array<{ jkt: string; revokedAt: number }>> {
+  const keys = await platform.listPlatformKvKeys(PREFIX_DPOP_JKT_REVOKED);
+  const out: Array<{ jkt: string; revokedAt: number }> = [];
+  for (const key of keys) {
+    const jkt = key.slice(PREFIX_DPOP_JKT_REVOKED.length);
+    const raw = await platform.getPlatformKv(key);
+    let revokedAt = 0;
+    try { revokedAt = Number(JSON.parse(raw ?? '{}').revokedAt) || 0; } catch { revokedAt = 0; }
+    out.push({ jkt, revokedAt });
+  }
+  return out;
+}
+
+/**
+ * Drop key tombstones older than `maxAgeMs`. Past the max token lifetime every
+ * credential the revoke could have killed is already expired, so the marker's
+ * job is done. Optional housekeeping; the set is tiny. Returns the count pruned.
+ */
+export async function pruneRevokedDpopKeys (platform: PlatformDB, maxAgeMs: number, now: number = Date.now()): Promise<number> {
+  const keys = await platform.listPlatformKvKeys(PREFIX_DPOP_JKT_REVOKED);
+  let pruned = 0;
+  for (const key of keys) {
+    const raw = await platform.getPlatformKv(key);
+    let revokedAt = 0;
+    try { revokedAt = Number(JSON.parse(raw ?? '{}').revokedAt) || 0; } catch { revokedAt = 0; }
+    if (now - revokedAt > maxAgeMs) { await platform.deletePlatformKv(key); pruned++; }
+  }
+  return pruned;
+}
+
+// --- DPoP key inventory (advisory, cluster-wide, pruned) --- //
+//
+// A denormalized record of which key thumbprints an operator has seen bound for
+// each client, so `bin/oauth-client.js list-keys` can show the operator a
+// pick-list to revoke from. ADVISORY ONLY — revoke-by-jkt works without it, so
+// writes are best-effort (fire-and-forget at the token endpoint) and reads
+// never throw. Key: `dpop-jkt-seen/<clientId>/<jkt>` (jkt is a fixed 43-char
+// base64url with no '/', so it parses back unambiguously even if a clientId
+// contained a '/'). Bounded by the master sweep (pruneDpopKeysSeen).
+
+/**
+ * Upsert the seen-record for (clientId, jkt): stamp `lastSeenAt`, preserve the
+ * original `firstSeenAt`. Advisory — silently no-ops on a malformed input
+ * rather than throwing (it must never break issuance).
+ */
+export async function recordDpopKeySeen (platform: PlatformDB, clientId: string, jkt: string): Promise<void> {
+  if (typeof clientId !== 'string' || clientId.length === 0 || typeof jkt !== 'string' || !JKT_RE.test(jkt)) return;
+  const key = PREFIX_DPOP_JKT_SEEN + clientId + '/' + jkt;
+  const now = Date.now();
+  let firstSeenAt = now;
+  const raw = await platform.getPlatformKv(key);
+  if (raw != null) {
+    try { const f = Number(JSON.parse(raw).firstSeenAt); if (Number.isFinite(f) && f > 0) firstSeenAt = f; } catch { /* keep now */ }
+  }
+  await platform.setPlatformKv(key, JSON.stringify({ firstSeenAt, lastSeenAt: now }));
+}
+
+/** All seen (clientId, jkt) records, optionally scoped to one client. */
+export async function listDpopKeysSeen (
+  platform: PlatformDB, clientId?: string,
+): Promise<Array<{ clientId: string; jkt: string; firstSeenAt: number; lastSeenAt: number }>> {
+  const scan = clientId != null && clientId.length > 0
+    ? PREFIX_DPOP_JKT_SEEN + clientId + '/'
+    : PREFIX_DPOP_JKT_SEEN;
+  const keys = await platform.listPlatformKvKeys(scan);
+  const out: Array<{ clientId: string; jkt: string; firstSeenAt: number; lastSeenAt: number }> = [];
+  for (const key of keys) {
+    const rest = key.slice(PREFIX_DPOP_JKT_SEEN.length); // <clientId>/<jkt>
+    if (rest.length < 45) continue; // at least 1-char clientId + '/' + 43-char jkt
+    const jkt = rest.slice(-43);
+    const cid = rest.slice(0, -44); // drop the '/' + 43-char jkt
+    const raw = await platform.getPlatformKv(key);
+    let firstSeenAt = 0; let lastSeenAt = 0;
+    try { const o = JSON.parse(raw ?? '{}'); firstSeenAt = Number(o.firstSeenAt) || 0; lastSeenAt = Number(o.lastSeenAt) || 0; } catch { /* zeros */ }
+    out.push({ clientId: cid, jkt, firstSeenAt, lastSeenAt });
+  }
+  return out;
+}
+
+/**
+ * Drop seen-records not touched within `maxAgeMs` — past the max token lifetime
+ * a key with no recent issuance has no live tokens, so its inventory row is
+ * stale. Keeps the (per-session-key) set bounded over the cluster's life.
+ * Returns the count pruned.
+ */
+export async function pruneDpopKeysSeen (platform: PlatformDB, maxAgeMs: number, now: number = Date.now()): Promise<number> {
+  const keys = await platform.listPlatformKvKeys(PREFIX_DPOP_JKT_SEEN);
+  let pruned = 0;
+  for (const key of keys) {
+    const raw = await platform.getPlatformKv(key);
+    let lastSeenAt = 0;
+    try { lastSeenAt = Number(JSON.parse(raw ?? '{}').lastSeenAt) || 0; } catch { lastSeenAt = 0; }
+    if (now - lastSeenAt > maxAgeMs) { await platform.deletePlatformKv(key); pruned++; }
+  }
+  return pruned;
 }
 
 // --- Key helpers (owned here, NOT in the engine) --- //

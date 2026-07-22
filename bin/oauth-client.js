@@ -24,6 +24,10 @@
 //   node bin/oauth-client.js show <clientId>
 //   node bin/oauth-client.js update <clientId> [--redirect-uri <uri>]... [--scope <s>] ...
 //   node bin/oauth-client.js revoke <clientId>
+//   node bin/oauth-client.js revoke-key <jkt> --yes
+//   node bin/oauth-client.js unrevoke-key <jkt> --yes
+//   node bin/oauth-client.js list-revoked-keys
+//   node bin/oauth-client.js list-keys [<clientId>]
 
 const path = require('path');
 
@@ -55,7 +59,10 @@ require('@pryv/boiler').init({
     }
 
     const platform = await initPlatform();
-    const { persistClient, removeClient, listClientIds, getClient } = require('oauth2');
+    const {
+      persistClient, removeClient, listClientIds, getClient,
+      revokeDpopKey, unrevokeDpopKey, listRevokedDpopKeys, listDpopKeysSeen,
+    } = require('oauth2');
 
     switch (args.command) {
       case 'create':
@@ -72,6 +79,18 @@ require('@pryv/boiler').init({
         break;
       case 'revoke':
         await runRevoke(platform, args, removeClient);
+        break;
+      case 'revoke-key':
+        await runRevokeKey(platform, args, revokeDpopKey);
+        break;
+      case 'unrevoke-key':
+        await runUnrevokeKey(platform, args, unrevokeDpopKey);
+        break;
+      case 'list-revoked-keys':
+        await runListRevokedKeys(platform, listRevokedDpopKeys);
+        break;
+      case 'list-keys':
+        await runListKeys(platform, args, listDpopKeysSeen, listRevokedDpopKeys);
         break;
       case 'rotate-secret':
         await runRotateSecret(platform, args, getClient, persistClient);
@@ -197,6 +216,73 @@ async function runRevoke (platform, args, removeClient) {
   console.log('      lands with the grant handlers.');
 }
 
+// --- Operator revoke-by-DPoP-key (RFC 9449 sender-constrained tokens) --- //
+//
+// Revokes a specific key thumbprint (jkt), not a whole client: use it to kill a
+// single leaked device/session key. Presence (blocklist) semantics — every
+// token bound to the key dies regardless of when it was minted, and the key can
+// neither mint nor rotate new tokens.
+
+async function runRevokeKey (platform, args, revokeDpopKey) {
+  const jkt = args.positional[0];
+  if (!jkt) throw new Error('revoke-key: <jkt> required (the RFC 7638 thumbprint of the key)');
+  if (!args.flags['yes'] && !args.flagsScalar['yes']) {
+    throw new Error('revoke-key: refuses to run without --yes (operator-revoke is a footgun)');
+  }
+  await revokeDpopKey(platform, jkt); // throws on a malformed (non-43-char-base64url) jkt
+  console.log('OK   DPoP key revoked: ' + jkt);
+  console.log();
+  console.log('NOTE: a cluster-wide revoke tombstone is written. Every core stops');
+  console.log('      LIVE DPoP-bound tokens on this key within');
+  console.log('      oauth.dpop.keyRevokeCheckSeconds (default 30s) — read locally');
+  console.log('      from PlatformDB, no cross-core bus. The key can neither mint');
+  console.log('      nor rotate new tokens. Reverse with:');
+  console.log('        node bin/oauth-client.js unrevoke-key ' + jkt + ' --yes');
+}
+
+async function runUnrevokeKey (platform, args, unrevokeDpopKey) {
+  const jkt = args.positional[0];
+  if (!jkt) throw new Error('unrevoke-key: <jkt> required');
+  if (!args.flags['yes'] && !args.flagsScalar['yes']) {
+    throw new Error('unrevoke-key: refuses to run without --yes');
+  }
+  await unrevokeDpopKey(platform, jkt); // throws on a malformed jkt
+  console.log('OK   DPoP key un-revoked: ' + jkt);
+  console.log('     Pre-expiry tokens bound to this key resume within the cache TTL.');
+}
+
+async function runListRevokedKeys (platform, listRevokedDpopKeys) {
+  const list = await listRevokedDpopKeys(platform);
+  if (list.length === 0) { console.log('(no revoked DPoP keys)'); return; }
+  list.sort((a, b) => b.revokedAt - a.revokedAt);
+  for (const { jkt, revokedAt } of list) {
+    console.log(jkt + '  revoked ' + new Date(revokedAt).toISOString());
+  }
+}
+
+// Operator pick-list: every DPoP key thumbprint seen bound for a client, most
+// recently used first, flagged REVOKED where a tombstone exists. Advisory data
+// (the seen-inventory) joined with authoritative revoke tombstones.
+async function runListKeys (platform, args, listDpopKeysSeen, listRevokedDpopKeys) {
+  const clientId = args.positional[0]; // optional filter
+  const seen = await listDpopKeysSeen(platform, clientId);
+  if (seen.length === 0) {
+    console.log(clientId ? '(no DPoP keys seen for ' + clientId + ')' : '(no DPoP keys seen)');
+    return;
+  }
+  const revoked = new Set((await listRevokedDpopKeys(platform)).map((e) => e.jkt));
+  seen.sort((a, b) => b.lastSeenAt - a.lastSeenAt);
+  for (const { clientId: cid, jkt, firstSeenAt, lastSeenAt } of seen) {
+    console.log(
+      jkt +
+      '  ' + cid +
+      '  first=' + new Date(firstSeenAt).toISOString() +
+      '  last=' + new Date(lastSeenAt).toISOString() +
+      (revoked.has(jkt) ? '  REVOKED' : '')
+    );
+  }
+}
+
 async function runRotateSecret (platform, args, getClient, persistClient) {
   const clientId = args.positional[0];
   if (!clientId) throw new Error('rotate-secret: <clientId> required');
@@ -288,6 +374,10 @@ function printUsage (stream) {
     '  node bin/oauth-client.js list\n' +
     '  node bin/oauth-client.js update <clientId> [flags]\n' +
     '  node bin/oauth-client.js revoke <clientId> --yes\n' +
+    '  node bin/oauth-client.js revoke-key <jkt> --yes\n' +
+    '  node bin/oauth-client.js unrevoke-key <jkt> --yes\n' +
+    '  node bin/oauth-client.js list-revoked-keys\n' +
+    '  node bin/oauth-client.js list-keys [<clientId>]\n' +
     '  node bin/oauth-client.js rotate-secret <clientId>\n\n' +
     'Flags (create / update):\n' +
     '  --redirect-uri <uri>      (multi-valued; at least one required on create)\n' +

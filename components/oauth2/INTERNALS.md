@@ -81,13 +81,42 @@ Every audit emission MUST be `await`ed. Silent fire-and-forget is a deliberate a
 
 Performance: audit writes are local (SQLite per-user audit DB); typical latency &lt; 5 ms. Not a hot-path concern.
 
-## DPoP extension points (not yet wired)
+## DPoP (RFC 9449) sender-constrained tokens
 
-DPoP (RFC 9449) is planned as a follow-up. The substrate to look for:
+Opt-in per request: a client that presents a `DPoP` proof on `/oauth2/token`
+binds the issued token to its key's RFC 7638 thumbprint (`jkt`). The bearer path
+is untouched; tokens stay opaque CUID2.
 
-- `components/oauth2/src/grants/authorization_code.ts` will gain a `jkt` (JWK thumbprint) binding to the issued access row when the token request carries a `DPoP` header.
-- `/oauth2/token` response will switch `token_type: "Bearer"` → `"DPoP"` when the request carries a `DPoP` header (RFC 9449 §5).
-- `components/middleware/src/getAuth.ts` will gain a `DPoP` scheme branch alongside the existing `Bearer` branch.
-- New keyspace `dpop-nonce/<jkt>/<jti>` for single-use proof replay defence (short TTL ≈ clock-skew window).
+- **Binding:** `src/routes/token.ts` verifies the proof (ES256-only, dependency-free
+  `node:crypto` — `src/dpop.ts`) before any grant runs, then stamps `jkt` onto the
+  access row (`bindAccessDpop` callback, authorization_code) and the refresh row
+  (`grants/refresh_token.ts`, rotation keeps the same key). `/oauth2/token` returns
+  `token_type: "DPoP"` for bound chains.
+- **Scheme capture:** the `DPoP` scheme is read in `MethodContext`/`initContext`
+  (NOT `getAuth`, which runs before `req.context` exists and is skipped by the
+  batch route).
+- **Enforcement:** `MethodContext.checkDpopBinding` runs in `retrieveExpandedAccess`
+  — the shared choke point across HTTP, batch, socket.io and hfs — so a bound token
+  is unusable without a matching proof on every transport (bound tokens fail closed
+  over socket.io/hfs, which carry no proof).
+- **Replay defence:** keyspace `dpop-jti/<jkt>/<jti>` via the atomic
+  `setAccessStateIfAbsent` primitive (first-writer-wins single-use); TTL ≈ 2× the
+  clock-skew window (`oauth.dpop.clockSkewSeconds`, default 120s).
 
-None of this is wired in the current substrate.
+### Operator revoke-by-key
+
+`bin/oauth-client.js revoke-key <jkt> --yes` tombstones a single key thumbprint —
+kill one leaked device/session key without revoking the whole client. Keyspace
+`dpop-jkt-revoked/<jkt>` → `{ revokedAt }`, cluster-wide (each core reads it
+locally — there is no cross-core bus). `MethodContext.checkDpopKeyNotRevoked`
+consults a per-core cache (`src/revokedKeysCache.ts`, TTL
+`oauth.dpop.keyRevokeCheckSeconds`, default 30s) and rejects any bound access on a
+revoked key; `token.ts` additionally refuses to mint or rotate on a revoked key.
+
+Semantics are **presence (blocklist), NOT the token-epoch used for client revoke**:
+a `clientId` is a re-assignable name (re-registration is a fresh trust decision
+whose new tokens must live), but a `jkt` IS the key — so any token bound to a
+revoked jkt is dead regardless of mint time, including one a refresh rotation
+re-mints on the same key after the revoke (an epoch check would wrongly honour it).
+`unrevoke-key` clears the tombstone (operator recovery); the master sweep prunes
+tombstones past the max token lifetime.
