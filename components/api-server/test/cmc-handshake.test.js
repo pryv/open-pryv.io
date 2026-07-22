@@ -1094,7 +1094,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       second = await runFreshHandshake('study-dup-b');
     });
 
-    it('[CN23] the newer relationship delivers to its own streams', async function () {
+    it('[CN26] the newer relationship delivers to its own streams', async function () {
       const text = 'newer relationship ' + Date.now();
       const res = await coreRequest.post(bob.eventsPath)
         .set('Authorization', bob.token)
@@ -1111,7 +1111,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
       );
     });
 
-    it('[CN24] the older relationship delivers to its own streams, not the newer one\'s', async function () {
+    it('[CN27] the older relationship delivers to its own streams, not the newer one\'s', async function () {
       const text = 'older relationship ' + Date.now();
       const res = await coreRequest.post(bob.eventsPath)
         .set('Authorization', bob.token)
@@ -1138,7 +1138,7 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
         'message sent on the older relationship must not surface on the newer one\'s stream');
     });
 
-    it('[CN25] each relationship keeps its own back-channel pointers', async function () {
+    it('[CN28] each relationship keeps its own back-channel pointers', async function () {
       const res = await coreRequest.get(bob.accessesPath)
         .set('Authorization', bob.token);
       const grants = (res.body?.accesses || []).filter((a) => {
