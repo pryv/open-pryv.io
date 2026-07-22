@@ -44,9 +44,18 @@ class MetadataCache {
     this.loader = metadataLoader;
     this.series = series;
     this.config = config;
+    // Cap the entry age to the operator client-revoke SLA. A cache HIT returns
+    // the cached metadata WITHOUT re-authenticating (the MISS path's loader is
+    // what runs the client-revoke check), so a 5-min TTL would let a revoked
+    // oauth token keep writing HF series long past oauth.clientRevokeCheckSeconds.
+    // Bounding the TTL makes an entry expire — and thus re-auth + re-check —
+    // within the revoke window.
+    let revokeMs = 30_000;
+    const configuredRevoke = Number(config.get('oauth:clientRevokeCheckSeconds'));
+    if (Number.isFinite(configuredRevoke) && configuredRevoke > 0) revokeMs = configuredRevoke * 1000;
     const options = {
       max: LRU_CACHE_SIZE,
-      ttl: LRU_CACHE_MAX_AGE_MS
+      ttl: Math.min(LRU_CACHE_MAX_AGE_MS, revokeMs)
     };
     this.cache = new LRU(options);
     // messages

@@ -357,28 +357,47 @@ class MethodContext {
 
   /**
    * Reject an OAuth-session access (`name = 'oauth:<clientId>'`) whose client
-   * an operator has revoked — so a `revoke` reaches live tokens cluster-wide
-   * within the cache TTL, instead of waiting out the ~1 h access-token TTL.
+   * an operator has revoked — so a `revoke` reaches live tokens within the
+   * cache TTL, instead of waiting out the ~1 h access-token TTL.
    * Non-oauth accesses and non-revoked clients pass untouched.
+   *
+   * ⚠️ TRANSPORT COVERAGE: this runs on every REQUEST-authenticated call
+   * (HTTP, batch, readToken-attachment). It does NOT cover a socket.io
+   * connection opened BEFORE the revoke — socket.io authenticates once at
+   * handshake and dispatches later messages without re-running this — nor an
+   * HFS series metadata-cache hit (≤5 min). Those transports lag the revoke by
+   * their connection / cache lifetime; closing that gap needs a per-core sweep
+   * that disconnects revoked sockets + invalidates the hfs cache (follow-up).
    *
    * Fail-open when the platform store is unavailable (e.g. unit contexts): the
    * revoke is a bounded-SLA control, not an availability gate — blocking every
    * oauth session during a platform hiccup would be worse than the ≤TTL window.
    */
   async checkClientNotRevoked () {
-    const name = (this.access as { name?: unknown } | null)?.name;
+    const access = this.access as { name?: unknown; created?: unknown } | null;
+    const name = access?.name;
     if (typeof name !== 'string' || !name.startsWith('oauth:')) return;
     const clientId = name.slice('oauth:'.length);
     if (clientId.length === 0) return;
     const platform = require('storages').platformDB;
     if (platform == null) return;
+    // Clamp the configured TTL: a non-numeric value would make the cache's
+    // `now - loadedAt > NaN` always false (never refresh → revoke never takes
+    // effect); a non-positive value would refresh on every request.
     let ttlSeconds = 30;
     try {
-      const configured = require('@pryv/boiler').getConfigSync().get('oauth:clientRevokeCheckSeconds');
-      if (configured != null) ttlSeconds = Number(configured);
+      const configured = Number(require('@pryv/boiler').getConfigSync().get('oauth:clientRevokeCheckSeconds'));
+      if (Number.isFinite(configured) && configured > 0) ttlSeconds = configured;
     } catch { /* config not booted (unit contexts) — keep the default */ }
-    const { isClientRevoked } = require('oauth2/src/revokedClientsCache.ts');
-    if (await isClientRevoked(platform, clientId, ttlSeconds)) {
+    const { getRevokedAt } = require('oauth2/src/revokedClientsCache.ts');
+    const revokedAt = await getRevokedAt(platform, clientId, ttlSeconds);
+    if (revokedAt == null) return;
+    // Token epoch: a revoke kills tokens minted BEFORE `revokedAt`; tokens
+    // minted after (e.g. after a re-registration) survive. `created` is unix
+    // SECONDS; `revokedAt` is ms. When `created` is missing (shouldn't happen
+    // for a minted oauth access), fail safe = treat as revoked.
+    const createdMs = typeof access?.created === 'number' ? access.created * 1000 : 0;
+    if (createdMs < revokedAt) {
       throw errors.invalidAccessToken('The application access has been revoked.', 403);
     }
   }

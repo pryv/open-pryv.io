@@ -172,9 +172,11 @@ const JKT_RE = /^[A-Za-z0-9_-]{43}$/;
 export async function setClient (platform: PlatformDB, client: OAuthClient): Promise<void> {
   const payload = { ...client, clientId: client.clientId, updatedAt: client.updatedAt || Date.now() };
   await platform.setPlatformKv(PREFIX_CLIENT + client.clientId, JSON.stringify(payload));
-  // Registering (or re-registering) a client id clears any revoke tombstone —
-  // an operator who re-creates the id starts from a clean, usable state.
-  await platform.deletePlatformKv(PREFIX_CLIENT_REVOKED + client.clientId);
+  // NB: re-registering a revoked client id does NOT clear the tombstone. The
+  // revoke is a token EPOCH (`revokedAt`): tokens minted BEFORE it stay dead,
+  // tokens minted AFTER (a fresh registration mints new ones) are honoured — so
+  // a compromised app's old sessions can't be resurrected by re-using its id,
+  // and a concurrent revoke-vs-re-register can't lose the revoke.
 }
 
 export async function getClient (platform: PlatformDB, clientId: string): Promise<OAuthClient | null> {
@@ -209,13 +211,34 @@ export async function listClientIds (platform: PlatformDB): Promise<string[]> {
 // clears it. The resource-server validation path consults these (per-core
 // cached) to reject a revoked client's oauth-session accesses.
 
-/** True when the clientId carries a revoke tombstone. */
-export async function isClientRevoked (platform: PlatformDB, clientId: string): Promise<boolean> {
-  if (typeof clientId !== 'string' || clientId.length === 0) return false;
-  return (await platform.getPlatformKv(PREFIX_CLIENT_REVOKED + clientId)) != null;
+/** The revoke epoch (ms) for a clientId, or null if it carries no tombstone. */
+export async function getRevokedAt (platform: PlatformDB, clientId: string): Promise<number | null> {
+  if (typeof clientId !== 'string' || clientId.length === 0) return null;
+  const raw = await platform.getPlatformKv(PREFIX_CLIENT_REVOKED + clientId);
+  if (raw == null) return null;
+  try { const at = Number(JSON.parse(raw).revokedAt); return Number.isFinite(at) ? at : 0; } catch { return 0; }
 }
 
-/** All currently-tombstoned client ids (the per-core cache loads this set). */
+/** True when the clientId carries a revoke tombstone (any epoch). */
+export async function isClientRevoked (platform: PlatformDB, clientId: string): Promise<boolean> {
+  return (await getRevokedAt(platform, clientId)) != null;
+}
+
+/** All tombstoned clients with their revoke epochs (the per-core cache loads this). */
+export async function listRevokedClients (platform: PlatformDB): Promise<Array<{ clientId: string; revokedAt: number }>> {
+  const keys = await platform.listPlatformKvKeys(PREFIX_CLIENT_REVOKED);
+  const out: Array<{ clientId: string; revokedAt: number }> = [];
+  for (const key of keys) {
+    const clientId = key.slice(PREFIX_CLIENT_REVOKED.length);
+    const raw = await platform.getPlatformKv(key);
+    let revokedAt = 0;
+    try { revokedAt = Number(JSON.parse(raw ?? '{}').revokedAt) || 0; } catch { revokedAt = 0; }
+    out.push({ clientId, revokedAt });
+  }
+  return out;
+}
+
+/** All currently-tombstoned client ids (CLI listing / prune). */
 export async function listRevokedClientIds (platform: PlatformDB): Promise<string[]> {
   const keys = await platform.listPlatformKvKeys(PREFIX_CLIENT_REVOKED);
   return keys.map((k) => k.slice(PREFIX_CLIENT_REVOKED.length));

@@ -26,43 +26,48 @@ function fakePlatform () {
 const CLIENT = { clientId: 'myapp', redirectUris: ['https://a/cb'], scope: ['cmc:x'], grantTypes: ['authorization_code'], clientName: 'X', updatedAt: 1 };
 
 describe('[OAUTH-CLIENT-REVOKE] operator client revoke', () => {
-  describe('[OCR-STORE] tombstone storage', () => {
-    it('[OCR01] deleteClient removes the client row AND writes a revoke tombstone', async () => {
+  describe('[OCR-STORE] tombstone storage (token epoch)', () => {
+    it('[OCR01] deleteClient removes the client row AND writes a revoke tombstone with an epoch', async () => {
       const p = fakePlatform();
       await storage.setClient(p, CLIENT);
       assert.ok(await storage.getClient(p, 'myapp'));
+      const before = Date.now();
       await storage.deleteClient(p, 'myapp');
       assert.equal(await storage.getClient(p, 'myapp'), null);
+      const revokedAt = await storage.getRevokedAt(p, 'myapp');
+      assert.ok(typeof revokedAt === 'number' && revokedAt >= before);
       assert.equal(await storage.isClientRevoked(p, 'myapp'), true);
     });
 
-    it('[OCR02] setClient (re-register) clears an existing tombstone', async () => {
+    it('[OCR02] setClient (re-register) does NOT clear the tombstone — the epoch stays', async () => {
       const p = fakePlatform();
       await storage.setClient(p, CLIENT);
       await storage.deleteClient(p, 'myapp');
-      assert.equal(await storage.isClientRevoked(p, 'myapp'), true);
+      const epoch = await storage.getRevokedAt(p, 'myapp');
       await storage.setClient(p, CLIENT); // re-register
-      assert.equal(await storage.isClientRevoked(p, 'myapp'), false);
+      assert.equal(await storage.getRevokedAt(p, 'myapp'), epoch, 'epoch unchanged by re-register');
+      assert.equal(await storage.isClientRevoked(p, 'myapp'), true);
     });
 
-    it('[OCR03] isClientRevoked is false for an unknown / empty id', async () => {
+    it('[OCR03] getRevokedAt is null for an unknown / empty id', async () => {
       const p = fakePlatform();
-      assert.equal(await storage.isClientRevoked(p, 'never'), false);
-      assert.equal(await storage.isClientRevoked(p, ''), false);
+      assert.equal(await storage.getRevokedAt(p, 'never'), null);
+      assert.equal(await storage.getRevokedAt(p, ''), null);
     });
 
-    it('[OCR04] listRevokedClientIds returns exactly the tombstoned ids', async () => {
+    it('[OCR04] listRevokedClients returns each tombstoned id with its epoch (re-register keeps it)', async () => {
       const p = fakePlatform();
       await storage.deleteClient(p, 'a');
       await storage.deleteClient(p, 'b');
-      await storage.setClient(p, { ...CLIENT, clientId: 'b' }); // clears b
-      const ids = await storage.listRevokedClientIds(p);
-      assert.deepEqual(ids.sort(), ['a']);
+      await storage.setClient(p, { ...CLIENT, clientId: 'b' }); // does NOT clear b
+      const entries = await storage.listRevokedClients(p);
+      const ids = entries.map((e) => e.clientId).sort();
+      assert.deepEqual(ids, ['a', 'b']);
+      assert.ok(entries.every((e) => typeof e.revokedAt === 'number' && e.revokedAt > 0));
     });
 
     it('[OCR05] pruneRevokedClients drops only tombstones older than maxAge', async () => {
       const p = fakePlatform();
-      // Two tombstones with hand-set ages.
       await p.setPlatformKv('oauth-client-revoked/old', JSON.stringify({ revokedAt: 1000 }));
       await p.setPlatformKv('oauth-client-revoked/new', JSON.stringify({ revokedAt: 9000 }));
       const pruned = await storage.pruneRevokedClients(p, 3000, 10000); // now=10000, maxAge=3000 → cutoff 7000
@@ -72,14 +77,15 @@ describe('[OAUTH-CLIENT-REVOKE] operator client revoke', () => {
     });
   });
 
-  describe('[OCR-CACHE] per-core cache', () => {
+  describe('[OCR-CACHE] per-core cache (epoch map)', () => {
     beforeEach(() => cache._resetForTests());
 
-    it('[OCR10] loads the set on first use and reflects a revoked client', async () => {
+    it('[OCR10] loads on first use and returns the revoke epoch (null when not revoked)', async () => {
       const p = fakePlatform();
       await storage.deleteClient(p, 'gone');
-      assert.equal(await cache.isClientRevoked(p, 'gone', 30, 1000), true);
-      assert.equal(await cache.isClientRevoked(p, 'other', 30, 1000), false);
+      const epoch = await cache.getRevokedAt(p, 'gone', 30, 1000);
+      assert.ok(typeof epoch === 'number' && epoch > 0);
+      assert.equal(await cache.getRevokedAt(p, 'other', 30, 1000), null);
     });
 
     it('[OCR11] serves from cache within the TTL (no re-read) then refreshes after it', async () => {
@@ -88,25 +94,24 @@ describe('[OAUTH-CLIENT-REVOKE] operator client revoke', () => {
       const orig = p.listPlatformKvKeys.bind(p);
       p.listPlatformKvKeys = async (pre) => { reads++; return orig(pre); };
 
-      await cache.isClientRevoked(p, 'x', 30, 1000); // cold load (read #1)
+      await cache.getRevokedAt(p, 'x', 30, 1000); // cold load (read #1)
       await storage.deleteClient(p, 'x'); // revoke AFTER the load
-      // Within TTL: still served from the stale cache → not yet revoked, no read.
-      assert.equal(await cache.isClientRevoked(p, 'x', 30, 5000), false);
+      // Within TTL: served from the stale cache → still null, no read.
+      assert.equal(await cache.getRevokedAt(p, 'x', 30, 5000), null);
       assert.equal(reads, 1);
-      // Past TTL (now - loadedAt > 30s): refresh picks up the revoke.
-      assert.equal(await cache.isClientRevoked(p, 'x', 30, 40000), true);
+      // Past TTL: refresh picks up the revoke epoch.
+      assert.ok((await cache.getRevokedAt(p, 'x', 30, 40000)) > 0);
       assert.equal(reads, 2);
     });
 
-    it('[OCR12] fail-open on a platform read error: keeps the stale set, does not throw', async () => {
+    it('[OCR12] fail-open on a platform read error: keeps the stale map, does not throw', async () => {
       const p = fakePlatform();
       await storage.deleteClient(p, 'known');
-      await cache.isClientRevoked(p, 'known', 30, 1000); // warm: {known}
+      await cache.getRevokedAt(p, 'known', 30, 1000); // warm: {known}
       p.listPlatformKvKeys = async () => { throw new Error('platform down'); };
-      // Past TTL → refresh throws internally, but the call resolves (fail-open)
-      // and keeps the last known set.
-      assert.equal(await cache.isClientRevoked(p, 'known', 30, 40000), true);
-      assert.equal(await cache.isClientRevoked(p, 'other', 30, 40000), false);
+      // Past TTL → refresh throws internally, but the call resolves (fail-open).
+      assert.ok((await cache.getRevokedAt(p, 'known', 30, 40000)) > 0);
+      assert.equal(await cache.getRevokedAt(p, 'other', 30, 40000), null);
     });
   });
 });
