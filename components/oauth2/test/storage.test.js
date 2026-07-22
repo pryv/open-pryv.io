@@ -238,4 +238,149 @@ describe('[OAUTH-STORE] storage layer', () => {
       assert.ok(await storage.getRefresh(platform, 'core-a', same));
     });
   });
+
+  describe('[RJKT01] DPoP key revoke tombstones (presence blocklist)', () => {
+    // A valid RFC 7638 thumbprint: exactly 43 unpadded base64url chars.
+    const JKT = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'; // 43 chars
+    const JKT2 = 'ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210_-abcde'; // 43 chars
+
+    it('[RJKT01a] revokeDpopKey writes a tombstone readable via getDpopKeyRevokedAt/isDpopKeyRevoked', async () => {
+      const platform = fakePlatform();
+      const before = Date.now();
+      await storage.revokeDpopKey(platform, JKT);
+      assert.ok(platform._internalKvStore.has('dpop-jkt-revoked/' + JKT));
+      const at = await storage.getDpopKeyRevokedAt(platform, JKT);
+      assert.ok(typeof at === 'number' && at >= before);
+      assert.equal(await storage.isDpopKeyRevoked(platform, JKT), true);
+    });
+    it('[RJKT01b] an un-revoked key reads null / false', async () => {
+      const platform = fakePlatform();
+      assert.equal(await storage.getDpopKeyRevokedAt(platform, JKT), null);
+      assert.equal(await storage.isDpopKeyRevoked(platform, JKT), false);
+    });
+    it('[RJKT01c] revokeDpopKey rejects a malformed jkt (typo must fail loud, not tombstone nothing)', async () => {
+      const platform = fakePlatform();
+      await assert.rejects(() => storage.revokeDpopKey(platform, 'too-short'), /43-char base64url/);
+      await assert.rejects(() => storage.revokeDpopKey(platform, JKT + 'x'), /43-char base64url/); // 44 chars
+      await assert.rejects(() => storage.revokeDpopKey(platform, 'has spaces in it 34567890123456789012345678'), /43-char base64url/);
+      assert.equal(platform._internalKvStore.size, 0);
+    });
+    it('[RJKT01d] unrevokeDpopKey clears the tombstone (operator recovery)', async () => {
+      const platform = fakePlatform();
+      await storage.revokeDpopKey(platform, JKT);
+      await storage.unrevokeDpopKey(platform, JKT);
+      assert.equal(await storage.isDpopKeyRevoked(platform, JKT), false);
+      await assert.rejects(() => storage.unrevokeDpopKey(platform, 'bad'), /43-char base64url/);
+    });
+    it('[RJKT01e] listRevokedDpopKeys returns every tombstone with its epoch', async () => {
+      const platform = fakePlatform();
+      await storage.revokeDpopKey(platform, JKT);
+      await storage.revokeDpopKey(platform, JKT2);
+      const list = await storage.listRevokedDpopKeys(platform);
+      const jkts = list.map((e) => e.jkt).sort();
+      assert.deepEqual(jkts, [JKT, JKT2].sort());
+      for (const e of list) assert.ok(typeof e.revokedAt === 'number' && e.revokedAt > 0);
+    });
+    it('[RJKT01f] pruneRevokedDpopKeys drops only tombstones older than maxAge', async () => {
+      const platform = fakePlatform();
+      await storage.revokeDpopKey(platform, JKT); // fresh (revokedAt ~ now)
+      // Plant a stale tombstone directly (revokedAt far in the past).
+      platform._internalKvStore.set('dpop-jkt-revoked/' + JKT2, JSON.stringify({ revokedAt: 1000 }));
+      const pruned = await storage.pruneRevokedDpopKeys(platform, 60_000);
+      assert.equal(pruned, 1);
+      assert.equal(await storage.isDpopKeyRevoked(platform, JKT2), false);
+      assert.equal(await storage.isDpopKeyRevoked(platform, JKT), true); // fresh one survives
+    });
+    it('[RJKT01h] pruneRevokedDpopKeys KEEPS a corrupt tombstone (fail-closed parity with enforcement)', async () => {
+      const platform = fakePlatform();
+      // A corrupt value: enforcement reads it as revoked (getDpopKeyRevokedAt → 0,
+      // non-null), so prune must not delete it (which would silently un-revoke).
+      platform._internalKvStore.set('dpop-jkt-revoked/' + JKT, 'not-json');
+      platform._internalKvStore.set('dpop-jkt-revoked/' + JKT2, JSON.stringify({ revokedAt: 1000 })); // aged, real
+      const pruned = await storage.pruneRevokedDpopKeys(platform, 60_000);
+      assert.equal(pruned, 1); // only the aged real one
+      assert.equal(await storage.isDpopKeyRevoked(platform, JKT), true, 'corrupt tombstone survives prune');
+      assert.equal(await storage.isDpopKeyRevoked(platform, JKT2), false);
+    });
+
+    it('[RJKT01g] the jkt-revoked keyspace does not collide with the jti replay keyspace', async () => {
+      const platform = fakePlatform();
+      await storage.revokeDpopKey(platform, JKT);
+      // Both prefixes share the 'dpop-' stem; a dpop-jti/ scan (the replay
+      // cache loader) must NOT catch a dpop-jkt-revoked/ tombstone, and vice
+      // versa — otherwise a revoke would look like a jti or get swept with it.
+      assert.equal((await platform.listPlatformKvKeys('dpop-jti/')).length, 0);
+      assert.equal((await platform.listPlatformKvKeys('dpop-jkt-revoked/')).length, 1);
+      assert.equal((await storage.listRevokedDpopKeys(platform)).length, 1);
+    });
+  });
+
+  describe('[KINV01] DPoP key inventory (advisory seen-records)', () => {
+    const JKT = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'; // 43 chars
+    const JKT2 = 'ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210_-abcde'; // 43 chars
+
+    it('[KINV01a] recordDpopKeySeen stores under dpop-jkt-seen/<clientId>/<jkt> and round-trips', async () => {
+      const platform = fakePlatform();
+      await storage.recordDpopKeySeen(platform, 'appA', JKT);
+      assert.ok(platform._internalKvStore.has('dpop-jkt-seen/appA/' + JKT));
+      const list = await storage.listDpopKeysSeen(platform);
+      assert.equal(list.length, 1);
+      assert.deepEqual({ clientId: list[0].clientId, jkt: list[0].jkt }, { clientId: 'appA', jkt: JKT });
+      assert.ok(list[0].firstSeenAt > 0 && list[0].lastSeenAt > 0);
+    });
+
+    it('[KINV01b] a repeat record preserves firstSeenAt and advances lastSeenAt', async () => {
+      const platform = fakePlatform();
+      await storage.recordDpopKeySeen(platform, 'appA', JKT);
+      const first = (await storage.listDpopKeysSeen(platform))[0];
+      // Force a distinct clock by planting an older firstSeenAt, then re-record.
+      platform._internalKvStore.set('dpop-jkt-seen/appA/' + JKT, JSON.stringify({ firstSeenAt: 1000, lastSeenAt: 1000 }));
+      await storage.recordDpopKeySeen(platform, 'appA', JKT);
+      const again = (await storage.listDpopKeysSeen(platform))[0];
+      assert.equal(again.firstSeenAt, 1000, 'firstSeenAt preserved');
+      assert.ok(again.lastSeenAt > 1000, 'lastSeenAt advanced');
+      assert.ok(first != null);
+    });
+
+    it('[KINV01c] listDpopKeysSeen scopes to one client when given; clientIds with a jkt parse cleanly', async () => {
+      const platform = fakePlatform();
+      await storage.recordDpopKeySeen(platform, 'appA', JKT);
+      await storage.recordDpopKeySeen(platform, 'appA', JKT2);
+      await storage.recordDpopKeySeen(platform, 'appB', JKT);
+      const all = await storage.listDpopKeysSeen(platform);
+      assert.equal(all.length, 3);
+      const scoped = await storage.listDpopKeysSeen(platform, 'appA');
+      assert.equal(scoped.length, 2);
+      assert.ok(scoped.every((e) => e.clientId === 'appA'));
+      // The 43-char no-slash jkt tail parses back even if clientId held a slash.
+      await storage.recordDpopKeySeen(platform, 'core/appC', JKT);
+      const weird = await storage.listDpopKeysSeen(platform, 'core/appC');
+      assert.deepEqual({ clientId: weird[0].clientId, jkt: weird[0].jkt }, { clientId: 'core/appC', jkt: JKT });
+    });
+
+    it('[KINV01d] recordDpopKeySeen no-ops (never throws) on malformed input', async () => {
+      const platform = fakePlatform();
+      await storage.recordDpopKeySeen(platform, '', JKT);
+      await storage.recordDpopKeySeen(platform, 'appA', 'not-a-jkt');
+      assert.equal((await storage.listDpopKeysSeen(platform)).length, 0);
+    });
+
+    it('[KINV01e] pruneDpopKeysSeen drops rows not touched within maxAge', async () => {
+      const platform = fakePlatform();
+      await storage.recordDpopKeySeen(platform, 'appA', JKT); // fresh
+      platform._internalKvStore.set('dpop-jkt-seen/appA/' + JKT2, JSON.stringify({ firstSeenAt: 1000, lastSeenAt: 1000 }));
+      const pruned = await storage.pruneDpopKeysSeen(platform, 60_000);
+      assert.equal(pruned, 1);
+      const left = await storage.listDpopKeysSeen(platform);
+      assert.deepEqual(left.map((e) => e.jkt), [JKT]);
+    });
+
+    it('[KINV01f] inventory keyspace does not collide with the revoke tombstone keyspace', async () => {
+      const platform = fakePlatform();
+      await storage.recordDpopKeySeen(platform, 'appA', JKT);
+      await storage.revokeDpopKey(platform, JKT);
+      assert.equal((await storage.listDpopKeysSeen(platform)).length, 1);
+      assert.equal((await storage.listRevokedDpopKeys(platform)).length, 1);
+    });
+  });
 });

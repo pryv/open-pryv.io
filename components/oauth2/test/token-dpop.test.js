@@ -20,7 +20,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { webcrypto } = require('node:crypto');
 const { handleToken } = require('../src/routes/token.ts');
-const { setCode, setRefresh, getRefresh } = require('../src/storage.ts');
+const { setCode, setRefresh, getRefresh, revokeDpopKey, listDpopKeysSeen } = require('../src/storage.ts');
 const { computeJkt } = require('../src/dpop.ts');
 
 const { subtle } = webcrypto;
@@ -320,5 +320,83 @@ describe('[OAUTH-TKN-DP] /oauth2/token — DPoP key binding', () => {
     await handler(tokenReq(codeBody('C-DP11'), await makeProof(key)), res);
     assert.equal(res.statusCode, 500);
     assert.equal(res.body.error, 'server_error');
+  });
+
+  it('[RJKT21a] authorization_code with a proof for an operator-REVOKED key: refused, code not consumed, no bind', async () => {
+    const platform = fakePlatform();
+    await seedCode(platform, 'C-RJ21');
+    await revokeDpopKey(platform, computeJkt(key.publicJwk));
+    const bound = [];
+    const handler = handleToken({ config: fakeConfig(), platform, bindAccessDpop: async (p) => { bound.push(p); } });
+    const res = fakeRes();
+    await handler(tokenReq(codeBody('C-RJ21'), await makeProof(key)), res);
+    assert.equal(res.statusCode, 400, JSON.stringify(res.body));
+    assert.equal(res.body.error, 'invalid_dpop_proof');
+    assert.equal(bound.length, 0, 'a revoked key must not bind an access');
+    // The code was NOT consumed — a plain Bearer exchange still works.
+    const res2 = fakeRes();
+    await handler(tokenReq(codeBody('C-RJ21')), res2);
+    assert.equal(res2.statusCode, 200, JSON.stringify(res2.body));
+    assert.equal(res2.body.token_type, 'Bearer');
+  });
+
+  it('[RJKT21b] refresh rotation onto a REVOKED key: refused, refresh row not consumed (chain not silently killed by the check)', async () => {
+    const platform = fakePlatform();
+    await seedRefresh(platform, 'RT-RJ21', { jkt: computeJkt(key.publicJwk) });
+    await revokeDpopKey(platform, computeJkt(key.publicJwk));
+    const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_OK });
+    const res = fakeRes();
+    await handler(tokenReq({ grant_type: 'refresh_token', refresh_token: 'RT-RJ21', client_id: 'myapp' }, await makeProof(key)), res);
+    assert.equal(res.statusCode, 400, JSON.stringify(res.body));
+    assert.equal(res.body.error, 'invalid_dpop_proof');
+    // The revoke check runs BEFORE the grant, so the refresh row is untouched
+    // (the resource-server enforcement is what kills any live tokens).
+    assert.ok(await getRefresh(platform, CORE_ID, 'RT-RJ21') != null, 'refresh row must survive the pre-grant revoke refusal');
+  });
+
+  // Let the fire-and-forget inventory write (recordDpopKeySeen, not awaited by
+  // the handler) settle before asserting.
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+  it('[KINV10a] a successful bound issuance records the (clientId, jkt) in the key inventory', async () => {
+    const platform = fakePlatform();
+    await seedCode(platform, 'C-KV10');
+    const handler = handleToken({ config: fakeConfig(), platform, bindAccessDpop: async () => {} });
+    const res = fakeRes();
+    await handler(tokenReq(codeBody('C-KV10'), await makeProof(key)), res);
+    assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    await settle();
+    const seen = await listDpopKeysSeen(platform);
+    assert.equal(seen.length, 1);
+    assert.deepEqual({ clientId: seen[0].clientId, jkt: seen[0].jkt }, { clientId: 'myapp', jkt: computeJkt(key.publicJwk) });
+  });
+
+  it('[KINV10b] a FAILED grant (valid proof, missing code) records nothing', async () => {
+    const platform = fakePlatform();
+    const handler = handleToken({ config: fakeConfig(), platform, bindAccessDpop: async () => {} });
+    const res = fakeRes();
+    // Valid proof (dpopJkt is set) but the code is absent → outcome not ok.
+    await handler(tokenReq(codeBody('C-MISSING-KV'), await makeProof(key)), res);
+    assert.notEqual(res.statusCode, 200);
+    await settle();
+    assert.equal((await listDpopKeysSeen(platform)).length, 0, 'no inventory row on a failed issuance');
+  });
+
+  it('[KINV10c] issuance still succeeds when the advisory inventory write throws (fire-and-forget)', async () => {
+    const base = fakePlatform();
+    // A platform whose setPlatformKv fails ONLY for the seen keyspace.
+    const platform = {
+      ...base,
+      async setPlatformKv (k, v) {
+        if (k.startsWith('dpop-jkt-seen/')) throw new Error('inventory store down');
+        return base.setPlatformKv(k, v);
+      },
+    };
+    await seedCode(platform, 'C-KV10c');
+    const handler = handleToken({ config: fakeConfig(), platform, bindAccessDpop: async () => {} });
+    const res = fakeRes();
+    await handler(tokenReq(codeBody('C-KV10c'), await makeProof(key)), res);
+    assert.equal(res.statusCode, 200, 'a failing inventory write must not break issuance: ' + JSON.stringify(res.body));
+    await settle();
   });
 });

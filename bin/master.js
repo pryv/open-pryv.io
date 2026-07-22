@@ -190,11 +190,31 @@ if (cluster.isPrimary) {
     // best-effort (a failed sweep just retries next interval).
     const sweepIntervalMs = config.get('accessState:sweepIntervalMs') || 15 * 60 * 1000;
     const accessStateSweep = setInterval(() => {
-      require('../storages/index.ts').platformDB.sweepExpiredAccessStates()
+      const platformDB = require('../storages/index.ts').platformDB;
+      platformDB.sweepExpiredAccessStates()
         .then(({ removed }) => {
           if (removed > 0) log(`[access-state-sweep] removed ${removed} expired row(s)`);
         })
         .catch((err) => log(`[access-state-sweep] failed: ${err.message}`));
+      // Prune operator revoke-by-key tombstones older than the max token
+      // lifetime: past it every DPoP-bound token the revoke could have killed is
+      // already expired, so the marker's job is done. Keeps the per-core-cached
+      // revoked-key set from growing over the cluster's life.
+      // NB: uses the CURRENT absolute cap. If an operator ever DECREASES
+      // oauth.refreshTokenAbsoluteTTL, a tombstone could be pruned while a chain
+      // issued under the old (larger) cap is still alive — the prune floor should
+      // really be the max cap ever configured. Bounded-edge; documented not fixed.
+      const maxTokenTtlMs = (Number(config.get('oauth:refreshTokenAbsoluteTTL')) || 90 * 24 * 3600) * 1000;
+      const oauthStorage = require('../components/oauth2/src/storage.ts');
+      oauthStorage.pruneRevokedDpopKeys(platformDB, maxTokenTtlMs)
+        .then((pruned) => { if (pruned > 0) log(`[revoke-key-tombstone-prune] removed ${pruned} stale tombstone(s)`); })
+        .catch((err) => log(`[revoke-key-tombstone-prune] failed: ${err.message}`));
+      // Prune advisory DPoP key-inventory rows a token lifetime past their last
+      // issuance — no live tokens remain on such a key, so the pick-list row is
+      // stale. Bounds the per-session-key inventory over the cluster's life.
+      oauthStorage.pruneDpopKeysSeen(platformDB, maxTokenTtlMs)
+        .then((pruned) => { if (pruned > 0) log(`[dpop-key-inventory-prune] removed ${pruned} stale row(s)`); })
+        .catch((err) => log(`[dpop-key-inventory-prune] failed: ${err.message}`));
     }, sweepIntervalMs);
     accessStateSweep.unref(); // keepAlive holds the master; the sweep must not
 
