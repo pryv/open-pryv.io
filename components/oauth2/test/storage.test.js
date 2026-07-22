@@ -291,6 +291,18 @@ describe('[OAUTH-STORE] storage layer', () => {
       assert.equal(await storage.isDpopKeyRevoked(platform, JKT2), false);
       assert.equal(await storage.isDpopKeyRevoked(platform, JKT), true); // fresh one survives
     });
+    it('[RJKT01h] pruneRevokedDpopKeys KEEPS a corrupt tombstone (fail-closed parity with enforcement)', async () => {
+      const platform = fakePlatform();
+      // A corrupt value: enforcement reads it as revoked (getDpopKeyRevokedAt → 0,
+      // non-null), so prune must not delete it (which would silently un-revoke).
+      platform._internalKvStore.set('dpop-jkt-revoked/' + JKT, 'not-json');
+      platform._internalKvStore.set('dpop-jkt-revoked/' + JKT2, JSON.stringify({ revokedAt: 1000 })); // aged, real
+      const pruned = await storage.pruneRevokedDpopKeys(platform, 60_000);
+      assert.equal(pruned, 1); // only the aged real one
+      assert.equal(await storage.isDpopKeyRevoked(platform, JKT), true, 'corrupt tombstone survives prune');
+      assert.equal(await storage.isDpopKeyRevoked(platform, JKT2), false);
+    });
+
     it('[RJKT01g] the jkt-revoked keyspace does not collide with the jti replay keyspace', async () => {
       const platform = fakePlatform();
       await storage.revokeDpopKey(platform, JKT);

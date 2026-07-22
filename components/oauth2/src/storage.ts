@@ -376,9 +376,15 @@ export async function pruneRevokedDpopKeys (platform: PlatformDB, maxAgeMs: numb
   let pruned = 0;
   for (const key of keys) {
     const raw = await platform.getPlatformKv(key);
-    let revokedAt = 0;
-    try { revokedAt = Number(JSON.parse(raw ?? '{}').revokedAt) || 0; } catch { revokedAt = 0; }
-    if (now - revokedAt > maxAgeMs) { await platform.deletePlatformKv(key); pruned++; }
+    let revokedAt = NaN;
+    try { revokedAt = Number(JSON.parse(raw ?? '{}').revokedAt); } catch { revokedAt = NaN; }
+    // A corrupt/unparseable tombstone is ENFORCED as revoked (fail-closed:
+    // getDpopKeyRevokedAt → 0, still non-null). Keep it here too — only prune
+    // rows with a real, aged epoch. Parsing a bad value to 0 would make
+    // `now - 0 > maxAgeMs` always true and silently un-revoke the key.
+    if (Number.isFinite(revokedAt) && revokedAt > 0 && now - revokedAt > maxAgeMs) {
+      await platform.deletePlatformKv(key); pruned++;
+    }
   }
   return pruned;
 }
