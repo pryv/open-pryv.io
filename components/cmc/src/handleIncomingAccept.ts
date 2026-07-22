@@ -52,6 +52,8 @@ const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const anchors = require('./anchorStreams.ts');
 const capabilityMod = require('./capability.ts');
+const relationshipKey = require('./relationshipKey.ts');
+const crypto = require('node:crypto');
 
 type Counterparty = { username: string; host: string };
 
@@ -196,7 +198,27 @@ async function handleIncomingAccept (params: {
   // in-place rather than failing the whole handshake — re-delivery is a
   // legitimate retry path and the access's clientData + permissions
   // must reflect the LATEST acceptance.
-  const accessName = 'cmc-back-channel-' + appCode + '--' + peerSlug;
+  // The name must be unique PER RELATIONSHIP, not per (app, peer): two
+  // studies run by one collector with one patient are separate
+  // relationships with separate channels. Naming them alike made the
+  // second handshake collide with the first and update it in place,
+  // repointing the first relationship's permissions and counterparty at
+  // the second's scope — after which deliveries on the first went to the
+  // second's streams.
+  //
+  // The suffix is a hash of the full scope rather than a transliteration of
+  // it: mapping ':'→'-' would collapse distinct scopes (`study:a` and
+  // `study-a`) onto one name, and the by-name reuse path would then heal the
+  // wrong relationship's access — resurrecting the very overwrite this fix
+  // removes. A hash cannot collide two different scopes. The bare app-root
+  // scope keeps the historical name so single-relationship deployments are
+  // untouched. (Matching is by scope, not by name — see the reuse lookup
+  // below — so the name only needs to be collision-free, not readable.)
+  const scopeSuffix = (typeof scopeStreamId === 'string' &&
+                       scopeStreamId !== C.NS_APPS + ':' + appCode)
+    ? '--' + crypto.createHash('sha1').update(scopeStreamId).digest('hex').slice(0, 12)
+    : '';
+  const accessName = 'cmc-back-channel-' + appCode + '--' + peerSlug + scopeSuffix;
   // Phase 2.2 features gating — features negotiated by the offer
   // (and accepted by the counterparty) are delivered on
   // `acceptEvent.content.features`. Mirror them onto the
@@ -217,6 +239,8 @@ async function handleIncomingAccept (params: {
       cmc: {
         role: 'counterparty',
         appCode,
+        // Names THIS relationship on both accounts — see relationshipKey.ts.
+        scopeStreamId: typeof scopeStreamId === 'string' ? scopeStreamId : null,
         features: negotiatedFeatures,
         counterparty: {
           username: counterparty.username,
@@ -228,9 +252,45 @@ async function handleIncomingAccept (params: {
       },
     },
   };
-  let access: AccessLike;
+  // Re-delivery of an accept for a relationship we already hold must update
+  // THAT relationship's access, not mint a second one. Match on the scope
+  // rather than the name: an access minted before names carried the scope
+  // still resolves (the selector derives its scope from its own channel
+  // permissions), so it is healed in place instead of being duplicated
+  // under the new name.
+  let access: AccessLike | null = null;
+  if (typeof mall.accesses.get === 'function' && typeof mall.accesses.update === 'function') {
+    try {
+      const existingList = await mall.accesses.get(userId, {});
+      const existingForScope = relationshipKey.selectRelationshipAccess({
+        accesses: existingList,
+        counterparty: {
+          username: counterparty.username,
+          hostSlug: slugMod.slugifyHost(counterparty.host),
+        },
+        scopeStreamId,
+        appCode,
+        logger: deps.logger,
+      });
+      if (existingForScope != null) {
+        const updated = await mall.accesses.update(userId, {
+          id: existingForScope.id,
+          update: {
+            permissions: accessParams.permissions,
+            clientData: accessParams.clientData,
+          },
+        });
+        access = updated ?? existingForScope;
+      }
+    } catch (err: unknown) {
+      // Non-fatal: fall through to create, which has its own duplicate path.
+      deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel reuse lookup failed', {
+        error: String((err as Error)?.message || err),
+      });
+    }
+  }
   try {
-    access = await mall.accesses.create(userId, accessParams);
+    if (access == null) access = await mall.accesses.create(userId, accessParams);
   } catch (err: unknown) {
     // Duplicate name (re-delivery / re-run) — look up the existing access
     // and update its clientData + permissions to reflect the latest
@@ -368,6 +428,11 @@ async function handleIncomingAccept (params: {
             remoteChatStreamId: chatStream,
             remoteCollectorStreamId: collectorStream,
             appCode,
+            // Lets the accepter stamp the back-channel onto the grant for
+            // THIS relationship rather than guessing from (peer, appCode).
+            // Older accepters ignore it and fall back to deriving the scope
+            // from remoteChatStreamId.
+            scopeStreamId,
           },
         },
         deps: { fetch: deps.fetch, timeoutMs: deps.timeoutMs, logger: deps.logger },

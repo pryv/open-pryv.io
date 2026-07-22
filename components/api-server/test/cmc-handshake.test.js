@@ -258,12 +258,13 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
   // deployment tests.
   //
   // These tests establish their OWN fresh handshake (study-ext / study-su)
-  // rather than re-use CN12's. The current back-channel matcher
-  // (handleIncomingBackChannel) keys on (peer.username, peer.host,
-  // appCode) only, so a second handshake with the same peer overwrites
-  // the first's back-channel info — fine for the CN14 re-delivery test
-  // but it leaves earlier study's remote-stream pointers stale. Fresh
-  // handshakes per describe keep each scenario hermetic.
+  // rather than re-use CN12's, so each scenario stays hermetic and reads
+  // independently of what ran before it.
+  //
+  // (Historically this was not a preference but a requirement: the matcher
+  // keyed on (peer.username, peer.host, appCode), so a second handshake with
+  // the same peer overwrote the first's back-channel pointers. Relationships
+  // are now keyed on their per-request scope — see [CMCHS-DUP].)
 
   /**
    * Run a fresh request → accept handshake for a given study-id, return
@@ -273,11 +274,11 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
    * scope-update describes can each get their own clean access pair.
    *
    * `appId` (default 'my-app') selects the app scope. The revocation
-   * describes pass a dedicated app-code per test: the back-channel
-   * matcher keys on (peer.username, peer.host, appCode) and picks the
-   * FIRST matching access, so only a unique app-code guarantees the
-   * fresh data-grant (not an earlier study's) receives the back-channel
-   * pointers the revoke delivery relies on.
+   * describes pass a dedicated app-code per test; that used to be load-
+   * bearing (the matcher picked the FIRST access matching (peer, appCode),
+   * so only a unique app-code guaranteed the fresh data-grant received the
+   * back-channel pointers). Relationships are now keyed on their
+   * per-request scope, so it is merely tidy isolation.
    */
   async function runFreshHandshake (studyId, appId = 'my-app') {
     const appRootStreamId = ':_cmc:apps:' + appId;
@@ -1082,14 +1083,9 @@ describe('[CMCHS] cmc two-user handshake (in-process integration)', function () 
   // Deliveries on the older relationship are therefore misrouted, and a
   // consent-revocation on it cannot reach the counterparty at all.
   //
-  // SKIPPED because it fails today — it documents a known defect rather than
-  // a regression. [CN23] passes (the newest relationship is the one both
-  // halves agree on); [CN24] and [CN25] fail, deterministically. Fixing this
-  // means giving both halves a per-relationship key — the per-request scope
-  // stream, since appCode cannot distinguish these — in the back-channel
-  // matcher AND in every outbound selector (handleChat, handleSystem,
-  // chatOrchestration, handleRevoke). Un-skip as the definition of done.
-  describe.skip('[CMCHS-DUP] two relationships with one peer under one app', function () {
+  // Both halves now resolve through the shared selector in relationshipKey,
+  // keyed on the per-request scope stream rather than on appCode.
+  describe('[CMCHS-DUP] two relationships with one peer under one app', function () {
     let first, second;
 
     before(async function () {

@@ -32,6 +32,7 @@ const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const outbound = require('./outbound.ts');
 const accessesUpdateHookMod = require('./accessesUpdateHook.ts');
+const relationshipKey = require('./relationshipKey.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 
 // Matches the trailing :collectors:<counterparty-slug> portion of a
@@ -166,20 +167,17 @@ async function handleSystemEvent (params: {
   // off the access (the hostSlug in the trigger stream-id is just a
   // routing tag, the access's stored host is canonical).
   const accessesList = await deps.mall.accesses.get(userId, {});
-  let chosen: AccessLike | null = null;
-  for (const acc of accessesList) {
-    const cmc = (acc?.clientData as { cmc?: { role?: string; counterparty?: { username?: string; host?: string }; appCode?: string; features?: { systemMessaging?: boolean }; [k: string]: unknown } } | undefined)?.cmc;
-    if (cmc?.role !== 'counterparty') continue;
-    const cp = cmc?.counterparty;
-    if (cp == null) continue;
-    if (cp.username !== parsed.counterparty.username) continue;
-    // Confirm the hostSlug matches by re-slugifying the access's host.
-    const accHostSlug = slugMod.slugifyHost(cp.host);
-    if (accHostSlug !== parsed.counterparty.hostSlug) continue;
-    if ((cmc as { appCode?: string })?.appCode != null && (cmc as { appCode?: string }).appCode !== parsed.appCode) continue;
-    chosen = acc;
-    break;
-  }
+  // Resolve by the relationship's scope — the trigger arrived on
+  // `<scope>:collectors:<peer>`, so the scope identifies which of this
+  // peer's relationships this alert belongs to. Shared with the inbound
+  // matcher so stamping and delivery cannot disagree.
+  const chosen: AccessLike | null = relationshipKey.selectRelationshipAccess({
+    accesses: accessesList,
+    counterparty: parsed.counterparty,
+    scopeStreamId: parsed.scopeStreamId,
+    appCode: parsed.appCode,
+    logger: deps.logger,
+  });
   if (chosen == null) {
     return { ok: false, reason: 'cmc-system-counterparty-access-not-found', detail: {
       appCode: parsed.appCode,

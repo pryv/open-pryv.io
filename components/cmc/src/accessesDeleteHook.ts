@@ -40,6 +40,7 @@
 
 import * as C from './constants.ts';
 import * as outbound from './outbound.ts';
+import * as relationshipKey from './relationshipKey.ts';
 import type { OutboundDeps, CmcAccessLike } from './_types.ts';
 
 type DeleteHookResult = {
@@ -111,6 +112,12 @@ function createAccessesDeletePostHook (deps: OutboundDeps) {
       if (typeof cmc.appCode === 'string') content.appCode = cmc.appCode;
       if (typeof cmc.offerEventId === 'string') content.offerEventId = cmc.offerEventId;
       if (typeof cmc.acceptEventId === 'string') content.acceptEventId = cmc.acceptEventId;
+      // Which relationship is being withdrawn — parity with handleRevoke, so
+      // a peer holding several relationships with us under one app can tell
+      // which one this raw-delete revocation refers to (the sender's
+      // accessId is meaningless on their account).
+      const revokedScope = relationshipKey.scopeOfAccess(access);
+      if (typeof revokedScope === 'string') content.scopeStreamId = revokedScope;
 
       // Bounded in-request retry, same rationale as handleRevoke: the
       // access is already deleted, so a queued retry could not re-derive

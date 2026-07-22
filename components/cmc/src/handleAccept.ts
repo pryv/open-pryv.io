@@ -183,6 +183,9 @@ async function handleAccept (params: {
       extraPermissions: extraPermissions.length > 0 ? extraPermissions : undefined,
       grantedPermissions,
       acceptEventId: triggerEvent?.id,
+      // Same scope the anchor streams were provisioned under, so the grant
+      // and its channels name one relationship consistently.
+      scopeStreamId: anchorScope,
     });
   } catch (err: unknown) {
     const e = err as { id?: string; message?: string };

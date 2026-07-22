@@ -32,6 +32,7 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const chatOrch = require('./chatOrchestration.ts');
+const relationshipKey = require('./relationshipKey.ts');
 
 type Counterparty = { username: string; host: string };
 
@@ -53,6 +54,9 @@ type ChatHandlerResult =
 type ChatContent = { content?: unknown; [k: string]: unknown };
 type ParsedChatStreamId = {
   appCode: string;
+  // The per-request scope prefix — the relationship's identity. Returned by
+  // parseChatStreamId all along; it simply used to be discarded here.
+  scopeStreamId: string;
   counterpartySlug: string;
   counterparty: { username: string; hostSlug: string; [k: string]: unknown };
   [k: string]: unknown;
@@ -93,19 +97,18 @@ async function handleChat (params: {
   // Resolve the counterparty access. Match on (username, slugifyHost(host),
   // appCode) — the access's stored hostSlug must round-trip from the live host.
   const accessesList = await deps.mall.accesses.get(userId, {});
-  let chosen: AccessLike | null = null;
-  for (const acc of accessesList) {
-    const cmc = acc?.clientData?.cmc;
-    if (cmc?.role !== 'counterparty') continue;
-    const cp = cmc?.counterparty;
-    if (cp == null) continue;
-    if (cp.username !== parsed.counterparty.username) continue;
-    const accHostSlug = slugMod.slugifyHost(cp.host);
-    if (accHostSlug !== parsed.counterparty.hostSlug) continue;
-    if (cmc?.appCode != null && cmc.appCode !== parsed.appCode) continue;
-    chosen = acc;
-    break;
-  }
+  // Resolve by the relationship's scope, not by (peer, appCode): the trigger
+  // arrived on `<scope>:chats:<peer>`, so the scope says which of this peer's
+  // relationships this message belongs to. Same selector the inbound
+  // back-channel matcher uses, so the two cannot disagree about which grant
+  // serves a relationship.
+  const chosen: AccessLike | null = relationshipKey.selectRelationshipAccess({
+    accesses: accessesList,
+    counterparty: parsed.counterparty,
+    scopeStreamId: parsed.scopeStreamId,
+    appCode: parsed.appCode,
+    logger: deps.logger,
+  });
   if (chosen == null) {
     return { ok: false, reason: 'cmc-chat-counterparty-access-not-found', detail: {
       appCode: parsed.appCode,

@@ -72,6 +72,13 @@ export type CmcClientData = {
   // accept re-dispatch.
   offerEventId?: string | null;
   acceptEventId?: string | null;
+  // The relationship's per-request scope stream (e.g.
+  // `:_cmc:apps:my-app:study-a`). Both sides anchor their chat / collector
+  // streams under it, so it is the one identifier that names a single
+  // relationship on both accounts — unlike appCode, which is the app scope
+  // and is therefore shared by every relationship of that app. See
+  // relationshipKey.ts.
+  scopeStreamId?: string | null;
 };
 
 /** Access as seen through the CMC mall view (mallAccessesAdapter output). */

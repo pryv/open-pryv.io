@@ -57,6 +57,7 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const outbound = require('./outbound.ts');
+const relationshipKey = require('./relationshipKey.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 
 import type { OutboundDeps } from './_types.ts';
@@ -122,11 +123,13 @@ async function handleRevoke (params: {
   //   2. triggerEvent.content.{counterparty, appCode} — when triggered from :_cmc:inbox
   let counterparty: Counterparty | null = null;
   let appCode: string | null = null;
+  let scopeStreamId: string | null = null;
   const streamIds = Array.isArray(triggerEvent.streamIds) ? triggerEvent.streamIds : [];
   for (const sid of streamIds) {
     const parsed = parseChatsOrCollectorsStreamId(sid);
     if (parsed != null) {
       appCode = parsed.appCode;
+      scopeStreamId = parsed.scopeStreamId;
       // Need the canonical host for outbound + access matching. The slug
       // gives us hostSlug; we keep both and match on slug below.
       counterparty = {
@@ -160,6 +163,11 @@ async function handleRevoke (params: {
   }
   if (appCode == null && typeof triggerEvent.content?.appCode === 'string') {
     appCode = triggerEvent.content.appCode;
+  }
+  // Forwarded revokes arriving on :_cmc:inbox carry the scope in content —
+  // there is no channel stream-id to parse on that path.
+  if (scopeStreamId == null && typeof triggerEvent.content?.scopeStreamId === 'string') {
+    scopeStreamId = triggerEvent.content.scopeStreamId;
   }
 
   // Acceptance-time path: find the counterparty-access and its paired
@@ -197,7 +205,7 @@ async function handleRevoke (params: {
       counterparty = { username: cp.username, host: cp.host };
     }
   } else {
-    counterpartyAccess = findCounterpartyAccess(accesses, counterparty!, appCode);
+    counterpartyAccess = findCounterpartyAccess(accesses, counterparty!, appCode, scopeStreamId);
     if (counterpartyAccess == null) {
       return { ok: false, reason: 'cmc-revoke-counterparty-access-not-found', detail: {
         counterparty,
@@ -303,6 +311,10 @@ async function handleRevoke (params: {
     };
     const cpCmc = counterpartyAccess.clientData?.cmc;
     if (typeof cpCmc?.appCode === 'string') revokeContent.appCode = cpCmc.appCode;
+    // Which relationship is being revoked — lets the peer tear down THIS one
+    // rather than whichever of ours it happens to match on (peer, appCode).
+    const revokedScope = relationshipKey.scopeOfAccess(counterpartyAccess);
+    if (typeof revokedScope === 'string') revokeContent.scopeStreamId = revokedScope;
     if (typeof cpCmc?.offerEventId === 'string') revokeContent.offerEventId = cpCmc.offerEventId;
     if (typeof cpCmc?.acceptEventId === 'string') revokeContent.acceptEventId = cpCmc.acceptEventId;
     const delivery = await deliverRevokeWithRetry({
@@ -414,11 +426,16 @@ async function deliverRevokeWithRetry (params: {
  */
 function parseChatsOrCollectorsStreamId (streamId: string): {
   appCode: string;
+  scopeStreamId: string;
   counterparty: { username: string; hostSlug: string };
 } | null {
   if (typeof streamId !== 'string') return null;
   const m = streamId.match(/^(:_cmc:apps:([^:]+)(?::[^:]+)*):(?:chats|collectors):([a-z0-9-]+--[a-z0-9-]+)$/);
   if (m == null) return null;
+  // Group 1 is the per-request scope — the relationship's identity. It was
+  // always captured here and always discarded, which is why a revoke on one
+  // relationship could resolve a sibling relationship's access.
+  const scopeStreamId = m[1];
   const appCode = m[2];
   const slug = m[3];
   let counterparty;
@@ -427,25 +444,27 @@ function parseChatsOrCollectorsStreamId (streamId: string): {
   } catch (_e) {
     return null;
   }
-  return { appCode, counterparty };
+  return { appCode, scopeStreamId, counterparty };
 }
 
 function findCounterpartyAccess (
   accesses: AccessLike[],
   counterparty: Counterparty,
-  appCode: string | null
+  appCode: string | null,
+  scopeStreamId?: string | null
 ): AccessLike | null {
-  for (const acc of accesses) {
-    const cmc = acc?.clientData?.cmc;
-    if (cmc?.role !== 'counterparty') continue;
-    const cp = cmc?.counterparty;
-    if (cp == null) continue;
-    if (cp.username !== counterparty.username) continue;
-    if (cp.host !== counterparty.host && slugMod.slugifyHost(cp.host) !== slugMod.slugifyHost(counterparty.host)) continue;
-    if (appCode != null && cmc?.appCode != null && cmc.appCode !== appCode) continue;
-    return acc;
-  }
-  return null;
+  // When the caller knows which relationship is being revoked, say so:
+  // revoking one study must not tear down or notify a sibling study run by
+  // the same peer under the same app.
+  return relationshipKey.selectRelationshipAccess({
+    accesses,
+    counterparty: {
+      username: counterparty.username,
+      hostSlug: slugMod.slugifyHost(counterparty.host),
+    },
+    scopeStreamId,
+    appCode,
+  });
 }
 
 function findPairedDataGrant (
@@ -463,19 +482,18 @@ function findPairedDataGrant (
   }
   // Tuple fallback needs a counterparty identity to match against.
   if (counterparty == null) return null;
-  // Fallback: every access whose clientData.cmc.role='data-grant' AND
-  // clientData.cmc.counterparty matches.
-  for (const acc of accesses) {
-    const cmc = acc?.clientData?.cmc;
-    if (cmc?.role !== 'data-grant') continue;
-    const cp = cmc?.counterparty;
-    if (cp == null) continue;
-    if (cp.username !== counterparty.username) continue;
-    if (cp.host !== counterparty.host && slugMod.slugifyHost(cp.host) !== slugMod.slugifyHost(counterparty.host)) continue;
-    if (appCode != null && cmc?.appCode != null && cmc.appCode !== appCode) continue;
-    return acc;
-  }
-  return null;
+  // Fallback: a data-grant for the same counterparty, narrowed to the same
+  // relationship as the access we are pairing with when that is knowable.
+  return relationshipKey.selectRelationshipAccess({
+    accesses,
+    role: 'data-grant',
+    counterparty: {
+      username: counterparty.username,
+      hostSlug: slugMod.slugifyHost(counterparty.host),
+    },
+    scopeStreamId: relationshipKey.scopeOfAccess(counterpartyAccess),
+    appCode,
+  });
 }
 
 export {

@@ -57,15 +57,38 @@ Affects `2.0.0-rc.10` and `2.0.0-rc.11`. Relationships whose handshake was
 already dropped do **not** heal on upgrade: nothing re-drives the delivery, so
 each affected relationship needs a fresh request → accept.
 
-### Known limitation — one peer, one app, several relationships
+### Fixed — several relationships with one counterparty under one app
 
-Two or more concurrent relationships with the same counterparty under the same
-app-code are still not distinguished from one another: the app-code derives from
-the app scope, not the per-request scope, and both the back-channel matcher and
-the outbound chat / system / revoke selectors resolve on it. The newest
-relationship is the one they agree on; deliveries on older ones are misrouted to
-the newest one's streams. Until this is addressed, use a distinct app-code per
-concurrent relationship with a given counterparty.
+Two concurrent relationships with the same counterparty under the same app-code
+were not told apart. The app-code derives from the app scope rather than the
+per-request scope, and every resolution site keyed on it, so the newest
+relationship was the one they all agreed on: the second handshake's back-channel
+overwrote the first relationship's stream pointers, deliveries on the older
+relationship were routed to the newer one's streams, and a consent-revocation on
+it could not reach the counterparty at all.
+
+Relationships are now keyed on their per-request scope stream (e.g.
+`:_cmc:apps:my-app:study-a`) — the one identifier both accounts already share,
+since each side anchors its chat and collector streams under it. The inbound
+back-channel matcher and every outbound selector resolve through a single shared
+function, so which grant serves a relationship cannot be answered two different
+ways.
+
+Accepting a relationship also used to name the requester-side back-channel access
+per (app, counterparty), so a second acceptance updated the first relationship's
+access in place. Names are now qualified by scope, and an existing access is
+matched by scope rather than by name — so re-delivery still updates in place
+while a genuinely new relationship gets its own.
+
+Backward compatible: grants minted before this release carry no scope field, but
+one is derived from the access's own channel permissions; where even that is
+absent, resolution falls back to the previous app-code behaviour. No migration is
+required, and single-relationship deployments are unaffected.
+
+Relationships whose back-channel was already lost still do not heal on upgrade —
+nothing re-drives a delivery that was dropped — so each needs a fresh
+request → accept. Deliveries on such a relationship now fail visibly instead of
+being silently misrouted.
 
 ## 2.0.0-rc.11 — 2026-07-21
 

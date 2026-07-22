@@ -250,8 +250,14 @@ function buildDataGrantPayload (params: {
   // instead of disambiguating by accessName (which collides across
   // re-runs from the same app/counterparty pair).
   acceptEventId?: string;
+  // The relationship's per-request scope stream (the offer's originStreamId,
+  // e.g. `:_cmc:apps:my-app:study-a`). Stamped so later deliveries can tell
+  // this relationship apart from another with the same peer under the same
+  // app. Omitted by callers that have no scope to hand; the selector then
+  // derives it from the grant's own channel permissions.
+  scopeStreamId?: string | null;
 }): Record<string, unknown> {
-  const { offerEvent, counterparty, accessName, features, extraPermissions, grantedPermissions, acceptEventId } = params;
+  const { offerEvent, counterparty, accessName, features, extraPermissions, grantedPermissions, acceptEventId, scopeStreamId } = params;
   const meta = offerEvent?.content?.requesterMeta ?? {};
   const computedName = accessName ??
     ('cmc:' + (meta.appId || 'app') + ':' + counterparty.username + '@' + counterparty.host);
@@ -307,6 +313,11 @@ function buildDataGrantPayload (params: {
         // correlation). The back-channel access on the requester side
         // has carried it from the start; stamp it here too.
         appCode: typeof meta.appId === 'string' ? meta.appId : null,
+        // The relationship's per-request scope. Unlike appCode (which is the
+        // app scope, shared by every relationship of that app) this names
+        // THIS relationship on both accounts, so deliveries can be routed to
+        // the right grant when one peer holds several. See relationshipKey.ts.
+        scopeStreamId: typeof scopeStreamId === 'string' ? scopeStreamId : null,
         counterparty,
         offerEventId: offerEvent.id,
         acceptEventId: acceptEventId ?? null,

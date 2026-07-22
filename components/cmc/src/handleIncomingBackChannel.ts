@@ -33,6 +33,7 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
+const relationshipKey = require('./relationshipKey.ts');
 
 type Counterparty = {
   username: string;
@@ -59,6 +60,9 @@ type BackChannelEventContent = {
   remoteChatStreamId?: string;
   remoteCollectorStreamId?: string;
   appCode?: string;
+  // The relationship this delivery belongs to. Absent from older senders,
+  // in which case the scope is derived from the channel stream-ids above.
+  scopeStreamId?: string;
 };
 
 type IncomingBackChannelResult =
@@ -72,61 +76,6 @@ type IncomingBackChannelResult =
       reason: string;
       detail?: unknown;
     };
-
-/**
- * Choose which data-grant a back-channel delivery belongs to, among the
- * grants that already matched the counterparty identity (username + host).
- *
- * `appCode` is a DISAMBIGUATOR, never a rejector. The two sides derive it
- * independently — the sender falls back to the literal `'unknown'` when it
- * cannot resolve its own request scope — so the values legitimately diverge
- * on a healthy handshake. Rejecting on mismatch drops the only candidate,
- * leaving `backChannelApiEndpoint` null forever and every later revoke on
- * that relationship silently undeliverable.
- *
- * Layered so that nothing which already worked changes behaviour:
- *   1. the FIRST candidate whose appCode is compatible with the delivery
- *      (equal, or not recorded on either side) — predicate- and
- *      order-identical to the previous inline scan, so established
- *      relationships keep resolving to the same grant.
- *   2. only when no candidate is compatible — the case that used to be
- *      rejected outright, so no behaviour can depend on it — take a
- *      candidate rather than dropping the delivery, preferring one whose
- *      back-channel is still unset. The ambiguity is logged.
- *
- * Note this does NOT make appCode a per-relationship key: it is derived from
- * the app scope, so several relationships with one peer under one app remain
- * indistinguishable here and in the outbound selectors. That defect is
- * separate and pinned by the skipped [CMCHS-DUP] handshake tests.
- */
-function pickDataGrant (
-  candidates: AccessLike[],
-  deliveryAppCode: string | undefined,
-  logger?: CmcLogger,
-): AccessLike | null {
-  if (candidates.length === 0) return null;
-
-  const appCodeCompatible = (acc: AccessLike): boolean => {
-    const own = acc.clientData?.cmc?.appCode;
-    if (own == null) return true;
-    if (typeof deliveryAppCode !== 'string' || deliveryAppCode.length === 0) return true;
-    return own === deliveryAppCode;
-  };
-
-  const compatible = candidates.find(appCodeCompatible);
-  if (compatible != null) return compatible;
-
-  const chosen = candidates.find((a) => a.clientData?.cmc?.backChannelApiEndpoint == null)
-    ?? candidates[0];
-  logger?.warn?.('cmc: back-channel delivery matches no data-grant with a compatible ' +
-    'appCode; storing it rather than dropping it, since the two sides derive appCode ' +
-    'independently and a dropped delivery leaves the relationship undeliverable', {
-    appCode: deliveryAppCode,
-    candidateIds: candidates.map((a) => a.id),
-    chosen: chosen.id,
-  });
-  return chosen;
-}
 
 async function handleIncomingBackChannel (params: {
   userId: string;
@@ -186,23 +135,30 @@ async function handleIncomingBackChannel (params: {
   // data-grant access has clientData.cmc.role='counterparty' AND the
   // counterparty {username, host} we're being told about.
   const accesses = await deps.mall.accesses.get(userId, {});
-  const fromHostSlug = slugMod.slugifyHost(fromHost);
-  const candidates: AccessLike[] = [];
-  for (const acc of accesses) {
-    const cmc = acc?.clientData?.cmc;
-    if (cmc?.role !== 'counterparty') continue;
-    const cp = cmc?.counterparty;
-    if (cp == null) continue;
-    if (cp.username !== fromUsername) continue;
-    if (slugMod.slugifyHost(cp.host) !== fromHostSlug) continue;
-    candidates.push(acc);
-  }
-  const chosen: AccessLike | null = pickDataGrant(candidates, c.appCode, deps.logger);
+
+  // Which relationship is this delivery for? The sender names it directly
+  // when it is new enough; otherwise its scope is recoverable from the
+  // channel stream-ids it is telling us about.
+  const deliveryScope: string | null =
+    (typeof c.scopeStreamId === 'string' && c.scopeStreamId.length > 0 ? c.scopeStreamId : null) ??
+    relationshipKey.scopeOfChannelStream(remoteChatStreamId) ??
+    relationshipKey.scopeOfChannelStream(remoteCollectorStreamId);
+
+  const chosen: AccessLike | null = relationshipKey.selectRelationshipAccess({
+    accesses,
+    counterparty: { username: fromUsername, hostSlug: slugMod.slugifyHost(fromHost) },
+    scopeStreamId: deliveryScope,
+    appCode: c.appCode,
+    // The peer derived this independently and may have fallen back to
+    // 'unknown'; it must not be able to drop the handshake.
+    appCodeAuthoritative: false,
+    logger: deps.logger,
+  });
   if (chosen == null) {
     return {
       ok: false,
       reason: 'cmc-back-channel-data-grant-not-found',
-      detail: { from, appCode: c.appCode },
+      detail: { from, appCode: c.appCode, scopeStreamId: deliveryScope },
     };
   }
 

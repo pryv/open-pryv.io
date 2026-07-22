@@ -38,6 +38,7 @@ const require = createRequire(import.meta.url);
 const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const outbound = require('./outbound.ts');
+const relationshipKey = require('./relationshipKey.ts');
 
 // Matches the trailing :chats:<counterparty-slug> portion of a chat stream-id.
 // We also capture the prefix (everything before :chats) as the "request scope".
@@ -86,43 +87,44 @@ type FindAccessParams = {
  * Find the user's CMC counterparty-access matching the given counterparty
  * (username + host). Returns the matching access, or null if none found.
  *
- * If the user has multiple counterparty-accesses to the same person (one
- * per app), this returns the FIRST match. Caller may filter further by
- * appCode if app-specific routing is required.
+ * With multiple relationships to the same person this returns the first —
+ * it does NOT identify a single relationship. Use
+ * `findCounterpartyAccessForScope` (or pass a scope to the selector) when
+ * that matters.
  */
 async function findCounterpartyAccess (params: FindAccessParams): Promise<AccessLike | null> {
   const { userId, counterparty, mall } = params;
   const accesses = await mall.accesses.get(userId, {});
-  for (const acc of accesses) {
-    const cmc = acc?.clientData?.cmc;
-    if (cmc?.role !== 'counterparty') continue;
-    const cp = cmc?.counterparty;
-    if (cp == null) continue;
-    if (cp.username === counterparty.username && cp.host === counterparty.host) {
-      return acc;
-    }
-  }
-  return null;
+  return relationshipKey.selectRelationshipAccess({
+    accesses,
+    counterparty: {
+      username: counterparty.username,
+      hostSlug: slugMod.slugifyHost(counterparty.host),
+    },
+  });
 }
 
 /**
  * Filter an access list to a specific app-code. Useful when the user has
  * multiple counterparty-accesses to the same person across different apps
  * and we want the one for the current app.
+ *
+ * Note an app-code does NOT identify a relationship — it is the app scope,
+ * so it is shared by every relationship of that app with that peer. Pass the
+ * per-request scope to the selector wherever it is known (it is, on any
+ * chat / collector trigger).
  */
 async function findCounterpartyAccessForApp (params: FindAccessParams & { appCode: string }): Promise<AccessLike | null> {
   const { userId, counterparty, mall, appCode } = params;
   const accesses = await mall.accesses.get(userId, {});
-  for (const acc of accesses) {
-    const cmc = acc?.clientData?.cmc;
-    if (cmc?.role !== 'counterparty') continue;
-    const cp = cmc?.counterparty;
-    if (cp == null) continue;
-    if (cp.username !== counterparty.username || cp.host !== counterparty.host) continue;
-    if (cmc?.appCode != null && cmc.appCode !== appCode) continue;
-    return acc;
-  }
-  return null;
+  return relationshipKey.selectRelationshipAccess({
+    accesses,
+    counterparty: {
+      username: counterparty.username,
+      hostSlug: slugMod.slugifyHost(counterparty.host),
+    },
+    appCode,
+  });
 }
 
 type DeliverChatParams = {
