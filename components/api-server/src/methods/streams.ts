@@ -70,8 +70,12 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // RETRIEVAL
   // Phase 4 H5: defense-in-depth — prune `:_cmc:_internal` subtree
   // from the response tree as a last step.
+  const sharedSecretsEnsureOnRead = sharedSecrets.createEnsureStreamsOnReadHook({
+    mall,
+    logger: getLogger('shared-secrets:ensure-on-read')
+  });
   const cmcStreamsGetInternalGuard = cmc.createStreamsGetInternalGuardHook();
-  api.register('streams.get', commonFns.getParamsValidation(methodsSchema.get.params), checkAuthorization, applyDefaultsForRetrieval, findAccessibleStreams, includeDeletionsIfRequested, cmcStreamsGetInternalGuard);
+  api.register('streams.get', commonFns.getParamsValidation(methodsSchema.get.params), sharedSecretsEnsureOnRead, checkAuthorization, applyDefaultsForRetrieval, findAccessibleStreams, includeDeletionsIfRequested, cmcStreamsGetInternalGuard);
   function applyDefaultsForRetrieval (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     params.parentId ??= null;
     params.includeDeletionsSince ??= null;

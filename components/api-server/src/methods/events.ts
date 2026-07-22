@@ -205,6 +205,10 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
 
   // Shared-secret items are ordinary events, so the ordinary events API can
   // reach them — these keep it from being a way around their lifecycle.
+  const sharedSecretsEnsureOnRead = sharedSecrets.createEnsureStreamsOnReadHook({
+    mall,
+    logger: getLogger('shared-secrets:ensure-on-read')
+  });
   const sharedSecretsCreateGuard = sharedSecrets.createEventCreateGuard({ errors });
   const sharedSecretsUpdateGuard = sharedSecrets.createEventUpdateGuard({ errors });
   const sharedSecretsDeleteGuard = sharedSecrets.createEventDeleteGuard({
@@ -214,6 +218,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
 
   api.register(
     'events.get',
+    sharedSecretsEnsureOnRead,
     cmcEventsGetInternalGuard,
     eventsGetUtils.coerceStreamsParam,
     eventsGetUtils.coerceAndValidateContentQueryParams,

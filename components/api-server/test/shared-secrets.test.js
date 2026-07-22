@@ -655,6 +655,27 @@ describe('[SHS] shared secrets', function () {
       }
     });
 
+    it('[SHS67] listing before ever creating one returns empty, not 404', async function () {
+      // The namespace is provisioned lazily, so a consumer whose FIRST action is
+      // "show me my outstanding secrets" must still get an answer — otherwise the
+      // read that needs the stream is also the thing refusing to create it. The
+      // CMC namespace shipped exactly that gap and a live integration hit it.
+      const fresh = await createAppAccess();
+
+      const events = await coreRequest.get(eventsPath)
+        .set('Authorization', fresh.token)
+        .query({ streams: [nsFor(fresh.id)] });
+      assert.strictEqual(events.status, 200,
+        'a first-time read must not 404: ' + JSON.stringify(events.body));
+      assert.deepStrictEqual(events.body.events, []);
+
+      const streams = await coreRequest.get(streamsPath)
+        .set('Authorization', fresh.token)
+        .query({ parentId: NS_ROOT });
+      assert.ok(streams.status === 200 || streams.status === 403,
+        'a first-time stream listing must resolve, not 404: ' + JSON.stringify(streams.body));
+    });
+
     it('[SHS26] an access lists its own shared secrets when naming the stream explicitly', async function () {
       const app = await createAppAccess();
       const created = await createOk(app.token, validBody());

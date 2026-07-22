@@ -128,5 +128,48 @@ function queryTouchesNamespace (streams: unknown): boolean {
   return collectQueriedStreamIds(streams).some((id) => C.isSharedSecretStreamId(id));
 }
 
-export { ensureStreams, collectQueriedStreamIds, queryTouchesNamespace, isAlreadyExistsError };
+/**
+ * Middleware that provisions the namespace when a READ reaches into it.
+ *
+ * This is the half the CMC namespace originally missed: an access whose first
+ * action is "list my outstanding secrets" would otherwise get
+ * `unknown-referenced-resource` forever, because the read that needs the stream
+ * is also the thing refusing to create it. Best-effort — a provisioning failure
+ * must not turn a read into an error, so it is logged and the chain continues.
+ */
+function createEnsureStreamsOnReadHook (deps: {
+  mall: MallStreamsOnly;
+  logger?: ProvisionLogger;
+}) {
+  return async function sharedSecretsEnsureOnRead (
+    context: { user?: { id?: string }; access?: { id?: string } },
+    params: { streams?: unknown; id?: unknown; parentId?: unknown },
+    result: unknown,
+    next: (err?: unknown) => void
+  ) {
+    const userId = context?.user?.id;
+    const accessId = context?.access?.id;
+    const touches = queryTouchesNamespace(params?.streams) ||
+      C.isSharedSecretStreamId(params?.id) ||
+      C.isSharedSecretStreamId(params?.parentId);
+    if (!touches || userId == null) return next();
+    try {
+      await ensureStreams({ mall: deps.mall, userId, accessId, logger: deps.logger });
+    } catch (err) {
+      deps.logger?.warn?.('shared-secrets: read-path provisioning failed', {
+        userId,
+        error: err instanceof Error ? err.message : String(err)
+      });
+    }
+    next();
+  };
+}
+
+export {
+  ensureStreams,
+  createEnsureStreamsOnReadHook,
+  collectQueriedStreamIds,
+  queryTouchesNamespace,
+  isAlreadyExistsError
+};
 export type { MallStreamsOnly, ProvisionLogger, StreamCreateParams };
