@@ -341,7 +341,13 @@ class MethodContext {
     } catch { /* config not booted (unit contexts) — keep the default */ }
     const { isKeyRevoked } = require('oauth2/src/revokedKeysCache.ts');
     if (await isKeyRevoked(platform, boundJkt, ttlSeconds)) {
-      throw errors.invalidAccessToken('The application access has been revoked.', 403);
+      // Uniform 403 IDENTICAL to checkDpopBinding's refusal — a mere token-bearer
+      // (no private key) must not be able to distinguish "operator-revoked key"
+      // from "bad proof". A distinct message here would leak revoke status and
+      // break the DPoP layer's no-oracle posture.
+      const err = errors.invalidAccessToken('DPoP proof verification failed.', 403);
+      err.httpHeaders = { 'WWW-Authenticate': 'DPoP algs="ES256", error="invalid_token"' };
+      throw err;
     }
   }
 

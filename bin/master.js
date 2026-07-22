@@ -200,6 +200,10 @@ if (cluster.isPrimary) {
       // lifetime: past it every DPoP-bound token the revoke could have killed is
       // already expired, so the marker's job is done. Keeps the per-core-cached
       // revoked-key set from growing over the cluster's life.
+      // NB: uses the CURRENT absolute cap. If an operator ever DECREASES
+      // oauth.refreshTokenAbsoluteTTL, a tombstone could be pruned while a chain
+      // issued under the old (larger) cap is still alive — the prune floor should
+      // really be the max cap ever configured. Bounded-edge; documented not fixed.
       const maxTokenTtlMs = (Number(config.get('oauth:refreshTokenAbsoluteTTL')) || 90 * 24 * 3600) * 1000;
       const oauthStorage = require('../components/oauth2/src/storage.ts');
       oauthStorage.pruneRevokedDpopKeys(platformDB, maxTokenTtlMs)
