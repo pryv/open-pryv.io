@@ -50,6 +50,26 @@ async function setupSocketIO (server: HttpServer, api: { call: (...args: unknown
   });
     // Manages socket.io connections and delivers method calls to the api.
   const manager = new Manager(logger, io, api, storageLayer, customAuthStepFn);
+
+  // Operator client-revoke reaches ALREADY-OPEN sockets. A socket authenticates
+  // once at handshake and then dispatches messages without re-auth, so the
+  // per-request revoke check never fires for it. This per-worker timer
+  // periodically revalidates every connection (re-runs retrieveExpandedAccess →
+  // the revoke check → disconnect on failure), bounding a revoked client's
+  // socket lifetime to ~clientRevokeCheckSeconds instead of the connection's
+  // full life. revalidateConnections is fire-and-forget per connection.
+  const { getConfigSync } = require('@pryv/boiler');
+  let revokeSweepSeconds = 30;
+  try {
+    const configured = Number(getConfigSync().get('oauth:clientRevokeCheckSeconds'));
+    if (Number.isFinite(configured) && configured > 0) revokeSweepSeconds = configured;
+  } catch { /* keep default */ }
+  const revokeSweep = setInterval(() => {
+    try { manager.revalidateConnections(); } catch (err: unknown) {
+      logger.warn('client-revoke socket sweep failed', err);
+    }
+  }, Math.max(5, revokeSweepSeconds) * 1000);
+  revokeSweep.unref(); // must not keep the worker alive
   // dynamicNamspaces allow to "auto" create namespaces
   // when connected pass the socket to Manager
   const dynamicNamespace = io.of(/^\/.+$/).on('connect', async (socket: SocketLike) => {

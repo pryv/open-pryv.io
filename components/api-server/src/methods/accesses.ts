@@ -515,6 +515,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     cmcAccessUpdateForgePreventionHook,
     loadAccessForUpdate,
     dpopBindingUpdateGuard,
+    oauthNameUpdateGuard,
     enforceUpdateChainRules,
     cleanupUpdatePermissions,
     snapshotAndApplyUpdate,
@@ -617,6 +618,24 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     const updatedDpop = updatedClientData == null ? undefined : updatedClientData.dpop;
     if (JSON.stringify(currentDpop ?? null) !== JSON.stringify(updatedDpop ?? null)) {
       return next(errors.forbidden('The clientData.dpop key binding cannot be created, changed or removed through accesses.update.'));
+    }
+    next();
+  }
+
+  /**
+   * The operator client-revoke check keys off an oauth-session access's
+   * `name` (`oauth:<clientId>`). Renaming such an access would strip the
+   * prefix and dodge the revoke while keeping the granted permissions, so a
+   * rename of an `oauth:*` access is rejected. These accesses are server-
+   * managed (minted by the token endpoint); a legitimate caller has no reason
+   * to rename one.
+   */
+  function oauthNameUpdateGuard (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
+    const newName = params.update?.name;
+    if (newName === undefined) return next(); // name untouched
+    const currentName = (params.targetAccess as { name?: unknown })?.name;
+    if (typeof currentName === 'string' && currentName.startsWith('oauth:') && newName !== currentName) {
+      return next(errors.forbidden('An OAuth-session access (oauth:<clientId>) cannot be renamed.'));
     }
     next();
   }
