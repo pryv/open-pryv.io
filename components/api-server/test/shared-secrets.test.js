@@ -397,15 +397,25 @@ describe('[SHS] shared secrets', function () {
       assert.ok(typeof history[1].time === 'number');
     });
 
-    it('[SHS56] the clear secret is scrubbed once the item leaves pending', async function () {
-      const consumed = await createOk(personalToken, validBody());
-      await retrieve(consumed.key);
+    it('[SHS56] secret AND signature value are scrubbed once the item leaves pending', async function () {
+      const consumed = await createOk(personalToken, validBody({
+        signature: { type: 'secret', value: 'a-passphrase-in-clear' }
+      }));
+      await retrieve(consumed.key, { signature: { type: 'secret', payload: 'a-passphrase-in-clear' } });
       const afterConsume = await coreRequest
         .get(eventsPath + '/' + consumed.id)
         .set('Authorization', personalToken);
       assert.strictEqual(afterConsume.status, 200, JSON.stringify(afterConsume.body));
       assert.strictEqual(afterConsume.body.event.content.secret, undefined,
         'a consumed secret must not linger at rest');
+      // The signature value is a passphrase in clear — same class of liability.
+      assert.strictEqual(afterConsume.body.event.content.signature?.value, undefined,
+        'the signature value must be scrubbed too');
+      assert.strictEqual(afterConsume.body.event.content.signature?.type, 'secret',
+        'but the signature type survives for the record');
+      const serialized = JSON.stringify(afterConsume.body);
+      assert.ok(!serialized.includes('a-passphrase-in-clear'),
+        'the passphrase must not survive anywhere in the stored item');
       // Metadata survives for audit.
       assert.strictEqual(afterConsume.body.event.content.status, 'consumed');
       assert.strictEqual(afterConsume.body.event.content.title, 'Share my token with the clinic');
@@ -635,6 +645,42 @@ describe('[SHS] shared secrets', function () {
       assert.strictEqual(ev.body.event.content.status, 'consumed');
       assert.strictEqual(history.length, 2, 'exactly one transition must be recorded: ' +
         JSON.stringify(history));
+    });
+
+    it('[SHS68] a delete racing a retrieve cannot overwrite a consume with a discard', async function () {
+      // The delete-as-discard path used to persist unconditionally; a concurrent
+      // retrieve could consume the secret (200) while the delete then stamped the
+      // record 'discarded'. The consume must stand, and the record must agree.
+      const created = await createOk(personalToken, validBody());
+      const { id, key } = created;
+
+      const [got] = await Promise.all([
+        retrieve(key),
+        coreRequest.delete(eventsPath + '/' + id).set('Authorization', personalToken)
+      ]);
+      // The retrieve either consumed it (200) or lost to the discard (403) —
+      // never a 500, and never both winning.
+      assert.ok(got.status === 200 || got.status === 403,
+        'the retrieve must cleanly win or lose the race, not error: ' + got.status);
+
+      // Valid end states: (a) consumed and still on record; (b) consumed then
+      // hard-purged by the racing delete that saw it terminal (F2); (c) discarded
+      // because the delete got there first. A SURVIVING record must never say
+      // 'discarded' while the consumer walked away with the secret.
+      const ev = await coreRequest.get(eventsPath + '/' + id).set('Authorization', personalToken);
+      const liveContent = (ev.status === 200 && ev.body.event?.content) ? ev.body.event.content : null;
+      if (liveContent != null) {
+        if (got.status === 200) {
+          assert.strictEqual(liveContent.status, 'consumed',
+            'a consumer got the secret, so a surviving record must not say discarded');
+        }
+        assert.strictEqual(liveContent.statusHistory.length, 2,
+          'exactly one transition may be recorded: ' + JSON.stringify(liveContent.statusHistory));
+      }
+      // Whatever the interleaving, the secret is never served a second time.
+      const again = await retrieve(key);
+      assert.notStrictEqual(again.status, 200);
+      assert.strictEqual(again.body?.secret, undefined);
     });
   });
 
@@ -878,6 +924,20 @@ describe('[SHS] shared secrets', function () {
       assert.strictEqual(consume.status, 200, 'a status read must not consume the secret');
     });
 
+    it('[SHS70] the status read reports an expired item as expired, not pending', async function () {
+      const created = await createOk(personalToken, validBody({ ttl: 1 }));
+      await new Promise((resolve) => setTimeout(resolve, 1600));
+
+      const res = await coreRequest
+        .post(secretsPath + '/status')
+        .set('Authorization', personalToken)
+        .send({ key: created.key });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.notStrictEqual(res.body.sharedSecret.status, 'pending',
+        'a status read must not call an expired secret live');
+      assert.strictEqual(res.body.sharedSecret.expired, true);
+    });
+
     it('[SHS54] the status endpoint requires authentication', async function () {
       // Otherwise it becomes a non-consuming probe: an attacker could validate a
       // candidate key without burning it, defeating the burn-on-use tell.
@@ -944,21 +1004,44 @@ describe('[SHS] shared secrets', function () {
       assert.strictEqual(res.status, 403, 'a discarded secret must never be served');
     });
 
-    it('[SHS34] a non-pending item can no longer be mutated or re-deleted away', async function () {
+    it('[SHS34] a terminal item is never mutated, but the owner can purge it (Art.17)', async function () {
       const created = await createOk(personalToken, validBody());
       const { id, key } = created;
       await retrieve(key);
 
+      // Still immutable via events.update — the record cannot be rewritten.
+      const upd = await coreRequest
+        .put(eventsPath + '/' + id)
+        .set('Authorization', personalToken)
+        .send({ content: { status: 'pending', secret: { back: true } } });
+      assert.strictEqual(upd.status, 403, JSON.stringify(upd.body));
+
+      // But deleting a terminal item hard-removes it — the secret is already
+      // gone, so this is the clean erasure path, not a status rewrite.
       const del = await coreRequest
         .delete(eventsPath + '/' + id)
         .set('Authorization', personalToken);
-      assert.strictEqual(del.status, 403, JSON.stringify(del.body));
+      assert.strictEqual(del.status, 200, JSON.stringify(del.body));
 
       const ev = await coreRequest
         .get(eventsPath + '/' + id)
         .set('Authorization', personalToken);
-      assert.strictEqual(ev.body.event.content.status, 'consumed',
-        'consumed is terminal — a delete must not rewrite it to discarded');
+      // Gone: either a deletion tombstone or a plain 404, never a live item.
+      assert.ok(ev.status === 404 || ev.body?.event?.deleted != null,
+        'a purged terminal item must not survive as a live record: ' + JSON.stringify(ev.body));
+    });
+
+    it('[SHS69] a foreign access cannot purge someone else\'s terminal item', async function () {
+      const owner = await createAppAccess();
+      const attacker = await createAppAccess({ permissions: [{ streamId: '*', level: 'manage' }] });
+      const created = await createOk(owner.token, validBody());
+      await retrieve(created.key); // now consumed/terminal
+
+      const del = await coreRequest
+        .delete(eventsPath + '/' + created.id)
+        .set('Authorization', attacker.token);
+      assert.notStrictEqual(del.status, 200,
+        'only the owner or a personal token may purge a terminal item');
     });
 
     it('[SHS35] the namespace streams cannot be created or deleted by hand', async function () {

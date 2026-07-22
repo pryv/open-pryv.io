@@ -32,9 +32,10 @@ import type {
 } from 'shared-secrets/src/item.ts';
 
 type MethodNext = (err?: unknown) => void;
+type ContextAccess = { id: string; isPersonal (): boolean; canCreateSharedSecrets (): boolean };
 type Context = {
   user: { id: string };
-  access?: { id: string; isPersonal (): boolean; canCreateSharedSecrets? (): boolean };
+  access?: ContextAccess;
 };
 type Result = Record<string, unknown>;
 
@@ -84,7 +85,10 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
     function checkPermission (context: Context, params: unknown, result: Result, next: MethodNext) {
       const access = context.access;
       if (access == null) return next(errors.invalidAccessToken('Missing access token.'));
-      if (typeof access.canCreateSharedSecrets === 'function' && !access.canCreateSharedSecrets()) {
+      // access is always an AccessLogic here (loadAccess middleware), so call
+      // the predicate directly — a `typeof … === 'function'` guard would fail
+      // OPEN, silently skipping the restriction if the shape ever drifted.
+      if (!access.canCreateSharedSecrets()) {
         const err = errors.forbidden('This access may not create shared secrets.');
         err.data = Object.assign({}, err.data, { id: 'shared-secret-forbidden' });
         return next(err);
@@ -229,7 +233,7 @@ export default async function produceSharedSecretsApiMethods (api: { register: (
 
       result.sharedSecret = S.toPublicView({
         id: event.id, time: event.time ?? 0, duration: event.duration, content
-      });
+      }, timestamp.now());
       next();
     });
 

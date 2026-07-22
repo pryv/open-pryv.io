@@ -17,7 +17,9 @@ import * as C from './constants.ts';
 import { SIGNATURE_TYPES, isStorableHash } from './key.ts';
 
 export type OnConsumed = { message: string; returnUrl?: string };
-export type ItemSignature = { type: string; value: string };
+// `value` is required at creation, but dropped once the item leaves pending —
+// see applyTransition. A stored terminal item keeps only the type.
+export type ItemSignature = { type: string; value?: string };
 
 export type StatusEntry = { status: string; time: number; info?: string };
 
@@ -128,7 +130,9 @@ export function buildContent (params: {
  *
  * The clear secret is dropped at this point: once consumed or discarded it has
  * served its purpose, and keeping it only adds at-rest exposure in backups and
- * exports. Title, status and history survive so the record stays auditable.
+ * exports. The signature `value` goes with it — for a `secret`-type signature it
+ * is the user's passphrase in clear, same class of liability. Title, status,
+ * history and the signature TYPE survive so the record stays auditable.
  */
 export function applyTransition (content: ItemContent, params: {
   status: string;
@@ -143,6 +147,7 @@ export function applyTransition (content: ItemContent, params: {
     statusHistory: [...(content.statusHistory ?? []), entry]
   };
   delete next.secret;
+  if (next.signature != null) next.signature = { type: next.signature.type };
   return next;
 }
 
@@ -151,16 +156,32 @@ export function isPending (content: ItemContent | null | undefined): boolean {
   return content?.status === C.STATUS_PENDING;
 }
 
-/** The public view of an item: status and metadata, never the secret or the hash. */
-export function toPublicView (event: { id: string; time: number; duration?: number | null; content: ItemContent }): Record<string, unknown> {
+/**
+ * The public view of an item: status and metadata, never the secret or the hash.
+ *
+ * When `now` is given, a still-`pending` item whose time has run out is reported
+ * as expired rather than pending — expiry is lazy (evaluated on read, not swept),
+ * so without this a status read would call a dead secret live. The stored record
+ * is not mutated; a GET stays side-effect-free.
+ */
+export function toPublicView (
+  event: { id: string; time: number; duration?: number | null; content: ItemContent },
+  now?: number
+): Record<string, unknown> {
   const c = event.content;
-  return {
+  const expires = event.time + (event.duration ?? 0);
+  const effectiveStatus = (now != null && c.status === C.STATUS_PENDING && now > expires)
+    ? C.STATUS_DISCARDED
+    : c.status;
+  const view: Record<string, unknown> = {
     id: event.id,
     title: c.title,
-    status: c.status,
+    status: effectiveStatus,
     statusHistory: c.statusHistory,
     onConsumed: c.onConsumed,
     signatureType: c.signature?.type,
-    expires: event.time + (event.duration ?? 0)
+    expires
   };
+  if (effectiveStatus !== c.status) view.expired = true;
+  return view;
 }

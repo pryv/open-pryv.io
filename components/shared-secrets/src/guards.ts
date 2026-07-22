@@ -71,12 +71,19 @@ function createEventUpdateGuard (deps: { errors: ErrorsFactory }) {
 }
 
 /**
- * Turn a delete of a pending item into a discard, and refuse it once terminal.
+ * Delete of a namespace item:
+ *  - pending → discard. Rewrites the in-flight event so the delete chain's own
+ *    trashing step persists the discarded, scrubbed content (one write, integrity
+ *    and notifications intact). The trashing update is a compare-and-set on
+ *    "still untrashed" (see flagAsTrashed), so a delete racing a concurrent
+ *    retrieve cannot overwrite a consume with a discard.
+ *  - terminal → let the normal delete proceed. A consumed/discarded item is
+ *    already trashed and its secret is gone, so the standard second-delete
+ *    hard-removes the record: the owner's (or a personal token's) Art.17 purge
+ *    path. Permission is enforced upstream — a foreign access never reaches here.
  *
- * Rather than writing here, it rewrites the in-flight event so the delete
- * chain's own trashing step persists the discarded, scrubbed content — one
- * write, and the surrounding machinery (integrity, tracking properties,
- * notifications) keeps working untouched.
+ * The status is NEVER rewritten backwards: a terminal item is deleted outright,
+ * not turned back into `discarded`.
  */
 function createEventDeleteGuard (deps: { errors: ErrorsFactory; now: () => number }) {
   return function sharedSecretsDeleteGuard (
@@ -89,12 +96,8 @@ function createEventDeleteGuard (deps: { errors: ErrorsFactory; now: () => numbe
     if (!touchesNamespace(target)) return next();
 
     const content = target!.content as ItemContent;
-    if (!isPending(content)) {
-      // Consumed is a fact about the past; a delete must not rewrite it.
-      return next(withId(
-        deps.errors.forbidden('A shared secret that is no longer pending cannot be deleted.'),
-        'shared-secret-immutable'));
-    }
+    if (!isPending(content)) return next(); // terminal → hard delete, no rewrite
+
     target!.content = applyTransition(content, {
       status: C.STATUS_DISCARDED,
       info: C.INFO_DELETED,

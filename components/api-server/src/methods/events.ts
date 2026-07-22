@@ -1011,10 +1011,17 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     newEvent.trashed = true;
     context.updateTrackingProperties(newEvent);
     // Discarding a shared secret scrubs its payload; a version row would
-    // preserve the very thing being removed, so history is skipped for it.
-    const skipVersioning = sharedSecrets.touchesNamespace(context.oldEvent);
-    const updatedEvent = await mall.events.update(context.user.id, newEvent,
-      undefined, { skipVersioning });
+    // preserve the very thing being removed, so history is skipped for it. And
+    // the trash is a compare-and-set on "still untrashed" — a delete racing a
+    // concurrent retrieve must not overwrite a consume with a discard; the
+    // loser re-reads and returns whatever the winner left.
+    const isSharedSecret = sharedSecrets.touchesNamespace(context.oldEvent);
+    let updatedEvent = await mall.events.update(context.user.id, newEvent,
+      undefined, { skipVersioning: isSharedSecret, onlyIfNotTrashed: isSharedSecret });
+    if (isSharedSecret && updatedEvent == null) {
+      // A concurrent retrieve consumed it first; report that terminal state.
+      updatedEvent = await mall.events.getOne(context.user.id, context.oldEvent!.id!);
+    }
     result.event = updatedEvent as WireEvent;
     result.event!.attachments = setFileReadToken(context.access, result.event!.attachments as Array<{ id: string; readToken?: string }> | undefined);
     next();

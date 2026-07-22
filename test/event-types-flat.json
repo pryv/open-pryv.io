@@ -2400,11 +2400,10 @@
           }
         },
         "signature": {
-          "description": "Optional proof required to redeem. `secret` compares a passphrase supplied out-of-band; `hmac-sha256` verifies HMAC(verifier-secret, key material) computed by the client, so the verifier secret itself never reaches the server. A wrong proof discards the secret.",
+          "description": "Optional proof required to redeem. `secret` compares a passphrase supplied out-of-band; `hmac-sha256` verifies HMAC(verifier-secret, key material) computed by the client, so the verifier secret itself never reaches the server. A wrong proof discards the secret. `value` is present only while the item is `pending`: it is scrubbed alongside the secret once the item is consumed or discarded (for a `secret`-type signature it is a passphrase in clear), leaving only the `type` on the record.",
           "type": "object",
           "required": [
-            "type",
-            "value"
+            "type"
           ],
           "properties": {
             "type": {

@@ -37,7 +37,9 @@ const HASH_RE = /^[0-9a-f]{64}$/;
 
 export type ParsedKey = { eventId: string; randomPart: string };
 export type MintedKey = { key: string; keyHash: string };
-export type Signature = { type: string; value: string } | null | undefined;
+// `value` is absent once the item is scrubbed at transition; a value-less
+// configured signature can never be satisfied, which is the safe outcome.
+export type Signature = { type: string; value?: string } | null | undefined;
 export type GivenSignature = { type?: string; payload?: unknown } | null | undefined;
 
 /** The signature methods a caller may ask for. */
@@ -102,6 +104,9 @@ export function verifySignature (
   _key?: string
 ): boolean {
   if (configured == null) return true; // nothing to prove
+  // A scrubbed (value-less) signature can never be satisfied — but it only ever
+  // sits on a terminal item, which is refused before this runs.
+  if (typeof configured.value !== 'string') return false;
   if (given == null || typeof given !== 'object') return false;
   if (given.type !== configured.type) return false;
   if (typeof given.payload !== 'string') return false;
