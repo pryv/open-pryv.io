@@ -86,6 +86,24 @@ describe('[CMCBRL] cmc/bootRetryLoop', () => {
     assert.equal(sched.stats().running, false);
   });
 
+  it('[BRL06] disables auto-enqueue on the loop\'s own dispatch (no retry-event amplification)', async () => {
+    // The retry loop owns the retry lifecycle: processRetryEvent reschedules
+    // the very event it re-dispatches. If that inner dispatch ALSO auto-
+    // enqueued a fresh retry on failure, a still-failing item would be both
+    // rescheduled and duplicated every cycle, and the duplicates spawn their
+    // own — the retries stream fans out geometrically. The loop must pass
+    // enqueueRetries: false.
+    const sched = startRetryLoopIfEnabled({
+      ...STUB_DEPS,
+      config: fakeConfig({ cmc: { retryLoop: { enabled: true } } }),
+      userIdsProvider: () => [],
+      isLoopWorker: () => true,
+    });
+    assert.notEqual(sched, null);
+    assert.equal(sched.deps.retryDeps.dispatchDeps.enqueueRetries, false);
+    await sched.stop();
+  });
+
   it('[BRL05] runs a tick with the configured retry deps', async () => {
     const ticked = [];
     const fakeScheduler = startRetryLoopIfEnabled({

@@ -93,6 +93,13 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
       fetch: deps.fetch,
       logger: deps.logger,
       selfIdentityFor: deps.selfIdentityFor,
+      // The retry loop OWNS the retry lifecycle: processRetryEvent
+      // reschedules (or retires) the very event it is re-dispatching. The
+      // dispatch it calls must therefore NOT also auto-enqueue a fresh retry
+      // on failure — that would leave a still-failing item both rescheduled
+      // AND re-queued as a duplicate, and each duplicate spawns its own, so
+      // one stuck delivery fans the retries stream out geometrically.
+      enqueueRetries: false,
     },
     logger: deps.logger,
   };
