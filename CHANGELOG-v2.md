@@ -39,6 +39,70 @@ the account and hands over a random key that can be redeemed exactly once.
 - Config: `sharedSecrets.enabled` (default `true`), `maxSizeBytes` (4096),
   `maxTtl` (30 days). Read per request, so an operator toggle takes effect
   without a restart.
+
+### OAuth2: DPoP — sender-constrained tokens (RFC 9449)
+
+An OAuth2 client can now bind its tokens to a key pair it holds, so a stolen
+bearer token alone is useless: every API call must also carry a `DPoP` proof —
+a short-lived JWS over the request method and URI, signed with the bound key.
+Opt-in per session and fully backward compatible — a client that sends no
+`DPoP` header gets plain bearer tokens exactly as before.
+
+- Binding happens at the token endpoint: a valid proof on the code exchange
+  yields `token_type: DPoP`, and every refresh must prove the **same** key —
+  a rotation attempted under a different key burns the refresh chain.
+- Proofs are single-use: the `jti` is spent atomically cluster-wide, so a
+  captured proof cannot be replayed, not even concurrently on two cores.
+- Enforcement sits in the shared access-validation path, so it covers REST,
+  batch calls, socket.io and HF series alike, fail-closed: a DPoP-bound access
+  arriving without a valid proof is rejected with `403` and a
+  `WWW-Authenticate: DPoP` challenge. The attachment `readToken` (previews,
+  file downloads, drag-and-drop) stays exempt — it is scoped to file reads and
+  cannot be upgraded into an API credential.
+- `accesses.create` / `accesses.update` refuse to forge or silently drop a
+  binding, and `.well-known` discovery advertises
+  `dpop_signing_alg_values_supported` (ES256).
+- A binding mismatch at the token endpoint emits an `oauth.token.dpop_mismatch`
+  audit event.
+- Config: `oauth.dpop.clockSkewSeconds` (default `120`) — accepted proof-age
+  window around the server clock.
+- ⚠️ Deployment requirement: proofs bind to the **client-facing** URI, which
+  the server reconstructs from `X-Forwarded-Host` / `X-Forwarded-Proto`. A
+  deployment accepting DPoP must sit behind a reverse proxy that overwrites
+  (never appends to) these headers — see the note in `default-config.yml`.
+
+Client support ships in the `pryv` JS library 3.10.0 (`SignedConnection`,
+`OAuth2Client` with `dpop: true`).
+
+### OAuth2: operator key-revocation (`revoke-key`) + key inventory
+
+When a client's key is compromised, the operator can now kill everything bound
+to it, cluster-wide, with one command: `bin/oauth-client.js revoke-key <jkt>
+--yes` (where `<jkt>` is the RFC 7638 key thumbprint) writes a platform-wide
+tombstone. Revocation is by key **presence**, not epoch: any token bound to the
+key dies — including refresh rotations attempted after the revoke — and the
+token endpoint refuses to mint or rotate for it. Each core re-reads the revoked
+set within `oauth.dpop.keyRevokeCheckSeconds` (default `30`), so live tokens
+are cut within that window without any cross-core bus. Rejections use the same
+uniform DPoP `403` as a binding failure, so the endpoint leaks no
+revoked-vs-not signal. `unrevoke-key` restores; `list-revoked-keys` and
+`list-keys [<clientId>]` inspect — the latter joins an advisory per-client
+inventory of keys seen at token issuance, so an operator can tell what a
+revocation will hit before running it.
+
+### OAuth2: client revocation now reaches live tokens cluster-wide
+
+`bin/oauth-client.js revoke <clientId>` used to stop new grants while already-
+issued access tokens lived out their TTL. Revoking a client now also writes a
+platform-wide tombstone carrying the revocation moment; every core rejects
+accesses minted before it at validation time, within
+`oauth.clientRevokeCheckSeconds` (default `30`). Long-lived transports are
+covered too: open socket.io connections are re-validated on a sweep and dropped
+when their client is revoked, and the HF series token cache is capped so a
+revocation cannot outlive it. The revocation is a token **epoch**: re-registering
+the same `client_id` works and its freshly-minted tokens are honoured, but the
+tombstone stays, so sessions from before the revoke can never be resurrected.
+
 ### Fixed — a CMC back-channel handshake could be dropped, silently and permanently
 
 `2.0.0-rc.10` began stamping the requester's app-code on the data-grant minted at

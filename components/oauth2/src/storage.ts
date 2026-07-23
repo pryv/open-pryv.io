@@ -207,9 +207,10 @@ export async function listClientIds (platform: PlatformDB): Promise<string[]> {
 // --- Client revoke tombstones (indefinite, cluster-wide) --- //
 //
 // A tombstone marks a clientId whose LIVE access tokens must stop working, even
-// before they expire. `deleteClient` writes it; `setClient` (re-register)
-// clears it. The resource-server validation path consults these (per-core
-// cached) to reject a revoked client's oauth-session accesses.
+// before they expire. `deleteClient` writes it; `setClient` (re-register) does
+// NOT clear it — the revoke is a token epoch, see the note in `setClient`. The
+// resource-server validation path consults these (per-core cached) to reject a
+// revoked client's oauth-session accesses minted before the epoch.
 
 /** The revoke epoch (ms) for a clientId, or null if it carries no tombstone. */
 export async function getRevokedAt (platform: PlatformDB, clientId: string): Promise<number | null> {
