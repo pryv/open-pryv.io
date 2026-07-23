@@ -20,9 +20,10 @@ cd "$(dirname "$0")/.."
 
 # 223: the shared-secrets component landed one open index signature without
 # bumping this ratchet, leaving `just lint` red on master. Raised here to
-# unblock; the shared-secrets shape should enumerate its fields and lower this
-# back to 222 in a follow-up.
-MAX=223
+# unblock; the shared-secrets shape should enumerate its fields.
+# 223→221: measured count dropped (open signatures removed elsewhere);
+# lowered to lock it in per the ratchet rule.
+MAX=221
 
 COUNT=$(grep -rE --include='*.ts' \
   --exclude-dir=node_modules --exclude-dir=test --exclude-dir=test-helpers \

@@ -14,14 +14,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-MAX=330   # measured count; ratchet DOWN only. Lowered from the drifted 339 by
+MAX=329   # measured count; ratchet DOWN only. Lowered from the drifted 339 by
           # converting 10 oauth2 files to real ESM imports. The remaining oauth2
           # shims are legitimate: lazy in-function require() (init-order safety),
           # bcrypt (ships no type declarations), or files whose typed imports
           # surface pre-existing cross-module type gaps deferred to the TS-migration.
-          # 329→330: components/cmc/src/relationshipKey.ts shipped a new shim
-          # without maintaining this gate; bumped to reflect the true count.
-          # Convert that file to real ESM imports and lower this back to 329.
+          # 330→329: components/cmc/src/relationshipKey.ts converted to real
+          # ESM imports (its temporary shim had bumped the count).
 
 COUNT=$(grep -rl --include='*.ts' \
   --exclude-dir=node_modules --exclude-dir=test --exclude-dir=test-helpers \

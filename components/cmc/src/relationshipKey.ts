@@ -4,9 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { createRequire } from 'node:module';
 import type { CmcLogger, CmcAccessLike as AccessLike } from './_types.ts';
-const require = createRequire(import.meta.url);
+import { slugifyHost } from './slug.ts';
 
 /**
  * CMC plugin — which relationship does this event belong to?
@@ -36,9 +35,6 @@ const require = createRequire(import.meta.url);
  * selector makes divergence structurally impossible rather than a thing to
  * remember.
  */
-
-const C = require('./constants.ts');
-const slugMod = require('./slug.ts');
 
 // `<scope>:chats:<slug>` / `<scope>:collectors:<slug>` — captures the scope.
 const CHANNEL_STREAM_RE = /^(:_cmc:apps:[^:]+(?::[^:]+)*):(?:chats|collectors):[a-z0-9-]+--[a-z0-9-]+$/;
@@ -135,7 +131,8 @@ function selectRelationshipAccess (params: SelectParams): AccessLike | null {
     const cp = cmc?.counterparty;
     if (cp == null) continue;
     if (cp.username !== counterparty.username) continue;
-    if (slugMod.slugifyHost(cp.host) !== counterparty.hostSlug) continue;
+    if (typeof cp.host !== 'string' || cp.host.length === 0) continue;
+    if (slugifyHost(cp.host) !== counterparty.hostSlug) continue;
     candidates.push(acc);
   }
   if (candidates.length === 0) return null;
