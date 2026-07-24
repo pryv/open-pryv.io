@@ -726,6 +726,45 @@ export default function conformanceTests (getDB) {
         assert.strictEqual(await db.getUserCore('iso-' + suffix), 'core-a');
         assert.strictEqual(await db.getObservabilityValue('iso-' + suffix), 'obs-value');
       });
+
+      it('[AS16] listExpiredAccessStates returns only expired rows under the prefix, with caller-facing key + parsed value', async () => {
+        const ns = 'oauth-code-' + cuid() + '/';
+        const otherNs = 'oauth-refresh-' + cuid() + '/';
+        const expired1 = ns + 'e1';
+        const expired2 = ns + 'e2';
+        const live = ns + 'live';
+        const expiredOther = otherNs + 'e';
+        await db.setAccessState(expired1, { accessId: 'a1', accessToken: 't1', apiEndpoint: 'https://e1/' }, past());
+        await db.setAccessState(expired2, { accessId: 'a2', accessToken: 't2', apiEndpoint: 'https://e2/' }, past());
+        await db.setAccessState(live, { accessId: 'a3' }, future());
+        await db.setAccessState(expiredOther, { accessId: 'a4' }, past());
+
+        const rows = await db.listExpiredAccessStates(ns);
+        const byKey = new Map(rows.map((r) => [r.key, r.value]));
+        // Only the two expired rows under `ns` — the live one and the other
+        // prefix are excluded.
+        assert.ok(byKey.has(expired1), 'expired1 present');
+        assert.ok(byKey.has(expired2), 'expired2 present');
+        assert.ok(!byKey.has(live), 'live row excluded');
+        assert.ok(!byKey.has(expiredOther), 'other-prefix row excluded');
+        // The caller sees the same key it wrote (no internal namespace prefix)
+        // and the parsed payload.
+        assert.deepStrictEqual(byKey.get(expired1), { accessId: 'a1', accessToken: 't1', apiEndpoint: 'https://e1/' });
+      });
+
+      it('[AS17] listExpiredAccessStates is non-destructive and rejects bad prefixes', async () => {
+        const ns = 'oauth-code-' + cuid() + '/';
+        const expired = ns + 'e';
+        await db.setAccessState(expired, { accessId: 'a' }, past());
+        // Non-destructive: listing does NOT remove the row (the sweep owns
+        // removal); a second call still returns it.
+        assert.strictEqual((await db.listExpiredAccessStates(ns)).length, 1);
+        assert.strictEqual((await db.listExpiredAccessStates(ns)).length, 1);
+        // Guards: empty prefix + SQL LIKE wildcards are rejected.
+        await assert.rejects(() => db.listExpiredAccessStates(''), /non-empty/);
+        await assert.rejects(() => db.listExpiredAccessStates('foo%'), /wildcard/);
+        await assert.rejects(() => db.listExpiredAccessStates('foo_'), /wildcard/);
+      });
     });
 
     describe('[PLKV] setPlatformKv / getPlatformKv / deletePlatformKv / listPlatformKvKeys', () => {

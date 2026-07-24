@@ -393,4 +393,97 @@ describe('[OAUTH-TKN-AC] /oauth2/token — authorization_code grant', () => {
       assert.equal(res.body.error, 'invalid_request');
     });
   });
+
+  describe('[OAUTH-TKN-AC-ORPHAN] failed exchange revokes the pre-minted access', () => {
+    // The code is consumed atomically at the top of the grant; any failure AFTER
+    // that abandons the access minted at /accept. Those failures must self-revoke
+    // it (HTTP accesses.delete) so it does not live to its TTL. Stub global fetch
+    // to observe the delete.
+    let deletes;
+    let originalFetch;
+    beforeEach(() => { deletes = []; originalFetch = globalThis.fetch; });
+    afterEach(() => { globalThis.fetch = originalFetch; });
+    function stubFetch (status = 200) {
+      globalThis.fetch = async (url, init) => { deletes.push({ url, init }); return { status }; };
+    }
+
+    it('[OTA-ORV1] PKCE failure revokes the pre-minted access (DELETE to its endpoint + token)', async () => {
+      stubFetch();
+      const platform = fakePlatform();
+      await seedCode(platform, 'CODE-ORV1');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      await handler({
+        body: {
+          grant_type: 'authorization_code',
+          code: 'CODE-ORV1',
+          code_verifier: 'wrong-verifier-1234567890',
+          client_id: 'myapp',
+          redirect_uri: 'https://app.example/cb',
+        }
+      }, res);
+      assert.equal(res.body.error, 'invalid_grant');
+      assert.equal(deletes.length, 1);
+      assert.equal(deletes[0].url, 'https://alice.pryv.me/accesses/acc-u-alice');
+      assert.equal(deletes[0].init.method, 'DELETE');
+      assert.equal(deletes[0].init.headers.authorization, 'tok-u-alice-myapp');
+    });
+
+    it('[OTA-ORV2] client_id mismatch revokes the pre-minted access', async () => {
+      stubFetch();
+      const platform = fakePlatform();
+      const verifier = await seedCode(platform, 'CODE-ORV2');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      await handler({
+        body: {
+          grant_type: 'authorization_code',
+          code: 'CODE-ORV2',
+          code_verifier: verifier,
+          client_id: 'attacker',
+          redirect_uri: 'https://app.example/cb',
+        }
+      }, res);
+      assert.equal(res.body.error, 'invalid_grant');
+      assert.equal(deletes.length, 1);
+      assert.equal(deletes[0].url, 'https://alice.pryv.me/accesses/acc-u-alice');
+    });
+
+    it('[OTA-ORV3] successful exchange does NOT revoke', async () => {
+      stubFetch();
+      const platform = fakePlatform();
+      const verifier = await seedCode(platform, 'CODE-ORV3');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      await handler({
+        body: {
+          grant_type: 'authorization_code',
+          code: 'CODE-ORV3',
+          code_verifier: verifier,
+          client_id: 'myapp',
+          redirect_uri: 'https://app.example/cb',
+        }
+      }, res);
+      assert.equal(res.statusCode, 200);
+      assert.equal(deletes.length, 0);
+    });
+
+    it('[OTA-ORV4] an unknown/reused code (nothing consumed) does NOT revoke', async () => {
+      stubFetch();
+      const platform = fakePlatform();
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      await handler({
+        body: {
+          grant_type: 'authorization_code',
+          code: 'NEVER-ISSUED',
+          code_verifier: pkceVerifier(),
+          client_id: 'myapp',
+          redirect_uri: 'https://app.example/cb',
+        }
+      }, res);
+      assert.equal(res.body.error, 'invalid_grant');
+      assert.equal(deletes.length, 0);
+    });
+  });
 });

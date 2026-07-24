@@ -71,6 +71,8 @@ export interface ObservabilityEntry { key: string; value: string }
 
 export interface AccessStateEntry { value: unknown; expiresAt: number }
 
+export interface ExpiredAccessStateEntry { key: string; value: unknown }
+
 export interface InvitationTokenInfo {
   createdAt: number;
   createdBy: string;
@@ -165,6 +167,16 @@ export interface PlatformDB {
    */
   consumeAccessState (key: string): Promise<AccessStateEntry | null>;
   sweepExpiredAccessStates (now?: number): Promise<{ removed: number }>;
+  /**
+   * Non-destructive listing of the EXPIRED access-state entries whose
+   * (caller-facing) key starts with `prefix`. Returns each match's key and
+   * parsed value — for callers that must act on an expired entry (e.g. revoke
+   * a resource its payload points at) BEFORE the sweep removes it. Does NOT
+   * delete anything; the sweep still owns removal. Malformed payloads are
+   * skipped (the sweep drops them). The `prefix` must not contain SQL LIKE
+   * wildcards.
+   */
+  listExpiredAccessStates (prefix: string, now?: number): Promise<ExpiredAccessStateEntry[]>;
 
   // --- Generic cluster-wide key-value (indefinite, no TTL) --------
   // For features that need string-keyed indefinite storage (no expiry,
@@ -297,6 +309,8 @@ const PlatformDB: PlatformDB = {
   async consumeAccessState (key: string): Promise<AccessStateEntry | null> { throw new Error('Not implemented'); },
 
   async sweepExpiredAccessStates (now?: number): Promise<{ removed: number }> { throw new Error('Not implemented'); },
+
+  async listExpiredAccessStates (prefix: string, now?: number): Promise<ExpiredAccessStateEntry[]> { throw new Error('Not implemented'); },
 
   // --- Generic cluster-wide key-value --- //
 

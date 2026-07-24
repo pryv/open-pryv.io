@@ -42,8 +42,15 @@ Object.freeze(PermissionLevels);
 const PERMISSION_LEVEL_VALUES: readonly PermissionLevel[] =
   Object.freeze(Object.keys(PermissionLevels) as PermissionLevel[]);
 
-/** Valid `setting` values for a feature permission (e.g. `selfRevoke`). */
-const FEATURE_SETTING_VALUES: readonly string[] = Object.freeze(['forbidden']);
+/**
+ * Valid `setting` values for a feature permission (e.g. `selfRevoke`).
+ * `allowed` is the explicit form of the default (absence ⇒ allow at every
+ * enforcement site, which tests `setting !== 'forbidden'`): it exists so a
+ * minted access can OVERRIDE an inherited restriction — e.g. an OAuth session
+ * credential stays self-revocable (a client may always revoke its own token)
+ * even when the consent offer forbids selfRevoke on the durable data-grant.
+ */
+const FEATURE_SETTING_VALUES: readonly string[] = Object.freeze(['forbidden', 'allowed']);
 
 function isStreamPermission (p: unknown): p is StreamPermission {
   if (p == null || typeof p !== 'object') return false;

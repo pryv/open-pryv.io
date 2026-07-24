@@ -103,6 +103,29 @@ revocation cannot outlive it. The revocation is a token **epoch**: re-registerin
 the same `client_id` works and its freshly-minted tokens are honoured, but the
 tombstone stays, so sessions from before the revoke can never be resurrected.
 
+### OAuth2: an abandoned authorization code no longer leaves its access alive
+
+The access behind an OAuth2 grant is minted when the user accepts, and delivered
+at the `/token` exchange. If that exchange never succeeds — the code expires
+unexchanged, or the exchange fails after the code is consumed (wrong PKCE
+verifier, client-auth failure, DPoP binding failure) — the pre-minted access
+used to linger until its own TTL (≤1h). It is now revoked proactively: a failed
+exchange revokes it on the spot, and a platform sweep catches expired
+unexchanged codes. Best-effort by design — if a revoke attempt fails, the access
+still dies by its own TTL, so the previous behavior is the worst case. The
+durable consent record (the data-grant) is never touched: only the ephemeral
+session credential dies.
+
+Two supporting API-visible changes:
+- Session accesses now carry an explicit `{ feature: 'selfRevoke', setting:
+  'allowed' }` permission, overriding any `selfRevoke: forbidden` inherited
+  from the consent offer. The offer's restriction binds the durable data-grant
+  (which keeps it verbatim), not the ephemeral session credential — a client
+  may always revoke its own token (RFC 7009), and the server itself relies on
+  that to delete orphans.
+- `accesses.create` now accepts `setting: 'allowed'` on feature permissions —
+  the explicit form of the default (absence has always meant allowed).
+
 ### Fixed — a CMC back-channel handshake could be dropped, silently and permanently
 
 `2.0.0-rc.10` began stamping the requester's app-code on the data-grant minted at

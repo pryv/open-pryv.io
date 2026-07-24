@@ -191,11 +191,38 @@ if (cluster.isPrimary) {
     const sweepIntervalMs = config.get('accessState:sweepIntervalMs') || 15 * 60 * 1000;
     const accessStateSweep = setInterval(() => {
       const platformDB = require('../storages/index.ts').platformDB;
-      platformDB.sweepExpiredAccessStates()
-        .then(({ removed }) => {
-          if (removed > 0) log(`[access-state-sweep] removed ${removed} expired row(s)`);
+      const { revokeOrphanAccess } = require('../components/oauth2/src/orphanAccess.ts');
+      // Revoke the pre-minted access behind each EXPIRED, never-exchanged OAuth
+      // authorization code BEFORE the generic sweep removes the code row. An
+      // expired oauth-code row that still exists was never exchanged (the
+      // /token consume is atomic single-use), so its pre-minted session access
+      // is an orphan — alive until its own (≤1h) TTL. Best-effort: a revoke
+      // failure is accepted (the access then dies by its own TTL) and the row
+      // is swept regardless. Capped per tick to keep the tick bounded.
+      const ORPHAN_REVOKE_MAX_PER_TICK = 300;
+      const revokeOrphans = platformDB.listExpiredAccessStates('oauth-code/')
+        .then(async (rows) => {
+          let revoked = 0;
+          for (const { value } of rows.slice(0, ORPHAN_REVOKE_MAX_PER_TICK)) {
+            const v = value || {};
+            if (typeof v.accessId === 'string' && typeof v.accessToken === 'string' && typeof v.apiEndpoint === 'string') {
+              if (await revokeOrphanAccess({ apiEndpoint: v.apiEndpoint, accessToken: v.accessToken, accessId: v.accessId })) revoked++;
+            }
+          }
+          if (revoked > 0) log(`[oauth-orphan-revoke] revoked ${revoked} orphaned pre-minted access(es)`);
         })
-        .catch((err) => log(`[access-state-sweep] failed: ${err.message}`));
+        .catch((err) => log(`[oauth-orphan-revoke] failed: ${err.message}`));
+
+      // Sweep AFTER the orphan-revoke pass, so the expired code rows are still
+      // present when listExpiredAccessStates reads their pre-minted access
+      // details (the sweep would otherwise delete them out from under it).
+      revokeOrphans.finally(() => {
+        platformDB.sweepExpiredAccessStates()
+          .then(({ removed }) => {
+            if (removed > 0) log(`[access-state-sweep] removed ${removed} expired row(s)`);
+          })
+          .catch((err) => log(`[access-state-sweep] failed: ${err.message}`));
+      });
       // Prune operator-revoke tombstones + the advisory key inventory older than
       // the max token lifetime: past it every token the revoke could have killed
       // is already expired, so the marker's job is done. Keeps the per-core-cached

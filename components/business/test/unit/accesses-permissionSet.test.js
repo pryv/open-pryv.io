@@ -23,7 +23,11 @@ describe('[PSET] accesses permissionSet', () => {
       });
       assert.deepEqual([...ps.PERMISSION_LEVEL_VALUES].sort(),
         ['contribute', 'create-only', 'manage', 'none', 'read']);
-      assert.deepEqual([...ps.FEATURE_SETTING_VALUES], ['forbidden']);
+      // 'allowed' is the explicit form of the default-allow — it lets a minted
+      // access override an inherited restriction (e.g. an OAuth session
+      // credential stays self-revocable while the durable data-grant keeps the
+      // offer's `forbidden`).
+      assert.deepEqual([...ps.FEATURE_SETTING_VALUES], ['forbidden', 'allowed']);
     });
   });
 
@@ -31,6 +35,7 @@ describe('[PSET] accesses permissionSet', () => {
     it('[PS02] recognizes stream and feature permissions', () => {
       assert.equal(ps.isStreamPermission({ streamId: 'health', level: 'read' }), true);
       assert.equal(ps.isFeaturePermission({ feature: 'selfRevoke', setting: 'forbidden' }), true);
+      assert.equal(ps.isFeaturePermission({ feature: 'selfRevoke', setting: 'allowed' }), true);
       assert.equal(ps.isStreamPermission({ feature: 'selfRevoke', setting: 'forbidden' }), false);
       assert.equal(ps.isFeaturePermission({ streamId: 'health', level: 'read' }), false);
       assert.equal(ps.isStreamPermission({ streamId: 'health', level: 'root' }), false);

@@ -547,6 +547,35 @@ class DBrqlite {
     return { removed };
   }
 
+  async listExpiredAccessStates (prefix: string, now = Date.now()) {
+    if (typeof prefix !== 'string' || prefix.length === 0) {
+      throw new Error('listExpiredAccessStates: prefix must be a non-empty string');
+    }
+    if (prefix.includes('%') || prefix.includes('_')) {
+      throw new Error('listExpiredAccessStates: prefix must not contain SQL LIKE wildcards');
+    }
+    const storePrefix = getAccessStateKey(prefix);
+    const rows = await this.query(
+      'SELECT key, value FROM keyValue WHERE key LIKE ?',
+      [storePrefix + '%']
+    );
+    const out: Array<{ key: string; value: unknown }> = [];
+    for (const row of rows) {
+      let parsed;
+      try {
+        parsed = JSON.parse(row.value);
+      } catch (_) {
+        continue; // malformed — the sweep drops it; nothing actionable here.
+      }
+      if (typeof parsed.expiresAt === 'number' && now > parsed.expiresAt) {
+        // Strip the internal 'access-state/' namespace so callers see the same
+        // key they wrote (e.g. 'oauth-code/<code>').
+        out.push({ key: (row.key as string).slice('access-state/'.length), value: parsed.value });
+      }
+    }
+    return out;
+  }
+
   // --- Generic cluster-wide key-value (indefinite) --- //
 
   async setPlatformKv (key: string, value: string): Promise<void> {

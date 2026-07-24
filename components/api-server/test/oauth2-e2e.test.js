@@ -315,16 +315,25 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       const access = await accessInfo(r.tokenRes.body.access_token);
       const streamPerms = access.permissions.filter((p) => p.streamId != null && !p.streamId.startsWith(':'));
       assert.deepEqual(streamPerms, [{ streamId: 'health', level: 'read' }]);
-      assert.ok(access.permissions.some((p) => p.feature === 'selfRevoke' && p.setting === 'forbidden'),
-        'feature permission must travel offer → grant → session access: ' + JSON.stringify(access.permissions));
+      // The offer's selfRevoke restriction binds the durable data-grant, NOT
+      // the ephemeral session credential: the session access carries an
+      // explicit `allowed` override so it can always revoke its own token
+      // (the server relies on that to delete orphaned pre-minted accesses).
+      assert.ok(access.permissions.some((p) => p.feature === 'selfRevoke' && p.setting === 'allowed'),
+        'session access must carry the selfRevoke:allowed override: ' + JSON.stringify(access.permissions));
+      assert.ok(!access.permissions.some((p) => p.feature === 'selfRevoke' && p.setting === 'forbidden'),
+        'the offer\'s selfRevoke:forbidden must NOT reach the session access: ' + JSON.stringify(access.permissions));
 
-      // The durable consent record (CMC data-grant) exists on the user.
+      // The durable consent record (CMC data-grant) exists on the user and
+      // keeps the offer's feature permissions VERBATIM (incl. the forbidden).
       const accessesRes = await coreRequest
         .get('/' + username + '/accesses')
         .set('Authorization', personalToken);
       const dataGrant = (accessesRes.body.accesses ?? [])
         .find((a) => a.clientData?.cmc?.role === 'counterparty');
       assert.ok(dataGrant != null, 'CMC data-grant must exist on the user account');
+      assert.ok((dataGrant.permissions ?? []).some((p) => p.feature === 'selfRevoke' && p.setting === 'forbidden'),
+        'data-grant must keep the offer\'s selfRevoke:forbidden verbatim: ' + JSON.stringify(dataGrant.permissions));
     });
 
     it('[OE07] the grant emits user-scoped oauth.* audit rows into the user audit trail', async function () {
@@ -432,6 +441,44 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       const r = await runFullFlow({ wrongVerifier: 'wrong-verifier-' + cuid() });
       assert.equal(r.tokenRes.status, 400);
       assert.equal(r.tokenRes.body.error, 'invalid_grant');
+    });
+
+    it('[OE23] wrong PKCE verifier → the pre-minted session access is revoked, not left alive', async function () {
+      // A failed exchange AFTER the code is consumed abandons the access
+      // minted at /accept; the grant handler must self-revoke it (the
+      // session access carries the selfRevoke:allowed override, so the
+      // HTTP accesses.delete of its own id, auth'd by its own token,
+      // succeeds even though the offer forbids selfRevoke on the
+      // data-grant).
+      const list = async () => {
+        const res = await coreRequest
+          .get('/' + username + '/accesses')
+          .set('Authorization', personalToken)
+          .query({ includeDeletions: true });
+        assert.equal(res.status, 200, describeRes(res));
+        return res.body;
+      };
+      const before = await list();
+      const beforeLive = new Set((before.accesses ?? []).map((a) => a.id));
+      const beforeDeleted = new Set((before.accessDeletions ?? []).map((d) => d.id));
+
+      const r = await runFullFlow({ wrongVerifier: 'wrong-verifier-' + cuid() });
+      assert.equal(r.tokenRes.status, 400);
+      assert.equal(r.tokenRes.body.error, 'invalid_grant');
+
+      const after = await list();
+      // runFullFlow asserted /accept returned 200, so a session access WAS
+      // minted for this flow — after the failed exchange no new live session
+      // access may remain for this client…
+      const newLive = (after.accesses ?? []).filter((a) =>
+        !beforeLive.has(a.id) && a.type === 'app' && a.name === 'oauth:' + clientId);
+      assert.deepEqual(newLive.map((a) => a.id), [],
+        'the pre-minted session access must be revoked on a failed exchange');
+      // …and the revoked access shows up among the deletions (it existed,
+      // then died — as opposed to never having been minted).
+      const newDeletions = (after.accessDeletions ?? []).filter((d) => !beforeDeleted.has(d.id));
+      assert.ok(newDeletions.length >= 1,
+        'the revoked session access must appear among access deletions');
     });
 
     it('[OE12] /accept with wrong userToken → 401', async function () {

@@ -96,7 +96,7 @@ describe('[PSLF] permissions selfRevoke', function () {
       assert.strictEqual(featureFound, true);
     });
 
-    it('[JYU5] must forbid creating accesses with selfRevoke different than forbidden ', async () => {
+    it('[JYU5] must forbid creating accesses with a selfRevoke setting outside the lexicon (forbidden/allowed)', async () => {
       const res = await coreRequest.post(basePathAccess).set('Authorization', personalToken).send({
         type: 'app',
         name: 'toto',

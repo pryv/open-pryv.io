@@ -60,6 +60,22 @@ const { outbound: cmcOutbound } = require('cmc');
 const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
 
 /**
+ * Session-credential selfRevoke override, applied at every session-access
+ * mint (accept-time pre-mint + refresh-rotation re-mint). The offer's
+ * `selfRevoke` feature binds the DURABLE consent capability (the data-grant),
+ * not the ephemeral session credential: a client may always revoke its own
+ * token, and the server itself relies on that to delete a pre-minted access
+ * whose authorization code dies unexchanged. Any inherited `selfRevoke` entry
+ * is replaced with an explicit allow; all other permissions pass through
+ * verbatim. The data-grant keeps the offer's feature permissions untouched.
+ */
+function withSessionSelfRevoke (permissions: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return permissions
+    .filter((p) => p.feature !== 'selfRevoke')
+    .concat([{ feature: 'selfRevoke', setting: 'allowed' }]);
+}
+
+/**
  * Structural view of the members this module touches on a business
  * MethodContext (the runtime value comes from `require('business')`, which
  * is untyped through the createRequire shim). Modelling the used surface
@@ -325,7 +341,10 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     // The short-TTL OAuth access mirrors EXACTLY this session's
     // granted subset; the durable data-grant (granted + CMC channel
     // anchors) is the consent ceiling that revocation/scope-update
-    // governs.
+    // governs. The minted row additionally carries the session
+    // selfRevoke override (see withSessionSelfRevoke) — the CHAIN keeps
+    // the granted subset verbatim (returned `permissions` below), so
+    // the refresh-time intersection with the data-grant stays exact.
     const permissions: Array<Record<string, unknown>> = grantedPermissions;
 
     const expireAfter = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
@@ -337,7 +356,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       type: 'app',
       name: 'oauth:' + clientId,
       deviceName: 'oauth-session-' + cuid(),
-      permissions,
+      permissions: withSessionSelfRevoke(permissions),
       expireAfter,
     };
     const result = await apiCall(context, 'accesses.create', params);
@@ -472,7 +491,10 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       revoked.code = 'data-grant-revoked';
       throw revoked;
     }
-    return mintAccessDirect({ userId, username, clientId, permissions: effective, expiresAt, ...(jkt != null ? { dpopJkt: jkt } : {}) });
+    // Session selfRevoke override AFTER the intersection — the intersection
+    // compares the chain's granted subset against the data-grant verbatim;
+    // the override only shapes the minted session row.
+    return mintAccessDirect({ userId, username, clientId, permissions: withSessionSelfRevoke(effective), expiresAt, ...(jkt != null ? { dpopJkt: jkt } : {}) });
   }
 
   // ---------------------------------------------------------------------

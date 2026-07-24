@@ -419,6 +419,31 @@ class DBpostgresql {
     return { removed };
   }
 
+  async listExpiredAccessStates (prefix: string, now = Date.now()): Promise<Array<{ key: string, value: unknown }>> {
+    if (typeof prefix !== 'string' || prefix.length === 0) {
+      throw new Error('listExpiredAccessStates: prefix must be a non-empty string');
+    }
+    if (prefix.includes('%') || prefix.includes('_')) {
+      throw new Error('listExpiredAccessStates: prefix must not contain SQL LIKE wildcards');
+    }
+    const rows = await this.#getWithPrefix(getAccessStateKey(prefix));
+    const out: Array<{ key: string, value: unknown }> = [];
+    for (const row of rows) {
+      let parsed;
+      try {
+        parsed = JSON.parse(row.value);
+      } catch (_) {
+        continue; // malformed — the sweep drops it; nothing actionable here.
+      }
+      if (typeof parsed.expiresAt === 'number' && now > parsed.expiresAt) {
+        // Strip the internal 'access-state/' namespace so callers see the same
+        // key they wrote (e.g. 'oauth-code/<code>').
+        out.push({ key: row.key.slice('access-state/'.length), value: parsed.value });
+      }
+    }
+    return out;
+  }
+
   // --- Generic cluster-wide key-value (indefinite) --- //
 
   async setPlatformKv (key: string, value: string): Promise<void> {
