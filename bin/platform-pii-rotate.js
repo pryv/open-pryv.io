@@ -142,7 +142,15 @@ const USERNAME_FIELD = 'username';
         userCoreCount++;
       }
 
-      // unique fields (email + any operator-added isUnique field)
+      // unique fields (email + any operator-added isUnique field).
+      // Rotation re-hashes each value under the new pepper, so it needs the
+      // CLEARTEXT source: HMAC tokens in PlatformDB cannot be re-hashed
+      // (one-way). The cleartext comes from the account object, one value per
+      // field here. When a field can hold several values for one user (for
+      // instance additional verified emails held outside the primary account
+      // field), every such cleartext value must be enumerated and rotated the
+      // same way; extend this loop to walk those values when that source
+      // exists.
       for (const field of uniqueFields) {
         if (field === 'username') continue;
         const value = user[field];

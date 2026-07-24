@@ -78,6 +78,63 @@ export default function conformanceTests (getDB) {
       });
     });
 
+    describe('[MUVAL] multiple unique values per (user, field)', () => {
+      // Uniqueness rows are keyed (field, value) -> username, so one user can
+      // own several values under the same field at once (e.g. more than one
+      // verified email). These pin that the row model tolerates N values per
+      // (user, field) and that per-value delete + enumeration behave.
+      it('[MUV01] one user owns several values under one field simultaneously', async () => {
+        const username = 'user-' + cuid();
+        const emails = [1, 2, 3].map(() => 'multi-' + cuid() + '@example.com');
+        for (const email of emails) {
+          await db.setUserUniqueField(username, 'email', email);
+        }
+        for (const email of emails) {
+          assert.strictEqual(await db.getUsersUniqueField('email', email), username);
+        }
+      });
+
+      it('[MUV02] a second value reserved by another user conflicts independently', async () => {
+        const user1 = 'user1-' + cuid();
+        const user2 = 'user2-' + cuid();
+        const owned = 'owned-' + cuid() + '@example.com';
+        const free = 'free-' + cuid() + '@example.com';
+        // user1 already owns one email value.
+        assert.strictEqual(await db.setUserUniqueFieldIfNotExists(user1, 'email', owned), true);
+        // user2 cannot take that value, but can reserve a different one.
+        assert.strictEqual(await db.setUserUniqueFieldIfNotExists(user2, 'email', owned), false);
+        assert.strictEqual(await db.setUserUniqueFieldIfNotExists(user2, 'email', free), true);
+        assert.strictEqual(await db.getUsersUniqueField('email', owned), user1);
+        assert.strictEqual(await db.getUsersUniqueField('email', free), user2);
+      });
+
+      it('[MUV03] deleting one value leaves the user\'s other values intact', async () => {
+        const username = 'user-' + cuid();
+        const keep = 'keep-' + cuid() + '@example.com';
+        const drop = 'drop-' + cuid() + '@example.com';
+        await db.setUserUniqueField(username, 'email', keep);
+        await db.setUserUniqueField(username, 'email', drop);
+        await db.deleteUserUniqueField('email', drop);
+        assert.strictEqual(await db.getUsersUniqueField('email', drop), null);
+        assert.strictEqual(await db.getUsersUniqueField('email', keep), username);
+      });
+
+      it('[MUV04] getAllWithPrefix enumerates every value a user owns for a field', async () => {
+        const username = 'user-' + cuid();
+        const emails = new Set([1, 2, 3].map(() => 'enum-' + cuid() + '@example.com'));
+        for (const email of emails) {
+          await db.setUserUniqueField(username, 'email', email);
+        }
+        const mine = (await db.getAllWithPrefix('user'))
+          .filter(e => e.isUnique === true && e.field === 'email' && e.username === username)
+          .map(e => e.value);
+        assert.strictEqual(mine.length, emails.size);
+        for (const email of emails) {
+          assert.ok(mine.includes(email), 'enumeration missing ' + email);
+        }
+      });
+    });
+
     describe('setUserIndexedField() / getUserIndexedField()', () => {
       it('must set and retrieve an indexed field', async () => {
         const username = 'user-' + cuid();

@@ -194,6 +194,18 @@ class Platform {
   }
 
   /**
+   * Test-only dependency injection. Wires a fake or real PlatformDB (and an
+   * optional PiiHasher) without booting the full storages stack, so the
+   * per-value / enumeration behaviour can be unit-tested directly. NOT part
+   * of the production surface: init() is the only supported wiring path.
+   */
+  _setDependenciesForTests (db: PlatformDB, hasher: InstanceType<typeof PiiHasher> | null = null) {
+    this.#db = db;
+    this.#piiHasher = hasher;
+    this.#piiInitError = null;
+  }
+
+  /**
    * Get the row-value stored for an isUnique field. In cleartext mode that
    * value is the owning username; in hashed mode it is the HMAC-username
    * token (since `setUserUniqueField` hashed both sides on write). Callers
@@ -310,7 +322,10 @@ class Platform {
    * Fully delete a user from PlatformDB.
    *
    * Discovers what's actually present by enumerating all PlatformDB entries
-   * for the username and deleting each. Robust to runtime changes in
+   * for the username and deleting each. Because it iterates rows (not field
+   * names), it releases EVERY unique-field value the user owns, including
+   * several values under one field (e.g. multiple verified emails), not just
+   * a single derived value. Robust to runtime changes in
    * `accountStreams.{uniqueFieldNames,indexedFieldNames}` — those are mutable
    * module-level bindings rebound by `reloadForTests` (see B-2026-05-29-2):
    * a fixture user created under one systemStreams config can be removed
@@ -348,7 +363,9 @@ class Platform {
    *  - `username` unique-field: self-referential (its value IS the username) →
    *    delete the old (field,value) row, recreate it with the new value + owner;
    *  - other unique fields (email, alias, …): value unchanged → re-own to the
-   *    new username token;
+   *    new username token. Iterating rows (not field names) re-owns EVERY such
+   *    value, including several values under one field (e.g. multiple verified
+   *    emails), not just a single derived value;
    *  - indexed fields (language, appId, …): keyed by username → write under the
    *    new token, delete the old.
    * The name→core mapping (`user-core/`) is handled by the caller.
@@ -636,6 +653,72 @@ class Platform {
    */
   async deleteUserUniqueField (field: string, value: string): Promise<void> {
     await this.#db.deleteUserUniqueField(field, this.hashFor(field, value));
+  }
+
+  // ---------------- Per-value unique-field operations ----------------
+  //
+  // Uniqueness rows are keyed `(field, value) -> owningUsername`, so a
+  // single user can own SEVERAL rows for one field at once (e.g. more than
+  // one verified email address). Each value is its own independent row;
+  // there is no "one row per (user, field)" limit in the storage model.
+  // The operations below are the explicit per-value primitives (reserve one
+  // value, release one value owner-guarded, and enumerate every value a user
+  // holds for a field) that callers use instead of assuming a user's field
+  // maps to a single derived value.
+
+  /**
+   * Reserve ONE value under a (user, field) uniqueness namespace, atomically.
+   * Thin, explicit wrapper over {@link setUserUniqueFieldIfNotExists} that
+   * names the per-value intent. Plaintext inputs; hashed internally.
+   * Returns true when the value is now owned by `username` (freshly reserved,
+   * or already owned by the same user, so the call is idempotent); false when
+   * another user already owns it (that row is left untouched).
+   */
+  async reserveUserUniqueValue (username: string, field: string, value: string): Promise<boolean> {
+    return await this.setUserUniqueFieldIfNotExists(username, field, value);
+  }
+
+  /**
+   * Release ONE value row under a (user, field) namespace, but ONLY when it
+   * is owned by `username`. A row owned by another user (or an absent row) is
+   * left untouched: this never deletes someone else's uniqueness claim.
+   * Plaintext inputs; hashed internally. Returns true when a row owned by this
+   * user was removed; false when nothing was removed.
+   */
+  async releaseUserUniqueValue (username: string, field: string, value: string): Promise<boolean> {
+    const usernameToken = this.hashFor(USERNAME_FIELD, username);
+    const valueToken = this.hashFor(field, value);
+    const owner = await this.#db.getUsersUniqueField(field, valueToken);
+    if (owner == null || owner !== usernameToken) return false;
+    await this.#db.deleteUserUniqueField(field, valueToken);
+    return true;
+  }
+
+  /**
+   * Enumerate EVERY value row a user owns for one unique field. This is the
+   * mechanism delete / compensation / re-own paths use to find all of a
+   * user's rows for a field, rather than assuming a single derived value.
+   * Mirrors {@link deleteUser}'s enumeration (scan the `user` prefix, match on
+   * the stored username token).
+   *
+   * Hashed-mode semantics: returns each row's VALUE exactly as PlatformDB
+   * holds it, consistent with {@link getUsersUniqueField}. In cleartext mode
+   * those are the plaintext values; in hashed mode they are the HMAC
+   * value-tokens. HMAC is one-way, so cleartext values cannot be recovered
+   * here: a caller that needs cleartext (e.g. to re-hash under a new pepper)
+   * must hold its own plaintext source such as the account store.
+   */
+  async listUserUniqueValues (username: string, field: string): Promise<string[]> {
+    const usernameToken = this.hashFor(USERNAME_FIELD, username);
+    const entries = await this.#db.getAllWithPrefix('user');
+    const values: string[] = [];
+    for (const entry of entries) {
+      if (entry.isUnique !== true) continue;
+      if (entry.field !== field) continue;
+      if (entry.username !== usernameToken) continue;
+      values.push(entry.value);
+    }
+    return values;
   }
 
   /**
