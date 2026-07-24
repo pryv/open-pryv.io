@@ -54,7 +54,10 @@ export function buildDiscoveryDocument (cfg: DiscoveryConfig): Record<string, un
     response_types_supported: ['code'],
     response_modes_supported: ['query'],
     grant_types_supported: cfg.grantTypesSupported ?? ['authorization_code'],
-    token_endpoint_auth_methods_supported: ['client_secret_basic', 'none'],
+    token_endpoint_auth_methods_supported: ['client_secret_basic', 'private_key_jwt', 'none'],
+    // RFC 7523 §2.2 — JWS algorithms accepted for a `private_key_jwt`
+    // client-authentication assertion. ES256 only (no alg confusion).
+    token_endpoint_auth_signing_alg_values_supported: ['ES256'],
     code_challenge_methods_supported: ['S256'],
     // Per RFC 9700 §2.1: no plain, no implicit, no RoPC.
     // PKCE is mandatory for all clients.

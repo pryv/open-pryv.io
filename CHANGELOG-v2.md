@@ -103,6 +103,26 @@ revocation cannot outlive it. The revocation is a token **epoch**: re-registerin
 the same `client_id` works and its freshly-minted tokens are honoured, but the
 tombstone stays, so sessions from before the revoke can never be resurrected.
 
+### OAuth2: `private_key_jwt` client authentication (RFC 7521/7523)
+
+A confidential client can now authenticate at the token endpoint with a signed
+JWT instead of a shared secret — no `client_secret` to distribute, store, or
+rotate. Register the client's **public** JWK Set
+(`bin/oauth-client.js create|update … --jwks-file <path>` or
+`--jwks-json <json>`; EC P-256 / ES256 keys only, and any key carrying private
+material is rejected outright), then send
+`client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`
++ `client_assertion` on any grant (authorization code, refresh,
+client_credentials). The assertion must be ES256-signed by a registered key,
+with `iss` = `sub` = `client_id`, `aud` naming the issuer or token-endpoint
+URL, `exp` at most 5 minutes out, and a single-use `jti` (replays are rejected
+atomically, cluster-wide). Verification failures are answered uniformly, so
+the endpoint leaks nothing about why. A client may hold both a secret and a
+JWKS; a presented assertion takes precedence and is fully verified. Discovery
+now advertises `private_key_jwt` and
+`token_endpoint_auth_signing_alg_values_supported: ["ES256"]`. `show` prints
+per-key RFC 7638 thumbprints rather than key material.
+
 ### OAuth2: an abandoned authorization code no longer leaves its access alive
 
 The access behind an OAuth2 grant is minted when the user accepts, and delivered

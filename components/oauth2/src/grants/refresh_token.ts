@@ -51,6 +51,7 @@ const { audit } = require('../audit.ts');
 const { logServerError } = require('../serverLog.ts');
 const { getClient } = require('../clientRegistry.ts');
 const { authenticateClient } = require('../clientSecret.ts');
+const { tokenEndpointAudiences } = require('../issuer.ts');
 
 /**
  * Mint a new app access for the resolved (userId, clientId, scope)
@@ -113,6 +114,9 @@ export type RefreshGrantParams = {
   client_secret?: string;
   /** Decoded Authorization: Basic credentials, when present (client_secret_basic). */
   basic?: { client_id: string; client_secret: string } | null;
+  /** Confidential-client auth (private_key_jwt, RFC 7521/7523). */
+  client_assertion?: string;
+  client_assertion_type?: string;
 };
 
 function lifetimes (config: { get (key: string): unknown }) {
@@ -216,7 +220,15 @@ export async function handleRefreshToken (
   }
   const client = await getClient(deps.platform, params.client_id);
   const presentedSecret = params.basic?.client_secret ?? params.client_secret;
-  const auth = await authenticateClient({ client, presentedSecret });
+  const auth = await authenticateClient({
+    client,
+    clientId: params.client_id,
+    presentedSecret,
+    assertion: params.client_assertion,
+    assertionType: params.client_assertion_type,
+    platform: deps.platform,
+    expectedAudiences: tokenEndpointAudiences(deps.config),
+  });
   if (!auth.ok) {
     return { ok: false, status: auth.status, error: auth.error, description: auth.description };
   }

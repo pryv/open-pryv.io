@@ -70,3 +70,19 @@ export function issuerFromConfig (config: { get (key: string): unknown }): strin
   }
   return api.replace(/\/$/, '');
 }
+
+/**
+ * The audience values a `private_key_jwt` client assertion (RFC 7523)
+ * may name: the issuer URL OR the token-endpoint URL. BOTH are derived
+ * SERVER-SIDE from config exactly as the discovery document derives them
+ * (`issuerFromConfig` + the `/oauth2/token` path) — never from request
+ * headers — so the token endpoint's trust posture is unchanged (no
+ * header is consulted to decide who the assertion was addressed to).
+ * Returns [] when the issuer is not derivable (fail-closed: aud cannot
+ * be satisfied, so the assertion is refused).
+ */
+export function tokenEndpointAudiences (config: { get (key: string): unknown }): string[] {
+  const issuer = issuerFromConfig(config);
+  if (!issuer) return [];
+  return [issuer, issuer + '/oauth2/token'];
+}

@@ -33,6 +33,7 @@
 
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
+import type { PublicJwkSet } from './jwks.ts';
 
 /** A granular Pryv permission entry, as in `accesses.create`. */
 export interface GrantPermission {
@@ -57,6 +58,16 @@ export interface OAuthClient {
    */
   clientSecretHash?: string;
   jwksRef?: string;
+  /**
+   * Inline PUBLIC JWK Set used to verify `private_key_jwt` client-auth
+   * assertions (RFC 7521/7523). EC P-256 (ES256) public keys ONLY;
+   * validated on write (any key carrying a private `d` is rejected).
+   * A client with a jwks on file is CONFIDENTIAL — private_key_jwt
+   * satisfies client authentication wherever client_secret_basic does.
+   * Public keys, so cluster-wide caching is safe by design. Distinct
+   * from the reserved `jwksRef` (a future by-reference pointer).
+   */
+  jwks?: PublicJwkSet;
   /**
    * Username of the Pryv user account this OAuth client is promoted
    * from (set by `bin/oauth-client.js create <username>`). Required
@@ -159,6 +170,7 @@ const PREFIX_CODE = 'oauth-code/';
 const PREFIX_REFRESH = 'oauth-refresh/';
 const PREFIX_REFRESH_USED = 'oauth-refresh-used/';
 const PREFIX_DPOP_JTI = 'dpop-jti/';
+const PREFIX_CASSERT_JTI = 'oauth-cassert-jti/';
 const PREFIX_DPOP_JKT_REVOKED = 'dpop-jkt-revoked/';
 const PREFIX_DPOP_JKT_SEEN = 'dpop-jkt-seen/';
 
@@ -372,6 +384,22 @@ export async function markDPoPJtiUsed (
   platform: PlatformDB, jkt: string, jti: string, expiresAt: number,
 ): Promise<boolean> {
   return platform.setAccessStateIfAbsent(PREFIX_DPOP_JTI + jkt + '/' + jti, 1, expiresAt);
+}
+
+/**
+ * `private_key_jwt` client-assertion jti single-use marker (RFC 7523
+ * replay prevention). Atomic first-writer-wins: returns true when THIS
+ * call recorded the (clientId, jti), false when it was already seen — two
+ * concurrent identical assertions yield exactly one true. TTL is the
+ * assertion's remaining lifetime (its `exp`); past that the exp check
+ * rejects the replay anyway. Namespaced by clientId so two clients cannot
+ * collide (and one cannot burn another's jti). Swept with the rest of the
+ * access-state keyspace.
+ */
+export async function markClientAssertionJtiUsed (
+  platform: PlatformDB, clientId: string, jti: string, expiresAt: number,
+): Promise<boolean> {
+  return platform.setAccessStateIfAbsent(PREFIX_CASSERT_JTI + clientId + '/' + jti, 1, expiresAt);
 }
 
 // --- DPoP key revoke tombstones (indefinite, cluster-wide) --- //

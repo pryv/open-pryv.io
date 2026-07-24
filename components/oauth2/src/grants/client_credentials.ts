@@ -27,8 +27,9 @@
  */
 
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
-import { verifySecret } from '../clientSecret.ts';
+import { authenticateClient } from '../clientSecret.ts';
 import { getClient } from '../clientRegistry.ts';
+import { tokenEndpointAudiences } from '../issuer.ts';
 import { audit } from '../audit.ts';
 import { logServerError } from '../serverLog.ts';
 
@@ -58,6 +59,9 @@ export type ClientCredentialsParams = {
   scope?: string;
   /** Decoded Basic credentials if Authorization: Basic was used (the route extracts). */
   basic?: { client_id: string; client_secret: string } | null;
+  /** Confidential-client auth (private_key_jwt, RFC 7521/7523). */
+  client_assertion?: string;
+  client_assertion_type?: string;
 };
 
 function lifetimes (config: { get (key: string): unknown }) {
@@ -74,22 +78,28 @@ export async function handleClientCredentials (
   | { ok: false; status: number; error: string; description?: string }
 > {
   // Auth-method precedence per RFC 6749 §2.3.1: if both Basic and body
-  // are present, Basic wins.
+  // are present, Basic wins. A client_assertion (private_key_jwt) is the
+  // alternative confidential credential and takes precedence over a secret.
   const clientId = params.basic?.client_id ?? params.client_id;
   const clientSecret = params.basic?.client_secret ?? params.client_secret;
+  const assertion = typeof params.client_assertion === 'string' && params.client_assertion.length > 0
+    ? params.client_assertion
+    : undefined;
 
   if (typeof clientId !== 'string' || clientId.length === 0) {
     return { ok: false, status: 401, error: 'invalid_client', description: 'client_id required' };
-  }
-  if (typeof clientSecret !== 'string' || clientSecret.length === 0) {
-    return { ok: false, status: 401, error: 'invalid_client', description: 'client_secret required' };
   }
 
   const client = await getClient(deps.platform, clientId);
   if (client == null) {
     return { ok: false, status: 401, error: 'invalid_client', description: 'unknown client' };
   }
-  if (typeof client.clientSecretHash !== 'string' || client.clientSecretHash.length === 0) {
+  // client_credentials is a server-to-server grant: a PUBLIC client cannot
+  // use it. The client must be confidential — a client_secret OR an inline
+  // JWKS (private_key_jwt) on file.
+  const hasHash = typeof client.clientSecretHash === 'string' && client.clientSecretHash.length > 0;
+  const hasJwks = client.jwks != null && Array.isArray(client.jwks.keys) && client.jwks.keys.length > 0;
+  if (!hasHash && !hasJwks) {
     return { ok: false, status: 401, error: 'invalid_client', description: 'client has no client_secret configured — run `bin/oauth-client.js rotate-secret`' };
   }
   if (!Array.isArray(client.grantTypes) || !client.grantTypes.includes('client_credentials')) {
@@ -99,9 +109,19 @@ export async function handleClientCredentials (
     return { ok: false, status: 500, error: 'server_error', description: 'client metadata missing accountUsername' };
   }
 
-  const secretOk = await verifySecret(clientSecret, client.clientSecretHash);
-  if (!secretOk) {
-    return { ok: false, status: 401, error: 'invalid_client', description: 'client_secret verification failed' };
+  // Verify the confidential credential (client_secret_basic/post OR
+  // private_key_jwt). Uniform invalid_client on any failure.
+  const auth = await authenticateClient({
+    client,
+    clientId,
+    presentedSecret: clientSecret,
+    assertion,
+    assertionType: params.client_assertion_type,
+    platform: deps.platform,
+    expectedAudiences: tokenEndpointAudiences(deps.config),
+  });
+  if (!auth.ok) {
+    return { ok: false, status: auth.status, error: auth.error, description: auth.description };
   }
 
   // Scope tokens are OPAQUE for this grant: the minted access always

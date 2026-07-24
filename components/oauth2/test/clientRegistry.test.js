@@ -318,4 +318,51 @@ describe('[OAUTH-CLIENT] client registry', () => {
       }), /no matching cmcOffers/);
     });
   });
+
+  describe('[OAUTH-CLIENT-5] inline JWK Set (private_key_jwt) validation on persistClient', () => {
+    const { webcrypto } = require('node:crypto');
+    const { subtle } = webcrypto;
+    const base = {
+      clientId: 'myapp',
+      redirectUris: ['https://x/cb'],
+      scope: [],
+      grantTypes: ['authorization_code'],
+    };
+    let publicJwk; let privateJwk;
+    before(async () => {
+      const pair = await subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+      privateJwk = await subtle.exportKey('jwk', pair.privateKey); // carries `d`
+      publicJwk = { kty: privateJwk.kty, crv: privateJwk.crv, x: privateJwk.x, y: privateJwk.y };
+    });
+
+    it('[OAUTH-CLIENT-5a] accepts a valid public EC P-256 JWK Set and stores the sanitized set', async () => {
+      const platform = fakePlatform();
+      await persistClient(platform, { ...base, jwks: { keys: [publicJwk] } });
+      const c = await getClient(platform, 'myapp');
+      assert.equal(c.jwks.keys.length, 1);
+      assert.equal(c.jwks.keys[0].kty, 'EC');
+      assert.equal(c.jwks.keys[0].crv, 'P-256');
+      assert.equal(c.jwks.keys[0].d, undefined);
+    });
+    it('[OAUTH-CLIENT-5b] rejects a JWK Set carrying private key material ("d")', async () => {
+      const platform = fakePlatform();
+      await assert.rejects(persistClient(platform, {
+        ...base, jwks: { keys: [privateJwk] },
+      }), /private key material/);
+    });
+    it('[OAUTH-CLIENT-5c] rejects an empty / malformed JWK Set', async () => {
+      const platform = fakePlatform();
+      await assert.rejects(persistClient(platform, { ...base, jwks: { keys: [] } }), /non-empty/);
+      await assert.rejects(persistClient(platform, { ...base, jwks: {} }), /keys/);
+    });
+    it('[OAUTH-CLIENT-5d] rejects a non-EC / non-P-256 key', async () => {
+      const platform = fakePlatform();
+      await assert.rejects(persistClient(platform, {
+        ...base, jwks: { keys: [{ ...publicJwk, kty: 'RSA' }] },
+      }), /kty/);
+      await assert.rejects(persistClient(platform, {
+        ...base, jwks: { keys: [{ ...publicJwk, crv: 'P-384' }] },
+      }), /crv/);
+    });
+  });
 });

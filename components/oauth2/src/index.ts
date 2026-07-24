@@ -21,6 +21,7 @@ import * as audit from './audit.ts';
 import * as routes from './routes.ts';
 import * as wwwAuthenticate from './wwwAuthenticate.ts';
 import * as storage from './storage.ts';
+import * as jwks from './jwks.ts';
 
 export {
   scopeRegistry,
@@ -31,6 +32,7 @@ export {
   routes,
   wwwAuthenticate,
   storage,
+  jwks,
 };
 
 // Convenience top-level re-exports — the most-frequently-used surface.
@@ -68,6 +70,13 @@ export const {
   listRevokedDpopKeys,
   listDpopKeysSeen,
 } = storage;
+
+// Public JWK Set helpers — validation (registration write path) + RFC 7638
+// thumbprint summary (operator `show`/`list` never print full key material).
+export const {
+  validatePublicJwkSet,
+  computeThumbprint,
+} = jwks;
 
 export const { audit: emitAudit } = audit;
 

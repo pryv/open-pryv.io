@@ -31,6 +31,7 @@ const require = createRequire(import.meta.url);
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { OAuthClient } from './storage.ts';
+import { validatePublicJwkSet } from './jwks.ts';
 
 const storage = require('./storage.ts');
 
@@ -117,7 +118,19 @@ export async function persistClient (platform: PlatformDB, client: OAuthClient):
     throw new Error('grantTypes required (at least one)');
   }
   validateCmcOffers(client);
-  await storage.setClient(platform, { ...client, updatedAt: Date.now() });
+  const validated = { ...client, updatedAt: Date.now() };
+  // Inline public JWK Set (private_key_jwt): validate on write — EC P-256
+  // public keys ONLY; any key carrying a private `d` is rejected outright,
+  // so the no-credentials-in-PlatformDB invariant holds. Store the
+  // sanitized set (only accepted members survive).
+  if (validated.jwks != null) {
+    try {
+      validated.jwks = validatePublicJwkSet(validated.jwks);
+    } catch (err) {
+      throw new Error(`jwks: ${(err as Error).message}`);
+    }
+  }
+  await storage.setClient(platform, validated);
 }
 
 /**

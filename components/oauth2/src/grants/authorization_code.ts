@@ -34,6 +34,7 @@ import type { OAuthCode } from '../storage.ts';
 import { audit } from '../audit.ts';
 import { getClient } from '../clientRegistry.ts';
 import { authenticateClient } from '../clientSecret.ts';
+import { tokenEndpointAudiences } from '../issuer.ts';
 import { revokeOrphanAccess } from '../orphanAccess.ts';
 
 export type AuthCodeDeps = {
@@ -58,6 +59,9 @@ export type GrantParams = {
   client_secret?: string;
   /** Decoded Authorization: Basic credentials, when present (client_secret_basic). */
   basic?: { client_id: string; client_secret: string } | null;
+  /** Confidential-client auth (private_key_jwt, RFC 7521/7523). */
+  client_assertion?: string;
+  client_assertion_type?: string;
 };
 
 /** Lifetimes (seconds). Operator can override via oauth.* config. */
@@ -153,7 +157,15 @@ export async function handleAuthorizationCode (
     }
     const client = await getClient(deps.platform, params.client_id as string);
     const presentedSecret = params.basic?.client_secret ?? params.client_secret;
-    const auth = await authenticateClient({ client, presentedSecret });
+    const auth = await authenticateClient({
+      client,
+      clientId: params.client_id as string,
+      presentedSecret,
+      assertion: params.client_assertion,
+      assertionType: params.client_assertion_type,
+      platform: deps.platform,
+      expectedAudiences: tokenEndpointAudiences(deps.config),
+    });
     if (!auth.ok) {
       return { ok: false, status: auth.status, error: auth.error, description: auth.description };
     }

@@ -62,6 +62,7 @@ require('@pryv/boiler').init({
     const {
       persistClient, removeClient, listClientIds, getClient,
       revokeDpopKey, unrevokeDpopKey, listRevokedDpopKeys, listDpopKeysSeen,
+      computeThumbprint,
     } = require('oauth2');
 
     switch (args.command) {
@@ -69,7 +70,7 @@ require('@pryv/boiler').init({
         await runCreate(platform, args, persistClient);
         break;
       case 'show':
-        await runShow(platform, args, getClient);
+        await runShow(platform, args, getClient, computeThumbprint);
         break;
       case 'list':
         await runList(platform, listClientIds);
@@ -134,6 +135,7 @@ async function runCreate (platform, args, persistClient) {
   const grantTypes = (args.flags['grant-type'] && args.flags['grant-type'].length > 0)
     ? args.flags['grant-type']
     : ['authorization_code', 'refresh_token'];
+  const jwks = resolveJwks(args); // undefined when neither --jwks-file nor --jwks-json given
 
   await persistClient(platform, {
     clientId,
@@ -146,6 +148,7 @@ async function runCreate (platform, args, persistClient) {
     applicationType: args.flagsScalar['application-type'] === 'native' ? 'native' : 'web',
     accountUsername: username,
     cmcOffers: parseCmcOffers(args.flags['cmc-offer']),
+    ...(jwks != null ? { jwks } : {}),
   });
 
   console.log('OK   client created: ' + clientId);
@@ -157,7 +160,7 @@ async function runCreate (platform, args, persistClient) {
   console.log('      handlers are wired.');
 }
 
-async function runShow (platform, args, getClient) {
+async function runShow (platform, args, getClient, computeThumbprint) {
   const clientId = args.positional[0];
   if (!clientId) throw new Error('show: <clientId> required');
   const client = await getClient(platform, clientId);
@@ -165,7 +168,31 @@ async function runShow (platform, args, getClient) {
     console.error('NOT FOUND: ' + clientId);
     process.exit(2);
   }
-  console.log(JSON.stringify(client, null, 2));
+  // Never print full key material for the inline JWK Set — replace it with a
+  // per-key RFC 7638 thumbprint summary (kid, if any). The public coordinates
+  // are not secret, but an operator wants a stable fingerprint to compare
+  // against, not raw curve points.
+  const view = { ...client };
+  if (client.jwks != null && Array.isArray(client.jwks.keys)) {
+    view.jwks = {
+      keys: client.jwks.keys.map((k) => ({
+        ...(k && k.kid != null ? { kid: k.kid } : {}),
+        thumbprint: safeThumbprint(computeThumbprint, k),
+      })),
+    };
+  }
+  console.log(JSON.stringify(view, null, 2));
+}
+
+// Compute a key's RFC 7638 thumbprint for display; never throw out of `show`.
+function safeThumbprint (computeThumbprint, jwk) {
+  try {
+    if (jwk == null || jwk.kty !== 'EC' || jwk.crv !== 'P-256' ||
+        typeof jwk.x !== 'string' || typeof jwk.y !== 'string') return '(unrecognized key)';
+    return computeThumbprint({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y });
+  } catch (_e) {
+    return '(thumbprint error)';
+  }
 }
 
 async function runList (platform, listClientIds) {
@@ -198,6 +225,10 @@ async function runUpdate (platform, args, getClient, persistClient) {
       ? parseCmcOffers(args.flags['cmc-offer'])
       : existing.cmcOffers,
   };
+  // Replace the inline JWK Set only when --jwks-file/--jwks-json is given;
+  // otherwise keep the existing set untouched.
+  const jwks = resolveJwks(args);
+  if (jwks != null) merged.jwks = jwks;
   await persistClient(platform, merged);
   console.log('OK   client updated: ' + clientId);
 }
@@ -334,6 +365,37 @@ function parseCmcOffers (values) {
   return offers;
 }
 
+// --jwks-file <path> | --jwks-json <json> → the inline public JWK Set object,
+// or undefined when neither is given. Mutually exclusive. Only parses JSON here;
+// deep validation (EC P-256 public keys only, no private `d`) happens in
+// persistClient → validatePublicJwkSet, which throws a clear error.
+function resolveJwks (args) {
+  const file = args.flagsScalar['jwks-file'];
+  const json = args.flagsScalar['jwks-json'];
+  const hasFile = typeof file === 'string' && file.length > 0;
+  const hasJson = typeof json === 'string' && json.length > 0;
+  if (hasFile && hasJson) {
+    throw new Error('--jwks-file and --jwks-json are mutually exclusive');
+  }
+  if (!hasFile && !hasJson) return undefined;
+  let raw;
+  if (hasFile) {
+    const fs = require('fs');
+    try {
+      raw = fs.readFileSync(file, 'utf8');
+    } catch (err) {
+      throw new Error('--jwks-file: cannot read "' + file + '": ' + (err.message ?? err));
+    }
+  } else {
+    raw = json;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error('--jwks-' + (hasFile ? 'file' : 'json') + ': not valid JSON: ' + (err.message ?? err));
+  }
+}
+
 async function usernameExists (username) {
   const { getUsersLocalIndex } = require('storage');
   const usersIndex = await getUsersLocalIndex();
@@ -389,6 +451,11 @@ function printUsage (stream) {
     '  --client-uri <uri>        client_uri shown on the consent screen\n' +
     '  --logo-uri <uri>          logo_uri shown on the consent screen\n' +
     '  --application-type web|native\n' +
+    '  --jwks-file <path>        inline public JWK Set (private_key_jwt client auth);\n' +
+    '                            EC P-256 (ES256) PUBLIC keys only — a key with a\n' +
+    '                            private "d" member is rejected\n' +
+    '  --jwks-json <json>        same, as an inline JSON string (mutually exclusive\n' +
+    '                            with --jwks-file)\n' +
     '  --cmc-offer <name>=<capabilityUrl>\n' +
     '                            (multi-valued) register a consent-offer reference for\n' +
     '                            granular scope: the app account publishes an open-link\n' +

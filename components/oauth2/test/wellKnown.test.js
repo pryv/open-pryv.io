@@ -31,6 +31,14 @@ describe('[OAUTH-WK] discovery document', () => {
       assert.equal(doc.authorization_response_iss_parameter_supported, true);
       assert.deepEqual(doc.dpop_signing_alg_values_supported, ['ES256']);
     });
+    it('[OAUTH-WK-1f] advertises private_key_jwt + ES256 client-auth signing algs', () => {
+      const doc = buildDiscoveryDocument({ issuer: 'https://x', scopesSupported: [] });
+      assert.ok(doc.token_endpoint_auth_methods_supported.includes('private_key_jwt'),
+        'must advertise private_key_jwt: ' + JSON.stringify(doc.token_endpoint_auth_methods_supported));
+      assert.ok(doc.token_endpoint_auth_methods_supported.includes('client_secret_basic'));
+      assert.ok(doc.token_endpoint_auth_methods_supported.includes('none'));
+      assert.deepEqual(doc.token_endpoint_auth_signing_alg_values_supported, ['ES256']);
+    });
     it('[OAUTH-WK-1b] trims trailing slash on issuer', () => {
       const doc = buildDiscoveryDocument({
         issuer: 'https://reg.pryv.me/',

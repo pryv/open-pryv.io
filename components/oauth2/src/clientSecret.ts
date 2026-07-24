@@ -23,6 +23,9 @@
 
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
+import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
+import { verifyClientAssertion, CLIENT_ASSERTION_TYPE } from './clientAssertion.ts';
+import { markClientAssertionJtiUsed } from './storage.ts';
 // bcrypt ships no type declarations — keep it on the require shim so the
 // import does not trip noImplicitAny (real ESM import needs @types/bcrypt).
 const require = createRequire(import.meta.url);
@@ -68,35 +71,99 @@ export type ClientAuthResult =
   | { ok: false; status: number; error: string; description: string };
 
 /**
+ * A single uniform failure for the `private_key_jwt` (assertion) path:
+ * bad signature, bad claims, replayed jti, wrong assertion type, or no
+ * JWKS on file — all return the SAME `invalid_client` with no
+ * distinguishing description, so the response is not an oracle.
+ */
+const ASSERTION_FAIL: ClientAuthResult = {
+  ok: false, status: 401, error: 'invalid_client', description: 'client authentication failed',
+};
+
+/** The client view authenticateClient needs — credentials on file (public keys / secret hash). */
+type ClientAuthView = { clientSecretHash?: unknown; jwks?: { keys: unknown[] } } | null | undefined;
+
+/**
  * Authenticate a client at the token endpoint per its confidentiality.
  *
- * A client that has a `clientSecretHash` on file is CONFIDENTIAL: it
- * must present a matching `client_secret` (advertised as
- * `client_secret_basic`). A client with no secret on file is PUBLIC:
- * PKCE is its sole protection and no secret is required (advertised as
- * `none`). This makes every grant's behaviour match the discovery
- * document's `token_endpoint_auth_methods_supported`.
+ * A client is CONFIDENTIAL when it has a `clientSecretHash`
+ * (`client_secret_basic` / `client_secret_post`) OR an inline `jwks`
+ * (`private_key_jwt`) on file. A confidential client MUST authenticate
+ * via one of its registered mechanisms. A client with neither is PUBLIC:
+ * PKCE is its sole protection and no client authentication is required
+ * (advertised as `none`). This makes every grant's behaviour match the
+ * discovery document's `token_endpoint_auth_methods_supported`.
+ *
+ * Precedence: when a `client_assertion` is presented it takes precedence
+ * and is fully verified — a bad assertion fails even if a valid secret is
+ * also presented. Every assertion-path failure is uniform `invalid_client`.
  *
  * `client` may be null (no cached registration) — treated as public, so
  * callers that don't (yet) have a registration on the exchange path keep
  * working while confidential clients are still verified once registered.
  */
 export async function authenticateClient (params: {
-  client: { clientSecretHash?: unknown } | null | undefined;
-  presentedSecret: string | undefined;
+  client: ClientAuthView;
+  /** The request's authenticated client_id — needed for the assertion iss/sub check + jti burn. */
+  clientId?: string | undefined;
+  presentedSecret?: string | undefined;
+  /** `client_assertion` form value (private_key_jwt), when present. */
+  assertion?: string | undefined;
+  /** `client_assertion_type` form value — must be the jwt-bearer URN. */
+  assertionType?: string | undefined;
+  /** Required to burn the assertion jti (single-use); absent → assertion path fails uniformly. */
+  platform?: PlatformDB | undefined;
+  /** Server-derived acceptable `aud` values (token-endpoint + issuer URLs). */
+  expectedAudiences?: string[] | undefined;
+  /** Injectable clock for tests (ms since epoch). */
+  now?: number | undefined;
 }): Promise<ClientAuthResult> {
   const hash = params.client?.clientSecretHash;
-  if (typeof hash !== 'string' || hash.length === 0) {
-    return { ok: true }; // public client — PKCE only
+  const hasHash = typeof hash === 'string' && hash.length > 0;
+  const jwks = params.client?.jwks;
+  const hasJwks = jwks != null && Array.isArray(jwks.keys) && jwks.keys.length > 0;
+
+  // --- private_key_jwt (RFC 7521/7523) — takes precedence when presented. --- //
+  if (typeof params.assertion === 'string' && params.assertion.length > 0) {
+    if (params.assertionType !== CLIENT_ASSERTION_TYPE) return ASSERTION_FAIL;
+    if (!hasJwks) return ASSERTION_FAIL; // no keys on file — uniform, no oracle
+    if (params.platform == null || typeof params.clientId !== 'string' || params.clientId.length === 0) {
+      return ASSERTION_FAIL;
+    }
+    try {
+      const verified = await verifyClientAssertion(params.assertion, {
+        clientId: params.clientId,
+        jwks: jwks as { keys: unknown[] },
+        expectedAudiences: params.expectedAudiences ?? [],
+        now: params.now,
+      });
+      // Burn the jti for its remaining lifetime — a replay within the window fails.
+      const fresh = await markClientAssertionJtiUsed(
+        params.platform, params.clientId, verified.jti, verified.exp * 1000,
+      );
+      if (!fresh) return ASSERTION_FAIL; // replayed
+    } catch {
+      return ASSERTION_FAIL; // bad signature / claims — uniform
+    }
+    return { ok: true };
   }
-  if (typeof params.presentedSecret !== 'string' || params.presentedSecret.length === 0) {
+
+  // --- No assertion presented: secret or public. --- //
+  if (hasHash) {
+    if (typeof params.presentedSecret !== 'string' || params.presentedSecret.length === 0) {
+      return { ok: false, status: 401, error: 'invalid_client', description: 'client authentication required' };
+    }
+    const good = await verifySecret(params.presentedSecret, hash as string);
+    if (!good) {
+      return { ok: false, status: 401, error: 'invalid_client', description: 'client authentication failed' };
+    }
+    return { ok: true };
+  }
+  if (hasJwks) {
+    // Confidential via private_key_jwt, but no assertion was presented.
     return { ok: false, status: 401, error: 'invalid_client', description: 'client authentication required' };
   }
-  const good = await verifySecret(params.presentedSecret, hash);
-  if (!good) {
-    return { ok: false, status: 401, error: 'invalid_client', description: 'client authentication failed' };
-  }
-  return { ok: true };
+  return { ok: true }; // public client — PKCE only
 }
 
 function base64url (buf: Buffer): string {
