@@ -88,14 +88,23 @@ tag-tests:
 
 # Run tests on the given component ('all' for all components) with optional extra parameters.
 # PostgreSQL is the default baseStorage; SQLite is the alternative — use `test-sqlite`.
+# Positional-arguments + "$@" so params reach mocha verbatim — an unquoted
+# {{params}} interpolation would hand shell metacharacters in e.g.
+# --grep "A|B" to the shell (pipe → command not found) instead of to mocha.
+[positional-arguments]
 test component *params:
-    STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run \
-        npx mocha -- {{params}}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
+    STORAGE_ENGINE=postgresql NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
 
 # Same as `test` but using the SQLite baseStorage engine
+[positional-arguments]
 test-sqlite component *params:
-    STORAGE_ENGINE=sqlite NODE_ENV=test COMPONENT={{component}} scripts/components-run \
-        npx mocha -- {{params}}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
+    STORAGE_ENGINE=sqlite NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha -- "$@"
 
 # Run tests with detailed output (PG default)
 test-detailed component *params:
