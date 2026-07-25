@@ -11,6 +11,7 @@ const utils = require('utils');
 const errors = require('errors').factory;
 const cmc = require('cmc');
 const sharedSecrets = require('shared-secrets');
+const emailsGuards = require('business/src/emails/guards.ts');
 const fs = require('fs');
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/eventsMethods.ts');
@@ -215,6 +216,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     errors,
     now: () => timestamp.now()
   });
+
+  // The multiple-emails container events are ordinary events too; these keep the
+  // events API from becoming a way to forge a verified address. Every mutation
+  // must go through the account methods.
+  const emailsCreateGuard = emailsGuards.createEventCreateGuard({ errors });
+  const emailsUpdateGuard = emailsGuards.createEventUpdateGuard({ errors });
+  const emailsDeleteGuard = emailsGuards.createEventDeleteGuard({ errors });
 
   api.register(
     'events.get',
@@ -422,6 +430,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     'events.create',
     commonFns.getParamsValidation(methodsSchema.create.params),
     sharedSecretsCreateGuard,
+    emailsCreateGuard,
     normalizeStreamIdAndStreamIds,
     applyPrerequisitesForCreation,
     validateEventContentAndCoerce,
@@ -740,6 +749,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     applyPrerequisitesForUpdate,
     // after the prerequisites, which is what loads the event being updated
     sharedSecretsUpdateGuard,
+    emailsUpdateGuard,
     validateEventContentAndCoerce,
     detectAccountStream,
     validateAccountStreamForUpdate,
@@ -977,6 +987,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     commonFns.getParamsValidation(methodsSchema.del.params),
     checkEventForDelete,
     sharedSecretsDeleteGuard,
+    emailsDeleteGuard,
     blockAccountEventDeletion,
     function (context: MethodContext, params: EventsDeleteParams, result: EventsDeleteResult, next: MethodNext) {
       // Invariant: checkEventForDelete landed context.oldEvent.

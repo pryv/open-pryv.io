@@ -15,7 +15,10 @@ type PlatformEntry = { field: string; username?: string; value: unknown; isUniqu
 type PlatformDBLike = { getAllWithPrefix: (prefix: string) => Promise<PlatformEntry[]> };
 type PiiHasherLike = { hashFor: (field: string, value: string) => string };
 type IntegrityOptions = { hasher?: PiiHasherLike | null };
-type PerUserEntries = Record<string, Record<string, { value: unknown; isUnique: boolean }>>;
+// A (user, field) can hold SEVERAL PlatformDB rows: a user may own more than
+// one value for a unique field (e.g. several verified emails), so entries are
+// kept as a list per field rather than a single value.
+type PerUserEntries = Record<string, Record<string, Array<{ value: unknown; isUnique: boolean }>>>;
 
 const USERNAME_FIELD = 'username';
 
@@ -50,7 +53,8 @@ export default async function platformCheckIntegrity (
     // PII — they're well-known sentinels) so the `__` check still works.
     if (entry.username.startsWith('__')) continue;
     if (platformEntryByUser[entry.username] == null) platformEntryByUser[entry.username] = {};
-    platformEntryByUser[entry.username][entry.field] = { value: entry.value, isUnique: entry.isUnique };
+    if (platformEntryByUser[entry.username][entry.field] == null) platformEntryByUser[entry.username][entry.field] = [];
+    platformEntryByUser[entry.username][entry.field].push({ value: entry.value, isUnique: entry.isUnique });
   }
 
   const errors: string[] = [];
@@ -94,21 +98,32 @@ export default async function platformCheckIntegrity (
       // and the raw repo value for indexed fields.
       const expectedValue = isUnique ? tokenFor(field, String(valueRepo)) : valueRepo;
 
+      const fieldEntries = platformEntryByUser[usernameKey]?.[field];
       if (platformEntryByUser[usernameKey] == null) {
         errors.push(`Cannot find username "${username}" data in platform db while looking for field "${field}" expected value:  "${valueRepo}"`);
         continue;
-      } else if (platformEntryByUser[usernameKey][field] == null) {
+      } else if (fieldEntries == null || fieldEntries.length === 0) {
         errors.push(`Cannot find field "${field}" for username "${username}" in the platform db expected value is :  "${valueRepo}"`);
-      } else if (platformEntryByUser[usernameKey][field].value !== expectedValue) {
-        errors.push(`Expected value "${valueRepo}" of field "${field}" for username "${username}" in the platform db but found value :  "${platformEntryByUser[usernameKey][field].value}"`);
-      } else if (platformEntryByUser[usernameKey][field].isUnique !== isUnique) {
-        const txt = isUnique ? 'unique found indexed' : 'indexed found unique';
-        errors.push(`Expected value "${valueRepo}" of field "${field}" for username "${username}" in the platform db to be "${txt}"`);
+      } else {
+        // Match the repository value against ANY of the field's rows. A unique
+        // field may carry several rows (multiple owned emails); the repository
+        // holds the singular/primary, which must be present among them.
+        const matchIdx = fieldEntries.findIndex((e) => e.value === expectedValue);
+        if (matchIdx === -1) {
+          errors.push(`Expected value "${valueRepo}" of field "${field}" for username "${username}" in the platform db but found value :  "${fieldEntries[0].value}"`);
+        } else {
+          if (fieldEntries[matchIdx].isUnique !== isUnique) {
+            const txt = isUnique ? 'unique found indexed' : 'indexed found unique';
+            errors.push(`Expected value "${valueRepo}" of field "${field}" for username "${username}" in the platform db to be "${txt}"`);
+          }
+          // Matched: drop the whole field. Any additional rows for it are
+          // legitimately owned values (e.g. non-primary verified emails) and
+          // must not be reported as orphans below.
+          delete platformEntryByUser[usernameKey][field];
+        }
       }
-      // all tests passed delete entry from platformEntryByUser
-      delete platformEntryByUser[usernameKey][field];
       // if user in platformEntryByUser is empty delete it
-      if (Object.keys(platformEntryByUser[usernameKey]).length === 0) delete platformEntryByUser[usernameKey];
+      if (platformEntryByUser[usernameKey] != null && Object.keys(platformEntryByUser[usernameKey]).length === 0) delete platformEntryByUser[usernameKey];
     }
   }
 
@@ -127,7 +142,9 @@ export default async function platformCheckIntegrity (
       errors.push(`Found data for user with hashed-username token "${usernameKey}" in the platform db but no matching user was found in the Repository pass above (hashed mode — cannot reverse the token)`);
     }
     for (const field of Object.keys(platformEntryByUser[usernameKey])) {
-      errors.push(`Found field "${field}" with value: "${platformEntryByUser[usernameKey][field].value}" for username "${usernameKey}" in the platform db but not in the Repository (System Streams)`);
+      for (const leftover of platformEntryByUser[usernameKey][field]) {
+        errors.push(`Found field "${field}" with value: "${leftover.value}" for username "${usernameKey}" in the platform db but not in the Repository (System Streams)`);
+      }
     }
   }
   return {

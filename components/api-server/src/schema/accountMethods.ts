@@ -14,11 +14,26 @@ const Action = require('./Action.ts');
 const helpers = require('./helpers.ts');
 const user = require('./user.ts').default(Action.READ);
 
+// One entry per email in the account's `:_emails:` container (the primary
+// included). The legacy scalar `email` above stays authoritative for the
+// primary; this array is the parallel multi-email record.
+const emailEntry = helpers.object({
+  value: helpers.email,
+  primary: helpers.boolean(),
+  status: helpers.string(),
+  verifiedAt: helpers.number({ nullable: true }),
+  verificationMethod: helpers.string({ nullable: true })
+}, {
+  required: ['value', 'primary', 'status', 'verifiedAt', 'verificationMethod'],
+  additionalProperties: false
+});
+
 const accountDetails = helpers.object({
   username: user.properties.username,
   email: user.properties.email,
   language: user.properties.language,
-  storageUsed: user.properties.storageUsed
+  storageUsed: user.properties.storageUsed,
+  emails: helpers.array(emailEntry)
 }, {
   required: ['username', 'email', 'storageUsed', 'language'],
   additionalProperties: false
@@ -38,7 +53,13 @@ const __ex_update = {
       // = body of HTTP requests
       update: helpers.object({
         email: helpers.email,
-        language: helpers.language
+        language: helpers.language,
+        // Multi-email operations, applied in the order add, setPrimary, remove.
+        emails: helpers.object({
+          add: helpers.array(helpers.email),
+          remove: helpers.array(helpers.email),
+          setPrimary: helpers.email
+        }, { additionalProperties: false })
       }, { additionalProperties: false })
     }, {
       required: ['update']

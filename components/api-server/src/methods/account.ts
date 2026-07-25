@@ -28,6 +28,17 @@ type MethodContext = BaseMethodContext & {
   resetToken?: string;
   userBusiness?: UserBusinessLike;
   passwordResetRequest?: import('storages/interfaces/baseStorage/PasswordResetRequests.ts').PasswordResetDoc;
+  // Multi-email scratchpad, populated mid-chain by account.update.
+  emailsOperations?: { add?: string[]; remove?: string[]; setPrimary?: string };
+  previousEmail?: string | null;
+};
+
+type EmailsUserContext = {
+  userId: string;
+  username: string;
+  user: unknown;
+  accessId: string;
+  legacyEmail: string | null;
 };
 
 const errors = require('errors').factory;
@@ -46,6 +57,8 @@ const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
 const ErrorIds = require('errors').ErrorIds;
 const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users/index.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
+const emailsContainer = require('business/src/emails/container.ts');
+const emailsOperations = require('business/src/emails/operations.ts');
 
 export default async function (api: { register: (...args: unknown[]) => void }) {
   const config = await ready();
@@ -76,7 +89,12 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     async function (context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
         // Invariant: addUserBusinessToContext ran earlier in this chain.
-        result.account = context.userBusiness!.getLegacyAccount();
+        const account = context.userBusiness!.getLegacyAccount() as Record<string, unknown>;
+        // Multi-email record. Falls back to synthesizing the array from the
+        // legacy field for users whose container has not been seeded yet.
+        account.emails = await emailsContainer.listViews(
+          context.user.id, account.email as string | null);
+        result.account = account;
         next();
       } catch (err) {
         return next(errors.unexpectedError(err));
@@ -90,12 +108,26 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     'account.update',
     commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.update.params),
+    splitEmailsOperations,
     validateThatAllFieldsAreEditable,
     updateDataOnPlatform,
     updateAccount,
+    syncLegacyEmailToContainer,
+    applyEmailsOperations,
     addUserBusinessToContext,
     buildResultData
   );
+
+  // Pull the `emails` operations object out of the legacy field update so the
+  // legacy steps below only ever see real account fields (email, language).
+  // The value is applied by applyEmailsOperations, after the legacy swap.
+  function splitEmailsOperations (context: MethodContext, params: { update: Record<string, unknown> }, _result: ResultBag, next: Next) {
+    if (Object.prototype.hasOwnProperty.call(params.update, 'emails')) {
+      context.emailsOperations = params.update.emails as MethodContext['emailsOperations'];
+      delete params.update.emails;
+    }
+    next();
+  }
 
   /**
    * Validate if given parameters are allowed for the edit
@@ -354,12 +386,15 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   }
 
   async function updateDataOnPlatform (context: MethodContext, params: { update: Record<string, unknown> }, _result: ResultBag, next: Next) {
+    if (Object.keys(params.update).length === 0) return next();
     try {
       const accountMap = accountStreams.accountMap;
       const operations: Array<Record<string, unknown>> = [];
       for (const [key, value] of Object.entries(params.update)) {
         // get previous value of the field;
         const previousValue = await usersRepository.getOnePropertyValue(context.user.id, key);
+        // Stash the previous email so the container sync knows the old primary.
+        if (key === 'email') { context.previousEmail = (previousValue as string | null) ?? null; }
         operations.push({
           action: 'update',
           key,
@@ -377,6 +412,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   }
 
   async function updateAccount (context: MethodContext, params: { update: Record<string, unknown> }, _result: ResultBag, next: Next) {
+    if (Object.keys(params.update).length === 0) return next();
     try {
       const accessId = context.access?.id
         ? context.access.id
@@ -396,6 +432,66 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     next();
   }
 
+  // Build the user context the emails operations share. Reads the current
+  // legacy primary from storage so seeding is reliable even for pre-seed users.
+  async function emailsContext (context: MethodContext): Promise<EmailsUserContext> {
+    const accessId = context.access?.id
+      ? context.access.id
+      : UserRepositoryOptions.SYSTEM_USER_ACCESS_ID;
+    const legacyEmail = await usersRepository.getOnePropertyValue(context.user.id, 'email');
+    return {
+      userId: context.user.id as string,
+      username: context.user.username as string,
+      user: context.user,
+      accessId,
+      legacyEmail: (legacyEmail as string | null) ?? null
+    };
+  }
+
+  // After the legacy email swap, mirror the change into the multi-email
+  // container (promote/create the new primary, keep the old one as verified).
+  async function syncLegacyEmailToContainer (context: MethodContext, params: { update: Record<string, unknown> }, _result: ResultBag, next: Next) {
+    if (!Object.prototype.hasOwnProperty.call(params.update, 'email')) return next();
+    try {
+      const oldValue = context.previousEmail ?? null;
+      const newValue = params.update.email as string;
+      const ctx = await emailsContext(context);
+      ctx.legacyEmail = oldValue; // seed from the pre-change primary if needed
+      await emailsOperations.reconcileLegacyPrimaryChange(
+        { errors, usersRepository }, ctx, oldValue, newValue);
+    } catch (err) {
+      return next(err);
+    }
+    next();
+  }
+
+  // Apply the `emails` operations object, in the order add, setPrimary, remove.
+  async function applyEmailsOperations (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    const ops = context.emailsOperations;
+    if (ops == null) return next();
+    try {
+      const ctx = await emailsContext(context);
+      const deps = { errors, usersRepository };
+      if (Array.isArray(ops.add) && ops.add.length > 0) {
+        await emailsOperations.addEmails(deps, ctx, ops.add);
+      }
+      if (ops.setPrimary != null) {
+        const changed = await emailsOperations.setPrimary(deps, ctx, ops.setPrimary);
+        if (changed) {
+          // Keep the loaded user coherent so the result reflects the new primary.
+          (context.user as Record<string, unknown>).email = ops.setPrimary;
+          pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_ACCOUNT_CHANGED);
+        }
+      }
+      if (Array.isArray(ops.remove) && ops.remove.length > 0) {
+        await emailsOperations.removeEmails(deps, ctx, ops.remove);
+      }
+    } catch (err) {
+      return next(err);
+    }
+    next();
+  }
+
   /**
    * Build response body for the account update
    */
@@ -404,7 +500,13 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       (context.user as Record<string, unknown>)[key] = params.update[key];
     });
     // Invariant: addUserBusinessToContext ran earlier in this chain.
-    result.account = context.userBusiness!.getLegacyAccount();
+    const account = context.userBusiness!.getLegacyAccount() as Record<string, unknown>;
+    try {
+      account.emails = await emailsContainer.listViews(context.user.id, account.email as string | null);
+    } catch (err) {
+      return next(errors.unexpectedError(err));
+    }
+    result.account = account;
     next();
   }
 };

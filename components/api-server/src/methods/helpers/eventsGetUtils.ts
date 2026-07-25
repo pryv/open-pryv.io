@@ -21,6 +21,8 @@ const SetFileReadTokenStream = require('../streams/SetFileReadTokenStream.ts').d
 const accountStreams = require('business/src/system-streams/index.ts');
 /** Root of the one-time shared-secret namespace — excluded from wildcard queries. */
 const SHARED_SECRETS_NS_ROOT = ':_shared-secrets:';
+/** Multiple-emails container — excluded from wildcard queries (surfaces only when named). */
+const EMAILS_NS_ROOT = ':_emails:';
 const integrity = require('business/src/integrity/index.ts').default;
 import type { MethodNext } from '../_types.ts';
 import type { Readable as ReadableStream } from 'node:stream';
@@ -359,6 +361,11 @@ function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params
         streamQuery.any != null && streamQuery.any.includes('*')) {
       if (streamQuery.not == null) { streamQuery.not = []; }
       streamQuery.not.push(SHARED_SECRETS_NS_ROOT);
+      // The multiple-emails container is kept out of wildcard queries for the
+      // same reason: it surfaces only when its stream is named explicitly, and
+      // its verified/pending status must never leak into a "give me everything"
+      // sweep. Personal tokens read it by naming :_emails: directly.
+      streamQuery.not.push(EMAILS_NS_ROOT);
     }
 
     // ------------- NOT ------------- //

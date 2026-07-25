@@ -234,6 +234,12 @@ user-account:
     - 'adminToken' # enable deletion from admin Panel
     #- 'personalToken' # enable self deletion request with a personal token
 
+# === PER-CORE: account policy ===
+account:
+  # Maximum number of emails an account may hold (primary included). The value
+  # is clamped to a hard ceiling of 20 regardless of what is configured here.
+  maxEmails: 5
+
 # === PLATFORM-WIDE schema (CRITICAL — drift corrupts user account data) ===
 # `custom.systemStreams` defines the account-field schema. All cores MUST agree.
 # Targeted for PlatformDB migration in a future release.

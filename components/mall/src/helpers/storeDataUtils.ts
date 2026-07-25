@@ -58,6 +58,13 @@ function parseStoreIdAndStoreItemId (fullItemId: string): [string, string] {
   // ordinary events living beside the user's other data.
   if (storeId === '_shared-secrets') return [LOCAL_STORE_ID, fullItemId];
 
+  // The multiple-emails container routes to the local store on the same terms.
+  // The `:_system:` prefix cannot host it: every :_system: / :system: stream
+  // routes to the single-field account adapter, which stores one value per
+  // field and blocks deletion. The container needs one ordinary event per
+  // email, so it is a guarded local-store stream like the two namespaces above.
+  if (storeId === '_emails') return [LOCAL_STORE_ID, fullItemId];
+
   let storeItemId: string;
   if (endMarkerIndex === (fullItemId.length - 1)) { // ':storeId:', i.e. pseudo-stream representing store root
     storeItemId = '*';

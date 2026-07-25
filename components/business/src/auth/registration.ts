@@ -11,6 +11,7 @@ const { errorHandling } = require('errors');
 const mailing = require('api-server/src/methods/helpers/mailing.ts');
 const { getPlatform } = require('platform');
 const accountStreams = require('business/src/system-streams/index.ts');
+const emailsContainer = require('business/src/emails/container.ts');
 const { User } = require('business/src/users/index.ts');
 const { getLogger } = require('@pryv/boiler');
 const { ApiEndpoint } = require('utils');
@@ -212,6 +213,22 @@ this.getServicesSettings = typeof servicesSettings === 'function' ? servicesSett
       const usersRepository = await getUsersRepository();
       // insertOne handles PlatformDB storage (unique + indexed fields) internally
       await usersRepository.insertOne(context.newUser, true);
+      // Seed the multi-email container: the initial email is primary and
+      // verified at today's trust level (no verification method). The
+      // PlatformDB row is already owned by the user (created by insertOne), so
+      // this reserves nothing. Best-effort: a container-seed failure must not
+      // fail an otherwise-successful registration; existing users without a
+      // container are handled by account.get's synthesize fallback anyway.
+      if (context.newUser.id != null && context.newUser.email != null) {
+        try {
+          await emailsContainer.seedInitial(context.newUser.id, context.newUser.email);
+        } catch (seedErr) {
+          getLogger('registration').warn('failed to seed emails container', {
+            username: context.newUser.username,
+            error: seedErr instanceof Error ? seedErr.message : String(seedErr)
+          });
+        }
+      }
     } catch (err) {
       return next(err);
     }

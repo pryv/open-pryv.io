@@ -153,7 +153,9 @@ describe('[ACCO] Account with system streams', function () {
         assert.strictEqual(res.body.account.storageUsed.attachedFiles, attachedFilesAccountEvent.content);
       });
       it('[R5S0] should return only visible default stream events', async () => {
-        assert.strictEqual(Object.keys(res.body.account).length, 4);
+        // `emails` is an additive computed field (the multi-email array), not a
+        // visible default-stream field, so exclude it from this count.
+        assert.strictEqual(Object.keys(res.body.account).filter((k) => k !== 'emails').length, 4);
       });
     });
   });
@@ -271,7 +273,12 @@ describe('[ACCO] Account with system streams', function () {
         assert.strictEqual(res.status, 200);
       });
       it('[K9IC] should returned updated account data', async () => {
-        assert.deepStrictEqual(res.body.account, {
+        // `emails` is an additive computed field checked separately; the legacy
+        // account shape stays exactly as before.
+        const account = { ...res.body.account };
+        assert.ok(Array.isArray(account.emails));
+        delete account.emails;
+        assert.deepStrictEqual(account, {
           username: user.attrs.username,
           email: newEmail,
           language: newLanguage,

@@ -783,5 +783,8 @@ describe('[ACCO] account', function () {
 
   function cleanUpDetails (accountDetails) {
     delete accountDetails.storageUsed;
+    // The multi-email array is additive to the legacy account shape; strip it
+    // so the legacy strict-equality checks stay focused on the legacy fields.
+    delete accountDetails.emails;
   }
 });
