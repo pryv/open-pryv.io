@@ -1,5 +1,25 @@
 # Changelog - Internal (no API impact)
 
+## fix(messages): pubsub workers now reconnect after the broker is lost
+
+The internal TCP pub/sub bus (used, among other things, to broadcast cache
+invalidations across workers) had no reconnect path. A worker that lost its
+connection to the broker — because the broker process crashed, was redeployed
+or recycled, or because the worker lost the startup race and its first connect
+failed — stayed disconnected for the rest of its lifetime, logging only a
+`warn`. Since access-cache invalidations travel over this bus, a disconnected
+worker never dropped its cached copy and could keep serving a revoked access
+indefinitely; on a clustered deployment with requests spread across workers,
+whether a deleted token still worked became a coin flip until a full restart.
+
+Clients now reconnect with capped exponential backoff, re-run broker election
+on each attempt (so a survivor takes over the freed port when the elected
+broker dies), and re-send their subscriptions once reconnected. A failed
+initial connect no longer strands the module in permanent local-only mode, and
+a worker that has genuinely lost the bus now logs at `error` rather than `warn`.
+No API or behavioural change on the healthy path. Covered by regression tests
+that kill the broker mid-run and assert delivery resumes.
+
 ## fix(api): an API method that fails asynchronously no longer hangs the request
 
 The method-chain runner ran each function inside a synchronous `try`/`catch`
