@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Multiple emails per account (beta)
+
+An account can now hold more than one email address, each with its own
+verification state, while the singular `email` field stays authoritative as the
+primary. **This feature is beta** — the surface may still change.
+
+- `GET /:username/account` returns an `emails` array alongside the legacy
+  `email` scalar: `[{ value, primary, status: 'pending'|'verified', verifiedAt,
+  verificationMethod }]`. Accounts that never used the feature report their
+  single primary as one verified entry. `verificationMethod` records how an
+  address reached its status: `'email-link'` (the holder clicked a mailed
+  token) and `'operator'` are proved ownership; `'registration'` (the founding
+  email) and `'legacy'` (set via the singular `email` field) are asserted but
+  not proved. A `verified` status alone therefore does not imply proven
+  ownership: check `verificationMethod` for that.
+- `PUT /:username/account` accepts an `emails` operations object, applied in the
+  order add, setPrimary, remove, resend:
+  `{ emails: { add?: [value], remove?: [value], setPrimary?: value, resend?: [value] } }`.
+  – `add` reserves the address (409 `item-already-exists` if another account
+    holds it), records it as `pending`, and mails a verification link.
+  – `remove` refuses the primary; releases the address and drops it.
+  – `setPrimary` refuses unless the target is already `verified`, then swaps the
+    primary (the old primary stays as a verified secondary).
+  – `resend` re-sends the verification mail for a pending address, subject to a
+    cooldown; each send rotates the token so older links stop working.
+- `POST /:username/account/verify-email` — public (the token in the body is the
+  credential, mailed to the address). A valid token marks that address
+  `verified`; unknown, expired and already-used tokens all return the same
+  `invalid-access-token` error. The token is a one-time secret bound to the
+  account and address; the server stores only its hash.
+- Addresses resolve to the account for registration/routing whether primary or
+  secondary; password reset still mails the primary only (unchanged).
+- Config: `account.maxEmails` (default 5, hard cap 20),
+  `account.emailVerification.tokenMaxAgeMs` (default 24h),
+  `account.emailVerification.resendCooldownMs` (default 5 min),
+  `services.email.enabled.verifyEmail` + `services.email.verifyEmailTemplate`,
+  and `auth.emailVerificationPageURL` (required when the verification mail is
+  enabled).
+
 ### Shared secrets: hand a secret to a third party by one-time key
 
 Passing a secret to a third party — typically an apiEndpoint carrying an access

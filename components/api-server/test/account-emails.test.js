@@ -82,7 +82,7 @@ describe('[EMLS] account emails (multiple)', function () {
       assert.strictEqual(only.primary, true);
       assert.strictEqual(only.status, 'verified');
       assert.strictEqual(only.verifiedAt, null);
-      assert.strictEqual(only.verificationMethod, null);
+      assert.strictEqual(only.verificationMethod, 'registration');
     });
   });
 
@@ -202,7 +202,8 @@ describe('[EMLS] account emails (multiple)', function () {
       const oldView = res.body.account.emails.find((e) => e.value === oldPrimary);
       assert.strictEqual(newView.primary, true);
       assert.strictEqual(newView.status, 'verified');
-      assert.strictEqual(newView.verificationMethod, null);
+      assert.strictEqual(newView.verificationMethod, 'legacy');
+      assert.strictEqual(newView.verifiedAt, null, 'a legacy assertion is not a real verification');
       assert.ok(oldView, 'old primary kept as verified non-primary');
       assert.strictEqual(oldView.primary, false);
       assert.strictEqual(oldView.status, 'verified');
@@ -219,7 +220,7 @@ describe('[EMLS] account emails (multiple)', function () {
       const promoted = res.body.account.emails.find((e) => e.value === pending);
       assert.strictEqual(promoted.primary, true);
       assert.strictEqual(promoted.status, 'verified');
-      assert.strictEqual(promoted.verificationMethod, null);
+      assert.strictEqual(promoted.verificationMethod, 'legacy');
     });
 
     it('[EML53] an existing verified value is promoted', async function () {
@@ -260,7 +261,7 @@ describe('[EMLS] account emails (multiple)', function () {
         assert.strictEqual(raw[0].content.value, email);
         assert.strictEqual(raw[0].content.primary, true);
         assert.strictEqual(raw[0].content.status, 'verified');
-        assert.strictEqual(raw[0].content.verificationMethod, null);
+        assert.strictEqual(raw[0].content.verificationMethod, 'registration');
         await usersRepository.deleteOne(userId, username);
       } finally {
         if (savedIntegrity != null) process.env.DISABLE_INTEGRITY_CHECK = savedIntegrity;

@@ -175,6 +175,7 @@ services:
     enabled:
       welcome: true
       resetPassword: true
+      verifyEmail: true
     # 'in-process' is the default since the merged mail component landed in v2.
     # Deployments that still run the external pryv/service-mail microservice
     # must pin `method: microservice` in their override-config.yml.
@@ -185,6 +186,10 @@ services:
     # --- shared between modes ---
     welcomeTemplate: welcome-email
     resetPasswordTemplate: reset-password
+    # Sent when an email is added to an account (or resent on request). The
+    # link carries a one-time token bound to (account, address); clicking it
+    # marks that address verified. Requires `auth.emailVerificationPageURL`.
+    verifyEmailTemplate: verify-email
     defaultLang: en
     # --- in-process mode only ---
     # Pug source directory to seed into PlatformDB on first boot (when
@@ -239,6 +244,14 @@ account:
   # Maximum number of emails an account may hold (primary included). The value
   # is clamped to a hard ceiling of 20 regardless of what is configured here.
   maxEmails: 5
+  # Email-verification token policy. `tokenMaxAgeMs` is how long a verification
+  # link stays valid (default 24h — the user is not sitting waiting like a
+  # password reset). `resendCooldownMs` is the minimum delay between two
+  # verification sends for the same address (default 5min), the rate limit on
+  # verification-mail spam.
+  emailVerification:
+    tokenMaxAgeMs: 86400000
+    resendCooldownMs: 300000
 
 # === PLATFORM-WIDE schema (CRITICAL — drift corrupts user account data) ===
 # `custom.systemStreams` defines the account-field schema. All cores MUST agree.

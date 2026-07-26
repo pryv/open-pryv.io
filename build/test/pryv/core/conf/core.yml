@@ -31,12 +31,13 @@ services:
     url: "http://register:9000"
     key: "no-key-reg"
   email:
-    enabled: {"welcome":false,"resetPassword":false}
+    enabled: {"welcome":false,"resetPassword":false,"verifyEmail":false}
     method: "microservice"
     url: "http://mail:9000/sendmail/"
     key: "no-key-mail"
     welcomeTemplate: "welcome-email"
     resetPasswordTemplate: "reset-password"
+    verifyEmailTemplate: "verify-email"
 reporting:
   templateVersion: "1.8.1"
 updates:

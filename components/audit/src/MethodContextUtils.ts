@@ -21,6 +21,7 @@ const AuditAccessIds = {
   VALID_PASSWORD: 'valid-password',
   PASSWORD_RESET_REQUEST: 'password-reset-request',
   PASSWORD_RESET_TOKEN: 'password-reset-token',
+  EMAIL_VERIFICATION_TOKEN: 'email-verification-token',
   ADMIN_TOKEN: 'admin',
   PUBLIC: 'public',
   INVALID: 'invalid'

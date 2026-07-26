@@ -7,6 +7,9 @@ auth:
   # `services.email.enabled = true` (e.g. [G1VN], [HZCU] in account-seq).
   # The URL itself doesn't matter for tests — they mock the SMTP transport.
   passwordResetPageURL: 'http://test.pryv.local/reset-password'
+  # Same, for the verify-email REQUIRED_WHEN when a test sets
+  # `services.email.enabled.verifyEmail = true` (e.g. [VEML*]).
+  emailVerificationPageURL: 'http://test.pryv.local/verify-email'
 logs:
   console:
     active: false
@@ -30,11 +33,13 @@ services:
     enabled:
       welcome: false
       resetPassword: false
+      verifyEmail: false
     method: mandrill
     url: https://mandrillapp.local/api/1.0/messages/send-template.json
     key: "doesnt-matter-in-test"
     welcomeTemplate: welcome-email
     resetPasswordTemplate: reset-password"
+    verifyEmailTemplate: verify-email
   register:
     url: http://127.0.0.1:5123
     key: test-system-key

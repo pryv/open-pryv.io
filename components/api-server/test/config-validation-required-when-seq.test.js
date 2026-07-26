@@ -49,9 +49,10 @@ describe('[CV-REQ] config-validation REQUIRED_WHEN', () => {
   }
 
   const allHappy = {
-    'services:email:enabled': { welcome: true, resetPassword: true },
+    'services:email:enabled': { welcome: true, resetPassword: true, verifyEmail: true },
     'services:email:resetPassword': true,
     'auth:passwordResetPageURL': 'https://example.com/reset',
+    'auth:emailVerificationPageURL': 'https://example.com/verify',
     'auth:adminAccessKey': 'some-real-admin-key',
     'auth:filesReadTokenSecret': 'some-real-secret',
     'letsEncrypt:enabled': false
@@ -93,6 +94,27 @@ describe('[CV-REQ] config-validation REQUIRED_WHEN', () => {
     }), problems);
     const p = problems.find((p) => p.payload && p.payload.path === 'auth:passwordResetPageURL');
     assert.ok(!p, 'expected NO problem when services.email.enabled.resetPassword === false');
+  });
+
+  it('[CV-REQ-4B] emailVerificationPageURL missing while verify-email is enabled → problem', () => {
+    const problems = [];
+    checkRequiredWhen(fakeConfig({
+      ...allHappy,
+      'auth:emailVerificationPageURL': undefined
+    }), problems);
+    const p = problems.find((p) => p.payload && p.payload.path === 'auth:emailVerificationPageURL');
+    assert.ok(p, 'expected a problem for auth:emailVerificationPageURL');
+  });
+
+  it('[CV-REQ-4C] emailVerificationPageURL not required when verifyEmail sub-feature is off', () => {
+    const problems = [];
+    checkRequiredWhen(fakeConfig({
+      ...allHappy,
+      'services:email:enabled': { welcome: true, resetPassword: true, verifyEmail: false },
+      'auth:emailVerificationPageURL': undefined
+    }), problems);
+    const p = problems.find((p) => p.payload && p.payload.path === 'auth:emailVerificationPageURL');
+    assert.ok(!p, 'expected NO problem when services.email.enabled.verifyEmail === false');
   });
 
   it('[CV-REQ-05] adminAccessKey always required — empty string flagged', () => {

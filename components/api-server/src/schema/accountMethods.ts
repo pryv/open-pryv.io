@@ -20,9 +20,11 @@ const user = require('./user.ts').default(Action.READ);
 const emailEntry = helpers.object({
   value: helpers.email,
   primary: helpers.boolean(),
-  status: helpers.string(),
+  status: helpers.string({ enum: ['pending', 'verified'] }),
   verifiedAt: helpers.number({ nullable: true }),
-  verificationMethod: helpers.string({ nullable: true })
+  // Explicit provenance. `null` is grandfathered pre-provenance data (read-only);
+  // only 'email-link' / 'operator' count as proved ownership.
+  verificationMethod: helpers.string({ nullable: true, enum: ['email-link', 'operator', 'registration', 'legacy', null] })
 }, {
   required: ['value', 'primary', 'status', 'verifiedAt', 'verificationMethod'],
   additionalProperties: false
@@ -56,9 +58,13 @@ const __ex_update = {
         language: helpers.language,
         // Multi-email operations, applied in the order add, setPrimary, remove.
         emails: helpers.object({
-          add: helpers.array(helpers.email),
-          remove: helpers.array(helpers.email),
-          setPrimary: helpers.email
+          // Bounded per request (the hard ceiling on emails per account is 20)
+          // so one call cannot fan out an unbounded number of verification mails.
+          add: helpers.array(helpers.email, { maxItems: 20 }),
+          remove: helpers.array(helpers.email, { maxItems: 20 }),
+          setPrimary: helpers.email,
+          // Re-send the verification mail for pending addresses (cooldown-gated).
+          resend: helpers.array(helpers.email, { maxItems: 20 })
         }, { additionalProperties: false })
       }, { additionalProperties: false })
     }, {
@@ -110,6 +116,22 @@ const __ex_resetPassword = {
     result: helpers.object({}, { additionalProperties: false })
   };
 export { __ex_resetPassword as resetPassword };
+const __ex_verifyEmail = {
+    params: helpers.object({
+      appId: helpers.string(),
+      origin: helpers.string(),
+      token: helpers.string()
+    }, {
+      required: ['appId', 'token']
+    }),
+    result: helpers.object({
+      email: helpers.email
+    }, {
+      required: ['email'],
+      additionalProperties: false
+    })
+  };
+export { __ex_verifyEmail as verifyEmail };
 const __ex_changeUsername = {
     params: helpers.object({
       newUsername: user.properties.username

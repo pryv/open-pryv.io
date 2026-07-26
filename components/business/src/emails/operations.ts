@@ -18,9 +18,52 @@
 
 import * as C from './constants.ts';
 import * as container from './container.ts';
+import * as storages from 'storages';
 
 import { getPlatform } from 'platform';
 import timestamp from 'unix-timestamp';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+
+/** The raw cluster-wide PlatformDB (TTL access-state store), read at call time
+ *  via the barrel's live-bound export so it reflects the initialized singleton. */
+type ThrottleStore = {
+  setAccessStateIfAbsent (key: string, value: unknown, expiresAt: number): Promise<boolean>;
+  deleteAccessState (key: string): Promise<void>;
+};
+function getPlatformDB (): ThrottleStore | null {
+  const db = storages.platformDB as ThrottleStore | undefined;
+  return (db != null && typeof db.setAccessStateIfAbsent === 'function') ? db : null;
+}
+/** Per-(account, address) send-throttle key. Hashed so no cleartext address
+ *  lands in a cluster-wide key. */
+function sendSlotKey (userId: string, email: string): string {
+  return 'email-verify-sent/' + userId + '/' + hashToken(email.toLowerCase());
+}
+
+/**
+ * Reserve the right to send a verification mail to `email` for `userId`, atomic
+ * first-writer-wins with a cooldown TTL. Returns true when THIS call reserved
+ * the slot (send allowed), false when a live slot already exists (a mail went
+ * out to this address within the cooldown — skip the send). The marker lives in
+ * PlatformDB, NOT on the container event, so it survives remove/re-add and caps
+ * the add/remove/re-add mail-bombing loop. Fails OPEN (returns true) when the
+ * cooldown is disabled or no platform store is available.
+ */
+async function reserveSendSlot (userId: string, email: string): Promise<boolean> {
+  const cooldownMs = await container.getResendCooldownMs();
+  if (cooldownMs <= 0) return true;
+  const db = getPlatformDB();
+  if (db == null) return true;
+  return await db.setAccessStateIfAbsent(sendSlotKey(userId, email), 1, Date.now() + cooldownMs);
+}
+
+/** Release a reserved send slot — called when the send actually FAILED, so a
+ *  real delivery failure does not burn the cooldown (no mail went out). */
+async function releaseSendSlot (userId: string, email: string): Promise<void> {
+  const db = getPlatformDB();
+  if (db == null) return;
+  await db.deleteAccessState(sendSlotKey(userId, email));
+}
 
 type ErrorsFactory = {
   invalidOperation (msg?: string, data?: unknown): Error;
@@ -32,6 +75,29 @@ type UsersRepositoryLike = {
 type Deps = { errors: ErrorsFactory; usersRepository: UsersRepositoryLike };
 type UserContext = { userId: string; username: string; user: unknown; accessId: string; legacyEmail: string | null };
 
+/** A newly minted verification token paired with the address it verifies. The
+ *  plaintext token lives only in memory long enough for the caller to email it;
+ *  only its hash is ever persisted. */
+type MintedVerification = { value: string; token: string };
+
+/** Mint a 256-bit URL-safe verification token (a secret, not an id). */
+function mintToken (): string {
+  return randomBytes(32).toString('base64url');
+}
+
+/** Hex sha256 of a token — the only form ever stored. */
+function hashToken (token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+/** Constant-time compare of two hex sha256 digests. */
+function hashEquals (a: string, b: string): boolean {
+  const ba = Buffer.from(a, 'hex');
+  const bb = Buffer.from(b, 'hex');
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
+}
+
 /** Seed the container from the legacy primary on first use (existing users). */
 async function ensureSeeded (userId: string, legacyEmail: string | null): Promise<void> {
   await container.ensureContainerStream(userId);
@@ -42,7 +108,7 @@ async function ensureSeeded (userId: string, legacyEmail: string | null): Promis
       primary: true,
       status: C.STATUS_VERIFIED,
       verifiedAt: null,
-      verificationMethod: null
+      verificationMethod: C.METHOD_REGISTRATION
     });
   }
 }
@@ -65,8 +131,14 @@ async function legacyEmailSwap (deps: Deps, ctx: UserContext, oldValue: string |
   await deps.usersRepository.updateOne(ctx.user, { email: newValue }, ctx.accessId);
 }
 
-/** add: reserve a row + create a pending, non-primary event per value. */
-async function addEmails (deps: Deps, ctx: UserContext, values: string[]): Promise<void> {
+/**
+ * add: reserve a row + create a pending, non-primary event per value, and stamp
+ * a fresh verification token on each. Returns the minted `{ value, token }`
+ * pairs so the caller can email them — the plaintext token is never persisted,
+ * only its hash. Mailing is the caller's job (the mail transport lives in the
+ * api-server layer); a mail failure must NOT roll the add back (resend recovers).
+ */
+async function addEmails (deps: Deps, ctx: UserContext, values: string[]): Promise<MintedVerification[]> {
   const errors = deps.errors;
   await ensureSeeded(ctx.userId, ctx.legacyEmail);
   const max = await container.getMaxEmails();
@@ -74,7 +146,9 @@ async function addEmails (deps: Deps, ctx: UserContext, values: string[]): Promi
 
   const reservedThisCall: string[] = [];
   const createdThisCall: string[] = [];
+  const minted: MintedVerification[] = [];
   try {
+    const maxAgeMs = await container.getVerificationTokenMaxAgeMs();
     for (const value of values) {
       const present = await container.findRawByValue(ctx.userId, value);
       if (present != null || createdThisCall.includes(value)) {
@@ -88,7 +162,7 @@ async function addEmails (deps: Deps, ctx: UserContext, values: string[]): Promi
         throw errors.itemAlreadyExists('email', { email: value });
       }
       reservedThisCall.push(value);
-      await container.createEmailEvent(ctx.userId, {
+      const event = await container.createEmailEvent(ctx.userId, {
         value,
         primary: false,
         status: C.STATUS_PENDING,
@@ -96,6 +170,11 @@ async function addEmails (deps: Deps, ctx: UserContext, values: string[]): Promi
         verificationMethod: null
       }, ctx.accessId);
       createdThisCall.push(value);
+      const token = mintToken();
+      await container.stampVerification(
+        ctx.userId, event, hashToken(token),
+        timestamp.now(maxAgeMs / 1000), timestamp.now());
+      minted.push({ value, token });
       count++;
     }
   } catch (err) {
@@ -109,6 +188,7 @@ async function addEmails (deps: Deps, ctx: UserContext, values: string[]): Promi
     }
     throw err;
   }
+  return minted;
 }
 
 /** remove: refuse the primary; release the row + delete the event per value. */
@@ -160,6 +240,68 @@ async function setPrimary (deps: Deps, ctx: UserContext, value: string): Promise
 }
 
 /**
+ * Verify a pending email from its mailed token. Scoped to THIS user's own
+ * container events (username came from the request path), so a token minted for
+ * another account can never match here. Compares the sha256 of the presented
+ * token, constant-time, against each pending event's stored hash; on a live
+ * (non-expired) match flips it to verified and clears the token fields.
+ * Returns the verified address, or null for every failure mode (unknown token,
+ * expired, none pending) so the caller can answer with ONE uniform error.
+ */
+async function verifyToken (userId: string, token: string): Promise<string | null> {
+  if (typeof token !== 'string' || token.length === 0) return null;
+  const presented = hashToken(token);
+  const now = timestamp.now();
+  const events = await container.getRawEvents(userId);
+  for (const ev of events) {
+    if (ev.content.status !== C.STATUS_PENDING) continue;
+    const hash = ev.content.verificationTokenHash;
+    if (hash == null) continue;
+    if (!hashEquals(hash, presented)) continue;
+    const expires = ev.content.verificationTokenExpires;
+    if (expires != null && now >= expires) return null; // matched but expired
+    await container.markVerified(userId, ev.content.value, C.METHOD_EMAIL_LINK);
+    return ev.content.value;
+  }
+  return null;
+}
+
+/**
+ * Resend the verification mail for a pending email, enforcing the resend
+ * cooldown and ROTATING the token (the old link dies). Returns the new
+ * `{ value, token }` for the caller to mail. Throws invalidOperation when the
+ * email is unknown, already verified, or still within the cooldown window
+ * (with `retryAfterSeconds`).
+ */
+async function resendVerification (deps: Deps, ctx: UserContext, value: string): Promise<MintedVerification> {
+  const errors = deps.errors;
+  await ensureSeeded(ctx.userId, ctx.legacyEmail);
+  const ev = await container.findRawByValue(ctx.userId, value);
+  if (ev == null) {
+    throw errors.invalidOperation('This email is not registered on the account.', { email: value });
+  }
+  if (ev.content.status !== C.STATUS_PENDING) {
+    throw errors.invalidOperation('This email is already verified.', { email: value });
+  }
+  const cooldownMs = await container.getResendCooldownMs();
+  const sentAt = ev.content.verificationSentAt;
+  const now = timestamp.now();
+  if (sentAt != null && cooldownMs > 0) {
+    const readyAt = sentAt + cooldownMs / 1000;
+    if (now < readyAt) {
+      throw errors.invalidOperation('Please wait before requesting another verification email.', {
+        email: value, retryAfterSeconds: Math.ceil(readyAt - now)
+      });
+    }
+  }
+  const maxAgeMs = await container.getVerificationTokenMaxAgeMs();
+  const token = mintToken();
+  await container.stampVerification(
+    ctx.userId, ev, hashToken(token), timestamp.now(maxAgeMs / 1000), now);
+  return { value, token };
+}
+
+/**
  * Legacy `account.update {email}` container sync. The legacy path already
  * swapped the singular field and its row; here we mirror the change into the
  * container: promote or create the new value as primary+verified, keep the old
@@ -173,14 +315,15 @@ async function reconcileLegacyPrimaryChange (deps: Deps, ctx: UserContext, oldVa
   let events = await container.getRawEvents(ctx.userId);
   if (events.length === 0 && oldValue != null) {
     // Reconstruct the prior primary so the record is not silently lost. Its
-    // row was released by the legacy swap, so re-reserve it.
+    // row was released by the legacy swap, so re-reserve it. This is the
+    // standing founding email — asserted at registration trust, not proved.
     await container.reserveRow(ctx.username, oldValue);
     await container.createEmailEvent(ctx.userId, {
       value: oldValue,
       primary: true,
       status: C.STATUS_VERIFIED,
       verifiedAt: null,
-      verificationMethod: null
+      verificationMethod: C.METHOD_REGISTRATION
     }, ctx.accessId);
     events = await container.getRawEvents(ctx.userId);
   }
@@ -188,20 +331,29 @@ async function reconcileLegacyPrimaryChange (deps: Deps, ctx: UserContext, oldVa
   const existingNew = events.find((e) => e.content.value === newValue) ?? null;
   if (existingNew != null) {
     const wasVerified = existingNew.content.status === C.STATUS_VERIFIED;
+    // A legacy swap does not prove ownership. If the value was already
+    // (link/operator/registration) verified, keep its provenance + timestamp;
+    // otherwise it is a legacy assertion — verified with no proof, so
+    // verifiedAt stays null (only a real verification stamps a time).
     await container.setContent(ctx.userId, existingNew, {
       primary: true,
       status: C.STATUS_VERIFIED,
-      verifiedAt: wasVerified ? existingNew.content.verifiedAt : timestamp.now(),
-      verificationMethod: wasVerified ? existingNew.content.verificationMethod : null
+      verifiedAt: wasVerified ? existingNew.content.verifiedAt : null,
+      verificationMethod: wasVerified ? existingNew.content.verificationMethod : C.METHOD_LEGACY,
+      // Promoting a pending email to verified retires any live token.
+      verificationTokenHash: null,
+      verificationTokenExpires: null,
+      verificationSentAt: null
     }, ctx.accessId);
   } else {
-    // The new value's row is already owned (reserved by the legacy swap).
+    // The new value's row is already owned (reserved by the legacy swap). Set
+    // by the legacy path with no proof of ownership → asserted, not proved.
     await container.createEmailEvent(ctx.userId, {
       value: newValue,
       primary: true,
       status: C.STATUS_VERIFIED,
       verifiedAt: null,
-      verificationMethod: null
+      verificationMethod: C.METHOD_LEGACY
     }, ctx.accessId);
   }
 
@@ -237,7 +389,11 @@ export {
   addEmails,
   removeEmails,
   setPrimary,
+  verifyToken,
+  resendVerification,
+  reserveSendSlot,
+  releaseSendSlot,
   reconcileLegacyPrimaryChange,
   ensureSeeded
 };
-export type { Deps, UserContext };
+export type { Deps, UserContext, MintedVerification };

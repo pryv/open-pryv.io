@@ -29,7 +29,7 @@ type MethodContext = BaseMethodContext & {
   userBusiness?: UserBusinessLike;
   passwordResetRequest?: import('storages/interfaces/baseStorage/PasswordResetRequests.ts').PasswordResetDoc;
   // Multi-email scratchpad, populated mid-chain by account.update.
-  emailsOperations?: { add?: string[]; remove?: string[]; setPrimary?: string };
+  emailsOperations?: { add?: string[]; remove?: string[]; setPrimary?: string; resend?: string[] };
   previousEmail?: string | null;
 };
 
@@ -46,7 +46,8 @@ const commonFns = require('./helpers/commonFunctions.ts');
 const mailing = require('./helpers/mailing.ts');
 const methodsSchema = require('../schema/accountMethods.ts');
 
-const { ready } = require('@pryv/boiler');
+const { ready, getLogger } = require('@pryv/boiler');
+const logger = getLogger('methods:account');
 const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
 const { getPlatform } = require('platform');
@@ -354,6 +355,64 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     mailing.sendmail(emailSettings, emailSettings.resetPasswordTemplate, recipient, substitutions, context.userBusiness!.language, next);
   }
 
+  // EMAIL VERIFICATION
+
+  // Mirror sendPasswordResetMail's gating: the whole email feature off, or the
+  // verifyEmail class specifically off, means no verification mail is sent.
+  function isVerifyMailEnabled (): boolean {
+    const enabled = getEmail().enabled;
+    if (enabled === false) return false;
+    if (enabled != null && typeof enabled === 'object' && enabled.verifyEmail === false) return false;
+    return true;
+  }
+
+  // Deliver one verification mail. The plaintext token is used only here, to
+  // build the link and substitutions; it is never persisted (only its hash is).
+  // The REQUIRED_WHEN boot check guarantees `auth.emailVerificationPageURL` is
+  // populated when the verification mail is enabled.
+  function deliverVerifyEmail (recipientEmail: string, username: string, lang: string, token: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const emailSettings = getEmail();
+      const pageURL = getAuth().emailVerificationPageURL;
+      const verifyLink = pageURL + '?verifyToken=' + encodeURIComponent(token);
+      const recipient = { email: recipientEmail, name: username, type: 'to' };
+      const substitutions = {
+        VERIFY_TOKEN: token,
+        VERIFY_URL: pageURL,
+        VERIFY_LINK: verifyLink,
+        EMAIL: recipientEmail,
+        USERNAME: username
+      };
+      mailing.sendmail(emailSettings, emailSettings.verifyEmailTemplate, recipient, substitutions, lang,
+        (err?: Error | null) => (err != null ? reject(err) : resolve()));
+    });
+  }
+
+  api.register(
+    'account.verifyEmail',
+    commonFns.getParamsValidation(methodsSchema.verifyEmail.params),
+    requireTrustedAppFn,
+    addUserBusinessToContext,
+    async function verifyEmailToken (context: MethodContext, params: { token: string }, result: ResultBag, next: Next) {
+      try {
+        // Invariant: addUserBusinessToContext ran earlier — userBusiness.id is
+        // the path user's id. verifyToken is scoped to this user's own pending
+        // events, so a token minted for another account cannot match here.
+        const value = await emailsOperations.verifyToken(context.userBusiness!.id, params.token);
+        if (value == null) {
+          // One uniform failure for unknown / expired / already-verified — no
+          // oracle on which case occurred.
+          return next(errors.invalidAccessToken('The verification token is invalid or expired.'));
+        }
+        result.email = value;
+        next();
+      } catch (err) {
+        return next(errors.unexpectedError(err));
+      }
+    },
+    setAuditAccessId(AuditAccessIds.EMAIL_VERIFICATION_TOKEN)
+  );
+
   // RESET PASSWORD
 
   api.register(
@@ -465,7 +524,11 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     next();
   }
 
-  // Apply the `emails` operations object, in the order add, setPrimary, remove.
+  // Apply the `emails` operations object, in the order add, setPrimary, remove,
+  // resend. add and resend each mint a token and send a verification mail; a
+  // send failure on ADD is logged but not fatal (the row/event are committed;
+  // resend recovers), while a resend send failure surfaces (the user asked for
+  // it). The plaintext tokens never leave this method.
   async function applyEmailsOperations (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const ops = context.emailsOperations;
     if (ops == null) return next();
@@ -473,7 +536,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       const ctx = await emailsContext(context);
       const deps = { errors, usersRepository };
       if (Array.isArray(ops.add) && ops.add.length > 0) {
-        await emailsOperations.addEmails(deps, ctx, ops.add);
+        const minted = await emailsOperations.addEmails(deps, ctx, ops.add);
+        await sendVerificationMails(context, minted, false);
       }
       if (ops.setPrimary != null) {
         const changed = await emailsOperations.setPrimary(deps, ctx, ops.setPrimary);
@@ -486,10 +550,56 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       if (Array.isArray(ops.remove) && ops.remove.length > 0) {
         await emailsOperations.removeEmails(deps, ctx, ops.remove);
       }
+      if (Array.isArray(ops.resend) && ops.resend.length > 0) {
+        const minted = [];
+        for (const value of ops.resend) {
+          minted.push(await emailsOperations.resendVerification(deps, ctx, value));
+        }
+        await sendVerificationMails(context, minted, true);
+      }
     } catch (err) {
       return next(err);
     }
     next();
+  }
+
+  // Send verification mails for freshly minted { value, token } pairs. On the
+  // ADD path (`fatal=false`) a delivery failure is logged and swallowed; on the
+  // RESEND path (`fatal=true`) it is thrown so the caller sees it.
+  async function sendVerificationMails (context: MethodContext, minted: Array<{ value: string; token: string }>, fatal: boolean): Promise<void> {
+    if (minted.length === 0) return;
+    if (!isVerifyMailEnabled()) return;
+    const username = context.user.username as string;
+    const lang = (await usersRepository.getOnePropertyValue(context.user.id, 'language')) as string | null;
+    for (const { value, token } of minted) {
+      // Persistent per-(account, address) throttle that survives remove/re-add,
+      // so an add/remove/re-add loop cannot bomb an arbitrary inbox with
+      // platform-branded mail. First send to an address always goes; a repeat
+      // within the cooldown is skipped (add) or refused (resend).
+      const allowed = await emailsOperations.reserveSendSlot(context.user.id, value);
+      if (!allowed) {
+        // A resend (fatal) surfaces the throttle; an add just skips silently.
+        if (fatal) {
+          throw errors.invalidOperation(
+            'Please wait before requesting another verification email.', { email: value });
+        }
+        logger.info(`verification mail to ${value} throttled (recent send to this address)`);
+        continue;
+      }
+      try {
+        await deliverVerifyEmail(value, username, lang || getEmail().defaultLang || 'en', token);
+      } catch (err) {
+        // No mail went out: clear the per-event send timestamp AND release the
+        // persistent throttle slot so the user can retry immediately (a real
+        // delivery failure must not strand the address behind the cooldown).
+        const ev = await emailsContainer.findRawByValue(context.user.id, value);
+        if (ev != null) await emailsContainer.setContent(context.user.id, ev, { verificationSentAt: null });
+        await emailsOperations.releaseSendSlot(context.user.id, value);
+        if (fatal) throw err;
+        // Do not leak the token: log the address and error message only.
+        logger.warn(`verification mail to ${value} failed (add): ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   /**

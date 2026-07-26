@@ -45,6 +45,18 @@ const REQUIRED_WHEN = [
       return true;
     }
   },
+  // `auth.emailVerificationPageURL` backs the verify-email link — same gating
+  // as passwordResetPageURL but keyed on the `verifyEmail` kill-switch. Mirror
+  // the runtime gate in `methods/account.ts` (isVerifyMailEnabled) exactly.
+  {
+    path: 'auth:emailVerificationPageURL',
+    when: c => {
+      const enabled = c.get('services:email:enabled');
+      if (enabled === false) return false;
+      if (enabled != null && typeof enabled === 'object' && enabled.verifyEmail === false) return false;
+      return true;
+    }
+  },
   // Admin keys & secrets — always required at boot. Multi-core bootstrap
   // already enforces `filesReadTokenSecret` via REQUIRED_AUTH_SECRETS;
   // single-core deploys had no equivalent guard until now.

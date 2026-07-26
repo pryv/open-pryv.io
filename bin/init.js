@@ -868,6 +868,11 @@ async function main () {
   const defaultPasswordResetPageURL = `${authUiUrl}/reset-password`;
   const passwordResetPageURL = await ask('  auth.passwordResetPageURL (derived from auth UI)', defaultPasswordResetPageURL);
 
+  // emailVerificationPageURL: sibling page under the same auth UI. Backs the
+  // verify-email link; required unless services.email.enabled.verifyEmail=false.
+  const defaultEmailVerificationPageURL = `${authUiUrl}/verify-email`;
+  const emailVerificationPageURL = await ask('  auth.emailVerificationPageURL (derived from auth UI)', defaultEmailVerificationPageURL);
+
   // trustedApps: must whitelist BOTH the operator's own publicUrl AND the
   // auth UI origin (otherwise the /reg/access flow loaded from the auth app
   // — whichever app-web-user-account host is configured — returns 403 because
@@ -1057,6 +1062,7 @@ async function main () {
       adminAccessKey,
       filesReadTokenSecret,
       passwordResetPageURL,
+      emailVerificationPageURL,
       trustedApps
     },
     access: {

@@ -32,11 +32,26 @@ type EmailView = {
   verificationMethod: string | null;
 };
 
+/**
+ * Raw stored content of a container event. Extends the public {@link EmailView}
+ * with the internal verification-token fields (Fable design decision, P3): a
+ * pending email carries the sha256 HASH of its emailed token (never the token
+ * itself), the token's expiry, and the last-sent timestamp for resend cooldown.
+ * These NEVER reach {@link toView} — a personal token reading raw content sees
+ * only the preimage-resistant hash, and cannot write the guarded namespace, so
+ * self-verification without inbox control stays impossible.
+ */
+type EmailRecordContent = EmailView & {
+  verificationTokenHash?: string | null;
+  verificationTokenExpires?: number | null;
+  verificationSentAt?: number | null;
+};
+
 type EventLike = {
   id: string;
   streamIds: string[];
   type: string;
-  content: EmailView;
+  content: EmailRecordContent;
   time?: number;
   modified?: number;
   modifiedBy?: string;
@@ -51,6 +66,20 @@ async function getMaxEmails (): Promise<number> {
   const raw = config.get('account:maxEmails');
   const n = typeof raw === 'number' && Number.isInteger(raw) ? raw : C.DEFAULT_MAX;
   return Math.max(1, Math.min(n, C.HARD_CAP));
+}
+
+/** Verification-token lifetime (ms). Default 24h — the user is not waiting. */
+async function getVerificationTokenMaxAgeMs (): Promise<number> {
+  const config = await getConfig();
+  const raw = config.get('account:emailVerification:tokenMaxAgeMs');
+  return typeof raw === 'number' && raw > 0 ? raw : C.DEFAULT_TOKEN_MAX_AGE_MS;
+}
+
+/** Minimum delay (ms) between two verification sends for the same email. */
+async function getResendCooldownMs (): Promise<number> {
+  const config = await getConfig();
+  const raw = config.get('account:emailVerification:resendCooldownMs');
+  return typeof raw === 'number' && raw >= 0 ? raw : C.DEFAULT_RESEND_COOLDOWN_MS;
 }
 
 /** Ensure the reserved container stream exists. Idempotent. */
@@ -120,14 +149,16 @@ async function listViews (userId: string, legacyEmail: string | null | undefined
   return events.map(toView);
 }
 
-/** The view a legacy singular email presents as when no container event exists. */
+/** The view a legacy singular email presents as when no container event exists.
+ *  It is the account's founding email — asserted at registration trust, not
+ *  link-proved (verifiedAt stays null, so it reads as NOT proved). */
 function synthesizeFromLegacy (legacyEmail: string): EmailView {
   return {
     value: legacyEmail,
     primary: true,
     status: C.STATUS_VERIFIED,
     verifiedAt: null,
-    verificationMethod: null
+    verificationMethod: C.METHOD_REGISTRATION
   };
 }
 
@@ -153,7 +184,7 @@ async function createEmailEvent (userId: string, view: EmailView, byAccessId?: s
 }
 
 /** Patch a container event's content fields. */
-async function setContent (userId: string, event: EventLike, patch: Partial<EmailView>, byAccessId?: string): Promise<void> {
+async function setContent (userId: string, event: EventLike, patch: Partial<EmailRecordContent>, byAccessId?: string): Promise<void> {
   const mall = await getMall();
   const by = byAccessId || SYSTEM_ACCESS_ID;
   const newEvent = {
@@ -200,28 +231,48 @@ async function seedInitial (userId: string, value: string, byAccessId?: string):
     primary: true,
     status: C.STATUS_VERIFIED,
     verifiedAt: null,
-    verificationMethod: null
+    verificationMethod: C.METHOD_REGISTRATION
   }, byAccessId);
 }
 
 /**
- * Internal / test seam: flip a pending email to verified. NEVER reachable
- * through a public API (that would forge verification). The mail-link
- * verification endpoint of a later phase is the real caller.
+ * Flip a pending email to verified and CLEAR its verification-token fields in
+ * the same patch (a verified email holds no live token). The public verify
+ * endpoint is the sanctioned caller once it has matched the token; it is also a
+ * test/operator seam. NEVER wire it to an unauthenticated path that skips the
+ * token match — that would forge verification.
  */
-async function markVerified (userId: string, value: string, method: string | null = null): Promise<boolean> {
+async function markVerified (userId: string, value: string, method: string): Promise<boolean> {
   const event = await findRawByValue(userId, value);
   if (event == null) return false;
   await setContent(userId, event, {
     status: C.STATUS_VERIFIED,
     verifiedAt: timestamp.now(),
-    verificationMethod: method
+    verificationMethod: method,
+    verificationTokenHash: null,
+    verificationTokenExpires: null,
+    verificationSentAt: null
   });
   return true;
 }
 
+/**
+ * Stamp a freshly-minted verification token onto a pending event: the token
+ * HASH (never the token), its expiry, and the send timestamp (for cooldown).
+ * Rotating overwrites any previous hash, so old links die.
+ */
+async function stampVerification (userId: string, event: EventLike, hash: string, expires: number, sentAt: number): Promise<void> {
+  await setContent(userId, event, {
+    verificationTokenHash: hash,
+    verificationTokenExpires: expires,
+    verificationSentAt: sentAt
+  });
+}
+
 export {
   getMaxEmails,
+  getVerificationTokenMaxAgeMs,
+  getResendCooldownMs,
   ensureContainerStream,
   getRawEvents,
   findRawByValue,
@@ -234,6 +285,7 @@ export {
   reserveRow,
   releaseRow,
   seedInitial,
-  markVerified
+  markVerified,
+  stampVerification
 };
-export type { EmailView, EventLike };
+export type { EmailView, EmailRecordContent, EventLike };

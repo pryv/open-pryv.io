@@ -45,6 +45,7 @@ const ALL_METHODS = [
   'account.usernameChanges',
   'account.requestPasswordReset',
   'account.resetPassword',
+  'account.verifyEmail',
   'profile.getPublic',
   'profile.getApp',
   'profile.get',

@@ -92,6 +92,17 @@ for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
   }
 }
 
+// auth.emailVerificationPageURL — required unless services.email.enabled.verifyEmail === false
+{
+  const emailEnabled = get('services.email.enabled');
+  let verifyEmailNeeded = true;
+  if (emailEnabled === false) verifyEmailNeeded = false;
+  if (emailEnabled && typeof emailEnabled === 'object' && emailEnabled.verifyEmail === false) verifyEmailNeeded = false;
+  if (verifyEmailNeeded && isMissingOrSentinel(get('auth.emailVerificationPageURL'))) {
+    problems.push('auth.emailVerificationPageURL missing or unset (required unless services.email.enabled.verifyEmail is false)');
+  }
+}
+
 // letsEncrypt.* — required when letsEncrypt.enabled is true
 if (get('letsEncrypt.enabled') === true) {
   for (const key of ['atRestKey', 'email']) {

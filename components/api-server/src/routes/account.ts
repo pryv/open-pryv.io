@@ -43,4 +43,11 @@ export default function (expressApp: ExpressApp, app: AppLike): void {
     params.origin = req.headers.origin;
     api.call(req.context, params, methodCallback(res, next, 200));
   });
+  // Public: the token in the body is the credential (mailed to the address
+  // being verified). No access-token middleware — mirrors reset-password.
+  expressApp.post(Paths.Account + '/verify-email', setMethodId('account.verifyEmail'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    const params = req.body;
+    params.origin = req.headers.origin;
+    api.call(req.context, params, methodCallback(res, next, 200));
+  });
 };
