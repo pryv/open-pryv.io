@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const cmc = require('cmc');
 const sharedSecrets = require('shared-secrets');
+const emailsGuards = require('business/src/emails/guards.ts');
 const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/streamsMethods.ts');
 const streamSchema = require('../schema/stream.ts').default;
@@ -183,6 +184,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   const cmcStreamCreateHook = cmc.createStreamCreateReservedRootHook({ errors });
   const sharedSecretsStreamUpdateGuard = sharedSecrets.createStreamUpdateGuard({ errors });
   const sharedSecretsStreamCreateGuard = sharedSecrets.createStreamCreateGuard({ errors });
+  const emailsStreamCreateGuard = emailsGuards.createStreamCreateGuard({ errors });
+  const emailsStreamUpdateGuard = emailsGuards.createStreamUpdateGuard({ errors });
+  const emailsStreamDeleteGuard = emailsGuards.createStreamDeleteGuard({ errors });
   const cmcEnsureReservedParentsHook = cmc.createEnsureReservedParentsHook({
     mall,
     logger: getLogger('cmc:ensure-reserved-parents'),
@@ -193,6 +197,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     cmcEnsureReservedParentsHook,
     cmcStreamCreateHook,
     sharedSecretsStreamCreateGuard,
+    emailsStreamCreateGuard,
     applyDefaultsForCreation,
     applyPrerequisitesForCreation,
     createStream);
@@ -258,7 +263,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     }
   }
   // UPDATE
-  api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), sharedSecretsStreamUpdateGuard, commonFns.catchForbiddenUpdate(streamSchema('update'), () => getUpdates().ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
+  api.register('streams.update', commonFns.getParamsValidation(methodsSchema.update.params), sharedSecretsStreamUpdateGuard, emailsStreamUpdateGuard, commonFns.catchForbiddenUpdate(streamSchema('update'), () => getUpdates().ignoreProtectedFields, logger), applyPrerequisitesForUpdate, updateStream);
   async function applyPrerequisitesForUpdate (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     if (params?.update?.parentId === params.id) {
       return next(errors.invalidOperation('The provided "parentId" is the same as the stream\'s "id".', params.update));
@@ -329,7 +334,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // owned (not permission-shaped) and surfaces a stable error id.
   const cmcStreamDeleteHook = cmc.createStreamDeleteReservedRootHook({ errors });
   const sharedSecretsStreamDeleteGuard = sharedSecrets.createStreamDeleteGuard({ errors });
-  api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), cmcStreamDeleteHook, sharedSecretsStreamDeleteGuard, verifyStreamExistenceAndPermissions, deleteStream);
+  api.register('streams.delete', commonFns.getParamsValidation(methodsSchema.del.params), cmcStreamDeleteHook, sharedSecretsStreamDeleteGuard, emailsStreamDeleteGuard, verifyStreamExistenceAndPermissions, deleteStream);
   async function verifyStreamExistenceAndPermissions (context: MethodContext, params: StreamsParams, result: StreamsResult, next: MethodNext) {
     params.mergeEventsWithParent ??= null;
     context.stream = await context.streamForStreamId(params.id!, null);

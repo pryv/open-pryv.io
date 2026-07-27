@@ -108,6 +108,19 @@ let _earlyDatabasePG: unknown = null;
 async function init (config?: BoilerConfig) {
   if (instances || initializing) return;
   initializing = true;
+  try {
+    await _doInit(config);
+  } finally {
+    // Always clear the guard. Without this, a mid-init throw leaves
+    // `initializing` true forever: every later init() hits the early return
+    // above, and callers that lazily trigger init (notably getMall's retry
+    // after a failed build) silently get an uninitialized barrel rather than a
+    // rebuilt one.
+    initializing = false;
+  }
+}
+
+async function _doInit (config?: BoilerConfig) {
   if (!config) config = await getConfig();
   const cfg = config!;
   await pluginLoader.init(cfg);
@@ -223,7 +236,6 @@ async function init (config?: BoilerConfig) {
     dataStoreModule
   };
   _refreshExports();
-  initializing = false;
 }
 
 /**

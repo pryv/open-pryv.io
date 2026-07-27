@@ -333,5 +333,51 @@ describe('[EMLS] account emails (multiple)', function () {
       assert.ok(named.body.events.length >= 1, 'named query surfaces container events');
       assert.ok(named.body.events.every((e) => (e.streamIds || []).includes(CONTAINER)));
     });
+
+    function streamsPath (username) { return '/' + username + '/streams'; }
+
+    it('[EML76] refuses streams.create under the container (personal token)', async function () {
+      const { u } = await seededUser();
+      const res = await coreRequest.post(streamsPath(u.username)).set('Authorization', u.token)
+        .send({ id: 'forged-child', parentId: CONTAINER, name: 'Forged' });
+      assert.ok(res.status >= 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.data?.id, 'emails-reserved-stream');
+    });
+
+    it('[EML77] refuses streams.update on the container (personal token)', async function () {
+      const { u } = await seededUser();
+      const res = await coreRequest.put(streamsPath(u.username) + '/' + encodeURIComponent(CONTAINER))
+        .set('Authorization', u.token).send({ name: 'Renamed' });
+      assert.ok(res.status >= 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.data?.id, 'emails-reserved-stream');
+    });
+
+    it('[EML78] refuses streams.delete of the container (personal token)', async function () {
+      const { u } = await seededUser();
+      const res = await coreRequest.delete(streamsPath(u.username) + '/' + encodeURIComponent(CONTAINER))
+        .set('Authorization', u.token);
+      assert.ok(res.status >= 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.data?.id, 'emails-reserved-stream');
+    });
+
+    it('[EML79] a non-personal token with star read cannot read the container by naming it', async function () {
+      const username = 'eml' + cuid().toLowerCase().slice(1, 12);
+      const personal = cuid();
+      const appToken = cuid();
+      const user = await fixtures.user(username, { email: cuid() + '@e79.example.com' });
+      await user.access({ token: personal, type: 'personal' });
+      await user.session(personal);
+      await user.access({ token: appToken, type: 'app', permissions: [{ streamId: '*', level: 'read' }] });
+      // Seed the container with a personal add.
+      await coreRequest.put('/' + username + '/account').set('Authorization', personal)
+        .send({ emails: { add: [cuid() + '@e79-extra.example.com'] } });
+      // The app token names the container explicitly — it must still get nothing
+      // (the container is account PII, blocked for non-personal tokens).
+      const named = await coreRequest.get(eventsPath(username)).set('Authorization', appToken)
+        .query({ streams: JSON.stringify([CONTAINER]) });
+      assert.strictEqual(named.status, 200, JSON.stringify(named.body));
+      assert.ok(!named.body.events.some((e) => (e.streamIds || []).includes(CONTAINER)),
+        'a non-personal token must not read the emails container even when naming it');
+    });
   });
 });

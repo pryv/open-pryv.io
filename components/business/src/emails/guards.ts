@@ -21,6 +21,7 @@ import * as C from './constants.ts';
 
 type ErrorsFactory = {
   forbidden (msg?: string): Error & { data?: Record<string, unknown> };
+  invalidOperation (msg?: string): Error & { data?: Record<string, unknown> };
 };
 type EventLike = { id?: string; streamIds?: string[]; type?: string; content?: unknown };
 
@@ -93,9 +94,68 @@ function createEventDeleteGuard (deps: { errors: ErrorsFactory }) {
   };
 }
 
+/**
+ * The container is an ordinary local-store stream, so the streams API can also
+ * reach it. Deleting it would drop every email event WITHOUT releasing the
+ * PlatformDB uniqueness rows (leaking those addresses platform-wide and breaking
+ * container/row lockstep); re-parenting or renaming it would break resolution.
+ * So the streams API cannot create under, edit, move, or delete the namespace —
+ * the same posture the shared-secrets namespace takes.
+ */
+function createStreamCreateGuard (deps: { errors: ErrorsFactory }) {
+  return function emailsStreamCreateGuard (
+    context: unknown,
+    params: { id?: unknown; parentId?: unknown },
+    result: unknown,
+    next: (err?: unknown) => void
+  ) {
+    if (C.isEmailStreamId(params?.id) || C.isEmailStreamId(params?.parentId)) {
+      return next(withId(
+        deps.errors.invalidOperation('The emails namespace is managed by the server.'),
+        'emails-reserved-stream'));
+    }
+    next();
+  };
+}
+
+function createStreamUpdateGuard (deps: { errors: ErrorsFactory }) {
+  return function emailsStreamUpdateGuard (
+    context: unknown,
+    params: { id?: unknown; update?: { parentId?: unknown } },
+    result: unknown,
+    next: (err?: unknown) => void
+  ) {
+    if (C.isEmailStreamId(params?.id) || C.isEmailStreamId(params?.update?.parentId)) {
+      return next(withId(
+        deps.errors.invalidOperation('The emails namespace is managed by the server.'),
+        'emails-reserved-stream'));
+    }
+    next();
+  };
+}
+
+function createStreamDeleteGuard (deps: { errors: ErrorsFactory }) {
+  return function emailsStreamDeleteGuard (
+    context: unknown,
+    params: { id?: unknown },
+    result: unknown,
+    next: (err?: unknown) => void
+  ) {
+    if (C.isEmailStreamId(params?.id)) {
+      return next(withId(
+        deps.errors.invalidOperation('The emails namespace is managed by the server.'),
+        'emails-reserved-stream'));
+    }
+    next();
+  };
+}
+
 export {
   touchesNamespace,
   createEventCreateGuard,
   createEventUpdateGuard,
-  createEventDeleteGuard
+  createEventDeleteGuard,
+  createStreamCreateGuard,
+  createStreamUpdateGuard,
+  createStreamDeleteGuard
 };

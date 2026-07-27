@@ -33,7 +33,22 @@ async function getMall () {
   }
   if (mall != null) { return mall; }
   initializing = true;
+  try {
+    return await buildMall();
+  } catch (err) {
+    // Init failed: drop the half-built instance so a later call rebuilds it
+    // instead of returning (or caching) a partial mall.
+    mall = undefined;
+    throw err;
+  } finally {
+    // ALWAYS clear the guard. Without this a failed init would leave
+    // `initializing = true` forever, stranding every future getMall() caller
+    // in the spin loop above.
+    initializing = false;
+  }
+}
 
+async function buildMall () {
   const config = await getConfig();
   const logger = getLogger('mall');
   const newMall: MallType = new Mall();
@@ -77,7 +92,6 @@ async function getMall () {
 
   await newMall.init();
 
-  initializing = false;
   return newMall;
 }
 

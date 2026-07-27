@@ -382,6 +382,11 @@ function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params
     if (streamQuery.storeId === storeDataUtils.LocalStoreId && !context.access.isPersonal()) {
       if (streamQuery.not == null) { streamQuery.not = []; }
       streamQuery.not.push(accountStreams.STREAM_ID_ACCOUNT);
+      // The emails container is account PII (addresses + verification state).
+      // Like the account root, a non-personal token must never read it — not
+      // even by naming :_emails: explicitly (the wildcard exclusion above only
+      // covers `any:['*']`). Personal tokens keep their explicit-name access.
+      streamQuery.not.push(EMAILS_NS_ROOT);
     }
   }
   next();

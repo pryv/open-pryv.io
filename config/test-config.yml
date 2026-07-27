@@ -38,7 +38,7 @@ services:
     url: https://mandrillapp.local/api/1.0/messages/send-template.json
     key: "doesnt-matter-in-test"
     welcomeTemplate: welcome-email
-    resetPasswordTemplate: reset-password"
+    resetPasswordTemplate: reset-password
     verifyEmailTemplate: verify-email
   register:
     url: http://127.0.0.1:5123

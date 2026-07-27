@@ -21,8 +21,25 @@ import * as container from './container.ts';
 import * as storages from 'storages';
 
 import { getPlatform } from 'platform';
+import { getLogger } from '@pryv/boiler';
 import timestamp from 'unix-timestamp';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+
+/**
+ * Re-reserve a platform row released by the legacy swap, warning if it fails.
+ * The swap releases the old primary's row before we re-reserve it; if another
+ * account claims that address in the window, the re-reserve fails and the
+ * container event now references an address this account no longer owns. That
+ * is a rare race; log it so it is diagnosable (the platform-integrity email
+ * cross-check also flags the resulting container-without-row state).
+ */
+async function reReserveOrWarn (username: string, value: string, site: string): Promise<void> {
+  const ok = await container.reserveRow(username, value);
+  if (!ok) {
+    getLogger('business:emails:operations').warn(
+      `failed to re-reserve email "${value}" for ${username} during ${site}: the address was taken by another account`);
+  }
+}
 
 /** The raw cluster-wide PlatformDB (TTL access-state store), read at call time
  *  via the barrel's live-bound export so it reflects the initialized singleton. */
@@ -232,7 +249,7 @@ async function setPrimary (deps: Deps, ctx: UserContext, value: string): Promise
 
   await legacyEmailSwap(deps, ctx, oldValue, value);
   if (oldValue != null && oldValue !== value) {
-    await container.reserveRow(ctx.username, oldValue); // stays in container
+    await reReserveOrWarn(ctx.username, oldValue, 'setPrimary'); // stays in container
   }
   if (current != null) await container.setContent(ctx.userId, current, { primary: false });
   await container.setContent(ctx.userId, target, { primary: true });
@@ -317,7 +334,7 @@ async function reconcileLegacyPrimaryChange (deps: Deps, ctx: UserContext, oldVa
     // Reconstruct the prior primary so the record is not silently lost. Its
     // row was released by the legacy swap, so re-reserve it. This is the
     // standing founding email — asserted at registration trust, not proved.
-    await container.reserveRow(ctx.username, oldValue);
+    await reReserveOrWarn(ctx.username, oldValue, 'reconcileLegacyPrimaryChange');
     await container.createEmailEvent(ctx.userId, {
       value: oldValue,
       primary: true,
@@ -363,10 +380,18 @@ async function reconcileLegacyPrimaryChange (deps: Deps, ctx: UserContext, oldVa
   for (const e of events) {
     if (e.content.value === newValue) continue;
     if (e.content.primary === true) {
-      await container.setContent(ctx.userId, e, { primary: false, status: C.STATUS_VERIFIED }, ctx.accessId);
+      // A demoted primary is verified and holds no live token — clear any
+      // token fields unconditionally so "verified ⇒ no live token" always holds.
+      await container.setContent(ctx.userId, e, {
+        primary: false,
+        status: C.STATUS_VERIFIED,
+        verificationTokenHash: null,
+        verificationTokenExpires: null,
+        verificationSentAt: null
+      }, ctx.accessId);
     }
     if (e.content.value === oldValue) {
-      await container.reserveRow(ctx.username, oldValue);
+      await reReserveOrWarn(ctx.username, oldValue, 'reconcileLegacyPrimaryChange');
     }
   }
 
