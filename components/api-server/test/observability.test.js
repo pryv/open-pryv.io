@@ -521,6 +521,64 @@ describe('[OBS] observability', function () {
     });
   });
 
+  describe('[OB-NT] named transactions', function () {
+    // A transaction NAME reaches the vendor unmasked: it bypasses the
+    // attribute exclude list and URL obfuscation alike. So the only safe
+    // naming rule is compile-time literals from a fixed set, and that is
+    // what these assert. A regression that passed `context.methodId`
+    // straight through would still look correct in review.
+    const API = require('api-server/src/API.ts').default || require('api-server/src/API.ts');
+
+    function callWith (methodId, api) {
+      const named = [];
+      // The facade refuses a second provider; each call needs a fresh one.
+      observability._reset();
+      observability.init({
+        id: 'mock',
+        setTransactionName (n) { named.push(n); },
+        recordError () {},
+        recordCustomEvent () {},
+        async startBackgroundTransaction (n, fn) { return fn(); }
+      });
+      const ctx = {
+        methodId,
+        tracing: { startSpan () {}, finishSpan () {}, setError () {} }
+      };
+      // Unregistered methods short-circuit before naming; that is fine, the
+      // assertion is about what name (if any) was emitted.
+      try {
+        api.call(ctx, {}, function () {});
+      } catch (e) { /* handler chain is irrelevant here */ }
+      return named;
+    }
+
+    it('[OB12] emits the exact literal for each named method, and nothing else', function () {
+      const api = new API();
+      for (const id of ['auth.register', 'auth.login', 'events.create', 'events.get']) {
+        api.register(id, function noop (ctx, params, result, next) { next(); });
+      }
+      for (const id of ['auth.register', 'auth.login', 'events.create', 'events.get']) {
+        const named = callWith(id, api);
+        assert.deepStrictEqual(named, [id],
+          'expected exactly one transaction name, the literal "' + id + '", got ' +
+          JSON.stringify(named));
+      }
+    });
+
+    it('[OB12B] leaves every other method to the agent, so no value can ride a name', function () {
+      const api = new API();
+      // A method id that is NOT in the table, and one that looks like it
+      // carries a value, which is the shape a careless change would emit.
+      for (const id of ['streams.get', 'events.getOne']) {
+        api.register(id, function noop (ctx, params, result, next) { next(); });
+        const named = callWith(id, api);
+        assert.deepStrictEqual(named, [],
+          id + ' must not be named explicitly; the agent names it by route ' +
+          'pattern. Got: ' + JSON.stringify(named));
+      }
+    });
+  });
+
   describe('[OB-HS] high-security opt-in', function () {
     beforeEach(async function () {
       const values = await getPlatformDB().getAllObservabilityValues();

@@ -10,8 +10,20 @@ const APIError = require('errors').APIError;
 const errors = require('errors').factory;
 const Result = require('./Result.ts').default;
 const { getConfigSync, getLogger } = require('@pryv/boiler');
+const observability = require('business/src/observability/index.ts');
 
 const logger = getLogger('api');
+
+// Methods given an explicit monitoring transaction name, mapped id to the
+// literal that gets emitted. Keep the values literal: see the note at the
+// call site for why a runtime string here would be a data-protection problem.
+// Everything not listed keeps the agent's route-pattern name, which is safe.
+const NAMED_TRANSACTIONS: Map<string, string> = new Map([
+  ['auth.register', 'auth.register'],
+  ['auth.login', 'auth.login'],
+  ['events.create', 'events.create'],
+  ['events.get', 'events.get']
+]);
 
 type AuditModule = { default?: { validApiCall (ctx: unknown, result: unknown): Promise<void> }; validApiCall? (ctx: unknown, result: unknown): Promise<void> } & { validApiCall (ctx: unknown, result: unknown): Promise<void> };
 type MethodContext = { methodId: string; tracing: { startSpan (n: string, tags?: Record<string, unknown>, parent?: string): void; finishSpan (n: string): void; setError (n: string, err: unknown): void }; username?: string; [k: string]: unknown };
@@ -183,6 +195,19 @@ class API {
     const methodList = methodMap.get(methodId);
 
     if (methodList == null) { return callback(errors.invalidMethod(methodId), null); }
+
+    // Name the transaction for the handful of methods worth watching on their
+    // own. Auto-instrumentation already names transactions after the Express
+    // route pattern, so this is about grouping, not coverage.
+    //
+    // ⚠ The emitted name is looked up in NAMED_TRANSACTIONS rather than taken
+    // from `methodId` directly, and that indirection is the point: a
+    // transaction NAME bypasses both the attribute exclude list and URL
+    // obfuscation, so anything that reaches one reaches the monitoring vendor
+    // unmasked. Passing a runtime string here would be a way to leak. Every
+    // value sent is a literal from the table below.
+    const namedTransaction = NAMED_TRANSACTIONS.get(methodId);
+    if (namedTransaction != null) observability.setTransactionName(namedTransaction);
 
     const tracing = context.tracing;
     const tags = context.username != null ? {} : { username: context.username };
