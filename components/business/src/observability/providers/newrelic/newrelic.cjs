@@ -65,11 +65,20 @@ exports.config = {
   allow_all_headers: false,
   attributes: {
     exclude: [
+      // ⚠ These must be the attribute names the AGENT EMITS, not the HTTP
+      // header names. It camel-cases multi-word headers
+      // (lib/header-attributes.js), so `user-agent` is published as
+      // `request.headers.userAgent` and a hyphenated exclusion silently
+      // matches nothing. A live attribute inventory caught exactly that.
+      // Note `allow_all_headers: false` already limits collection to
+      // accept / content-length / content-type / referer / user-agent / host,
+      // so the credential entries below are defence in depth for the case
+      // where someone flips that flag.
       'request.headers.authorization',
       'request.headers.cookie',
-      'request.headers.proxy-authorization',
-      'request.headers.set-cookie*',
-      'request.headers.x-*',
+      'request.headers.proxyAuthorization',
+      'request.headers.setCookie*',
+      'request.headers.x*',
       'request.body',
       // Subject-linking attributes. A request path on this API carries the
       // username, event ids and attachment ids; the Host header carries the
@@ -86,7 +95,8 @@ exports.config = {
       'request.headers.referer',
       // Privacy over debuggability: a User-Agent is a fingerprinting
       // contributor even though it identifies nobody on its own.
-      'request.headers.user-agent'
+      // Camel-cased by the agent, see the note above.
+      'request.headers.userAgent'
       // Retained: accept, content-type, content-length. These describe the
       // shape of a request, not who made it.
     ]

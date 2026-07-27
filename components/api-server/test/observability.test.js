@@ -287,12 +287,13 @@ describe('[OBS] observability', function () {
         'header capture must stay on the agent default allowlist');
 
       const mustExclude = [
-        // credentials and payloads
+        // Credentials and payloads. Names are the agent's published attribute
+        // names, which camel-case multi-word headers, not the header names.
         'request.headers.authorization',
         'request.headers.cookie',
-        'request.headers.proxy-authorization',
-        'request.headers.set-cookie*',
-        'request.headers.x-*',
+        'request.headers.proxyAuthorization',
+        'request.headers.setCookie*',
+        'request.headers.x*',
         'request.body',
         // subject-linking attributes: URLs carry usernames and record ids,
         // the parameter wildcard also catches route params such as
@@ -305,7 +306,7 @@ describe('[OBS] observability', function () {
         'request.headers.referer',
         // A User-Agent identifies nobody alone but contributes to
         // fingerprinting, so privacy wins over debuggability here.
-        'request.headers.user-agent'
+        'request.headers.userAgent'
       ];
       for (const key of mustExclude) {
         assert.ok(config.attributes.exclude.includes(key),
@@ -430,6 +431,65 @@ describe('[OBS] observability', function () {
       assert.strictEqual(resolved.recordSql, 'off');
       assert.strictEqual(resolved.logForwarding, false);
       assert.strictEqual(resolved.obfuscation, true);
+    });
+
+    it('[OBSC7] the agent EXCLUDES the attribute names it actually emits', function () {
+      // The exclude list is matched against the agent's published attribute
+      // names, which are not the HTTP header names: multi-word headers are
+      // camel-cased, so `request.headers.user-agent` matches nothing while
+      // `request.headers.userAgent` is what gets emitted. A hand-written list
+      // is therefore only as good as its spelling, and a wrong spelling fails
+      // silently and invisibly. Ask the agent's own filter what it decided.
+      const mustBeExcluded = [
+        'request.uri',
+        'http.url',
+        'request.headers.host',
+        'request.headers.referer',
+        'request.headers.userAgent',
+        'request.parameters.route.username',
+        'request.parameters.auth'
+      ];
+      // Retained on purpose, and asserted so this test cannot pass by
+      // excluding everything.
+      const mustBeKept = ['request.headers.accept'];
+      const result = spawnSync('node', ['-e',
+        'const c = require("newrelic/lib/config").initialize();' +
+        'const AttributeFilter = require("newrelic/lib/config/attribute-filter");' +
+        'const DESTINATIONS = AttributeFilter.DESTINATIONS;' +
+        'const f = new AttributeFilter(c);' +
+        'const out = {};' +
+        'for (const k of ' + JSON.stringify([...mustBeExcluded, ...mustBeKept]) + ') {' +
+        '  out[k] = f.filterAll(DESTINATIONS.TRANS_EVENT, k);' +
+        '}' +
+        'console.log(JSON.stringify(out));'
+      ], {
+        encoding: 'utf8',
+        cwd: path.resolve(__dirname, '../../..'),
+        env: {
+          ...process.env,
+          NEW_RELIC_HOME: buildObservabilityEnv({
+            enabled: true,
+            provider: 'newrelic',
+            appName: 'x',
+            logLevel: 'error',
+            hostname: 'core.x',
+            newrelic: { licenseKey: 'k'.repeat(40) }
+          }).NEW_RELIC_HOME,
+          NEW_RELIC_LICENSE_KEY: 'd'.repeat(40)
+        }
+      });
+      assert.strictEqual(result.status, 0, 'child failed: ' + result.stderr);
+      const decisions = JSON.parse(result.stdout.trim());
+      for (const key of mustBeExcluded) {
+        assert.strictEqual(decisions[key], 0,
+          key + ' must be excluded from transaction events, filter returned ' +
+          decisions[key] + ' (a non-zero destination mask means it is SENT)');
+      }
+      for (const key of mustBeKept) {
+        assert.notStrictEqual(decisions[key], 0,
+          key + ' should still be collected; if this is 0 the filter is ' +
+          'excluding everything and the assertions above prove nothing');
+      }
     });
 
     it('[OBSC4] the log-forwarding opt-in env var is honoured at module load', function () {
