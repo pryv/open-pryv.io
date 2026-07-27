@@ -11,14 +11,22 @@
  * Builds the deps the `sso` component needs from the app and hands them to
  * `registerRoutes`. The component soft-degrades to a no-op when SSO is disabled
  * (the default) or incompletely configured, so this mount is inert on a stock
- * deployment. The `onIdentity` seam is a placeholder here: it proves the
- * end-to-end flow but does not yet resolve an account or mint a session — that
- * lands with the account-linking + session-mint work.
+ * deployment.
+ *
+ * `onIdentity` runs the account-linking rule table over the real platform +
+ * `:_emails:` container: a proven IdP identity is mapped to a Pryv account
+ * (fail-closed), and on a match a first-login `(provider, sub)` binding is
+ * persisted. A `login` outcome resolves the account but does NOT yet mint a
+ * session (that is the next step) — for now it hands off to the landing page
+ * with a pending marker; refusals hand off with a coarse error code.
  */
 
 import type { AppLike } from './_types.ts';
 import { getLogger } from '@pryv/boiler';
-import { registerRoutes, type IdentityClaims } from 'sso';
+import { registerRoutes, resolveAccountForIdentity, type IdentityClaims } from 'sso';
+import { getPlatform } from 'platform';
+import { getUsersRepository } from 'business/src/users/index.ts';
+import { buildSsoLinkDeps } from './ssoLinkDeps.ts';
 
 type ExpressApp = { get: (...args: unknown[]) => void };
 
@@ -44,20 +52,26 @@ function deriveCallbackBase (config: AppLike['config']): string {
 export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
   const config = app.config;
   const logger = getLogger('routes:sso');
-
-  const adminKey = config.get('auth:adminAccessKey');
   const landingPageURL = config.get('sso:landingPageURL');
+  const adminKey = config.get('auth:adminAccessKey');
 
-  // Placeholder completion: the identity is proven (id_token validated), but
-  // account resolution + session mint are not wired yet — hand off to the
-  // landing page with a coarse pending marker. Log NO identifiers (provider +
-  // the email-verified boolean only).
+  // The linking deps are resolved lazily per sign-in (getPlatform /
+  // getUsersRepository are cached singletons); SSO is a low-frequency path so
+  // there is no need to hoist them at mount time.
   async function onIdentity (claims: IdentityClaims): Promise<{ location: string }> {
     const url = typeof landingPageURL === 'string' ? landingPageURL : '';
-    logger.info(`identity verified via provider "${claims.provider}" (emailVerified=${claims.emailVerified}); ` +
-      'account linking not yet available');
     const sep = url.includes('?') ? '&' : '?';
-    return { location: url + sep + 'ssoStatus=pending' };
+    const deps = buildSsoLinkDeps(await getPlatform(), await getUsersRepository(), logger);
+    const outcome = await resolveAccountForIdentity(deps, claims);
+    if (outcome.kind === 'login') {
+      // Account resolved (+ first-login binding persisted). Session mint lands
+      // in the next step; for now hand off with a pending marker. Log the
+      // provider only — never the resolved username / claims.
+      logger.info(`sso: identity via provider "${claims.provider}" resolved to an account (session mint pending)`);
+      return { location: `${url}${sep}ssoStatus=pending` };
+    }
+    logger.info(`sso: sign-in refused via provider "${claims.provider}" (${outcome.code})`);
+    return { location: `${url}${sep}ssoError=${encodeURIComponent(outcome.code)}` };
   }
 
   registerRoutes(expressApp, {

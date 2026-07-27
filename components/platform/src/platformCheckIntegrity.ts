@@ -49,6 +49,11 @@ export default async function platformCheckIntegrity (
     // cross-core uniqueness. It is NOT a user account (System Streams) field,
     // so it has no repository counterpart by design.
     if (entry.field === 'alias') continue;
+    // NOTE: `sso-<provider>` third-party-sign-in bindings are ALSO platform-only
+    // (no System Streams counterpart), but they are NOT skipped here — they are
+    // removed per known user in the match pass below, so an sso row owned by no
+    // repository user (a partially-failed delete) still surfaces as an orphan.
+    // Because these rows route logins, orphan detection matters.
     // Skip entries without a username (e.g. user-core/ prefix entries)
     if (entry.username == null) continue;
     // Skip reserved usernames (e.g. __cores__ for core registration).
@@ -203,6 +208,19 @@ export default async function platformCheckIntegrity (
       }
       // if user in platformEntryByUser is empty delete it
       if (platformEntryByUser[usernameKey] != null && Object.keys(platformEntryByUser[usernameKey]).length === 0) delete platformEntryByUser[usernameKey];
+    }
+
+    // Remove THIS known user's platform-only `sso-<provider>` binding rows. The
+    // account-field pass above never matches them (they have no System Streams
+    // counterpart), but they legitimately belong to this repository user — so
+    // dropping them here leaves only sso rows owned by NO repository user to
+    // survive to the leftover pass, where they are correctly reported as
+    // orphans (a stale binding that could mis-route an SSO login).
+    if (platformEntryByUser[usernameKey] != null) {
+      for (const field of Object.keys(platformEntryByUser[usernameKey])) {
+        if (field.startsWith('sso-')) delete platformEntryByUser[usernameKey][field];
+      }
+      if (Object.keys(platformEntryByUser[usernameKey]).length === 0) delete platformEntryByUser[usernameKey];
     }
   }
 
