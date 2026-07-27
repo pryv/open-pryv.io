@@ -6,8 +6,7 @@
   ],
   "configuration": {
     "fields": {
-      "attachmentsDirPath":  { "type": "string",  "required": true,  "description": "Directory for event file attachments" },
-      "previewsDirPath":     { "type": "string",  "required": true,  "description": "Directory for event file previews" }
+      "previewsDirPath":     { "type": "string",  "required": true,  "description": "Directory for event file previews. NOTE: event file attachments do NOT have a separate directory - they co-locate with per-user data under the user local directory (storages.engines.sqlite.path)." }
     }
   }
 }

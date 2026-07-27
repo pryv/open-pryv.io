@@ -1115,7 +1115,8 @@ async function main () {
       engines: {
         ...(pgConfig ? { postgresql: pgConfig } : {}),
         filesystem: {
-          attachmentsDirPath: `${dataFolder}/users`,
+          // Attachments co-locate under the user local directory
+          // (sqlite.path); only previews need their own directory.
           previewsDirPath: `${dataFolder}/previews`
         },
         ...(s3Config ? { s3: s3Config } : {}),

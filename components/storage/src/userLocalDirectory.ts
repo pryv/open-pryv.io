@@ -32,8 +32,16 @@ function setBasePathTestOnly (path: string | undefined) {
 }
 
 /**
- * Load config and make sure baseUserDirectory exists
- * This could also handle eventual migrations
+ * Load config and make sure baseUserDirectory exists.
+ *
+ * The base is `storages:engines:sqlite:path` and holds ALL per-user local
+ * data under `<base>/<shard>/<userId>/`: the sqlite user DBs, HF series
+ * files, AND event file attachments (`.../attachments/`). There is no
+ * separate `attachmentsDirPath` - attachments co-locate here by design, so
+ * per-user erasure is a single recursive delete of the user directory.
+ * (Only previews live elsewhere, via `previewsDirPath`.)
+ *
+ * This could also handle eventual migrations.
  */
 async function init () {
   if (basePath) return;

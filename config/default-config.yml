@@ -74,7 +74,9 @@ storages:
     sqlite:
       path: 'REPLACE ME'
     filesystem:
-      attachmentsDirPath: 'REPLACE ME'
+      # Event file ATTACHMENTS co-locate with per-user data under the user
+      # local directory (storages:engines:sqlite:path) - there is no separate
+      # attachments directory. Only previews have their own directory.
       previewsDirPath: 'REPLACE ME'
     # s3 — S3-compatible attachment storage (diskless alternative to
     # filesystem; select with `storages.file.engine: s3`). Uncomment + fill:

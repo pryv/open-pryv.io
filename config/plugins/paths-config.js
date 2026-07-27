@@ -16,7 +16,8 @@ module.exports = {
         path: path.join(varPryvFolder, 'users')
       },
       filesystem: {
-        attachmentsDirPath: path.join(varPryvFolder, 'attachments'),
+        // Attachments co-locate with per-user data under sqlite.path (the
+        // user local directory base); only previews need their own dir.
         previewsDirPath: path.join(varPryvFolder, 'previews')
       },
       mongodb: {

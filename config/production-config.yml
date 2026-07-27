@@ -12,7 +12,8 @@ storages:
       port: 27017
       name: pryv-node
     filesystem:
-      attachmentsDirPath: "${PRYV_DATADIR}/service-core-files/attachments"
+      # Attachments co-locate under the user local directory
+      # (storages:engines:sqlite:path); no separate attachments directory.
       previewsDirPath: "${PRYV_DATADIR}/service-core-files/previews"
 register:
   secret: OVERRIDE ME
