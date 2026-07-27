@@ -34,9 +34,20 @@ and an operator who wants the previous behaviour has to ask for it explicitly.
   which also covers the case where a credential travels as `?auth=` or
   `?readToken=` and would otherwise be re-emitted when a request is forwarded
   between cores.
-- **URL obfuscation is enabled**, because attribute exclusion cannot reach the
-  *names* of external segments and spans, and those embed the outbound path.
-  Leading path segments and record-shaped identifiers are masked there.
+- **Outbound paths are masked entirely** in external segment and span names,
+  the one surface attribute exclusion cannot reach. Masking only recognisable
+  identifier shapes was tried first and leaked: attachment filenames,
+  user-chosen stream ids and webhook path segments all survived it. Nothing in
+  a path is treated as safe now. The cost, accepted deliberately, is that
+  external calls no longer break down per route; your own routes are
+  unaffected because transaction names are route patterns.
+- **Error message text is redacted.** The platform's own validation errors can
+  quote client-supplied values (an unknown-referenced-streams error names the
+  rejected stream ids), and an extension can put anything in a message. Error
+  class, stack location, route and timing still reach the provider.
+- **The `User-Agent` header is no longer sent**, and custom events and custom
+  attributes are disabled. Neither is a subject identifier on its own; both are
+  avenues for one, and nothing in the platform emits the latter.
 - **Application log forwarding is off.** The agent would otherwise auto-instrument
   the logging stack and forward log records including their message bodies, which
   no filter scrubs for identifiers. Operators who want it can opt in by setting

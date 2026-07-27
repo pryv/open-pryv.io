@@ -83,25 +83,45 @@ exports.config = {
       'request.parameters.*',
       'http.url',
       'request.headers.host',
-      'request.headers.referer'
-      // Deliberately retained: user-agent, accept, content-type,
-      // content-length. Operationally useful and not subject-linking.
+      'request.headers.referer',
+      // Privacy over debuggability: a User-Agent is a fingerprinting
+      // contributor even though it identifies nobody on its own.
+      'request.headers.user-agent'
+      // Retained: accept, content-type, content-length. These describe the
+      // shape of a request, not who made it.
     ]
   },
   // Attribute exclusion cannot reach SEGMENT and SPAN NAMES, which embed the
-  // outbound path on cross-core forwards. Obfuscation is the only mechanism
-  // that rewrites those. Masks the leading path segment (the username),
-  // cuid-shaped ids, and any trailing query text, while leaving the route
-  // words in between: /wactiv/events/c123... becomes */events/*
+  // outbound path on cross-core forwards and on webhook deliveries.
+  // Obfuscation is the only mechanism that rewrites those.
+  //
+  // This masks the ENTIRE path rather than matching identifier shapes.
+  // Shape-matching was tried and leaked: it caught leading segments and
+  // cuid-shaped ids, but attachment filenames, user-chosen stream ids, and
+  // anything in a non-leading segment survived (an attachment download
+  // forwarded between cores became `*/events/*/*/blood-report-jane-doe.pdf`).
+  // Enumerating every identifier shape a caller might use is a losing game,
+  // so nothing in a path is treated as safe. The cost is the loss of
+  // per-route latency breakdown on EXTERNAL calls; transaction names remain
+  // route-shaped, so the APM view of our own routes is unaffected.
   // Hard-coded rather than env-gated so it can be cited as a constant.
   url_obfuscation: {
     enabled: true,
     regex: {
-      pattern: '(^/[^/?]+)|(c[a-z0-9]{20,})|(\\?.*$)',
-      flags: 'g',
+      pattern: '^/.*',
+      flags: '',
       replacement: '*'
     }
   },
+  // Redact the messages of captured errors. Our own validation errors quote
+  // client-supplied values (rejected stream ids, for instance), and an
+  // extension can put anything in a message, so message text is not a
+  // surface we can keep clean by review.
+  strip_exception_messages: { enabled: true },
+  // Nothing in production emits these, and they are an easy accidental
+  // channel for identifiers, so they are shut rather than left available.
+  custom_insights_events: { enabled: false },
+  api: { custom_attributes_enabled: false },
   application_logging: {
     enabled: true,
     forwarding: {

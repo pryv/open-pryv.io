@@ -14,10 +14,16 @@ const require = createRequire(import.meta.url);
  *
  * Side effects:
  *   - `require('newrelic')` — activates the agent's Express/http/etc.
- *     instrumentation. The agent reads its config from env vars the
- *     master already populated (NEW_RELIC_LICENSE_KEY,
- *     NEW_RELIC_APP_NAME, NEW_RELIC_PROCESS_HOST_DISPLAY_NAME,
- *     NEW_RELIC_LOG_LEVEL, NEW_RELIC_HIGH_SECURITY=true).
+ *     instrumentation. Credentials and labelling come from env vars the
+ *     master populated (NEW_RELIC_LICENSE_KEY, NEW_RELIC_APP_NAME,
+ *     NEW_RELIC_PROCESS_HOST_DISPLAY_NAME, NEW_RELIC_LOG_LEVEL,
+ *     NEW_RELIC_HIGH_SECURITY, which defaults to false).
+ *     ⚠ Everything that governs WHAT DATA LEAVES the deployment lives in
+ *     `newrelic.cjs`, which the agent finds by scanning NEW_RELIC_HOME.
+ *     Nothing here requires that file, and it is invisible to the scan
+ *     unless it keeps a `.js`/`.cjs`/`.mjs` name. Do not describe this
+ *     boot path as env-var-only: an earlier version of this comment said
+ *     so, and the scrub config sat unloaded for weeks behind it.
  *   - Constructs an adapter wrapping the agent handle.
  *   - Attaches the adapter to the provider-agnostic façade via
  *     `observability.init(adapter)`.

@@ -32,6 +32,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const assert = require('node:assert');
 const path = require('node:path');
+const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const cuid = require('cuid');
 
@@ -301,30 +302,59 @@ describe('[OBS] observability', function () {
         'request.parameters.*',
         'http.url',
         'request.headers.host',
-        'request.headers.referer'
+        'request.headers.referer',
+        // A User-Agent identifies nobody alone but contributes to
+        // fingerprinting, so privacy wins over debuggability here.
+        'request.headers.user-agent'
       ];
       for (const key of mustExclude) {
         assert.ok(config.attributes.exclude.includes(key),
           'attributes.exclude must contain ' + key);
       }
 
-      // Retained on purpose: operationally useful, not subject-linking.
-      assert.ok(!config.attributes.exclude.includes('request.headers.user-agent'),
-        'user-agent is deliberately retained');
-
       assert.strictEqual(config.transaction_tracer.record_sql, 'off',
         'SQL text must never be captured');
+      assert.strictEqual(config.strip_exception_messages.enabled, true,
+        'error message text can quote client-supplied values, so it is redacted');
+      assert.strictEqual(config.custom_insights_events.enabled, false);
+      assert.strictEqual(config.api.custom_attributes_enabled, false);
     });
 
-    it('[OBSC2] enables URL obfuscation, the only cover for segment and span names', function () {
+    it('[OBSC2] masks the WHOLE path in segment and span names', function () {
       const { config } = require(NR_CONFIG_MODULE);
       // Attribute exclusion cannot reach a segment or span NAME, and those
-      // embed the outbound path on cross-core forwards.
+      // embed the outbound path on cross-core forwards and webhook calls.
       assert.strictEqual(config.url_obfuscation.enabled, true);
-      assert.strictEqual(config.url_obfuscation.regex.pattern,
-        '(^/[^/?]+)|(c[a-z0-9]{20,})|(\\?.*$)');
-      assert.strictEqual(config.url_obfuscation.regex.flags, 'g');
+      assert.strictEqual(config.url_obfuscation.regex.pattern, '^/.*',
+        'the whole path must be masked; matching identifier SHAPES leaked');
       assert.strictEqual(config.url_obfuscation.regex.replacement, '*');
+    });
+
+    it('[OBSC6] the mask leaves nothing identifying in a path, whatever its shape', function () {
+      // Regression guard for a real leak. An earlier pattern matched
+      // identifier shapes (leading segment, cuid-like ids, query strings) and
+      // missed everything else: attachment filenames, user-chosen stream ids,
+      // and webhook path segments all survived. Enumerating shapes a caller
+      // might use is a losing game, so assert that nothing survives.
+      const { config } = require(NR_CONFIG_MODULE);
+      const { pattern, flags, replacement } = config.url_obfuscation.regex;
+      const mask = (p) => p.replace(new RegExp(pattern, flags), replacement);
+
+      const leakedBefore = [
+        // attachment download forwarded between cores: the filename is
+        // user-chosen and sat in a non-leading segment
+        '/alice/events/c1a2b3c4d5e6f7g8h9i0j1k2/cfileid00000000000000000/blood-report-jane-doe.pdf',
+        // user-chosen stream id
+        '/alice/streams/diary-anna',
+        // webhook delivery to an app-supplied path
+        '/pryv-notify/alice',
+        // an id shape nobody thought of
+        '/alice/events/EVT-2026-0001'
+      ];
+      for (const path of leakedBefore) {
+        assert.strictEqual(mask(path), replacement,
+          'path must mask to exactly the replacement, got: ' + mask(path));
+      }
     });
 
     it('[OBSC3] ships application log forwarding OFF by default', function () {
@@ -353,8 +383,24 @@ describe('[OBS] observability', function () {
       // than off, and log forwarding ON. Every assertion above passed happily
       // through all of that, because they read the object we export rather than
       // the config the agent resolves. So ask the agent.
-      const providerDir = path.resolve(
-        __dirname, '../../business/src/observability/providers/newrelic');
+      // Take the directory from the env builder rather than computing it
+      // here, so this asserts the actual production chain: the value master
+      // puts in NEW_RELIC_HOME must be a directory the agent can discover
+      // the config in. Computing it independently would leave that link
+      // untested, which is the same seam that hid the original defect.
+      const producedEnv = buildObservabilityEnv({
+        enabled: true,
+        provider: 'newrelic',
+        appName: 'x',
+        logLevel: 'error',
+        hostname: 'core.x',
+        newrelic: { licenseKey: 'k'.repeat(40) }
+      });
+      const providerDir = producedEnv.NEW_RELIC_HOME;
+      assert.ok(providerDir, 'master must emit NEW_RELIC_HOME');
+      assert.ok(fs.existsSync(path.join(providerDir, 'newrelic.cjs')),
+        'NEW_RELIC_HOME must contain a file the agent will discover, found: ' +
+        fs.readdirSync(providerDir).join(', '));
       const result = spawnSync('node', ['-e',
         'const c = require("newrelic/lib/config").initialize();' +
         'console.log(JSON.stringify({' +
