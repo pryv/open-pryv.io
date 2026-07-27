@@ -2,13 +2,28 @@
 
 ## Unreleased
 
-### Observability: stricter default scrubbing, and log forwarding now off by default
+### Observability: the agent's scrubbing config was never applied; stricter posture now in force
 
-Optional APM reporting keeps working as before, but a deployment that enables it
-now sends the monitoring vendor considerably less. This changes shipped defaults,
-so **upgrading is enough to inherit the stricter posture**: no configuration
-change is required, and an operator who wants the previous behaviour has to ask
-for it explicitly.
+⚠ **If you have optional APM enabled, read this.** The agent configuration that
+was supposed to strip sensitive data was placed in a file the agent does not
+look for, so it was **never loaded**. Affected deployments have been running on
+the agent's built-in defaults instead, which means the vendor received request
+URLs, the `Host` header, route parameters (including the username as a
+first-class attribute), obfuscated SQL rather than none, and **forwarded
+application log records including their message text**. The documented
+protections listed below did not take effect. This is fixed by moving the
+configuration to a filename the agent discovers, and a test now asserts the
+posture through the agent's own configuration loader rather than by inspecting
+our own object, which is what allowed the gap to pass unnoticed.
+
+Operators who enable APM should assume the previous behaviour applied for as
+long as it was enabled, and check what their provider account holds. Note that
+ingested telemetry usually cannot be deleted on demand.
+
+Beyond that fix, a deployment that enables APM now sends considerably less than
+the original design intended. This changes shipped defaults, so **upgrading is
+enough to inherit the stricter posture**: no configuration change is required,
+and an operator who wants the previous behaviour has to ask for it explicitly.
 
 - **Request URLs, query and route parameters, and the `Host` and `Referer`
   headers are no longer sent.** On this API a request path carries the username

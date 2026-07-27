@@ -1,8 +1,23 @@
 # Changelog - Internal (no API impact)
 
-## fix(observability): the high-security opt-in was dead code, and the agent config now pins the scrub posture
+## fix(observability): the agent never loaded its config file, the high-security opt-in was dead code, and the posture is now test-pinned
 
-Two internal gaps behind the operator-visible scrubbing change.
+Three internal gaps behind the operator-visible scrubbing change.
+
+**The agent never loaded the config file.** It discovers configuration by
+scanning `NEW_RELIC_HOME` for exactly `newrelic.js`, `newrelic.cjs`,
+`newrelic.mjs`, or whatever `NEW_RELIC_CONFIG_FILENAME` names, and otherwise
+falls back silently to environment variables and built-in defaults. The config
+lived in `newrelic.ts`, which is invisible to that scan, and the provider boot
+module only calls `require('newrelic')` without referencing it. Verified against
+the pinned agent's own loader: with the directory as it was, the agent resolved
+`attributes.exclude: []`, `record_sql: 'obfuscated'` and
+`application_logging.forwarding.enabled: true`. The configuration is now in
+`newrelic.cjs` (`.cjs` because the package is ESM and the agent uses `require`),
+with `newrelic.ts` re-exporting it so callers and tests read the same object.
+`[OBSC5]` asks the agent's loader what it resolved, so this class of gap fails a
+test rather than passing silently: every other assertion in the suite inspected
+our own exported object and was happy throughout.
 
 **The high-security opt-in never worked.** The worker-env builder read
 `obs.newrelic.highSecurity`, but the platform config resolver never returned

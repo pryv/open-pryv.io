@@ -344,6 +344,48 @@ describe('[OBS] observability', function () {
       assert.strictEqual(config.application_logging.local_decorating.enabled, false);
     });
 
+    it('[OBSC5] the AGENT actually discovers this config, not just our importers', function () {
+      // The regression this guards is not hypothetical: the config used to live
+      // in a .ts file, which the agent cannot discover. It scans NEW_RELIC_HOME
+      // for exactly newrelic.js / newrelic.cjs / newrelic.mjs (or
+      // NEW_RELIC_CONFIG_FILENAME) and otherwise silently runs on env vars and
+      // built-in defaults: no exclusions, SQL recorded as obfuscated rather
+      // than off, and log forwarding ON. Every assertion above passed happily
+      // through all of that, because they read the object we export rather than
+      // the config the agent resolves. So ask the agent.
+      const providerDir = path.resolve(
+        __dirname, '../../business/src/observability/providers/newrelic');
+      const result = spawnSync('node', ['-e',
+        'const c = require("newrelic/lib/config").initialize();' +
+        'console.log(JSON.stringify({' +
+        '  exclude: c.attributes.exclude,' +
+        '  recordSql: c.transaction_tracer.record_sql,' +
+        '  logForwarding: c.application_logging.forwarding.enabled,' +
+        '  obfuscation: c.url_obfuscation && c.url_obfuscation.enabled' +
+        '}));'
+      ], {
+        encoding: 'utf8',
+        cwd: path.resolve(__dirname, '../../..'),
+        env: {
+          ...process.env,
+          NEW_RELIC_HOME: providerDir,
+          NEW_RELIC_LICENSE_KEY: 'd'.repeat(40),
+          NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED: undefined
+        }
+      });
+      assert.strictEqual(result.status, 0, 'child failed: ' + result.stderr);
+      const resolved = JSON.parse(result.stdout.trim());
+
+      assert.ok(resolved.exclude.includes('request.uri'),
+        'the agent resolved no URL exclusion, so it did not load our config file: ' +
+        JSON.stringify(resolved.exclude));
+      assert.ok(resolved.exclude.includes('request.parameters.*'));
+      assert.ok(resolved.exclude.includes('request.headers.host'));
+      assert.strictEqual(resolved.recordSql, 'off');
+      assert.strictEqual(resolved.logForwarding, false);
+      assert.strictEqual(resolved.obfuscation, true);
+    });
+
     it('[OBSC4] the log-forwarding opt-in env var is honoured at module load', function () {
       // `forwarding.enabled` is evaluated when the module is first imported,
       // and these modules load through ESM interop, so clearing require.cache
