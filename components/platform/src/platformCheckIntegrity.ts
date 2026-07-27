@@ -216,9 +216,16 @@ export default async function platformCheckIntegrity (
     // dropping them here leaves only sso rows owned by NO repository user to
     // survive to the leftover pass, where they are correctly reported as
     // orphans (a stale binding that could mis-route an SSO login).
+    // Guard: never drop a real (possibly custom) account field that merely
+    // happens to be named `sso-*` — those are handled by the match pass above,
+    // so a leftover one is a genuine error we must NOT hide.
     if (platformEntryByUser[usernameKey] != null) {
       for (const field of Object.keys(platformEntryByUser[usernameKey])) {
-        if (field.startsWith('sso-')) delete platformEntryByUser[usernameKey][field];
+        if (field.startsWith('sso-') &&
+            !indexedFields.includes(field) &&
+            !accountStreams.uniqueFieldNames.includes(field)) {
+          delete platformEntryByUser[usernameKey][field];
+        }
       }
       if (Object.keys(platformEntryByUser[usernameKey]).length === 0) delete platformEntryByUser[usernameKey];
     }

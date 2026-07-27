@@ -15,8 +15,17 @@
  */
 
 import type { LinkDeps } from 'sso';
-import { findRawByValue } from 'business/src/emails/container.ts';
+import { getRawEvents } from 'business/src/emails/container.ts';
 import { isProvedOwnership } from 'business/src/emails/constants.ts';
+
+/** Normalize an email for comparison the way HASHED-mode platform routing does
+ *  (lowercase + trim), so a case-differing IdP claim that still ROUTED to the
+ *  account also passes the proof check. (In cleartext mode the platform email
+ *  lookup is byte-exact, so a case-differing claim misses at routing — a
+ *  platform-level trait, not resolved here.) */
+function normalizeEmail (email: string): string {
+  return email.trim().toLowerCase();
+}
 
 /** Platform field name that holds a provider's `sub` bindings. */
 export const bindingField = (provider: string): string => `sso-${provider}`;
@@ -76,8 +85,17 @@ export function buildSsoLinkDeps (
     isEmailProved: async (username, email) => {
       const userId = await usersRepository.getUserIdForUsername(username);
       if (userId == null) return false;
-      const ev = await findRawByValue(userId, email);
-      return ev != null && isProvedOwnership(ev.content);
+      const target = normalizeEmail(email);
+      // A LIVE (non-trashed), case-insensitively matching, PROVED entry.
+      // Case-insensitive so an IdP email whose case differs from the stored one
+      // still verifies; trashed events are excluded so a removed-but-not-yet-
+      // released address cannot pass the gate.
+      const events = await getRawEvents(userId);
+      return events.some((ev) =>
+        (ev as { trashed?: boolean }).trashed !== true &&
+        typeof ev.content.value === 'string' &&
+        normalizeEmail(ev.content.value) === target &&
+        isProvedOwnership(ev.content));
     },
     logger
   };
