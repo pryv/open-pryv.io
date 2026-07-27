@@ -853,7 +853,7 @@ Additional smaller breaking changes already landed in `2.0.0-pre`: `accesses.cre
 - HF-series ingress on raw deploys requires the optional in-process dispatcher (Plan 67) or an nginx vhost (sample at `docs/nginx-ingress-sample.conf`). The deployed-infra lib-js `[CHFA]` case fails without one; the in-process dispatcher closes it for low-volume deployments. Documented in `faq-infra.md`.
 - `[ASTE][AS02][TJ8S]` audit time-range test is an intermittent matrix flake (passes in isolation, fires occasionally in the full sequential matrix). Same family as the existing `[ZD22]` baseline noise. Not a runtime bug. Tracked in workspace bug log.
 - `[CMCHS-AP][AP01]` CMC back-channel access integrity test is an intermittent matrix flake (~1/2 on test infra; runtime behaviour on deployed infra is unverified pending the RC cut's deploy-validation pass).
-- OAuth2 RFC 6749 surface is deferred to post-v2. The current `/reg/access` flow is Pryv-native; OAuth2 will be additive.
+- OAuth2 RFC 6749 surface is deferred to post-v2. The current `/reg/access` flow is Pryv-native; OAuth2 will be additive. **(Superseded in a later 2.x release: the OAuth2 authorization-code / PKCE flow shipped additively, along with DPoP, `private_key_jwt` client auth, and token revocation — see the OAuth2 entries above and `docs/oauth2.md`. The `/reg/access` flow remains supported.)**
 
 ### Compliance posture
 
@@ -1229,7 +1229,7 @@ See `components/cmc/README.md` for the canonical design, `IMPLEMENTERS-GUIDE.md`
 
 ## Known gaps in v2.0.0
 
-- **OAuth2 authorization code flow** (RFC 6749 `/oauth2/authorize`, `/oauth2/token`, client registration, refresh tokens, PKCE) is **not** in v2. Clients that need OAuth2-style authorization must continue using the existing `/reg/access` polling flow (ported from the former `service-register`).
+- **OAuth2 authorization code flow** (RFC 6749 `/oauth2/authorize`, `/oauth2/token`, client registration, refresh tokens, PKCE) is **not** in v2. Clients that need OAuth2-style authorization must continue using the existing `/reg/access` polling flow (ported from the former `service-register`). **(Superseded: this flow shipped additively in a later 2.x release — `/oauth2/authorize`, `/oauth2/token`, PKCE, refresh tokens, DPoP, and client revocation are now available; see the OAuth2 entries above and `docs/oauth2.md`. The `/reg/access` polling flow remains supported.)**
 
 ## Multi-factor authentication (merged from former service-mfa)
 
