@@ -26,6 +26,17 @@ auth:
   passwordResetRequestMaxAge: 3600000
   passwordResetPageURL: https://sw.pryv.me/access/reset-password.html
   emailVerificationPageURL: https://sw.pryv.me/access/verify-email.html
+# Third-party sign-in (OIDC relying party). Disabled by default; uncomment and
+# fill in to enable. `clientSecret` is a per-core secret — keep it YAML-only.
+# sso:
+#   enabled: true
+#   landingPageURL: https://sw.pryv.me/access/sso-signin.html
+#   providers:
+#     google:
+#       issuer: https://accounts.google.com
+#       clientId: OVERRIDE ME
+#       clientSecret: OVERRIDE ME
+#       label: Google
 services:
   register:
     url: https://reg.pryv.io

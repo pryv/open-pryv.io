@@ -112,6 +112,47 @@ if (get('letsEncrypt.enabled') === true) {
   }
 }
 
+// sso.* — third-party sign-in (OIDC relying party). Mirrors checkSsoConfig +
+// the sso.landingPageURL REQUIRED_WHEN in config/plugins/config-validation.js.
+if (get('sso.enabled') === true) {
+  if (get('dns.active') === true) {
+    problems.push('sso.enabled is true but dns.active is also true — SSO is single-core / dnsLess only in this version; disable one of the two');
+  }
+  const callbackBaseURL = get('sso.callbackBaseURL');
+  if (typeof callbackBaseURL === 'string' && callbackBaseURL !== '') {
+    let cbOk = false;
+    try { cbOk = new URL(callbackBaseURL).protocol === 'https:'; } catch (e) { cbOk = false; }
+    if (!cbOk) problems.push('sso.callbackBaseURL must be a valid https URL when set');
+  }
+  const providers = get('sso.providers');
+  if (Array.isArray(providers)) {
+    problems.push('sso.providers must be a map keyed by provider id, not a list');
+  }
+  const providerIds = (providers && typeof providers === 'object' && !Array.isArray(providers)) ? Object.keys(providers) : [];
+  if (providerIds.length > 0 && isMissingOrSentinel(get('sso.landingPageURL'))) {
+    problems.push('sso.landingPageURL missing or unset (required when sso.enabled is true and providers are configured)');
+  }
+  const SSO_PROVIDER_ID_RE = /^[a-z0-9](?:[a-z0-9_-]{0,30}[a-z0-9])?$/;
+  for (const id of providerIds) {
+    if (!SSO_PROVIDER_ID_RE.test(id)) {
+      problems.push(`sso.providers.${id}: id must be a url-safe slug (lowercase letters/digits, '-' or '_')`);
+    }
+    const issuer = get(`sso.providers.${id}.issuer`);
+    if (isMissingOrSentinel(issuer)) {
+      problems.push(`sso.providers.${id}.issuer missing or unset`);
+    } else {
+      let httpsOk = false;
+      try { httpsOk = new URL(issuer).protocol === 'https:'; } catch (e) { httpsOk = false; }
+      if (!httpsOk) problems.push(`sso.providers.${id}.issuer must be a valid https URL`);
+    }
+    for (const key of ['clientId', 'clientSecret']) {
+      if (isMissingOrSentinel(get(`sso.providers.${id}.${key}`))) {
+        problems.push(`sso.providers.${id}.${key} missing or unset (required for a configured provider)`);
+      }
+    }
+  }
+}
+
 // DNS topology consistency (mirrors checkDnsTopologyConsistency in
 // config/plugins/config-validation.js). dnsLess.isActive DEFAULTS to true
 // at runtime, so for a dns-active config it must be explicitly false in

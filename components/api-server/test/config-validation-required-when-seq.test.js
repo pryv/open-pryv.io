@@ -305,3 +305,111 @@ describe('[CVDT] config-validation DNS topology consistency', () => {
     assert.strictEqual(problems.length, 0);
   });
 });
+
+describe('[SSOCFG] config-validation third-party sign-in (SSO)', () => {
+  let checkSsoConfig, checkRequiredWhen;
+
+  before(async function () {
+    this.timeout(30000);
+    await initTests();
+    await initCore();
+    ({ checkSsoConfig, checkRequiredWhen } =
+      require('../../../config/plugins/config-validation.js'));
+  });
+
+  function fakeConfig (map) {
+    return { get: (key) => map[key] };
+  }
+
+  const validProvider = {
+    google: { issuer: 'https://accounts.google.com', clientId: 'cid', clientSecret: 'csecret', label: 'Google' }
+  };
+
+  it('[SSOCFG-01] disabled (default) → no checks run, no problems', () => {
+    const problems = [];
+    checkSsoConfig(fakeConfig({ 'sso:enabled': false, 'dns:active': true, 'sso:providers': { bad: {} } }), problems);
+    assert.strictEqual(problems.length, 0, JSON.stringify(problems, null, 2));
+  });
+
+  it('[SSOCFG-02] enabled with a valid provider (dnsLess) → no problems', () => {
+    const problems = [];
+    checkSsoConfig(fakeConfig({ 'sso:enabled': true, 'sso:providers': validProvider }), problems);
+    assert.strictEqual(problems.length, 0, JSON.stringify(problems, null, 2));
+  });
+
+  it('[SSOCFG-03] enabled with embedded DNS (dns.active) → single-core refusal (D7)', () => {
+    const problems = [];
+    checkSsoConfig(fakeConfig({ 'sso:enabled': true, 'dns:active': true, 'sso:providers': validProvider }), problems);
+    const p = problems.find((p) => p.path && p.path[0] === 'sso' && p.path[1] === 'enabled');
+    assert.ok(p, 'expected a single-core/dns problem');
+    assert.ok(p.message.includes('single-core'), p.message);
+  });
+
+  it('[SSOCFG-04] provider id not a url-safe slug → problem', () => {
+    const problems = [];
+    checkSsoConfig(fakeConfig({
+      'sso:enabled': true,
+      'sso:providers': { 'Bad Id!': { issuer: 'https://idp.example.com', clientId: 'a', clientSecret: 'b' } }
+    }), problems);
+    const p = problems.find((p) => p.message.includes('url-safe slug'));
+    assert.ok(p, 'expected a slug problem: ' + JSON.stringify(problems));
+  });
+
+  it('[SSOCFG-05] provider missing clientSecret → problem', () => {
+    const problems = [];
+    checkSsoConfig(fakeConfig({
+      'sso:enabled': true,
+      'sso:providers': { google: { issuer: 'https://accounts.google.com', clientId: 'cid' } }
+    }), problems);
+    const p = problems.find((p) => p.message.includes('clientSecret'));
+    assert.ok(p, 'expected a missing-clientSecret problem');
+  });
+
+  it('[SSOCFG-06] provider issuer not https → problem', () => {
+    const problems = [];
+    checkSsoConfig(fakeConfig({
+      'sso:enabled': true,
+      'sso:providers': { google: { issuer: 'http://accounts.google.com', clientId: 'a', clientSecret: 'b' } }
+    }), problems);
+    const p = problems.find((p) => p.message.includes('https URL'));
+    assert.ok(p, 'expected an https-issuer problem');
+  });
+
+  it('[SSOCFG-07] landingPageURL required once enabled with providers (REQUIRED_WHEN)', () => {
+    const problems = [];
+    checkRequiredWhen(fakeConfig({
+      'sso:enabled': true,
+      'sso:providers': validProvider,
+      'sso:landingPageURL': ''
+    }), problems);
+    const p = problems.find((p) => p.payload && p.payload.path === 'sso:landingPageURL');
+    assert.ok(p, 'expected a missing landingPageURL problem');
+  });
+
+  it('[SSOCFG-08] landingPageURL NOT required when disabled or no providers', () => {
+    const problems = [];
+    checkRequiredWhen(fakeConfig({ 'sso:enabled': false, 'sso:providers': validProvider, 'sso:landingPageURL': undefined }), problems);
+    checkRequiredWhen(fakeConfig({ 'sso:enabled': true, 'sso:providers': {}, 'sso:landingPageURL': undefined }), problems);
+    const sso = problems.filter((p) => p.payload && p.payload.path === 'sso:landingPageURL');
+    assert.strictEqual(sso.length, 0, 'expected NO landingPageURL problem when disabled / no providers');
+  });
+
+  it('[SSOCFG-09] providers as a YAML list (not a map) → problem', () => {
+    const problems = [];
+    checkSsoConfig(fakeConfig({
+      'sso:enabled': true,
+      'sso:providers': [{ issuer: 'https://accounts.google.com', clientId: 'a', clientSecret: 'b' }]
+    }), problems);
+    const p = problems.find((p) => p.message.includes('map keyed by provider id'));
+    assert.ok(p, 'expected a providers-must-be-a-map problem: ' + JSON.stringify(problems));
+  });
+
+  it('[SSOCFG-10] callbackBaseURL non-https when set → problem; empty/unset → fine', () => {
+    let problems = [];
+    checkSsoConfig(fakeConfig({ 'sso:enabled': true, 'sso:callbackBaseURL': 'http://core.example.com', 'sso:providers': validProvider }), problems);
+    assert.ok(problems.find((p) => p.message.includes('callbackBaseURL')), 'expected an https-callbackBaseURL problem');
+    problems = [];
+    checkSsoConfig(fakeConfig({ 'sso:enabled': true, 'sso:callbackBaseURL': '', 'sso:providers': validProvider }), problems);
+    assert.strictEqual(problems.length, 0, 'empty callbackBaseURL is allowed (derived from public URL)');
+  });
+});

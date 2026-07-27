@@ -1,0 +1,14 @@
+{
+  "name": "sso",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Third-party sign-in: Pryv as an OpenID Connect relying party",
+  "homepage": "https://pryv.com",
+  "license": "BSD-3-Clause",
+  "author": "Pryv <info@pryv.com> (https://pryv.com)",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "openid-client": "^6.0.0"
+  }
+}

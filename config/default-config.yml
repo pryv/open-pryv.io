@@ -127,6 +127,26 @@ auth:
   passwordAgeMinDays: 0
   passwordPreventReuseHistoryLength: 0
 
+# === Third-party sign-in (Pryv as an OpenID Connect relying party) ===
+# Inert unless a provider is configured: no routes mount and no network calls
+# are made. NOTE: distinct from the legacy `auth.ssoCookie*` trusted-app cookie
+# keys — same three letters, unrelated feature.
+sso:
+  enabled: false                 # master kill-switch (opt-in)
+  landingPageURL: ''             # auth-app page that receives the one-time
+                                 # sign-in handoff (REQUIRED when enabled with
+                                 # providers)
+  callbackBaseURL: ''            # optional; defaults from the public service
+                                 # URL. `<base>/auth/sso/<provider>/callback`
+                                 # must be registered VERBATIM at each IdP.
+  providers: {}                  # operator IdP allow-list, default EMPTY
+  # providers:
+  #   google:
+  #     issuer: https://accounts.google.com
+  #     clientId: ''             # from the IdP's app registration
+  #     clientSecret: ''         # PER-CORE secret — YAML only, never PlatformDB
+  #     label: Google            # sign-in button label
+
 # === PER-CORE: local plugin code references ===
 customExtensions:
   defaultFolder: 'REPLACE ME'

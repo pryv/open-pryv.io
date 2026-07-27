@@ -222,6 +222,13 @@ class Application {
     // MethodContext + api method registry.
     require('./routes/oauth2.ts').default(this.expressApp, this);
 
+    // Third-party sign-in (OIDC relying party). Soft-degrades to a no-op when
+    // `sso:enabled` is false (the default) or no provider is configured, so a
+    // stock deployment mounts nothing. Registered here, near the oauth2 mount,
+    // so the root-level /auth/sso/* routes bind before the per-user /:username
+    // routes are considered.
+    require('./routes/sso.ts').default(this.expressApp, this);
+
     // system, root, register and delete MUST come first
     require('./routes/auth/delete.ts').default(this.expressApp, this);
     require('./routes/auth/register.ts').default(this.expressApp, this);

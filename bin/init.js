@@ -453,6 +453,21 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #           headers: { Authorization: 'Bearer <api-token>' }
 # #           bodyTemplate: '{"to": "{{phoneNumber}}", "text": "{{message}}"}'
 
+# # sso — third-party sign-in (Pryv as an OpenID Connect relying party).
+# # Single-core / dnsLess only in this version. clientSecret is a per-core
+# # secret — keep it YAML-only. At each IdP register the callback served by
+# # THIS core's API host: <callbackBaseURL or public API URL>/auth/sso/<id>/
+# # callback (NOT the landingPageURL host). Unrelated to legacy auth.ssoCookie*.
+# # sso:
+# #   enabled: true
+# #   landingPageURL: ${dnsLess ? 'https://auth.example.com/sso-signin' : 'https://sw.example.com/access/sso-signin'}
+# #   providers:
+# #     google:
+# #       issuer: https://accounts.google.com
+# #       clientId: <from the IdP app registration>
+# #       clientSecret: <per-core secret>
+# #       label: Google
+
 ${HOSTINGS_BLOCK}
 ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # custom.systemStreams — extend the account schema (e.g. add 'phone',
