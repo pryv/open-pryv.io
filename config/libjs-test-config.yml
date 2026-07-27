@@ -23,3 +23,10 @@ auth:
   adminAccessKey: 'libjs-test-admin-key'
   filesReadTokenSecret: 'libjs-test-files-secret'
   ssoCookieSignSecret: 'libjs-test-sso-secret'
+  # Required by config validation whenever the verify-email sub-feature is on,
+  # and it ships on by default. The servers this file configures are spawned
+  # with NODE_ENV=development, so they never read test-config.yml and need
+  # their own copy. Without it the server exits 1 during validation and the
+  # suite fails with an opaque "Server not ready" timeout instead.
+  # The URL itself is never dereferenced here; these tests mock no mail.
+  emailVerificationPageURL: 'http://test.pryv.local/verify-email'
