@@ -8,34 +8,47 @@
 /**
  * Third-party sign-in — route mount + soft-degrade gate.
  *
- * `registerRoutes` establishes the component seam and the enable gate. It
- * soft-degrades to a no-op in two cases, so the host boots unchanged:
- *   - `sso:enabled` is not `true` (the default) — silent, no routes;
- *   - enabled but `sso:providers` is empty — warns, no routes.
- *
- * The `GET /auth/sso/:provider/{start,callback}` handlers, provider registry,
- * and state-cookie machinery land in a subsequent change; this scaffold wires
- * the seam and the gate so the enable path exists and is validated end-to-end.
+ * `registerRoutes` progressively soft-degrades so the host boots unchanged:
+ *   - `sso:enabled` not `true` (the default) → silent, no routes;
+ *   - enabled but `sso:providers` empty → warn, no routes;
+ *   - enabled + providers but the wiring deps (adminKey / callbackBaseURL /
+ *     landingPageURL / onIdentity) are absent → warn, no routes.
+ * Only with the full set does it mount `GET /auth/sso/:provider/{start,callback}`.
  */
 
 import type { ConfigLike } from '@pryv/boiler';
+import { createRegistry } from './providers.ts';
+import { handleStart } from './routes/start.ts';
+import { handleCallback, type IdentityClaims } from './routes/callback.ts';
 
 /** Everything the component needs from the host, injected by the api-server. */
-export type SsoDeps = { config: ConfigLike };
+export type SsoDeps = {
+  config: ConfigLike;
+  /** Operator admin key — the state-cookie signing root. */
+  adminKey?: string;
+  /** Absolute base whose `/auth/sso/<provider>/callback` is registered at IdPs. */
+  callbackBaseURL?: string;
+  /** Where a finished (or failed) sign-in hands off. */
+  landingPageURL?: string;
+  /** Completion seam invoked with the proven identity (account resolution + mint). */
+  onIdentity?: (claims: IdentityClaims) => Promise<{ location: string }>;
+  logger?: { warn: (msg: string) => void };
+};
 
 /** Minimal Express surface used at mount time. */
-type ExpressLike = { get?: (...args: unknown[]) => void };
+type ExpressLike = { get?: (path: string, handler: (...args: unknown[]) => void) => void };
 
 /** The configured provider ids — the operator's IdP allow-list (may be empty). */
 function configuredProviderIds (config: ConfigLike): string[] {
   const providers = config.get('sso:providers');
-  if (providers == null || typeof providers !== 'object') return [];
+  if (providers == null || typeof providers !== 'object' || Array.isArray(providers)) return [];
   return Object.keys(providers as Record<string, unknown>);
 }
 
 /**
  * Mount the SSO routes on an Express app. No-op (host boots unchanged) unless
- * `sso:enabled` is true AND at least one provider is configured.
+ * `sso:enabled` is true, at least one provider is configured, AND the wiring
+ * deps are present.
  */
 export function registerRoutes (app: ExpressLike, deps: SsoDeps): void {
   if (typeof app?.get !== 'function') {
@@ -52,8 +65,29 @@ export function registerRoutes (app: ExpressLike, deps: SsoDeps): void {
     return;
   }
 
-  // The route handlers mount in a subsequent change. Announce the configured
-  // providers so an operator enabling the feature early sees it took effect.
-  console.warn(`[sso] ${providerIds.length} provider(s) configured (${providerIds.join(', ')}); ` +
-    'route handlers are not yet available in this build');
+  if (deps.adminKey == null || deps.adminKey === '' ||
+      deps.callbackBaseURL == null || deps.callbackBaseURL === '' ||
+      deps.landingPageURL == null || deps.landingPageURL === '' ||
+      typeof deps.onIdentity !== 'function') {
+    console.warn('[sso] enabled with providers but wiring is incomplete ' +
+      '(adminKey / callbackBaseURL / landingPageURL / onIdentity) — no SSO routes mounted');
+    return;
+  }
+
+  const registry = createRegistry(config);
+  const base = deps.callbackBaseURL.replace(/\/+$/, '');
+  const callbackUrl = (provider: string): string => `${base}/auth/sso/${provider}/callback`;
+
+  app.get!('/auth/sso/:provider/start',
+    handleStart({ registry, adminKey: deps.adminKey, callbackUrl, logger: deps.logger }) as (...a: unknown[]) => void);
+
+  app.get!('/auth/sso/:provider/callback',
+    handleCallback({
+      registry,
+      adminKey: deps.adminKey,
+      callbackUrl,
+      landingPageURL: deps.landingPageURL,
+      onIdentity: deps.onIdentity,
+      logger: deps.logger
+    }) as (...a: unknown[]) => void);
 }

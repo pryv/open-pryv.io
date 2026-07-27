@@ -16,3 +16,6 @@
 
 export { registerRoutes } from './routes.ts';
 export type { SsoDeps } from './routes.ts';
+export type { IdentityClaims } from './routes/callback.ts';
+export { createRegistry, readProviders } from './providers.ts';
+export type { ProviderDef, ProviderPublic, Registry } from './providers.ts';

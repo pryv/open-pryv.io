@@ -10,5 +10,8 @@
   "main": "src/index.ts",
   "dependencies": {
     "openid-client": "^6.0.0"
+  },
+  "devDependencies": {
+    "jose": "^6.0.0"
   }
 }
