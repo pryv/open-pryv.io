@@ -19,3 +19,5 @@ export type { SsoDeps } from './routes.ts';
 export type { IdentityClaims } from './routes/callback.ts';
 export { createRegistry, readProviders } from './providers.ts';
 export type { ProviderDef, ProviderPublic, Registry } from './providers.ts';
+export { resolveAccountForIdentity } from './linking.ts';
+export type { LinkDeps, LinkOutcome, RefuseCode } from './linking.ts';
