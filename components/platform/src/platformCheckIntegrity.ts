@@ -15,9 +15,12 @@ type PlatformEntry = { field: string; username?: string; value: unknown; isUniqu
 type PlatformDBLike = { getAllWithPrefix: (prefix: string) => Promise<PlatformEntry[]> };
 type PiiHasherLike = { hashFor: (field: string, value: string) => string };
 type IntegrityOptions = { hasher?: PiiHasherLike | null };
-// A (user, field) can hold SEVERAL PlatformDB rows: a user may own more than
-// one value for a unique field (e.g. several verified emails), so entries are
-// kept as a list per field rather than a single value.
+// A (user, field) can hold SEVERAL PlatformDB rows: the `email` field may own
+// more than one value (multiple emails per account), so entries are kept as a
+// list per field. Only `email` is legitimately multi-row — the primary is
+// matched against the repository and any leftover email rows are cross-checked
+// against the account's `:_emails:` container; a leftover on any OTHER field is
+// reported as an orphan.
 type PerUserEntries = Record<string, Record<string, Array<{ value: unknown; isUnique: boolean }>>>;
 
 const USERNAME_FIELD = 'username';
@@ -63,9 +66,66 @@ export default async function platformCheckIntegrity (
   const usersFromRepository = await usersRepository.getAll();
   const indexedFields = accountStreams.indexedFieldNames;
 
-  const infos = {
+  // Lazy requires (circular-import avoidance, same as the repository require
+  // above — emails/container.ts imports `platform`). Used only to cross-check
+  // leftover `email` rows against a user's `:_emails:` container events; the
+  // container is fetched only for users who actually hold extra email rows.
+  const emailsContainer = require('business/src/emails/container.ts');
+  const EMAIL_FIELD = require('business/src/emails/constants.ts').UNIQUE_FIELD;
+  // Once the container store proves unreachable for one user, stop trying for
+  // the rest of the run: a lazy re-init on every user could hang (and is a
+  // heavyweight side effect). `emailCrossCheckSkipped` surfaces the degradation
+  // in `infos` so a silent skip leaves a trace instead of a false all-clear.
+  let crossCheckUnavailable = false;
+  let emailCrossCheckSkipped = 0;
+
+  // Cross-check a user's leftover `email` platform rows against their
+  // `:_emails:` container. `primaryToken` is the already-matched primary row's
+  // token form (kept for the reverse check). Both directions are token-vs-token,
+  // so hashed mode is handled by `tokenFor` (identity in cleartext mode).
+  async function crossCheckEmailRows (
+    userId: string, username: string,
+    leftoverRows: Array<{ value: unknown }>, primaryToken: unknown
+  ): Promise<void> {
+    if (crossCheckUnavailable) { emailCrossCheckSkipped++; return; }
+    let rawEvents: Array<{ content?: { value?: unknown } }>;
+    try {
+      rawEvents = await emailsContainer.getRawEvents(userId);
+    } catch (_err) {
+      // Container store not reachable in this caller (e.g. a platform-only
+      // integrity context, or a per-user store error): skip the container
+      // cross-check for the REST of the run rather than retry per user, and
+      // record it in `infos` so the degradation is not silent.
+      crossCheckUnavailable = true;
+      emailCrossCheckSkipped++;
+      return;
+    }
+    const containerTokens = new Set(
+      rawEvents.map((ev) => tokenFor(EMAIL_FIELD, String(ev.content?.value)))
+    );
+    // Forward: every leftover platform row must be backed by a container email.
+    for (const row of leftoverRows) {
+      if (!containerTokens.has(String(row.value))) {
+        errors.push(`Found email row with value: "${row.value}" for username "${username}" in the platform db with no matching email on the account`);
+      }
+    }
+    // Reverse (opportunistic — the container was fetched anyway): every
+    // container email must own a platform row. A container email whose row was
+    // lost while NO other leftover row exists is not caught here (the container
+    // is never fetched for a single-row user); full reverse coverage would cost
+    // a mall read per user and is intentionally deferred.
+    const allRowTokens = new Set([String(primaryToken), ...leftoverRows.map((r) => String(r.value))]);
+    for (const token of containerTokens) {
+      if (!allRowTokens.has(token)) {
+        errors.push(`Account of "${username}" holds an email with no matching row in the platform db (token "${token}")`);
+      }
+    }
+  }
+
+  const infos: { usersCountOnPlatform: number; usersCountOnRepository: number; emailCrossCheckSkipped: number } = {
     usersCountOnPlatform: Object.keys(platformEntryByUser).length,
-    usersCountOnRepository: usersFromRepository.length
+    usersCountOnRepository: usersFromRepository.length,
+    emailCrossCheckSkipped: 0
   };
 
   for (let i = 0; i < usersFromRepository.length; i++) {
@@ -116,10 +176,29 @@ export default async function platformCheckIntegrity (
             const txt = isUnique ? 'unique found indexed' : 'indexed found unique';
             errors.push(`Expected value "${valueRepo}" of field "${field}" for username "${username}" in the platform db to be "${txt}"`);
           }
-          // Matched: drop the whole field. Any additional rows for it are
-          // legitimately owned values (e.g. non-primary verified emails) and
-          // must not be reported as orphans below.
-          delete platformEntryByUser[usernameKey][field];
+          // Remove only the matched (repository / primary) row, then account
+          // for any remaining rows of this field.
+          fieldEntries.splice(matchIdx, 1);
+          if (fieldEntries.length === 0) {
+            delete platformEntryByUser[usernameKey][field];
+          } else if (field === EMAIL_FIELD) {
+            // The `email` field legitimately holds several rows (multiple owned
+            // emails). Cross-check the leftovers against the account's
+            // `:_emails:` container: every extra row must be backed by a
+            // container email record, and (opportunistically, since we fetch it)
+            // every container email must own a platform row. The container holds
+            // cleartext; platform rows hold the token form (HMAC in hashed mode),
+            // so bridge via tokenFor exactly as the primary match does.
+            await crossCheckEmailRows(userRepo.id, username, fieldEntries, expectedValue);
+            delete platformEntryByUser[usernameKey][field];
+          } else {
+            // A non-email single-valued unique/indexed field must hold exactly
+            // one row; any leftover after the primary match is an orphan.
+            for (const row of fieldEntries) {
+              errors.push(`Found extra row with value: "${row.value}" of single-valued field "${field}" for username "${username}" in the platform db`);
+            }
+            delete platformEntryByUser[usernameKey][field];
+          }
         }
       }
       // if user in platformEntryByUser is empty delete it
@@ -147,6 +226,7 @@ export default async function platformCheckIntegrity (
       }
     }
   }
+  infos.emailCrossCheckSkipped = emailCrossCheckSkipped;
   return {
     title: 'Platform DB vs users repository',
     infos,

@@ -34,6 +34,9 @@ primary. **This feature is beta** — the surface may still change.
   account and address; the server stores only its hash.
 - Addresses resolve to the account for registration/routing whether primary or
   secondary; password reset still mails the primary only (unchanged).
+- Existing accounts need no migration: the primary is synthesized from the
+  singular `email` field until the container is first written, so `account.get`
+  returns the same result before and after the container is populated.
 - Config: `account.maxEmails` (default 5, hard cap 20),
   `account.emailVerification.tokenMaxAgeMs` (default 24h),
   `account.emailVerification.resendCooldownMs` (default 5 min),

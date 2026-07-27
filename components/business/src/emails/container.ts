@@ -34,7 +34,7 @@ type EmailView = {
 
 /**
  * Raw stored content of a container event. Extends the public {@link EmailView}
- * with the internal verification-token fields (Fable design decision, P3): a
+ * with the internal verification-token fields: a
  * pending email carries the sha256 HASH of its emailed token (never the token
  * itself), the token's expiry, and the last-sent timestamp for resend cooldown.
  * These NEVER reach {@link toView} — a personal token reading raw content sees
