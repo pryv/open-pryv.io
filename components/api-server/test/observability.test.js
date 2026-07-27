@@ -23,6 +23,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  *   [OB07] shim no-ops when PRYV_OBSERVABILITY_PROVIDER unset
  *   [OB08] logForwarder forwards ONLY errors at default log level
  *   [OB09] logForwarder forwards warns when log level is raised to 'warn'
+ *   [OBSC] agent config pins the scrub constants (exclusions, URL
+ *          obfuscation, no SQL capture, log forwarding off by default)
+ *   [OBHS] high-security opt-in round-trips PlatformDB -> config -> worker env
  *
  * Sequential because it mutates PlatformDB + process.env + global façade state.
  */
@@ -266,6 +269,153 @@ describe('[OBS] observability', function () {
       assert.strictEqual(calls[1].kind, 'event');
       assert.strictEqual(calls[1].type, 'PryvLog');
       assert.strictEqual(calls[1].attrs.level, 'warn');
+    });
+  });
+
+  describe('[OB-SC] agent config scrub constants', function () {
+    // These values are quoted verbatim in the customer-facing data-flow
+    // documentation, which answers "what does our APM vendor receive?".
+    // Pin them here so a well-meaning edit cannot loosen the posture
+    // silently: if this test changes, that documentation must change too.
+    const NR_CONFIG_MODULE = 'business/src/observability/providers/newrelic/newrelic.ts';
+
+    it('[OBSC] excludes credentials, request bodies, URLs and identifying attributes', function () {
+      const { config } = require(NR_CONFIG_MODULE);
+
+      assert.strictEqual(config.allow_all_headers, false,
+        'header capture must stay on the agent default allowlist');
+
+      const mustExclude = [
+        // credentials and payloads
+        'request.headers.authorization',
+        'request.headers.cookie',
+        'request.headers.proxy-authorization',
+        'request.headers.set-cookie*',
+        'request.headers.x-*',
+        'request.body',
+        // subject-linking attributes: URLs carry usernames and record ids,
+        // the parameter wildcard also catches route params such as
+        // request.parameters.route.username, and Host carries the username
+        // as a subdomain in DNS-ful topologies
+        'request.uri',
+        'request.parameters.*',
+        'http.url',
+        'request.headers.host',
+        'request.headers.referer'
+      ];
+      for (const key of mustExclude) {
+        assert.ok(config.attributes.exclude.includes(key),
+          'attributes.exclude must contain ' + key);
+      }
+
+      // Retained on purpose: operationally useful, not subject-linking.
+      assert.ok(!config.attributes.exclude.includes('request.headers.user-agent'),
+        'user-agent is deliberately retained');
+
+      assert.strictEqual(config.transaction_tracer.record_sql, 'off',
+        'SQL text must never be captured');
+    });
+
+    it('[OBSC2] enables URL obfuscation, the only cover for segment and span names', function () {
+      const { config } = require(NR_CONFIG_MODULE);
+      // Attribute exclusion cannot reach a segment or span NAME, and those
+      // embed the outbound path on cross-core forwards.
+      assert.strictEqual(config.url_obfuscation.enabled, true);
+      assert.strictEqual(config.url_obfuscation.regex.pattern,
+        '(^/[^/?]+)|(c[a-z0-9]{20,})|(\\?.*$)');
+      assert.strictEqual(config.url_obfuscation.regex.flags, 'g');
+      assert.strictEqual(config.url_obfuscation.regex.replacement, '*');
+    });
+
+    it('[OBSC3] ships application log forwarding OFF by default', function () {
+      // The agent auto-instruments the logging stack and would forward log
+      // records including message bodies. Attribute exclusion does not apply
+      // to a message, and nothing here scrubs identifiers out of one.
+      assert.strictEqual(
+        process.env.NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED,
+        undefined,
+        'this assertion is only meaningful with the opt-in env var unset');
+      const { config } = require(NR_CONFIG_MODULE);
+      assert.strictEqual(config.application_logging.forwarding.enabled, false,
+        'log forwarding must be off unless an operator opts in');
+      assert.strictEqual(config.application_logging.enabled, true);
+      assert.strictEqual(config.application_logging.metrics.enabled, true,
+        'log-to-metric counts carry no message content and stay on');
+      assert.strictEqual(config.application_logging.local_decorating.enabled, false);
+    });
+
+    it('[OBSC4] the log-forwarding opt-in env var is honoured at module load', function () {
+      // `forwarding.enabled` is evaluated when the module is first imported,
+      // and these modules load through ESM interop, so clearing require.cache
+      // does NOT re-evaluate them. Load in a child process instead, which is
+      // also closer to reality: the setting is decided when a worker boots.
+      const modulePath = path.resolve(
+        __dirname,
+        '../../business/src/observability/providers/newrelic/newrelic.ts');
+      const read = (env) => {
+        const result = spawnSync('node', ['--input-type=module', '-e',
+          'const m = await import("file://' + modulePath + '");' +
+          'console.log(m.config.application_logging.forwarding.enabled);'
+        ], { encoding: 'utf8', env: { ...process.env, ...env } });
+        assert.strictEqual(result.status, 0,
+          'child failed: ' + result.stderr);
+        return result.stdout.trim();
+      };
+
+      assert.strictEqual(
+        read({ NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED: 'true' }),
+        'true',
+        'an explicit opt-in must be honoured');
+      assert.strictEqual(
+        read({ NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED: undefined }),
+        'false',
+        'and the shipped default with no env set must stay off');
+    });
+  });
+
+  describe('[OB-HS] high-security opt-in', function () {
+    beforeEach(async function () {
+      const values = await getPlatformDB().getAllObservabilityValues();
+      for (const { key } of values) {
+        await getPlatformDB().deleteObservabilityValue(key);
+      }
+    });
+
+    it('[OBHS] defaults to false with no PlatformDB row', async function () {
+      const obs = await platform.getObservabilityConfig();
+      assert.strictEqual(obs.newrelic.highSecurity, false);
+    });
+
+    it('[OBHS2] round-trips PlatformDB -> config -> worker env', async function () {
+      await platform.setObservabilityValue('enabled', true);
+      await platform.setObservabilityValue('provider', 'newrelic');
+      await platform.setObservabilityValue('newrelic-license-key', 'k'.repeat(40));
+      await platform.setObservabilityValue('newrelic-high-security', true);
+
+      const obs = await platform.getObservabilityConfig();
+      assert.strictEqual(obs.newrelic.highSecurity, true,
+        'the opt-in row must reach the resolved config');
+
+      const env = buildObservabilityEnv(obs);
+      assert.strictEqual(env.NEW_RELIC_HIGH_SECURITY, 'true',
+        'and must reach the worker env, or the opt-in is dead code');
+    });
+
+    it('[OBHS3] is stored in the clear, unlike the license key', async function () {
+      // Not a secret: an operator comparing cores should be able to read it.
+      await platform.setObservabilityValue('newrelic-high-security', true);
+      const raw = await getPlatformDB().getObservabilityValue('newrelic-high-security');
+      assert.ok(/true/.test(String(raw)),
+        'expected a readable boolean, got: ' + String(raw));
+    });
+
+    it('[OBHS4] local YAML wins over the PlatformDB row, as for `enabled`', async function () {
+      await platform.setObservabilityValue('newrelic-high-security', true);
+      await withInjectedConfig({ observability: { newrelic: { highSecurity: false } } }, async () => {
+        const obs = await platform.getObservabilityConfig();
+        assert.strictEqual(obs.newrelic.highSecurity, false,
+          'the local override is the operator kill-switch and must win');
+      });
     });
   });
 });

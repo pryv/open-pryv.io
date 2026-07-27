@@ -1067,7 +1067,7 @@ class Platform {
    *   appName: string,
    *   logLevel: 'error' | 'warn' | 'info' | 'debug',
    *   hostname: string,
-   *   newrelic: { licenseKey: string }
+   *   newrelic: { licenseKey: string, highSecurity: boolean }
    * }>}
    */
   async getObservabilityConfig () {
@@ -1077,7 +1077,7 @@ class Platform {
       provider?: string;
       logLevel?: string;
       appName?: string;
-      newrelic?: { licenseKey?: string };
+      newrelic?: { licenseKey?: string; highSecurity?: boolean };
     };
     const localYaml = (this.#config.get('observability') || {}) as ObservabilityYaml;
     const dbRows = await this.#db.getAllObservabilityValues();
@@ -1118,9 +1118,19 @@ class Platform {
 
     // Decrypt provider secrets on demand — only if they exist AND the
     // operator hasn't set a local override in YAML.
+    // High Security Mode is account-side and irreversible once enabled, so it
+    // ships off; this row is the operator's opt-in once their account has it.
+    // Not a secret, so it is stored and read in the clear. YAML wins over DB
+    // to keep the local-override emergency path consistent with `enabled`.
+    const highSecurity = localYaml.newrelic?.highSecurity != null
+      ? localYaml.newrelic.highSecurity === true
+      : (db['newrelic-high-security'] != null
+          ? parseJsonBoolean(db['newrelic-high-security'])
+          : false);
     const newrelic = {
       licenseKey: localYaml.newrelic?.licenseKey ||
-        await this.#decryptObservabilitySecret('newrelic-license-key', db['newrelic-license-key'])
+        await this.#decryptObservabilitySecret('newrelic-license-key', db['newrelic-license-key']),
+      highSecurity
     };
 
     return { enabled, provider, appName, logLevel, hostname, newrelic };

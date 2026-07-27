@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### Observability: stricter default scrubbing, and log forwarding now off by default
+
+Optional APM reporting keeps working as before, but a deployment that enables it
+now sends the monitoring vendor considerably less. This changes shipped defaults,
+so **upgrading is enough to inherit the stricter posture**: no configuration
+change is required, and an operator who wants the previous behaviour has to ask
+for it explicitly.
+
+- **Request URLs, query and route parameters, and the `Host` and `Referer`
+  headers are no longer sent.** On this API a request path carries the username
+  and record identifiers, the `Host` header carries the username as a subdomain
+  in DNS-ful deployments, and route parameters are captured as attributes in
+  their own right, so all of them are now excluded from every destination
+  (transactions, errors, traces and spans). Query parameters are excluded too,
+  which also covers the case where a credential travels as `?auth=` or
+  `?readToken=` and would otherwise be re-emitted when a request is forwarded
+  between cores.
+- **URL obfuscation is enabled**, because attribute exclusion cannot reach the
+  *names* of external segments and spans, and those embed the outbound path.
+  Leading path segments and record-shaped identifiers are masked there.
+- **Application log forwarding is off.** The agent would otherwise auto-instrument
+  the logging stack and forward log records including their message bodies, which
+  no filter scrubs for identifiers. Operators who want it can opt in by setting
+  `NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED=true` on the service
+  process, and they own what those messages contain. Log-derived metrics, which
+  carry no message content, remain enabled.
+- **What still flows**, so APM remains useful: route-shaped transaction names,
+  status codes, timings, the core's own FQDN, and datastore and external call
+  timing. Request bodies, `Authorization`/`Cookie` headers and SQL text were
+  already excluded and remain so.
+- **New command `observability newrelic set-high-security <true|false>`.** High
+  Security Mode was previously documented as operator-selectable but could not
+  actually be turned on. It is now settable, still off by default. Enable it on
+  the provider account *first*: the agent refuses to connect when the two sides
+  disagree, and the account-side setting cannot be undone without provider
+  support. It is not required for the scrubbing above, which is unconditional.
+
 ### Multiple emails per account (beta)
 
 An account can now hold more than one email address, each with its own

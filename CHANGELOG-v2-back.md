@@ -1,5 +1,37 @@
 # Changelog - Internal (no API impact)
 
+## fix(observability): the high-security opt-in was dead code, and the agent config now pins the scrub posture
+
+Two internal gaps behind the operator-visible scrubbing change.
+
+**The high-security opt-in never worked.** The worker-env builder read
+`obs.newrelic.highSecurity`, but the platform config resolver never returned
+that field and no CLI command could set it, so the corresponding environment
+variable was always `false` regardless of operator intent. The resolver now
+reads a `newrelic-high-security` platform row (stored in the clear: it is not a
+secret, and operators compare it across cores), a local YAML override wins over
+it exactly as it does for `enabled`, and `observability newrelic
+set-high-security` writes it. Covered by `[OBHS]`-`[OBHS4]`, which assert the
+row reaches the resolved config and the worker environment rather than just the
+database.
+
+**Agent config constants are now test-pinned.** The exclusion list, URL
+obfuscation pattern, `record_sql: 'off'` and the log-forwarding default are
+quoted verbatim in customer-facing data-flow documentation, so `[OBSC]`-`[OBSC4]`
+assert each of them. A future edit that loosens the posture now fails a test
+instead of silently contradicting published documentation. `[OBSC4]` loads the
+config in a child process on purpose: the log-forwarding default is evaluated at
+module load and these modules load through ESM interop, so clearing the module
+cache in-process does not re-evaluate them.
+
+**Diagnostics.** `observability show` now prints the high-security state and a
+summary of what is and is not sent to the provider, and reports the
+log-forwarding line conditionally since it cannot observe the service process's
+environment from another shell. When storage engine start-up fails, the command
+now explains that engine start-up opens the user-data connection before it
+reaches the platform database, instead of surfacing a raw driver authentication
+error that sends operators looking in the wrong place.
+
 ## fix(messages): pubsub workers now reconnect after the broker is lost
 
 The internal TCP pub/sub bus (used, among other things, to broadcast cache

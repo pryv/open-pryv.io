@@ -19,6 +19,7 @@
 //   node bin/observability.js set-log-level <level>      # error | warn | info | debug
 //   node bin/observability.js set-app-name <name>
 //   node bin/observability.js newrelic set-license-key <key>
+//   node bin/observability.js newrelic set-high-security <true|false>
 //
 // The license key is stored AES-256-GCM encrypted at rest (HKDF key
 // material derived from auth.adminAccessKey); the `show` command never
@@ -94,7 +95,23 @@ async function initPlatform () {
   const config = await getConfig();
   const rqliteUrl = config.get('storages:engines:rqlite:url') || 'http://localhost:4001';
   await waitForRqlite(rqliteUrl);
-  await require('storages').init(config);
+  // The storages barrel opens the user-data (baseStorage) connection before it
+  // reaches PlatformDB, so this CLI cannot run without user-data credentials
+  // even though it only ever touches PlatformDB rows. When that connection is
+  // the thing that failed, say so plainly: the raw driver message (e.g. a SASL
+  // complaint about a non-string password) reads like a PlatformDB problem and
+  // sends operators looking in the wrong place.
+  try {
+    await require('storages').init(config);
+  } catch (err) {
+    throw new Error(
+      'could not initialise storage engines: ' + err.message +
+      '\nThis CLI only reads and writes PlatformDB, but engine start-up opens the' +
+      '\nuser-data storage connection first, so it needs those credentials too.' +
+      '\nCheck the baseStorage engine settings for this core (host, port, user,' +
+      '\npassword) in the config this process loaded, then retry.'
+    );
+  }
   const { getPlatform } = require('platform');
   return await getPlatform();
 }
@@ -138,6 +155,20 @@ async function runShow (platform) {
   console.log('logLevel:         ' + obs.logLevel);
   console.log('hostname:         ' + obs.hostname);
   console.log('newrelic licenseKey set: ' + (licenseKeySet ? 'yes' : 'no'));
+  console.log('newrelic highSecurity:   ' + (obs.newrelic.highSecurity === true));
+  console.log('');
+  // What the shipped agent config sends, restated here so an operator can
+  // answer "what does the vendor see?" without reading source.
+  console.log('Data sent to the provider:');
+  console.log('  sent:     route-shaped transaction names, status codes, timings,');
+  console.log('            this core FQDN, datastore and external call timing');
+  console.log('  NOT sent: request URLs and query parameters, request bodies,');
+  console.log('            auth/cookie/Host/Referer headers, SQL text (hard-coded)');
+  console.log('  NOT sent: application log messages, unless the log-forwarding');
+  console.log('            env opt-in is set on the service process (this command');
+  console.log('            runs in a different shell and cannot see that)');
+  console.log('  Authoritative list: the agent config in');
+  console.log('  components/business/src/observability/providers/newrelic/');
   console.log('');
 
   // Cross-reference against the boot-log [platform-config-snapshot] line.
@@ -200,7 +231,31 @@ async function runNewrelic (platform, args) {
     console.log('Rolling restart cores to pick up the change.');
     return;
   }
-  throw new Error('newrelic: unknown subcommand "' + (args.subcommand || '') + '" (expected "set-license-key")');
+  if (args.subcommand === 'set-high-security') {
+    const raw = args.licenseKey; // positional slot after the subcommand
+    if (raw !== 'true' && raw !== 'false') {
+      throw new Error('newrelic set-high-security: expected "true" or "false" (got "' + (raw || '') + '")');
+    }
+    await platform.setObservabilityValue('newrelic-high-security', raw === 'true');
+    if (raw === 'true') {
+      console.log('newrelic High Security Mode requested for this platform.');
+      console.log('');
+      console.log('IMPORTANT: enable High Security Mode on the New Relic ACCOUNT first.');
+      console.log('The agent refuses to connect when the two disagree, so a core');
+      console.log('restarted before the account side is ready reports nothing at all.');
+      console.log('Account-side HSM cannot be switched off again without New Relic support.');
+      console.log('');
+      console.log('It also disables custom events, custom attributes and log forwarding,');
+      console.log('and coerces SQL capture to obfuscated. The default scrubbing this');
+      console.log('platform ships does not depend on it.');
+    } else {
+      console.log('newrelic High Security Mode disabled for this platform (the default).');
+      console.log('Attribute exclusion and URL obfuscation still apply; they are hard-coded.');
+    }
+    console.log('Rolling restart cores to pick up the change.');
+    return;
+  }
+  throw new Error('newrelic: unknown subcommand "' + (args.subcommand || '') + '" (expected "set-license-key" or "set-high-security")');
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +293,10 @@ function printUsage (stream) {
   stream.write('  observability set-log-level <error|warn|info|debug>\n');
   stream.write('  observability set-app-name <name>\n');
   stream.write('  observability newrelic set-license-key <key>\n');
+  stream.write('  observability newrelic set-high-security <true|false>\n');
   stream.write('\n');
   stream.write('The license key is stored AES-256-GCM encrypted in PlatformDB.\n');
   stream.write('Rotation requires a rolling restart of all cores.\n');
+  stream.write('High Security Mode must be enabled on the provider account FIRST;\n');
+  stream.write('the agent refuses to connect when the two sides disagree.\n');
 }
