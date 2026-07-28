@@ -548,4 +548,106 @@ describe('[AUDT] Audit', function () {
       });
     });
   });
+
+  describe('[AT07] breach-scope read enrichment (recordCount + scopedStreamIds)', function () {
+    before(async function () {
+      // an empty stream so one read can return zero records
+      const emptyRes = await coreRequest
+        .post(createUserPath('/streams'))
+        .set('Authorization', access.token)
+        .send({ id: 'empty', name: 'EMPTY' });
+      assert.ok(emptyRes.status === 201 || emptyRes.status === 200, 'empty stream created');
+      // seed a few events in stream 'yo' so a scoped read has a non-zero count
+      for (let i = 0; i < 3; i++) {
+        const r = await coreRequest
+          .post(eventsPath)
+          .set('Authorization', access.token)
+          .send({ streamIds: ['yo'], type: 'note/txt', content: 'e' + i });
+        assert.strictEqual(r.status, 201, 'seed event created');
+      }
+    });
+
+    describe('[AT71] a scoped events.get', function () {
+      let now, readCount;
+      before(async function () {
+        now = timestamp.now();
+        const res = await coreRequest
+          .get(eventsPath)
+          .set('Authorization', access.token)
+          .query({ streams: ['yo'] });
+        assert.strictEqual(res.status, 200);
+        readCount = res.body.events.length;
+        assert.ok(readCount >= 3, 'scoped read returned the seeded events');
+      });
+      it('[QK1A] records recordCount + scopedStreamIds on the audit row', async function () {
+        const entries = await getAuditEvents({ fromTime: now });
+        const log = entries.find(e => e.content.action === 'events.get');
+        assert.ok(log, 'events.get audit row present');
+        assert.strictEqual(log.content.recordCount, readCount, 'recordCount matches the delivered event count');
+        assert.deepEqual(log.content.scopedStreamIds, ['yo'], 'scoped to the local stream, bare id');
+        assert.strictEqual(log.content.scopedStreamCount, 1, 'scopedStreamCount present');
+      });
+    });
+
+    describe('[AT72] an events.get returning nothing', function () {
+      let now;
+      before(async function () {
+        now = timestamp.now();
+        const res = await coreRequest
+          .get(eventsPath)
+          .set('Authorization', access.token)
+          .query({ streams: ['empty'] });
+        assert.strictEqual(res.status, 200);
+        assert.strictEqual(res.body.events.length, 0, 'empty stream has no events');
+      });
+      it('[QK2B] records recordCount: 0 (present, not absent)', async function () {
+        const entries = await getAuditEvents({ fromTime: now });
+        const log = entries.find(e => e.content.action === 'events.get');
+        assert.ok(log, 'events.get audit row present');
+        assert.strictEqual(log.content.recordCount, 0, 'recordCount is 0, not undefined');
+        assert.deepEqual(log.content.scopedStreamIds, ['empty']);
+      });
+    });
+
+    describe('[AT73] a wildcard events.get (personal access, no stream filter)', function () {
+      let now;
+      before(async function () {
+        now = timestamp.now();
+        const res = await coreRequest
+          .get(eventsPath)
+          .set('Authorization', access.token);
+        assert.strictEqual(res.status, 200);
+      });
+      it('[QK3C] records the wildcard scope sentinel', async function () {
+        const entries = await getAuditEvents({ fromTime: now });
+        const log = entries.find(e => e.content.action === 'events.get');
+        assert.ok(log, 'events.get audit row present');
+        assert.deepEqual(log.content.scopedStreamIds, ['*'], 'wildcard sentinel');
+        assert.strictEqual(typeof log.content.recordCount, 'number', 'recordCount present');
+      });
+    });
+
+    describe('[AT74] an events.getOne', function () {
+      let now, eventId;
+      before(async function () {
+        const list = await coreRequest
+          .get(eventsPath)
+          .set('Authorization', access.token)
+          .query({ streams: ['yo'] });
+        eventId = list.body.events[0].id;
+        now = timestamp.now();
+        const res = await coreRequest
+          .get(eventsPath + eventId)
+          .set('Authorization', access.token);
+        assert.strictEqual(res.status, 200);
+      });
+      it('[QK4D] records recordCount: 1 and no scope field', async function () {
+        const entries = await getAuditEvents({ fromTime: now });
+        const log = entries.find(e => e.content.action === 'events.getOne');
+        assert.ok(log, 'events.getOne audit row present');
+        assert.strictEqual(log.content.recordCount, 1, 'single-record read counts 1');
+        assert.strictEqual(log.content.scopedStreamIds, undefined, 'no stream-scope field on getOne');
+      });
+    });
+  });
 });

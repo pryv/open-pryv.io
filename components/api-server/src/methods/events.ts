@@ -291,6 +291,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     let canReadEvent = false;
     // special case no streamIds on event && deleted
     if (event.streamIds == null) { // event might be deleted - limit result to deleted property
+      context.auditRecordCount = 1; // disclosed one record's existence (breach-scope)
       result.event = { id: event.id, deleted: event.deleted };
       return next();
     }
@@ -309,6 +310,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (!canReadEvent) { return next(errors.forbidden()); }
     // Stored attachments always carry ids; the wire type keeps them optional.
     event.attachments = setFileReadToken(context.access, event.attachments as Array<{ id: string; readToken?: string }> | undefined);
+    context.auditRecordCount = 1; // returned one record (breach-scope)
     result.event = event;
     return next();
   }

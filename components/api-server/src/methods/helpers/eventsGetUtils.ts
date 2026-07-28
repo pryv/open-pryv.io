@@ -16,7 +16,7 @@ const errors = require('errors').factory;
 const { getMall, storeDataUtils } = require('mall');
 const { treeUtils } = require('utils');
 const utils = require('utils');
-const { Readable } = require('stream');
+const { Readable, Transform } = require('stream');
 const SetFileReadTokenStream = require('../streams/SetFileReadTokenStream.ts').default;
 const accountStreams = require('business/src/system-streams/index.ts');
 /** Root of the one-time shared-secret namespace — excluded from wildcard queries. */
@@ -392,6 +392,12 @@ function streamQueryAddForcedAndForbiddenStreams (context: MethodContext, params
   next();
 }
 async function streamQueryExpandStreams (context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
+  // Breach-scope: detect a surviving `*` BEFORE expansion destroys it. At this
+  // point permission-substitution has already replaced `*` for limited accesses,
+  // so a remaining `*` genuinely means "every stream this access can read".
+  const scopedWildcard = Array.isArray(params.arrayOfStreamQueriesWithStoreId)
+    ? params.arrayOfStreamQueriesWithStoreId.some((q: { any?: unknown }) => Array.isArray(q.any) && q.any.includes('*'))
+    : false;
   try {
     params.arrayOfStreamQueriesWithStoreId =
             await streamsQueryUtils.expandAndTransformStreamQueries(params.arrayOfStreamQueriesWithStoreId, expandStreamInContext);
@@ -403,6 +409,9 @@ async function streamQueryExpandStreams (context: MethodContext, params: GetEven
   // delete streamQueries with no inclusions
   params.arrayOfStreamQueriesWithStoreId =
         params.arrayOfStreamQueriesWithStoreId.filter((streamQuery: { any?: unknown; and?: unknown }) => streamQuery.any != null || streamQuery.and != null);
+  // Breach-scope: capture the streams this read is SCOPED to (resolved `any`
+  // inclusions only; `and`/`not` clauses merely narrow the result).
+  captureAuditScopedStreams(context, params.arrayOfStreamQueriesWithStoreId, scopedWildcard);
   context.tracing.finishSpan('streamQueries');
   next();
   async function expandStreamInContext (streamId: string, storeId: string, excludedIds: string[]) {
@@ -424,6 +433,35 @@ async function streamQueryExpandStreams (context: MethodContext, params: GetEven
     const result = resultWithPrefix.map((fullStreamId: string) => storeDataUtils.parseStoreIdAndStoreItemId(fullStreamId)[1]);
     return result;
   }
+}
+// Breach-scope: max concrete stream ids stored on an audit row; beyond this the
+// list is capped but `scopedStreamCount` still carries the true total (never a
+// silent truncation).
+const AUDIT_SCOPED_STREAMS_CAP = 100;
+/**
+ * Record the streams a read was scoped to on `context`, for the audit row.
+ * Unions the resolved `any` inclusions across every surviving query (never the
+ * narrowing `and`/`not` clauses), re-prefixes non-local store ids to their wire
+ * form (`:storeId:id`), and collapses a surviving `*` to the `['*']` sentinel.
+ * `scopedStreamCount` is always the true resolved size (survives cap + sentinel).
+ */
+function captureAuditScopedStreams (context: MethodContext, queries: Array<{ any?: unknown; storeId?: string }>, scopedWildcard: boolean): void {
+  const ids = new Set<string>();
+  for (const q of (queries || [])) {
+    if (!Array.isArray(q.any)) continue;
+    const storeId = q.storeId ?? storeDataUtils.LocalStoreId;
+    for (const id of q.any) {
+      if (id === '*') continue; // sentinel handled below
+      ids.add(storeDataUtils.getFullItemId(storeId, id));
+    }
+  }
+  context.auditScopedStreamCount = ids.size;
+  if (scopedWildcard) {
+    context.auditScopedStreamIds = ['*'];
+    return;
+  }
+  const arr = [...ids];
+  context.auditScopedStreamIds = arr.length > AUDIT_SCOPED_STREAMS_CAP ? arr.slice(0, AUDIT_SCOPED_STREAMS_CAP) : arr;
 }
 function hasDoNotExpandMarker (streamId: string) {
   return streamId.endsWith('!');
@@ -477,6 +515,32 @@ async function streamQueryAddHiddenStreams (context: MethodContext, params: GetE
 // injectTestConfig() reach this api-register-time-bound callsite.
 async function findEventsFromStore (secretOrGetter: string | (() => string), context: MethodContext, params: GetEventsParams, result: ResultBag, next: MethodNext) {
   const filesReadTokenSecret = typeof secretOrGetter === 'function' ? secretOrGetter() : secretOrGetter;
+  // Breach-scope audit: initialise the delivered-record counter to 0 on ANY
+  // read, so its absence on an audit row means "pre-fix / non-read" and 0 means
+  // "read returned nothing". Streamed stores increment it as events flow;
+  // materialised account-store branches add their length directly.
+  context.auditRecordCount = 0;
+  let openAuditCountStreams = 0;
+  function countingStream (stream: ReadableStream): ReadableStream {
+    openAuditCountStreams++;
+    // At least one stream may not fully drain (client abort / store error) — mark
+    // potentially-incomplete until every counting stream reports _flush.
+    context.auditRecordCountIncomplete = true;
+    const counter = new Transform({
+      objectMode: true,
+      transform (event: unknown, _enc: unknown, cb: (e?: Error | null, v?: unknown) => void) {
+        const prev = typeof context.auditRecordCount === 'number' ? context.auditRecordCount : 0;
+        context.auditRecordCount = prev + 1;
+        cb(null, event);
+      },
+      flush (cb: (e?: Error | null) => void) {
+        openAuditCountStreams--;
+        if (openAuditCountStreams === 0) context.auditRecordCountIncomplete = false;
+        cb();
+      }
+    });
+    return stream.pipe(counter);
+  }
   if (params.arrayOfStreamQueriesWithStoreId?.length === 0) {
     result.events = [];
     return next();
@@ -513,7 +577,7 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
         filesReadTokenSecret
       }));
     }
-    result.addToConcatArrayStream('events', stream);
+    result.addToConcatArrayStream('events', countingStream(stream));
   }
   // When account store is included (from * queries), fetch its events non-streaming
   // and merge with local store results to respect global skip/limit.
@@ -565,10 +629,13 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
       merged.sort((a: { time: number }, b: { time: number }) => sortDir * (a.time - b.time));
       if (origSkip) merged = merged.slice(origSkip);
       if (origLimit != null) merged = merged.slice(0, origLimit);
+      // Materialised set — count directly (always complete, no stream to abort).
+      context.auditRecordCount = (typeof context.auditRecordCount === 'number' ? context.auditRecordCount : 0) + merged.length;
       result.addToConcatArrayStream('events', Readable.from(merged));
       delete paramsByStoreId[localStoreId];
     } else {
       // Only account store, no local store
+      context.auditRecordCount = (typeof context.auditRecordCount === 'number' ? context.auditRecordCount : 0) + accountEvents.length;
       result.addToConcatArrayStream('events', Readable.from(accountEvents));
     }
   }

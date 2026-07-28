@@ -56,3 +56,11 @@ const __ex_deactivateMfa = {
     }, { required: ['username'] })
   };
 export { __ex_deactivateMfa as deactivateMfa };
+const __ex_getAccess = {
+    params: helpers.object({
+      accessId: helpers.string()
+    }, {
+      required: ['accessId']
+    })
+  };
+export { __ex_getAccess as getAccess };

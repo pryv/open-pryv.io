@@ -33,6 +33,8 @@ const { ready, getLogger } = require('@pryv/boiler');
 const { getUsersRepository } = require('business/src/users/index.ts');
 
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
+const { parseAccessRef } = require('business/src/accesses/refs.ts');
+const { getAccessIndex } = require('platform/src/accessIndex.ts');
 
 const { platform } = require('platform') as { platform: Platform };
 
@@ -71,6 +73,40 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     getUserInfoInit,
     getUserInfoSetAccessStats
   );
+
+  // --------------------------------------------------------------- getAccess
+  // Resolve a bare accessId -> owning user + operational metadata from the
+  // cluster-wide reverse-index. Composite `<base>:<serial>` ids (as carried on
+  // audit streams) are normalized to their base. Deleted accesses are returned
+  // (with `deleted` set) — scoping a breach after revocation is the use case.
+  systemAPI.register('system.getAccess',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    commonFns.getParamsValidation(methodsSchema.getAccess.params),
+    getAccess
+  );
+
+  async function getAccess (_context: MethodContext, params: { accessId: string }, result: ResultBag & { accessIndex?: Record<string, unknown> }, next: Next) {
+    let baseId = params.accessId;
+    try { baseId = parseAccessRef(params.accessId).base; } catch (_e) { /* not a composite ref — use as-is */ }
+    try {
+      const entry = await getAccessIndex(platform, baseId);
+      if (entry == null) {
+        return next(errors.unknownResource('access', params.accessId));
+      }
+      const out: Record<string, unknown> = { ...entry };
+      // Hashed mode: the row holds a usernameToken, not a plaintext username.
+      // Surface the owning core so the responder can recover the plaintext
+      // home-core-side; plaintext never leaves its jurisdiction here.
+      if (platform.piiModeIsHashed && typeof entry.usernameToken === 'string') {
+        const coreId = await platform.getUserCoreByPreHashedUsername(entry.usernameToken);
+        out.core = coreId != null ? platform.coreIdToUrl(coreId) : null;
+      }
+      result.accessIndex = out;
+      next();
+    } catch (err) {
+      return next(errors.unexpectedError(err));
+    }
+  }
 
   async function loadUserToMinimalMethodContext (minimalMethodContext: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
     try {
