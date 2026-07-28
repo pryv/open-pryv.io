@@ -117,6 +117,18 @@ primary. **This feature is beta** — the surface may still change.
   and `auth.emailVerificationPageURL` (required when the verification mail is
   enabled).
 
+### Fixed — a method disabled by the operator no longer blames the licence
+
+`451 unavailable-method` always answered "API method unavailable in current
+version. This method is only available in the commercial license.", whatever the
+caller's actual reason: the error builder accepted an explanatory message and
+discarded it. A method can be unavailable for reasons unrelated to licensing,
+such as an operator turning an optional feature off, and the licence text sent
+readers chasing the wrong thing. The caller's message now reaches the response;
+the licence wording remains the default where no message is given. Calling a
+shared-secrets endpoint on a platform with `sharedSecrets.enabled: false` now
+answers "Shared secrets are disabled on this platform."
+
 ### Shared secrets: hand a secret to a third party by one-time key
 
 Passing a secret to a third party — typically an apiEndpoint carrying an access

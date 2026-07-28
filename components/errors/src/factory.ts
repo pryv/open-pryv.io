@@ -37,7 +37,7 @@ interface ErrorFactory {
   unknownResource: (resourceType?: string, id?: string, innerError?: Error) => APIErrorT;
   unsupportedContentType: (contentType: string) => APIErrorT;
   goneResource: () => APIErrorT;
-  unavailableMethod: (_message?: string) => APIErrorT;
+  unavailableMethod: (message?: string) => APIErrorT;
   InvalidInvitationToken: () => APIErrorT;
 }
 
@@ -230,8 +230,13 @@ factory.goneResource = function () {
   });
 };
 
-factory.unavailableMethod = function (_message?: string) {
-  return new APIError(ErrorIds.unavailableMethod, 'API method unavailable in current version. This method is only available in the commercial license.', {
+factory.unavailableMethod = function (message?: string) {
+  // The caller's message reaches the wire: a method can be unavailable for
+  // reasons that have nothing to do with licensing (an operator turning an
+  // optional feature off, say), and answering with the licence text sends the
+  // reader chasing the wrong thing.
+  return new APIError(ErrorIds.unavailableMethod, message ??
+    'API method unavailable in current version. This method is only available in the commercial license.', {
     httpStatus: 451
   });
 };
