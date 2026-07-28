@@ -44,7 +44,34 @@ because the method registry *is* the emitter's vocabulary. `Platform`'s
 observability config swaps the vendor key for `otlp-endpoint` plus an encrypted
 `otlp-headers` map, which is what makes the backend interchangeable.
 
-**Tests.** `[OBS1]`-`[OBSJ]` (business unit suite) are the filter proof: they
+**Two defects that only a deployment surfaced**, both fixed, and both worth
+recording because they are the failure grammar this layer was rebuilt to
+retire: telemetry that reports success while emitting nothing.
+
+- **The emitter attached with an empty vocabulary.** API method modules
+  register in `Server.registerApiMethods`, which runs after
+  `Application.initiate`, where startup had been placed — so the emitter
+  came up knowing zero method ids and would have refused every datapoint as
+  `unknown-method-id`. The deployed log line read `telemetry emitter active
+  (0 methods)`. Startup moved to the end of `registerApiMethods`, and
+  `startFromEnv` now REFUSES to attach on an empty vocabulary with a legible
+  reason rather than activating inert. `[OB11]` pins the refusal. The local
+  suite could not have caught this: its tests hand the vocabulary in
+  explicitly, and nothing asserted that the real wiring supplies one.
+- **A rising `telemetry.dropped` said nothing about what was refused.** The
+  drop path now names the offending value in the LOCAL log alongside the
+  reason. Local logs already carry identifiers, so this adds no exposure, and
+  it never becomes part of a payload.
+
+**The reporting interval is now a real control.** It was hard-coded while the
+documentation already told operators they could widen it to reduce the
+low-traffic correlation residual. `observability set-interval <seconds>`
+stores it in PlatformDB, master resolves it with the rest of the posture,
+workers receive it, and the emitter clamps it to 60-3600 so a
+misconfiguration cannot make individual activity finely observable. Default
+raised 60s to 300s.
+
+**Tests.** `[OBS1]`-`[OBSQ]` (business unit suite) are the filter proof: they
 ask the validator what it decided for accepted *and* refused inputs, including
 a fuzz pass over identifier-shaped keys and values, with a legitimate datapoint
 pinned in each block so the suite cannot pass by dropping everything. `[OB01]`-

@@ -60,11 +60,15 @@ there is nothing to re-scrub and no vendor-agent settings to review.
   collector inside your own infrastructure keeps telemetry within your trust
   boundary entirely.
 - **Configuration commands changed** (`bin/observability.js`): `set-endpoint
-  <url>`, `set-header <name> <value>` and `clear-headers` replace the
-  vendor-specific `newrelic set-license-key` and `newrelic set-high-security`,
-  and `enable` no longer takes a provider argument. Headers carry the backend
-  credential and are stored AES-256-GCM encrypted at rest; `show` never echoes
-  them. `set-endpoint` refuses a non-HTTPS destination unless it is local.
+  <url>`, `set-header <name> <value>`, `clear-headers` and `set-interval
+  <seconds>` replace the vendor-specific `newrelic set-license-key` and
+  `newrelic set-high-security`, and `enable` no longer takes a provider
+  argument. Headers carry the backend credential and are stored AES-256-GCM
+  encrypted at rest; `show` never echoes them. `set-endpoint` refuses a
+  non-HTTPS destination unless it is local.
+- **`set-interval` is a privacy control**, not just a tuning knob: it sets the
+  granularity at which activity is observable and is the only lever on the
+  low-traffic residual above. Default 300s, clamped to 60-3600.
 - **Honest limit**: the emitted content is anonymous by construction, but on a
   very low-traffic instance "one error in this interval" can still correlate to
   the only active user. That is a property of traffic volume rather than of the
