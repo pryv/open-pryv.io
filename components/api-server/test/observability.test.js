@@ -157,6 +157,13 @@ describe('[OBS] observability', function () {
         assert.strictEqual(env.PRYV_OBS_SERVICE_NAME, 'test-cluster-app');
         assert.strictEqual(env.PRYV_OBS_INSTANCE_ID, require('os').hostname(),
           'instance id is the machine, not anything from the URL layer');
+        // Unset means the emitter's privacy-biased default.
+        assert.strictEqual(env.PRYV_OBS_FLUSH_SECONDS, undefined);
+
+        await platform.setObservabilityValue('otlp-flush-interval', '900');
+        const widened = buildObservabilityEnv(await platform.getObservabilityConfig());
+        assert.strictEqual(widened.PRYV_OBS_FLUSH_SECONDS, '900',
+          'the operator can widen the reporting interval, as the docs promise');
       });
     });
   });

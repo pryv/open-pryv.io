@@ -503,6 +503,9 @@ observability:
   otlp:
     endpoint: ''                                  # if set locally, wins over PlatformDB (emergency override)
     # headers: { api-key: '' }                    # auth header the backend expects; prefer bin/observability.js set-header (encrypted at rest)
+    # flushIntervalSeconds: 300                   # 60-3600. PRIVACY control: error reports are grouped per interval and
+    #                                             # stamped at its boundary, so a longer interval reduces the chance that a
+    #                                             # single report on a low-traffic instance correlates to a single user.
 
 # === PER-CORE: schema migrations ===
 # Engine-agnostic schema migration runner (see storages/interfaces/migrations/).

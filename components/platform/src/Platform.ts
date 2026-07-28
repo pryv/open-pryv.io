@@ -1077,7 +1077,7 @@ class Platform {
       provider?: string;
       logLevel?: string;
       appName?: string;
-      otlp?: { endpoint?: string; headers?: Record<string, string> };
+      otlp?: { endpoint?: string; headers?: Record<string, string>; flushIntervalSeconds?: number };
     };
     const localYaml = (this.#config.get('observability') || {}) as ObservabilityYaml;
     const dbRows = await this.#db.getAllObservabilityValues();
@@ -1127,7 +1127,12 @@ class Platform {
       (db['otlp-endpoint'] != null ? parseJsonString(db['otlp-endpoint']) : '');
     const headers = localYaml.otlp?.headers ||
       parseHeaders(await this.#decryptObservabilitySecret('otlp-headers', db['otlp-headers']));
-    const otlp = { endpoint, headers };
+    // Reporting interval. This is a privacy control (it sets how finely
+    // activity is observable), so it is part of the resolved posture
+    // rather than a hard-coded constant; the emitter clamps it.
+    const flushIntervalSeconds = localYaml.otlp?.flushIntervalSeconds ??
+      (db['otlp-flush-interval'] != null ? Number(parseJsonString(db['otlp-flush-interval'])) : null);
+    const otlp = { endpoint, headers, flushIntervalSeconds };
 
     return { enabled, provider, appName, logLevel, hostname, otlp };
   }

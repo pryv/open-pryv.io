@@ -81,6 +81,9 @@ require('@pryv/boiler').init({
       case 'clear-headers':
         await runClearHeaders(platform);
         break;
+      case 'set-interval':
+        await runSetInterval(platform, args);
+        break;
       default:
         console.error('Unknown command: ' + args.command);
         printUsage(process.stderr);
@@ -159,6 +162,9 @@ async function runShow (platform) {
   console.log('hostname:         ' + obs.hostname);
   console.log('otlp endpoint:    ' + (obs.otlp.endpoint || '(unset)'));
   console.log('otlp headers set: ' + (headerNames.length > 0 ? headerNames.join(', ') + ' (values hidden)' : 'none'));
+  console.log('report interval:  ' + (obs.otlp.flushIntervalSeconds != null
+    ? obs.otlp.flushIntervalSeconds + 's'
+    : '300s (default)'));
   console.log('');
   // What leaves the deployment, restated here so an operator can answer
   // "what does the backend see?" without reading source.
@@ -230,6 +236,23 @@ async function runSetHeader (platform, args) {
   console.log('Rolling restart cores to pick up the change.');
 }
 
+async function runSetInterval (platform, args) {
+  const seconds = Number(args.seconds);
+  if (!Number.isFinite(seconds) || seconds < 60 || seconds > 3600) {
+    throw new Error('set-interval: expected a number of seconds between 60 and 3600 (got "' +
+      (args.seconds || '') + '")');
+  }
+  await platform.setObservabilityValue('otlp-flush-interval', String(Math.round(seconds)));
+  console.log('observability reporting interval set to ' + Math.round(seconds) + 's');
+  console.log('');
+  console.log('This is a privacy control: it sets how finely activity is observable.');
+  console.log('Error reports are grouped per interval and stamped at its boundary, so a');
+  console.log('longer interval reduces the residual chance that a single report on a');
+  console.log('low-traffic instance correlates to a single user. Shorter means faster');
+  console.log('alerting. Default 300s.');
+  console.log('Rolling restart cores to pick up the change.');
+}
+
 async function runClearHeaders (platform) {
   await platform.setObservabilityValue('otlp-headers', JSON.stringify({}));
   console.log('observability OTLP headers cleared');
@@ -263,6 +286,9 @@ function parseArgs (argv) {
       args.headerName = positional[1];
       args.headerValue = positional[2];
       break;
+    case 'set-interval':
+      args.seconds = positional[1];
+      break;
   }
   return args;
 }
@@ -275,6 +301,7 @@ function printUsage (stream) {
   stream.write('  observability set-endpoint <url>\n');
   stream.write('  observability set-header <name> <value>\n');
   stream.write('  observability clear-headers\n');
+  stream.write('  observability set-interval <seconds>   # 60-3600, default 300\n');
   stream.write('  observability set-app-name <name>\n');
   stream.write('\n');
   stream.write('Telemetry ships over OTLP/HTTP: set the backend base URL with\n');

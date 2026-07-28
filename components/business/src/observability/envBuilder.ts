@@ -20,20 +20,25 @@ interface ObservabilityConfig {
   enabled: boolean;
   appName: string;
   hostname: string;
-  otlp?: { endpoint?: string; headers?: Record<string, string> };
+  otlp?: { endpoint?: string; headers?: Record<string, string>; flushIntervalSeconds?: number | null };
 }
 
 function buildObservabilityEnv (obs: ObservabilityConfig | null | undefined): Record<string, string> {
   if (!obs || !obs.enabled) return {};
   const endpoint = obs.otlp?.endpoint;
   if (!endpoint) return {};
-  return {
+  const env: Record<string, string> = {
     PRYV_OBS_ENABLED: 'true',
     PRYV_OBS_ENDPOINT: endpoint,
     PRYV_OBS_HEADERS: JSON.stringify(obs.otlp?.headers || {}),
     PRYV_OBS_SERVICE_NAME: obs.appName,
     PRYV_OBS_INSTANCE_ID: obs.hostname
   };
+  const seconds = obs.otlp?.flushIntervalSeconds;
+  if (seconds != null && Number.isFinite(seconds)) {
+    env.PRYV_OBS_FLUSH_SECONDS = String(seconds);
+  }
+  return env;
 }
 
 export { buildObservabilityEnv };

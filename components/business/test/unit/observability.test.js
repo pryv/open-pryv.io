@@ -427,6 +427,20 @@ describe('[OBS] observability choke point', function () {
       assert.strictEqual(schema.validateResource({ 'user.name': 'alice' }).ok, false);
     });
 
+    it('[OBSQ] the reporting interval is operator-settable and clamped', function () {
+      // It is the only lever on the low-traffic correlation residual, and
+      // the documentation promises operators can widen it — so the knob
+      // must exist, and must not be settable to a value fine enough to
+      // make individual activity observable.
+      assert.strictEqual(emitter.clampInterval(undefined), emitter.DEFAULT_FLUSH_INTERVAL_MS);
+      assert.strictEqual(emitter.DEFAULT_FLUSH_INTERVAL_MS, 300000, 'default is 5 minutes');
+      assert.strictEqual(emitter.clampInterval(600000), 600000, 'a wider interval is honoured');
+      assert.strictEqual(emitter.clampInterval(1000), emitter.MIN_FLUSH_INTERVAL_MS,
+        'too fine is clamped up');
+      assert.strictEqual(emitter.clampInterval(99999999), emitter.MAX_FLUSH_INTERVAL_MS);
+      assert.strictEqual(emitter.clampInterval(Number.NaN), emitter.DEFAULT_FLUSH_INTERVAL_MS);
+    });
+
     it('[OBSO] a rejected resource drops the whole batch rather than sending it', async function () {
       const sink = captureSink();
       observability.init({

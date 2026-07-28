@@ -55,7 +55,21 @@ interface EmitterConfig {
 /** Bounded to keep a backend outage from growing memory without limit. */
 const MAX_ERROR_RECORDS = 200;
 const MAX_SERIES = 2000;
-const DEFAULT_FLUSH_INTERVAL_MS = 60000;
+/**
+ * The reporting interval is a PRIVACY control, not a tuning knob: it is
+ * the granularity at which activity is observable, and the only lever on
+ * the residual correlation risk at low traffic. Five minutes by default,
+ * biased towards privacy over alerting latency; operators may widen it.
+ */
+const DEFAULT_FLUSH_INTERVAL_MS = 300000;
+const MIN_FLUSH_INTERVAL_MS = 60000;
+const MAX_FLUSH_INTERVAL_MS = 3600000;
+
+/** Clamp so a misconfiguration cannot make activity finely observable. */
+function clampInterval (requested: number | undefined): number {
+  if (requested == null || !Number.isFinite(requested)) return DEFAULT_FLUSH_INTERVAL_MS;
+  return Math.min(MAX_FLUSH_INTERVAL_MS, Math.max(MIN_FLUSH_INTERVAL_MS, requested));
+}
 
 let config: EmitterConfig | null = null;
 let flushTimer: NodeJS.Timeout | null = null;
@@ -312,7 +326,7 @@ function init (cfg: EmitterConfig): void {
   if (config != null) throw new Error('observability emitter: already initialized');
   config = cfg;
   intervalStartMs = nowMs();
-  const interval = cfg.flushIntervalMs || DEFAULT_FLUSH_INTERVAL_MS;
+  const interval = clampInterval(cfg.flushIntervalMs);
   flushTimer = setInterval(function () {
     flush().catch(function () { /* flush never throws; belt and braces */ });
   }, interval);
@@ -355,6 +369,7 @@ function _buffered () {
 
 export {
   init, isActive, recordApiCall, reportError, flush, shutdown, knownErrorCodes,
+  clampInterval, DEFAULT_FLUSH_INTERVAL_MS, MIN_FLUSH_INTERVAL_MS, MAX_FLUSH_INTERVAL_MS,
   _reset, _buffered
 };
 export type { EmitterConfig };

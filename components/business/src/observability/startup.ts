@@ -29,7 +29,8 @@ const ENV = {
   ENDPOINT: 'PRYV_OBS_ENDPOINT',
   HEADERS: 'PRYV_OBS_HEADERS',
   SERVICE_NAME: 'PRYV_OBS_SERVICE_NAME',
-  INSTANCE_ID: 'PRYV_OBS_INSTANCE_ID'
+  INSTANCE_ID: 'PRYV_OBS_INSTANCE_ID',
+  FLUSH_SECONDS: 'PRYV_OBS_FLUSH_SECONDS'
 } as const;
 
 interface StartupOptions {
@@ -70,6 +71,9 @@ function startFromEnv (options: StartupOptions): StartupResult {
       instanceId: env[ENV.INSTANCE_ID] || '',
       worker: workerId(),
       methodIds: options.methodIds,
+      // Operator-set reporting interval; the emitter clamps it. Absent
+      // means the emitter's privacy-biased default.
+      flushIntervalMs: flushIntervalMs(env[ENV.FLUSH_SECONDS]),
       logger: options.logger
     });
   } catch (err) {
@@ -83,6 +87,12 @@ function startFromEnv (options: StartupOptions): StartupResult {
  * series. `cluster.worker.id` in a fork, 'master' otherwise. Infrastructure
  * identity only.
  */
+function flushIntervalMs (seconds: string | undefined): number | undefined {
+  if (!seconds) return undefined;
+  const parsed = Number(seconds);
+  return Number.isFinite(parsed) ? parsed * 1000 : undefined;
+}
+
 function workerId (): string {
   const cluster = require('cluster');
   return (cluster.worker != null && cluster.worker.id != null) ? String(cluster.worker.id) : 'master';
