@@ -1,5 +1,41 @@
 # Changelog - Internal (no API impact)
 
+## feat(breach-scope): operator tooling to scope a breach from a compromised accessId
+
+An incident responder who holds only a compromised `accessId` and a time window
+can now produce the technical inputs for a breach notification (subjects
+affected, records affected, categories of data by stream scope) without an O(N)
+walk over every user or a fragile re-run of the historical query.
+
+**Added.**
+- A cluster-wide access reverse-index over the platform key/value store
+  (`components/platform/src/accessIndex.ts`) mapping a bare `accessId` to its
+  owning user plus minimal operational metadata (type, expires, created /
+  last-modified, deleted). PII posture follows the existing hashing regime: in
+  hashed mode the row carries the username HMAC token, never plaintext, and the
+  secret access token is never stored. Subject erasure removes or tombstones the
+  row. Populated by hooks at every access-creation site plus update / delete
+  cascade; a `bin/backfill-access-index.js` script backfills and repairs.
+- An admin-key-gated `GET /system/accesses/:accessId` that normalises composite
+  `<base>:<serial>` ids and always returns revoked accesses (scoping a breach
+  after revocation is the primary case).
+- Read audit rows now carry `content.recordCount` (records the read delivered;
+  `0` on empty reads, `1` for a single-event read, absent on writes and
+  pre-change rows) and `content.scopedStreamIds` + `content.scopedStreamCount`
+  (the streams the read was scoped to; a bare wildcard collapses to `['*']`, the
+  id list caps at 100 while the count preserves the true total). A partial count
+  from an aborted drain is labeled `recordCountIncomplete`. The fields ride in
+  the audit `content` blob, so no schema migration.
+- `bin/breach-scope.js`: a read-only, credential-free operator CLI run on the
+  subject's home core. It resolves the owner, recovers the plaintext username
+  locally in hashed mode, pulls the access's audit rows for the window, and
+  renders a caveat-labeled report as JSON and/or Markdown, plus a
+  `breachScopeReport` module that does the classification and rendering.
+
+**Fixed.** Socket.io API calls produced no audit row at all; they are now
+audited like HTTP calls (best-effort, never breaking the socket response). Batch
+calls drain the result before auditing so streamed reads finish counting.
+
 ## refactor(observability): replace the vendor agent with an allow-list emitter
 
 The optional APM integration is rebuilt around a single choke point instead of
