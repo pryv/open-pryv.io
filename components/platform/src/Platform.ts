@@ -746,6 +746,31 @@ class Platform {
     await this.#db.deleteUserIndexedField(this.hashFor(USERNAME_FIELD, username), field);
   }
 
+  // ---------------- Generic cluster-wide key/value (mode-agnostic) --------
+  //
+  // Thin pass-throughs to the engine's indefinite KV primitives. Typed
+  // domain layers (oauth2 storage, accessIndex) own their key prefixes and
+  // row shapes and consume these; going through the wrapper keeps every
+  // PlatformDB write on one path. These store OPAQUE strings — any PII a
+  // caller puts in a value is the caller's responsibility to hash (via
+  // `hashFor`), exactly as the accessIndex layer does for usernames.
+
+  async setPlatformKv (key: string, value: string): Promise<void> {
+    await this.#db.setPlatformKv(key, value);
+  }
+
+  async getPlatformKv (key: string): Promise<string | null> {
+    return await this.#db.getPlatformKv(key);
+  }
+
+  async deletePlatformKv (key: string): Promise<void> {
+    await this.#db.deletePlatformKv(key);
+  }
+
+  async listPlatformKvKeys (prefix: string): Promise<string[]> {
+    return await this.#db.listPlatformKvKeys(prefix);
+  }
+
   /**
    * Get all user-to-core mappings.
    */
