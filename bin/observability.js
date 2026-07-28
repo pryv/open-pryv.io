@@ -19,6 +19,7 @@
 //   node bin/observability.js set-endpoint <url>
 //   node bin/observability.js set-header <name> <value>
 //   node bin/observability.js clear-headers
+//   node bin/observability.js set-interval <seconds>   # 60-3600, default 300
 //   node bin/observability.js set-app-name <name>
 //
 // Telemetry is shipped over OTLP/HTTP, so the destination is a URL and
@@ -171,8 +172,9 @@ async function runShow (platform) {
   console.log('Data sent to the backend:');
   console.log('  sent:     per-method call counts, durations and error counts');
   console.log('            (API method ids, status classes, error codes),');
-  console.log('            this core FQDN, worker id, service name and version,');
-  console.log('            and stack traces for server-side faults');
+  console.log('            this MACHINE hostname (never a user-facing host),');
+  console.log('            worker id, service name and version, and');
+  console.log('            stack traces for server-side faults');
   console.log('  NOT sent: request URLs, query parameters, request bodies,');
   console.log('            headers, usernames, event data, log messages and');
   console.log('            error messages — none of these have a representation');

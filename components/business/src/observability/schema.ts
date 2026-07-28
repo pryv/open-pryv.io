@@ -60,11 +60,23 @@ const ERROR_ATTRIBUTES: readonly string[] = [
  * else. Anything outside this set means the sanitizer changed and the
  * report is dropped rather than sent.
  */
-// The path alternative deliberately pins its FIRST character to a
-// non-slash: a character class that merely contains '/' also matches a
-// leading one, which is how an absolute path slips through something that
-// reads like an allow-list. Caught by [OBSL].
-const SAFE_FRAME = /^at (<external>|(?:[A-Za-z0-9_$.<> [\]]{1,80} \()?(?:node:[A-Za-z0-9_/.]{1,100}|[A-Za-z0-9_.\-][A-Za-z0-9_.\-/]{0,199}):\d{1,7}:\d{1,7}\)?)$/;
+// Frame grammar, assembled from named parts so it can be read.
+//
+// Two traps are encoded here, both found the hard way:
+//   - the path alternative pins its FIRST character to a non-slash,
+//     because a class that merely contains '/' also matches a leading one,
+//     i.e. an absolute path (caught by [OBSL]);
+//   - the function-name alternative is a SHAPE, not a character class: a
+//     class permitting spaces accepts runtime data such as a person's name
+//     (raised by cross-model review).
+// `..` segments are rejected separately in validateFrames.
+const FRAME_NAME =
+  '(?:(?:new|async) )?(?:<anonymous>|[A-Za-z_$][A-Za-z0-9_$]*)(?:\\.(?:<anonymous>|[A-Za-z0-9_$]+))*';
+const FRAME_LOCATION =
+  '(?:node:[A-Za-z0-9_/.]{1,100}|[A-Za-z0-9_.\\-][A-Za-z0-9_.\\-/]{0,199}):\\d{1,7}:\\d{1,7}';
+const SAFE_FRAME = new RegExp(
+  '^at (?:<external>|' + FRAME_NAME + ' \\(' + FRAME_LOCATION + '\\)|' + FRAME_LOCATION + ')$'
+);
 
 /**
  * Service name is operator-supplied (`observability set-app-name`), so it
@@ -211,6 +223,14 @@ function validateFrames (value: string): ValidationResult {
   if (value.length === 0) return OK;
   for (const frame of value.split('\n')) {
     if (!SAFE_FRAME.test(frame)) return { ok: false, reason: DROP_REASONS.UNSAFE_FRAME };
+    // A `..` segment walks out of the repository while still matching the
+    // relative-path shape above, so the grammar alone is not enough. This
+    // check is deliberately duplicated from the sanitizer rather than
+    // shared: a backstop whose logic is the sanitizer's inherits the
+    // sanitizer's bugs, which is exactly how this one was missed.
+    if (frame.split('/').includes('..')) {
+      return { ok: false, reason: DROP_REASONS.UNSAFE_FRAME };
+    }
   }
   return OK;
 }

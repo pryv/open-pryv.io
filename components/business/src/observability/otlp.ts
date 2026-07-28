@@ -58,6 +58,12 @@ interface MetricsInput {
   resourceAttributes: Attributes;
 }
 
+/**
+ * Milliseconds to OTLP nanoseconds. The product exceeds
+ * `Number.MAX_SAFE_INTEGER`, so the last ~256 ns are not exact. That is
+ * irrelevant here and mildly helpful: every timestamp we emit is an
+ * interval boundary, deliberately coarse to the minute or more.
+ */
 function nanos (millis: number): string {
   return String(Math.round(millis) * 1000000);
 }

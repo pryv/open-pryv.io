@@ -251,7 +251,15 @@ function drain () {
     attributes: Attributes, count: number, sum: number, bucketCounts: number[]
   }>> = {};
   for (const [name, series] of histograms) histogramsOut[name] = Array.from(series.values());
-  const errorsOut = Array.from(errorGroups.values());
+  // Validate the count here, with the rest of the record's fields: it is
+  // appended by the serializer, so without this it would be the one emitted
+  // field the schema never saw. A group whose count is out of range is
+  // dropped rather than sent with an unchecked value.
+  const errorsOut = Array.from(errorGroups.values()).filter(function (group) {
+    const check = validateErrorAttributes({ 'error.count': String(group.count) });
+    if (!check.ok) countDrop(check.reason, 'error.count=' + group.count);
+    return check.ok;
+  });
   counters.clear();
   histograms.clear();
   errorGroups.clear();

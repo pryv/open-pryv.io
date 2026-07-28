@@ -1051,10 +1051,11 @@ class Platform {
    * Build the effective observability config by merging:
    *   1. Defaults + local YAML override (under `observability:` in config).
    *   2. Cluster-wide values from PlatformDB (under `observability/<key>`).
-   *   3. Derived fields: `hostname` from `new URL(core.url).hostname`,
-   *      `appName` fallback to `dns.domain` when unset.
+   *   3. Derived fields: `hostname` from the MACHINE (`os.hostname()`,
+   *      never the URL layer — see `#deriveHostname`), `appName` fallback
+   *      to `dns.domain` when unset.
    *
-   * Secrets (license keys) are at-rest-encrypted via `AtRestEncryption`
+   * Secrets (the backend auth headers) are at-rest-encrypted via `AtRestEncryption`
    * with HKDF-derived keys per provider. The source material is
    * `auth.adminAccessKey` — every cluster has one, and it's already
    * the operator-sync secret.
@@ -1112,8 +1113,8 @@ class Platform {
       appName = domain ? 'open-pryv.io (' + domain + ')' : 'open-pryv.io';
     }
 
-    // Hostname: derive from core.url if it's a URL; else fall back to
-    // dns.domain (prefixed with "single.") or OS hostname as last resort.
+    // Hostname: the machine's own, never anything from the URL layer.
+    // See `#deriveHostname` for why that distinction is load-bearing.
     const hostname = this.#deriveHostname();
 
     // Telemetry destination. The endpoint is plain config; the headers

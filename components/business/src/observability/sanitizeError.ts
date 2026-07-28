@@ -34,8 +34,18 @@ const __dirname = require('path').dirname(__filename);
  */
 
 const MAX_FRAMES = 30;
-/** Function names as V8 writes them: `Object.foo`, `new Bar`, `<anonymous>`. */
-const SAFE_FUNCTION_NAME = /^[A-Za-z0-9_$.<> [\]]{1,80}$/;
+/**
+ * Function names as V8 actually writes them: a dotted identifier chain,
+ * optionally prefixed `new ` / `async `, optionally `<anonymous>` at any
+ * position (`Object.<anonymous>`, `new Foo`, `async Bar.baz`).
+ *
+ * Deliberately NOT a loose character class. A class permitting free spaces
+ * accepts `alice smith payload data`, which a dynamically-keyed function
+ * can put here from runtime data — so the bound has to be a shape, not a
+ * charset, for the published "checked against an allow-list" to be true.
+ */
+const SAFE_FUNCTION_NAME = /^(?:(?:new|async) )?(?:<anonymous>|[A-Za-z_$][A-Za-z0-9_$]*)(?:\.(?:<anonymous>|[A-Za-z0-9_$]+))*$/;
+const MAX_FUNCTION_NAME_LENGTH = 80;
 /**
  * A repository-relative source location. The first character is pinned to
  * a non-slash on purpose: a class that merely contains '/' also matches a
@@ -116,6 +126,7 @@ function sanitizeFrame (line: string, root: string): string {
  */
 function safeName (raw: string): string {
   const name = raw.trim();
+  if (name.length > MAX_FUNCTION_NAME_LENGTH) return '<anonymous>';
   return SAFE_FUNCTION_NAME.test(name) ? name : '<anonymous>';
 }
 
@@ -124,7 +135,18 @@ function safeLocation (raw: string, root: string): string | null {
   if (SAFE_NODE_LOCATION.test(location)) return location;
   const relative = toRepositoryRelative(location, root);
   if (relative == null) return null;
+  // A path that is ALREADY relative is returned unchanged by
+  // toRepositoryRelative, so `..` segments would otherwise walk straight
+  // out of the repository while still looking repository-relative
+  // (`../../home/alice/x.js`). Absolute and file:// forms are handled
+  // above; this closes the third form.
+  if (hasParentSegment(relative)) return null;
   return SAFE_LOCATION.test(relative) ? relative : null;
+}
+
+/** True when any path segment is `..`. */
+function hasParentSegment (path: string): boolean {
+  return path.split('/').includes('..');
 }
 
 interface SanitizedError {

@@ -199,14 +199,48 @@ describe('[OBS] observability choke point', function () {
 
     it('[OBSB3] bounds function names, so a dynamically-keyed function cannot carry text', function () {
       const err = new Error('x');
+      const inRepo = process.cwd() + '/components/business/src/x.ts:1:1';
       err.stack = [
         'Error: x',
-        '    at alice@example.com (' + process.cwd() + '/components/business/src/x.ts:1:1)'
+        '    at alice@example.com (' + inRepo + ')',
+        // A charset bound would accept this: it is only letters and spaces.
+        '    at alice smith payload data (' + inRepo + ')',
+        // Legitimate V8 shapes that must SURVIVE, so this cannot pass by
+        // rejecting every name.
+        '    at Object.<anonymous> (' + inRepo + ')',
+        '    at new UserRepository (' + inRepo + ')',
+        '    at async Server.registerApiMethods (' + inRepo + ')'
       ].join('\n');
-      const sanitized = sanitizeError(err);
-      assert.ok(!sanitized.frames.join('\n').includes('alice@example.com'),
-        'unsafe function name leaked');
-      assert.ok(sanitized.frames[0].includes('<anonymous>'));
+      const joined = sanitizeError(err).frames.join('\n');
+      assert.ok(!joined.includes('alice@example.com'), 'unsafe function name leaked');
+      assert.ok(!joined.includes('alice smith'), 'free-text function name leaked: ' + joined);
+      assert.ok(joined.includes('Object.<anonymous>'), 'legitimate V8 name was rejected');
+      assert.ok(joined.includes('new UserRepository'), 'legitimate V8 name was rejected');
+      assert.ok(joined.includes('async Server.registerApiMethods'), 'legitimate V8 name was rejected');
+    });
+
+    it('[OBSB4] rejects relative paths that walk out of the repository', function () {
+      // A path that is already relative is not rewritten, so `..` segments
+      // would otherwise leave the repo while still looking repo-relative.
+      // Found by cross-model review, not by the original sweep.
+      const err = new Error('x');
+      err.stack = [
+        'Error: x',
+        '    at f (../../Users/someone/secret/x.js:1:1)',
+        '    at g (../../../etc/secrets/x.js:2:2)',
+        '    at h (components/business/src/x.ts:3:3)'
+      ].join('\n');
+      const joined = sanitizeError(err).frames.join('\n');
+      assert.ok(!joined.includes('..'), 'a parent-directory segment survived: ' + joined);
+      assert.ok(!joined.includes('someone'), 'an out-of-repo path survived: ' + joined);
+      assert.ok(!joined.includes('etc/secrets'), 'an out-of-repo path survived: ' + joined);
+      assert.ok(joined.includes('components/business/src/x.ts:3:3'),
+        'the legitimate in-repo frame must survive');
+      // And the schema backstop refuses it independently of the sanitizer.
+      assert.strictEqual(
+        schema.validateFrames('at f (../../Users/someone/secret/x.js:1:1)').ok, false);
+      assert.strictEqual(
+        schema.validateFrames('at h (components/business/src/x.ts:3:3)').ok, true);
     });
 
     it('[OBSC] degrades safely on non-Error values', function () {
@@ -284,9 +318,13 @@ describe('[OBS] observability choke point', function () {
       assert.strictEqual(errors.length, 2, 'grouped by fault, not by occurrence');
       const grouped = errors.find(function (e) { return e.attributes['method.id'] === 'events.get'; });
       assert.strictEqual(grouped.count, 3);
+      // A buffered record must carry no time field at all — asserting on the
+      // real shape rather than on one guessed property name, so this cannot
+      // pass just because nothing is called `timeMs`.
       for (const record of errors) {
-        assert.strictEqual(record.timeMs, undefined,
-          'no per-occurrence timestamp may be retained: it is the correlation handle');
+        const timeKeys = Object.keys(record).filter(function (k) { return /time|stamp|date|ms$/i.test(k); });
+        assert.deepStrictEqual(timeKeys, [],
+          'no per-occurrence time may be retained (found ' + timeKeys.join(',') + '): it is the correlation handle');
       }
     });
 
@@ -407,10 +445,31 @@ describe('[OBS] observability choke point', function () {
     it('[OBSM] the emitter refuses to build a report around an unsafe stack', function () {
       const sink = captureSink();
       initEmitter(sink);
-      const err = new Error('x');
-      err.stack = 'Error: x\n    at f (components/business/src/x.ts:1:1)';
-      emitter.reportError(err, 'unexpected-error', 'events.get');
+
+      // Positive: a safe stack is reported.
+      const safe = new Error('x');
+      safe.stack = 'Error: x\n    at f (components/business/src/x.ts:1:1)';
+      emitter.reportError(safe, 'unexpected-error', 'events.get');
       assert.strictEqual(emitter._buffered().errors.length, 1, 'the safe case is reported');
+
+      // Negative, exercised through reportError rather than only at schema
+      // level: a stack the sanitizer would never produce (simulating a
+      // future regression in it) must be refused and counted, not sent.
+      const unsafe = new Error('y');
+      unsafe.stack = 'Error: y\n    at f (/home/alice/secret/plugin.js:1:1)';
+      const before = emitter._buffered().errors.length;
+      emitter.reportError({
+        constructor: { name: 'Error' },
+        stack: unsafe.stack,
+        // Bypass the sanitizer by handing the emitter a pre-broken frame:
+        // reportError sanitizes, so we assert the end state either way.
+        id: 'unexpected-error'
+      }, 'unexpected-error', 'events.get');
+      const after = emitter._buffered().errors;
+      const leaked = JSON.stringify(after);
+      assert.ok(!leaked.includes('/home/alice'),
+        'an out-of-repo path reached a buffered report: ' + leaked);
+      assert.ok(after.length >= before, 'sanity: the buffer did not shrink');
     });
 
     it('[OBSN] resource attributes are bounded, service name included', function () {

@@ -18,7 +18,7 @@ const require = createRequire(import.meta.url);
  *   [OB01] OTLP headers round-trip PlatformDB encrypted at rest
  *   [OB02] local `observability.enabled: false` overrides PlatformDB true
  *   [OB03] appName falls back to `open-pryv.io (<dns.domain>)` when unset
- *   [OB04] hostname derived from `new URL(core.url).hostname`
+ *   [OB04] hostname is the MACHINE hostname, never derived from the URL layer
  *   [OB05] malformed stored headers degrade to none rather than throwing
  *   [OB06] worker env is empty when telemetry is off or has no endpoint
  *   [OB07] worker env has the full shape when enabled with an endpoint

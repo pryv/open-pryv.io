@@ -68,7 +68,7 @@ there is nothing to re-scrub and no vendor-agent settings to review.
   non-HTTPS destination unless it is local.
 - **`set-interval` is a privacy control**, not just a tuning knob: it sets the
   granularity at which activity is observable and is the only lever on the
-  low-traffic residual above. Default 300s, clamped to 60-3600.
+  low-traffic residual noted below. Default 300s, clamped to 60-3600.
 - **Honest limit**: the emitted content is anonymous by construction, but on a
   very low-traffic instance "one error in this interval" can still correlate to
   the only active user. That is a property of traffic volume rather than of the
