@@ -30,15 +30,26 @@ there is nothing to re-scrub and no vendor-agent settings to review.
   duration histograms and error counts, labelled only with an API method id (a
   registered identifier from the platform's own method registry), a status class
   (`2xx`/`3xx`/`4xx`/`5xx`) and an error code from the API's documented error id
-  list; plus the service name, service version, this core's FQDN and a worker
-  index. Server-side faults additionally carry a stack trace whose frames are
-  rewritten repository-relative.
+  list; plus the service name, service version, the machine hostname and a
+  worker index. Server-side faults additionally carry a hard-coded message
+  chosen by error code and a stack trace rebuilt from repository-relative
+  frames.
 - **What cannot be sent**: request URLs, query and route parameters, request and
   response bodies, headers of any kind, usernames, stream and event identifiers,
   log records, and error *messages*. None has a representation in the emitted
   schema. Error messages are excluded deliberately and permanently: they
   routinely interpolate file paths and client input, so the code travels and the
   message stays in your own logs.
+- **Error reports are aggregated and time-coarsened.** Reports are grouped by
+  fault with a count and stamped at the reporting interval, not at the instant
+  of failure. A precise timestamp is a re-identification handle: "this method
+  failed at 14:32:07.123" singles out one action to anyone holding a second
+  timestamped signal, your own audit log included. The deliberate cost is that
+  sub-interval ordering and exact error times are not available from telemetry.
+- **The instance identifier is the machine hostname**, never derived from your
+  service URL or DNS domain. In DNS-based deployments user-facing hosts are
+  `<username>.<domain>`, so a URL-derived hostname would have been one config
+  change away from attaching a username to every datapoint.
 - **Outbound host names are gone.** The previous integration could not stop the
   agent reporting the destination host of outbound calls, which for webhooks is
   an endpoint the operator chose and may itself identify. Nothing observes
@@ -54,10 +65,11 @@ there is nothing to re-scrub and no vendor-agent settings to review.
   and `enable` no longer takes a provider argument. Headers carry the backend
   credential and are stored AES-256-GCM encrypted at rest; `show` never echoes
   them. `set-endpoint` refuses a non-HTTPS destination unless it is local.
-- **Honest limit**: what remains is pseudonymous, not anonymous. Timestamps,
-  method ids, status codes and the core FQDN still describe activity and can be
-  correlated against another signal, so the telemetry is still personal data and
-  your processor obligations toward the backend still apply.
+- **Honest limit**: the emitted content is anonymous by construction, but on a
+  very low-traffic instance "one error in this interval" can still correlate to
+  the only active user. That is a property of traffic volume rather than of the
+  schema, and widening the reporting interval reduces it. We state it rather
+  than claim an unqualified guarantee.
 
 ### Multiple emails per account (beta)
 
