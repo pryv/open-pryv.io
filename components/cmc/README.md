@@ -55,7 +55,7 @@ Promoting the workflow to the platform via `:_cmc:` and leaning entirely on Pryv
 
 And it does this **without changing the API surface** that clients consume. `lib-js@3.1.0` (the composite-id `accesses.update` floor) works unchanged.
 
-## Scope locked in interactive Q&A (2026-05-13)
+## Scope
 
 | Question | Answer |
 |---|---|
@@ -287,130 +287,13 @@ Apps query via plain `events.get({streamIds:[':_cmc:state']})`.
 
 Every successful `:_cmc:inbox` write (whether by in-process plugin routing for same-platform same-core directed invites, or by counterparty access writes for everything else) fires a standard socket.io `eventsCreated`. The recipient's app uses the standard `@pryv/monitor` add-on — `new pryv.Monitor(connection, { streams: [':_cmc:inbox'] })` + `monitor.on('event', cb)` + `monitor.start()` — no new socket primitive.
 
-## Phases
-
-### Phase A — Implementer's Guide (FIRST DELIVERABLE — user review gate)
-
-Output: `IMPLEMENTERS-GUIDE.md`.
-
-A standalone document written from an API-consumer's perspective. The reader is an app/bridge developer building on open-pryv.io. The doc walks through every flow with full JSON for every API call, then provides reference sections on event-type schemas, capability accesses, socket subscription, error catalogue, and migration from the legacy "Collector" pattern. Includes a dedicated section on cross-platform federation showing that the same protocol works between independent operators.
-
-**Exit:** Pierre review. Any wire-shape change in later phases must update this document.
-
-### Phase B — Engineering pre-flight (spec + open questions)
-
-Output: short spec docs alongside this README (or expanded sections of this README).
-
-1. **`PLUGIN-INTERFACE.md`** — how a plugin reserves a stream-id prefix with the mall dispatcher + registers pre/post write-hooks on `events.create` / `accesses.update` / `streams.create`. **Confirms CMC is NOT a new storage engine** — all state lives in standard per-user storage; the plugin only routes hook execution. Audit existing precedents (system-streams in the system-streams module, observability in the optional observability provider) for the cleanest pattern.
-2. **`DATA-RESIDENCY.md`** — documents (a) the `:_cmc:_internal:*` hidden-stream convention and read-hook filter; (b) the required index on the accesses table's `clientData.cmc.counterparty.{username, host}`; (c) the retry-queue event schema on `:_cmc:_internal:retries`; (d) v1 limitations (home-core failover delays pending retries). Short doc — the decision matrix is gone now that we've locked "zero new storage primitives."
-3. **`EVENT-SCHEMAS.md`** — full JSON Schema for every `cmc/*` event type, split by write-side vs deliver-side.
-4. **`CAPABILITY-ACCESSES.md`** — capability access permission shape; per-capability real streams `:_cmc:_internal:offer:<capId>` (single-event-bearing) + `:_cmc:_internal:responses:<capId>` (single-write); TTL; single-use enforcement; lifecycle (mint + GC with the capability).
-5. **`COUNTERPARTY-ACCESSES.md`** — `clientData.cmc.role: 'counterparty'` permission model on `:_cmc:inbox`, write-hook validation rules, `content.from` stamping.
-6. **`FEDERATION.md`** — cross-platform reference: the bidirectional access pair, what happens on each platform's plugin, where state lives, what fails how. **Notes that cross-core same-platform deliveries take the same standard HTTPS path as cross-platform — no dedicated cross-core auth lane.**
-7. **`SECURITY-NOTES.md`** — threat model. Replay protection, `content.from` spoofing prevention (capability access marker), capability interception, quota abuse, single-use enforcement under concurrency.
-8. **`OPEN-QUESTIONS.md`** — track unresolved decisions.
-
-**Exit:** specs reviewed; open questions resolved or explicitly deferred.
-
-### Phase C — Plugin skeleton & namespace registration
-
-1. Create `components/business/src/cmc/` (NOT `storages/datastores/` — CMC is a plugin, not a storage engine) with: plugin manifest, namespace-registration helper, write-hook registration, schema-validators directory, slug helpers, type-script source. No new storage engine, no new mall routing target — `:_cmc:*` events / accesses / streams use the existing per-user PG/SQLite storage paths.
-2. Register `:_cmc:` prefix with mall dispatcher for **write-hook routing only**. Reserve the five plugin-managed parent regions (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`, `:_cmc:_internal`, `:_cmc:_internal:retries`) so they auto-exist on every user account. Allow user `streams.create({parentId: ':_cmc:apps'})` for everything user-creatable. Reject `streams.create` directly under `:_cmc:` outside `:_cmc:apps`. The `chats` / `collectors` sub-segments are plugin-reserved at any depth under `:_cmc:apps:<app-code>:...` and auto-created on demand by the plugin (user code may not create them).
-3. Auto-provision the five reserved parent streams on user creation (system-stream-style — they always exist).
-4. Wire into the API server hook chain (after access auth, before storage write). No `storages.init()` participation — the plugin doesn't own storage.
-5. Test: `[CMCNS]` namespace registration + reserved-root rejection + auto-provisioning + `:_cmc:apps` sub-stream creation (10–12 tests).
-
-**Exit:** PG + SQLite matrix green; users can `streams.create({parentId: ':_cmc:apps'})`; reserved-root streams reject mutation; `cmc/*` events can be written into `:_cmc:apps:*` sub-streams; events / accesses / streams under `:_cmc:*` are queryable via the standard `events.get` / `accesses.get` / `streams.get` paths (no plugin-specific reader).
-
-### Phase D — Plugin orchestration framework + capability + accept/refuse
-
-1. Implement the **trigger-event dispatch loop**: plugin watches `cmc/*` writes across all `:_cmc:` regions (user-managed `:_cmc:apps:*` for lifecycle, plugin-managed `:_cmc:apps:<app-code>:[<path>:]chats:*` / `:_cmc:apps:<app-code>:[<path>:]collectors:*` for chat + system); dispatches to per-type orchestration handlers; updates trigger event content with `status` lifecycle.
-2. Implement the plugin's **outbound HTTPS client** for making Pryv API calls to counterparty apiEndpoints. Includes timeout + audit logging. **Retry queue:** hidden companion stream `:_cmc:_internal:retries` in per-user main storage; one event per pending delivery with `content.{apiEndpoint, payload, attempts, nextAttemptAt}`. Queue management via standard `events.create` / `events.update` / `events.delete`. Survives core restart; pending deliveries wait for home core to recover (no cross-core failover in v1 — same semantics as the user's other queued work).
-3. Implement capability access minting on `consent/request-cmc` triggers with `capabilityRequested: true`. Materialize per-capability streams `:_cmc:_internal:offer:<capId>` (with the single request event) and `:_cmc:_internal:responses:<capId>` (empty, awaiting single accept/refuse). Grant the capability access `read` + `create-only` on those two streams.
-4. Implement `consent/accept-cmc` / `consent/refuse-cmc` orchestration:
-   - Plugin opens capability connection via stored URL from trigger event.
-   - Reads offer; creates local data-grant access; delivers accept via capability connection.
-   - Receives back-channel apiEndpoint from response; stores in `clientData.cmc.counterparty.backChannelApiEndpoint`.
-5. Implement single-use consumption + auto-deletion of capability access.
-6. Implement counterparty marker (`clientData.cmc.role: 'counterparty'`) on both sides of the access pair, with stored apiEndpoints.
-7. Test: `[CMCCAP]` capability mint/read/consume (12 tests), `[CMCREQ]` end-to-end accept/refuse with plugin orchestration (15 tests), `[CMCRACE]` concurrent-accept race resolution (3 tests), `[CMCRETRY]` outbound-call failure/retry (5 tests).
-
-**Exit:** End-to-end open-invite flow works as a single trigger event on each side; both plugins coordinate via stored apiEndpoints; data-grant + back-channel accesses are bidirectionally wired.
-
-### Phase E — Counterparty writes on `:_cmc:inbox` (receiving side validation)
-
-1. Implement `:_cmc:inbox` write-hook that accepts incoming writes from counterparty accesses (server-internal — these writes come from the **plugin's outbound HTTPS calls**, not from app code).
-2. Validate the actor's `clientData.cmc.role === 'counterparty'`, the event type matches the role's allowed family, content schema is valid.
-3. Stamp `content.from` from the access's stored counterparty identity.
-4. Fire socket.io push.
-5. Test: `[CMCINBOX]` write-hook validation (10 tests), `[CMCFROM]` content.from stamping (4 tests), `[CMCROLE]` allowed-event-type enforcement (8 tests).
-
-**Exit:** Counterparty writes via the plugin's outbound calls are received, validated, and pushed correctly.
-
-### Phase F — Chat + revoke + auto-anchor streams
-
-1. Implement per-app/path `:chats` parent + per-counterparty `:chats:<counterparty-slug>` auto-creation hook (nested under whichever `:_cmc:apps:<app-code>:[<path>:]` scope stream the trigger was written to) in accept orchestration (so the anchor stream exists before the first chat write).
-2. Implement `message/chat-cmc` orchestration: plugin resolves access pair from counterparty slug + delivers chat to counterparty's matching `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>` via stored apiEndpoint.
-3. Implement `consent/revoke-cmc` orchestration: plugin `accesses.delete`s locally + delivers `consent/revoke-cmc` to counterparty's `:_cmc:inbox`; receiving plugin `accesses.delete`s its half and the anchor streams are left in place (history preserved).
-4. Test: `[CMCCHAT]` (8 tests, incl. per-counterparty stream auto-create idempotence), `[CMCREVOKE]` (8 tests).
-
-**Exit:** Chat works as one trigger on the sender's `:_cmc:apps:<app-code>:[<path>:]chats:<counterparty-slug>`; revoke is a single trigger that tears down both halves of the access pair.
-
-### Phase G — System channel (alerts + acks + scope-request + scope-update)
-
-1. Implement per-app/path `:collectors` parent + per-counterparty `:collectors:<counterparty-slug>` auto-creation (nested under whichever `:_cmc:apps:<app-code>:[<path>:]` scope stream the trigger was written to) in accept orchestration (so the anchor stream exists at acceptance, before any system messages can flow).
-2. Implement `notification/alert-cmc` / `notification/ack-cmc` orchestrations: plugin delivers to counterparty's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` via stored apiEndpoint.
-3. Implement `consent/scope-request-cmc` orchestration (collector side): plugin pre-validates permission-chain rules locally + delivers ask to user's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` via stored data-grant apiEndpoint.
-4. Implement `consent/scope-update-cmc` orchestration (user side, both response-to-request AND self-initiated): plugin calls `accesses.update` locally on the data-grant access + delivers the update to collector's matching `:_cmc:apps:<app-code>:[<path>:]collectors:<counterparty-slug>` via stored back-channel apiEndpoint. Receiving plugin emits `accessUpdated` socket event locally.
-5. Implement `accesses.update` post-hook: detect counterparty accesses + auto-fire `consent/scope-update-cmc` notification to the counterparty's collector stream. Implement double-fire suppression so the CMC trigger handler's own `accesses.update` call doesn't trigger a redundant notification.
-6. Enforce opt-in: counterparty access must carry `clientData.cmc.features.systemMessaging: true`.
-7. Operator-specific quota; critical alerts higher allowance.
-8. Test: `[CMCSYS]` system-alert/ack flows (10 tests), `[CMCSCOPE]` scope-request/scope-update flows (15 tests: widening/narrowing/removing/expiry/self-initiated/stale-id), `[CMCPOSTHOOK]` accesses.update post-hook + double-fire suppression (8 tests).
-
-**Exit:** All four event-type families functional. Cross-core deliveries use the same standard HTTPS path as cross-platform (no dedicated cross-core auth lane — see "Future development scoping" note below).
-
-### Phase H — Socket.io push
-
-1. Hook every successful `:_cmc:inbox` insert (by the plugin's incoming-delivery handler) to emit a socket.io event.
-2. Hook every trigger-event status update (orchestration progress) to emit a socket.io event on the trigger's scope stream.
-3. Test: `[CMCPUSH]` socket.io delivery (5 tests), `[CMCTRIGGERPUSH]` trigger status updates (5 tests).
-
-**Exit:** Recipients see inbox arrivals without polling; senders see action-status updates without polling.
-
-*(`:_cmc:state` cross-scope projection deferred to v2 — apps query their own trigger streams for status in v1.)*
-
-### Phase I — legacy-shim helpers + backwards-compat shims
-
-(In `the legacy client library ` — user-driven; this plan documents the surface.)
-
-1. `Connection.cmcSend(type, content, options?)` — convenience for `events.create({streamIds: [<scope>], type, content})`.
-2. `Connection.cmcSubscribe(handler)` — monitor wrapper for `:_cmc:inbox`.
-3. `Collector` / `CollectorClient` proxy classes — route to `:_cmc:` underneath.
-
-**Exit:** legacy can adopt without rewriting consumer apps.
-
-### Phase J — Test matrix + deploy + cross-platform e2e + public docs
-
-1. Full PG + SQLite matrix green. Plugin tests live under `components/cmc/test/`. No new conformance matrix — `:_cmc:*` events / accesses / streams pass through the existing per-user-storage conformance.
-2. Deploy to `dev-pryv2-single` (single-core single-platform), validate.
-3. Deploy to pryv.me `core-use1` + `core-euc1`, validate cross-core via the standard HTTPS path.
-4. **Cross-platform e2e**: stand up a second open-pryv.io instance on a different domain (e.g. dev-deploy could add `dev-cmc-peer.example.com`); run a request → accept → chat → scope-update → revoke flow with users on both platforms. Different `dnsLess` topologies on each side ideally.
-5. `lib-js` conformance against deployed infra unchanged (no API surface drift).
-6. **Public-docs hand-off.** This is the moment the customer-facing chain catches up with the implementation:
-   - `CHANGELOG-v2.md` (API-facing) + `CHANGELOG-v2-back.md` (internal) entries written.
-   - **dev-site dedicated CMC section** — a new top-level page on `pryv.github.io` that links into the canonical [IMPLEMENTERS-GUIDE.md](IMPLEMENTERS-GUIDE.md) in this component (or republishes its content with a stable URL). Pattern matches how the v2 topology rewrite and the Let's Encrypt integration (LE integration) added customer-resources pages.
-   - **Documentation chain** — every public entry-point that references CMC (customer-resources sidebar, API reference, change-log, "What's new" page) gets a link to the component's `IMPLEMENTERS-GUIDE.md`. No stale stale plan-tracking references in public docs.
-   - `lib-js` README + `legacy-shim` README cross-link to `components/cmc/IMPLEMENTERS-GUIDE.md` as the canonical wire-shape doc.
-
-**Exit:** Production deploy. Cross-platform interop demonstrated. Public-doc chain refreshed; this component is discoverable from the dev-site landing page.
-
 ## Risks & open questions
 
 - **`:_cmc:inbox` writable-by-counterparty permission model.** New behaviour for Pryv — today no stream accepts writes from accesses based on a `clientData` marker. The plugin's write-hook is the enforcer. Careful security review needed: must reject forged `content.from`, must validate event-type belongs to the family allowed for the access's counterparty relationship.
 - **Capability access lifecycle.** Hidden from `accesses.get` by default? Visible? Discoverable by operator audit?
 - **Back-channel apiEndpoint delivery.** How does the recipient retrieve the back-channel apiEndpoint after writing accept? Proposed: the plugin appends a `cmc/accept-receipt-v1` event to `:_cmc:_internal:offer:<capId>` (readable via the same capability connection). Or: the accept event's `events.create` response includes it server-stamped.
 - **Single-use enforcement under concurrency.** Two patients simultaneously hit an open invite (`to: null`); first-write-wins must be transactional. Tested in `[CMCRACE]`.
-- **State projection cost.** Maintaining `:_cmc:state` materialized off outbox/inbox is O(events) on write. For high-volume operators, benchmark before Phase H ships.
+- **State projection cost.** Maintaining `:_cmc:state` materialized off outbox/inbox is O(events) on write. For high-volume operators, benchmark before enabling it at scale.
 - **Cross-platform directed invites.** Out of scope for v1. Backlog item depending on future OAuth2 / app-accounts work federated invite webhook.
 - **Capability access visibility.** Operators may want audit visibility. Plugin should expose capability accesses to operator audit but hide from regular `accesses.get`.
 - **Existing legacy data.** Legacy compat shim covers runtime; data migration deferred.
@@ -478,9 +361,9 @@ Anything else proposing mTLS should justify why it can't live in those scopes.
 
 CMC does not add to this list.
 
-## Open questions (carry through Phase B)
+## Open questions
 
-1. **Namespace name.** `:_cmc:` is functional but cryptic. Alternatives: `:channels:`, `:consent:`, `:messages:`, `:cross:`. Decide before Phase C.
+1. **Namespace name.** `:_cmc:` is functional but cryptic. Alternatives: `:channels:`, `:consent:`, `:messages:`, `:cross:`.
 2. **`:_cmc:inbox` deletion.** Can a user `events.delete` from their inbox? Proposed: yes, soft-delete.
 3. **Capability TTL default.** 7 days proposed. **Align with future OAuth2 token TTL default.**
 4. **Quota numbers.** Per-source per-recipient inbox limit: 100 events/min proposed.
@@ -493,21 +376,6 @@ CMC does not add to this list.
 11. **App-scope enforcement default.** `clientData.cmc.appScope` enforced when set (opt-in) vs always enforced when present (default-on)?
 
 ---
-
-## Pre-implementation checklist
-
-- [x] **Phase A Implementer's Guide drafted** (federation-friendly redesign)
-- [x] **Component scaffolded** at `components/cmc/` (Phase C foundation: constants + slug + validators + 59 unit tests)
-- [ ] Phase B spec docs written + reviewed
-- [ ] composite-id `accesses.update` floor confirmed deployed on dev infra
-- [ ] Future OAuth2 / app-accounts work cross-referenced once Phase B closes
-- [ ] client-lib team aware (co-coordinated plan for legacy-shim helpers)
-- [ ] Hidden-streams-as-baseStorage primitive landed (preferred prerequisite) OR explicit decision to ship CMC-specific filter middleware as interim debt
-- [ ] Scoped-notification refactor landed (optional optimization — CMC works correctly under coarse notifications via lib-js client-side filtering even without it)
-- [ ] dev-site dedicated CMC section drafted (see Phase J item 6)
-- [ ] Cross-platform test infrastructure spec (second open-pryv.io instance — dev-deploy YAML)
-- [ ] Doc workflow: every change to design or behaviour applies here (README + IMPLEMENTERS-GUIDE + INTERNALS) first.
-
 
 # License
 

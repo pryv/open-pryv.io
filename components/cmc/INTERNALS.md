@@ -19,7 +19,7 @@
 
 ---
 
-# 1. Plugin trigger dispatch loop (skeleton — Phase D)
+# 1. Plugin trigger dispatch loop (skeleton)
 
 The plugin watches every `cmc/*` event write that lands on a stream under `:_cmc:`. Dispatch is by `(stream-region, event-type)`:
 
@@ -231,7 +231,7 @@ sequenceDiagram
     Note over Plugin: max attempts reached then<br/>status='failed', reason='cmc-delivery-failed'
 ```
 
-**Retry policy** (proposed, finalize in Phase B):
+**Retry policy** (proposed):
 - Attempts: 1 immediate + N retries with exponential backoff (1m, 5m, 30m, 2h, 6h, 24h — total ~32h).
 - Audit: every attempt logs (apiEndpoint host, payload type, attempt#, outcome) to the standard Pryv audit stream. Bodies redacted.
 - Cross-cluster vs cross-platform: same code path; only the destination host differs.
@@ -309,7 +309,7 @@ sequenceDiagram
     APIServer-->>App: socket.io push (status)
 ```
 
-**Index requirement:** Phase B `DATA-RESIDENCY.md` must specify a B-tree index on `accesses.clientData.cmc.counterparty.{username, host}` (PG path) / equivalent on SQLite. Without it, the slug-resolution lookup degrades to a full-table scan per chat write.
+**Index requirement:** a B-tree index is required on `accesses.clientData.cmc.counterparty.{username, host}` (PG path) / equivalent on SQLite. Without it, the slug-resolution lookup degrades to a full-table scan per chat write.
 
 **Per-app scoping:** matching on `clientData.cmc.appCode` means the user can have multiple counterparty-accesses to the same person across different apps (one per app) without cross-talk. The trigger's app-scope is canonical; the matched access carries the corresponding remote stream-id.
 
@@ -440,7 +440,7 @@ sequenceDiagram
 
 # 11. Slug computation
 
-Deterministic. Helpers ship in `lib-js` (Phase I) and the plugin uses the same code for stream-id construction so client + server agree.
+Deterministic. Helpers ship in `lib-js` and the plugin uses the same code for stream-id construction so client + server agree.
 
 ```mermaid
 flowchart LR
@@ -534,7 +534,7 @@ Note that `status: 'completed'` on the trigger means "local teardown done and th
 
 ---
 
-# 14. Cross-platform e2e (Phase J validation)
+# 14. Cross-platform e2e validation
 
 Full end-to-end across two independent open-pryv.io platforms with different operators. This is the scenario that proves federation works without shared CA or shared user namespace.
 
@@ -642,28 +642,7 @@ Revoke needs no equivalent exemption: peer-delivered revokes are short-circuited
 
 ---
 
-# Notes for Phase B specs
-
-Each numbered flow above corresponds to a specification document that needs writing before Phase C coding starts. The mapping:
-
-| Flow # | Title | Spec doc |
-|---|---|---|
-| 1 | Trigger dispatch loop | `PLUGIN-INTERFACE.md` (write-hook contract; **CMC is plugin, not storage engine**) |
-| 2 | Capability access lifecycle | `CAPABILITY-ACCESSES.md` |
-| 3 | Bidirectional access pair | `COUNTERPARTY-ACCESSES.md` |
-| 4 | Outbound HTTP + retry queue | `FEDERATION.md` + `DATA-RESIDENCY.md` (hidden companion stream + retry event schema) |
-| 5 | Inbox write-hook | `COUNTERPARTY-ACCESSES.md` (write-hook section) |
-| 6 | Chat slug-resolution | `EVENT-SCHEMAS.md` (per-family routing) + `DATA-RESIDENCY.md` (counterparty index requirement) |
-| 7 | System channel + features | `EVENT-SCHEMAS.md` + `SECURITY-NOTES.md` |
-| 8 | Scope-request pre-validation | `EVENT-SCHEMAS.md` (permission-chain rules) |
-| 9 | Scope-update with `accesses.update` | `EVENT-SCHEMAS.md` |
-| 10 | Post-hook + suppression | `EVENT-SCHEMAS.md` + `OPEN-QUESTIONS.md` (cls-hooked mechanism choice) |
-| 11 | Slug computation | `EVENT-SCHEMAS.md` (slug section) |
-| 12 | Same-core short-circuit | `FEDERATION.md` (delivery-path matrix) |
-| 13 | Revoke teardown | `EVENT-SCHEMAS.md` |
-| 14 | Cross-platform e2e | `FEDERATION.md` |
-
-Open questions deliberately left for Phase B (not blockers for this doc):
+# Open questions (not blockers for this doc)
 
 - Capability TTL default + override policy.
 - Per-host queue / backpressure in retry loop.
