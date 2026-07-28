@@ -9,7 +9,7 @@ import type { CmcLogger } from './_types.ts';
 const require = createRequire(import.meta.url);
 
 /**
- * CMC plugin — handleInvalidateLink (Phase 2 capability lifecycle).
+ * CMC plugin — handleInvalidateLink (capability lifecycle).
  *
  * Triggered by `consent/invalidate-link-cmc` written to one of the
  * requester's own `:_cmc:apps:*` streams. The plugin flips the

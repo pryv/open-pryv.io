@@ -208,7 +208,7 @@ describe('[CMCHC] cmc/handleChat', () => {
     });
   });
 
-  describe('[CMCHC-FEAT] Phase 2.2 features gating', () => {
+  describe('[CMCHC-FEAT] features gating', () => {
     // `features.chat: false` on the counterparty access is binding.
     // handleChat rejects the send so the offer's negotiated feature
     // contract isn't a silent no-op.

@@ -219,7 +219,7 @@ async function handleIncomingAccept (params: {
     ? '--' + crypto.createHash('sha1').update(scopeStreamId).digest('hex').slice(0, 12)
     : '';
   const accessName = 'cmc-back-channel-' + appCode + '--' + peerSlug + scopeSuffix;
-  // Phase 2.2 features gating — features negotiated by the offer
+  // Features gating — features negotiated by the offer
   // (and accepted by the counterparty) are delivered on
   // `acceptEvent.content.features`. Mirror them onto the
   // back-channel access's clientData so handleChat / handleSystem on
@@ -445,14 +445,14 @@ async function handleIncomingAccept (params: {
     }
   }
 
-  // Phase 1 single-use lifecycle: flip the capability access's
+  // Single-use lifecycle: flip the capability access's
   // `clientData.cmc.capability.state` from 'open' to 'consumed' so a
   // subsequent re-click via the same capabilityUrl can be rejected
   // with `cmc-capability-consumed` by the responses-stream write-hook
   // (instead of silently re-running this handler and minting a
   // duplicate back-channel access). Open-link mode skips this step —
   // capabilities with `mode: 'open-link'` keep state='open' until
-  // explicit invalidation (Phase 2 plan). Best-effort; the back-channel
+  // explicit invalidation. Best-effort; the back-channel
   // access is already minted so the relationship is established.
   //
   // `capabilityIdToConsume` and `capabilityAccess` were resolved above
@@ -467,7 +467,7 @@ async function handleIncomingAccept (params: {
           userId, capabilityId: capabilityIdToConsume, deps: { mall },
         });
       } else if (capabilityMode === 'open-link') {
-        // Open-link mode (Phase 2 lifecycle): instead of flipping state
+        // Open-link mode (capability lifecycle): instead of flipping state
         // to 'consumed', append the accepter to acceptedBy so a
         // same-patient re-click can be detected by the response-stream
         // write-hook. The capability stays open until the requester

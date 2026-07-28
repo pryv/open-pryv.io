@@ -193,7 +193,7 @@ const ET_RETRY = 'cmc-internal/retry-cmc';
 // apiEndpoint + remote stream-ids so future chat / system deliveries from
 // the accepter to the requester resolve cleanly.
 const ET_BACK_CHANNEL = 'consent/back-channel-cmc';
-// Per-capability invalidation (open-link mode, Phase 2). The requester
+// Per-capability invalidation (open-link mode). The requester
 // writes this to one of their own `:_cmc:apps:*` streams; the plugin
 // flips the capability access state to `'invalidated'` so further
 // accepts are rejected by the responses-stream write-hook. Already

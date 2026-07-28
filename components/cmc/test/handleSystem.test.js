@@ -582,7 +582,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
     });
 
     it('[HS28c] suppression flag is set during mall.accesses.update (post-hook would see isSuppressed===true)', async () => {
-      // Phase 3.1 verification: when handleSystemScopeUpdate's local-apply
+      // Verification: when handleSystemScopeUpdate's local-apply
       // runs mall.accesses.update, the post-hook (`accessesUpdateHook`)
       // would also fire and would issue a SECOND outbound notification
       // to the counterparty. To prevent the double-fire, the handler
@@ -750,7 +750,7 @@ describe('[CMCHS] cmc/handleSystem', () => {
     });
   });
 
-  describe('[CMCHS-FEAT] Phase 2.2 features.systemMessaging gating', () => {
+  describe('[CMCHS-FEAT] features.systemMessaging gating', () => {
     // `features.systemMessaging: false` on the counterparty access is
     // binding for user-level system events (alert + ack). Protocol-
     // level events (scope-request, scope-update) are NOT subject to

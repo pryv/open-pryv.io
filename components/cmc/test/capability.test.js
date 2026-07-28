@@ -293,7 +293,7 @@ describe('[CMCCAP] cmc/capability', () => {
     });
   });
 
-  describe('[CMCCAP-LF] capability lifecycle (Phase 1)', () => {
+  describe('[CMCCAP-LF] capability lifecycle', () => {
     it('[CC14] mint stamps `state: "open"` and default `mode: "single-use"` on clientData.cmc.capability', async () => {
       const mall = fakeMall();
       const r = await mintCapability({

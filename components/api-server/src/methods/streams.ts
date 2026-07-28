@@ -69,7 +69,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   const getUpdates = () => config.get('updates');
   const mall = await getMall();
   // RETRIEVAL
-  // Phase 4 H5: defense-in-depth — prune `:_cmc:_internal` subtree
+  // Defense-in-depth: prune `:_cmc:_internal` subtree
   // from the response tree as a last step.
   const sharedSecretsEnsureOnRead = sharedSecrets.createEnsureStreamsOnReadHook({
     mall,
@@ -326,7 +326,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     }
   }
   // DELETION
-  // Phase 4 H6: reserved-root immutability. The base permission model
+  // Reserved-root immutability. The base permission model
   // (AccessLogic._canManageStream) returns true for personal accesses,
   // so without this guard a personal token could delete `:_cmc:` and
   // silently break every active CMC relationship on the account. Wired

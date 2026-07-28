@@ -53,8 +53,8 @@ import type { CmcAccessLike as AccessRow, MallLike } from './_types.ts';
  *                  responses-stream write-hook). This is the default.
  *
  *   'open-link'  — multiple accepts allowed until the requester
- *                  explicitly invalidates the link (Phase 2 plan;
- *                  open-link writes do NOT transition state to
+ *                  explicitly invalidates the link (open-link
+ *                  writes do NOT transition state to
  *                  'consumed' on accept; invalidation transitions to
  *                  'invalidated'). Use case: a doctor publishing a
  *                  multi-patient study invite.
@@ -248,10 +248,10 @@ async function mintCapability (params: {
         kind: 'capability',
         capabilityId,
         requestEventId: triggerEvent.id ?? null,
-        // Phase 1 lifecycle: a two-state machine on the access itself.
+        // Capability lifecycle: a two-state machine on the access itself.
         // `state` is 'open' at mint, flips to 'consumed' on the first
         // successful accept (single-use mode only). Open-link mode
-        // stays 'open' until explicit invalidation (Phase 2).
+        // stays 'open' until explicit invalidation.
         capability: {
           mode,
           state: 'open',
@@ -317,7 +317,7 @@ async function gcCapability (params: {
  * was minted with `requestEventId: null`. This post-create helper
  * stamps the now-known id so downstream consumers
  * (`handleIncomingAccept` reading `clientData.cmc.requestEventId` to
- * stamp `inviteEventId` on the inbox-mirror — see Phase 1.1) can
+ * stamp `inviteEventId` on the inbox-mirror) can
  * resolve the original invite trigger event.
  *
  * Idempotent: if the access already has `requestEventId === id`,
@@ -388,7 +388,8 @@ async function findCapabilityAccess (params: {
  * `state: 'consumed'`. Called by the responder-side handler after a
  * successful accept lands (single-use mode). Idempotent — calling on
  * an already-consumed access is a no-op (no-op write). Open-link mode
- * callers should NOT call this; their consumption tracking is Phase 2.
+ * callers should NOT call this; their consumption tracking is via the
+ * open-link capability lifecycle.
  */
 async function markCapabilityConsumed (params: {
   userId: string;

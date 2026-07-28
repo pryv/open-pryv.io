@@ -11,7 +11,7 @@ import { dirname } from 'node:path';
 const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 /**
- * Phase 10: Two-core integration tests.
+ * Two-core integration tests.
  *
  * Boots two real service-core instances (child processes) with a shared
  * rqlite PlatformDB and a DNS server. Verifies end-to-end multi-core flows:

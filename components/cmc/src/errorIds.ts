@@ -46,8 +46,8 @@ const CmcErrorIds = {
   // invalidation) are UNTOUCHED — they continue to work for chat /
   // system / revoke. Per-relationship revocation uses the existing
   // `consent/revoke-cmc` event, NOT this error.
-  // State will be added by the open-link Phase 2 plan; the error.id
-  // is enumerated here so the catalogue is stable.
+  // State will be added by the open-link capability lifecycle; the
+  // error.id is enumerated here so the catalogue is stable.
   CAPABILITY_INVALIDATED: 'cmc-capability-invalidated',
   // Open-link mode same-patient re-click. A counterparty whose
   // `{username, host}` is already in the capability access's
@@ -175,7 +175,7 @@ const CmcErrorIds = {
   // permitted regardless of the flag.
   SYSTEM_MESSAGING_DISABLED: 'cmc-system-messaging-disabled',
 
-  // --- Forge-prevention on accesses.* HTTP routes (Phase 4 H7) ---
+  // --- Forge-prevention on accesses.* HTTP routes ---
   // User code attempted to write under the `clientData.cmc` namespace
   // via the api-server accesses.create / accesses.update routes. That
   // namespace is plugin-owned end-to-end (role, appCode, counterparty,

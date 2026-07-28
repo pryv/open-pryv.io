@@ -219,8 +219,8 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
         'mirror.time outside expected window: ' + mirror.time);
     });
 
-    it('[IA02F] back-channel access carries `features` from accept event content (Phase 2.2 requester-side gating)', async () => {
-      // Phase 2.2 features gating works symmetrically on both sides
+    it('[IA02F] back-channel access carries `features` from accept event content (requester-side gating)', async () => {
+      // Features gating works symmetrically on both sides
       // of the relationship. The accepter's data-grant already
       // carries features via buildDataGrantPayload. The requester's
       // back-channel access (minted here) must mirror them from the

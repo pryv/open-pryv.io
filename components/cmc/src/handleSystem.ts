@@ -187,7 +187,7 @@ async function handleSystemEvent (params: {
 
   const cmc = chosen.clientData?.cmc;
 
-  // Phase 2.2 features gating — the offer's negotiated
+  // Features gating — the offer's negotiated
   // `features.systemMessaging` is the relationship's binding contract.
   // When the counterparty access carries
   // `clientData.cmc.features.systemMessaging === false`, alert + ack

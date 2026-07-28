@@ -176,7 +176,7 @@ function createStreamCreateReservedRootHook (deps: Deps): Middleware {
 }
 
 /**
- * streams.delete hook — Phase 4 H6 reserved-root immutability.
+ * streams.delete hook — reserved-root immutability.
  *
  * Symmetric counterpart to `createStreamCreateReservedRootHook`. Even
  * a personal token (which bypasses per-access permission checks via
@@ -378,7 +378,7 @@ function createEnsureReservedParentsHook (deps: ProvisionDeps): Middleware {
 }
 
 /**
- * events.get hook — Phase 4 H5 defense-in-depth: strip any
+ * events.get hook — defense-in-depth: strip any
  * `:_cmc:_internal:*` stream-ids from `params.streams` (string form OR
  * `{streamId, ...}` object form) before the query reaches the store.
  *
@@ -410,7 +410,7 @@ function createEventsGetInternalGuardHook (): Middleware {
 }
 
 /**
- * events.getOne hook — Phase 4 H5 defense-in-depth: if the fetched
+ * events.getOne hook — defense-in-depth: if the fetched
  * event lives in `:_cmc:_internal:*`, return 404 instead of leaking
  * its existence (mirrors the existing pattern for hidden system
  * streams in `checkIfAuthorized`).
@@ -440,7 +440,7 @@ function createEventGetOneInternalGuardHook (deps: Deps): Middleware {
 }
 
 /**
- * streams.get hook — Phase 4 H5 defense-in-depth: prune the
+ * streams.get hook — defense-in-depth: prune the
  * `:_cmc:_internal` subtree from the response tree. The tree returned
  * by `findAccessibleStreams` is shaped as a forest of `{id, children}`
  * nodes; we recursively drop any node whose id starts in the internal
@@ -468,7 +468,7 @@ function createStreamsGetInternalGuardHook (): Middleware {
 }
 
 /**
- * events.create hook — Phase 4 H8 `content.from` forge-prevention for
+ * events.create hook — `content.from` forge-prevention for
  * chat / system messages delivered into our per-app streams by a
  * counterparty-marked access (i.e. peer outbound POSTs that landed on
  * our :_cmc:apps:<app>:[<sub>:]chats:<slug> or
@@ -533,7 +533,7 @@ function createCounterpartyFromStampingHook (deps: Deps): Middleware {
 }
 
 /**
- * accesses.create / accesses.update hook — Phase 4 H7 forge-prevention.
+ * accesses.create / accesses.update hook — forge-prevention.
  *
  * The `clientData.cmc` namespace is owned end-to-end by the CMC plugin:
  * `role`, `appCode`, `counterparty`, `capability`, `requestEventId`,

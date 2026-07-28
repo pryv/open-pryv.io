@@ -8,11 +8,11 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * CMC plugin — capability open-link lifecycle tests (Phase 2).
+ * CMC plugin — capability open-link lifecycle tests.
  *
  * [CMCOL] covers the open-link mode multi-accept + same-patient
  * re-click detection + `markCapabilityInvalidated` semantics on top of
- * the Phase 1 mintCapability + state machine.
+ * the mintCapability + state machine.
  */
 
 const assert = require('node:assert/strict');
@@ -101,7 +101,7 @@ const SINGLE_USE_TRIGGER = {
   },
 };
 
-describe('[CMCOL] cmc/capability open-link (Phase 2)', () => {
+describe('[CMCOL] cmc/capability open-link', () => {
   describe('[CMCOL-MA] multi-patient happy path', () => {
     it('[CMCOL-MA] three counterparties accept the same open-link capability; acceptedBy ends with 3 entries', async () => {
       const mall = fakeMall();

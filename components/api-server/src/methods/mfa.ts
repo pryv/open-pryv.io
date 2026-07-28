@@ -178,7 +178,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const user = session.context.user;
         await maybeMFAService().verify(user.username, session.profile, { headers: {}, body: params });
         // The session.context.token is the real access token issued by auth.login
-        // and stashed by Phase 5's MFA-aware login flow.
+        // and stashed by the MFA-aware login flow.
         if (!session.context.token) {
           return next(errors.unexpectedError(new Error('MFA session has no token to release — login flow not wired')));
         }

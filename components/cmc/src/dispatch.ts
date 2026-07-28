@@ -270,7 +270,7 @@ async function dispatch (params: {
         });
         break;
       case C.ET_INVALIDATE_LINK:
-        // Per-capability lifecycle (open-link mode, Phase 2). Requester
+        // Per-capability lifecycle (open-link mode). Requester
         // invalidates their own capability locally; no peer delivery.
         result = await handleInvalidateLinkMod.handleInvalidateLink({
           userId, triggerEvent: event, deps,

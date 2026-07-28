@@ -205,7 +205,7 @@ class CertRenewer {
  * Minimal DNS writer backed by PlatformDB's setDnsRecord / deleteDnsRecord
  * (multi-core with embedded DNS). After setDnsRecord, waits `waitMs` for
  * the record to propagate to LE's geo-distributed resolvers; measured
- * need during the Phase 1 spike was ~15s.
+ * need during an early spike measured ~15s.
  */
 class PlatformDBDnsWriter {
   #platformDB: PlatformDB;

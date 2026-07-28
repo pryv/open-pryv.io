@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * CMC plugin — handleInvalidateLink (Phase 2 capability lifecycle).
+ * CMC plugin — handleInvalidateLink (capability lifecycle).
  *
  * [CMCIL] covers the requester-side `consent/invalidate-link-cmc`
  * handler: open-link state flip + idempotency + single-use no-op +

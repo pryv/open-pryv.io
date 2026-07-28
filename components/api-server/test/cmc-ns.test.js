@@ -263,7 +263,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
   });
 
   describe('[CMCNS-H6] streams.delete reserved-root immutability', function () {
-    // Phase 4 H6 — even a personal token (which has implicit '*'
+    // Even a personal token (which has implicit '*'
     // manage and bypasses per-access permission checks) must NOT be
     // able to delete one of the plugin-auto-provisioned reserved
     // parents. Without this guard, deleting `:_cmc:` would silently
@@ -304,7 +304,7 @@ describe('[CMCNS] cmc namespace + write-hook integration', function () {
   });
 
   describe('[CMCNS-H7] accesses.create / accesses.update forge-prevention', function () {
-    // Phase 4 H7 — the `clientData.cmc` namespace is plugin-owned. User
+    // The `clientData.cmc` namespace is plugin-owned. User
     // code attempting to forge fields under it (e.g. `role: counterparty`
     // to bypass the handshake, or a fake `capability.state` to confuse
     // the lifecycle) must be rejected up-front at the api-server route

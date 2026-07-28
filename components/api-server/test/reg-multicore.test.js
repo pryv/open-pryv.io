@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 /**
- * Phase 9: Multi-core acceptance tests.
+ * Multi-core acceptance tests.
  *
  * These tests inject multi-core config (dns:domain, core:id, hostings)
  * and seed PlatformDB with fake cores — no second instance needed.
